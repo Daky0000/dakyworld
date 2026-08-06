@@ -88,18 +88,38 @@ than failing silently.
 
 ## Deploying
 
-Both Railway and Hostinger (the accounts you already have) can host this:
+Client and server deploy as **one Railway service** on one domain
+(`os.dakyworld.com`): the Express process serves `client/dist` as static
+files and the API under `/api`, so there's no second service, no CORS setup,
+and `VITE_API_BASE=/api` just works.
 
-- **Server**: Railway is the natural fit — it's already where Postgres
-  lives. `railway up` from `server/`, add the env vars from `.env` in the
-  Railway dashboard, set the start command to `npm run build && npm start`.
-- **Client**: build with `npm run build` in `client/` (outputs `dist/`),
-  deploy the static output to Railway (as a static site service) or
-  Hostinger. Point `VITE_API_BASE` at your deployed server's URL and
-  `CLIENT_ORIGIN` on the server at your deployed client's URL.
-- **GitHub**: this folder is already a git repo (`git init` was run). Create
-  a repo on GitHub and `git remote add origin ...` / `git push` when you're
-  ready — nothing has been pushed yet.
+`railway.json` and the root `package.json` define this. In the Railway
+service settings, **Root Directory must be the repo root** (not `server/`) —
+the build needs both folders in context.
+
+| Phase | Command | What it does |
+|---|---|---|
+| Build | `npm run build` | builds `client/dist`, then compiles the server |
+| Start | `npm start` | `prisma migrate deploy` then boots the server |
+
+Required service variables: `DATABASE_URL`, `NODE_ENV=production`, and
+**`APP_PASSWORD`** (see below). Deploys happen on push to `main`.
+
+### Protecting the deployed instance
+
+`DEV_NO_AUTH=true` resolves *every* request to a full Owner account. That's
+fine locally and dangerous in public, so in production the app **refuses to
+serve** unless one of these is configured:
+
+- **`APP_PASSWORD`** — a shared-password gate (HTTP Basic; any username, this
+  password) over the whole app. The stopgap. The Stripe webhook and
+  `/api/health` stay open, since neither can send credentials.
+- **Clerk** — real accounts and roles. Set `CLERK_SECRET_KEY`,
+  `CLERK_PUBLISHABLE_KEY`, `VITE_CLERK_PUBLISHABLE_KEY`, and
+  `DEV_NO_AUTH=false`. Both sides are already coded for this.
+
+Railway itself has no login layer to lean on — it's a host, not an identity
+provider — which is why the gate lives in the app.
 
 ## Project structure
 

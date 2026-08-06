@@ -1,0 +1,13 @@
+{
+  "name": "dakyworld-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Builds the client and the server as one deployable service — the server serves client/dist alongside the API.",
+  "scripts": {
+    "build": "npm --prefix client ci && npm --prefix client run build && npm --prefix server ci && npm --prefix server run build",
+    "start": "npm --prefix server run start"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
