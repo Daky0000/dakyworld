@@ -4,6 +4,9 @@ import { useAuth } from "../lib/auth";
 const navItems = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/leads", label: "Leads" },
+  // Configuring scrapers spends money on Apify, so the API restricts it to the
+  // Owner. Hiding the tab keeps the rest of the team out of a 403.
+  { to: "/lead-sources", label: "Capture", ownerOnly: true },
   { to: "/proposals", label: "Proposals" },
   { to: "/projects", label: "Projects" },
   { to: "/invoices", label: "Invoices" },
@@ -12,6 +15,7 @@ const navItems = [
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const visibleNav = navItems.filter((item) => !item.ownerOnly || user?.role === "OWNER");
   return (
     <div className="min-h-screen bg-ivory text-ink">
       <header className="border-b border-ink/10 bg-white/70 backdrop-blur">
@@ -26,7 +30,7 @@ export function Layout() {
             </div>
           </div>
           <nav className="flex items-center gap-6">
-            {navItems.map((item) => (
+            {visibleNav.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

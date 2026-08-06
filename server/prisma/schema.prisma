@@ -126,6 +126,12 @@ enum LeadSource {
   OUTREACH
   CONTENT
   WARM_NETWORK
+  // Machine-sourced. Everything below arrives through a ScraperSource rather
+  // than a person typing it in, which is why leads carry `scraperRunId`.
+  GOOGLE_MAPS
+  WEB_SCRAPE
+  DIRECTORY
+  SOCIAL
   OTHER
 }
 
@@ -156,10 +162,172 @@ model Lead {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
+  // --- Firmographics, mostly filled by the scrapers -----------------------
+  website      String?
+  address      String?
+  city         String?
+  region       String?
+  country      String?
+  category     String? // "Dental clinic", "Law firm" — the scraped business category
+  rating       Decimal? @db.Decimal(3, 2)
+  reviewsCount Int?
+  latitude     Float?
+  longitude    Float?
+  socialLinks  Json? // { facebook, instagram, linkedin, twitter }
+  tags         String[] @default([])
+
+  /// The provider's own id (Google place id, profile URL). Kept for re-scraping
+  /// the same record; `dedupeKey` is what actually prevents duplicates, since a
+  /// business found on Maps and again on its website must collapse into one lead.
+  externalId String?
+  /// Normalised identity: place id, else website domain, else email, else
+  /// phone, else name+city. Unique, so a re-run updates rather than duplicates.
+  dedupeKey  String? @unique
+  /// The untouched scraper item, so a mapping fix can be replayed without re-scraping.
+  enrichment Json?
+
+  group           LeadGroup?     @relation(fields: [groupId], references: [id])
+  groupId         String?
+  scraperSource   ScraperSource? @relation(fields: [scraperSourceId], references: [id])
+  scraperSourceId String?
+  scraperRun      ScraperRun?    @relation(fields: [scraperRunId], references: [id])
+  scraperRunId    String?
+
   proposals      Proposal[]
   communications Communication[]
 
   @@index([status])
+  @@index([groupId])
+  @@index([scraperRunId])
+  @@index([source, createdAt])
+}
+
+/// A named bucket of leads — normally one scrape batch ("Accra dentists,
+/// 6 Aug"), so the pipeline stays readable when a run lands 200 rows at once.
+model LeadGroup {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  /// Groups a scraper opened automatically, as opposed to ones the Owner made by hand.
+  autoCreated Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  leads Lead[]
+}
+
+// ---------------------------------------------------------------------------
+// Lead sourcing — Apify actors, their schedules, and their run history
+// ---------------------------------------------------------------------------
+
+/// How a scraper's raw items are read. GOOGLE_MAPS and GENERIC_CONTACT are
+/// built-in mappers; CUSTOM means `fieldMap` alone decides.
+enum ScraperPreset {
+  AUTO
+  GOOGLE_MAPS
+  GENERIC_CONTACT
+  CUSTOM
+}
+
+enum ScraperRunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  ABORTED
+  TIMED_OUT
+}
+
+enum ScraperRunTrigger {
+  MANUAL
+  SCHEDULED
+}
+
+/// One configured Apify actor. The Owner adds these from the UI — actor id,
+/// input JSON, and the times of day it should run — so new lead sources need
+/// no code change.
+model ScraperSource {
+  id          String  @id @default(cuid())
+  name        String
+  /// Apify actor identifier, e.g. `compass/crawler-google-places` or an actor id.
+  actorId     String
+  description String?
+
+  /// Actor input, passed to Apify verbatim. `{{date}}` / `{{today}}` are substituted at run time.
+  input    Json          @default("{}")
+  /// Dot-path overrides, lead field -> item path, e.g. { "contactEmail": "contact.email" }.
+  fieldMap Json?
+  preset   ScraperPreset @default(AUTO)
+
+  /// What scraped leads are labelled as, and the group they land in.
+  leadSource LeadSource @default(GOOGLE_MAPS)
+  groupName  String? // supports {{name}} and {{date}}
+
+  enabled   Boolean @default(true)
+  maxItems  Int     @default(100)
+  /// Leads scoring below this are dropped instead of saved — the noise filter.
+  minScore  Int     @default(0)
+  /// Move leads that clear `qualifyScore` straight to QUALIFYING.
+  autoQualify  Boolean @default(true)
+  qualifyScore Int     @default(60)
+
+  /// Daily run times as "HH:mm" in `timezone`. Empty = manual only.
+  scheduleEnabled Boolean  @default(false)
+  scheduleTimes   String[] @default([])
+  timezone        String   @default("Africa/Accra")
+
+  lastRunAt DateTime?
+  /// Set once a slot fires so a restart inside the same minute can't double-run.
+  nextRunAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  runs  ScraperRun[]
+  leads Lead[]
+
+  @@index([enabled, scheduleEnabled])
+}
+
+model ScraperRun {
+  id       String        @id @default(cuid())
+  source   ScraperSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceId String
+
+  apifyRunId String?
+  datasetId  String?
+  status     ScraperRunStatus  @default(QUEUED)
+  trigger    ScraperRunTrigger @default(MANUAL)
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  itemsFetched Int     @default(0)
+  leadsCreated Int     @default(0)
+  leadsUpdated Int     @default(0)
+  duplicates   Int     @default(0)
+  filtered     Int     @default(0)
+  error        String?
+  input        Json?
+
+  leads Lead[]
+
+  @@index([sourceId, startedAt])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Settings & Integrations
+// ---------------------------------------------------------------------------
+
+/// Runtime configuration the Owner edits in the app rather than in Railway.
+/// Values flagged `secret` are AES-256-GCM ciphertext (see lib/secrets.ts) and
+/// are never returned to the client in full.
+model AppSetting {
+  key       String   @id
+  value     String
+  secret    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------

@@ -13,8 +13,11 @@ import { projectsRouter } from "./routes/projects.js";
 import { invoicesRouter } from "./routes/invoices.js";
 import { usersRouter } from "./routes/users.js";
 import { dashboardRouter } from "./routes/dashboard.js";
+import { scrapersRouter } from "./routes/scrapers.js";
+import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { stripe, stripeEnabled } from "./lib/stripe.js";
+import { startScheduler } from "./services/scheduler.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -87,6 +90,8 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/invoices", invoicesRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/dashboard", dashboardRouter);
+app.use("/api/scrapers", scrapersRouter);
+app.use("/api/settings", settingsRouter);
 
 if (!hasBuiltClient) {
   // No client build present (local API-only run) — show what's running.
@@ -122,6 +127,9 @@ bootstrapOwner()
     app.listen(PORT, () => {
       console.log(`Dakyworld OS API listening on http://localhost:${PORT}`);
       console.log(hasBuiltClient ? "  → Serving the built client from client/dist" : "  → No client build found — API only");
+      // Daily lead capture. Harmless with no Apify token and no sources: it
+      // finds nothing due and goes back to sleep.
+      startScheduler();
       if (DEV_NO_AUTH) {
         console.log("  → DEV_NO_AUTH=true: implicit Owner, no login required (ignored when NODE_ENV=production).");
       } else if (!process.env.OWNER_EMAIL || !process.env.OWNER_PASSWORD) {

@@ -10,4 +10,14 @@ body {
   .input {
     @apply w-full border border-ink/20 bg-white px-3 py-2 text-sm outline-none transition focus:border-ink/50;
   }
+
+  /* Compact control for filter bars and toolbars, where a full .input is too loud. */
+  .filter-select {
+    @apply border border-ink/15 bg-white px-2 py-1.5 font-mono text-[11px] uppercase tracking-[.08em] text-ink/70 outline-none transition focus:border-ink/50;
+  }
+
+  /* JSON editors: actor input and field maps. */
+  .code-input {
+    @apply w-full border border-ink/20 bg-ink/[.02] px-3 py-2 font-mono text-xs leading-relaxed outline-none transition focus:border-ink/50;
+  }
 }

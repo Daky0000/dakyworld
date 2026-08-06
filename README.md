@@ -10,7 +10,10 @@ Cloudinary (file storage, PDF hosting).
 
 ## What's built (Phase 1 MVP)
 
-- **Lead & Pipeline** — full CRUD, source/status tracking, lead scoring.
+- **Lead & Pipeline** — full CRUD, source/status tracking, lead scoring,
+  filtering and grouping, bulk actions, per-lead contact history.
+- **Lead capture (Apify)** — configurable scrapers that pull prospects off
+  Google Maps and the web on a daily schedule. See below.
 - **Proposal & Negotiation** — create, generate a branded PDF, send, and
   accept (which auto-creates the Client + Project) or reject.
 - **Project & Delivery** — milestones, tasks, team assignment, time logging.
@@ -71,6 +74,47 @@ npm run dev                 # http://localhost:5173
 Open http://localhost:5173 — the dashboard, leads, proposals, projects,
 invoices, and clients pages are all live against the API.
 
+## Lead capture
+
+The **Capture** page (Owner only, `/lead-sources`) runs [Apify](https://apify.com)
+actors and files what they find into the pipeline as leads.
+
+**Connect once.** Paste an Apify API token into Capture → Apify connection.
+The token is verified against Apify before it is accepted, then stored
+AES-256-GCM encrypted in the `AppSetting` table — not in an env var, so lead
+sources can be added and changed without a redeploy. (`APIFY_TOKEN` in the
+environment still wins if you'd rather pin it there.)
+
+**Add sources without code.** A source is one actor plus its input JSON. Add
+one from a template (Google Maps businesses with no website, Google Maps +
+email enrichment, contact sweep over a list of URLs), by searching the Apify
+Store from inside the app, or by typing an actor id. Nothing about a new
+source requires a deploy.
+
+**Schedule them.** Each source takes up to six run times a day (`06:30`,
+`18:00`, …) in its own timezone. An in-process scheduler ticks every minute
+and starts whatever is due. The next slot is written to `nextRunAt` *before*
+the run starts, so a failing actor can't retry-loop and a restart can't fire
+the same slot twice. Slots missed by more than six hours — a long outage —
+are skipped rather than stampeded through on boot. Runs interrupted by a
+deploy are re-attached to on the next boot.
+
+**What arrives.** Each row is mapped to a lead (`GOOGLE_MAPS`,
+`GENERIC_CONTACT`, automatic detection, or a custom field map), scored 0–100
+on how reachable and how sellable-to it is, and filed into a named batch.
+Scoring rewards a missing website and page-builder domains — the clearest
+signal that a business needs what Dakyworld sells.
+
+**Nothing duplicates and nothing is overwritten.** Every lead gets a
+`dedupeKey` — place id, else website domain, else email, else phone, else
+name+city. A re-run of the same search fills in blanks and refreshes ratings
+and review counts, but never overwrites an edit, never downgrades a status,
+and never creates a second row. Permanently closed businesses and rows below
+the source's minimum score are dropped rather than saved.
+
+Actor runs cost money on Apify. The whole feature is Owner-gated server-side
+(`requireRole("OWNER")`), and `maxItems` caps every run.
+
 ## Turning on the real integrations
 
 Everything below is fully coded and wired — each just needs real keys
@@ -78,8 +122,13 @@ dropped into `server/.env` to go live. Nothing needs to be rewritten.
 
 | Integration | Get keys from | Env vars |
 |---|---|---|
+| Lead capture (Apify) | https://console.apify.com/settings/integrations | `APIFY_TOKEN` *(optional — normally set in the app)*, `APP_SECRET` |
 | Payments (Stripe) | https://dashboard.stripe.com/test/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
+
+Set `APP_SECRET` to any long random string. Without it, stored tokens are
+encrypted with a key derived from `DATABASE_URL` and have to be re-entered if
+that URL ever changes.
 
 Without Cloudinary configured, "Generate PDF" still works — it streams the
 PDF directly to your browser instead of uploading and storing a URL.
@@ -154,14 +203,22 @@ Dakyworld OS/
       schema.prisma  Full data model — 11 entities from the original spec
       seed.ts        Sample data for local development
     src/
-      lib/           Prisma client, password hashing, sessions, Stripe, Cloudinary
+      lib/           Prisma client, password hashing, sessions, Stripe, Cloudinary,
+                     Apify REST client, encrypted settings store
       middleware/    Session auth (or dev bypass) + role permission gate
-      routes/        auth, clients, leads, proposals, projects, invoices, users, dashboard
-      services/pdf.ts  Branded proposal/invoice PDF rendering
+      routes/        auth, clients, leads, proposals, projects, invoices, users,
+                     dashboard, scrapers, settings
+      services/
+        pdf.ts           Branded proposal/invoice PDF rendering
+        leadMapping.ts   Scraped row -> lead: field resolution, scoring, dedupe keys
+        scraperRunner.ts Starts Apify runs, polls them, ingests the results
+        scheduler.ts     Minute tick that fires each source's daily run times
+        scraperTemplates.ts  Pre-filled starting points for the Capture page
     client/          React + TypeScript + Tailwind SPA (nested so Railway builds it)
       src/
-        pages/       Login, Dashboard, Leads, Proposals, Projects(+detail), Invoices, Clients(+detail)
-        components/  Layout/nav + shared UI primitives
+        pages/       Login, Dashboard, Leads, LeadSources, Proposals,
+                     Projects(+detail), Invoices, Clients(+detail)
+        components/  Layout/nav, shared UI primitives, LeadDrawer, SourceEditor
         lib/         Typed API client, auth context, shared types
 ```
 
@@ -171,7 +228,10 @@ See `server/prisma/schema.prisma` for the authoritative model. It covers
 all eleven entities from the original spec — `User` (with `Role` enum),
 `Client`, `Contact`, `Lead`, `Proposal`, `Project`, `ProjectAssignment`,
 `Milestone`, `Task`, `TimeEntry`, `CarePlan`, `Invoice` + `InvoiceLineItem`,
-`Communication` + `Attachment` — even though the UI currently only exposes
+`Communication` + `Attachment` — plus what lead capture added: `LeadGroup`
+(capture batches), `ScraperSource` (a configured actor and its schedule),
+`ScraperRun` (one execution and its tally), `AppSetting` (encrypted runtime
+config), and the firmographic columns on `Lead` itself — even though the UI currently only exposes
 Phase 1's slice (Leads, Proposals, Projects, Invoices, Clients). Care Plans,
 Time & Capacity reporting, and Communications logging have working API
 routes' data model in place and can get a UI page added the same way the

@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./pages/Dashboard";
 import { Leads } from "./pages/Leads";
+import { LeadSources } from "./pages/LeadSources";
 import { Proposals } from "./pages/Proposals";
 import { Projects } from "./pages/Projects";
 import { ProjectDetail } from "./pages/ProjectDetail";
@@ -15,6 +16,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/leads" element={<Leads />} />
+        <Route path="/lead-sources" element={<LeadSources />} />
         <Route path="/proposals" element={<Proposals />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:id" element={<ProjectDetail />} />
