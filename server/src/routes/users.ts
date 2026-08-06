@@ -46,9 +46,9 @@ const inviteInput = z.object({
 
 // Pre-provisions a User row so the person appears in dropdowns before their
 // first real login; their Clerk identity gets linked automatically the first
-// time they sign in with this email (see attachUser in middleware/auth.ts —
-// note: current implementation matches on clerkUserId, so wire the invite
-// flow's email match at signup time once Clerk is live).
+// time they sign in with this email (see attachUser in middleware/auth.ts).
+// Note this only creates the row — sending the actual Clerk invitation is
+// still a manual step in the Clerk dashboard.
 usersRouter.post("/", requireRole("OWNER"), async (req, res, next) => {
   try {
     const data = inviteInput.parse(req.body);

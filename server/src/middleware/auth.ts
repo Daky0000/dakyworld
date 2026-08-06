@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { clerkMiddleware, getAuth } from "@clerk/express";
+import { clerkMiddleware, getAuth, clerkClient } from "@clerk/express";
 import { prisma } from "../lib/prisma.js";
 import type { User } from "@prisma/client";
 
@@ -44,18 +44,37 @@ export async function attachUser(req: Request, res: Response, next: NextFunction
 
     let dbUser = await prisma.user.findUnique({ where: { clerkUserId: userId } });
     if (!dbUser) {
-      // First time this Clerk identity has hit the API. The very first user
-      // ever created becomes Owner; everyone after defaults to Developer and
-      // an Owner must promote them via the Team settings screen.
-      const existingCount = await prisma.user.count();
-      dbUser = await prisma.user.create({
-        data: {
-          clerkUserId: userId,
-          email: `${userId}@pending.clerk`, // replaced once we sync real profile data from Clerk
-          name: "New team member",
-          role: existingCount === 0 ? "OWNER" : "DEVELOPER",
-        },
-      });
+      // First time this Clerk identity has hit the API. Pull the real profile
+      // so the team list shows actual names and addresses, and so an invite
+      // row can be matched on email below.
+      const clerkUser = await clerkClient.users.getUser(userId);
+      const email = clerkUser.primaryEmailAddress?.emailAddress ?? `${userId}@pending.clerk`;
+      const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || email;
+
+      const preProvisioned = await prisma.user.findUnique({ where: { email } });
+      if (preProvisioned?.clerkUserId && preProvisioned.clerkUserId !== userId) {
+        // This address is already tied to a different Clerk identity — refuse
+        // rather than silently hand over someone else's account.
+        return res.status(409).json({ error: "That email is already linked to another account" });
+      }
+
+      if (preProvisioned) {
+        // Invited via the Team screen before their first login — adopt that
+        // row so the role their Owner chose survives.
+        dbUser = await prisma.user.update({
+          where: { id: preProvisioned.id },
+          data: { clerkUserId: userId, name: preProvisioned.name || name },
+        });
+      } else {
+        // The first identity to actually sign in becomes Owner; everyone after
+        // defaults to Developer for an Owner to promote. Rows without a
+        // clerkUserId don't count — that covers the DEV_NO_AUTH placeholder
+        // user and un-redeemed invites, neither of which is a real login.
+        const signedInCount = await prisma.user.count({ where: { clerkUserId: { not: null } } });
+        dbUser = await prisma.user.create({
+          data: { clerkUserId: userId, email, name, role: signedInCount === 0 ? "OWNER" : "DEVELOPER" },
+        });
+      }
     }
     req.dbUser = dbUser;
     next();
