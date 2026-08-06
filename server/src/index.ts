@@ -4,8 +4,8 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
-import { clerkParser, attachUser } from "./middleware/auth.js";
-import { passwordGate } from "./middleware/gate.js";
+import { attachUser, bootstrapOwner, requireAuth, DEV_NO_AUTH } from "./middleware/auth.js";
+import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
 import { leadsRouter } from "./routes/leads.js";
 import { proposalsRouter } from "./routes/proposals.js";
@@ -51,10 +51,6 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
   res.json({ received: true });
 });
 
-// Everything past this point is behind the shared-password gate. The Stripe
-// webhook above is deliberately outside it — Stripe can't send credentials.
-app.use(passwordGate);
-
 // The client is served ahead of the auth middleware below: attachUser does a
 // database round trip per request, and static assets have no business paying
 // for one. The "/api/" guard keeps API routes falling through to their routers.
@@ -69,10 +65,15 @@ if (hasBuiltClient) {
 }
 
 app.use(express.json());
-app.use(clerkParser);
-app.use(attachUser);
 
+// Public: Railway's healthcheck runs before anyone has logged in.
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+
+// Resolves the session cookie but never rejects — /api/auth/login has to stay
+// reachable without one. requireAuth below is what actually closes the door.
+app.use(attachUser);
+app.use("/api/auth", authRouter);
+app.use("/api", requireAuth);
 
 app.use("/api/clients", clientsRouter);
 app.use("/api/leads", leadsRouter);
@@ -107,13 +108,19 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: message });
 });
 
-app.listen(PORT, () => {
-  console.log(`Dakyworld OS API listening on http://localhost:${PORT}`);
-  console.log(hasBuiltClient ? "  → Serving the built client from client/dist" : "  → No client build found — API only");
-  if (process.env.DEV_NO_AUTH === "true") {
-    console.log("  → DEV_NO_AUTH=true: running as a single implicit Owner user, no real login required.");
-    if (!process.env.APP_PASSWORD) {
-      console.warn("  ⚠ APP_PASSWORD is not set — nothing is protecting this instance.");
-    }
-  }
-});
+// Runs before the port opens, so the first request can't beat the Owner into
+// existence. A failure here shouldn't take the whole API down — the rest of
+// the app works, and the cause is on stdout.
+bootstrapOwner()
+  .catch((err) => console.error("Owner bootstrap failed:", err))
+  .finally(() => {
+    app.listen(PORT, () => {
+      console.log(`Dakyworld OS API listening on http://localhost:${PORT}`);
+      console.log(hasBuiltClient ? "  → Serving the built client from client/dist" : "  → No client build found — API only");
+      if (DEV_NO_AUTH) {
+        console.log("  → DEV_NO_AUTH=true: implicit Owner, no login required (ignored when NODE_ENV=production).");
+      } else if (!process.env.OWNER_EMAIL || !process.env.OWNER_PASSWORD) {
+        console.warn("  ⚠ OWNER_EMAIL / OWNER_PASSWORD are not set — no way to create the first account.");
+      }
+    });
+  });

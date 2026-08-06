@@ -27,23 +27,41 @@ enum Role {
 }
 
 model User {
-  id          String   @id @default(cuid())
-  clerkUserId String?  @unique // links to Clerk auth identity; null until first login
-  email       String   @unique
-  name        String
-  role        Role     @default(DEVELOPER)
-  skills      String[] @default([])
-  hourlyRate  Decimal? @db.Decimal(10, 2)
-  weeklyCapacityHours Decimal @default(0) @db.Decimal(5, 2)
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  // scrypt hash, see server/src/lib/password.ts. Null for members an Owner
+  // pre-provisioned who haven't been given a password yet — they can't log in.
+  passwordHash        String?
+  name                String
+  role                Role     @default(DEVELOPER)
+  skills              String[] @default([])
+  hourlyRate          Decimal? @db.Decimal(10, 2)
+  weeklyCapacityHours Decimal  @default(0) @db.Decimal(5, 2)
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   assignedProjects ProjectAssignment[]
   assignedTasks    Task[]
   timeEntries      TimeEntry[]
   communications   Communication[]
   performanceNotes PerformanceNote[]
+  sessions         Session[]
+}
+
+/// A logged-in browser session. Only the SHA-256 of the session token is
+/// stored, so a leaked database dump can't be used to impersonate anyone —
+/// the raw token exists solely in the user's cookie.
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model PerformanceNote {
@@ -60,7 +78,7 @@ model PerformanceNote {
 // ---------------------------------------------------------------------------
 
 model Client {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   name           String
   company        String?
   email          String?
@@ -68,10 +86,10 @@ model Client {
   address        String?
   sector         String?
   firstContactAt DateTime?
-  lifetimeValue  Decimal  @default(0) @db.Decimal(12, 2)
+  lifetimeValue  Decimal   @default(0) @db.Decimal(12, 2)
   creditTerms    String? // e.g. "Net 15", "50% deposit"
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   contacts       Contact[]
   leads          Lead[]
@@ -83,18 +101,18 @@ model Client {
 }
 
 model Contact {
-  id              String   @id @default(cuid())
-  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  clientId        String
-  name            String
-  title           String?
-  email           String?
-  phone           String?
-  decisionRole    String? // their role in the buying decision
-  isPrimary       Boolean  @default(false)
-  notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id           String   @id @default(cuid())
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId     String
+  name         String
+  title        String?
+  email        String?
+  phone        String?
+  decisionRole String? // their role in the buying decision
+  isPrimary    Boolean  @default(false)
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -121,22 +139,22 @@ enum LeadStatus {
 }
 
 model Lead {
-  id               String     @id @default(cuid())
-  client           Client?    @relation(fields: [clientId], references: [id])
-  clientId         String?
-  contactName      String
-  contactEmail     String?
-  contactPhone     String?
-  companyName      String?
-  source           LeadSource @default(OTHER)
-  status           LeadStatus @default(NEW)
-  leadScore        Int        @default(0) // 0-100
-  discoveryCallAt  DateTime?
-  discoveryNotes   String?
-  estimatedDealSize Decimal?  @db.Decimal(12, 2)
-  winLossReason    String?
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+  id                String     @id @default(cuid())
+  client            Client?    @relation(fields: [clientId], references: [id])
+  clientId          String?
+  contactName       String
+  contactEmail      String?
+  contactPhone      String?
+  companyName       String?
+  source            LeadSource @default(OTHER)
+  status            LeadStatus @default(NEW)
+  leadScore         Int        @default(0) // 0-100
+  discoveryCallAt   DateTime?
+  discoveryNotes    String?
+  estimatedDealSize Decimal?   @db.Decimal(12, 2)
+  winLossReason     String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
 
   proposals      Proposal[]
   communications Communication[]
@@ -158,25 +176,25 @@ enum ProposalStatus {
 }
 
 model Proposal {
-  id            String         @id @default(cuid())
-  lead          Lead?          @relation(fields: [leadId], references: [id])
-  leadId        String?
-  client        Client?        @relation(fields: [clientId], references: [id])
-  clientId      String?
-  title         String
-  serviceType   String // e.g. "Website Build", "Care Plan", "Automation"
-  scopeSummary  String
-  priceAmount   Decimal        @db.Decimal(12, 2)
-  priceTier     String? // e.g. "SME Essentials", "Growth", "Enterprise Concierge"
-  currency      String         @default("GHS")
-  status        ProposalStatus @default(DRAFT)
-  sentAt        DateTime?
-  viewedAt      DateTime?
-  respondedAt   DateTime?
-  expiresAt     DateTime?
-  pdfUrl        String? // Cloudinary URL once generated
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id           String         @id @default(cuid())
+  lead         Lead?          @relation(fields: [leadId], references: [id])
+  leadId       String?
+  client       Client?        @relation(fields: [clientId], references: [id])
+  clientId     String?
+  title        String
+  serviceType  String // e.g. "Website Build", "Care Plan", "Automation"
+  scopeSummary String
+  priceAmount  Decimal        @db.Decimal(12, 2)
+  priceTier    String? // e.g. "SME Essentials", "Growth", "Enterprise Concierge"
+  currency     String         @default("GHS")
+  status       ProposalStatus @default(DRAFT)
+  sentAt       DateTime?
+  viewedAt     DateTime?
+  respondedAt  DateTime?
+  expiresAt    DateTime?
+  pdfUrl       String? // Cloudinary URL once generated
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
   project Project?
 
@@ -222,11 +240,11 @@ model Project {
 }
 
 model ProjectAssignment {
-  id        String   @id @default(cuid())
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId String
-  user      User     @relation(fields: [userId], references: [id])
-  userId    String
+  id         String   @id @default(cuid())
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId  String
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
   assignedAt DateTime @default(now())
 
   @@unique([projectId, userId])
@@ -251,18 +269,18 @@ enum TaskStatus {
 }
 
 model Task {
-  id             String     @id @default(cuid())
-  project        Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId      String
-  title          String
-  description    String?
-  assignee       User?      @relation(fields: [assigneeId], references: [id])
-  assigneeId     String?
-  status         TaskStatus @default(TODO)
-  dueDate        DateTime?
-  estimateHours  Decimal?   @db.Decimal(6, 2)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  id            String     @id @default(cuid())
+  project       Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId     String
+  title         String
+  description   String?
+  assignee      User?      @relation(fields: [assigneeId], references: [id])
+  assigneeId    String?
+  status        TaskStatus @default(TODO)
+  dueDate       DateTime?
+  estimateHours Decimal?   @db.Decimal(6, 2)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
   timeEntries TimeEntry[]
 }
@@ -303,23 +321,23 @@ enum CarePlanStatus {
 }
 
 model CarePlan {
-  id              String         @id @default(cuid())
-  client          Client         @relation(fields: [clientId], references: [id])
-  clientId        String
-  project         Project?       @relation(fields: [projectId], references: [id])
-  projectId       String?        @unique
-  tier            CarePlanTier
-  monthlyFee      Decimal        @db.Decimal(12, 2)
-  currency        String         @default("GHS")
-  billingDay      Int            @default(1) // day of month, 1-28
-  includedHours   Decimal?       @db.Decimal(6, 2)
-  hoursUsedThisCycle Decimal     @default(0) @db.Decimal(6, 2)
-  status          CarePlanStatus @default(ACTIVE)
-  startedAt       DateTime       @default(now())
-  churnedAt       DateTime?
-  stripeSubscriptionId String?   @unique
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id                   String         @id @default(cuid())
+  client               Client         @relation(fields: [clientId], references: [id])
+  clientId             String
+  project              Project?       @relation(fields: [projectId], references: [id])
+  projectId            String?        @unique
+  tier                 CarePlanTier
+  monthlyFee           Decimal        @db.Decimal(12, 2)
+  currency             String         @default("GHS")
+  billingDay           Int            @default(1) // day of month, 1-28
+  includedHours        Decimal?       @db.Decimal(6, 2)
+  hoursUsedThisCycle   Decimal        @default(0) @db.Decimal(6, 2)
+  status               CarePlanStatus @default(ACTIVE)
+  startedAt            DateTime       @default(now())
+  churnedAt            DateTime?
+  stripeSubscriptionId String?        @unique
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   invoices Invoice[]
 }
@@ -337,26 +355,26 @@ enum InvoiceStatus {
 }
 
 model Invoice {
-  id             String        @id @default(cuid())
-  client         Client        @relation(fields: [clientId], references: [id])
-  clientId       String
-  project        Project?      @relation(fields: [projectId], references: [id])
-  projectId      String?
-  carePlan       CarePlan?     @relation(fields: [carePlanId], references: [id])
-  carePlanId     String?
-  invoiceNumber  String        @unique
-  currency       String        @default("GHS")
-  amountTotal    Decimal       @db.Decimal(12, 2)
-  status         InvoiceStatus @default(DRAFT)
-  issueDate      DateTime      @default(now())
-  dueDate        DateTime
-  sentAt         DateTime?
-  viewedAt       DateTime?
-  paidAt         DateTime?
-  pdfUrl         String? // Cloudinary URL once generated
+  id                    String        @id @default(cuid())
+  client                Client        @relation(fields: [clientId], references: [id])
+  clientId              String
+  project               Project?      @relation(fields: [projectId], references: [id])
+  projectId             String?
+  carePlan              CarePlan?     @relation(fields: [carePlanId], references: [id])
+  carePlanId            String?
+  invoiceNumber         String        @unique
+  currency              String        @default("GHS")
+  amountTotal           Decimal       @db.Decimal(12, 2)
+  status                InvoiceStatus @default(DRAFT)
+  issueDate             DateTime      @default(now())
+  dueDate               DateTime
+  sentAt                DateTime?
+  viewedAt              DateTime?
+  paidAt                DateTime?
+  pdfUrl                String? // Cloudinary URL once generated
   stripePaymentIntentId String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
 
   lineItems InvoiceLineItem[]
 }
@@ -383,20 +401,20 @@ enum CommunicationType {
 }
 
 model Communication {
-  id        String            @id @default(cuid())
-  type      CommunicationType
-  summary   String
-  outcome   String?
-  occurredAt DateTime         @default(now())
-  createdAt DateTime          @default(now())
+  id         String            @id @default(cuid())
+  type       CommunicationType
+  summary    String
+  outcome    String?
+  occurredAt DateTime          @default(now())
+  createdAt  DateTime          @default(now())
 
-  client   Client?  @relation(fields: [clientId], references: [id])
-  clientId String?
-  lead     Lead?    @relation(fields: [leadId], references: [id])
-  leadId   String?
-  project  Project? @relation(fields: [projectId], references: [id])
-  projectId String?
-  loggedBy User?    @relation(fields: [loggedById], references: [id])
+  client     Client?  @relation(fields: [clientId], references: [id])
+  clientId   String?
+  lead       Lead?    @relation(fields: [leadId], references: [id])
+  leadId     String?
+  project    Project? @relation(fields: [projectId], references: [id])
+  projectId  String?
+  loggedBy   User?    @relation(fields: [loggedById], references: [id])
   loggedById String?
 
   attachments Attachment[]
