@@ -22,7 +22,12 @@ const PORT = Number(process.env.PORT ?? 4000);
 // The built React client, served by this same process in production so the
 // UI and the API share one origin (and one Railway service, one domain).
 // Empty during local development, where Vite serves the client on :5173.
-const CLIENT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/dist");
+//
+// The client lives under server/ because Railway's Root Directory for this
+// service is `server`, which is the whole build context — a sibling folder at
+// the repo root is simply not present at build time. From server/dist/ that
+// makes the built client ../client/dist.
+const CLIENT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../client/dist");
 const hasBuiltClient = existsSync(path.join(CLIENT_DIST, "index.html"));
 
 app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? "http://localhost:5173", credentials: true }));

@@ -62,7 +62,7 @@ To exercise the real login locally, set `DEV_NO_AUTH=false` and fill in
 ### 2. Client
 
 ```bash
-cd client
+cd server/client
 cp .env.example .env
 npm install
 npm run dev                 # http://localhost:5173
@@ -93,14 +93,19 @@ Client and server deploy as **one Railway service** on one domain
 files and the API under `/api`, so there's no second service, no CORS setup,
 and `VITE_API_BASE=/api` just works.
 
-`railway.json` and the root `package.json` define this. In the Railway
-service settings, **Root Directory must be the repo root** (not `server/`) —
-the build needs both folders in context.
+The service's **Root Directory is `server`**, which is the entire build
+context — a folder alongside it at the repo root does not exist at build time.
+That is why the client lives at `server/client` rather than `client/`: it has
+to be inside that directory to be built at all. `server/railway.json` is the
+config Railway reads.
 
 | Phase | Command | What it does |
 |---|---|---|
-| Build | `npm run build` | builds `client/dist`, then compiles the server |
+| Build | `npm run build` | builds `server/client/dist`, then compiles the API |
 | Start | `npm start` | `prisma migrate deploy` then boots the server |
+
+The root `package.json` and `railway.json` mirror this for the case where
+Root Directory is ever changed to the repo root; keep them in step.
 
 Required service variables: `DATABASE_URL`, `NODE_ENV=production`,
 `OWNER_EMAIL`, `OWNER_PASSWORD`. Deploys happen on push to `main`.
@@ -153,11 +158,11 @@ Dakyworld OS/
       middleware/    Session auth (or dev bypass) + role permission gate
       routes/        auth, clients, leads, proposals, projects, invoices, users, dashboard
       services/pdf.ts  Branded proposal/invoice PDF rendering
-  client/            React + TypeScript + Tailwind SPA
-    src/
-      pages/         Login, Dashboard, Leads, Proposals, Projects(+detail), Invoices, Clients(+detail)
-      components/    Layout/nav + shared UI primitives
-      lib/           Typed API client, shared types
+    client/          React + TypeScript + Tailwind SPA (nested so Railway builds it)
+      src/
+        pages/       Login, Dashboard, Leads, Proposals, Projects(+detail), Invoices, Clients(+detail)
+        components/  Layout/nav + shared UI primitives
+        lib/         Typed API client, auth context, shared types
 ```
 
 ## Data model

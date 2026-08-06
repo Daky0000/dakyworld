@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "prisma generate && tsc -p tsconfig.json",
-    "build:client": "npm --prefix ../client ci && npm --prefix ../client run build",
-    "build:all": "npm run build:client && npm run build",
+    "build": "npm run build:client && prisma generate && tsc -p tsconfig.json",
+    "build:client": "npm --prefix client ci && npm --prefix client run build",
+    "build:server": "prisma generate && tsc -p tsconfig.json",
     "start": "prisma migrate deploy && node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
