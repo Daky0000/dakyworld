@@ -145,13 +145,14 @@ You are given the raw cells of one or more sheets, with 0-based row numbers down
 
 What matters:
 
-1. **One file often holds several tables.** A blank row or two, a heading like "Companies/Organizations" spanning a row on its own, or a fresh set of headers part-way down all mark the start of a new table. Tables in the same file routinely have different columns from each other. Report each as its own entry — never merge them, and never force a later table's columns onto the first table's headers.
-2. **Boundaries are what you are really being asked for.** headerRow, firstDataRow and lastDataRow must be exact 0-based indices into the grid you were shown (headerRow is -1 when the table has none). Do not include the header row in the data range. Do not include banner rows, blank rows, totals rows or notes-to-self rows.
-3. **Keep every column.** Map to a built-in field where one genuinely fits; otherwise set field to "custom" and give it a clear label — that keeps the column instead of losing it. Only two things earn "ignore": row-number columns (S/N, #, No.) and columns that are entirely empty.
-4. **One built-in field per table.** If a table has two phone columns, the first is contactPhone and the second is custom (label it "Alternate phone"). The same goes for a second email or a second address.
-5. **Unlabelled columns still mean something.** A column with no header whose cells read "Switched off", "No answer", "Wrong number" is a call-outcome column: label it from its contents and mark it custom.
-6. **Every lead needs a name.** For a table of companies, the company-name column is both companyName and the lead's name — map it to contactName, and add a second column entry with the same index mapped to companyName if the table also carries a contact person.
-7. If a block is clearly not leads — a legend, a summary, a pivot of counts — leave it out and say so in the summary.`;
+1. **One file often holds several tables.** What starts a new one is a heading spanning a row on its own ("Companies/Organizations"), or a fresh set of headers part-way down — not a blank row by itself. Tables in the same file routinely have different columns from each other. Report each as its own entry — never merge them, and never force a later table's columns onto the first table's headers.
+2. **Blank rows inside a table are normal and do not end it.** A deleted row, a spacer, a numbering gap where S/N jumps from 4 to 6 or 23 to 25 — none of these are boundaries. Run the table on to the last row that still fits its columns. Splitting one table at a blank row is the most damaging mistake available to you here: the fragments lose the header above the first one, and every column in them becomes unnamed.
+3. **Boundaries are what you are really being asked for.** headerRow, firstDataRow and lastDataRow must be exact 0-based indices into the grid you were shown (headerRow is -1 when the table has none). Do not include the header row in the data range. Do not include banner rows, totals rows or notes-to-self rows.
+4. **Keep every column.** Map to a built-in field where one genuinely fits; otherwise set field to "custom" and give it a clear label — that keeps the column instead of losing it. Only two things earn "ignore": row-number columns (S/N, #, No.) and columns that are entirely empty.
+5. **One built-in field per table.** If a table has two phone columns, the first is contactPhone and the second is custom (label it "Alternate phone"). The same goes for a second email or a second address.
+6. **Unlabelled columns still mean something.** A column with no header whose cells read "Switched off", "No answer", "Wrong number" is a call-outcome column: label it from its contents and mark it custom.
+7. **Every lead needs a name.** For a table of companies, the company-name column is both companyName and the lead's name — map it to contactName, and add a second column entry with the same index mapped to companyName if the table also carries a contact person.
+8. If a block is clearly not leads — a legend, a summary, a pivot of counts — leave it out and say so in the summary.`;
 
 function userPrompt(grids: SheetGrid[], hints: PlanTable[]): string {
   const sheets = grids.map(renderGrid).join("\n\n");

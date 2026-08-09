@@ -132,6 +132,20 @@ function guessType(header: string, samples: string[]): LeadFieldType {
   return "TEXT";
 }
 
+/**
+ * A name for a column whose header cell is empty, read off its contents.
+ * Deliberately one rule rather than a taxonomy: a column of free text is the
+ * common case — "Switched off", "No answer", "Waiting on us to send proposals"
+ * — and "Notes" beats "Column F" by a distance. Anything else keeps the column
+ * letter, which at least says where to look in the file.
+ */
+function labelFromContents(samples: string[]): string | null {
+  const values = samples.filter(Boolean);
+  if (values.length < 2) return null;
+  const averageLength = values.reduce((total, value) => total + value.length, 0) / values.length;
+  return averageLength >= 18 ? "Notes" : null;
+}
+
 /** Spreadsheet column letters, so an unlabelled column is still nameable. */
 export function columnLetter(index: number): string {
   let letters = "";
@@ -156,12 +170,42 @@ function filledCount(row: string[]): number {
   return row.filter((cell) => cell !== "").length;
 }
 
+/** The columns a range of rows actually fills. */
+function footprint(grid: SheetGrid, start: number, end: number): Set<number> {
+  const used = new Set<number>();
+  for (let index = start; index <= end; index += 1) {
+    grid.rows[index]?.forEach((cell, column) => {
+      if (cell !== "") used.add(column);
+    });
+  }
+  return used;
+}
+
+/** How much of `later` sits inside the columns `earlier` already uses. */
+function columnOverlap(earlier: Set<number>, later: Set<number>): number {
+  if (!later.size) return 0;
+  let shared = 0;
+  for (const column of later) if (earlier.has(column)) shared += 1;
+  return shared / later.size;
+}
+
+/** Rows below `start` that are blank — the gap between two blocks. */
+const MAX_GAP_ROWS = 2;
+
 /**
  * Splits a sheet into candidate blocks on blank rows, keeping a lone
  * single-cell row above a block as that block's title rather than as data.
+ *
+ * Blank rows are a weak signal on their own. Real sheets are full of them
+ * *inside* a table — a row deleted, a spacer someone left, a numbering gap
+ * where S/N jumps from 4 to 6 — and splitting on every one shatters a single
+ * table into fragments that then lose the header sitting above the first one.
+ * So a block that follows a short gap is folded back into the previous block
+ * unless it announces itself as something new: its own banner, or its own
+ * header row, or a set of columns the previous block wasn't using.
  */
 function findBlocks(grid: SheetGrid): Block[] {
-  const blocks: Block[] = [];
+  const raw: Block[] = [];
   let start: number | null = null;
   let banner: string | null = null;
   let pendingBanner: string | null = null;
@@ -171,7 +215,7 @@ function findBlocks(grid: SheetGrid): Block[] {
 
     if (filled === 0) {
       if (start !== null) {
-        blocks.push({ start, end: index - 1, banner });
+        raw.push({ start, end: index - 1, banner });
         start = null;
         banner = null;
       }
@@ -193,8 +237,23 @@ function findBlocks(grid: SheetGrid): Block[] {
     }
   }
 
-  if (start !== null) blocks.push({ start, end: grid.rows.length - 1, banner });
-  return blocks;
+  if (start !== null) raw.push({ start, end: grid.rows.length - 1, banner });
+
+  const merged: Block[] = [];
+  for (const block of raw) {
+    const previous = merged[merged.length - 1];
+    const continuation =
+      previous !== undefined &&
+      block.banner === null &&
+      block.start - previous.end - 1 <= MAX_GAP_ROWS &&
+      !looksLikeHeader(grid.rows[block.start]) &&
+      columnOverlap(footprint(grid, previous.start, previous.end), footprint(grid, block.start, block.end)) >= 0.8;
+
+    if (continuation) previous.end = block.end;
+    else merged.push({ ...block });
+  }
+
+  return merged;
 }
 
 /** Header rows are short, wordy and non-numeric — data rows usually aren't. */
@@ -250,7 +309,7 @@ function buildTable(
     if (field !== "ignore" && field !== "custom" && claimed.has(field)) field = "custom";
     if (field !== "ignore" && field !== "custom") claimed.add(field);
 
-    const label = header || `Column ${columnLetter(column)}`;
+    const label = header || labelFromContents(samples) || `Column ${columnLetter(column)}`;
     const type = field !== "custom" && field !== "ignore" ? (builtinField(field)?.type ?? "TEXT") : guessType(header, samples);
 
     return {
