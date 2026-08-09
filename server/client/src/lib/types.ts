@@ -217,16 +217,6 @@ export interface ScraperOverview {
   lastRun: (ScraperRun & { source?: { name: string } }) | null;
 }
 
-export interface IntegrationSettings {
-  apify: {
-    connected: boolean;
-    envManaged: boolean;
-    token: string | null;
-    account: { username?: string; profile?: { name?: string }; plan?: { id?: string } } | null;
-    error: string | null;
-  };
-}
-
 export interface MappingPreview {
   items: {
     lead?: Record<string, unknown>;
@@ -309,7 +299,15 @@ export interface AnalyzeResponse {
   warning: string | null;
 }
 
-export interface ImportConnections {
+/** Everything the Owner configures at runtime — see the Settings page. */
+export interface AppSettings {
+  apify: {
+    connected: boolean;
+    envManaged: boolean;
+    token: string | null;
+    account: { username?: string; profile?: { name?: string }; plan?: { id?: string } } | null;
+    error: string | null;
+  };
   analyst: { configured: boolean; envManaged: boolean; key: string | null; model: string };
   google: {
     configured: boolean;
@@ -319,6 +317,21 @@ export interface ImportConnections {
     account: string | null;
     /** Paste into the Google OAuth client's authorised redirect URIs. */
     redirectUri: string;
+  };
+  stripe: {
+    configured: boolean;
+    envManaged: boolean;
+    key: string | null;
+    livemode: boolean | null;
+    webhookConfigured: boolean;
+    webhookUrl: string;
+  };
+  cloudinary: { configured: boolean; envManaged: boolean; cloudName: string | null; apiKey: string | null };
+  general: {
+    appUrl: string | null;
+    appUrlEnvManaged: boolean;
+    resolvedAppUrl: string;
+    timezone: string;
   };
 }
 

@@ -2,8 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { renderInvoicePdf } from "../services/pdf.js";
-import { cloudinaryEnabled, uploadBuffer } from "../lib/cloudinary.js";
-import { stripe, stripeEnabled } from "../lib/stripe.js";
+import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
+import { getStripe } from "../lib/stripe.js";
 
 export const invoicesRouter = Router();
 
@@ -112,7 +112,7 @@ invoicesRouter.post("/:id/generate-pdf", async (req, res, next) => {
       })),
     });
 
-    if (!cloudinaryEnabled) {
+    if (!(await cloudinaryConfigured())) {
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename="${invoice.invoiceNumber}.pdf"`);
       return res.send(pdf);
@@ -143,9 +143,10 @@ invoicesRouter.post("/:id/send", async (req, res, next) => {
 // Stripe keys are added; the route itself is fully implemented.
 invoicesRouter.post("/:id/create-payment-link", async (req, res, next) => {
   try {
-    if (!stripeEnabled || !stripe) {
+    const stripe = await getStripe();
+    if (!stripe) {
       return res.status(503).json({
-        error: "Stripe is not configured — add STRIPE_SECRET_KEY to .env to enable payment links.",
+        error: "Stripe is not configured — add the secret key under Settings → Payments to enable payment links.",
       });
     }
     const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: { client: true } });

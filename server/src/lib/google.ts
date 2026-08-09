@@ -12,6 +12,7 @@
  * not a trade worth making.
  */
 
+import { randomUUID } from "node:crypto";
 import { SETTING, getSetting, setSetting } from "./settings.js";
 import { MAX_COLUMNS, MAX_ROWS_PER_SHEET, parseWorkbook, toGrid, type SheetGrid } from "../services/spreadsheet.js";
 import { columnLetter } from "../services/sheetPlan.js";
@@ -68,12 +69,42 @@ export async function googleConnected(): Promise<boolean> {
 }
 
 /**
- * The URL Google must redirect back to. It has to match a "Authorised redirect
- * URI" on the OAuth client exactly, so the settings screen shows this value for
- * the Owner to paste into the Google Cloud console.
+ * The URL Google must redirect back to. It has to match an "Authorised
+ * redirect URI" on the OAuth client character for character, so the Settings
+ * screen shows this value for the Owner to paste into the Google Cloud
+ * console — and the path is fixed here for the same reason: changing it means
+ * re-registering it with Google, so it stays put even though the handler now
+ * lives with the rest of the settings code.
  */
 export function redirectUri(origin: string): string {
   return process.env.GOOGLE_REDIRECT_URI?.trim() || `${origin.replace(/\/$/, "")}/api/imports/google/callback`;
+}
+
+/**
+ * Outstanding consent redirects. Held here rather than in either router
+ * because the flow spans both: Settings starts it, and the callback arrives at
+ * the path registered with Google. The state proves a callback is one we
+ * started, and carries the page to return the browser to.
+ */
+const pendingStates = new Map<string, { at: number; returnTo: string }>();
+const STATE_TTL_MS = 10 * 60_000;
+
+export function rememberState(returnTo: string): string {
+  const state = randomUUID();
+  pendingStates.set(state, { at: Date.now(), returnTo });
+  for (const [key, entry] of pendingStates) {
+    if (Date.now() - entry.at > STATE_TTL_MS) pendingStates.delete(key);
+  }
+  return state;
+}
+
+/** Single-use: a state that has been consumed can't be replayed. */
+export function consumeState(state: string): { returnTo: string } | null {
+  const entry = pendingStates.get(state);
+  if (!entry) return null;
+  pendingStates.delete(state);
+  if (Date.now() - entry.at > STATE_TTL_MS) return null;
+  return { returnTo: entry.returnTo };
 }
 
 export async function buildAuthUrl(origin: string, state: string): Promise<string> {

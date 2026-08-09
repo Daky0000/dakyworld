@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type {
   AnalyzeResponse,
   DriveFile,
-  ImportConnections,
+  AppSettings,
   ImportPlan,
   LeadImportRecord,
   PlanColumn,
@@ -58,7 +58,6 @@ interface Upload {
  */
 export function LeadImport() {
   const qc = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
   const [upload, setUpload] = useState<Upload | null>(null);
   const [driveFile, setDriveFile] = useState<DriveFile | null>(null);
   const [sheets, setSheets] = useState<string[]>([]);
@@ -72,29 +71,13 @@ export function LeadImport() {
   );
 
   const { data: connections } = useQuery({
-    queryKey: ["import-connections"],
-    queryFn: () => api.get<ImportConnections>("/imports/connections"),
+    queryKey: ["settings"],
+    queryFn: () => api.get<AppSettings>("/settings"),
   });
   const { data: history } = useQuery({
     queryKey: ["imports"],
     queryFn: () => api.get<LeadImportRecord[]>("/imports"),
   });
-
-  // The Google consent redirect lands back here with its outcome in the URL.
-  const googleResult = searchParams.get("google");
-  useEffect(() => {
-    if (!googleResult) return;
-    void qc.invalidateQueries({ queryKey: ["import-connections"] });
-    const timer = setTimeout(() => {
-      setSearchParams((params) => {
-        params.delete("google");
-        params.delete("message");
-        params.delete("account");
-        return params;
-      }, { replace: true });
-    }, 6000);
-    return () => clearTimeout(timer);
-  }, [googleResult, qc, setSearchParams]);
 
   const analyze = useMutation({
     mutationFn: () =>
@@ -183,11 +166,6 @@ export function LeadImport() {
         }
       />
 
-      {googleResult === "connected" && (
-        <Note tone="ok">Google Drive connected{searchParams.get("account") ? ` as ${searchParams.get("account")}` : ""}.</Note>
-      )}
-      {googleResult === "error" && <Note tone="bad">{searchParams.get("message") ?? "The Google sign-in didn't complete."}</Note>}
-
       <Connections connections={connections} />
 
       {done ? (
@@ -248,160 +226,46 @@ export function LeadImport() {
 
 // --- Connections -----------------------------------------------------------
 
-function Connections({ connections }: { connections?: ImportConnections }) {
-  const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [key, setKey] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ["import-connections"] });
-
-  const saveKey = useMutation({
-    mutationFn: () => api.put<ImportConnections>("/imports/connections/anthropic", { key }),
-    onSuccess: () => {
-      setKey("");
-      invalidate();
-    },
-  });
-  const clearKey = useMutation({
-    mutationFn: () => api.delete("/imports/connections/anthropic"),
-    onSuccess: invalidate,
-  });
-  const saveGoogle = useMutation({
-    mutationFn: () => api.put<ImportConnections>("/imports/connections/google", { clientId, clientSecret }),
-    onSuccess: () => {
-      setClientSecret("");
-      invalidate();
-    },
-  });
-  const disconnect = useMutation({
-    mutationFn: () => api.post("/imports/google/disconnect"),
-    onSuccess: invalidate,
-  });
-  const connect = useMutation({
-    mutationFn: () => api.get<{ url: string }>("/imports/google/auth-url"),
-    onSuccess: (result) => {
-      window.location.href = result.url;
-    },
-  });
-
+/**
+ * A read-out with a way through to Settings, where the keys actually live.
+ * Both integrations are optional here — an upload mapped by pattern rules is a
+ * complete import — so this says what's on rather than blocking the page.
+ */
+function Connections({ connections }: { connections?: AppSettings }) {
   const analyst = connections?.analyst;
   const google = connections?.google;
 
   return (
     <Card className="mb-8">
-      <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-center gap-3 text-left">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <span className="font-mono text-[11px] uppercase tracking-[.14em] text-ink/60">Connections</span>
-        <span className="flex items-center gap-2 text-xs text-ink/50">
+
+        <span className="flex items-center gap-2 text-sm">
           <StatusDot tone={analyst?.configured ? "ok" : "idle"} />
-          AI analyst
-          <StatusDot tone={google?.connected ? "ok" : google?.configured ? "warn" : "idle"} />
-          Google Drive
+          {analyst?.configured ? (
+            <span className="text-ink/70">AI analyst on</span>
+          ) : (
+            <span className="text-ink/50">No AI analyst — sheets are mapped by pattern rules</span>
+          )}
         </span>
+
+        <span className="flex items-center gap-2 text-sm">
+          <StatusDot tone={google?.connected ? "ok" : google?.configured ? "warn" : "idle"} />
+          {google?.connected ? (
+            <span className="text-ink/70">Drive: {google.account ?? "connected"}</span>
+          ) : (
+            <span className="text-ink/50">Drive not connected — upload a file instead</span>
+          )}
+        </span>
+
         <span className="flex-1" />
-        <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">{open ? "Hide" : "Set up"}</span>
-      </button>
-
-      {open && (
-        <div className="mt-6 grid gap-8 lg:grid-cols-2">
-          <section>
-            <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">AI analyst</h3>
-            <p className="mb-3 text-sm text-ink/60">
-              Reads the sheet and works out where each table starts, what every column means, and which ones don't fit the fixed
-              fields. Without a key the file is still imported — just mapped by pattern rules, which need a tidy sheet.
-            </p>
-            {analyst?.configured ? (
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <Badge tone="gold">connected</Badge>
-                <span className="font-mono text-xs text-ink/50">{analyst.key}</span>
-                <span className="text-xs text-ink/40">{analyst.model}</span>
-                {analyst.envManaged ? (
-                  <span className="text-xs text-ink/40">Set by an environment variable</span>
-                ) : (
-                  <Button variant="ghost" size="sm" onClick={() => clearKey.mutate()} disabled={clearKey.isPending}>
-                    Remove
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <form
-                className="flex flex-wrap items-end gap-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (key.trim()) saveKey.mutate();
-                }}
-              >
-                <Field label="Anthropic API key">
-                  <input
-                    value={key}
-                    onChange={(event) => setKey(event.target.value)}
-                    placeholder="sk-ant-…"
-                    className="input w-72"
-                    type="password"
-                  />
-                </Field>
-                <Button type="submit" size="sm" disabled={!key.trim() || saveKey.isPending}>
-                  {saveKey.isPending ? "Checking…" : "Save key"}
-                </Button>
-              </form>
-            )}
-            {saveKey.isError && <Note tone="bad">{(saveKey.error as Error).message}</Note>}
-          </section>
-
-          <section>
-            <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Google Drive</h3>
-            {google?.connected ? (
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <Badge tone="gold">connected</Badge>
-                <span>{google.account ?? "Google account"}</span>
-                <Button variant="ghost" size="sm" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>
-                  Disconnect
-                </Button>
-              </div>
-            ) : google?.configured ? (
-              <div className="space-y-3">
-                <p className="text-sm text-ink/60">Sign in to pick spreadsheets straight out of Drive. Read-only access.</p>
-                <Button size="sm" onClick={() => connect.mutate()} disabled={connect.isPending}>
-                  {connect.isPending ? "Redirecting…" : "Connect Google Drive"}
-                </Button>
-                {connect.isError && <Note tone="bad">{(connect.error as Error).message}</Note>}
-              </div>
-            ) : (
-              <form
-                className="space-y-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (clientId.trim() && clientSecret.trim()) saveGoogle.mutate();
-                }}
-              >
-                <p className="text-sm text-ink/60">
-                  Create an OAuth client (type “Web application”) in the Google Cloud console with the Drive and Sheets APIs enabled,
-                  then paste its credentials here.
-                </p>
-                <Field label="Client ID">
-                  <input value={clientId} onChange={(event) => setClientId(event.target.value)} className="input" />
-                </Field>
-                <Field label="Client secret">
-                  <input
-                    value={clientSecret}
-                    onChange={(event) => setClientSecret(event.target.value)}
-                    type="password"
-                    className="input"
-                  />
-                </Field>
-                <Field label="Authorised redirect URI" hint="Add this exact value to the OAuth client in Google Cloud.">
-                  <code className="block break-all border border-ink/10 bg-ivory px-2 py-1.5 text-xs">{google?.redirectUri}</code>
-                </Field>
-                <Button type="submit" size="sm" disabled={saveGoogle.isPending}>
-                  {saveGoogle.isPending ? "Saving…" : "Save client"}
-                </Button>
-                {saveGoogle.isError && <Note tone="bad">{(saveGoogle.error as Error).message}</Note>}
-              </form>
-            )}
-          </section>
-        </div>
-      )}
+        <Link
+          to="/settings"
+          className="font-mono text-[10px] uppercase tracking-[.14em] text-bronze transition hover:underline"
+        >
+          Set up in Settings →
+        </Link>
+      </div>
     </Card>
   );
 }
@@ -423,7 +287,7 @@ function SourceStep({
   onUseAi,
   onAnalyze,
 }: {
-  connections?: ImportConnections;
+  connections?: AppSettings;
   upload: Upload | null;
   driveFile: DriveFile | null;
   sheets: string[];
@@ -554,7 +418,7 @@ function DrivePicker({
   selected,
   onPick,
 }: {
-  connections?: ImportConnections;
+  connections?: AppSettings;
   selected: DriveFile | null;
   onPick: (file: DriveFile, sheets: string[]) => void;
 }) {

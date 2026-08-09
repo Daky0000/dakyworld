@@ -17,7 +17,7 @@ import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
-import { stripe, stripeEnabled } from "./lib/stripe.js";
+import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
 import { startScheduler } from "./services/scheduler.js";
 
 const app = express();
@@ -39,13 +39,15 @@ app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? "http://localhost:5173", cre
 // Stripe webhook needs the raw request body for signature verification, so
 // it's mounted before the global express.json() parser below.
 app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), async (req, res) => {
-  if (!stripeEnabled || !stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
+  const stripe = await getStripe();
+  const webhookSecret = await stripeWebhookSecret();
+  if (!stripe || !webhookSecret) {
     return res.status(503).send("Stripe webhook not configured");
   }
   let event;
   try {
     const signature = req.headers["stripe-signature"] as string;
-    event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
+    event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
   } catch (err) {
     return res.status(400).send(`Webhook signature verification failed: ${(err as Error).message}`);
   }

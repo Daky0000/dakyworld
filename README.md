@@ -19,6 +19,9 @@ Cloudinary (file storage, PDF hosting).
   its own batch with its own columns, however messy the file. See below.
 - **Configurable lead columns** — rename, reorder, hide and add columns, per
   batch or across the whole pipeline, without a schema change.
+- **Settings** — every integration key (Apify, Anthropic, Google, Stripe,
+  Cloudinary) pasted in the app and stored encrypted in the database, so
+  adding or rotating one never needs a redeploy.
 - **Proposal & Negotiation** — create, generate a branded PDF, send, and
   accept (which auto-creates the Client + Project) or reject.
 - **Project & Delivery** — milestones, tasks, team assignment, time logging.
@@ -84,7 +87,7 @@ invoices, and clients pages are all live against the API.
 The **Capture** page (Owner only, `/lead-sources`) runs [Apify](https://apify.com)
 actors and files what they find into the pipeline as leads.
 
-**Connect once.** Paste an Apify API token into Capture → Apify connection.
+**Connect once.** Paste an Apify API token into **Settings → Lead capture**.
 The token is verified against Apify before it is accepted, then stored
 AES-256-GCM encrypted in the `AppSetting` table — not in an env var, so lead
 sources can be added and changed without a redeploy. (`APIFY_TOKEN` in the
@@ -178,16 +181,30 @@ fixed even though their label isn't. Everything else lives in
 
 ## Turning on the real integrations
 
-Everything below is fully coded and wired — each just needs real keys
-dropped into `server/.env` to go live. Nothing needs to be rewritten.
+Everything below is fully coded and wired — each just needs real keys to go
+live. **Paste them into Settings** (Owner only, `/settings`), where they're
+stored AES-256-GCM encrypted in the `AppSetting` table; nothing needs a
+redeploy and nothing needs to be rewritten.
 
-| Integration | Get keys from | Env vars |
+Each panel says what the integration unlocks, what state it's in, and where to
+get the credential. Keys are verified against the provider *before* they're
+saved, so a typo fails on the screen rather than silently at 6am.
+
+The environment variables below still work and still win where one is set —
+the panel then shows the value as env-managed and refuses to edit it, so the
+deploy stays the source of truth wherever you chose to make it one.
+
+| Settings panel | Get keys from | Env override |
 |---|---|---|
-| Lead capture (Apify) | https://console.apify.com/settings/integrations | `APIFY_TOKEN` *(optional — normally set in the app)*, `APP_SECRET` |
-| Sheet analyst (Anthropic) | https://console.anthropic.com/settings/keys | `ANTHROPIC_API_KEY` *(optional — normally set in the app)* |
-| Sheet import from Drive (Google) | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` *(both optional — normally set in the app)*, `GOOGLE_REDIRECT_URI` *(only if the app is behind a proxy that rewrites the host)* |
-| Payments (Stripe) | https://dashboard.stripe.com/test/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
+| Lead capture (Apify) | https://console.apify.com/settings/integrations | `APIFY_TOKEN` |
+| AI analyst (Anthropic) | https://console.anthropic.com/settings/keys | `ANTHROPIC_API_KEY` |
+| Google Drive | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` *(only behind a proxy that rewrites the host)* |
+| Payments (Stripe) | https://dashboard.stripe.com/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
+| General (public URL, timezone) | — | `APP_URL`, `SCRAPER_TIMEZONE` |
+
+`APP_SECRET` is the one that isn't a panel: it's the key those stored secrets
+are encrypted with, so it belongs in the environment.
 
 Set `APP_SECRET` to any long random string. Without it, stored tokens are
 encrypted with a key derived from `DATABASE_URL` and have to be re-entered if
@@ -201,9 +218,10 @@ pattern-rule mapping; without Google credentials, imports still accept
 uploaded files.
 
 The Google OAuth client must be of type **Web application**, with the Drive
-API and Google Sheets API enabled, and with the redirect URI shown on the
-Import page added to it verbatim — the app derives it from `APP_URL` (or the
-request host), and Google matches it exactly.
+API and Google Sheets API enabled, and with the redirect URI shown in
+**Settings → Google Drive** added to it verbatim — the app derives it from the
+public URL (Settings → General, or `APP_URL`, or the request host), and Google
+matches it character for character.
 
 ## Deploying
 
@@ -278,7 +296,7 @@ Dakyworld OS/
                      client, encrypted settings store
       middleware/    Session auth (or dev bypass) + role permission gate
       routes/        auth, clients, leads, proposals, projects, invoices, users,
-                     dashboard, scrapers, imports, settings
+                     dashboard, scrapers, imports, settings (every runtime key)
       services/
         pdf.ts           Branded proposal/invoice PDF rendering
         leadMapping.ts   Scraped row -> lead: field resolution, scoring, dedupe keys
@@ -292,7 +310,7 @@ Dakyworld OS/
     client/          React + TypeScript + Tailwind SPA (nested so Railway builds it)
       src/
         pages/       Login, Dashboard, Leads, LeadImport, LeadSources, Proposals,
-                     Projects(+detail), Invoices, Clients(+detail)
+                     Projects(+detail), Invoices, Clients(+detail), Settings
         components/  Layout/nav, shared UI primitives, LeadDrawer, LeadColumns
                      (dynamic cells + column editor), SourceEditor
         lib/         Typed API client, auth context, shared types

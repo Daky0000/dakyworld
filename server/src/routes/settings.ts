@@ -1,15 +1,39 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { requireRole } from "../middleware/auth.js";
 import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
 import { maskSecret } from "../lib/secrets.js";
 import { ApifyError, getAccount } from "../lib/apify.js";
+import { AnalystError, ANALYST_MODEL, verifyKey } from "../lib/anthropic.js";
+import {
+  GoogleError,
+  buildAuthUrl,
+  clearGoogleTokenCache,
+  consumeState,
+  exchangeCode,
+  googleConfigured,
+  googleConnected,
+  redirectUri,
+  rememberState,
+} from "../lib/google.js";
+import { verifyStripeKey } from "../lib/stripe.js";
 
+/**
+ * Everything the Owner configures at runtime, in one place.
+ *
+ * Every credential here is stored in `AppSetting` — encrypted when it's a
+ * secret — rather than in an environment variable, so a key can be added or
+ * rotated from the Settings screen without a redeploy. An environment variable
+ * still wins where one is set: the screen then shows the value as
+ * env-managed and refuses to edit it, so the deploy stays the source of truth
+ * wherever someone chose to make it one.
+ */
 export const settingsRouter = Router();
 
-// Integration credentials are Owner-only: they spend real money and reach
-// outside the company.
+// These credentials spend real money and reach outside the company.
 settingsRouter.use(requireRole("OWNER"));
+
+// --- Apify -----------------------------------------------------------------
 
 // The account lookup is a network round trip; the settings page polls, so a
 // short cache keeps it from hammering Apify on every render.
@@ -40,19 +64,93 @@ async function describeApify() {
   };
 }
 
-// GET /api/settings/integrations
-settingsRouter.get("/integrations", async (_req, res, next) => {
+// --- The whole picture -----------------------------------------------------
+
+/** The app's public URL: the setting, else the env var, else this request's own host. */
+function origin(req: Request, configured: string | null): string {
+  return (configured || `${req.protocol}://${req.get("host") ?? "localhost"}`).replace(/\/$/, "");
+}
+
+async function describeAll(req: Request) {
+  const [apify, anthropicKey, googleClientId, googleAccount, stripeKey, stripeHook, cloudName, cloudKey, cloudSecret, appUrl, timezone] =
+    await Promise.all([
+      describeApify(),
+      getSetting(SETTING.ANTHROPIC_KEY),
+      getSetting(SETTING.GOOGLE_CLIENT_ID),
+      getSetting(SETTING.GOOGLE_ACCOUNT),
+      getSetting(SETTING.STRIPE_SECRET_KEY),
+      getSetting(SETTING.STRIPE_WEBHOOK_SECRET),
+      getSetting(SETTING.CLOUDINARY_CLOUD_NAME),
+      getSetting(SETTING.CLOUDINARY_API_KEY),
+      getSetting(SETTING.CLOUDINARY_API_SECRET),
+      getSetting(SETTING.APP_URL),
+      getSetting(SETTING.DEFAULT_TIMEZONE),
+    ]);
+
+  return {
+    apify,
+    analyst: {
+      configured: Boolean(anthropicKey),
+      envManaged: isEnvManaged(SETTING.ANTHROPIC_KEY),
+      key: anthropicKey ? maskSecret(anthropicKey) : null,
+      model: ANALYST_MODEL,
+    },
+    google: {
+      configured: await googleConfigured(),
+      connected: await googleConnected(),
+      envManaged: isEnvManaged(SETTING.GOOGLE_CLIENT_ID),
+      clientId: googleClientId ? `${googleClientId.slice(0, 16)}…` : null,
+      account: googleAccount,
+      /** Register this on the OAuth client, exactly as shown. */
+      redirectUri: redirectUri(origin(req, appUrl)),
+    },
+    stripe: {
+      configured: Boolean(stripeKey),
+      envManaged: isEnvManaged(SETTING.STRIPE_SECRET_KEY),
+      key: stripeKey ? maskSecret(stripeKey) : null,
+      livemode: stripeKey ? !stripeKey.startsWith("sk_test_") : null,
+      webhookConfigured: Boolean(stripeHook),
+      webhookUrl: `${origin(req, appUrl)}/api/webhooks/stripe`,
+    },
+    cloudinary: {
+      configured: Boolean(cloudName && cloudKey && cloudSecret),
+      envManaged: isEnvManaged(SETTING.CLOUDINARY_CLOUD_NAME),
+      cloudName,
+      apiKey: cloudKey ? maskSecret(cloudKey) : null,
+    },
+    general: {
+      appUrl,
+      appUrlEnvManaged: isEnvManaged(SETTING.APP_URL),
+      resolvedAppUrl: origin(req, appUrl),
+      timezone: timezone ?? "Africa/Accra",
+    },
+  };
+}
+
+export type SettingsSnapshot = Awaited<ReturnType<typeof describeAll>>;
+
+settingsRouter.get("/", async (req, res, next) => {
   try {
-    res.json({ apify: await describeApify() });
+    res.json(await describeAll(req));
   } catch (err) {
     next(err);
   }
 });
 
-// PUT /api/settings/integrations/apify — the token is verified against Apify
-// before it is stored, so a typo fails here rather than silently at 6am.
-settingsRouter.put("/integrations/apify", async (req, res, next) => {
+/** Rejects a write to something the deploy has pinned, rather than saving a value that will never be read. */
+function guardEnv(key: string, label: string, res: { status: (code: number) => { json: (body: unknown) => unknown } }): boolean {
+  if (!isEnvManaged(key)) return false;
+  res.status(409).json({ error: `${label} is set by an environment variable. Change it in Railway instead.` });
+  return true;
+}
+
+// --- Apify -----------------------------------------------------------------
+
+// The token is verified against Apify before it is stored, so a typo fails
+// here rather than silently at 6am.
+settingsRouter.put("/apify", async (req, res, next) => {
   try {
+    if (guardEnv(SETTING.APIFY_TOKEN, "The Apify token", res)) return;
     const { token } = z.object({ token: z.string().min(10, "That doesn't look like an Apify token") }).parse(req.body);
 
     try {
@@ -66,19 +164,236 @@ settingsRouter.put("/integrations/apify", async (req, res, next) => {
 
     await setSetting(SETTING.APIFY_TOKEN, token.trim(), { secret: true });
     accountCache = null;
-    res.json({ apify: await describeApify() });
+    res.json(await describeAll(req));
   } catch (err) {
     next(err);
   }
 });
 
-// DELETE /api/settings/integrations/apify — disconnects. Sources and captured
-// leads are left alone; scheduled runs simply stop firing.
-settingsRouter.delete("/integrations/apify", async (_req, res, next) => {
+// Disconnecting leaves sources and captured leads alone; scheduled runs simply stop firing.
+settingsRouter.delete("/apify", async (req, res, next) => {
   try {
+    if (guardEnv(SETTING.APIFY_TOKEN, "The Apify token", res)) return;
     await deleteSetting(SETTING.APIFY_TOKEN);
     accountCache = null;
-    res.json({ apify: await describeApify() });
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Anthropic -------------------------------------------------------------
+
+settingsRouter.put("/anthropic", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.ANTHROPIC_KEY, "The Anthropic API key", res)) return;
+    const { key } = z.object({ key: z.string().min(10, "That doesn't look like an Anthropic API key") }).parse(req.body);
+    await verifyKey(key.trim());
+    await setSetting(SETTING.ANTHROPIC_KEY, key.trim(), { secret: true });
+    res.json(await describeAll(req));
+  } catch (err) {
+    if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+settingsRouter.delete("/anthropic", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.ANTHROPIC_KEY, "The Anthropic API key", res)) return;
+    await deleteSetting(SETTING.ANTHROPIC_KEY);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Google ----------------------------------------------------------------
+
+settingsRouter.put("/google", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.GOOGLE_CLIENT_ID, "The Google OAuth client", res)) return;
+    const { clientId, clientSecret } = z
+      .object({
+        clientId: z.string().min(10, "That doesn't look like a Google client ID"),
+        clientSecret: z.string().min(10, "That doesn't look like a Google client secret"),
+      })
+      .parse(req.body);
+
+    await setSetting(SETTING.GOOGLE_CLIENT_ID, clientId.trim());
+    await setSetting(SETTING.GOOGLE_CLIENT_SECRET, clientSecret.trim(), { secret: true });
+    clearGoogleTokenCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.get("/google/auth-url", async (req, res, next) => {
+  try {
+    // Only a path within this app, never an absolute URL — an open redirect is
+    // not a feature worth having.
+    const requested = typeof req.query.return === "string" ? req.query.return : "/settings";
+    const returnTo = requested.startsWith("/") && !requested.startsWith("//") ? requested : "/settings";
+    const appUrl = await getSetting(SETTING.APP_URL);
+    res.json({ url: await buildAuthUrl(origin(req, appUrl), rememberState(returnTo)) });
+  } catch (err) {
+    if (err instanceof GoogleError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+/**
+ * Completes the consent redirect. Exported rather than mounted here because
+ * Google sends the browser to the URI registered on the OAuth client, which
+ * lives under /api/imports (see lib/google.ts → redirectUri) — moving the path
+ * would mean re-registering it. It is a page navigation, not an API call, so
+ * it answers with a redirect either way and carries the outcome in the query
+ * string.
+ */
+export async function handleGoogleCallback(req: Request, res: Response) {
+  const appUrl = await getSetting(SETTING.APP_URL);
+  const base = origin(req, appUrl);
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const pending = state ? consumeState(state) : null;
+
+  const back = (params: Record<string, string>) => {
+    const url = new URL(pending?.returnTo ?? "/settings", base);
+    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+    res.redirect(url.toString());
+  };
+
+  if (typeof req.query.error === "string") return back({ google: "error", message: req.query.error });
+  if (!pending) return back({ google: "error", message: "That sign-in link had expired. Try again." });
+
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  if (!code) return back({ google: "error", message: "Google didn't return an authorisation code." });
+
+  try {
+    const { email } = await exchangeCode(code, base);
+    back({ google: "connected", ...(email ? { account: email } : {}) });
+  } catch (err) {
+    back({ google: "error", message: err instanceof GoogleError ? err.message : "Could not complete the Google sign-in." });
+  }
+}
+
+settingsRouter.post("/google/disconnect", async (req, res, next) => {
+  try {
+    await deleteSetting(SETTING.GOOGLE_REFRESH_TOKEN);
+    await deleteSetting(SETTING.GOOGLE_ACCOUNT);
+    clearGoogleTokenCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Removes the client itself, which implies disconnecting the account.
+settingsRouter.delete("/google", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.GOOGLE_CLIENT_ID, "The Google OAuth client", res)) return;
+    await Promise.all([
+      deleteSetting(SETTING.GOOGLE_CLIENT_ID),
+      deleteSetting(SETTING.GOOGLE_CLIENT_SECRET),
+      deleteSetting(SETTING.GOOGLE_REFRESH_TOKEN),
+      deleteSetting(SETTING.GOOGLE_ACCOUNT),
+    ]);
+    clearGoogleTokenCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Stripe ----------------------------------------------------------------
+
+settingsRouter.put("/stripe", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.STRIPE_SECRET_KEY, "The Stripe secret key", res)) return;
+    const { secretKey, webhookSecret } = z
+      .object({
+        secretKey: z.string().min(10, "That doesn't look like a Stripe secret key"),
+        webhookSecret: z.string().optional(),
+      })
+      .parse(req.body);
+
+    try {
+      await verifyStripeKey(secretKey.trim());
+    } catch (err) {
+      return res.status(400).json({ error: `Stripe rejected that key: ${(err as Error).message}` });
+    }
+
+    await setSetting(SETTING.STRIPE_SECRET_KEY, secretKey.trim(), { secret: true });
+    if (webhookSecret?.trim()) await setSetting(SETTING.STRIPE_WEBHOOK_SECRET, webhookSecret.trim(), { secret: true });
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/stripe", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.STRIPE_SECRET_KEY, "The Stripe secret key", res)) return;
+    await Promise.all([deleteSetting(SETTING.STRIPE_SECRET_KEY), deleteSetting(SETTING.STRIPE_WEBHOOK_SECRET)]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Cloudinary ------------------------------------------------------------
+
+settingsRouter.put("/cloudinary", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.CLOUDINARY_CLOUD_NAME, "The Cloudinary credentials", res)) return;
+    const { cloudName, apiKey, apiSecret } = z
+      .object({
+        cloudName: z.string().min(2),
+        apiKey: z.string().min(4),
+        apiSecret: z.string().min(4),
+      })
+      .parse(req.body);
+
+    await setSetting(SETTING.CLOUDINARY_CLOUD_NAME, cloudName.trim());
+    await setSetting(SETTING.CLOUDINARY_API_KEY, apiKey.trim());
+    await setSetting(SETTING.CLOUDINARY_API_SECRET, apiSecret.trim(), { secret: true });
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/cloudinary", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.CLOUDINARY_CLOUD_NAME, "The Cloudinary credentials", res)) return;
+    await Promise.all([
+      deleteSetting(SETTING.CLOUDINARY_CLOUD_NAME),
+      deleteSetting(SETTING.CLOUDINARY_API_KEY),
+      deleteSetting(SETTING.CLOUDINARY_API_SECRET),
+    ]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- General ---------------------------------------------------------------
+
+settingsRouter.put("/general", async (req, res, next) => {
+  try {
+    const { appUrl, timezone } = z
+      .object({
+        appUrl: z.string().url("That isn't a valid URL").or(z.literal("")).optional(),
+        timezone: z.string().min(1).optional(),
+      })
+      .parse(req.body);
+
+    if (appUrl !== undefined && !isEnvManaged(SETTING.APP_URL)) {
+      if (appUrl) await setSetting(SETTING.APP_URL, appUrl.replace(/\/$/, ""));
+      else await deleteSetting(SETTING.APP_URL);
+    }
+    if (timezone) await setSetting(SETTING.DEFAULT_TIMEZONE, timezone);
+
+    res.json(await describeAll(req));
   } catch (err) {
     next(err);
   }

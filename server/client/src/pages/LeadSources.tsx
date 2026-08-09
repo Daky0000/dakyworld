@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type {
   ApifyActorSummary,
-  IntegrationSettings,
+  AppSettings,
   ScraperOverview,
   ScraperRun,
   ScraperSource,
@@ -159,126 +159,45 @@ export function LeadSources() {
 
 // --- Connection ------------------------------------------------------------
 
+/**
+ * A read-out, not a form. The Apify token is edited on the Settings page along
+ * with every other credential — duplicating the form here would mean two places
+ * to keep in step and two places to look when something is wrong.
+ */
 function ApifyConnection() {
-  const qc = useQueryClient();
-  const [token, setToken] = useState("");
-  const [editing, setEditing] = useState(false);
-
   const { data } = useQuery({
-    queryKey: ["integrations"],
-    queryFn: () => api.get<IntegrationSettings>("/settings/integrations"),
-  });
-
-  const connect = useMutation({
-    mutationFn: () => api.put<IntegrationSettings>("/settings/integrations/apify", { token }),
-    onSuccess: () => {
-      setToken("");
-      setEditing(false);
-      void qc.invalidateQueries({ queryKey: ["integrations"] });
-      void qc.invalidateQueries({ queryKey: ["scraper-overview"] });
-    },
-  });
-
-  const disconnect = useMutation({
-    mutationFn: () => api.delete("/settings/integrations/apify"),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["integrations"] });
-      void qc.invalidateQueries({ queryKey: ["scraper-overview"] });
-    },
+    queryKey: ["settings"],
+    queryFn: () => api.get<AppSettings>("/settings"),
   });
 
   const apify = data?.apify;
-  const showForm = editing || (apify && !apify.token);
 
   return (
     <Card className="mb-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <StatusDot tone={apify?.connected ? "ok" : apify?.token ? "bad" : "idle"} />
-            <h2 className="font-serif text-lg">Apify connection</h2>
-          </div>
-          <p className="mt-1 max-w-xl text-sm text-ink/60">
-            {apify?.connected ? (
-              <>
-                Connected as <strong>{apify.account?.username ?? "your account"}</strong>
-                {apify.account?.plan?.id && <> on the {apify.account.plan.id} plan</>}. Token {apify.token}.
-              </>
-            ) : apify?.error ? (
-              <span className="text-red-600">{apify.error}</span>
-            ) : (
-              <>
-                Paste your Apify API token to let Dakyworld OS run scrapers. Find it at{" "}
-                <a
-                  className="text-bronze hover:underline"
-                  href="https://console.apify.com/settings/integrations"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  console.apify.com → Settings → API &amp; Integrations
-                </a>
-                .
-              </>
-            )}
-          </p>
-          {apify?.envManaged && (
-            <p className="mt-1 text-xs text-ink/40">Set by the APIFY_TOKEN environment variable — edit it in Railway.</p>
-          )}
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2">
+          <StatusDot tone={apify?.connected ? "ok" : apify?.token ? "bad" : "idle"} />
+          <h2 className="font-serif text-lg">Apify connection</h2>
         </div>
-
-        {!apify?.envManaged && (
-          <div className="flex items-center gap-3">
-            {apify?.token && !editing && (
-              <>
-                <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
-                  Replace token
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => {
-                    if (confirm("Disconnect Apify? Scheduled runs stop until a token is added again.")) disconnect.mutate();
-                  }}
-                >
-                  Disconnect
-                </Button>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      {showForm && !apify?.envManaged && (
-        <form
-          className="mt-4 flex flex-wrap items-end gap-3 border-t border-ink/10 pt-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            connect.mutate();
-          }}
-        >
-          <div className="min-w-[20rem] flex-1">
-            <Field label="Apify API token">
-              <input
-                type="password"
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
-                placeholder="apify_api_…"
-                className="input font-mono text-xs"
-                autoComplete="off"
-              />
-            </Field>
-          </div>
-          <Button type="submit" disabled={connect.isPending || token.length < 10}>
-            {connect.isPending ? "Checking…" : "Connect"}
-          </Button>
-          {editing && (
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
-              Cancel
-            </Button>
+        <p className="min-w-[16rem] flex-1 text-sm text-ink/60">
+          {apify?.connected ? (
+            <>
+              Connected as <strong>{apify.account?.username ?? "your account"}</strong>
+              {apify.account?.plan?.id && <> on the {apify.account.plan.id} plan</>}.
+            </>
+          ) : apify?.error ? (
+            <span className="text-red-600">{apify.error}</span>
+          ) : (
+            <>Scrapers can&rsquo;t run until an Apify API token is added.</>
           )}
-          {connect.isError && <p className="w-full text-sm text-red-600">{(connect.error as Error).message}</p>}
-        </form>
-      )}
+        </p>
+        <Link
+          to="/settings?tab=capture"
+          className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+        >
+          {apify?.connected ? "Manage in Settings" : "Add a token"}
+        </Link>
+      </div>
     </Card>
   );
 }

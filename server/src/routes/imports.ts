@@ -1,25 +1,11 @@
-import { randomUUID } from "node:crypto";
 import express, { Router } from "express";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { requireRole } from "../middleware/auth.js";
-import { AnalystError, ANALYST_MODEL, analystConfigured, analyzeGrids, verifyKey } from "../lib/anthropic.js";
-import {
-  GoogleError,
-  buildAuthUrl,
-  exchangeCode,
-  clearGoogleTokenCache,
-  googleConfigured,
-  googleConnected,
-  getDriveFile,
-  listSpreadsheets,
-  listTabs,
-  readGrids,
-  redirectUri,
-} from "../lib/google.js";
-import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
-import { maskSecret } from "../lib/secrets.js";
+import { AnalystError, analystConfigured, analyzeGrids } from "../lib/anthropic.js";
+import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from "../lib/google.js";
+import { handleGoogleCallback } from "./settings.js";
 import { detectTables, normalizePlan, type ImportPlan } from "../services/sheetPlan.js";
 import { SpreadsheetError, isSpreadsheetName, listWorkbookSheets, parseWorkbook, type SheetGrid } from "../services/spreadsheet.js";
 import { buildPreviews, commitPlan } from "../services/leadImport.js";
@@ -34,6 +20,11 @@ importsRouter.use(requireRole("OWNER"));
 // bodies far larger than the rest of the API allows. Deliberately after the
 // role check: nobody unauthenticated gets to hand us 28 MB to parse.
 importsRouter.use(express.json({ limit: "28mb" }));
+
+// Google's consent redirect lands here because this is the URI registered on
+// the OAuth client. The handler itself belongs with the rest of the settings
+// code; only the path is fixed. See lib/google.ts → redirectUri.
+importsRouter.get("/google/callback", handleGoogleCallback);
 
 /**
  * Parsed sheets, kept between "analyse" and "commit" so a 3,000-row workbook
@@ -68,147 +59,6 @@ function decodeUpload(dataBase64: string): Buffer {
   }
   return buffer;
 }
-
-// --- Connection status -----------------------------------------------------
-
-function origin(req: { protocol: string; get: (name: string) => string | undefined }): string {
-  return process.env.APP_URL?.trim() || `${req.protocol}://${req.get("host") ?? "localhost"}`;
-}
-
-async function describeConnections(req: Parameters<typeof origin>[0]) {
-  const [key, clientId, account] = await Promise.all([
-    getSetting(SETTING.ANTHROPIC_KEY),
-    getSetting(SETTING.GOOGLE_CLIENT_ID),
-    getSetting(SETTING.GOOGLE_ACCOUNT),
-  ]);
-
-  return {
-    analyst: {
-      configured: Boolean(key),
-      envManaged: isEnvManaged(SETTING.ANTHROPIC_KEY),
-      key: key ? maskSecret(key) : null,
-      model: ANALYST_MODEL,
-    },
-    google: {
-      configured: await googleConfigured(),
-      connected: await googleConnected(),
-      envManaged: isEnvManaged(SETTING.GOOGLE_CLIENT_ID),
-      clientId: clientId ? `${clientId.slice(0, 14)}…` : null,
-      account,
-      /** Paste this into the OAuth client's "Authorised redirect URIs". */
-      redirectUri: redirectUri(origin(req)),
-    },
-  };
-}
-
-importsRouter.get("/connections", async (req, res, next) => {
-  try {
-    res.json(await describeConnections(req));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// PUT /api/imports/connections/anthropic — verified against the API before it's stored.
-importsRouter.put("/connections/anthropic", async (req, res, next) => {
-  try {
-    const { key } = z.object({ key: z.string().min(10, "That doesn't look like an Anthropic API key") }).parse(req.body);
-    await verifyKey(key.trim());
-    await setSetting(SETTING.ANTHROPIC_KEY, key.trim(), { secret: true });
-    res.json(await describeConnections(req));
-  } catch (err) {
-    if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });
-    next(err);
-  }
-});
-
-importsRouter.delete("/connections/anthropic", async (req, res, next) => {
-  try {
-    await deleteSetting(SETTING.ANTHROPIC_KEY);
-    res.json(await describeConnections(req));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// PUT /api/imports/connections/google — the OAuth client, not the account.
-// Connecting the account itself is the redirect dance below.
-importsRouter.put("/connections/google", async (req, res, next) => {
-  try {
-    const { clientId, clientSecret } = z
-      .object({
-        clientId: z.string().min(10, "That doesn't look like a Google client ID"),
-        clientSecret: z.string().min(10, "That doesn't look like a Google client secret"),
-      })
-      .parse(req.body);
-
-    await setSetting(SETTING.GOOGLE_CLIENT_ID, clientId.trim());
-    await setSetting(SETTING.GOOGLE_CLIENT_SECRET, clientSecret.trim(), { secret: true });
-    clearGoogleTokenCache();
-    res.json(await describeConnections(req));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// --- Google OAuth ----------------------------------------------------------
-
-/** Outstanding consent redirects, so a callback can't be forged or replayed. */
-const pendingStates = new Map<string, number>();
-const STATE_TTL_MS = 10 * 60_000;
-
-importsRouter.get("/google/auth-url", async (req, res, next) => {
-  try {
-    const state = randomUUID();
-    pendingStates.set(state, Date.now());
-    for (const [key, at] of pendingStates) {
-      if (Date.now() - at > STATE_TTL_MS) pendingStates.delete(key);
-    }
-    res.json({ url: await buildAuthUrl(origin(req), state) });
-  } catch (err) {
-    if (err instanceof GoogleError) return res.status(err.status).json({ error: err.message });
-    next(err);
-  }
-});
-
-/**
- * Where Google sends the browser back. It's a page navigation, not an API
- * call, so it answers with a redirect into the import screen either way and
- * carries the outcome in the query string.
- */
-importsRouter.get("/google/callback", async (req, res) => {
-  const back = (params: Record<string, string>) => {
-    const url = new URL("/leads/import", origin(req));
-    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-    res.redirect(url.toString());
-  };
-
-  const state = typeof req.query.state === "string" ? req.query.state : "";
-  const code = typeof req.query.code === "string" ? req.query.code : "";
-
-  if (typeof req.query.error === "string") return back({ google: "error", message: req.query.error });
-  if (!state || !pendingStates.has(state)) return back({ google: "error", message: "That sign-in link had expired. Try again." });
-  pendingStates.delete(state);
-  if (!code) return back({ google: "error", message: "Google didn't return an authorisation code." });
-
-  try {
-    const { email } = await exchangeCode(code, origin(req));
-    back({ google: "connected", ...(email ? { account: email } : {}) });
-  } catch (err) {
-    back({ google: "error", message: err instanceof GoogleError ? err.message : "Could not complete the Google sign-in." });
-  }
-});
-
-importsRouter.post("/google/disconnect", async (req, res, next) => {
-  try {
-    await deleteSetting(SETTING.GOOGLE_REFRESH_TOKEN);
-    await deleteSetting(SETTING.GOOGLE_ACCOUNT);
-    clearGoogleTokenCache();
-    res.json(await describeConnections(req));
-  } catch (err) {
-    next(err);
-  }
-});
 
 // --- Google Drive browsing -------------------------------------------------
 

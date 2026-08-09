@@ -13,6 +13,7 @@ const navItems = [
   { to: "/projects", label: "Projects" },
   { to: "/invoices", label: "Invoices" },
   { to: "/clients", label: "Clients" },
+  { to: "/settings", label: "Settings", ownerOnly: true },
 ];
 
 export function Layout() {

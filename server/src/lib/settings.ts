@@ -16,6 +16,13 @@ export const SETTING = {
   /** Written by the OAuth callback; the only Google credential that persists. */
   GOOGLE_REFRESH_TOKEN: "google.refreshToken",
   GOOGLE_ACCOUNT: "google.account",
+  STRIPE_SECRET_KEY: "stripe.secretKey",
+  STRIPE_WEBHOOK_SECRET: "stripe.webhookSecret",
+  CLOUDINARY_CLOUD_NAME: "cloudinary.cloudName",
+  CLOUDINARY_API_KEY: "cloudinary.apiKey",
+  CLOUDINARY_API_SECRET: "cloudinary.apiSecret",
+  /** The app's own public URL — what Google's redirect URI is built from. */
+  APP_URL: "app.url",
 } as const;
 
 /** Env fallbacks, checked before the database. */
@@ -26,6 +33,12 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.GOOGLE_CLIENT_ID]: "GOOGLE_CLIENT_ID",
   [SETTING.GOOGLE_CLIENT_SECRET]: "GOOGLE_CLIENT_SECRET",
   [SETTING.GOOGLE_REFRESH_TOKEN]: "GOOGLE_REFRESH_TOKEN",
+  [SETTING.STRIPE_SECRET_KEY]: "STRIPE_SECRET_KEY",
+  [SETTING.STRIPE_WEBHOOK_SECRET]: "STRIPE_WEBHOOK_SECRET",
+  [SETTING.CLOUDINARY_CLOUD_NAME]: "CLOUDINARY_CLOUD_NAME",
+  [SETTING.CLOUDINARY_API_KEY]: "CLOUDINARY_API_KEY",
+  [SETTING.CLOUDINARY_API_SECRET]: "CLOUDINARY_API_SECRET",
+  [SETTING.APP_URL]: "APP_URL",
 };
 
 // One process, one cache. Writes go through setSetting, which clears it.

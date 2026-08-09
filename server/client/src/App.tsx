@@ -9,6 +9,7 @@ import { Projects } from "./pages/Projects";
 import { ProjectDetail } from "./pages/ProjectDetail";
 import { Invoices } from "./pages/Invoices";
 import { Clients } from "./pages/Clients";
+import { Settings } from "./pages/Settings";
 import { ClientDetail } from "./pages/ClientDetail";
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/clients/:id" element={<ClientDetail />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
   );

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { renderProposalPdf } from "../services/pdf.js";
-import { cloudinaryEnabled, uploadBuffer } from "../lib/cloudinary.js";
+import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
 
 export const proposalsRouter = Router();
 
@@ -88,7 +88,7 @@ proposalsRouter.post("/:id/generate-pdf", async (req, res, next) => {
       expiresAt: proposal.expiresAt,
     });
 
-    if (!cloudinaryEnabled) {
+    if (!(await cloudinaryConfigured())) {
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename="proposal-${proposal.id}.pdf"`);
       return res.send(pdf);
