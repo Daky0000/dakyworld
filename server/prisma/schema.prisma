@@ -186,6 +186,11 @@ model Lead {
   /// The untouched scraper item, so a mapping fix can be replayed without re-scraping.
   enrichment Json?
 
+  /// Values for columns that aren't Lead scalars — `{ "<LeadField.key>": value }`.
+  /// This is what lets an imported sheet keep every one of its columns instead
+  /// of losing the ones the fixed schema has no home for.
+  customFields Json?
+
   group           LeadGroup?     @relation(fields: [groupId], references: [id])
   groupId         String?
   scraperSource   ScraperSource? @relation(fields: [scraperSourceId], references: [id])
@@ -203,18 +208,131 @@ model Lead {
 }
 
 /// A named bucket of leads — normally one scrape batch ("Accra dentists,
-/// 6 Aug"), so the pipeline stays readable when a run lands 200 rows at once.
+/// 6 Aug") or one table found inside an imported spreadsheet, so the pipeline
+/// stays readable when a run or an import lands 200 rows at once.
 model LeadGroup {
   id          String   @id @default(cuid())
   name        String
   slug        String   @unique
   description String?
-  /// Groups a scraper opened automatically, as opposed to ones the Owner made by hand.
+  /// Groups a scraper or an import opened automatically, as opposed to ones the Owner made by hand.
   autoCreated Boolean  @default(false)
+  /// Where an imported group came from — "Contacts!A5:F210" — so a re-import can be traced.
+  sourceLabel String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  leads Lead[]
+  leadImport   LeadImport? @relation(fields: [leadImportId], references: [id])
+  leadImportId String?
+
+  leads  Lead[]
+  fields LeadField[]
+
+  @@index([leadImportId])
+}
+
+// ---------------------------------------------------------------------------
+// Lead columns — the shape of the leads table itself
+// ---------------------------------------------------------------------------
+
+enum LeadFieldType {
+  TEXT
+  LONG_TEXT
+  NUMBER
+  CURRENCY
+  DATE
+  BOOLEAN
+  EMAIL
+  PHONE
+  URL
+  SELECT
+}
+
+/// One column of the leads table. `builtin` fields address a Lead scalar by
+/// `key` (contactName, city, …); the rest are stored in `Lead.customFields`
+/// under the same key, which is how an imported sheet keeps columns the fixed
+/// schema has never heard of.
+///
+/// A row with `groupId = null` belongs to the default column set. A group with
+/// its own rows overrides that set entirely, so two lead groups imported from
+/// one workbook can show completely different columns.
+model LeadField {
+  id       String        @id @default(cuid())
+  group    LeadGroup?    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId  String?
+  key      String
+  label    String
+  type     LeadFieldType @default(TEXT)
+  builtin  Boolean       @default(false)
+  hidden   Boolean       @default(false)
+  position Int           @default(0)
+  /// Column width in pixels, when the Owner has dragged one.
+  width    Int?
+  /// SELECT options, and whatever the importer learned about the column.
+  meta     Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Postgres treats NULLs as distinct, so this constraint only binds
+  // group-scoped rows; uniqueness inside the default set is enforced in
+  // server/src/services/leadFields.ts.
+  @@unique([groupId, key])
+  @@index([groupId, position])
+}
+
+// ---------------------------------------------------------------------------
+// Spreadsheet imports
+// ---------------------------------------------------------------------------
+
+enum LeadImportSource {
+  UPLOAD
+  GOOGLE_SHEET
+  GOOGLE_DRIVE_FILE
+}
+
+enum LeadImportStatus {
+  ANALYZING
+  READY
+  IMPORTED
+  FAILED
+}
+
+/// One run of "read this spreadsheet and turn it into leads". Holds the plan
+/// the analyst produced — every table it found, with each table's columns and
+/// where its rows start — so the Owner can correct it before anything is
+/// written, and so a bad import can be explained afterwards.
+model LeadImport {
+  id     String           @id @default(cuid())
+  source LeadImportSource @default(UPLOAD)
+  status LeadImportStatus @default(ANALYZING)
+
+  fileName    String?
+  /// Google Drive file id, when the sheet came from a connected Drive.
+  driveFileId String?
+  /// The tabs that were read.
+  sheetNames  String[] @default([])
+
+  /// The analysed plan, as edited by the Owner. See services/sheetPlan.ts.
+  plan Json?
+  /// "claude-opus-5" when the AI analyst ran, "rules" when the fallback did.
+  analyzedBy String?
+  /// The analyst's own summary of what it found and what looked doubtful.
+  notes      String?
+  error      String?
+
+  tablesFound   Int @default(0)
+  groupsCreated Int @default(0)
+  leadsCreated  Int @default(0)
+  leadsUpdated  Int @default(0)
+  rowsSkipped   Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  groups LeadGroup[]
+
+  @@index([createdAt])
 }
 
 // ---------------------------------------------------------------------------

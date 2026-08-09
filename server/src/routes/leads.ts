@@ -1,25 +1,19 @@
 import { Router } from "express";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import {
+  BUILTIN_FIELDS,
+  LEAD_FIELD_TYPES,
+  LEAD_SOURCES,
+  LEAD_STATUSES,
+  isBuiltinKey,
+  replaceFields,
+  resolveFields,
+  slugifyKey,
+} from "../services/leadFields.js";
 
 export const leadsRouter = Router();
-
-const LEAD_SOURCES = [
-  "REFERRAL",
-  "LINKEDIN",
-  "COLD_EMAIL",
-  "OUTREACH",
-  "CONTENT",
-  "WARM_NETWORK",
-  "GOOGLE_MAPS",
-  "WEB_SCRAPE",
-  "DIRECTORY",
-  "SOCIAL",
-  "OTHER",
-] as const;
-
-const LEAD_STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"] as const;
 
 const leadInput = z.object({
   contactName: z.string().min(1),
@@ -42,6 +36,8 @@ const leadInput = z.object({
   category: z.string().optional().nullable(),
   tags: z.array(z.string()).optional(),
   groupId: z.string().cuid().nullable().optional(),
+  /** Values for the columns that aren't Lead scalars — see services/leadFields.ts. */
+  customFields: z.record(z.unknown()).nullable().optional(),
 });
 
 const SORTS: Record<string, Prisma.LeadOrderByWithRelationInput> = {
@@ -241,6 +237,88 @@ leadsRouter.delete("/groups/:id", async (req, res, next) => {
   }
 });
 
+// --- Columns ---------------------------------------------------------------
+//
+// The leads table's shape is data, not code: which columns show, in what order,
+// under what label, and whether they're a Lead scalar or a value carried in
+// `customFields`. A group with its own set overrides the default set entirely,
+// which is what lets two batches imported from one workbook look nothing alike.
+
+const fieldInput = z.object({
+  key: z.string().min(1).max(64),
+  label: z.string().min(1).max(60),
+  type: z.enum(LEAD_FIELD_TYPES).optional(),
+  hidden: z.boolean().optional(),
+  width: z.number().int().min(60).max(600).nullable().optional(),
+  meta: z.record(z.unknown()).nullable().optional(),
+});
+
+// GET /api/leads/fields?groupId= — the columns this view should render.
+leadsRouter.get("/fields", async (req, res, next) => {
+  try {
+    const groupId = typeof req.query.groupId === "string" && req.query.groupId ? req.query.groupId : null;
+    const resolved = await resolveFields(groupId);
+    res.json({
+      ...resolved,
+      groupId,
+      /** Everything a new column could map onto, for the column editor's picker. */
+      builtins: BUILTIN_FIELDS,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/leads/fields — replaces a scope's whole column set.
+ *
+ * The column editor sends the list it wants to end up with, because reorder,
+ * rename, hide, add and remove all arrive together and applying them one at a
+ * time would leave the table in states the Owner never asked for.
+ */
+leadsRouter.put("/fields", async (req, res, next) => {
+  try {
+    const { groupId, fields } = z
+      .object({ groupId: z.string().cuid().nullable().optional(), fields: z.array(fieldInput) })
+      .parse(req.body);
+
+    if (groupId) {
+      const group = await prisma.leadGroup.findUnique({ where: { id: groupId }, select: { id: true } });
+      if (!group) return res.status(404).json({ error: "Lead group not found" });
+    }
+
+    // A custom column must never claim a Lead scalar's name, or two different
+    // things would write to one place.
+    const seen = new Set<string>();
+    const cleaned = fields.map((field) => {
+      let key = field.key.trim();
+      if (!isBuiltinKey(key)) key = slugifyKey(key);
+      let candidate = key;
+      let suffix = 2;
+      while (seen.has(candidate)) candidate = `${key}_${suffix++}`;
+      seen.add(candidate);
+      return { ...field, key: candidate, meta: (field.meta ?? null) as Prisma.InputJsonValue | null };
+    });
+
+    const saved = await replaceFields(groupId ?? null, cleaned);
+    res.json({ scope: groupId ? "group" : "default", groupId: groupId ?? null, fields: saved });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/leads/fields?groupId= — drops the override, falling back to the
+// default set (or, for the default set, to the built-in columns).
+leadsRouter.delete("/fields", async (req, res, next) => {
+  try {
+    const groupId = typeof req.query.groupId === "string" && req.query.groupId ? req.query.groupId : null;
+    await prisma.leadField.deleteMany({ where: { groupId } });
+    res.json(await resolveFields(groupId));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- Bulk actions ----------------------------------------------------------
 
 // PATCH /api/leads/bulk — what you need after a scrape drops 200 rows at once.
@@ -308,10 +386,19 @@ leadsRouter.get("/:id", async (req, res, next) => {
   }
 });
 
+/** `customFields` is free-form JSON to zod but typed JSON to Prisma. */
+function toPrismaData<T extends { customFields?: Record<string, unknown> | null }>(input: T) {
+  const { customFields, ...rest } = input;
+  return {
+    ...rest,
+    ...(customFields === undefined ? {} : { customFields: (customFields ?? Prisma.JsonNull) as Prisma.InputJsonValue }),
+  };
+}
+
 leadsRouter.post("/", async (req, res, next) => {
   try {
     const data = leadInput.parse(req.body);
-    const lead = await prisma.lead.create({ data });
+    const lead = await prisma.lead.create({ data: toPrismaData(data) });
     res.status(201).json(lead);
   } catch (err) {
     next(err);
@@ -321,7 +408,14 @@ leadsRouter.post("/", async (req, res, next) => {
 leadsRouter.patch("/:id", async (req, res, next) => {
   try {
     const data = leadInput.partial().parse(req.body);
-    const lead = await prisma.lead.update({ where: { id: req.params.id }, data });
+    // A patch of one custom value shouldn't drop the others, so the incoming
+    // object is merged over what the lead already holds.
+    if (data.customFields) {
+      const current = await prisma.lead.findUnique({ where: { id: req.params.id }, select: { customFields: true } });
+      const previous = (current?.customFields as Record<string, unknown> | null) ?? {};
+      data.customFields = { ...previous, ...data.customFields };
+    }
+    const lead = await prisma.lead.update({ where: { id: req.params.id }, data: toPrismaData(data) });
     res.json(lead);
   } catch (err) {
     next(err);

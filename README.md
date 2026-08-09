@@ -14,6 +14,11 @@ Cloudinary (file storage, PDF hosting).
   filtering and grouping, bulk actions, per-lead contact history.
 - **Lead capture (Apify)** — configurable scrapers that pull prospects off
   Google Maps and the web on a daily schedule. See below.
+- **Spreadsheet import (AI)** — point at an `.xlsx`/`.csv`, or a sheet in a
+  connected Google Drive, and Claude reads it: every table it holds becomes
+  its own batch with its own columns, however messy the file. See below.
+- **Configurable lead columns** — rename, reorder, hide and add columns, per
+  batch or across the whole pipeline, without a schema change.
 - **Proposal & Negotiation** — create, generate a branded PDF, send, and
   accept (which auto-creates the Client + Project) or reject.
 - **Project & Delivery** — milestones, tasks, team assignment, time logging.
@@ -115,6 +120,62 @@ the source's minimum score are dropped rather than saved.
 Actor runs cost money on Apify. The whole feature is Owner-gated server-side
 (`requireRole("OWNER")`), and `maxItems` caps every run.
 
+## Importing a lead sheet
+
+The **Import** page (Owner only, `/leads/import`) turns a spreadsheet into
+leads. It exists because a real lead sheet is never one clean table: there's a
+banner across row 4, headers on row 6, a second block of organisations further
+down with different columns, an unlabelled column whose cells all read
+"Switched off", and a phone number Excel turned into `2.56742E+11`.
+
+**Where the file comes from.** Upload an `.xlsx`, `.csv` or `.tsv`, or connect
+a Google account and pick a sheet straight out of Drive (read-only; native
+Google Sheets are read through the Sheets API, and an `.xlsx` sitting in Drive
+goes through the same parser an upload would). Multi-tab workbooks let you
+choose which tabs to read.
+
+**What the analyst does.** The grid goes to Claude, which returns a *plan*: the
+tables it found, the exact row each one starts and stops at, and what every
+column means — mapped to a lead field where one genuinely fits, kept as a
+column of its own where none does, ignored only for row numbers and blank
+filler. Nothing is written yet. The plan comes back for review: retitle a
+table, untick one, drag a row boundary, remap a column, then re-preview.
+
+**One file, several batches.** Each table in the plan becomes its own
+`LeadGroup` with its own `LeadField` set. A sheet holding a table of people and
+a table of companies lands as two batches that look nothing alike — which is
+the point, since forcing them into one shape is exactly what loses the data.
+Columns the fixed schema has never heard of ("Alternate phone", "Call outcome")
+are kept in `Lead.customFields` and shown as real columns.
+
+**Without an Anthropic key** the import still works — the file is mapped by
+pattern rules instead, which handle a tidy sheet (blank-row-separated blocks,
+banner rows as titles, header synonyms, a second phone column as its own
+column) and hand you the same review screen to correct.
+
+**Nothing duplicates.** Imported rows get the same kind of `dedupeKey` scraped
+leads do — email, else website domain, else phone, else name+city — so
+re-importing an updated sheet refreshes the same leads, filling blanks and
+merging custom values rather than doubling the pipeline. Rows with no usable
+name are skipped and counted.
+
+### Editing the columns
+
+**Leads → Columns** edits the table itself. Rename anything, reorder it, hide
+what you don't need, add a column of your own (with a type — email, phone,
+URL, currency, date…), or add a lead field that isn't currently shown.
+
+Scope follows what you're looking at: with a batch filtered, you're editing
+that batch's columns and the rest of the pipeline is untouched; with no batch
+filtered, you're editing the default set every batch without its own falls back
+to. Removing a column only takes it off the table — the values stay on the
+leads, and adding it back shows them again.
+
+Columns marked *lead field* address a `Lead` scalar (`contactName`, `city`, …)
+and feed filtering, scoring and the conversion to a Client, so their meaning is
+fixed even though their label isn't. Everything else lives in
+`Lead.customFields`.
+
 ## Turning on the real integrations
 
 Everything below is fully coded and wired — each just needs real keys
@@ -123,6 +184,8 @@ dropped into `server/.env` to go live. Nothing needs to be rewritten.
 | Integration | Get keys from | Env vars |
 |---|---|---|
 | Lead capture (Apify) | https://console.apify.com/settings/integrations | `APIFY_TOKEN` *(optional — normally set in the app)*, `APP_SECRET` |
+| Sheet analyst (Anthropic) | https://console.anthropic.com/settings/keys | `ANTHROPIC_API_KEY` *(optional — normally set in the app)* |
+| Sheet import from Drive (Google) | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` *(both optional — normally set in the app)*, `GOOGLE_REDIRECT_URI` *(only if the app is behind a proxy that rewrites the host)* |
 | Payments (Stripe) | https://dashboard.stripe.com/test/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
 
@@ -133,7 +196,14 @@ that URL ever changes.
 Without Cloudinary configured, "Generate PDF" still works — it streams the
 PDF directly to your browser instead of uploading and storing a URL.
 Without Stripe configured, invoice payment links return a clear 503 rather
-than failing silently.
+than failing silently. Without an Anthropic key, sheet imports fall back to
+pattern-rule mapping; without Google credentials, imports still accept
+uploaded files.
+
+The Google OAuth client must be of type **Web application**, with the Drive
+API and Google Sheets API enabled, and with the redirect URI shown on the
+Import page added to it verbatim — the app derives it from `APP_URL` (or the
+request host), and Google matches it exactly.
 
 ## Deploying
 
@@ -204,21 +274,27 @@ Dakyworld OS/
       seed.ts        Sample data for local development
     src/
       lib/           Prisma client, password hashing, sessions, Stripe, Cloudinary,
-                     Apify REST client, encrypted settings store
+                     Apify REST client, Anthropic sheet analyst, Google Drive/Sheets
+                     client, encrypted settings store
       middleware/    Session auth (or dev bypass) + role permission gate
       routes/        auth, clients, leads, proposals, projects, invoices, users,
-                     dashboard, scrapers, settings
+                     dashboard, scrapers, imports, settings
       services/
         pdf.ts           Branded proposal/invoice PDF rendering
         leadMapping.ts   Scraped row -> lead: field resolution, scoring, dedupe keys
+        leadFields.ts    The leads table's shape: built-in columns, custom ones, coercion
+        spreadsheet.ts   .xlsx/.csv -> plain grids, nothing interpreted
+        sheetPlan.ts     Table detection, header synonyms, plan validation, row extraction
+        leadImport.ts    Runs an approved plan: groups, columns, leads, dedupe
         scraperRunner.ts Starts Apify runs, polls them, ingests the results
         scheduler.ts     Minute tick that fires each source's daily run times
         scraperTemplates.ts  Pre-filled starting points for the Capture page
     client/          React + TypeScript + Tailwind SPA (nested so Railway builds it)
       src/
-        pages/       Login, Dashboard, Leads, LeadSources, Proposals,
+        pages/       Login, Dashboard, Leads, LeadImport, LeadSources, Proposals,
                      Projects(+detail), Invoices, Clients(+detail)
-        components/  Layout/nav, shared UI primitives, LeadDrawer, SourceEditor
+        components/  Layout/nav, shared UI primitives, LeadDrawer, LeadColumns
+                     (dynamic cells + column editor), SourceEditor
         lib/         Typed API client, auth context, shared types
 ```
 
@@ -231,7 +307,11 @@ all eleven entities from the original spec — `User` (with `Role` enum),
 `Communication` + `Attachment` — plus what lead capture added: `LeadGroup`
 (capture batches), `ScraperSource` (a configured actor and its schedule),
 `ScraperRun` (one execution and its tally), `AppSetting` (encrypted runtime
-config), and the firmographic columns on `Lead` itself — even though the UI currently only exposes
+config), and the firmographic columns on `Lead` itself; plus what the
+spreadsheet import added: `LeadField` (a column of the leads table — global or
+per-batch, built-in or custom), `LeadImport` (one import run and the plan it
+ran), and `Lead.customFields` (values for columns that aren't `Lead` scalars)
+— even though the UI currently only exposes
 Phase 1's slice (Leads, Proposals, Projects, Invoices, Clients). Care Plans,
 Time & Capacity reporting, and Communications logging have working API
 routes' data model in place and can get a UI page added the same way the

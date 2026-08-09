@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import type { Lead, LeadGroup } from "../lib/types";
+import type { Lead, LeadFieldDef, LeadGroup } from "../lib/types";
+import { useLeadFields } from "./LeadColumns";
 import { Badge, Button, Drawer, Field, Money, RelativeTime, ScoreBar } from "./ui";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
@@ -246,6 +247,8 @@ export function LeadDrawer({
             </DetailRow>
           </Section>
 
+          <CustomFieldsForm lead={lead} onSave={(customFields) => update.mutate({ customFields })} pending={update.isPending} />
+
           <QualificationForm lead={lead} onSave={(body) => update.mutate(body)} pending={update.isPending} />
 
           <CommunicationsSection lead={lead} onLogged={invalidate} />
@@ -263,6 +266,90 @@ export function LeadDrawer({
         </div>
       )}
     </Drawer>
+  );
+}
+
+/**
+ * The columns this lead's batch carries that aren't Lead scalars — everything
+ * an imported sheet brought with it that the fixed schema has no home for.
+ * Shown from the batch's own column set, plus any stray key the lead holds that
+ * the set no longer lists, so nothing that was imported can go invisible.
+ */
+function CustomFieldsForm({
+  lead,
+  onSave,
+  pending,
+}: {
+  lead: Lead;
+  onSave: (values: Record<string, unknown>) => void;
+  pending: boolean;
+}) {
+  const { data: fieldSet } = useLeadFields(lead.groupId ?? null);
+  const [draft, setDraft] = useState<Record<string, string> | null>(null);
+
+  const defined: LeadFieldDef[] = (fieldSet?.fields ?? []).filter((field) => !field.builtin);
+  const strays = Object.keys(lead.customFields ?? {})
+    .filter((key) => !defined.some((field) => field.key === key))
+    .map<LeadFieldDef>((key) => ({
+      id: null,
+      key,
+      label: key.replace(/_/g, " "),
+      type: "TEXT",
+      builtin: false,
+      hidden: false,
+      position: 999,
+      width: null,
+    }));
+  const fields = [...defined, ...strays];
+
+  // Switching leads inside an open drawer must not carry the previous edits.
+  useEffect(() => {
+    setDraft(null);
+  }, [lead.id]);
+
+  if (!fields.length) return null;
+
+  const valueOf = (field: LeadFieldDef) => {
+    if (draft && field.key in draft) return draft[field.key];
+    const raw = lead.customFields?.[field.key];
+    return raw === null || raw === undefined ? "" : String(raw);
+  };
+
+  return (
+    <Section title={fieldSet?.scope === "group" ? "This batch's own columns" : "Extra columns"}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {fields.map((field) => (
+          <Field key={field.key} label={field.label} full={field.type === "LONG_TEXT"}>
+            {field.type === "LONG_TEXT" ? (
+              <textarea
+                rows={3}
+                value={valueOf(field)}
+                onChange={(event) => setDraft({ ...(draft ?? {}), [field.key]: event.target.value })}
+                className="input"
+              />
+            ) : (
+              <input
+                value={valueOf(field)}
+                onChange={(event) => setDraft({ ...(draft ?? {}), [field.key]: event.target.value })}
+                className="input"
+              />
+            )}
+          </Field>
+        ))}
+      </div>
+      <div className="mt-3">
+        <Button
+          size="sm"
+          disabled={!draft || pending}
+          onClick={() => {
+            if (draft) onSave(draft);
+            setDraft(null);
+          }}
+        >
+          {pending ? "Saving…" : draft ? "Save changes" : "Saved"}
+        </Button>
+      </div>
+    </Section>
   );
 }
 

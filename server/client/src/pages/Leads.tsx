@@ -2,20 +2,11 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
-import type { Lead, LeadStats } from "../lib/types";
+import { useAuth } from "../lib/auth";
+import type { Lead, LeadFieldDef, LeadStats } from "../lib/types";
 import { LeadDrawer } from "../components/LeadDrawer";
-import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  Field,
-  Money,
-  PageHeader,
-  RelativeTime,
-  ScoreBar,
-  StatTile,
-} from "../components/ui";
+import { ColumnManager, LeadCell, useLeadFields, visibleFields } from "../components/LeadColumns";
+import { Button, Card, EmptyState, Field, Money, PageHeader, StatTile } from "../components/ui";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
 const SOURCES = [
@@ -87,6 +78,7 @@ function toQuery(filters: Filters): string {
 
 export function Leads() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   // Arriving from "view what this run captured" lands here pre-filtered.
   const [filters, setFilters] = useState<Filters>(() => ({
@@ -97,6 +89,7 @@ export function Leads() {
   const [groupBy, setGroupBy] = useState<GroupBy>("status");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showForm, setShowForm] = useState(false);
+  const [columnsOpen, setColumnsOpen] = useState(false);
 
   // The open lead lives in the URL, so a lead can be linked to directly.
   const openLeadId = searchParams.get("lead");
@@ -121,6 +114,10 @@ export function Leads() {
     queryKey: ["lead-stats", query],
     queryFn: () => api.get<LeadStats>(`/leads/stats?${query}`),
   });
+  // The columns for whatever is being looked at: a batch's own set when one
+  // batch is filtered to, the default set otherwise.
+  const { data: fieldSet } = useLeadFields(filters.groupId || null);
+  const columns = visibleFields(fieldSet);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["leads"] });
@@ -196,6 +193,19 @@ export function Leads() {
         subtitle="Every prospect from first contact through close — captured by hand or by the scrapers."
         action={
           <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)}>
+              Columns
+            </Button>
+            {/* Importing reaches into Google and spends Anthropic credits, so
+                the API restricts it to the Owner — don't offer it to anyone else. */}
+            {user?.role === "OWNER" && (
+              <Link
+                to="/leads/import"
+                className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+              >
+                Import sheet
+              </Link>
+            )}
             <Link
               to="/lead-sources"
               className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
@@ -252,7 +262,9 @@ export function Leads() {
         />
       )}
 
-      {isLoading ? (
+      {/* The columns arrive on their own request, so wait for them too rather
+          than flashing a table with no columns in it. */}
+      {isLoading || !fieldSet ? (
         <div className="text-sm text-ink/50">Loading…</div>
       ) : leads.length === 0 ? (
         <EmptyState
@@ -283,6 +295,10 @@ export function Leads() {
               key={group.key}
               label={group.label}
               leads={group.leads}
+              // Grouping by capture batch is the one view where each block can
+              // legitimately have its own columns, so each block asks for them.
+              groupId={groupBy === "group" && group.key !== "none" ? group.key : null}
+              fallbackColumns={columns}
               selected={selected}
               onToggle={toggleSelected}
               onToggleAll={toggleMany}
@@ -300,6 +316,13 @@ export function Leads() {
       )}
 
       <LeadDrawer leadId={openLeadId} groups={stats?.groups ?? []} onClose={() => setOpenLeadId(null)} />
+
+      <ColumnManager
+        open={columnsOpen}
+        onClose={() => setColumnsOpen(false)}
+        groupId={filters.groupId || null}
+        groupName={stats?.groups.find((group) => group.id === filters.groupId)?.name}
+      />
     </div>
   );
 }
@@ -357,6 +380,8 @@ function groupLeads(leads: Lead[], groupBy: GroupBy): RenderGroup[] {
 function LeadGroupBlock({
   label,
   leads,
+  groupId,
+  fallbackColumns,
   selected,
   onToggle,
   onToggleAll,
@@ -366,6 +391,9 @@ function LeadGroupBlock({
 }: {
   label: string;
   leads: Lead[];
+  /** Set only when this block is one capture batch, which may own its columns. */
+  groupId: string | null;
+  fallbackColumns: LeadFieldDef[];
   selected: Set<string>;
   onToggle: (id: string) => void;
   onToggleAll: (ids: string[], select: boolean) => void;
@@ -374,6 +402,10 @@ function LeadGroupBlock({
   showGroupHeader: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const { data: ownFields } = useLeadFields(groupId);
+  // Only a batch with its own set overrides the page's columns; a batch on the
+  // defaults renders exactly like everything else.
+  const columns = groupId && ownFields?.scope === "group" ? visibleFields(ownFields) : fallbackColumns;
   const ids = leads.map((lead) => lead.id);
   const allSelected = ids.every((id) => selected.has(id));
   const withEmail = leads.filter((lead) => lead.contactEmail).length;
@@ -406,17 +438,15 @@ function LeadGroupBlock({
 
       {!collapsed && (
         <div className="overflow-x-auto border border-ink/10 bg-white">
-          <table className="w-full min-w-[860px] text-left text-sm">
+          <table className="w-full text-left text-sm" style={{ minWidth: `${Math.max(640, columns.length * 150)}px` }}>
             <thead>
               <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
                 <th className="w-8 px-3 py-3" />
-                <th className="px-4 py-3">Business</th>
-                <th className="px-4 py-3">Reach</th>
-                <th className="px-4 py-3">Where</th>
-                <th className="px-4 py-3">Signal</th>
-                <th className="px-4 py-3">Score</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Added</th>
+                {columns.map((column) => (
+                  <th key={column.key} className="px-4 py-3 whitespace-nowrap" style={column.width ? { width: column.width } : undefined}>
+                    {column.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -437,42 +467,11 @@ function LeadGroupBlock({
                       aria-label={`Select ${lead.contactName}`}
                     />
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{lead.contactName}</div>
-                    <div className="text-xs text-ink/50">
-                      {lead.companyName && lead.companyName !== lead.contactName ? lead.companyName : lead.category ?? "—"}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-1">
-                      {lead.contactEmail && <Badge tone="gold">email</Badge>}
-                      {lead.contactPhone && <Badge tone="muted">phone</Badge>}
-                      {lead.website ? <Badge tone="muted">site</Badge> : <Badge tone="default">no site</Badge>}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-ink/60">{lead.city ?? lead.country ?? "—"}</td>
-                  <td className="px-4 py-3 text-xs text-ink/60">
-                    {lead.rating ? `${Number(lead.rating).toFixed(1)} ★ · ${lead.reviewsCount ?? 0}` : "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <ScoreBar score={lead.leadScore} />
-                  </td>
-                  <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                    <select
-                      value={lead.status}
-                      onChange={(event) => onStatus(lead.id, event.target.value)}
-                      className="border border-ink/20 bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
-                    >
-                      {STATUSES.map((status) => (
-                        <option key={status} value={status}>
-                          {status}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-ink/40">
-                    <RelativeTime value={lead.createdAt} />
-                  </td>
+                  {columns.map((column) => (
+                    <td key={column.key} className="px-4 py-3 align-top">
+                      <LeadCell lead={lead} field={column} onStatus={(status) => onStatus(lead.id, status)} />
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>

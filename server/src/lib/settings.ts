@@ -9,12 +9,23 @@ import { decryptSecret, encryptSecret } from "./secrets.js";
 export const SETTING = {
   APIFY_TOKEN: "apify.token",
   DEFAULT_TIMEZONE: "scrapers.timezone",
+  /** Powers the spreadsheet analyst — see lib/anthropic.ts. */
+  ANTHROPIC_KEY: "anthropic.apiKey",
+  GOOGLE_CLIENT_ID: "google.clientId",
+  GOOGLE_CLIENT_SECRET: "google.clientSecret",
+  /** Written by the OAuth callback; the only Google credential that persists. */
+  GOOGLE_REFRESH_TOKEN: "google.refreshToken",
+  GOOGLE_ACCOUNT: "google.account",
 } as const;
 
 /** Env fallbacks, checked before the database. */
 const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.APIFY_TOKEN]: "APIFY_TOKEN",
   [SETTING.DEFAULT_TIMEZONE]: "SCRAPER_TIMEZONE",
+  [SETTING.ANTHROPIC_KEY]: "ANTHROPIC_API_KEY",
+  [SETTING.GOOGLE_CLIENT_ID]: "GOOGLE_CLIENT_ID",
+  [SETTING.GOOGLE_CLIENT_SECRET]: "GOOGLE_CLIENT_SECRET",
+  [SETTING.GOOGLE_REFRESH_TOKEN]: "GOOGLE_REFRESH_TOKEN",
 };
 
 // One process, one cache. Writes go through setSetting, which clears it.

@@ -8,6 +8,7 @@ import { attachUser, bootstrapOwner, requireAuth, DEV_NO_AUTH } from "./middlewa
 import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
 import { leadsRouter } from "./routes/leads.js";
+import { importsRouter } from "./routes/imports.js";
 import { proposalsRouter } from "./routes/proposals.js";
 import { projectsRouter } from "./routes/projects.js";
 import { invoicesRouter } from "./routes/invoices.js";
@@ -72,7 +73,13 @@ if (hasBuiltClient) {
   });
 }
 
-app.use(express.json());
+// A spreadsheet arrives base64-encoded inside the JSON body, so the import
+// routes need a far bigger ceiling than the rest of the API. Their parser is
+// mounted inside the imports router, behind requireAuth and an Owner check, so
+// an anonymous request can't push 28 MB at us — which means the global parser
+// has to leave those paths alone rather than rejecting them at 100 kB first.
+const jsonParser = express.json();
+app.use((req, res, next) => (req.path.startsWith("/api/imports") ? next() : jsonParser(req, res, next)));
 
 // Public: Railway's healthcheck runs before anyone has logged in.
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
@@ -85,6 +92,7 @@ app.use("/api", requireAuth);
 
 app.use("/api/clients", clientsRouter);
 app.use("/api/leads", leadsRouter);
+app.use("/api/imports", importsRouter);
 app.use("/api/proposals", proposalsRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/invoices", invoicesRouter);

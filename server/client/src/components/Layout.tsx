@@ -4,9 +4,11 @@ import { useAuth } from "../lib/auth";
 const navItems = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/leads", label: "Leads" },
-  // Configuring scrapers spends money on Apify, so the API restricts it to the
-  // Owner. Hiding the tab keeps the rest of the team out of a 403.
+  // Configuring scrapers spends money on Apify, and importing spends Anthropic
+  // credits and reaches into a Google account, so the API restricts both to the
+  // Owner. Hiding the tabs keeps the rest of the team out of a 403.
   { to: "/lead-sources", label: "Capture", ownerOnly: true },
+  { to: "/leads/import", label: "Import", ownerOnly: true },
   { to: "/proposals", label: "Proposals" },
   { to: "/projects", label: "Projects" },
   { to: "/invoices", label: "Invoices" },
