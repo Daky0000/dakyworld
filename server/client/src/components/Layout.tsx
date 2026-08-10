@@ -1,7 +1,9 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
-const navItems = [
+type NavItem = { to: string; label: string; end?: boolean; ownerOnly?: boolean; roles?: string[] };
+
+const navItems: NavItem[] = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/leads", label: "Leads" },
   // Configuring scrapers spends money on Apify, and importing spends Anthropic
@@ -12,6 +14,9 @@ const navItems = [
   { to: "/proposals", label: "Proposals" },
   { to: "/projects", label: "Projects" },
   { to: "/invoices", label: "Invoices" },
+  // Care plans decide what recurring money moves and when, so the API limits
+  // them to the Owner and Finance — same reasoning as Capture and Import.
+  { to: "/care-plans", label: "Retainers", roles: ["OWNER", "OPERATIONS_FINANCE"] },
   { to: "/clients", label: "Clients" },
   { to: "/settings", label: "Settings", ownerOnly: true },
 ];
@@ -20,7 +25,11 @@ export function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const visibleNav = navItems.filter((item) => !item.ownerOnly || user?.role === "OWNER");
+  const visibleNav = navItems.filter(
+    (item) =>
+      (!item.ownerOnly || user?.role === "OWNER") &&
+      (!item.roles || (user?.role !== undefined && item.roles.includes(user.role))),
+  );
   // Every page except the dashboard is somewhere you arrived from somewhere
   // else, so every one of them gets a way back that doesn't mean hunting for
   // the browser chrome or guessing which nav tab you came in through.

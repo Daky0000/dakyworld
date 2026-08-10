@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { renderInvoicePdf } from "../services/pdf.js";
 import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
 import { getStripe } from "../lib/stripe.js";
+import { createNumberedInvoice } from "../services/invoiceNumber.js";
 
 export const invoicesRouter = Router();
 
@@ -21,15 +22,6 @@ const invoiceInput = z.object({
   dueDate: z.coerce.date(),
   lineItems: z.array(lineItemInput).min(1),
 });
-
-async function nextInvoiceNumber(): Promise<string> {
-  const now = new Date();
-  const prefix = `DAK-${now.toLocaleString("en-US", { month: "short" }).toUpperCase()}-${now.getFullYear()}`;
-  const countThisMonth = await prisma.invoice.count({
-    where: { invoiceNumber: { startsWith: prefix } },
-  });
-  return `${prefix}-${String(countThisMonth + 1).padStart(3, "0")}`;
-}
 
 invoicesRouter.get("/", async (req, res, next) => {
   try {
@@ -61,7 +53,6 @@ invoicesRouter.get("/:id", async (req, res, next) => {
 invoicesRouter.post("/", async (req, res, next) => {
   try {
     const data = invoiceInput.parse(req.body);
-    const invoiceNumber = await nextInvoiceNumber();
     const lineItems = data.lineItems.map((li) => ({
       description: li.description,
       quantity: li.quantity,
@@ -70,19 +61,21 @@ invoicesRouter.post("/", async (req, res, next) => {
     }));
     const amountTotal = lineItems.reduce((sum, li) => sum + li.amount, 0);
 
-    const invoice = await prisma.invoice.create({
-      data: {
-        clientId: data.clientId,
-        projectId: data.projectId,
-        carePlanId: data.carePlanId,
-        currency: data.currency,
-        dueDate: data.dueDate,
-        invoiceNumber,
-        amountTotal,
-        lineItems: { create: lineItems },
-      },
-      include: { lineItems: true },
-    });
+    const invoice = await createNumberedInvoice((invoiceNumber) =>
+      prisma.invoice.create({
+        data: {
+          clientId: data.clientId,
+          projectId: data.projectId,
+          carePlanId: data.carePlanId,
+          currency: data.currency,
+          dueDate: data.dueDate,
+          invoiceNumber,
+          amountTotal,
+          lineItems: { create: lineItems },
+        },
+        include: { lineItems: true },
+      }),
+    );
     res.status(201).json(invoice);
   } catch (err) {
     next(err);

@@ -1,16 +1,22 @@
 import type { ScraperSource } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { apifyConfigured } from "../lib/apify.js";
+import { isValidTimezone, safeZone, zonedDateParts, zonedTimeToUtc } from "../lib/timezone.js";
 import { resumeInterruptedRuns, runSource } from "./scraperRunner.js";
+import { billDuePlans } from "./carePlanBilling.js";
 
 /**
- * Daily lead capture. Each source carries a list of local times ("06:30",
- * "18:00") and a timezone; this ticks once a minute and starts whichever ones
- * are due.
+ * The app's clock. Two things run on it:
  *
- * The next due instant is stored on the source as `nextRunAt` and advanced
- * *before* the run is started, so a failing actor can't be retried in a loop
- * and a restart can't fire the same slot twice.
+ *  - **Lead capture.** Each source carries a list of local times ("06:30",
+ *    "18:00") and a timezone; this ticks once a minute and starts whichever
+ *    ones are due.
+ *  - **Care plan billing.** Each active plan bills on its own day of the
+ *    month — see `carePlanBilling.ts`.
+ *
+ * Both follow the same discipline: the next due instant is stored on the row
+ * and advanced *before* the work starts, so a failure can't be retried in a
+ * loop and a restart can't fire the same slot twice.
  *
  * Deliberately in-process rather than a cron container: Dakyworld OS runs as a
  * single Railway service, and one setInterval has no moving parts to keep in
@@ -23,52 +29,9 @@ const MAX_CATCHUP_MS = 6 * 60 * 60_000;
 
 let timer: NodeJS.Timeout | null = null;
 
-// --- Timezone maths (no dependency: Intl already knows every zone) ---------
-
-export function isValidTimezone(timeZone: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** How far the zone is ahead of UTC at a given instant, in milliseconds. */
-function zoneOffsetMs(instant: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(instant);
-
-  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? 0);
-  const wallClockAsUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
-  return wallClockAsUtc - instant.getTime();
-}
-
-/** The UTC instant at which a given wall-clock time occurs in `timeZone`. */
-function zonedTimeToUtc(year: number, month: number, day: number, hour: number, minute: number, timeZone: string): Date {
-  const naive = Date.UTC(year, month - 1, day, hour, minute);
-  // Two passes: the first offset may belong to the wrong side of a DST change.
-  let instant = naive - zoneOffsetMs(new Date(naive), timeZone);
-  instant = naive - zoneOffsetMs(new Date(instant), timeZone);
-  return new Date(instant);
-}
-
-/** Today's date in `timeZone`, as [year, month, day]. */
-function zonedDateParts(instant: Date, timeZone: string): [number, number, number] {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })
-    .format(instant)
-    .split("-")
-    .map(Number);
-  return [parts[0], parts[1], parts[2]];
-}
+// The zone maths moved to lib/timezone.ts once care plan billing needed it
+// too; re-exported because the scrapers router validates against it.
+export { isValidTimezone };
 
 export function parseScheduleTime(value: string): { hour: number; minute: number } | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
@@ -89,7 +52,7 @@ export function computeNextRunAt(
 ): Date | null {
   if (!source.enabled || !source.scheduleEnabled || source.scheduleTimes.length === 0) return null;
 
-  const timeZone = isValidTimezone(source.timezone) ? source.timezone : "UTC";
+  const timeZone = safeZone(source.timezone);
   const [year, month, day] = zonedDateParts(from, timeZone);
 
   let earliest: Date | null = null;
@@ -118,6 +81,16 @@ export async function syncSchedule(sourceId: string): Promise<Date | null> {
 // --- The tick --------------------------------------------------------------
 
 export async function tick(now = new Date()) {
+  // Two independent jobs on one interval. Lead capture failing must not stop
+  // an invoice going out, so they're settled separately rather than awaited
+  // in sequence.
+  const results = await Promise.allSettled([captureTick(now), billDuePlans(now)]);
+  for (const result of results) {
+    if (result.status === "rejected") console.error("[scheduler] job failed:", result.reason);
+  }
+}
+
+async function captureTick(now: Date) {
   // Backfill sources that were scheduled while the server was down, or saved
   // before this feature existed.
   const unscheduled = await prisma.scraperSource.findMany({
@@ -173,7 +146,7 @@ export function startScheduler() {
 
   void resumeInterruptedRuns().catch((err) => console.error("[scheduler] resume failed:", err));
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
-  console.log("  → Lead capture scheduler running (checks every minute)");
+  console.log("  → Scheduler running (lead capture + care plan billing, checks every minute)");
 }
 
 export function stopScheduler() {

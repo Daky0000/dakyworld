@@ -607,25 +607,83 @@ enum CarePlanStatus {
 }
 
 model CarePlan {
-  id                   String         @id @default(cuid())
-  client               Client         @relation(fields: [clientId], references: [id])
-  clientId             String
-  project              Project?       @relation(fields: [projectId], references: [id])
-  projectId            String?        @unique
-  tier                 CarePlanTier
-  monthlyFee           Decimal        @db.Decimal(12, 2)
-  currency             String         @default("GHS")
-  billingDay           Int            @default(1) // day of month, 1-28
-  includedHours        Decimal?       @db.Decimal(6, 2)
-  hoursUsedThisCycle   Decimal        @default(0) @db.Decimal(6, 2)
+  id         String       @id @default(cuid())
+  client     Client       @relation(fields: [clientId], references: [id])
+  clientId   String
+  /// The retainer's delivery project, if it has one. Time logged against it is
+  /// what `includedHours` is measured against.
+  project    Project?     @relation(fields: [projectId], references: [id])
+  projectId  String?      @unique
+  tier       CarePlanTier
+  monthlyFee Decimal      @db.Decimal(12, 2)
+  currency   String       @default("GHS")
+
+  // --- Billing ---------------------------------------------------------
+  billingDay Int     @default(1) // day of month, 1-28: every month has one
+  /// Billing runs on this zone's calendar, not the server's.
+  timezone   String  @default("Africa/Accra")
+  /// False bills the plan by hand from the Care Plans page instead.
+  autoInvoice Boolean @default(true)
+  /// Days from issue to due date on the invoices this plan raises.
+  dueDays     Int     @default(14)
+  /// Advanced *before* an invoice is raised, so a failure can't retry-loop.
+  nextBillingAt DateTime?
+  lastBilledAt  DateTime?
+
+  // --- Hours -----------------------------------------------------------
+  includedHours     Decimal? @db.Decimal(6, 2)
+  /// Charged per hour beyond `includedHours`, in arrears. Null never bills overage.
+  overageHourlyRate Decimal? @db.Decimal(12, 2)
+
+  // --- Review cadence --------------------------------------------------
+  /// The retainer promise includes a periodic review. 0 turns the reminder off.
+  reviewEveryMonths Int       @default(3)
+  nextReviewAt      DateTime?
+  lastReviewAt      DateTime?
+
   status               CarePlanStatus @default(ACTIVE)
   startedAt            DateTime       @default(now())
+  pausedAt             DateTime?
   churnedAt            DateTime?
+  churnReason          String?
+  notes                String?
   stripeSubscriptionId String?        @unique
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
   invoices Invoice[]
+  cycles   CarePlanCycle[]
+}
+
+/// One billed month of a care plan. The retainer is invoiced in advance, so a
+/// cycle is created when its period *starts*; the hours it used are settled
+/// later, when the next cycle bills and the number is finally known.
+///
+/// It exists so that "how many hours did we give them in April" survives the
+/// month ending, and — through the unique key on (plan, periodStart) — so that
+/// a retry, a double tick or an impatient "Bill now" cannot bill a month twice.
+model CarePlanCycle {
+  id          String   @id @default(cuid())
+  carePlan    CarePlan @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
+  carePlanId  String
+  periodStart DateTime
+  periodEnd   DateTime
+
+  /// Snapshotted: a later change to the plan's price must not rewrite history.
+  monthlyFee    Decimal  @db.Decimal(12, 2)
+  includedHours Decimal? @db.Decimal(6, 2)
+
+  /// Settled when the following cycle bills — null until then.
+  hoursUsed     Decimal?  @db.Decimal(6, 2)
+  overageHours  Decimal?  @db.Decimal(6, 2)
+  overageAmount Decimal?  @db.Decimal(12, 2)
+  settledAt     DateTime?
+
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
+  invoiceId String?  @unique
+  createdAt DateTime @default(now())
+
+  @@unique([carePlanId, periodStart])
 }
 
 // ---------------------------------------------------------------------------
@@ -663,6 +721,7 @@ model Invoice {
   updatedAt             DateTime      @updatedAt
 
   lineItems InvoiceLineItem[]
+  cycle     CarePlanCycle?
 }
 
 model InvoiceLineItem {

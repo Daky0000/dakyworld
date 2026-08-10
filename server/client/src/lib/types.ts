@@ -413,6 +413,75 @@ export interface Invoice {
   lineItems: InvoiceLineItem[];
 }
 
+// --- Care plans ------------------------------------------------------------
+
+export type CarePlanTier = "SME_ESSENTIALS" | "GROWTH" | "ENTERPRISE_CONCIERGE";
+export type CarePlanStatus = "ACTIVE" | "PAUSED" | "CHURNED";
+
+/** One billed month. `settledAt` is null until its hours have been counted. */
+export interface CarePlanCycle {
+  id: string;
+  periodStart: string;
+  periodEnd: string;
+  monthlyFee: string;
+  includedHours?: string | null;
+  hoursUsed?: string | null;
+  overageHours?: string | null;
+  overageAmount?: string | null;
+  settledAt?: string | null;
+  invoice?: {
+    id: string;
+    invoiceNumber: string;
+    status: string;
+    amountTotal: string;
+    currency: string;
+    pdfUrl?: string | null;
+  } | null;
+}
+
+/** Hours in the period running right now — computed, never stored. */
+export interface CarePlanUsage {
+  periodStart: string;
+  periodEnd: string;
+  hoursUsed: number;
+  includedHours: number | null;
+  hoursRemaining: number | null;
+}
+
+export interface CarePlan {
+  id: string;
+  tier: CarePlanTier;
+  status: CarePlanStatus;
+  monthlyFee: string;
+  currency: string;
+  billingDay: number;
+  timezone: string;
+  autoInvoice: boolean;
+  dueDays: number;
+  nextBillingAt?: string | null;
+  lastBilledAt?: string | null;
+  includedHours?: string | null;
+  overageHourlyRate?: string | null;
+  reviewEveryMonths: number;
+  nextReviewAt?: string | null;
+  lastReviewAt?: string | null;
+  startedAt: string;
+  pausedAt?: string | null;
+  churnedAt?: string | null;
+  churnReason?: string | null;
+  notes?: string | null;
+  client: { id: string; name: string; company?: string | null; email?: string | null };
+  project?: { id: string; name: string; status: string } | null;
+  projectId?: string | null;
+  usage?: CarePlanUsage;
+  cycles?: CarePlanCycle[];
+  _count?: { invoices: number; cycles: number };
+}
+
+export type BillOutcome =
+  | { billed: true; invoiceId: string; invoiceNumber: string; periodStart: string; amountTotal: number }
+  | { billed: false; reason: "already-billed" | "not-active" | "not-due"; periodStart?: string };
+
 export interface DashboardData {
   revenueThisMonth: string;
   monthlyRecurringRevenue: string;
@@ -422,6 +491,16 @@ export interface DashboardData {
   pipelineValue: string;
   openProposalCount: number;
   leadsByStatus: { status: string; _count: number }[];
+  /** Retainer health, so churn and an overdue review are visible without a click. */
+  carePlans: {
+    active: number;
+    paused: number;
+    churnedThisQuarter: number;
+    billingWithin7Days: number;
+    reviewsDue: number;
+    draftInvoices: number;
+    nextBilling: { id: string; client: string; at: string; amount: string; currency: string } | null;
+  };
 }
 
 export interface User {

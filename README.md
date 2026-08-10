@@ -30,6 +30,9 @@ Cloudinary (file storage, PDF hosting).
 - **Project & Delivery** — milestones, tasks, team assignment, time logging.
 - **Invoicing & Payments** — line-item invoices, PDF generation, Stripe
   Checkout payment links, manual mark-paid.
+- **Care plans (retainers)** — the recurring half of the business: tiers,
+  included hours, and an invoice raised on the plan's own billing day every
+  month, with hours over the allowance charged in arrears. See below.
 - **Revenue Dashboard** — live MRR, outstanding invoices, pipeline value,
   leads-by-status — computed on read, no manual reporting.
 - **Role model** — Owner / Project Manager / Developer / Designer /
@@ -37,9 +40,47 @@ Cloudinary (file storage, PDF hosting).
   Today, only the Owner-role check on team management is actually wired up
   as a gate — extend `requireRole(...)` on other routes as the team grows.
 
-Not yet built (later phases per the original spec): Care Plan billing
-automation, quarterly-review reminders, AI-powered churn/upsell insights,
-Slack notifications, a client-facing portal.
+Not yet built (later phases per the original spec): AI-powered churn/upsell
+insights, Slack notifications, a client-facing portal.
+
+## Care plans
+
+The **Retainers** page (`/care-plans`, Owner and Operations-Finance) is where
+recurring revenue actually comes from — the MRR figure on the dashboard is the
+sum of what is configured here.
+
+**In advance, in arrears.** A plan bills on its own day of the month, in its
+own timezone, for the month ahead — because that is what a retainer is. Hours
+can't work that way: how many were used is only known once the month has
+ended. So each invoice carries the coming month's fee *and* the closing
+month's overage, and every cycle is settled one cycle late.
+
+**Hours are counted, not typed.** `includedHours` is measured against billable
+time logged on the plan's delivery project, so the bar on the page is the same
+number the team's timesheets produce. A plan with no project linked, or no
+included hours, is unmetered and never bills overage. Overage needs a rate —
+without one the extra hours are shown but not charged, and the page says so.
+
+**Billing twice is the failure that matters.** Not billing is visible; billing
+twice is a refund and an apology. Three things prevent it: `nextBillingAt` is
+advanced before any invoice is written, the period billed is derived from the
+calendar rather than from when the job happened to run, and a unique key on
+(plan, period) makes a duplicate a database error rather than a duplicate
+invoice. "Bill now" and the scheduler therefore can't collide, and a plan
+signed mid-month is never back-charged for the weeks before it existed.
+
+**Nothing is sent automatically.** Invoices are raised as **drafts**. There is
+no email provider wired into this app, so "sent" would be a status flip with
+nothing behind it — the dashboard counts the drafts waiting instead.
+
+**A long outage bills the months it missed**, up to three, rather than
+silently skipping them — the opposite of the lead-capture scheduler, where a
+stale slot is dropped because a stale scrape is worthless.
+
+Pausing keeps the history and stops the billing; resuming picks up from today
+rather than back-billing the gap. Churn records why. Each plan also carries a
+review cadence (quarterly by default) that shows as overdue on both the page
+and the dashboard until it is marked held.
 
 ## Running it locally
 
@@ -314,7 +355,8 @@ Dakyworld OS/
       schema.prisma  Full data model — 11 entities from the original spec
       seed.ts        Sample data for local development
     src/
-      lib/           Prisma client, password hashing, sessions, Stripe, Cloudinary,
+      lib/           Prisma client, password hashing, sessions, timezone maths,
+                     Stripe, Cloudinary,
                      Apify REST client, Anthropic sheet analyst, Google Drive/Sheets
                      client, encrypted settings store
       middleware/    Session auth (or dev bypass) + role permission gate
@@ -328,11 +370,14 @@ Dakyworld OS/
         sheetPlan.ts     Table detection, header synonyms, plan validation, row extraction
         leadImport.ts    Runs an approved plan: groups, columns, leads, dedupe
         scraperRunner.ts Starts Apify runs, polls them, ingests the results
-        scheduler.ts     Minute tick that fires each source's daily run times
+        carePlanBilling.ts  Retainer periods, overage settlement, invoice raising
+        invoiceNumber.ts    Monthly invoice numbering, collision-safe
+        scheduler.ts     Minute tick: lead capture run times + care plan billing
         scraperTemplates.ts  Pre-filled starting points for the Capture page
     client/          React + TypeScript + Tailwind SPA (nested so Railway builds it)
       src/
         pages/       Login, Dashboard, Leads, LeadImport, LeadSources, Proposals,
+                     CarePlans,
                      Projects(+detail), Invoices, Clients(+detail), Settings
         components/  Layout/nav, shared UI primitives, LeadDrawer, LeadColumns
                      (dynamic cells + column editor), SourceEditor
