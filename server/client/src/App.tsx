@@ -9,6 +9,7 @@ import { Projects } from "./pages/Projects";
 import { ProjectDetail } from "./pages/ProjectDetail";
 import { Invoices } from "./pages/Invoices";
 import { CarePlans } from "./pages/CarePlans";
+import { Emails } from "./pages/Emails";
 import { Clients } from "./pages/Clients";
 import { Settings } from "./pages/Settings";
 import { ClientDetail } from "./pages/ClientDetail";
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/projects/:id" element={<ProjectDetail />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/care-plans" element={<CarePlans />} />
+        <Route path="/emails" element={<Emails />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/clients/:id" element={<ClientDetail />} />
         <Route path="/settings" element={<Settings />} />

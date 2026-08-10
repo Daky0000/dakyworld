@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { Invoice } from "../lib/types";
 import { Badge, Button, EmptyState, Money, PageHeader, Table } from "../components/ui";
+import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
 
 export function Invoices() {
   const qc = useQueryClient();
+  const [emailing, setEmailing] = useState<ComposerTarget | null>(null);
   const { data: invoices, isLoading } = useQuery({
     queryKey: ["invoices"],
     queryFn: () => api.get<Invoice[]>("/invoices"),
@@ -62,9 +65,24 @@ export function Invoices() {
                     <Button variant="secondary" onClick={() => generatePdf.mutate(inv.id)}>
                       PDF
                     </Button>
+                    {/* The invoice PDF is rendered when the email sends, not
+                        now, so what lands is the invoice as it stands then. */}
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setEmailing({
+                          clientId: inv.client.id,
+                          purpose: inv.status === "OVERDUE" ? "INVOICE_REMINDER" : "INVOICE_DELIVERY",
+                          invoiceId: inv.id,
+                          attachments: [{ kind: "invoice", invoiceId: inv.id, name: `${inv.invoiceNumber}.pdf` }],
+                        })
+                      }
+                    >
+                      Email
+                    </Button>
                     {inv.status === "DRAFT" && (
                       <Button variant="secondary" onClick={() => send.mutate(inv.id)}>
-                        Send
+                        Mark sent
                       </Button>
                     )}
                     {inv.status !== "PAID" && <Button onClick={() => markPaid.mutate(inv.id)}>Mark paid</Button>}
@@ -75,6 +93,8 @@ export function Invoices() {
           </tbody>
         </Table>
       )}
+
+      <EmailComposer target={emailing} open={emailing !== null} onClose={() => setEmailing(null)} />
     </div>
   );
 }

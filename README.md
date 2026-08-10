@@ -33,6 +33,9 @@ Cloudinary (file storage, PDF hosting).
 - **Care plans (retainers)** — the recurring half of the business: tiers,
   included hours, and an invoice raised on the plan's own billing day every
   month, with hours over the allowance charged in arrears. See below.
+- **Email** — write to a lead or client with a draft the AI wrote from their
+  own record, send the invoice or the finished work as an attachment, and let
+  follow-up sequences send themselves. See below.
 - **Revenue Dashboard** — live MRR, outstanding invoices, pipeline value,
   leads-by-status — computed on read, no manual reporting.
 - **Role model** — Owner / Project Manager / Developer / Designer /
@@ -42,6 +45,81 @@ Cloudinary (file storage, PDF hosting).
 
 Not yet built (later phases per the original spec): AI-powered churn/upsell
 insights, Slack notifications, a client-facing portal.
+
+## Email
+
+The **Email** page (`/emails`, Owner / Finance / PM) is where everything
+outbound happens: one-off letters, deliverables, and the follow-up sequences.
+
+**Connect a mailbox first.** **Settings → Email** takes SMTP credentials for
+whatever address Dakyworld already sends from — Google Workspace, the
+Hostinger mailbox on the domain, Zoho. SMTP rather than a provider API because
+all of them already speak it, and none of them need a new account opening or a
+domain re-verifying before the first email can go out. The credentials are
+checked against the server before they are stored, so a wrong password fails
+on that screen rather than silently at 8am inside a sequence. On Google
+Workspace it must be an **App Password** — Google refuses plain logins from
+applications.
+
+### Drafting
+
+Pick a lead or a client and the composer shows **what we actually know about
+them**, in the same words the drafter is given: the city the scraper found,
+that they have no website, the 4.6 stars from 212 reviews, the proposal sent
+three weeks ago that nobody answered, the invoice eleven days overdue.
+
+Press *Write a draft* and Claude writes the email from exactly those facts,
+under Dakyworld's own voice and positioning, for one of fourteen purposes — a
+cold approach reads nothing like an invoice reminder. Two rules do most of the
+work: it may use only the facts supplied, and it produces a draft rather than
+an outbox. A tailored email that invents a branch office is worse than a
+generic one, and nothing sends without a person reading it first.
+
+Without an Anthropic key the whole page still works — the thirteen built-in
+templates are written out in full, and `{{first_name}}`, `{{company}}`,
+`{{city}}` fill from the recipient's record the same way.
+
+### Sending deliverables
+
+*Email* on an invoice or a proposal opens the composer with the PDF already
+attached. The PDF is **rendered when the message sends**, not when it is
+drafted, so what the client receives is the document as it stands then. Any
+other file attaches by link.
+
+### Sequences
+
+A sequence is the follow-up nobody remembers to send by hand, which is where
+most of a cold pipeline is lost. Each step waits its own number of days and
+sends inside a local window (08:00–18:00, weekdays, by default) so nothing
+lands at 3am on a Sunday. A step can use a template, be written inline, or be
+drafted per person at send time from that person's own record.
+
+Sequences can enrol **every new lead** that matches a filter — score, city, no
+website — so a scrape at 06:30 becomes a first email the next morning without
+anyone opening the app. `requireApproval` turns the whole thing into a drafts
+queue instead, for when you want to read each one.
+
+**Three things stop a sequence**, all checked at send rather than at
+enrolment: the address is suppressed, the lead has moved out of the pipeline
+(converted, disqualified, lost), or someone replied. A reply stops every
+sequence that person is in, not just the one they answered.
+
+### Not writing to people who asked you not to
+
+Every cold email carries a signed one-click unsubscribe, in the body and in
+the `List-Unsubscribe` header that Gmail and Outlook read. The unsubscribe
+endpoint is public and takes effect immediately — a link that needs a login is
+not an unsubscribe link — and it honours the request even if the signature
+doesn't match, because refusing an opt-out over a token mismatch is
+indefensible. Suppressed addresses are checked before **every** send, including
+from inside a running sequence.
+
+### What it deliberately doesn't do
+
+It sends; it does not read a mailbox. There is no inbox, no open tracking, and
+no click tracking — a tracking pixel is how a business letter starts being
+filtered as marketing. Replies are recorded the way calls already are, by
+logging them, which is what stops the sequence.
 
 ## Care plans
 
@@ -265,6 +343,7 @@ deploy stays the source of truth wherever you chose to make it one.
 | Google Drive | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` *(only behind a proxy that rewrites the host)* |
 | Payments (Stripe) | https://dashboard.stripe.com/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
+| Email (SMTP) | Your own mailbox — Workspace, Hostinger, Zoho | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM_EMAIL` |
 | General (public URL, timezone) | — | `APP_URL`, `SCRAPER_TIMEZONE` |
 
 `APP_SECRET` is the one that isn't a panel: it's the key those stored secrets
@@ -274,6 +353,8 @@ Set `APP_SECRET` to any long random string. Without it, stored tokens are
 encrypted with a key derived from `DATABASE_URL` and have to be re-entered if
 that URL ever changes.
 
+Without a mailbox connected, emails and sequences can be written and queued
+but nothing sends — the Email page says so rather than failing quietly.
 Without Cloudinary configured, "Generate PDF" still works — it streams the
 PDF directly to your browser instead of uploading and storing a URL.
 Without Stripe configured, invoice payment links return a clear 503 rather
@@ -356,11 +437,12 @@ Dakyworld OS/
       seed.ts        Sample data for local development
     src/
       lib/           Prisma client, password hashing, sessions, timezone maths,
-                     Stripe, Cloudinary,
+                     SMTP mailer, AI email drafter, Stripe, Cloudinary,
                      Apify REST client, Anthropic sheet analyst, Google Drive/Sheets
                      client, encrypted settings store
       middleware/    Session auth (or dev bypass) + role permission gate
-      routes/        auth, clients, leads, proposals, projects, invoices, users,
+      routes/        auth, clients, leads, proposals, projects, invoices,
+                     care-plans, emails (+ the public unsubscribe), users,
                      dashboard, scrapers, imports, settings (every runtime key)
       services/
         pdf.ts           Branded proposal/invoice PDF rendering
@@ -372,12 +454,17 @@ Dakyworld OS/
         scraperRunner.ts Starts Apify runs, polls them, ingests the results
         carePlanBilling.ts  Retainer periods, overage settlement, invoice raising
         invoiceNumber.ts    Monthly invoice numbering, collision-safe
-        scheduler.ts     Minute tick: lead capture run times + care plan billing
+        emailContext.ts     What we know about a recipient, as facts
+        emailRender.ts      Placeholders, text+HTML, signature, unsubscribe
+        emailSender.ts      Compose, suppression check, attachments, send
+        emailSequences.ts   Enrolment, send windows, step running, stopping
+        emailTemplates.ts   The thirteen letters that ship with the app
+        scheduler.ts     Minute tick: lead capture, care plan billing, email
         scraperTemplates.ts  Pre-filled starting points for the Capture page
     client/          React + TypeScript + Tailwind SPA (nested so Railway builds it)
       src/
         pages/       Login, Dashboard, Leads, LeadImport, LeadSources, Proposals,
-                     CarePlans,
+                     CarePlans, Emails,
                      Projects(+detail), Invoices, Clients(+detail), Settings
         components/  Layout/nav, shared UI primitives, LeadDrawer, LeadColumns
                      (dynamic cells + column editor), SourceEditor

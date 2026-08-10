@@ -18,10 +18,13 @@ export function LeadDrawer({
   leadId,
   groups,
   onClose,
+  onEmail,
 }: {
   leadId: string | null;
   groups: LeadGroup[];
   onClose: () => void;
+  /** Opens the composer on this lead. Handled by the page so the composer isn't nested inside a drawer. */
+  onEmail?: (leadId: string) => void;
 }) {
   const qc = useQueryClient();
   const { data: lead, isLoading } = useQuery({
@@ -83,6 +86,15 @@ export function LeadDrawer({
                 </option>
               ))}
             </select>
+            {onEmail && (
+              <Button
+                onClick={() => onEmail(lead.id)}
+                disabled={!lead.contactEmail}
+                title={lead.contactEmail ? `Write to ${lead.contactEmail}` : "No email address on this lead"}
+              >
+                Email
+              </Button>
+            )}
             <Link
               to={`/proposals?leadId=${lead.id}`}
               className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"

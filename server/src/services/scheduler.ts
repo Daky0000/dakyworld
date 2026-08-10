@@ -4,6 +4,8 @@ import { apifyConfigured } from "../lib/apify.js";
 import { isValidTimezone, safeZone, zonedDateParts, zonedTimeToUtc } from "../lib/timezone.js";
 import { resumeInterruptedRuns, runSource } from "./scraperRunner.js";
 import { billDuePlans } from "./carePlanBilling.js";
+import { dispatchDueEmails } from "./emailSender.js";
+import { runDueSequences } from "./emailSequences.js";
 
 /**
  * The app's clock. Two things run on it:
@@ -81,10 +83,15 @@ export async function syncSchedule(sourceId: string): Promise<Date | null> {
 // --- The tick --------------------------------------------------------------
 
 export async function tick(now = new Date()) {
-  // Two independent jobs on one interval. Lead capture failing must not stop
-  // an invoice going out, so they're settled separately rather than awaited
-  // in sequence.
-  const results = await Promise.allSettled([captureTick(now), billDuePlans(now)]);
+  // Four independent jobs on one interval. Lead capture failing must not stop
+  // an invoice going out, and neither must stop a follow-up, so they're
+  // settled separately rather than awaited in sequence.
+  const results = await Promise.allSettled([
+    captureTick(now),
+    billDuePlans(now),
+    dispatchDueEmails(now),
+    runDueSequences(now),
+  ]);
   for (const result of results) {
     if (result.status === "rejected") console.error("[scheduler] job failed:", result.reason);
   }
@@ -146,7 +153,7 @@ export function startScheduler() {
 
   void resumeInterruptedRuns().catch((err) => console.error("[scheduler] resume failed:", err));
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
-  console.log("  → Scheduler running (lead capture + care plan billing, checks every minute)");
+  console.log("  → Scheduler running (lead capture, care plan billing, email — checks every minute)");
 }
 
 export function stopScheduler() {

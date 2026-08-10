@@ -2,10 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../lib/api";
 import type { Proposal } from "../lib/types";
-import { Badge, Button, Card, EmptyState, Money, PageHeader, Table } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Money, PageHeader } from "../components/ui";
+import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
 
 export function Proposals() {
   const qc = useQueryClient();
+  const [emailing, setEmailing] = useState<ComposerTarget | null>(null);
   const { data: proposals, isLoading } = useQuery({
     queryKey: ["proposals"],
     queryFn: () => api.get<Proposal[]>("/proposals"),
@@ -64,6 +66,22 @@ export function Proposals() {
                   <Button variant="secondary" onClick={() => generatePdf.mutate(p.id)}>
                     PDF
                   </Button>
+                  {/* The proposal PDF renders at send time, so a change made
+                      after the draft was written still reaches the client. */}
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      setEmailing({
+                        clientId: p.client?.id,
+                        leadId: p.client ? undefined : p.lead?.id,
+                        purpose: "PROPOSAL_COVER",
+                        proposalId: p.id,
+                        attachments: [{ kind: "proposal", proposalId: p.id, name: `${p.title}.pdf` }],
+                      })
+                    }
+                  >
+                    Email
+                  </Button>
                   {p.status === "DRAFT" && (
                     <Button variant="secondary" onClick={() => send.mutate(p.id)}>
                       Send
@@ -83,6 +101,8 @@ export function Proposals() {
           ))}
         </div>
       )}
+
+      <EmailComposer target={emailing} open={emailing !== null} onClose={() => setEmailing(null)} />
     </div>
   );
 }

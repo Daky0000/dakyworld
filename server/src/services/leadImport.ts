@@ -10,6 +10,7 @@
  */
 
 import type { Prisma } from "@prisma/client";
+import { enrolNewLeads } from "./emailSequences.js";
 import { prisma } from "../lib/prisma.js";
 import { builtinField, isBuiltinKey } from "./leadFields.js";
 import { extractRows, type ImportPlan, type PlanTable } from "./sheetPlan.js";
@@ -204,6 +205,9 @@ const CHUNK = 200;
 export async function commitPlan(importId: string, grids: SheetGrid[], plan: ImportPlan): Promise<CommitResult> {
   const byName = new Map(grids.map((grid) => [grid.name, grid]));
   const result: CommitResult = { groupsCreated: 0, leadsCreated: 0, leadsUpdated: 0, rowsSkipped: 0, groups: [] };
+  // createMany can't return ids, so the leads this import actually created are
+  // found afterwards by the groups it wrote into and the moment it started.
+  const startedAt = new Date();
 
   for (const table of plan.tables) {
     if (table.include === false) continue;
@@ -300,6 +304,15 @@ export async function commitPlan(importId: string, grids: SheetGrid[], plan: Imp
     }
 
     result.groups.push({ id: group.id, name: group.name, leads: prepared.length });
+  }
+
+  // Anything new goes to whichever email sequences are watching for it.
+  if (result.leadsCreated > 0) {
+    const created = await prisma.lead.findMany({
+      where: { groupId: { in: result.groups.map((group) => group.id) }, createdAt: { gte: startedAt } },
+      select: { id: true },
+    });
+    await enrolNewLeads(created.map((lead) => lead.id));
   }
 
   return result;

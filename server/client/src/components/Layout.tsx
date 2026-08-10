@@ -17,6 +17,9 @@ const navItems: NavItem[] = [
   // Care plans decide what recurring money moves and when, so the API limits
   // them to the Owner and Finance — same reasoning as Capture and Import.
   { to: "/care-plans", label: "Retainers", roles: ["OWNER", "OPERATIONS_FINANCE"] },
+  // Writing to a client under the company's name isn't a junior privilege —
+  // the API restricts it the same way, so hiding the tab avoids a 403.
+  { to: "/emails", label: "Email", roles: ["OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"] },
   { to: "/clients", label: "Clients" },
   { to: "/settings", label: "Settings", ownerOnly: true },
 ];

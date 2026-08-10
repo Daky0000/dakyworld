@@ -13,6 +13,7 @@ import { proposalsRouter } from "./routes/proposals.js";
 import { projectsRouter } from "./routes/projects.js";
 import { invoicesRouter } from "./routes/invoices.js";
 import { carePlansRouter } from "./routes/carePlans.js";
+import { emailsRouter, unsubscribeRouter } from "./routes/emails.js";
 import { usersRouter } from "./routes/users.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
@@ -20,6 +21,7 @@ import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
 import { startScheduler } from "./services/scheduler.js";
+import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -87,6 +89,10 @@ app.use((req, res, next) => (req.path.startsWith("/api/imports") ? next() : json
 // Public: Railway's healthcheck runs before anyone has logged in.
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
+// Also public, and deliberately so: an unsubscribe link that needs a login is
+// not an unsubscribe link. Every cold email this app sends carries one.
+app.use("/api/emails", unsubscribeRouter);
+
 // Resolves the session cookie but never rejects — /api/auth/login has to stay
 // reachable without one. requireAuth below is what actually closes the door.
 app.use(attachUser);
@@ -100,6 +106,7 @@ app.use("/api/proposals", proposalsRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/invoices", invoicesRouter);
 app.use("/api/care-plans", carePlansRouter);
+app.use("/api/emails", emailsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/scrapers", scrapersRouter);
@@ -139,9 +146,12 @@ bootstrapOwner()
     app.listen(PORT, () => {
       console.log(`Dakyworld OS API listening on http://localhost:${PORT}`);
       console.log(hasBuiltClient ? "  → Serving the built client from client/dist" : "  → No client build found — API only");
-      // Daily lead capture. Harmless with no Apify token and no sources: it
-      // finds nothing due and goes back to sleep.
+      // Daily lead capture, monthly billing, and outbound email. Harmless with
+      // nothing configured: it finds nothing due and goes back to sleep.
       startScheduler();
+      // The letters that ship with the app, copied in once so they can be
+      // edited. Failing here must not take the API down.
+      void ensureBuiltinTemplates().catch((err) => console.error("Template seed failed:", err));
       if (DEV_NO_AUTH) {
         console.log("  → DEV_NO_AUTH=true: implicit Owner, no login required (ignored when NODE_ENV=production).");
       } else if (!process.env.OWNER_EMAIL || !process.env.OWNER_PASSWORD) {

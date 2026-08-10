@@ -327,6 +327,18 @@ export interface AppSettings {
     webhookUrl: string;
   };
   cloudinary: { configured: boolean; envManaged: boolean; cloudName: string | null; apiKey: string | null };
+  email: {
+    configured: boolean;
+    envManaged: boolean;
+    host: string | null;
+    port: number;
+    secure: boolean;
+    user: string | null;
+    fromName: string | null;
+    fromEmail: string | null;
+    replyTo: string | null;
+    signature: string | null;
+  };
   general: {
     appUrl: string | null;
     appUrlEnvManaged: boolean;
@@ -481,6 +493,166 @@ export interface CarePlan {
 export type BillOutcome =
   | { billed: true; invoiceId: string; invoiceNumber: string; periodStart: string; amountTotal: number }
   | { billed: false; reason: "already-billed" | "not-active" | "not-due"; periodStart?: string };
+
+// --- Email -----------------------------------------------------------------
+
+export type EmailPurpose =
+  | "COLD_OUTREACH"
+  | "FOLLOW_UP"
+  | "MEETING_REQUEST"
+  | "PROPOSAL_COVER"
+  | "DELIVERABLE_HANDOVER"
+  | "PROJECT_UPDATE"
+  | "INVOICE_DELIVERY"
+  | "INVOICE_REMINDER"
+  | "CARE_PLAN_REVIEW"
+  | "ONBOARDING"
+  | "REACTIVATION"
+  | "THANK_YOU"
+  | "ANNOUNCEMENT"
+  | "CUSTOM";
+
+export type EmailStatus = "DRAFT" | "SCHEDULED" | "SENDING" | "SENT" | "FAILED" | "CANCELLED";
+export type EmailKind = "MANUAL" | "TEMPLATE" | "AI_DRAFT" | "SEQUENCE" | "AUTOMATION";
+
+export type EmailAttachment =
+  | { kind?: "file"; name: string; url: string; contentType?: string }
+  | { kind: "invoice"; invoiceId: string; name?: string }
+  | { kind: "proposal"; proposalId: string; name?: string };
+
+export interface EmailMessage {
+  id: string;
+  subject: string;
+  bodyHtml: string;
+  bodyText: string;
+  toEmail: string;
+  toName?: string | null;
+  cc: string[];
+  bcc: string[];
+  status: EmailStatus;
+  kind: EmailKind;
+  purpose: EmailPurpose;
+  scheduledFor?: string | null;
+  sentAt?: string | null;
+  failedAt?: string | null;
+  error?: string | null;
+  attempts: number;
+  attachments: EmailAttachment[];
+  createdAt: string;
+  lead?: { id: string; contactName: string; companyName?: string | null } | null;
+  client?: { id: string; name: string } | null;
+  invoice?: { id: string; invoiceNumber: string } | null;
+  proposal?: { id: string; title: string } | null;
+  template?: { id: string; name: string } | null;
+  step?: { position: number; sequence: { id: string; name: string } } | null;
+}
+
+/** What the drafter sees — shown in the composer so the writer sees it too. */
+export interface EmailContext {
+  kind: "lead" | "client" | "address";
+  email: string | null;
+  name: string | null;
+  facts: string[];
+  variables: Record<string, string>;
+  suppressed: string | null;
+}
+
+export interface EmailDraft {
+  subject: string;
+  body: string;
+  rationale: string;
+  confidence: number;
+  model: string;
+  variables: Record<string, string>;
+  facts: string[];
+}
+
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  slug: string;
+  purpose: EmailPurpose;
+  description?: string | null;
+  subject: string;
+  bodyHtml: string;
+  aiBrief?: string | null;
+  builtin: boolean;
+  active: boolean;
+  usageCount: number;
+}
+
+export type SequenceTrigger =
+  | "MANUAL"
+  | "LEAD_CREATED"
+  | "LEAD_STATUS_CHANGED"
+  | "PROPOSAL_SENT"
+  | "PROJECT_COMPLETED"
+  | "INVOICE_OVERDUE"
+  | "CARE_PLAN_REVIEW_DUE";
+
+export interface SequenceStep {
+  id?: string;
+  position: number;
+  delayDays: number;
+  templateId?: string | null;
+  subject?: string | null;
+  bodyHtml?: string | null;
+  useAi: boolean;
+  aiBrief?: string | null;
+  purpose: EmailPurpose;
+  template?: { id: string; name: string } | null;
+}
+
+export interface EmailSequence {
+  id: string;
+  name: string;
+  description?: string | null;
+  trigger: SequenceTrigger;
+  triggerFilter?: Record<string, unknown> | null;
+  active: boolean;
+  stopOnReply: boolean;
+  requireApproval: boolean;
+  sendWindowStart: number;
+  sendWindowEnd: number;
+  weekdaysOnly: boolean;
+  timezone: string;
+  steps: SequenceStep[];
+  activeEnrollments?: number;
+  _count?: { enrollments: number };
+}
+
+export interface EmailEnrollment {
+  id: string;
+  status: "ACTIVE" | "COMPLETED" | "STOPPED";
+  toEmail: string;
+  nextPosition: number;
+  nextSendAt?: string | null;
+  stopReason?: string | null;
+  startedAt: string;
+  lead?: { id: string; contactName: string; companyName?: string | null } | null;
+  client?: { id: string; name: string } | null;
+  _count?: { messages: number };
+}
+
+export interface EmailSuppression {
+  id: string;
+  email: string;
+  reason: string;
+  source: string;
+  createdAt: string;
+}
+
+export interface EmailStatusSummary {
+  connected: boolean;
+  drafterReady: boolean;
+  drafts: number;
+  scheduled: number;
+  sent: number;
+  failed: number;
+  activeSequences: number;
+  activeEnrollments: number;
+  suppressed: number;
+}
 
 export interface DashboardData {
   revenueThisMonth: string;

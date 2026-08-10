@@ -1,0 +1,197 @@
+import { prisma } from "../lib/prisma.js";
+
+/**
+ * What the drafter is allowed to know about the person being written to.
+ *
+ * A generic email is worse than no email — it reads as a mail merge, because
+ * it is one. Everything here is a fact already in the database: the city the
+ * scraper found, the rating on their Google listing, the proposal that went
+ * out three weeks ago and was never answered, the invoice that is eleven days
+ * overdue. The drafter is told these and told to use only these, which is what
+ * keeps a "tailored" email from being a confidently invented one.
+ */
+
+export interface RecipientContext {
+  kind: "lead" | "client" | "address";
+  /** Who the email actually goes to. */
+  email: string | null;
+  name: string | null;
+  /** Rendered for the prompt — plain lines, no JSON, nothing invented. */
+  facts: string[];
+  /** Values available to `{{placeholders}}` in a template. */
+  variables: Record<string, string>;
+  leadId?: string;
+  clientId?: string;
+}
+
+function line(label: string, value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  return `${label}: ${value}`;
+}
+
+function firstName(full: string | null | undefined): string {
+  if (!full) return "there";
+  const trimmed = full.trim();
+  // A company name in the contact field ("Accra Dental Centre") has no first
+  // name to take, and "Hi Accra," reads worse than no name at all.
+  if (/\b(ltd|limited|llc|inc|company|centre|center|group|services|enterprise|school|church|foundation)\b/i.test(trimmed)) {
+    return "there";
+  }
+  return trimmed.split(/\s+/)[0];
+}
+
+function ago(date: Date | null | undefined): string | null {
+  if (!date) return null;
+  const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 14) return `${days} days ago`;
+  if (days < 60) return `${Math.round(days / 7)} weeks ago`;
+  return `${Math.round(days / 30)} months ago`;
+}
+
+export async function leadContext(leadId: string): Promise<RecipientContext> {
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    include: {
+      group: { select: { name: true } },
+      proposals: { orderBy: { createdAt: "desc" }, take: 3 },
+      communications: { orderBy: { occurredAt: "desc" }, take: 5 },
+      emails: { where: { status: "SENT" }, orderBy: { sentAt: "desc" }, take: 5, select: { subject: true, sentAt: true } },
+    },
+  });
+  if (!lead) throw new Error("Lead not found");
+
+  const facts = [
+    line("Contact name", lead.contactName),
+    line("Business", lead.companyName),
+    line("Business type", lead.category),
+    line("City", [lead.city, lead.region, lead.country].filter(Boolean).join(", ") || null),
+    line("Website", lead.website ?? "none found — this is the strongest reason to write to them"),
+    line("Google rating", lead.rating ? `${lead.rating} from ${lead.reviewsCount ?? 0} reviews` : null),
+    line("How we found them", lead.source.replace(/_/g, " ").toLowerCase()),
+    line("Which list", lead.group?.name),
+    line("Pipeline status", lead.status),
+    line("Lead score (0-100, how reachable and sellable-to)", lead.leadScore),
+    line("Estimated deal size", lead.estimatedDealSize ? `GHS ${lead.estimatedDealSize}` : null),
+    line("Discovery notes", lead.discoveryNotes),
+    line("Discovery call", lead.discoveryCallAt ? `held ${ago(lead.discoveryCallAt)}` : null),
+  ].filter((entry): entry is string => entry !== null);
+
+  for (const proposal of lead.proposals) {
+    facts.push(
+      `Proposal "${proposal.title}" (${proposal.serviceType}, GHS ${proposal.priceAmount}) — ${proposal.status.toLowerCase()}, sent ${ago(proposal.sentAt) ?? "not yet"}`,
+    );
+  }
+  for (const note of lead.communications) {
+    facts.push(`Contact ${ago(note.occurredAt)} (${note.type.toLowerCase()}): ${note.summary}${note.outcome ? ` — ${note.outcome}` : ""}`);
+  }
+  for (const sent of lead.emails) {
+    facts.push(`We already emailed them ${ago(sent.sentAt)}: "${sent.subject}"`);
+  }
+  if (lead.emails.length === 0) facts.push("We have never emailed this person before.");
+
+  return {
+    kind: "lead",
+    leadId: lead.id,
+    email: lead.contactEmail,
+    name: lead.contactName,
+    facts,
+    variables: {
+      first_name: firstName(lead.contactName),
+      contact_name: lead.contactName,
+      company: lead.companyName ?? lead.contactName,
+      city: lead.city ?? "",
+      category: lead.category ?? "business",
+      website: lead.website ?? "",
+      rating: lead.rating ? String(lead.rating) : "",
+    },
+  };
+}
+
+export async function clientContext(clientId: string): Promise<RecipientContext> {
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    include: {
+      contacts: { orderBy: { isPrimary: "desc" }, take: 3 },
+      projects: { orderBy: { createdAt: "desc" }, take: 5, include: { milestones: { orderBy: { dueDate: "asc" } } } },
+      invoices: { orderBy: { issueDate: "desc" }, take: 5 },
+      carePlans: { where: { status: "ACTIVE" }, take: 2 },
+      emails: { where: { status: "SENT" }, orderBy: { sentAt: "desc" }, take: 5, select: { subject: true, sentAt: true } },
+    },
+  });
+  if (!client) throw new Error("Client not found");
+
+  const primary = client.contacts.find((contact) => contact.isPrimary) ?? client.contacts[0] ?? null;
+
+  const facts = [
+    line("Client", client.name),
+    line("Company", client.company),
+    line("Sector", client.sector),
+    line("Main contact", primary ? `${primary.name}${primary.title ? `, ${primary.title}` : ""}` : null),
+    line("Client since", ago(client.firstContactAt ?? client.createdAt)),
+    line("Lifetime value", `GHS ${client.lifetimeValue}`),
+    line("Payment terms", client.creditTerms),
+  ].filter((entry): entry is string => entry !== null);
+
+  for (const plan of client.carePlans) {
+    facts.push(
+      `On a ${plan.tier.replace(/_/g, " ").toLowerCase()} care plan at GHS ${plan.monthlyFee}/month${plan.includedHours ? `, ${plan.includedHours} hours included` : ""}`,
+    );
+  }
+  for (const project of client.projects) {
+    const open = project.milestones.filter((milestone) => !milestone.completedAt);
+    facts.push(
+      `Project "${project.name}" (${project.serviceType}) — ${project.status.toLowerCase()}` +
+        (open.length > 0 ? `, next milestone "${open[0].title}"${open[0].dueDate ? ` due ${open[0].dueDate.toDateString()}` : ""}` : ", all milestones complete"),
+    );
+  }
+  for (const invoice of client.invoices) {
+    const overdue = invoice.status !== "PAID" && invoice.dueDate < new Date();
+    facts.push(
+      `Invoice ${invoice.invoiceNumber} for ${invoice.currency} ${invoice.amountTotal} — ${invoice.status.toLowerCase()}` +
+        (overdue ? `, OVERDUE since ${invoice.dueDate.toDateString()}` : ""),
+    );
+  }
+  for (const sent of client.emails) {
+    facts.push(`We emailed them ${ago(sent.sentAt)}: "${sent.subject}"`);
+  }
+
+  return {
+    kind: "client",
+    clientId: client.id,
+    email: primary?.email ?? client.email,
+    name: primary?.name ?? client.name,
+    facts,
+    variables: {
+      first_name: firstName(primary?.name ?? client.name),
+      contact_name: primary?.name ?? client.name,
+      company: client.company ?? client.name,
+      client_name: client.name,
+      sector: client.sector ?? "",
+    },
+  };
+}
+
+/** A plain address with no record behind it — nothing to personalise from, and the drafter is told so. */
+export function addressContext(email: string, name?: string | null): RecipientContext {
+  return {
+    kind: "address",
+    email,
+    name: name ?? null,
+    facts: ["We hold no record for this address beyond the name given. Do not invent any detail about them."],
+    variables: { first_name: firstName(name), contact_name: name ?? "", company: "" },
+  };
+}
+
+export async function resolveContext(args: {
+  leadId?: string | null;
+  clientId?: string | null;
+  toEmail?: string | null;
+  toName?: string | null;
+}): Promise<RecipientContext> {
+  if (args.leadId) return leadContext(args.leadId);
+  if (args.clientId) return clientContext(args.clientId);
+  if (args.toEmail) return addressContext(args.toEmail, args.toName);
+  throw new Error("An email needs a lead, a client, or an address");
+}

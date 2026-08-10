@@ -2,6 +2,7 @@ import type { Lead, LeadSource, Prisma, ScraperRunStatus, ScraperRunTrigger, Scr
 import { prisma } from "../lib/prisma.js";
 import { ApifyError, abortRun, getDatasetItems, getRun, startRun, type ApifyRunStatus } from "../lib/apify.js";
 import { buildDedupeKey, mapItemToLead, scoreLead, type NormalizedLead, type Preset } from "./leadMapping.js";
+import { enrolNewLeads } from "./emailSequences.js";
 
 /**
  * Runs a configured Apify actor and turns its dataset into leads.
@@ -254,6 +255,15 @@ export async function ingestRun(runId: string, datasetId: string | null, source:
     `[scraper] ${source.name}: ${stats.itemsFetched} items → ${stats.leadsCreated} new, ` +
       `${stats.leadsUpdated} updated, ${stats.duplicates} duplicate, ${stats.filtered} filtered out`,
   );
+
+  // Anything new goes to whichever email sequences are watching for it. Only
+  // leads *created* by this run carry its id — a re-scrape that merely enriches
+  // an existing lead leaves `scraperRunId` where it was, so nobody is enrolled
+  // twice for having been found again.
+  if (stats.leadsCreated > 0) {
+    const created = await prisma.lead.findMany({ where: { scraperRunId: runId }, select: { id: true } });
+    await enrolNewLeads(created.map((lead) => lead.id));
+  }
 }
 
 export interface IngestStats {

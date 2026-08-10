@@ -23,6 +23,20 @@ export const SETTING = {
   CLOUDINARY_API_SECRET: "cloudinary.apiSecret",
   /** The app's own public URL — what Google's redirect URI is built from. */
   APP_URL: "app.url",
+
+  // Outbound email. SMTP rather than a provider API because every mailbox
+  // Dakyworld might send from — Google Workspace, Hostinger, Zoho — speaks it,
+  // and none of them need a new account opening to start.
+  SMTP_HOST: "smtp.host",
+  SMTP_PORT: "smtp.port",
+  SMTP_SECURE: "smtp.secure",
+  SMTP_USER: "smtp.user",
+  SMTP_PASSWORD: "smtp.password",
+  MAIL_FROM_NAME: "mail.fromName",
+  MAIL_FROM_EMAIL: "mail.fromEmail",
+  MAIL_REPLY_TO: "mail.replyTo",
+  /** Appended to every outbound email — address, unsubscribe line, sign-off. */
+  MAIL_SIGNATURE: "mail.signature",
 } as const;
 
 /** Env fallbacks, checked before the database. */
@@ -39,6 +53,14 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.CLOUDINARY_API_KEY]: "CLOUDINARY_API_KEY",
   [SETTING.CLOUDINARY_API_SECRET]: "CLOUDINARY_API_SECRET",
   [SETTING.APP_URL]: "APP_URL",
+  [SETTING.SMTP_HOST]: "SMTP_HOST",
+  [SETTING.SMTP_PORT]: "SMTP_PORT",
+  [SETTING.SMTP_SECURE]: "SMTP_SECURE",
+  [SETTING.SMTP_USER]: "SMTP_USER",
+  [SETTING.SMTP_PASSWORD]: "SMTP_PASSWORD",
+  [SETTING.MAIL_FROM_NAME]: "MAIL_FROM_NAME",
+  [SETTING.MAIL_FROM_EMAIL]: "MAIL_FROM_EMAIL",
+  [SETTING.MAIL_REPLY_TO]: "MAIL_REPLY_TO",
 };
 
 // One process, one cache. Writes go through setSetting, which clears it.

@@ -17,10 +17,11 @@ import { Badge, Button, Field, PageHeader, StatusDot } from "../components/ui";
  * wherever someone chose to make it one.
  */
 
-type SectionId = "analyst" | "google" | "capture" | "payments" | "storage" | "general";
+type SectionId = "email" | "analyst" | "google" | "capture" | "payments" | "storage" | "general";
 
 const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
-  { id: "analyst", label: "AI analyst", blurb: "Reads messy spreadsheets into leads" },
+  { id: "email", label: "Email", blurb: "The mailbox everything sends from" },
+  { id: "analyst", label: "AI analyst", blurb: "Reads sheets, drafts emails" },
   { id: "google", label: "Google Drive", blurb: "Import a sheet without downloading it" },
   { id: "capture", label: "Lead capture", blurb: "Apify scrapers and their schedule" },
   { id: "payments", label: "Payments", blurb: "Stripe checkout links on invoices" },
@@ -31,7 +32,7 @@ const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
 export function Settings() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [section, setSection] = useState<SectionId>((searchParams.get("tab") as SectionId) || "analyst");
+  const [section, setSection] = useState<SectionId>((searchParams.get("tab") as SectionId) || "email");
 
   const { data, isLoading } = useQuery({
     queryKey: ["settings"],
@@ -79,6 +80,8 @@ export function Settings() {
         return data.stripe.configured ? (data.stripe.webhookConfigured ? "ok" : "warn") : "idle";
       case "storage":
         return data.cloudinary.configured ? "ok" : "idle";
+      case "email":
+        return data.email.configured ? "ok" : "idle";
       default:
         return "ok";
     }
@@ -120,6 +123,7 @@ export function Settings() {
             <p className="text-sm text-ink/50">Loading…</p>
           ) : (
             <>
+              {section === "email" && <EmailPanel settings={data} />}
               {section === "analyst" && <AnalystPanel settings={data} />}
               {section === "google" && <GooglePanel settings={data} result={googleResult} params={searchParams} />}
               {section === "capture" && <CapturePanel settings={data} />}
@@ -131,6 +135,194 @@ export function Settings() {
         </div>
       </div>
     </div>
+  );
+}
+
+// --- Email -----------------------------------------------------------------
+
+/**
+ * The mailbox. SMTP rather than a provider API because every address Dakyworld
+ * might send from already speaks it — no new account, no domain to verify
+ * again before the first email can go out.
+ */
+function EmailPanel({ settings }: { settings: AppSettings }) {
+  const email = settings.email;
+  const save = useSaveSettings();
+  const [host, setHost] = useState(email.host ?? "");
+  const [port, setPort] = useState(email.port || 587);
+  const [user, setUser] = useState(email.user ?? "");
+  const [password, setPassword] = useState("");
+  const [fromName, setFromName] = useState(email.fromName ?? "Dan Kwame Ayipah");
+  const [fromEmail, setFromEmail] = useState(email.fromEmail ?? "");
+  const [replyTo, setReplyTo] = useState(email.replyTo ?? "");
+  const [sign, setSign] = useState(email.signature ?? "");
+  const [testTo, setTestTo] = useState("");
+  const [testResult, setTestResult] = useState<string | null>(null);
+
+  const connect = useMutation({
+    mutationFn: () =>
+      api.put<AppSettings>("/settings/email", {
+        host: host.trim(),
+        port: Number(port),
+        user: user.trim(),
+        password,
+        fromName: fromName.trim(),
+        fromEmail: fromEmail.trim(),
+        replyTo: replyTo.trim(),
+        signature: sign,
+      }),
+    onSuccess: (result) => {
+      save(result);
+      setPassword("");
+    },
+  });
+  const remove = useMutation({ mutationFn: () => api.delete<AppSettings>("/settings/email"), onSuccess: save });
+  const test = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; to: string }>("/settings/email/test", { to: testTo.trim() }),
+    onSuccess: (result) => setTestResult(`Sent to ${result.to}. If it doesn't arrive, check the spam folder before anything else.`),
+    onError: (err: Error) => setTestResult(err.message),
+  });
+
+  /** The three mailboxes Dakyworld realistically sends from, pre-filled. */
+  const presets = [
+    { label: "Google Workspace", host: "smtp.gmail.com", port: 587, note: "Use an App Password, not the account password." },
+    { label: "Hostinger", host: "smtp.hostinger.com", port: 465, note: "The mailbox password, as set in hPanel." },
+    { label: "Zoho Mail", host: "smtp.zoho.com", port: 465, note: "An app-specific password if 2FA is on." },
+  ];
+
+  return (
+    <Panel
+      title="Email"
+      what={
+        <>
+          The address the whole system sends from — proposals, invoices, deliverables, cold outreach and every follow-up sequence.
+          Nothing leaves the app until this is connected.
+        </>
+      }
+      where={
+        !email.configured && (
+          <>
+            Any mailbox with SMTP works. On Google Workspace you need an{" "}
+            <a
+              className="text-bronze hover:underline"
+              href="https://myaccount.google.com/apppasswords"
+              target="_blank"
+              rel="noreferrer"
+            >
+              App Password
+            </a>{" "}
+            rather than the account password — Google refuses plain logins from applications.
+          </>
+        )
+      }
+      state={
+        email.configured ? (
+          <Connected>
+            <span>
+              {email.fromName} &lt;{email.fromEmail}&gt;
+            </span>
+            <span className="font-mono text-xs text-ink/50">
+              {email.host}:{email.port}
+            </span>
+            {!email.envManaged && (
+              <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
+                Disconnect
+              </Button>
+            )}
+          </Connected>
+        ) : (
+          <NotConnected>Emails can be written and queued, but none will send.</NotConnected>
+        )
+      }
+    >
+      {email.envManaged ? (
+        <EnvNote variable="SMTP_HOST" />
+      ) : (
+        <>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {presets.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                title={preset.note}
+                onClick={() => {
+                  setHost(preset.host);
+                  setPort(preset.port);
+                }}
+                className="border border-ink/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink/55 transition hover:border-ink hover:text-ink"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          <form
+            className="mt-4 grid gap-3 sm:grid-cols-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (host.trim() && user.trim() && password && fromEmail.trim()) connect.mutate();
+            }}
+          >
+            <Field label="SMTP host">
+              <input value={host} onChange={(event) => setHost(event.target.value)} placeholder="smtp.gmail.com" className="input" />
+            </Field>
+            <Field label="Port" hint="587 for STARTTLS, 465 for implicit TLS.">
+              <input type="number" value={port} onChange={(event) => setPort(Number(event.target.value))} className="input" />
+            </Field>
+            <Field label="Username">
+              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="dan@dakyworld.com" className="input" />
+            </Field>
+            <Field label="Password" hint="Stored encrypted. Never shown again.">
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder={email.configured ? "•••••••• (unchanged)" : "App password"}
+                className="input"
+              />
+            </Field>
+            <Field label="From name">
+              <input value={fromName} onChange={(event) => setFromName(event.target.value)} className="input" />
+            </Field>
+            <Field label="From address">
+              <input value={fromEmail} onChange={(event) => setFromEmail(event.target.value)} placeholder="dan@dakyworld.com" className="input" />
+            </Field>
+            <Field label="Reply-to" hint="Optional — where replies should land, if not the from address." full>
+              <input value={replyTo} onChange={(event) => setReplyTo(event.target.value)} className="input" />
+            </Field>
+            <Field label="Signature" hint="Appended to every email the app sends." full>
+              <textarea rows={3} value={sign} onChange={(event) => setSign(event.target.value)} className="input" />
+            </Field>
+
+            <div className="sm:col-span-2 flex items-center gap-3">
+              <Button type="submit" disabled={connect.isPending || !host.trim() || !user.trim() || !password || !fromEmail.trim()}>
+                {connect.isPending ? "Checking with the server…" : email.configured ? "Save" : "Connect"}
+              </Button>
+              <span className="text-xs text-ink/45">Checked against the mail server before it's saved.</span>
+            </div>
+          </form>
+          <ErrorNote error={connect.error} />
+        </>
+      )}
+
+      {email.configured && (
+        <div className="mt-6 border-t border-ink/10 pt-4">
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">Send a test</div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              className="input max-w-xs"
+              placeholder="your@address.com"
+              value={testTo}
+              onChange={(event) => setTestTo(event.target.value)}
+            />
+            <Button variant="secondary" onClick={() => test.mutate()} disabled={test.isPending || !/^\S+@\S+\.\S+$/.test(testTo)}>
+              {test.isPending ? "Sending…" : "Send test"}
+            </Button>
+          </div>
+          {testResult && <p className="mt-2 text-sm text-ink/60">{testResult}</p>}
+        </div>
+      )}
+    </Panel>
   );
 }
 

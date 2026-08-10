@@ -17,6 +17,8 @@ import {
   rememberState,
 } from "../lib/google.js";
 import { verifyStripeKey } from "../lib/stripe.js";
+import { MailerError, readMailerConfig, sendMail, verifySmtp } from "../lib/mailer.js";
+import { signature, toHtml, toText } from "../services/emailRender.js";
 
 /**
  * Everything the Owner configures at runtime, in one place.
@@ -118,12 +120,39 @@ async function describeAll(req: Request) {
       cloudName,
       apiKey: cloudKey ? maskSecret(cloudKey) : null,
     },
+    email: await describeEmail(),
     general: {
       appUrl,
       appUrlEnvManaged: isEnvManaged(SETTING.APP_URL),
       resolvedAppUrl: origin(req, appUrl),
       timezone: timezone ?? "Africa/Accra",
     },
+  };
+}
+
+/** The mailbox the app sends from. The password is never returned, only its shape. */
+async function describeEmail() {
+  const config = await readMailerConfig();
+  const [host, port, user, fromName, fromEmail, replyTo, sign] = await Promise.all([
+    getSetting(SETTING.SMTP_HOST),
+    getSetting(SETTING.SMTP_PORT),
+    getSetting(SETTING.SMTP_USER),
+    getSetting(SETTING.MAIL_FROM_NAME),
+    getSetting(SETTING.MAIL_FROM_EMAIL),
+    getSetting(SETTING.MAIL_REPLY_TO),
+    getSetting(SETTING.MAIL_SIGNATURE),
+  ]);
+  return {
+    configured: config !== null,
+    envManaged: isEnvManaged(SETTING.SMTP_HOST),
+    host,
+    port: port ? Number(port) : 587,
+    secure: config?.secure ?? false,
+    user,
+    fromName,
+    fromEmail,
+    replyTo,
+    signature: sign ?? (await signature()),
   };
 }
 
@@ -369,6 +398,96 @@ settingsRouter.delete("/cloudinary", async (req, res, next) => {
       deleteSetting(SETTING.CLOUDINARY_CLOUD_NAME),
       deleteSetting(SETTING.CLOUDINARY_API_KEY),
       deleteSetting(SETTING.CLOUDINARY_API_SECRET),
+    ]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Email -----------------------------------------------------------------
+
+settingsRouter.put("/email", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.SMTP_HOST, "The mail server settings", res)) return;
+    const input = z
+      .object({
+        host: z.string().min(3),
+        port: z.number().int().min(1).max(65535).default(587),
+        secure: z.boolean().optional(),
+        user: z.string().min(3),
+        password: z.string().min(1),
+        fromName: z.string().min(1).default("Dakyworld"),
+        fromEmail: z.string().email(),
+        replyTo: z.string().email().or(z.literal("")).optional(),
+        signature: z.string().max(600).optional(),
+      })
+      .parse(req.body);
+
+    // Checked against the server before it is stored, so a wrong password
+    // fails on this screen rather than silently at 8am inside a sequence.
+    await verifySmtp({
+      host: input.host.trim(),
+      port: input.port,
+      secure: input.secure ?? input.port === 465,
+      user: input.user.trim(),
+      password: input.password,
+      fromName: input.fromName,
+      fromEmail: input.fromEmail,
+      replyTo: input.replyTo || null,
+    });
+
+    await setSetting(SETTING.SMTP_HOST, input.host.trim());
+    await setSetting(SETTING.SMTP_PORT, String(input.port));
+    await setSetting(SETTING.SMTP_SECURE, String(input.secure ?? input.port === 465));
+    await setSetting(SETTING.SMTP_USER, input.user.trim());
+    await setSetting(SETTING.SMTP_PASSWORD, input.password, { secret: true });
+    await setSetting(SETTING.MAIL_FROM_NAME, input.fromName.trim());
+    await setSetting(SETTING.MAIL_FROM_EMAIL, input.fromEmail.trim());
+    if (input.replyTo !== undefined) {
+      if (input.replyTo) await setSetting(SETTING.MAIL_REPLY_TO, input.replyTo.trim());
+      else await deleteSetting(SETTING.MAIL_REPLY_TO);
+    }
+    if (input.signature !== undefined) await setSetting(SETTING.MAIL_SIGNATURE, input.signature);
+
+    res.json(await describeAll(req));
+  } catch (err) {
+    if (err instanceof MailerError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+/** Proves the whole path works, end to end, by sending one real email. */
+settingsRouter.post("/email/test", async (req, res, next) => {
+  try {
+    const { to } = z.object({ to: z.string().email() }).parse(req.body);
+    const sign = await signature();
+    const body = `This is a test from Dakyworld OS.\n\nIf you are reading it, the mailbox is connected and the app can send on your behalf — proposals, invoices, deliverables and sequences will all go out through this address.`;
+    await sendMail({
+      to,
+      subject: "Dakyworld OS — mail is working",
+      html: toHtml(body, sign, null),
+      text: toText(body, sign, null),
+    });
+    res.json({ ok: true, to });
+  } catch (err) {
+    if (err instanceof MailerError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+settingsRouter.delete("/email", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.SMTP_HOST, "The mail server settings", res)) return;
+    await Promise.all([
+      deleteSetting(SETTING.SMTP_HOST),
+      deleteSetting(SETTING.SMTP_PORT),
+      deleteSetting(SETTING.SMTP_SECURE),
+      deleteSetting(SETTING.SMTP_USER),
+      deleteSetting(SETTING.SMTP_PASSWORD),
+      deleteSetting(SETTING.MAIL_FROM_NAME),
+      deleteSetting(SETTING.MAIL_FROM_EMAIL),
+      deleteSetting(SETTING.MAIL_REPLY_TO),
     ]);
     res.json(await describeAll(req));
   } catch (err) {

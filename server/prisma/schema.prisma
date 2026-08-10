@@ -47,6 +47,7 @@ model User {
   communications   Communication[]
   performanceNotes PerformanceNote[]
   sessions         Session[]
+  emailsWritten    EmailMessage[]
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -98,6 +99,8 @@ model Client {
   carePlans      CarePlan[]
   invoices       Invoice[]
   communications Communication[]
+  emails         EmailMessage[]
+  enrollments    EmailEnrollment[]
 }
 
 model Contact {
@@ -200,6 +203,8 @@ model Lead {
 
   proposals      Proposal[]
   communications Communication[]
+  emails         EmailMessage[]
+  enrollments    EmailEnrollment[]
 
   @@index([status])
   @@index([groupId])
@@ -483,6 +488,7 @@ model Proposal {
   updatedAt    DateTime       @updatedAt
 
   project Project?
+  emails  EmailMessage[]
 
   @@index([status])
 }
@@ -522,6 +528,7 @@ model Project {
   timeEntries    TimeEntry[]
   invoices       Invoice[]
   communications Communication[]
+  emails         EmailMessage[]
   carePlan       CarePlan?
 }
 
@@ -653,6 +660,7 @@ model CarePlan {
 
   invoices Invoice[]
   cycles   CarePlanCycle[]
+  emails   EmailMessage[]
 }
 
 /// One billed month of a care plan. The retainer is invoiced in advance, so a
@@ -722,6 +730,7 @@ model Invoice {
 
   lineItems InvoiceLineItem[]
   cycle     CarePlanCycle?
+  emails    EmailMessage[]
 }
 
 model InvoiceLineItem {
@@ -772,4 +781,256 @@ model Attachment {
   url             String // Cloudinary URL
   filename        String
   createdAt       DateTime      @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Email — outreach, deliverables, and the sequences that send them
+// ---------------------------------------------------------------------------
+
+enum EmailStatus {
+  /// Written, going nowhere until someone sends it.
+  DRAFT
+  /// Approved and waiting for its send time.
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+  /// Pulled back before it went — the recipient replied, unsubscribed, or the plan changed.
+  CANCELLED
+}
+
+/// Why this message exists. Kept because "who wrote this" is the first question
+/// asked of anything that turns up in a client's inbox.
+enum EmailKind {
+  MANUAL
+  TEMPLATE
+  AI_DRAFT
+  SEQUENCE
+  AUTOMATION
+}
+
+/// What an email is for. Drives the AI brief, the template library and the
+/// tone: a cold approach and an invoice reminder are not the same letter.
+enum EmailPurpose {
+  COLD_OUTREACH
+  FOLLOW_UP
+  MEETING_REQUEST
+  PROPOSAL_COVER
+  DELIVERABLE_HANDOVER
+  PROJECT_UPDATE
+  INVOICE_DELIVERY
+  INVOICE_REMINDER
+  CARE_PLAN_REVIEW
+  ONBOARDING
+  REACTIVATION
+  THANK_YOU
+  ANNOUNCEMENT
+  CUSTOM
+}
+
+model EmailMessage {
+  id      String @id @default(cuid())
+  subject String
+  /// The body as written, in HTML. `bodyText` is the plain-text alternative
+  /// that keeps the message readable in text-only clients and out of spam.
+  bodyHtml String
+  bodyText String
+
+  toEmail String
+  toName  String?
+  cc      String[] @default([])
+  bcc     String[] @default([])
+  replyTo String?
+
+  status  EmailStatus  @default(DRAFT)
+  kind    EmailKind    @default(MANUAL)
+  purpose EmailPurpose @default(CUSTOM)
+
+  /// Set on a scheduled message; the scheduler sends it when it comes due.
+  scheduledFor DateTime?
+  sentAt       DateTime?
+  failedAt     DateTime?
+  error        String?
+  attempts     Int       @default(0)
+  /// The provider's Message-ID, so a reply threads back to it.
+  messageId    String?
+  /// Threading header for a follow-up: it should land under the first email
+  /// rather than starting a new conversation.
+  inReplyTo    String?
+
+  /// [{ name, url, contentType }] — Cloudinary URLs, or a PDF this app renders.
+  attachments Json @default("[]")
+
+  /// Everything this email might be about. All optional: a cold email has a
+  /// lead and nothing else; an invoice delivery has a client and an invoice.
+  lead       Lead?     @relation(fields: [leadId], references: [id])
+  leadId     String?
+  client     Client?   @relation(fields: [clientId], references: [id])
+  clientId   String?
+  project    Project?  @relation(fields: [projectId], references: [id])
+  projectId  String?
+  proposal   Proposal? @relation(fields: [proposalId], references: [id])
+  proposalId String?
+  invoice    Invoice?  @relation(fields: [invoiceId], references: [id])
+  invoiceId  String?
+  carePlan   CarePlan? @relation(fields: [carePlanId], references: [id])
+  carePlanId String?
+
+  template     EmailTemplate?     @relation(fields: [templateId], references: [id])
+  templateId   String?
+  step         EmailSequenceStep? @relation(fields: [stepId], references: [id])
+  stepId       String?
+  enrollment   EmailEnrollment?   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  enrollmentId String?
+
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+  createdById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, scheduledFor])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([toEmail])
+}
+
+/// A reusable letter. `{{placeholders}}` are filled from the recipient's own
+/// record at send time — see services/emailRender.ts for the full list.
+model EmailTemplate {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  purpose     EmailPurpose @default(CUSTOM)
+  description String?
+  subject     String
+  bodyHtml    String
+  /// True for the ones that ship with the app. They can be edited; editing one
+  /// makes it yours, and a later deploy never overwrites it.
+  builtin     Boolean      @default(false)
+  /// A brief for the AI when this template is a starting point rather than the
+  /// finished letter.
+  aiBrief     String?
+  active      Boolean      @default(true)
+  usageCount  Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  messages EmailMessage[]
+  steps    EmailSequenceStep[]
+}
+
+/// What starts a sequence. MANUAL means a person enrols people by hand.
+enum SequenceTrigger {
+  MANUAL
+  LEAD_CREATED
+  LEAD_STATUS_CHANGED
+  PROPOSAL_SENT
+  PROJECT_COMPLETED
+  INVOICE_OVERDUE
+  CARE_PLAN_REVIEW_DUE
+}
+
+/// A series of emails sent on a delay — the follow-up nobody remembers to send
+/// by hand, which is where most of a cold pipeline is actually lost.
+model EmailSequence {
+  id            String          @id @default(cuid())
+  name          String
+  description   String?
+  trigger       SequenceTrigger @default(MANUAL)
+  /// Narrows an automatic trigger: `{ "status": "QUALIFIED", "minScore": 60 }`.
+  triggerFilter Json?
+  active        Boolean         @default(false)
+  /// Stops the rest of the sequence once the person replies. On by default:
+  /// nothing reads worse than a follow-up to an email already answered.
+  stopOnReply     Boolean @default(true)
+  /// Every message waits for approval instead of going out on its own.
+  requireApproval Boolean @default(false)
+  /// Local hours a sequence email may be sent in, so nothing lands at 3am.
+  sendWindowStart Int     @default(8)
+  sendWindowEnd   Int     @default(18)
+  weekdaysOnly    Boolean @default(true)
+  timezone        String  @default("Africa/Accra")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  steps       EmailSequenceStep[]
+  enrollments EmailEnrollment[]
+}
+
+model EmailSequenceStep {
+  id         String        @id @default(cuid())
+  sequence   EmailSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  sequenceId String
+  /// 0-based order in the sequence.
+  position   Int
+  /// Days after the previous step, or after enrolment for the first.
+  delayDays  Int           @default(3)
+
+  template   EmailTemplate? @relation(fields: [templateId], references: [id])
+  templateId String?
+  /// Written inline instead of from a template.
+  subject    String?
+  bodyHtml   String?
+  /// Draft this step with the AI at send time, from the recipient's own record.
+  useAi      Boolean        @default(false)
+  aiBrief    String?
+  purpose    EmailPurpose   @default(FOLLOW_UP)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages EmailMessage[]
+
+  @@unique([sequenceId, position])
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  /// Stopped early — replied, unsubscribed, converted, or pulled by hand.
+  STOPPED
+}
+
+model EmailEnrollment {
+  id         String        @id @default(cuid())
+  sequence   EmailSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  sequenceId String
+
+  lead     Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId   String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId String?
+  /// Snapshotted at enrolment: the address is what was reachable then.
+  toEmail  String
+
+  status       EnrollmentStatus @default(ACTIVE)
+  /// The next step to send — 0 is the first.
+  nextPosition Int              @default(0)
+  nextSendAt   DateTime?
+  stopReason   String?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  messages EmailMessage[]
+
+  /// One enrolment per person per sequence: re-enrolling must not double-send.
+  @@unique([sequenceId, leadId])
+  @@unique([sequenceId, clientId])
+  @@index([status, nextSendAt])
+}
+
+/// Addresses that must never be written to again. Checked before every send,
+/// sequences included — an unsubscribe that only stops one campaign is not an
+/// unsubscribe.
+model EmailSuppression {
+  id     String @id @default(cuid())
+  email  String @unique
+  reason String
+  /// UNSUBSCRIBED, BOUNCED, COMPLAINED, MANUAL
+  source String @default("MANUAL")
+
+  createdAt DateTime @default(now())
 }

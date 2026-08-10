@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { Lead, LeadFieldDef, LeadStats } from "../lib/types";
 import { LeadDrawer } from "../components/LeadDrawer";
+import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
 import {
   ColumnManager,
   LeadCell,
@@ -105,6 +106,8 @@ export function Leads() {
   // null = editing the default set; a group id = editing that list's own set.
   // `undefined` means the editor is closed.
   const [columnsFor, setColumnsFor] = useState<string | null | undefined>(undefined);
+
+  const [emailing, setEmailing] = useState<ComposerTarget | null>(null);
 
   // The open lead lives in the URL, so a lead can be linked to directly.
   const openLeadId = searchParams.get("lead");
@@ -338,7 +341,18 @@ export function Leads() {
         </div>
       )}
 
-      <LeadDrawer leadId={openLeadId} groups={stats?.groups ?? []} onClose={() => setOpenLeadId(null)} />
+      <LeadDrawer
+        leadId={openLeadId}
+        groups={stats?.groups ?? []}
+        onClose={() => setOpenLeadId(null)}
+        onEmail={(leadId) => {
+          // Close the drawer first: one slide-over on top of another is a maze.
+          setOpenLeadId(null);
+          setEmailing({ leadId, purpose: "COLD_OUTREACH" });
+        }}
+      />
+
+      <EmailComposer target={emailing} open={emailing !== null} onClose={() => setEmailing(null)} />
 
       <ColumnManager
         open={columnsFor !== undefined}
