@@ -5,7 +5,16 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { Lead, LeadFieldDef, LeadStats } from "../lib/types";
 import { LeadDrawer } from "../components/LeadDrawer";
-import { ColumnManager, LeadCell, useLeadFields, visibleFields } from "../components/LeadColumns";
+import {
+  ColumnManager,
+  LeadCell,
+  LeadCellEditor,
+  buildLeadPatch,
+  editableText,
+  isEditableField,
+  useLeadFields,
+  visibleFields,
+} from "../components/LeadColumns";
 import { Button, Card, EmptyState, Field, Money, PageHeader, StatTile } from "../components/ui";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
@@ -23,13 +32,17 @@ const SOURCES = [
   "OTHER",
 ];
 
+// Lists first, and the default: a lead belongs to the list it arrived in, and
+// that's how it should read. Bucketing everything by status instead throws
+// away which sheet or scrape it came from, and quietly implies a judgement
+// ("qualified") that nobody has actually made yet.
 const GROUP_BY = [
+  { value: "group", label: "List" },
   { value: "status", label: "Status" },
-  { value: "group", label: "Capture batch" },
   { value: "city", label: "City" },
   { value: "category", label: "Category" },
   { value: "source", label: "Source" },
-  { value: "none", label: "Flat list" },
+  { value: "none", label: "One flat list" },
 ] as const;
 
 type GroupBy = (typeof GROUP_BY)[number]["value"];
@@ -86,10 +99,12 @@ export function Leads() {
     scraperSourceId: searchParams.get("scraperSourceId") ?? "",
     scraperRunId: searchParams.get("scraperRunId") ?? "",
   }));
-  const [groupBy, setGroupBy] = useState<GroupBy>("status");
+  const [groupBy, setGroupBy] = useState<GroupBy>("group");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showForm, setShowForm] = useState(false);
-  const [columnsOpen, setColumnsOpen] = useState(false);
+  // null = editing the default set; a group id = editing that list's own set.
+  // `undefined` means the editor is closed.
+  const [columnsFor, setColumnsFor] = useState<string | null | undefined>(undefined);
 
   // The open lead lives in the URL, so a lead can be linked to directly.
   const openLeadId = searchParams.get("lead");
@@ -132,8 +147,8 @@ export function Leads() {
     },
   });
 
-  const updateStatus = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) => api.patch<Lead>(`/leads/${id}`, { status }),
+  const updateLead = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<Lead>(`/leads/${id}`, body),
     onSuccess: invalidate,
   });
 
@@ -154,7 +169,11 @@ export function Leads() {
   });
 
   const leads = data?.items ?? [];
-  const grouped = useMemo(() => groupLeads(leads, groupBy), [leads, groupBy]);
+  // Searching is a question about every lead you have, not about one list, so
+  // the answer comes back as one ranked set rather than re-bucketed by list.
+  const searching = filters.q.trim().length > 0;
+  const effectiveGroupBy: GroupBy = searching && groupBy === "group" ? "none" : groupBy;
+  const grouped = useMemo(() => groupLeads(leads, effectiveGroupBy), [leads, effectiveGroupBy]);
   const activeFilterCount =
     (filters.q ? 1 : 0) +
     filters.status.length +
@@ -193,9 +212,10 @@ export function Leads() {
         subtitle="Every prospect from first contact through close — captured by hand or by the scrapers."
         action={
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => setColumnsOpen(true)}>
+            <Button variant="ghost" size="sm" onClick={() => setColumnsFor(filters.groupId || null)}>
               Columns
             </Button>
+            <ExportMenu query={query} count={data?.total ?? 0} />
             {/* Importing reaches into Google and spends Anthropic credits, so
                 the API restricts it to the Owner — don't offer it to anyone else. */}
             {user?.role === "OWNER" && (
@@ -297,14 +317,17 @@ export function Leads() {
               leads={group.leads}
               // Grouping by capture batch is the one view where each block can
               // legitimately have its own columns, so each block asks for them.
-              groupId={groupBy === "group" && group.key !== "none" ? group.key : null}
+              groupId={effectiveGroupBy === "group" && group.key !== "none" ? group.key : null}
               fallbackColumns={columns}
               selected={selected}
               onToggle={toggleSelected}
               onToggleAll={toggleMany}
               onOpen={setOpenLeadId}
-              onStatus={(id, status) => updateStatus.mutate({ id, status })}
-              showGroupHeader={groupBy !== "none"}
+              onSave={(id, body) => updateLead.mutate({ id, body })}
+              savingId={updateLead.isPending ? updateLead.variables?.id : undefined}
+              saveError={updateLead.error}
+              onEditColumns={setColumnsFor}
+              showGroupHeader={effectiveGroupBy !== "none"}
             />
           ))}
           {data && data.total > leads.length && (
@@ -318,12 +341,43 @@ export function Leads() {
       <LeadDrawer leadId={openLeadId} groups={stats?.groups ?? []} onClose={() => setOpenLeadId(null)} />
 
       <ColumnManager
-        open={columnsOpen}
-        onClose={() => setColumnsOpen(false)}
-        groupId={filters.groupId || null}
-        groupName={stats?.groups.find((group) => group.id === filters.groupId)?.name}
+        open={columnsFor !== undefined}
+        onClose={() => setColumnsFor(undefined)}
+        groupId={columnsFor ?? null}
+        groupName={stats?.groups.find((group) => group.id === columnsFor)?.name}
       />
     </div>
+  );
+}
+
+// --- Export ----------------------------------------------------------------
+
+/**
+ * Downloads whatever the table is currently showing. A plain link rather than
+ * a fetch: the session cookie rides along, the browser handles the save
+ * dialog, and a 5,000-row workbook never has to exist in memory here.
+ */
+function ExportMenu({ query, count }: { query: string; count: number }) {
+  const base = import.meta.env.VITE_API_BASE ?? "/api";
+  const href = (format: string) => `${base}/leads/export?format=${format}${query ? `&${query}` : ""}`;
+
+  return (
+    <span className="flex items-center gap-1">
+      <a
+        href={href("xlsx")}
+        title={`Export ${count} lead${count === 1 ? "" : "s"} to Excel, with every column`}
+        className="inline-flex items-center gap-2 border border-ink/20 px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition hover:border-ink"
+      >
+        Excel
+      </a>
+      <a
+        href={href("pdf")}
+        title={`Export ${count} lead${count === 1 ? "" : "s"} to a printable PDF`}
+        className="inline-flex items-center gap-2 border border-ink/20 px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition hover:border-ink"
+      >
+        PDF
+      </a>
+    </span>
   );
 }
 
@@ -386,7 +440,10 @@ function LeadGroupBlock({
   onToggle,
   onToggleAll,
   onOpen,
-  onStatus,
+  onSave,
+  savingId,
+  saveError,
+  onEditColumns,
   showGroupHeader,
 }: {
   label: string;
@@ -398,10 +455,17 @@ function LeadGroupBlock({
   onToggle: (id: string) => void;
   onToggleAll: (ids: string[], select: boolean) => void;
   onOpen: (id: string) => void;
-  onStatus: (id: string, status: string) => void;
+  /** Any edit to a lead — a status change, or a whole row typed over. */
+  onSave: (id: string, body: Record<string, unknown>) => void;
+  savingId?: string;
+  saveError: unknown;
+  /** Opens the column editor for whichever set this block is rendering. */
+  onEditColumns: (groupId: string | null) => void;
   showGroupHeader: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
   const { data: ownFields } = useLeadFields(groupId);
   // Only a batch with its own set overrides the page's columns; a batch on the
   // defaults renders exactly like everything else.
@@ -409,6 +473,18 @@ function LeadGroupBlock({
   const ids = leads.map((lead) => lead.id);
   const allSelected = ids.every((id) => selected.has(id));
   const withEmail = leads.filter((lead) => lead.contactEmail).length;
+
+  const startEditing = (lead: Lead) => {
+    setEditingId(lead.id);
+    setDraft(Object.fromEntries(columns.filter(isEditableField).map((field) => [field.key, editableText(lead, field)])));
+  };
+
+  const commit = (lead: Lead) => {
+    const patch = buildLeadPatch(columns, draft);
+    setEditingId(null);
+    // Nothing changed is a perfectly ordinary outcome of opening a row.
+    if (Object.keys(patch).length) onSave(lead.id, patch);
+  };
 
   return (
     <section>
@@ -438,42 +514,106 @@ function LeadGroupBlock({
 
       {!collapsed && (
         <div className="overflow-x-auto border border-ink/10 bg-white">
+          {saveError instanceof Error && (
+            <p className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{saveError.message}</p>
+          )}
           <table className="w-full text-left text-sm" style={{ minWidth: `${Math.max(640, columns.length * 150)}px` }}>
             <thead>
               <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
                 <th className="w-8 px-3 py-3" />
                 {columns.map((column) => (
                   <th key={column.key} className="px-4 py-3 whitespace-nowrap" style={column.width ? { width: column.width } : undefined}>
-                    {column.label}
+                    {/* The header is the way into renaming, reordering and
+                        hiding this column — the place you're already looking
+                        when you decide the name is wrong. */}
+                    <button
+                      type="button"
+                      onClick={() => onEditColumns(groupId)}
+                      title={`Edit columns${column.builtin ? "" : " · custom column"}`}
+                      className="group flex items-center gap-1 uppercase tracking-[.12em] transition hover:text-ink"
+                    >
+                      {column.label}
+                      <span className="opacity-0 transition group-hover:opacity-60">✎</span>
+                    </button>
                   </th>
                 ))}
+                <th className="w-20 px-3 py-3 text-right">
+                  <button
+                    type="button"
+                    onClick={() => onEditColumns(groupId)}
+                    title="Add a column"
+                    className="font-mono text-[13px] leading-none text-ink/40 transition hover:text-ink"
+                  >
+                    +
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {leads.map((lead) => (
-                <tr
-                  key={lead.id}
-                  className={`cursor-pointer border-b border-ink/5 transition last:border-0 hover:bg-ivory/60 ${
-                    selected.has(lead.id) ? "bg-gold/5" : ""
-                  }`}
-                  onClick={() => onOpen(lead.id)}
-                >
-                  <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(lead.id)}
-                      onChange={() => onToggle(lead.id)}
-                      className="h-3.5 w-3.5 accent-[#0B0B0C]"
-                      aria-label={`Select ${lead.contactName}`}
-                    />
-                  </td>
-                  {columns.map((column) => (
-                    <td key={column.key} className="px-4 py-3 align-top">
-                      <LeadCell lead={lead} field={column} onStatus={(status) => onStatus(lead.id, status)} />
+              {leads.map((lead) => {
+                const editing = editingId === lead.id;
+                return (
+                  <tr
+                    key={lead.id}
+                    className={`group border-b border-ink/5 transition last:border-0 ${
+                      editing ? "bg-gold/10" : `cursor-pointer hover:bg-ivory/60 ${selected.has(lead.id) ? "bg-gold/5" : ""}`
+                    }`}
+                    onClick={() => !editing && onOpen(lead.id)}
+                  >
+                    <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(lead.id)}
+                        onChange={() => onToggle(lead.id)}
+                        className="h-3.5 w-3.5 accent-[#0B0B0C]"
+                        aria-label={`Select ${lead.contactName}`}
+                      />
                     </td>
-                  ))}
-                </tr>
-              ))}
+                    {columns.map((column) => (
+                      <td
+                        key={column.key}
+                        className="px-4 py-3 align-top"
+                        onClick={(event) => editing && event.stopPropagation()}
+                      >
+                        {editing && isEditableField(column) ? (
+                          <LeadCellEditor
+                            field={column}
+                            value={draft[column.key] ?? ""}
+                            onChange={(next) => setDraft((current) => ({ ...current, [column.key]: next }))}
+                            onCommit={() => commit(lead)}
+                            onCancel={() => setEditingId(null)}
+                            autoFocus={column.key === columns.find(isEditableField)?.key}
+                          />
+                        ) : (
+                          <LeadCell lead={lead} field={column} onStatus={(status) => onSave(lead.id, { status })} />
+                        )}
+                      </td>
+                    ))}
+                    <td className="px-3 py-3 text-right" onClick={(event) => event.stopPropagation()}>
+                      {editing ? (
+                        <span className="flex justify-end gap-2 font-mono text-[10px] uppercase tracking-[.1em]">
+                          <button type="button" onClick={() => commit(lead)} className="text-bronze hover:underline">
+                            {savingId === lead.id ? "Saving…" : "Save"}
+                          </button>
+                          <button type="button" onClick={() => setEditingId(null)} className="text-ink/40 hover:text-ink">
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEditing(lead)}
+                          title="Edit this row"
+                          aria-label={`Edit ${lead.contactName}`}
+                          className="font-mono text-xs text-ink/25 opacity-0 transition hover:text-ink group-hover:opacity-100"
+                        >
+                          ✎
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

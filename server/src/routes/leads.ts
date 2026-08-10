@@ -12,8 +12,12 @@ import {
   resolveFields,
   slugifyKey,
 } from "../services/leadFields.js";
+import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
 
 export const leadsRouter = Router();
+
+/** An export is a file someone waits for — big enough to be useful, bounded enough to finish. */
+const EXPORT_LIMIT = 5000;
 
 const leadInput = z.object({
   contactName: z.string().min(1),
@@ -232,6 +236,63 @@ leadsRouter.delete("/groups/:id", async (req, res, next) => {
     await prisma.lead.updateMany({ where: { groupId: req.params.id }, data: { groupId: null } });
     await prisma.leadGroup.delete({ where: { id: req.params.id } });
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/leads/export?format=xlsx|pdf — the current view, as a file.
+ *
+ * Takes exactly the same query string as the table, so what downloads is what
+ * you were looking at. Grouped by batch, each batch keeps its own columns —
+ * one worksheet each, because two batches with different columns can't share a
+ * sheet without one of them losing columns.
+ */
+leadsRouter.get("/export", async (req, res, next) => {
+  try {
+    const format = String(req.query.format ?? "xlsx").toLowerCase();
+    if (format !== "xlsx" && format !== "pdf") {
+      return res.status(400).json({ error: "format must be xlsx or pdf" });
+    }
+
+    const where = buildWhere(req.query as Record<string, unknown>);
+    const sort = SORTS[String(req.query.sort ?? "newest")] ?? SORTS.newest;
+    const leads = await prisma.lead.findMany({ where, orderBy: sort, take: EXPORT_LIMIT, include: { group: true } });
+
+    // One export per batch when the leads span several, so each keeps its own
+    // columns; a single batch (or none) exports flat.
+    const byGroup = new Map<string, { name: string; leads: typeof leads }>();
+    for (const lead of leads) {
+      const key = lead.groupId ?? "none";
+      const bucket = byGroup.get(key) ?? { name: lead.group?.name ?? "Ungrouped", leads: [] };
+      bucket.leads.push(lead);
+      byGroup.set(key, bucket);
+    }
+
+    const groups: ExportGroup[] = [];
+    for (const [key, bucket] of byGroup) {
+      const { fields } = await resolveFields(key === "none" ? null : key);
+      groups.push({ name: bucket.name, fields: fields.filter((field) => !field.hidden), leads: bucket.leads });
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const filename = `dakyworld-leads-${stamp}.${format === "pdf" ? "pdf" : "xlsx"}`;
+    const subtitle = `${leads.length} lead${leads.length === 1 ? "" : "s"} · exported ${stamp}${
+      leads.length === EXPORT_LIMIT ? ` · capped at ${EXPORT_LIMIT}` : ""
+    }`;
+
+    const file =
+      format === "pdf"
+        ? await renderLeadsPdf(groups, "Lead export", subtitle)
+        : await renderLeadsXlsx(groups, "Leads");
+
+    res.setHeader(
+      "Content-Type",
+      format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(file);
   } catch (err) {
     next(err);
   }

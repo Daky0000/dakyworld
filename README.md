@@ -17,8 +17,11 @@ Cloudinary (file storage, PDF hosting).
 - **Spreadsheet import (AI)** — point at an `.xlsx`/`.csv`, or a sheet in a
   connected Google Drive, and Claude reads it: every table it holds becomes
   its own batch with its own columns, however messy the file. See below.
-- **Configurable lead columns** — rename, reorder, hide and add columns, per
-  batch or across the whole pipeline, without a schema change.
+- **Configurable lead columns** — rename, reorder, hide and add columns from
+  the table header itself, per list or across the whole pipeline, without a
+  schema change. Any row can be edited in place, including the name.
+- **Export** — the current view, filters and all, to Excel (one sheet per list,
+  every column) or a printable PDF.
 - **Settings** — every integration key (Apify, Anthropic, Google, Stripe,
   Cloudinary) pasted in the app and stored encrypted in the database, so
   adding or rotating one never needs a redeploy.
@@ -161,6 +164,26 @@ leads do — email, else website domain, else phone, else name+city — so
 re-importing an updated sheet refreshes the same leads, filling blanks and
 merging custom values rather than doubling the pipeline. Rows with no usable
 name are skipped and counted.
+
+### Editing leads and columns
+
+**Any row edits in place.** The pencil at the end of a row turns it into
+inputs — every column, including the name and any custom column the sheet
+brought with it. Enter saves, Escape cancels. Status and source become
+dropdowns so a typo can't invent a pipeline stage.
+
+**Leads are grouped by list, not by status.** A lead belongs to the sheet or
+scrape it arrived in, and that's how the page reads by default. Bucketing
+everything under NEW / QUALIFYING / QUALIFIED instead throws away where each
+lead came from and implies a judgement nobody has made yet — status is still
+there as a grouping option, and as a filter, when you want it. **Searching
+crosses every list**: type in the search box and the results come back as one
+set drawn from all leads rather than re-bucketed.
+
+**Export** hands back what you're looking at. Excel gives one worksheet per
+list, each with that list's own columns; PDF is a landscape read-out of the
+first eight columns, for printing or sending. Both take the same filters as
+the table, and both cap at 5,000 rows.
 
 ### Editing the columns
 

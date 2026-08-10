@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
 const navItems = [
@@ -18,7 +18,13 @@ const navItems = [
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const visibleNav = navItems.filter((item) => !item.ownerOnly || user?.role === "OWNER");
+  // Every page except the dashboard is somewhere you arrived from somewhere
+  // else, so every one of them gets a way back that doesn't mean hunting for
+  // the browser chrome or guessing which nav tab you came in through.
+  const canGoBack = location.pathname !== "/";
   return (
     <div className="min-h-screen bg-ivory text-ink">
       <header className="border-b border-ink/10 bg-white/70 backdrop-blur">
@@ -64,6 +70,15 @@ export function Layout() {
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-6 py-10">
+        {canGoBack && (
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="mb-5 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+          >
+            <span aria-hidden>←</span> Back
+          </button>
+        )}
         <Outlet />
       </main>
     </div>

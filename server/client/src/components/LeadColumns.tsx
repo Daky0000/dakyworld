@@ -5,6 +5,19 @@ import type { Lead, LeadFieldDef, LeadFieldSet, LeadFieldType } from "../lib/typ
 import { Badge, Button, Drawer, Money, RelativeTime, ScoreBar } from "./ui";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
+const SOURCES = [
+  "REFERRAL",
+  "LINKEDIN",
+  "COLD_EMAIL",
+  "OUTREACH",
+  "CONTENT",
+  "WARM_NETWORK",
+  "GOOGLE_MAPS",
+  "WEB_SCRAPE",
+  "DIRECTORY",
+  "SOCIAL",
+  "OTHER",
+];
 
 export const FIELD_TYPES: LeadFieldType[] = [
   "TEXT",
@@ -157,6 +170,133 @@ export function LeadCell({
     default:
       return <span>{String(value)}</span>;
   }
+}
+
+// --- Editing ---------------------------------------------------------------
+
+/** Columns the system owns; everything else on a lead can be typed over. */
+const READONLY_KEYS = new Set(["createdAt", "updatedAt", "id"]);
+
+export function isEditableField(field: LeadFieldDef): boolean {
+  return !READONLY_KEYS.has(field.key);
+}
+
+/** The current value as text, for putting in an input. */
+export function editableText(lead: Lead, field: LeadFieldDef): string {
+  const value = leadValue(lead, field);
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return value.join(", ");
+  if (field.type === "DATE") {
+    const date = new Date(String(value));
+    return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
+  }
+  return String(value);
+}
+
+/**
+ * One cell mid-edit. Built-in columns with a fixed vocabulary get a dropdown so
+ * a typo can't put a lead into a status that doesn't exist; everything else
+ * gets the input its type deserves.
+ */
+export function LeadCellEditor({
+  field,
+  value,
+  onChange,
+  onCommit,
+  onCancel,
+  autoFocus,
+}: {
+  field: LeadFieldDef;
+  value: string;
+  onChange: (next: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+  autoFocus?: boolean;
+}) {
+  const keys = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onCommit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel();
+    }
+  };
+
+  const shared = "w-full min-w-[6rem] border border-ink/25 bg-white px-2 py-1 text-sm outline-none focus:border-ink";
+
+  if (field.key === "status" || field.key === "source") {
+    const options = field.key === "status" ? STATUSES : SOURCES;
+    return (
+      <select value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={keys} className={shared} autoFocus={autoFocus}>
+        {!options.includes(value) && <option value={value}>{value || "—"}</option>}
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option.replace(/_/g, " ")}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (field.type === "BOOLEAN") {
+    return (
+      <select value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={keys} className={shared} autoFocus={autoFocus}>
+        <option value="">—</option>
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    );
+  }
+
+  return (
+    <input
+      value={value}
+      autoFocus={autoFocus}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={keys}
+      type={field.type === "DATE" ? "date" : field.type === "NUMBER" || field.type === "CURRENCY" ? "number" : "text"}
+      className={shared}
+    />
+  );
+}
+
+/**
+ * A row's edits as a PATCH body. Built-in columns go to their own Lead field;
+ * everything else is merged into `customFields`, and each value is turned into
+ * the shape the API validates for — an empty box means null, not "".
+ */
+export function buildLeadPatch(fields: LeadFieldDef[], draft: Record<string, string>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  const custom: Record<string, unknown> = {};
+
+  for (const field of fields) {
+    if (!isEditableField(field) || !(field.key in draft)) continue;
+    const raw = draft[field.key].trim();
+
+    let value: unknown = raw === "" ? null : raw;
+    if (raw !== "") {
+      if (field.key === "tags") {
+        value = raw
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean);
+      } else if (field.type === "NUMBER" || field.type === "CURRENCY") {
+        const numeric = Number(raw);
+        value = Number.isFinite(numeric) ? numeric : null;
+      } else if (field.type === "BOOLEAN") {
+        value = raw === "true";
+      }
+    } else if (field.key === "tags") {
+      value = [];
+    }
+
+    if (field.builtin) patch[field.key] = value;
+    else custom[field.key] = value;
+  }
+
+  if (Object.keys(custom).length) patch.customFields = custom;
+  return patch;
 }
 
 // --- Column editor ---------------------------------------------------------
