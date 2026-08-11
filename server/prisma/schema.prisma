@@ -510,6 +510,20 @@ model Proposal {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
+  /// The full argued document — situation, findings, scope, investment. See
+  /// lib/proposalWriter.ts for its shape. Null for proposals written by hand
+  /// before the writer existed, which still render from `scopeSummary` alone.
+  body Json?
+  /// What was observed about the company at the moment this was drafted, with
+  /// the evidence for each finding. Kept so a claim can be defended — or
+  /// retracted — months later, when their site has changed.
+  audit Json?
+  /// Model id when this was drafted by the writer; null when a person wrote it.
+  generatedBy String?
+  /// The writer's own 0-1 read on how well the evidence supported it. Low means
+  /// have the call before sending.
+  confidence  Float?
+
   project Project?
   emails  EmailMessage[]
 

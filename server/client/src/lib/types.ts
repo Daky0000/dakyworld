@@ -441,6 +441,85 @@ export interface DriveFile {
   owners?: { displayName?: string }[];
 }
 
+// --- The proposal writer ---------------------------------------------------
+
+export type AuditSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "GOOD";
+export type AuditArea = "WEBSITE" | "EMAIL" | "SECURITY" | "PRESENCE" | "BRAND" | "OPERATIONS";
+
+/** One observed fact about a company, with the evidence it came from. */
+export interface AuditFinding {
+  id: string;
+  area: AuditArea;
+  severity: AuditSeverity;
+  observed: string;
+  evidence: string;
+  service: string | null;
+}
+
+export interface CompanyAudit {
+  ranAt: string;
+  site: {
+    requested: string;
+    finalUrl: string | null;
+    reachable: boolean;
+    status: number | null;
+    responseMs: number | null;
+    https: boolean;
+    platform: string | null;
+    server: string | null;
+  } | null;
+  domain: { name: string; hasMx: boolean; mailProvider: string | null; hasSpf: boolean; hasDmarc: boolean } | null;
+  findings: AuditFinding[];
+  /** What was examined — so "not found" can be told from "not looked at". */
+  checked: string[];
+  notes: string[];
+}
+
+/** The argued document. Null on proposals written by hand. */
+export interface ProposalBody {
+  headline: string;
+  situation: string;
+  findings: { observed: string; evidence: string; costsThem: string; fix: string; service: string }[];
+  scope: { phase: string; deliverables: string[]; outcome: string }[];
+  investment: {
+    lineItems: { description: string; amount: number; firm: boolean; billing: "ONE_OFF" | "MONTHLY" }[];
+    total: number;
+    totalIsFirm: boolean;
+    recurring: number;
+    basis: string;
+  };
+  timeline: string;
+  whyUs: string;
+  assumptions: string[];
+  nextStep: string;
+}
+
+export interface ProposalDraft extends ProposalBody {
+  title: string;
+  serviceType: string;
+  confidence: number;
+  /** What the writer wanted to know and couldn't — questions for the call. */
+  thinFacts: string[];
+}
+
+export interface ProposalDraftResponse {
+  draft: ProposalDraft;
+  audit: CompanyAudit;
+  subject: {
+    kind: "lead" | "client";
+    leadId: string | null;
+    clientId: string | null;
+    companyName: string;
+    contactName: string | null;
+    contactEmail: string | null;
+    cold: boolean;
+  };
+  /** Everything the writer was shown, so its reasoning can be checked. */
+  facts: string[];
+  model: string;
+  usage: { inputTokens: number; outputTokens: number };
+}
+
 export interface Proposal {
   id: string;
   title: string;
@@ -455,6 +534,10 @@ export interface Proposal {
   createdAt: string;
   client?: Client | null;
   lead?: Lead | null;
+  body?: ProposalBody | null;
+  audit?: CompanyAudit | null;
+  generatedBy?: string | null;
+  confidence?: number | null;
 }
 
 export interface Project {

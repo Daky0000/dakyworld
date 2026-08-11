@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type { Lead, LeadFieldDef, LeadGroup } from "../lib/types";
 import { CaptureTag, captureMethodLabel, useLeadFields } from "./LeadColumns";
+import { ProposalWriter } from "./ProposalWriter";
 import { Badge, Button, Drawer, Field, Money, RelativeTime, ScoreBar } from "./ui";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
@@ -57,7 +58,10 @@ export function LeadDrawer({
     },
   });
 
+  const [writing, setWriting] = useState(false);
+
   return (
+    <>
     <Drawer
       open={Boolean(leadId)}
       onClose={onClose}
@@ -96,12 +100,11 @@ export function LeadDrawer({
                 Email
               </Button>
             )}
-            <Link
-              to={`/proposals?leadId=${lead.id}`}
-              className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
-            >
+            {/* Opens the writer against this lead rather than sending the
+                Owner to the Proposals page to pick it out of a list again. */}
+            <Button variant="secondary" onClick={() => setWriting(true)}>
               Draft proposal
-            </Link>
+            </Button>
             {lead.client ? (
               <Link to={`/clients/${lead.client.id}`} className="font-mono text-xs uppercase tracking-[.12em] text-bronze">
                 View client →
@@ -284,6 +287,8 @@ export function LeadDrawer({
         </div>
       )}
     </Drawer>
+    <ProposalWriter open={writing} lead={lead ?? null} onClose={() => setWriting(false)} />
+    </>
   );
 }
 

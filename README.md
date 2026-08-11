@@ -295,6 +295,58 @@ Actor runs cost money on Apify. The whole feature is Owner-gated server-side
 than being applied to the results afterwards, and the monthly budget stops
 runs starting at all.
 
+## Drafting a proposal
+
+The proposal writer (**Proposals → Draft a proposal**, or **Draft proposal** on
+any lead) writes about one company, from evidence about that company.
+
+The difference it exists to make is the difference between these two sentences:
+
+> A modern website helps businesses like yours build trust.
+
+> adjeidental.com is served over plain HTTP, so Chrome shows every visitor
+> "Not secure" before they see your name — and your domain has no DMARC record,
+> so anyone can send an invoice that appears to come from you.
+
+The first is a brochure and gets deleted. The second is a reason to reply. The
+only difference is that someone looked.
+
+**So it looks first.** `services/companyAudit.ts` fetches their homepage and
+queries DNS, and reports what it finds: HTTPS or not, mobile viewport or not,
+what the site is built on (a Wix page and a three-year-old WordPress are
+different arguments), the year in the footer, response time, whether a visitor
+can contact them at all, whether a link to them previews properly when shared,
+whether anything measures the site, whether the domain receives mail, and
+whether SPF and DMARC exist. A business with no website at all gets the
+strongest findings of the lot.
+
+**Every claim carries its evidence.** Each finding records the URL, header or
+DNS record it came from, and the review screen shows them beside the argument
+built on them. A prospect who checks one claim and finds it true believes the
+rest; one who finds an invented claim stops reading. Checking takes ten seconds
+and the Owner does it before sending.
+
+**It cannot claim what it did not check.** The audit reports what it examined,
+not only what it found, so "no backups" is never asserted — nobody looked at
+their backups. A DNS query that fails is recorded as *not checked*, never as
+*no record*: those look identical in code and only one of them is safe to put
+in front of a prospect.
+
+**It cannot invent a price.** Only prices Dakyworld publishes — the website
+build from-price and the three care plan tiers, in `services/dakyworld.ts` —
+may be quoted as firm. Everything else is priced after the discovery call and
+marked as such. The Owner sets the final number on the review screen before
+saving; the writer proposes, the founder prices.
+
+**Nothing is sent by a model.** The draft is reviewed, edited and saved as an
+ordinary proposal, which the existing PDF and email flow then carries. The
+audit and the writer's own confidence are stored with it, so a claim can be
+defended — or retracted — months later when their site has changed.
+
+The writer needs an Anthropic key (**Settings → AI analyst**). The audit does
+not, and runs free: **Just check them** on the same screen gives the evidence
+with no model call, which is also the fastest way to prepare for a call.
+
 ## Importing a lead sheet
 
 The **Import** page (Owner only, `/leads/import`) turns a spreadsheet into
@@ -504,6 +556,9 @@ Dakyworld OS/
         scraperRunner.ts Starts Apify runs, polls them, ingests the results
         captureConfig.ts How every scrape behaves: market, cost ceilings, proxy, defaults
         captureNotify.ts The run report — failures, and runs that quietly found nothing
+        companyAudit.ts  Fetches their site, asks DNS: what is actually wrong, with evidence
+        proposalContext.ts What the proposal writer may know — the record plus the audit
+        dakyworld.ts     The brand, the voice, and the priced service catalogue
         carePlanBilling.ts  Retainer periods, overage settlement, invoice raising
         invoiceNumber.ts    Monthly invoice numbering, collision-safe
         emailContext.ts     What we know about a recipient, as facts

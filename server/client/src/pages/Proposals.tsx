@@ -4,10 +4,12 @@ import { api } from "../lib/api";
 import type { Proposal } from "../lib/types";
 import { Badge, Button, Card, EmptyState, Money, PageHeader } from "../components/ui";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
+import { ProposalWriter } from "../components/ProposalWriter";
 
 export function Proposals() {
   const qc = useQueryClient();
   const [emailing, setEmailing] = useState<ComposerTarget | null>(null);
+  const [writing, setWriting] = useState(false);
   const { data: proposals, isLoading } = useQuery({
     queryKey: ["proposals"],
     queryFn: () => api.get<Proposal[]>("/proposals"),
@@ -38,12 +40,19 @@ export function Proposals() {
 
   return (
     <div>
-      <PageHeader title="Proposal & Negotiation" subtitle="Generate, track, and close proposals — the middle of the funnel." />
+      <PageHeader
+        title="Proposal & Negotiation"
+        subtitle="Generate, track, and close proposals — the middle of the funnel."
+        action={<Button onClick={() => setWriting(true)}>Draft a proposal</Button>}
+      />
 
       {isLoading ? (
         <div className="text-sm text-ink/50">Loading…</div>
       ) : !proposals || proposals.length === 0 ? (
-        <EmptyState message="No proposals yet. Create one from a lead's detail, or via the API." />
+        <EmptyState
+          message="No proposals yet. Pick a lead and the writer will check their site and their domain, then argue from what it finds."
+          action={<Button onClick={() => setWriting(true)}>Draft your first proposal</Button>}
+        />
       ) : (
         <div className="space-y-4">
           {proposals.map((p) => (
@@ -53,6 +62,8 @@ export function Proposals() {
                   <div className="flex items-center gap-2">
                     <h3 className="font-serif text-lg">{p.title}</h3>
                     <StatusBadge status={p.status} />
+                    {p.body && <Badge tone="muted">drafted from {p.body.findings.length} findings</Badge>}
+                    {p.confidence != null && p.confidence < 0.55 && <Badge tone="muted">low confidence</Badge>}
                   </div>
                   <div className="mt-1 text-sm text-ink/60">
                     {p.client?.name ?? p.lead?.contactName ?? "Unassigned"} · {p.serviceType}
@@ -102,6 +113,7 @@ export function Proposals() {
         </div>
       )}
 
+      <ProposalWriter open={writing} onClose={() => setWriting(false)} />
       <EmailComposer target={emailing} open={emailing !== null} onClose={() => setEmailing(null)} />
     </div>
   );

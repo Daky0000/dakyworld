@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { EmailPurpose } from "@prisma/client";
 import { AnalystError, analystKey } from "./anthropic.js";
+import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
 import type { RecipientContext } from "../services/emailContext.js";
 
 /**
@@ -25,30 +26,15 @@ import type { RecipientContext } from "../services/emailContext.js";
 
 export const DRAFTER_MODEL = "claude-opus-5";
 
-/**
- * Who Dakyworld is, in the drafter's own terms. Taken from the positioning the
- * website and brand documents already use — not re-invented here, because two
- * descriptions of the same company is how a brand voice dies.
- */
-const BRAND = `About the sender — Dakyworld:
+/** The email-specific half of the voice; the shared half is in services/dakyworld.ts. */
+const VOICE = `${BRAND_VOICE}
 
-- An outsourced IT department for established businesses in Ghana and West Africa. Based in Kumasi. The founder is Dan Kwame Ayipah, who writes and signs these emails himself.
-- The offer, in one line: hire one IT company instead of building a whole team.
-- What it covers: websites, security and backups, email/workspace and cloud, automation and AI, integrations, branding and design, training and consulting.
-- Entirely digital and remote. No on-site visits, no hardware, no printers, no office networking. Never imply otherwise.
-- Most clients arrive through a one-off project — usually a website build — and move onto a monthly care plan afterwards.
-- Real numbers that may be used because they are true: 70%+ of manual admin burden cut for clients, a 4-hour response on priority-one security incidents, zero data-loss incidents. Do not invent statistics beyond these.
-- Prices, when relevant: website builds from GHS 35,000; care plans at GHS 5,000 (SME Essentials), GHS 12,500 (Growth), GHS 25,000+ (Enterprise Concierge) a month. Only mention a price if the brief asks for one.`;
+For email specifically:
 
-const VOICE = `How Dakyworld writes:
-
-- Plain, direct English. Short sentences. No consultant vocabulary — no "leverage", "solutions", "synergy", "cutting-edge", "in today's fast-paced world", "I hope this email finds you well".
-- Calm and specific, never breathless. No exclamation marks. No emoji.
 - Short. A cold email is under 120 words. A client update is under 200. If it needs to be longer, it needs a call instead.
 - One ask, at the end, and make it small: a reply, a fifteen-minute call, a yes-or-no. Never two asks.
-- Say the useful thing first. The reader decides in one line whether to keep reading, and "I'm writing to introduce" is not that line.
-- British spelling. Currency as "GHS 12,500".
-- Sign off as Dan, not as a company. No corporate signature block — the app appends one.`;
+- "I'm writing to introduce" is not a first line.
+- No corporate signature block — the app appends one.`;
 
 const SCHEMA = {
   type: "object",
