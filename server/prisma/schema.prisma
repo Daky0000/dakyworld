@@ -138,6 +138,26 @@ enum LeadSource {
   OTHER
 }
 
+/// How a lead got into the system, as opposed to `source`, which is where the
+/// business was found. Set by whatever created the row and never changed
+/// afterwards: a lead imported from a sheet and later enriched by a scrape is
+/// still a lead that arrived on a sheet.
+///
+/// PDF, DOCUMENT and API have no importer behind them yet. They are declared
+/// now because adding a value to a Postgres enum and using it need separate
+/// migrations, and the cost of declaring them early is nothing.
+enum LeadCaptureMethod {
+  MANUAL
+  APIFY
+  EXCEL
+  CSV
+  GOOGLE_SHEET
+  PDF
+  DOCUMENT
+  API
+  OTHER
+}
+
 enum LeadStatus {
   NEW
   QUALIFYING
@@ -156,6 +176,8 @@ model Lead {
   contactPhone      String?
   companyName       String?
   source            LeadSource @default(OTHER)
+  /// The route in — a scrape, a spreadsheet, typed by hand. See LeadCaptureMethod.
+  captureMethod     LeadCaptureMethod @default(MANUAL)
   status            LeadStatus @default(NEW)
   leadScore         Int        @default(0) // 0-100
   discoveryCallAt   DateTime?
@@ -210,6 +232,7 @@ model Lead {
   @@index([groupId])
   @@index([scraperRunId])
   @@index([source, createdAt])
+  @@index([captureMethod])
 }
 
 /// A named bucket of leads — normally one scrape batch ("Accra dentists,

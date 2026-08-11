@@ -7,10 +7,12 @@ import type { Lead, LeadFieldDef, LeadStats } from "../lib/types";
 import { LeadDrawer } from "../components/LeadDrawer";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
 import {
+  CAPTURE_METHODS,
   ColumnManager,
   LeadCell,
   LeadCellEditor,
   buildLeadPatch,
+  captureMethodLabel,
   editableText,
   isEditableField,
   useLeadFields,
@@ -43,6 +45,7 @@ const GROUP_BY = [
   { value: "city", label: "City" },
   { value: "category", label: "Category" },
   { value: "source", label: "Source" },
+  { value: "method", label: "How it got in" },
   { value: "none", label: "One flat list" },
 ] as const;
 
@@ -52,6 +55,8 @@ interface Filters {
   q: string;
   status: string[];
   source: string;
+  /** How the lead got in — APIFY, EXCEL, GOOGLE_SHEET, MANUAL… */
+  captureMethod: string;
   groupId: string;
   city: string;
   category: string;
@@ -66,6 +71,7 @@ const EMPTY_FILTERS: Filters = {
   q: "",
   status: [],
   source: "",
+  captureMethod: "",
   groupId: "",
   city: "",
   category: "",
@@ -80,6 +86,7 @@ function toQuery(filters: Filters): string {
   if (filters.q) params.set("q", filters.q);
   if (filters.status.length) params.set("status", filters.status.join(","));
   if (filters.source) params.set("source", filters.source);
+  if (filters.captureMethod) params.set("captureMethod", filters.captureMethod);
   if (filters.groupId) params.set("groupId", filters.groupId);
   if (filters.city) params.set("city", filters.city);
   if (filters.category) params.set("category", filters.category);
@@ -97,6 +104,7 @@ export function Leads() {
   // Arriving from "view what this run captured" lands here pre-filtered.
   const [filters, setFilters] = useState<Filters>(() => ({
     ...EMPTY_FILTERS,
+    captureMethod: searchParams.get("captureMethod") ?? "",
     scraperSourceId: searchParams.get("scraperSourceId") ?? "",
     scraperRunId: searchParams.get("scraperRunId") ?? "",
   }));
@@ -182,6 +190,7 @@ export function Leads() {
     filters.status.length +
     filters.has.length +
     (filters.source ? 1 : 0) +
+    (filters.captureMethod ? 1 : 0) +
     (filters.groupId ? 1 : 0) +
     (filters.city ? 1 : 0) +
     (filters.category ? 1 : 0) +
@@ -426,6 +435,10 @@ function groupLeads(leads: Lead[], groupBy: GroupBy): RenderGroup[] {
       case "source":
         key = lead.source;
         label = lead.source.replace(/_/g, " ");
+        break;
+      case "method":
+        key = lead.captureMethod;
+        label = captureMethodLabel(lead.captureMethod);
         break;
       default:
         key = lead.status;
@@ -676,6 +689,26 @@ function FilterBar({
               {source.replace(/_/g, " ")}
             </option>
           ))}
+        </select>
+        {/* How it got in, next to where it was found — the two questions that
+            sound alike and aren't. */}
+        <select
+          value={filters.captureMethod}
+          onChange={(event) => set({ captureMethod: event.target.value })}
+          className="filter-select"
+        >
+          <option value="">Any method</option>
+          {CAPTURE_METHODS.map((method) => {
+            const count = stats?.byMethod?.find((row) => row.captureMethod === method.value)?._count ?? 0;
+            // Methods nothing has ever arrived by would only be noise, unless
+            // that's what's currently filtered to.
+            if (!count && filters.captureMethod !== method.value) return null;
+            return (
+              <option key={method.value} value={method.value}>
+                {method.label} ({count})
+              </option>
+            );
+          })}
         </select>
         <select value={filters.groupId} onChange={(event) => set({ groupId: event.target.value })} className="filter-select">
           <option value="">Any batch</option>

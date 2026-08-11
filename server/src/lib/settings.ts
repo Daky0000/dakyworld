@@ -9,6 +9,28 @@ import { decryptSecret, encryptSecret } from "./secrets.js";
 export const SETTING = {
   APIFY_TOKEN: "apify.token",
   DEFAULT_TIMEZONE: "scrapers.timezone",
+
+  // Lead capture. Everything an Apify run needs that isn't the actor itself:
+  // what a new source starts out as, what a run is allowed to cost, where it
+  // searches, and who hears about it. See services/captureConfig.ts.
+  CAPTURE_MAX_ITEMS: "capture.maxItems",
+  CAPTURE_MIN_SCORE: "capture.minScore",
+  CAPTURE_AUTO_QUALIFY: "capture.autoQualify",
+  CAPTURE_QUALIFY_SCORE: "capture.qualifyScore",
+  CAPTURE_RUN_TIMEOUT: "capture.runTimeoutSecs",
+  CAPTURE_MEMORY: "capture.memoryMbytes",
+  CAPTURE_PROXY_MODE: "capture.proxyMode",
+  CAPTURE_PROXY_COUNTRY: "capture.proxyCountry",
+  CAPTURE_MONTHLY_BUDGET: "capture.monthlyBudgetUsd",
+  CAPTURE_MAX_RUN_CHARGE: "capture.maxRunChargeUsd",
+  CAPTURE_MAX_CONCURRENT: "capture.maxConcurrentRuns",
+  CAPTURE_LOCATION: "capture.location",
+  CAPTURE_COUNTRY_CODE: "capture.countryCode",
+  CAPTURE_LANGUAGE: "capture.language",
+  CAPTURE_NOTIFY: "capture.notify",
+  CAPTURE_NOTIFY_EMAIL: "capture.notifyEmail",
+  CAPTURE_RETENTION_DAYS: "capture.retentionDays",
+
   /** Powers the spreadsheet analyst — see lib/anthropic.ts. */
   ANTHROPIC_KEY: "anthropic.apiKey",
   GOOGLE_CLIENT_ID: "google.clientId",
@@ -43,6 +65,10 @@ export const SETTING = {
 const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.APIFY_TOKEN]: "APIFY_TOKEN",
   [SETTING.DEFAULT_TIMEZONE]: "SCRAPER_TIMEZONE",
+  // The two capture limits worth pinning from the deploy: they're the ones
+  // that stop a mistake in the UI from costing money.
+  [SETTING.CAPTURE_MONTHLY_BUDGET]: "APIFY_MONTHLY_BUDGET_USD",
+  [SETTING.CAPTURE_MAX_CONCURRENT]: "APIFY_MAX_CONCURRENT_RUNS",
   [SETTING.ANTHROPIC_KEY]: "ANTHROPIC_API_KEY",
   [SETTING.GOOGLE_CLIENT_ID]: "GOOGLE_CLIENT_ID",
   [SETTING.GOOGLE_CLIENT_SECRET]: "GOOGLE_CLIENT_SECRET",

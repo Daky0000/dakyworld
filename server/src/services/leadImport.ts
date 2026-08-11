@@ -9,7 +9,7 @@
  * what loses the data.
  */
 
-import type { Prisma } from "@prisma/client";
+import type { LeadCaptureMethod, Prisma } from "@prisma/client";
 import { enrolNewLeads } from "./emailSequences.js";
 import { prisma } from "../lib/prisma.js";
 import { builtinField, isBuiltinKey } from "./leadFields.js";
@@ -197,6 +197,22 @@ export interface CommitResult {
 const CHUNK = 200;
 
 /**
+ * The tag these rows will carry on the Leads page. A native Google Sheet is
+ * its own route in; everything else is named after the file, because "Excel"
+ * and "CSV" are what the Owner recognises — an `.xlsx` fetched from Drive is
+ * still an Excel file, and where it was stored isn't the interesting part.
+ */
+async function captureMethodFor(importId: string): Promise<LeadCaptureMethod> {
+  const record = await prisma.leadImport.findUnique({
+    where: { id: importId },
+    select: { source: true, fileName: true },
+  });
+  if (!record) return "OTHER";
+  if (record.source === "GOOGLE_SHEET") return "GOOGLE_SHEET";
+  return /\.(csv|tsv)$/i.test(record.fileName ?? "") ? "CSV" : "EXCEL";
+}
+
+/**
  * Writes an approved plan. Each table gets a group, that group's columns, and
  * its rows; rows whose identity already exists are refreshed rather than
  * duplicated, and only where the sheet actually has a value — an import must
@@ -208,6 +224,7 @@ export async function commitPlan(importId: string, grids: SheetGrid[], plan: Imp
   // createMany can't return ids, so the leads this import actually created are
   // found afterwards by the groups it wrote into and the moment it started.
   const startedAt = new Date();
+  const captureMethod = await captureMethodFor(importId);
 
   for (const table of plan.tables) {
     if (table.include === false) continue;
@@ -266,6 +283,9 @@ export async function commitPlan(importId: string, grids: SheetGrid[], plan: Imp
         source: (row.lead.source as Prisma.LeadCreateManyInput["source"]) ?? (table.leadSource as Prisma.LeadCreateManyInput["source"]),
         status: (row.lead.status as Prisma.LeadCreateManyInput["status"]) ?? (table.status as Prisma.LeadCreateManyInput["status"]),
         leadScore: typeof row.lead.leadScore === "number" ? row.lead.leadScore : scoreRow(row.lead),
+        // Set on create only. A lead that arrived on a sheet and is later
+        // found again by a scrape still arrived on a sheet.
+        captureMethod,
         groupId: group.id,
         dedupeKey: row.dedupeKey,
         customFields: Object.keys(row.custom).length ? (row.custom as Prisma.InputJsonValue) : undefined,

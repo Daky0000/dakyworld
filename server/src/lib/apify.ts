@@ -57,12 +57,14 @@ interface RequestOptions {
   /** Store search is public; everything else needs the Owner's token. */
   token?: string | null;
   anonymous?: boolean;
+  /** Send the token when there is one, but don't insist: public actors read fine without it. */
+  optionalAuth?: boolean;
   timeoutMs?: number;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const token = options.anonymous ? null : (options.token ?? (await getApifyToken()));
-  if (!options.anonymous && !token) throw new ApifyNotConfiguredError();
+  if (!options.anonymous && !options.optionalAuth && !token) throw new ApifyNotConfiguredError();
 
   const url = new URL(`${API_BASE}${path}`);
   for (const [key, value] of Object.entries(options.query ?? {})) {
@@ -123,6 +125,49 @@ export async function getAccount(token?: string): Promise<ApifyAccount> {
   return request<ApifyAccount>("/users/me", { token });
 }
 
+/**
+ * This billing month's spend, which is what the budget cap in Settings →
+ * Lead capture is measured against. Apify reports credits in USD; the
+ * "after volume discount" figure is the one that matches the invoice.
+ */
+export interface ApifyUsage {
+  spentUsd: number;
+  /** Credits included in the plan, when the account exposes them. */
+  includedUsd: number | null;
+  cycleStart: string | null;
+  cycleEnd: string | null;
+}
+
+let usageCache: { at: number; token: string; usage: ApifyUsage } | null = null;
+const USAGE_CACHE_MS = 60_000;
+
+export async function getMonthlyUsage(token?: string): Promise<ApifyUsage> {
+  const key = token ?? (await getApifyToken()) ?? "";
+  if (usageCache && usageCache.token === key && Date.now() - usageCache.at < USAGE_CACHE_MS) {
+    return usageCache.usage;
+  }
+
+  const [raw, account] = await Promise.all([
+    request<any>("/users/me/usage/monthly", { token }),
+    getAccount(token).catch(() => null),
+  ]);
+
+  const usage: ApifyUsage = {
+    spentUsd: Number(raw?.totalUsageCreditsUsdAfterVolumeDiscount ?? raw?.totalUsageCreditsUsdBeforeVolumeDiscount ?? 0) || 0,
+    includedUsd: account?.plan?.monthlyUsageCreditsUsd ?? null,
+    cycleStart: raw?.usageCycle?.startAt ?? null,
+    cycleEnd: raw?.usageCycle?.endAt ?? null,
+  };
+  usageCache = { at: Date.now(), token: key, usage };
+  return usage;
+}
+
+/** Called when the token changes, so a new account isn't reported with the old one's numbers. */
+export function clearApifyCaches() {
+  usageCache = null;
+  schemaCache.clear();
+}
+
 // --- Actors ----------------------------------------------------------------
 
 export interface ApifyActorSummary {
@@ -136,6 +181,8 @@ export interface ApifyActorSummary {
   stats?: { totalRuns?: number };
   pictureUrl?: string;
   isPublic?: boolean;
+  /** FREE, PAY_PER_EVENT, PRICE_PER_DATASET_ITEM, FLAT_PRICE_PER_MONTH. */
+  pricingModel?: string | null;
 }
 
 function toSummary(actor: any): ApifyActorSummary {
@@ -150,6 +197,7 @@ function toSummary(actor: any): ApifyActorSummary {
     stats: actor.stats,
     pictureUrl: actor.pictureUrl,
     isPublic: actor.isPublic,
+    pricingModel: actor.currentPricingInfo?.pricingModel ?? actor.pricingInfos?.at(-1)?.pricingModel ?? null,
   };
 }
 
@@ -186,19 +234,91 @@ export async function getActor(actorId: string): Promise<ApifyActorDetail> {
 
   // The example input lives on the actor's default build, and is the best
   // starting point we can offer for the input editor.
-  const buildTag = actor.defaultRunOptions?.build ?? "latest";
-  const buildId = actor.taggedBuilds?.[buildTag]?.buildId;
-  if (buildId) {
-    try {
-      const build = await request<any>(`/actor-builds/${buildId}`);
-      const schema = build?.actorDefinition?.input;
-      if (schema) detail.inputSchema = schema;
-      if (build?.actorDefinition?.exampleRunInput) detail.exampleRunInput = build.actorDefinition.exampleRunInput;
-    } catch {
-      // An actor without a readable build is still perfectly runnable.
-    }
-  }
+  const build = await fetchBuild(actor);
+  const schema = build?.actorDefinition?.input;
+  if (schema) detail.inputSchema = schema;
+  if (build?.actorDefinition?.exampleRunInput) detail.exampleRunInput = build.actorDefinition.exampleRunInput;
   return detail;
+}
+
+/** An actor without a readable build is still perfectly runnable, so this never throws. */
+async function fetchBuild(actor: any): Promise<any | null> {
+  const buildTag = actor?.defaultRunOptions?.build ?? "latest";
+  const buildId = actor?.taggedBuilds?.[buildTag]?.buildId;
+  if (!buildId) return null;
+  return request<any>(`/actor-builds/${buildId}`, { optionalAuth: true }).catch(() => null);
+}
+
+// --- Actor input schema ----------------------------------------------------
+
+/**
+ * What an actor will actually accept, read from its published input schema.
+ *
+ * Three things depend on this, and all three used to be guesswork:
+ *
+ * - **Which key the proxy goes in.** There is no convention: Google Maps
+ *   scrapers take none at all, `vdrmota/contact-info-scraper` *requires*
+ *   `proxyConfig`, most crawlers want `proxyConfiguration`. Injecting the
+ *   wrong one — or any one into an actor that declares none — is an input
+ *   validation failure at 6am, so we only ever fill a key the actor declares.
+ * - **Warning about typos.** A misspelt input key doesn't error, it's just
+ *   silently ignored, and the run comes back with the wrong rows.
+ * - **Cost.** `pricingModel` is what tells the Owner whether a run is billed
+ *   per event, per result, or not at all.
+ */
+export interface ApifyActorSchema {
+  actorId: string;
+  title: string | null;
+  pricingModel: string | null;
+  defaultRunOptions: { build?: string; timeoutSecs?: number; memoryMbytes?: number } | null;
+  /** Declared input keys; empty when the actor publishes no schema. */
+  properties: string[];
+  required: string[];
+  /** The key this actor takes a proxy in, if any. */
+  proxyField: string | null;
+  proxyRequired: boolean;
+  /** Apify's own default for that field, used as-is when we have nothing better. */
+  proxyDefault: Record<string, unknown> | null;
+}
+
+const schemaCache = new Map<string, { at: number; schema: ApifyActorSchema | null }>();
+const SCHEMA_CACHE_MS = 6 * 60 * 60_000;
+
+/** Null when the actor can't be read at all — a bad id, a private actor, or Apify being down. */
+export async function getActorSchema(actorId: string, force = false): Promise<ApifyActorSchema | null> {
+  const id = normalizeActorId(actorId);
+  const cached = schemaCache.get(id);
+  if (!force && cached && Date.now() - cached.at < SCHEMA_CACHE_MS) return cached.schema;
+
+  let schema: ApifyActorSchema | null = null;
+  try {
+    const actor = await request<any>(`/acts/${id}`, { optionalAuth: true });
+    const build = await fetchBuild(actor);
+    const input = build?.actorDefinition?.input ?? {};
+    const properties: Record<string, any> = input.properties ?? {};
+    const required: string[] = Array.isArray(input.required) ? input.required : [];
+
+    const proxyEntry = Object.entries(properties).find(
+      ([key, value]) => /proxy/i.test(key) && (value as any)?.type === "object",
+    );
+
+    schema = {
+      actorId: displayActorId(id),
+      title: actor.title ?? actor.name ?? null,
+      pricingModel: actor.pricingInfos?.at(-1)?.pricingModel ?? "FREE",
+      defaultRunOptions: actor.defaultRunOptions ?? null,
+      properties: Object.keys(properties),
+      required,
+      proxyField: proxyEntry?.[0] ?? null,
+      proxyRequired: proxyEntry ? required.includes(proxyEntry[0]) : false,
+      proxyDefault: (proxyEntry?.[1] as any)?.default ?? null,
+    };
+  } catch {
+    schema = null;
+  }
+
+  schemaCache.set(id, { at: Date.now(), schema });
+  return schema;
 }
 
 // --- Runs ------------------------------------------------------------------
@@ -224,11 +344,16 @@ export interface ApifyRun {
   statusMessage?: string;
 }
 
-export async function startRun(
-  actorId: string,
-  input: unknown,
-  options: { timeoutSecs?: number; memoryMbytes?: number; maxItems?: number } = {},
-): Promise<ApifyRun> {
+export interface StartRunOptions {
+  timeoutSecs?: number;
+  memoryMbytes?: number;
+  /** Pay-per-result actors only — Apify stops the run at this many rows. */
+  maxItems?: number;
+  /** Pay-per-event actors only — Apify stops the run at this much spend. */
+  maxTotalChargeUsd?: number;
+}
+
+export async function startRun(actorId: string, input: unknown, options: StartRunOptions = {}): Promise<ApifyRun> {
   const id = normalizeActorId(actorId);
   return request<ApifyRun>(`/acts/${id}/runs`, {
     method: "POST",
@@ -236,8 +361,12 @@ export async function startRun(
     query: {
       timeout: options.timeoutSecs,
       memory: options.memoryMbytes,
-      // Only meaningful for pay-per-result actors, ignored elsewhere.
+      // Both are cost ceilings enforced by Apify itself rather than by us
+      // after the fact, and each applies to one pricing model — the caller
+      // decides which to send from the actor's own pricing (see
+      // scraperRunner.costCeiling).
       maxItems: options.maxItems,
+      maxTotalChargeUsd: options.maxTotalChargeUsd,
     },
   });
 }

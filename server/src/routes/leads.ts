@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import {
   BUILTIN_FIELDS,
+  LEAD_CAPTURE_METHODS,
   LEAD_FIELD_TYPES,
   LEAD_SOURCES,
   LEAD_STATUSES,
@@ -63,6 +64,12 @@ function buildWhere(query: Record<string, unknown>): Prisma.LeadWhereInput {
 
   const source = str("source");
   if (source) where.source = { in: source.split(",") as (typeof LEAD_SOURCES)[number][] };
+
+  // How the lead got in — a scrape, a spreadsheet, typed by hand.
+  const captureMethod = str("captureMethod");
+  if (captureMethod) {
+    where.captureMethod = { in: captureMethod.split(",") as (typeof LEAD_CAPTURE_METHODS)[number][] };
+  }
 
   const groupId = str("groupId");
   if (groupId) where.groupId = groupId === "none" ? null : groupId;
@@ -144,9 +151,12 @@ leadsRouter.get("/stats", async (req, res, next) => {
     const where = buildWhere(req.query as Record<string, unknown>);
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60_000);
 
-    const [byStatus, bySource, byCity, byCategory, totals, reachable, newThisWeek, groups] = await Promise.all([
+    const [byStatus, bySource, byMethod, byCity, byCategory, totals, reachable, newThisWeek, groups] = await Promise.all([
       prisma.lead.groupBy({ by: ["status"], _count: true, where }),
       prisma.lead.groupBy({ by: ["source"], _count: true, where }),
+      // Counted against the *other* filters only, so the method chips still
+      // show what switching to another method would find.
+      prisma.lead.groupBy({ by: ["captureMethod"], _count: true, where: { ...where, captureMethod: undefined } }),
       prisma.lead.groupBy({ by: ["city"], _count: true, where, orderBy: { _count: { city: "desc" } }, take: 25 }),
       prisma.lead.groupBy({ by: ["category"], _count: true, where, orderBy: { _count: { category: "desc" } }, take: 25 }),
       prisma.lead.aggregate({ where, _count: true, _avg: { leadScore: true }, _sum: { estimatedDealSize: true } }),
@@ -166,6 +176,7 @@ leadsRouter.get("/stats", async (req, res, next) => {
       newThisWeek,
       byStatus,
       bySource,
+      byMethod,
       cities: byCity.filter((row) => row.city),
       categories: byCategory.filter((row) => row.category),
       groups,

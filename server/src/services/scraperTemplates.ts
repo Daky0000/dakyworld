@@ -22,6 +22,12 @@ import type { LeadSource, ScraperPreset } from "@prisma/client";
  * developers, schools, banks, professional services, manufacturers, government
  * agencies — plus the two that map to the newer Branding and Training &
  * Consulting lines.
+ *
+ * Every `input` below is written against the actor's published input schema:
+ * an undeclared key isn't an error, it's silently dropped, so a template that
+ * *looks* like it caps reviews may not be doing it. `{{location}}` is filled
+ * from Settings → Lead capture at run time, so moving the market moves every
+ * template with it.
  */
 
 export interface ScraperTemplate {
@@ -40,8 +46,12 @@ export interface ScraperTemplate {
   editFirst: string[];
 }
 
-/** Where Dakyworld's reachable market actually is, biggest first. */
-const GHANA_CITIES = "Accra, Ghana";
+/**
+ * The main market comes from Settings → Lead capture, so it can be widened
+ * without editing code. Kumasi is written out because that template is
+ * specifically about being local, not about wherever the market is set to.
+ */
+const MARKET = "{{location}}";
 const ASHANTI = "Kumasi, Ghana";
 
 export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
@@ -69,7 +79,7 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "logistics company",
         "printing press",
       ],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
       website: "withoutWebsite",
@@ -131,12 +141,10 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "land sales company",
         "serviced apartments",
       ],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 24,
       language: "en",
       skipClosedPlaces: true,
-      maxReviews: 0,
-      maxImages: 0,
     },
   },
   {
@@ -160,12 +168,10 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "college",
         "training centre",
       ],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
       skipClosedPlaces: true,
-      maxReviews: 0,
-      maxImages: 0,
     },
   },
   {
@@ -190,12 +196,10 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "insurance brokerage",
         "recruitment agency",
       ],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
       skipClosedPlaces: true,
-      maxReviews: 0,
-      maxImages: 0,
     },
   },
   {
@@ -220,12 +224,10 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "importer and distributor",
         "logistics company",
       ],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
       skipClosedPlaces: true,
-      maxReviews: 0,
-      maxImages: 0,
     },
   },
   {
@@ -243,12 +245,10 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
     editFirst: ["searchStringsArray", "locationQuery"],
     input: {
       searchStringsArray: ["private clinic", "dental clinic", "diagnostic centre", "medical laboratory", "eye clinic", "pharmacy chain"],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
       skipClosedPlaces: true,
-      maxReviews: 0,
-      maxImages: 0,
     },
   },
   {
@@ -266,12 +266,10 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
     editFirst: ["searchStringsArray", "locationQuery"],
     input: {
       searchStringsArray: ["non-governmental organisation", "charity", "church", "trade association", "cooperative society"],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
       skipClosedPlaces: true,
-      maxReviews: 0,
-      maxImages: 0,
     },
   },
   {
@@ -289,7 +287,7 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
     editFirst: ["searchStringsArray", "locationQuery"],
     input: {
       searchStringsArray: ["hotel", "guest house", "restaurant", "event venue", "boutique", "furniture store"],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 25,
       language: "en",
       website: "withoutWebsite",
@@ -313,12 +311,10 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
     editFirst: ["searchStringsArray", "locationQuery"],
     input: {
       searchStringsArray: ["marketing agency", "private school", "hotel"],
-      locationQuery: GHANA_CITIES,
+      locationQuery: MARKET,
       maxCrawledPlacesPerSearch: 25,
       language: "en",
       skipClosedPlaces: true,
-      maxReviews: 0,
-      maxImages: 0,
     },
   },
   {
@@ -339,6 +335,10 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
       maxRequestsPerStartUrl: 50,
       maxDepth: 2,
       considerChildFrames: true,
+      // This actor *requires* a proxy — a run without one is rejected before
+      // it starts. Delete this key to have the proxy from Settings → Lead
+      // capture filled in instead.
+      proxyConfig: { useApifyProxy: true },
     },
   },
 ];

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type { Lead, LeadFieldDef, LeadGroup } from "../lib/types";
-import { useLeadFields } from "./LeadColumns";
+import { CaptureTag, captureMethodLabel, useLeadFields } from "./LeadColumns";
 import { Badge, Button, Drawer, Field, Money, RelativeTime, ScoreBar } from "./ui";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
@@ -65,6 +65,7 @@ export function LeadDrawer({
       subtitle={
         lead && (
           <span className="flex flex-wrap items-center gap-2">
+            <CaptureTag method={lead.captureMethod} />
             <Badge tone="muted">{lead.source.replace(/_/g, " ")}</Badge>
             {lead.category && <span>{lead.category}</span>}
             {lead.city && <span>· {lead.city}</span>}
@@ -226,6 +227,11 @@ export function LeadDrawer({
 
           <Section title="Where it came from">
             <DetailRow label="Source">{lead.source.replace(/_/g, " ")}</DetailRow>
+            <DetailRow label="How it got in">
+              <Link to={`/leads?captureMethod=${lead.captureMethod}`} className="text-bronze hover:underline">
+                {captureMethodLabel(lead.captureMethod)}
+              </Link>
+            </DetailRow>
             <DetailRow label="Captured by">
               {lead.scraperSource ? (
                 <Link to="/lead-sources" className="text-bronze hover:underline">

@@ -74,6 +74,8 @@ export interface Lead {
   contactPhone?: string | null;
   companyName?: string | null;
   source: string;
+  /** The route in — a scrape, a spreadsheet, typed by hand. Set by the system. */
+  captureMethod: CaptureMethod;
   status: string;
   leadScore: number;
   estimatedDealSize?: string | null;
@@ -120,6 +122,21 @@ export interface Communication {
   loggedBy?: { id: string; name: string } | null;
 }
 
+/**
+ * How a lead got into the system. PDF, DOCUMENT and API have no importer
+ * behind them yet — the tag is ready for when one arrives.
+ */
+export type CaptureMethod =
+  | "MANUAL"
+  | "APIFY"
+  | "EXCEL"
+  | "CSV"
+  | "GOOGLE_SHEET"
+  | "PDF"
+  | "DOCUMENT"
+  | "API"
+  | "OTHER";
+
 export interface LeadStats {
   total: number;
   averageScore: number;
@@ -128,6 +145,8 @@ export interface LeadStats {
   newThisWeek: number;
   byStatus: { status: string; _count: number }[];
   bySource: { source: string; _count: number }[];
+  /** Counted ignoring the method filter, so the chips still show what's there. */
+  byMethod: { captureMethod: CaptureMethod; _count: number }[];
   cities: { city: string | null; _count: number }[];
   categories: { category: string | null; _count: number }[];
   groups: LeadGroup[];
@@ -203,6 +222,25 @@ export interface ApifyActorSummary {
   fullName: string;
   stats?: { totalRuns?: number };
   pictureUrl?: string;
+  pricingModel?: string | null;
+}
+
+/** One actor this install depends on — see GET /api/scrapers/actors. */
+export interface ActorHealth {
+  actorId: string;
+  reachable: boolean;
+  title: string | null;
+  pricingModel: string | null;
+  proxyField: string | null;
+  proxyRequired: boolean;
+  inTemplates: boolean;
+  usedBy: { id: string; name: string; enabled: boolean; unknownKeys: string[] }[];
+}
+
+export interface ActorHealthReport {
+  actors: ActorHealth[];
+  unreachable: number;
+  withUnknownKeys: number;
 }
 
 export interface ScraperOverview {
@@ -215,6 +253,15 @@ export interface ScraperOverview {
   capturedThisWeek: number;
   capturedTotal: number;
   lastRun: (ScraperRun & { source?: { name: string } }) | null;
+  /** Null when Apify isn't connected, or wouldn't say. */
+  spend: {
+    spentUsd: number;
+    includedUsd: number | null;
+    budgetUsd: number | null;
+    cycleEnd: string | null;
+    blocked: boolean;
+  } | null;
+  concurrency: { running: number; limit: number };
 }
 
 export interface MappingPreview {
@@ -299,14 +346,51 @@ export interface AnalyzeResponse {
   warning: string | null;
 }
 
+export type ProxyMode = "NONE" | "AUTO" | "DATACENTER" | "RESIDENTIAL";
+export type NotifyMode = "OFF" | "FAILURES" | "ALL";
+
+/** How lead capture behaves for every source — Settings → Lead capture. */
+export interface CaptureConfig {
+  maxItems: number;
+  minScore: number;
+  autoQualify: boolean;
+  qualifyScore: number;
+  timezone: string;
+  runTimeoutSecs: number;
+  /** 0 means "whatever the actor asks for". */
+  memoryMbytes: number;
+  proxyMode: ProxyMode;
+  proxyCountry: string | null;
+  monthlyBudgetUsd: number | null;
+  /** Per run, enforced by Apify on pay-per-event actors. */
+  maxRunChargeUsd: number | null;
+  maxConcurrentRuns: number;
+  location: string;
+  countryCode: string;
+  language: string;
+  notify: NotifyMode;
+  notifyEmail: string | null;
+  retentionDays: number;
+}
+
 /** Everything the Owner configures at runtime — see the Settings page. */
 export interface AppSettings {
   apify: {
     connected: boolean;
     envManaged: boolean;
     token: string | null;
-    account: { username?: string; profile?: { name?: string }; plan?: { id?: string } } | null;
+    account: {
+      username?: string;
+      profile?: { name?: string };
+      plan?: { id?: string; monthlyUsageCreditsUsd?: number };
+    } | null;
     error: string | null;
+    usage: { spentUsd: number; includedUsd: number | null; cycleStart: string | null; cycleEnd: string | null } | null;
+  };
+  capture: {
+    config: CaptureConfig;
+    defaults: CaptureConfig;
+    envManaged: { monthlyBudgetUsd: boolean; maxConcurrentRuns: boolean; timezone: boolean };
   };
   analyst: { configured: boolean; envManaged: boolean; key: string | null; model: string };
   google: {

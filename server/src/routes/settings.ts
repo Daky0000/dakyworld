@@ -3,7 +3,9 @@ import { z } from "zod";
 import { requireRole } from "../middleware/auth.js";
 import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
 import { maskSecret } from "../lib/secrets.js";
-import { ApifyError, getAccount } from "../lib/apify.js";
+import { ApifyError, clearApifyCaches, getAccount, getMonthlyUsage } from "../lib/apify.js";
+import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
+import { isValidTimezone } from "../services/scheduler.js";
 import { AnalystError, ANALYST_MODEL, verifyKey } from "../lib/anthropic.js";
 import {
   GoogleError,
@@ -63,6 +65,21 @@ async function describeApify() {
     token: maskSecret(token),
     account: accountCache.account,
     error: accountCache.error,
+    // What the month has cost so far, next to the ceiling it's measured
+    // against. Apify itself caches this for a minute.
+    usage: accountCache.account ? await getMonthlyUsage(token).catch(() => null) : null,
+  };
+}
+
+/**
+ * How lead capture behaves for every source — see services/captureConfig.ts.
+ * Shipped with the settings snapshot so the Lead capture panel is one request.
+ */
+async function describeCapture() {
+  return {
+    config: await readCaptureConfig(),
+    defaults: CAPTURE_DEFAULTS,
+    envManaged: captureEnvManaged(),
   };
 }
 
@@ -91,6 +108,7 @@ async function describeAll(req: Request) {
 
   return {
     apify,
+    capture: await describeCapture(),
     analyst: {
       configured: Boolean(anthropicKey),
       envManaged: isEnvManaged(SETTING.ANTHROPIC_KEY),
@@ -193,6 +211,7 @@ settingsRouter.put("/apify", async (req, res, next) => {
 
     await setSetting(SETTING.APIFY_TOKEN, token.trim(), { secret: true });
     accountCache = null;
+    clearApifyCaches();
     res.json(await describeAll(req));
   } catch (err) {
     next(err);
@@ -205,6 +224,53 @@ settingsRouter.delete("/apify", async (req, res, next) => {
     if (guardEnv(SETTING.APIFY_TOKEN, "The Apify token", res)) return;
     await deleteSetting(SETTING.APIFY_TOKEN);
     accountCache = null;
+    clearApifyCaches();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Lead capture behaviour ------------------------------------------------
+
+/**
+ * Everything about how scrapes run that isn't the token: what a new source
+ * starts as, what a run may cost, where it searches, and who is told about it.
+ *
+ * Each field is optional — the panel saves one card at a time — and an empty
+ * string clears a value back to its default rather than storing a blank.
+ */
+settingsRouter.put("/capture", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        maxItems: z.number().int().min(1).max(1000),
+        minScore: z.number().int().min(0).max(100),
+        autoQualify: z.boolean(),
+        qualifyScore: z.number().int().min(0).max(100),
+        timezone: z.string().refine(isValidTimezone, { message: "Unknown timezone" }),
+        runTimeoutSecs: z.number().int().min(60, "Give a run at least a minute").max(21_600, "Six hours is the ceiling"),
+        memoryMbytes: z.union([z.literal(0), z.literal(1024), z.literal(2048), z.literal(4096), z.literal(8192)]),
+        proxyMode: z.enum(["NONE", "AUTO", "DATACENTER", "RESIDENTIAL"]),
+        proxyCountry: z
+          .string()
+          .regex(/^[A-Za-z]{2}$/, "Use a two-letter country code, e.g. GH")
+          .or(z.literal(""))
+          .nullable(),
+        monthlyBudgetUsd: z.number().min(0).max(100_000).nullable(),
+        maxRunChargeUsd: z.number().min(0).max(10_000).nullable(),
+        maxConcurrentRuns: z.number().int().min(1).max(10),
+        location: z.string().min(2).max(120),
+        countryCode: z.string().regex(/^[A-Za-z]{2}$/, "Use a two-letter country code, e.g. gh"),
+        language: z.string().min(2).max(10),
+        notify: z.enum(["OFF", "FAILURES", "ALL"]),
+        notifyEmail: z.string().email().or(z.literal("")).nullable(),
+        retentionDays: z.number().int().min(0).max(3650),
+      })
+      .partial()
+      .parse(req.body);
+
+    await writeCaptureConfig(input);
     res.json(await describeAll(req));
   } catch (err) {
     next(err);

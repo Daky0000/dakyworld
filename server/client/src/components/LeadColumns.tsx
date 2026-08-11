@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { Lead, LeadFieldDef, LeadFieldSet, LeadFieldType } from "../lib/types";
+import type { CaptureMethod, Lead, LeadFieldDef, LeadFieldSet, LeadFieldType } from "../lib/types";
 import { Badge, Button, Drawer, Money, RelativeTime, ScoreBar } from "./ui";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
@@ -55,6 +55,49 @@ export function leadValue(lead: Lead, field: LeadFieldDef): unknown {
   return lead.customFields?.[field.key];
 }
 
+// --- How a lead got in -----------------------------------------------------
+
+/**
+ * The capture-method tag, in the words the Owner uses rather than the enum's.
+ *
+ * It answers a question the pipeline can't: two leads sitting next to each
+ * other may have arrived from a Google Maps scrape and from a conference
+ * attendee list, and how much to trust the email, whether re-scraping will
+ * refresh it, and who to chase about a bad row all depend on which.
+ */
+export const CAPTURE_METHODS: { value: CaptureMethod; label: string; hint: string }[] = [
+  { value: "APIFY", label: "Apify", hint: "Found by a scraper run" },
+  { value: "EXCEL", label: "Excel", hint: "Imported from an .xlsx spreadsheet" },
+  { value: "CSV", label: "CSV", hint: "Imported from a .csv or .tsv file" },
+  { value: "GOOGLE_SHEET", label: "Google Sheet", hint: "Imported straight from Drive" },
+  { value: "MANUAL", label: "Manual", hint: "Typed in by hand" },
+  { value: "PDF", label: "PDF", hint: "Read out of a PDF" },
+  { value: "DOCUMENT", label: "Word", hint: "Read out of a Word document" },
+  { value: "API", label: "API", hint: "Pushed in by another system" },
+  { value: "OTHER", label: "Other", hint: "Route in isn't recorded" },
+];
+
+const METHOD_BY_VALUE = new Map(CAPTURE_METHODS.map((method) => [method.value, method]));
+
+export function captureMethodLabel(method: CaptureMethod | undefined): string {
+  return METHOD_BY_VALUE.get(method ?? "OTHER")?.label ?? "Other";
+}
+
+/**
+ * Scraped leads are the ones that arrive by the thousand and need the most
+ * scepticism, so they get the accent; everything a person chose to bring in
+ * reads quieter.
+ */
+export function CaptureTag({ method }: { method: CaptureMethod | undefined }) {
+  const entry = METHOD_BY_VALUE.get(method ?? "OTHER");
+  if (!entry) return null;
+  return (
+    <span title={entry.hint}>
+      <Badge tone={entry.value === "APIFY" ? "gold" : "muted"}>{entry.label}</Badge>
+    </span>
+  );
+}
+
 // --- Rendering -------------------------------------------------------------
 
 function Empty() {
@@ -96,8 +139,17 @@ export function LeadCell({
     );
   }
 
+  if (field.key === "captureMethod") return <CaptureTag method={lead.captureMethod} />;
+
+  // The tag rides along with the name, so how a lead got in is visible without
+  // having to turn a column on — it's context for reading the row, not data.
   if (field.key === "contactName") {
-    return <span className="font-medium">{lead.contactName}</span>;
+    return (
+      <span className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{lead.contactName}</span>
+        <CaptureTag method={lead.captureMethod} />
+      </span>
+    );
   }
 
   if (value === null || value === undefined || value === "") return <Empty />;

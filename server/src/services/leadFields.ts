@@ -46,6 +46,23 @@ export const LEAD_SOURCES = [
 
 export const LEAD_STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"] as const;
 
+/**
+ * The route a lead took into the system. Written by whatever created it — the
+ * scraper, the importer, the new-lead form — never by a sheet column and never
+ * by hand, which is why it isn't writable below.
+ */
+export const LEAD_CAPTURE_METHODS = [
+  "MANUAL",
+  "APIFY",
+  "EXCEL",
+  "CSV",
+  "GOOGLE_SHEET",
+  "PDF",
+  "DOCUMENT",
+  "API",
+  "OTHER",
+] as const;
+
 export interface BuiltinField {
   key: string;
   label: string;
@@ -147,6 +164,14 @@ export const BUILTIN_FIELDS: BuiltinField[] = [
     hint: "Free labels. A comma- or semicolon-separated cell becomes several tags.",
   },
   { key: "createdAt", label: "Added", type: "DATE", writable: false, visible: true, hint: "When the lead was added. Set by the system." },
+  {
+    key: "captureMethod",
+    label: "Method",
+    type: "SELECT",
+    writable: false,
+    visible: false,
+    hint: "How this lead got in — a scrape, a spreadsheet, typed by hand. Set by the system, and shown beside the name whether or not this column is on.",
+  },
 ];
 
 const BUILTIN_BY_KEY = new Map(BUILTIN_FIELDS.map((field) => [field.key, field]));

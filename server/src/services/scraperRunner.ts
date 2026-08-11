@@ -1,8 +1,20 @@
-import type { Lead, LeadSource, Prisma, ScraperRunStatus, ScraperRunTrigger, ScraperSource } from "@prisma/client";
+import type { Lead, LeadSource, Prisma, ScraperRun, ScraperRunStatus, ScraperRunTrigger, ScraperSource } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { ApifyError, abortRun, getDatasetItems, getRun, startRun, type ApifyRunStatus } from "../lib/apify.js";
+import {
+  ApifyError,
+  abortRun,
+  getActorSchema,
+  getDatasetItems,
+  getMonthlyUsage,
+  getRun,
+  startRun,
+  type ApifyRunStatus,
+  type StartRunOptions,
+} from "../lib/apify.js";
 import { buildDedupeKey, mapItemToLead, scoreLead, type NormalizedLead, type Preset } from "./leadMapping.js";
 import { enrolNewLeads } from "./emailSequences.js";
+import { captureTokens, proxyInput, readCaptureConfig, runOptions, type CaptureConfig } from "./captureConfig.js";
+import { reportRun } from "./captureNotify.js";
 
 /**
  * Runs a configured Apify actor and turns its dataset into leads.
@@ -11,12 +23,18 @@ import { enrolNewLeads } from "./emailSequences.js";
  * starts the Apify run, records it, and returns. A detached poller then waits
  * for the run and ingests the results, updating the ScraperRun row as it goes
  * — which is what the UI watches.
+ *
+ * What a run is allowed to cost, where it searches and whether it proxies all
+ * come from the shared capture configuration (services/captureConfig.ts)
+ * rather than from the source, so those can be changed once for everything.
  */
 
 const POLL_FAST_MS = 5_000;
 const POLL_SLOW_MS = 20_000;
 const POLL_FAST_WINDOW_MS = 60_000;
+/** How long the poller stays interested. Apify's own timeout is set alongside it. */
 const DEFAULT_RUN_TIMEOUT_MS = 30 * 60_000;
+const POLL_GRACE_MS = 2 * 60_000;
 
 /** Runs this process is already polling, so a restart-resume can't double-attach. */
 const polling = new Set<string>();
@@ -27,8 +45,12 @@ const polling = new Set<string>();
  * `{{today}}`, `{{yesterday}}` and `{{date}}` inside string values of the
  * actor input, so a daily schedule can scrape "restaurants opened since
  * {{yesterday}}" without the Owner editing the JSON every morning.
+ *
+ * `extra` carries the market tokens — `{{location}}`, `{{country}}`,
+ * `{{countryCode}}`, `{{language}}` — from the capture configuration, so
+ * every source follows one answer to "where do we sell".
  */
-export function applyInputTemplate(input: unknown, now = new Date()): unknown {
+export function applyInputTemplate(input: unknown, now = new Date(), extra: Record<string, string> = {}): unknown {
   const iso = (date: Date) => date.toISOString().slice(0, 10);
   const yesterday = new Date(now.getTime() - 24 * 60 * 60_000);
   const replacements: Record<string, string> = {
@@ -36,6 +58,7 @@ export function applyInputTemplate(input: unknown, now = new Date()): unknown {
     today: iso(now),
     yesterday: iso(yesterday),
     timestamp: now.toISOString(),
+    ...Object.fromEntries(Object.entries(extra).map(([key, value]) => [key.toLowerCase(), value])),
   };
 
   const walk = (value: unknown): unknown => {
@@ -103,22 +126,106 @@ export class ScrapeInProgressError extends Error {
   }
 }
 
+/** Too many scrapes at once. Configurable under Settings → Lead capture. */
+export class CaptureBusyError extends Error {
+  constructor(limit: number) {
+    super(
+      `${limit} scrape${limit === 1 ? "" : "s"} already running, which is the limit. ` +
+        `Wait for one to finish, or raise the limit under Settings → Lead capture.`,
+    );
+  }
+}
+
+/** The month's Apify spend has reached the ceiling set in Settings. */
+export class CaptureBudgetError extends Error {
+  constructor(spent: number, budget: number) {
+    super(
+      `This month's Apify spend ($${spent.toFixed(2)}) has reached the $${budget.toFixed(2)} budget. ` +
+        `Raise it under Settings → Lead capture, or wait for the billing month to roll over.`,
+    );
+  }
+}
+
+/**
+ * What has to be true before spending money: this source isn't already
+ * running, nothing else is over-running, and the month still has budget.
+ *
+ * The budget check fails *open* if Apify can't be reached — a monitoring blip
+ * shouldn't stop lead generation, and the run itself will fail loudly enough
+ * if Apify is genuinely down.
+ */
+export async function assertCanRun(config: CaptureConfig, sourceId?: string) {
+  if (sourceId) {
+    const active = await prisma.scraperRun.findFirst({ where: { sourceId, status: { in: ["QUEUED", "RUNNING"] } } });
+    if (active) throw new ScrapeInProgressError();
+  }
+
+  const running = await prisma.scraperRun.count({ where: { status: { in: ["QUEUED", "RUNNING"] } } });
+  if (running >= config.maxConcurrentRuns) throw new CaptureBusyError(config.maxConcurrentRuns);
+
+  if (config.monthlyBudgetUsd != null) {
+    try {
+      const usage = await getMonthlyUsage();
+      if (usage.spentUsd >= config.monthlyBudgetUsd) {
+        throw new CaptureBudgetError(usage.spentUsd, config.monthlyBudgetUsd);
+      }
+    } catch (err) {
+      if (err instanceof CaptureBudgetError) throw err;
+      console.warn("[scraper] Could not read Apify usage, letting the run proceed:", (err as Error).message);
+    }
+  }
+}
+
+/**
+ * Builds the input Apify actually receives: the source's own JSON with the
+ * date and market tokens filled in, plus a proxy in whichever field this
+ * actor declares for one (see captureConfig.proxyInput).
+ */
+async function buildRunInput(source: ScraperSource, config: CaptureConfig) {
+  const input = applyInputTemplate(source.input ?? {}, new Date(), captureTokens(config)) as Record<string, unknown>;
+  const schema = await getActorSchema(source.actorId);
+  const proxy = proxyInput(config, schema, input);
+  return {
+    input: proxy ? { ...input, [proxy.field]: proxy.value } : input,
+    proxyField: proxy?.field ?? null,
+    schema,
+  };
+}
+
+/**
+ * Apify enforces cost two different ways and each applies to one pricing
+ * model: `maxItems` stops a pay-per-result actor at N rows, `maxTotalChargeUsd`
+ * stops a pay-per-event actor at N dollars. Sending the wrong one is at best
+ * ignored and at worst rejected, so the actor's own pricing decides. When the
+ * pricing can't be read, `maxItems` is the safer guess — it's the older
+ * parameter and the one every actor tolerates.
+ */
+function costCeiling(source: ScraperSource, config: CaptureConfig, pricingModel: string | null | undefined) {
+  if (pricingModel === "PAY_PER_EVENT") {
+    return config.maxRunChargeUsd != null ? { maxTotalChargeUsd: config.maxRunChargeUsd } : {};
+  }
+  return { maxItems: source.maxItems };
+}
+
 export async function runSource(sourceId: string, trigger: ScraperRunTrigger = "MANUAL") {
   const source = await prisma.scraperSource.findUnique({ where: { id: sourceId } });
   if (!source) throw new Error("Lead source not found");
 
-  const active = await prisma.scraperRun.findFirst({
-    where: { sourceId, status: { in: ["QUEUED", "RUNNING"] } },
-  });
-  if (active) throw new ScrapeInProgressError();
+  const config = await readCaptureConfig();
+  await assertCanRun(config, sourceId);
 
-  const input = applyInputTemplate(source.input ?? {});
+  const { input, proxyField, schema } = await buildRunInput(source, config);
   const run = await prisma.scraperRun.create({
     data: { sourceId, trigger, status: "QUEUED", input: input as Prisma.InputJsonValue },
   });
 
   try {
-    const apifyRun = await startRun(source.actorId, input);
+    // The caps go to Apify rather than being applied to the dataset after the
+    // fact, so the row limit saves money instead of only saving pipeline noise.
+    const apifyRun = await startWithProxyFallback(source.actorId, input, proxyField, {
+      ...runOptions(config),
+      ...costCeiling(source, config, schema?.pricingModel),
+    });
     const updated = await prisma.scraperRun.update({
       where: { id: run.id },
       data: { apifyRunId: apifyRun.id, datasetId: apifyRun.defaultDatasetId, status: toRunStatus(apifyRun.status) },
@@ -128,10 +235,36 @@ export async function runSource(sourceId: string, trigger: ScraperRunTrigger = "
     return updated;
   } catch (err) {
     const message = err instanceof ApifyError ? err.message : (err as Error).message;
-    return prisma.scraperRun.update({
+    const failed = await prisma.scraperRun.update({
       where: { id: run.id },
       data: { status: "FAILED", error: message, finishedAt: new Date() },
     });
+    await notify(failed, source);
+    return failed;
+  }
+}
+
+/**
+ * Actors publish input schemas that are sometimes out of date with the build
+ * that runs, so a proxy field we read as valid can still be rejected. Rather
+ * than lose the run to a field we added ourselves, drop it and go again once.
+ */
+async function startWithProxyFallback(
+  actorId: string,
+  input: Record<string, unknown>,
+  proxyField: string | null,
+  options: StartRunOptions,
+) {
+  try {
+    return await startRun(actorId, input, options);
+  } catch (err) {
+    const rejectedOurProxy =
+      proxyField != null && err instanceof ApifyError && err.status === 400 && err.message.includes(proxyField);
+    if (!rejectedOurProxy) throw err;
+
+    console.warn(`[scraper] ${actorId} rejected the injected "${proxyField}" — retrying without it.`);
+    const { [proxyField]: _dropped, ...rest } = input;
+    return startRun(actorId, rest, options);
   }
 }
 
@@ -152,6 +285,11 @@ async function pollUntilDone(runId: string) {
   polling.add(runId);
   const startedPollingAt = Date.now();
 
+  // Stay interested a little longer than Apify's own timeout, so a run that
+  // stops on its own is read properly instead of being written off here.
+  const config = await readCaptureConfig().catch(() => null);
+  const patience = (config?.runTimeoutSecs ? config.runTimeoutSecs * 1000 : DEFAULT_RUN_TIMEOUT_MS) + POLL_GRACE_MS;
+
   try {
     for (;;) {
       const run = await prisma.scraperRun.findUnique({ where: { id: runId }, include: { source: true } });
@@ -163,8 +301,8 @@ async function pollUntilDone(runId: string) {
         apifyRun = await getRun(run.apifyRunId);
       } catch (err) {
         // A transient Apify blip shouldn't abandon the run — retry on the slow cadence.
-        if (Date.now() - startedPollingAt > DEFAULT_RUN_TIMEOUT_MS) {
-          await failRun(runId, `Lost contact with Apify: ${(err as Error).message}`);
+        if (Date.now() - startedPollingAt > patience) {
+          await failRun(runId, `Lost contact with Apify: ${(err as Error).message}`, run.source);
           return;
         }
         await sleep(POLL_SLOW_MS);
@@ -180,22 +318,26 @@ async function pollUntilDone(runId: string) {
       }
 
       if (TERMINAL.includes(apifyRun.status)) {
-        if (apifyRun.status === "SUCCEEDED") {
-          await ingestRun(runId, apifyRun.defaultDatasetId ?? run.datasetId, run.source);
-        } else {
-          await prisma.scraperRun.update({
-            where: { id: runId },
-            data: {
-              finishedAt: new Date(),
-              error: apifyRun.statusMessage ?? `Apify run ${apifyRun.status.toLowerCase().replace("-", " ")}`,
-            },
-          });
-        }
+        const datasetId = apifyRun.defaultDatasetId ?? run.datasetId;
+        const note =
+          apifyRun.status === "SUCCEEDED"
+            ? null
+            : (apifyRun.statusMessage ?? `Apify run ${apifyRun.status.toLowerCase().replace("-", " ")}`);
+
+        // A run that timed out or was stopped has still been paid for, and its
+        // dataset holds everything found up to that point. Those rows are as
+        // good as any others — file them, and keep the reason alongside.
+        if (datasetId) await ingestRun(runId, datasetId, run.source, note);
+        else await failRun(runId, note ?? "Apify run finished without a dataset", run.source);
         return;
       }
 
-      if (Date.now() - startedPollingAt > DEFAULT_RUN_TIMEOUT_MS) {
-        await failRun(runId, "Gave up waiting after 30 minutes — the Apify run may still be going.");
+      if (Date.now() - startedPollingAt > patience) {
+        await failRun(
+          runId,
+          `Gave up waiting after ${Math.round(patience / 60_000)} minutes — the Apify run may still be going.`,
+          run.source,
+        );
         return;
       }
 
@@ -206,8 +348,17 @@ async function pollUntilDone(runId: string) {
   }
 }
 
-async function failRun(runId: string, error: string) {
-  await prisma.scraperRun.update({ where: { id: runId }, data: { status: "FAILED", error, finishedAt: new Date() } });
+async function failRun(runId: string, error: string, source?: ScraperSource) {
+  const run = await prisma.scraperRun.update({
+    where: { id: runId },
+    data: { status: "FAILED", error, finishedAt: new Date() },
+  });
+  if (source) await notify(run, source);
+}
+
+/** Never lets a reporting failure change the outcome of a run. */
+async function notify(run: ScraperRun, source: ScraperSource) {
+  await reportRun(run, source).catch((err) => console.error("[scraper] could not send run report:", (err as Error).message));
 }
 
 function sleep(ms: number) {
@@ -231,9 +382,14 @@ export async function resumeInterruptedRuns() {
 
 // --- Ingestion -------------------------------------------------------------
 
-export async function ingestRun(runId: string, datasetId: string | null, source: ScraperSource) {
+/**
+ * `note` is set when the run didn't finish cleanly. Its rows are still read
+ * and filed — Apify has already charged for them — and the note is kept as the
+ * run's error so the UI can say what went wrong beside what was salvaged.
+ */
+export async function ingestRun(runId: string, datasetId: string | null, source: ScraperSource, note: string | null = null) {
   if (!datasetId) {
-    await failRun(runId, "Apify run finished without a dataset");
+    await failRun(runId, note ?? "Apify run finished without a dataset", source);
     return;
   }
 
@@ -241,20 +397,24 @@ export async function ingestRun(runId: string, datasetId: string | null, source:
   try {
     items = await getDatasetItems(datasetId, Math.min(source.maxItems, 1000));
   } catch (err) {
-    await failRun(runId, `Could not read the results: ${(err as Error).message}`);
+    await failRun(runId, `Could not read the results: ${(err as Error).message}`, source);
     return;
   }
 
   const stats = await ingestItems(items.slice(0, source.maxItems), source, runId);
 
-  await prisma.scraperRun.update({
+  const finished = await prisma.scraperRun.update({
     where: { id: runId },
-    data: { ...stats, status: "SUCCEEDED", finishedAt: new Date() },
+    // A note means the status is already the one Apify reported (timed out,
+    // aborted); only a clean run gets promoted to SUCCEEDED here.
+    data: { ...stats, status: note ? undefined : "SUCCEEDED", error: note, finishedAt: new Date() },
   });
   console.log(
     `[scraper] ${source.name}: ${stats.itemsFetched} items → ${stats.leadsCreated} new, ` +
-      `${stats.leadsUpdated} updated, ${stats.duplicates} duplicate, ${stats.filtered} filtered out`,
+      `${stats.leadsUpdated} updated, ${stats.duplicates} duplicate, ${stats.filtered} filtered out` +
+      (note ? ` (${note})` : ""),
   );
+  await notify(finished, source);
 
   // Anything new goes to whichever email sequences are watching for it. Only
   // leads *created* by this run carry its id — a re-scrape that merely enriches
@@ -374,6 +534,7 @@ async function upsertLead(
     tags: mapped.tags,
     enrichment: raw as Prisma.InputJsonValue,
     source: source.leadSource as LeadSource,
+    captureMethod: "APIFY" as const,
     leadScore: score,
     scraperSourceId: source.id,
     scraperRunId: runId,
@@ -430,6 +591,23 @@ async function upsertLead(
   const changed = didEnrich(existing, mapped);
   await prisma.lead.update({ where: { id: existing.id }, data: enrichment });
   return changed ? "updated" : "unchanged";
+}
+
+// --- Housekeeping ----------------------------------------------------------
+
+/**
+ * Drops run history past the configured retention window. Captured leads are
+ * untouched — the foreign key is nullable, so a lead outlives the record of
+ * the scrape that found it. A retention of 0 keeps everything for ever.
+ */
+export async function pruneRunHistory(retentionDays: number, now = new Date()): Promise<number> {
+  if (retentionDays <= 0) return 0;
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60_000);
+  const { count } = await prisma.scraperRun.deleteMany({
+    where: { startedAt: { lt: cutoff }, status: { notIn: ["QUEUED", "RUNNING"] } },
+  });
+  if (count) console.log(`[scraper] Pruned ${count} run record(s) older than ${retentionDays} days`);
+  return count;
 }
 
 /** Did this re-scrape actually add anything the Owner didn't already have? */

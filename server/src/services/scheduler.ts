@@ -2,7 +2,8 @@ import type { ScraperSource } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { apifyConfigured } from "../lib/apify.js";
 import { isValidTimezone, safeZone, zonedDateParts, zonedTimeToUtc } from "../lib/timezone.js";
-import { resumeInterruptedRuns, runSource } from "./scraperRunner.js";
+import { CaptureBudgetError, CaptureBusyError, pruneRunHistory, resumeInterruptedRuns, runSource } from "./scraperRunner.js";
+import { readCaptureConfig } from "./captureConfig.js";
 import { billDuePlans } from "./carePlanBilling.js";
 import { dispatchDueEmails } from "./emailSender.js";
 import { runDueSequences } from "./emailSequences.js";
@@ -83,14 +84,15 @@ export async function syncSchedule(sourceId: string): Promise<Date | null> {
 // --- The tick --------------------------------------------------------------
 
 export async function tick(now = new Date()) {
-  // Four independent jobs on one interval. Lead capture failing must not stop
-  // an invoice going out, and neither must stop a follow-up, so they're
-  // settled separately rather than awaited in sequence.
+  // Independent jobs on one interval. Lead capture failing must not stop an
+  // invoice going out, and neither must stop a follow-up, so they're settled
+  // separately rather than awaited in sequence.
   const results = await Promise.allSettled([
     captureTick(now),
     billDuePlans(now),
     dispatchDueEmails(now),
     runDueSequences(now),
+    housekeepingTick(now),
   ]);
   for (const result of results) {
     if (result.status === "rejected") console.error("[scheduler] job failed:", result.reason);
@@ -138,9 +140,29 @@ async function captureTick(now: Date) {
       await runSource(source.id, "SCHEDULED");
       console.log(`[scheduler] Started scheduled run for “${source.name}”`);
     } catch (err) {
+      // Being at the concurrency limit or over budget is the guardrail doing
+      // its job, not a fault: say so plainly and let the next slot try again.
+      if (err instanceof CaptureBusyError || err instanceof CaptureBudgetError) {
+        console.warn(`[scheduler] Held back “${source.name}”: ${err.message}`);
+        continue;
+      }
       console.error(`[scheduler] Could not start “${source.name}”:`, (err as Error).message);
     }
   }
+}
+
+/**
+ * Run history past its retention window. Once a day is plenty — the check is
+ * cheap, but the delete isn't, and nothing depends on it being prompt.
+ */
+let lastPruneDay: string | null = null;
+
+async function housekeepingTick(now: Date) {
+  const day = now.toISOString().slice(0, 10);
+  if (lastPruneDay === day) return;
+  lastPruneDay = day;
+  const { retentionDays } = await readCaptureConfig();
+  await pruneRunHistory(retentionDays, now);
 }
 
 export function startScheduler() {

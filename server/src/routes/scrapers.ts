@@ -3,11 +3,22 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { requireRole } from "../middleware/auth.js";
-import { apifyConfigured, displayActorId, getActor, getDatasetItems, listMyActors, normalizeActorId, searchStore } from "../lib/apify.js";
-import { ScrapeInProgressError, runSource, stopRun } from "../services/scraperRunner.js";
+import {
+  apifyConfigured,
+  displayActorId,
+  getActor,
+  getActorSchema,
+  getDatasetItems,
+  getMonthlyUsage,
+  listMyActors,
+  normalizeActorId,
+  searchStore,
+} from "../lib/apify.js";
+import { CaptureBudgetError, CaptureBusyError, ScrapeInProgressError, runSource, stopRun } from "../services/scraperRunner.js";
 import { computeNextRunAt, isValidTimezone, parseScheduleTime, syncSchedule } from "../services/scheduler.js";
 import { SCRAPER_TEMPLATES } from "../services/scraperTemplates.js";
 import { buildDedupeKey, mapItemToLead, scoreLead, type Preset } from "../services/leadMapping.js";
+import { readCaptureConfig, unknownInputKeys } from "../services/captureConfig.js";
 
 export const scrapersRouter = Router();
 
@@ -43,16 +54,16 @@ const sourceInput = z.object({
   leadSource: z.enum(LEAD_SOURCES).default("GOOGLE_MAPS"),
   groupName: z.string().max(120).optional().nullable(),
   enabled: z.boolean().default(true),
-  maxItems: z.number().int().min(1).max(1000).default(100),
-  minScore: z.number().int().min(0).max(100).default(0),
-  autoQualify: z.boolean().default(true),
-  qualifyScore: z.number().int().min(0).max(100).default(60),
+  // Left optional on purpose: anything the form doesn't send falls back to the
+  // capture defaults in Settings, so those are a real default rather than a
+  // number copied into every source at the moment it was created.
+  maxItems: z.number().int().min(1).max(1000).optional(),
+  minScore: z.number().int().min(0).max(100).optional(),
+  autoQualify: z.boolean().optional(),
+  qualifyScore: z.number().int().min(0).max(100).optional(),
   scheduleEnabled: z.boolean().default(false),
   scheduleTimes: z.array(scheduleTime).max(6, "Six runs a day is plenty").default([]),
-  timezone: z
-    .string()
-    .refine(isValidTimezone, { message: "Unknown timezone" })
-    .default("Africa/Accra"),
+  timezone: z.string().refine(isValidTimezone, { message: "Unknown timezone" }).optional(),
 });
 
 /** Actors are stored in their display form (`username/actor`), whatever was pasted. */
@@ -79,6 +90,10 @@ scrapersRouter.get("/overview", async (_req, res, next) => {
       .filter((source) => source.enabled && source.scheduleEnabled && source.nextRunAt)
       .sort((a, b) => a.nextRunAt!.getTime() - b.nextRunAt!.getTime());
 
+    const config = await readCaptureConfig();
+    // Spend is a live call to Apify; the page must still render when it fails.
+    const usage = connected ? await getMonthlyUsage().catch(() => null) : null;
+
     res.json({
       connected,
       sourceCount: sources.length,
@@ -89,6 +104,17 @@ scrapersRouter.get("/overview", async (_req, res, next) => {
       capturedThisWeek,
       capturedTotal,
       lastRun,
+      spend: usage
+        ? {
+            spentUsd: usage.spentUsd,
+            includedUsd: usage.includedUsd,
+            budgetUsd: config.monthlyBudgetUsd,
+            cycleEnd: usage.cycleEnd,
+            /** True once runs are being refused rather than merely close to it. */
+            blocked: config.monthlyBudgetUsd != null && usage.spentUsd >= config.monthlyBudgetUsd,
+          }
+        : null,
+      concurrency: { running, limit: config.maxConcurrentRuns },
     });
   } catch (err) {
     next(err);
@@ -122,6 +148,65 @@ scrapersRouter.get("/catalog/actor", async (req, res, next) => {
   try {
     const id = z.string().min(3).parse(req.query.id);
     res.json(await getActor(id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/scrapers/actors — the health of every actor this install depends on.
+ *
+ * An actor is someone else's code on someone else's account: it gets renamed,
+ * made private, deprecated, or repriced, and the first sign of any of that is
+ * a scheduled run failing at 06:00. This answers the three questions worth
+ * asking before that happens — is it still there, what does it cost now, and
+ * is each source's input actually understood by it.
+ *
+ * `?refresh=1` bypasses the six-hour schema cache.
+ */
+scrapersRouter.get("/actors", async (req, res, next) => {
+  try {
+    const refresh = req.query.refresh === "1";
+    const sources = await prisma.scraperSource.findMany({
+      select: { id: true, name: true, actorId: true, input: true, enabled: true },
+      orderBy: { name: "asc" },
+    });
+
+    const templateActors = new Set(SCRAPER_TEMPLATES.map((template) => template.actorId));
+    const ids = [...new Set([...sources.map((source) => source.actorId), ...templateActors])];
+
+    const actors = await Promise.all(
+      ids.map(async (actorId) => {
+        const schema = await getActorSchema(actorId, refresh);
+        const used = sources
+          .filter((source) => normalizeActorId(source.actorId) === normalizeActorId(actorId))
+          .map((source) => ({
+            id: source.id,
+            name: source.name,
+            enabled: source.enabled,
+            // Keys the actor will silently ignore — nearly always a typo, and
+            // invisible until you wonder why a filter isn't filtering.
+            unknownKeys: unknownInputKeys((source.input ?? {}) as Record<string, unknown>, schema),
+          }));
+
+        return {
+          actorId,
+          reachable: schema !== null,
+          title: schema?.title ?? null,
+          pricingModel: schema?.pricingModel ?? null,
+          proxyField: schema?.proxyField ?? null,
+          proxyRequired: schema?.proxyRequired ?? false,
+          inTemplates: templateActors.has(actorId),
+          usedBy: used,
+        };
+      }),
+    );
+
+    res.json({
+      actors: actors.sort((a, b) => b.usedBy.length - a.usedBy.length || a.actorId.localeCompare(b.actorId)),
+      unreachable: actors.filter((actor) => !actor.reachable).length,
+      withUnknownKeys: actors.filter((actor) => actor.usedBy.some((source) => source.unknownKeys.length > 0)).length,
+    });
   } catch (err) {
     next(err);
   }
@@ -163,13 +248,22 @@ scrapersRouter.get("/sources/:id", async (req, res, next) => {
 scrapersRouter.post("/sources", async (req, res, next) => {
   try {
     const data = sourceInput.parse(req.body);
+    const config = await readCaptureConfig();
+    const resolved = {
+      ...data,
+      maxItems: data.maxItems ?? config.maxItems,
+      minScore: data.minScore ?? config.minScore,
+      autoQualify: data.autoQualify ?? config.autoQualify,
+      qualifyScore: data.qualifyScore ?? config.qualifyScore,
+      timezone: data.timezone ?? config.timezone,
+    };
     const created = await prisma.scraperSource.create({
       data: {
-        ...data,
-        actorId: normalizeStoredActorId(data.actorId),
-        input: data.input as Prisma.InputJsonValue,
-        fieldMap: (data.fieldMap ?? undefined) as Prisma.InputJsonValue | undefined,
-        nextRunAt: computeNextRunAt(data),
+        ...resolved,
+        actorId: normalizeStoredActorId(resolved.actorId),
+        input: resolved.input as Prisma.InputJsonValue,
+        fieldMap: (resolved.fieldMap ?? undefined) as Prisma.InputJsonValue | undefined,
+        nextRunAt: computeNextRunAt(resolved),
       },
     });
     res.status(201).json(created);
@@ -216,7 +310,11 @@ scrapersRouter.post("/sources/:id/run", async (req, res, next) => {
     const run = await runSource(req.params.id, "MANUAL");
     res.status(202).json(run);
   } catch (err) {
-    if (err instanceof ScrapeInProgressError) return res.status(409).json({ error: err.message });
+    if (err instanceof ScrapeInProgressError || err instanceof CaptureBusyError) {
+      return res.status(409).json({ error: err.message });
+    }
+    // 402: the request is fine, it's the money that has run out.
+    if (err instanceof CaptureBudgetError) return res.status(402).json({ error: err.message });
     next(err);
   }
 });

@@ -150,9 +150,14 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
         <section>
           <SectionTitle>Actor input</SectionTitle>
           <p className="mb-2 text-xs text-ink/50">
-            Passed to Apify exactly as written. <code className="font-mono">{"{{date}}"}</code> and{" "}
-            <code className="font-mono">{"{{yesterday}}"}</code> are replaced when the run starts, so a daily schedule can
-            move its own search window.
+            Passed to Apify exactly as written, except for the tokens replaced when the run starts:{" "}
+            <code className="font-mono">{"{{date}}"}</code>, <code className="font-mono">{"{{yesterday}}"}</code> so a daily
+            schedule can move its own search window, and <code className="font-mono">{"{{location}}"}</code>,{" "}
+            <code className="font-mono">{"{{country}}"}</code>, <code className="font-mono">{"{{language}}"}</code> from
+            Settings → Lead capture so the market is set in one place.
+          </p>
+          <p className="mb-2 text-xs text-ink/50">
+            A proxy is added automatically for actors that take one; write the key yourself to override it.
           </p>
           <textarea
             rows={12}

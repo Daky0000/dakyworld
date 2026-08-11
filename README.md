@@ -221,6 +221,39 @@ email enrichment, contact sweep over a list of URLs), by searching the Apify
 Store from inside the app, or by typing an actor id. Nothing about a new
 source requires a deploy.
 
+**One place decides how every source behaves.** **Settings → Lead capture**
+holds what a source shouldn't have to repeat:
+
+- *The market.* One location, country and language. Any actor input containing
+  `{{location}}`, `{{country}}`, `{{countryCode}}` or `{{language}}` is filled
+  in at run time, so widening from Accra to Lagos is one edit rather than ten.
+  (`{{date}}` and `{{yesterday}}` work the same way for moving search windows.)
+- *What a run may cost.* A monthly Apify budget, a per-run charge cap, a wall
+  clock timeout, and a limit on simultaneous runs. Runs are refused — free —
+  once the month's spend reaches the budget. The timeout matters most: actors
+  ship defaults measured in days, so a bad search string would otherwise run
+  until it had spent everything.
+- *What a new source starts as.* Row cap, score floor, qualify threshold,
+  timezone.
+- *Who hears about it.* A run report by email — off, failures only, or every
+  run. Failures-only still reports a run that succeeded and filed nothing,
+  because that is the failure that otherwise goes unnoticed.
+- *Housekeeping.* How long run history is kept. Captured leads are never
+  deleted by it.
+
+**Proxies are per actor, not guessed.** Actors disagree about proxies: the
+Google Maps ones take none, `vdrmota/contact-info-scraper` *requires*
+`proxyConfig`, most crawlers want `proxyConfiguration`. The app reads each
+actor's published input schema and only ever fills a field the actor actually
+declares — writing the key yourself in the input JSON always wins.
+
+**The actors themselves are checked.** An actor is someone else's code on
+someone else's account: it gets renamed, made private or repriced. Settings →
+Lead capture lists every actor in use with its pricing model and whether Apify
+still returns it, and flags any input key an actor doesn't accept — those are
+dropped silently by Apify, so a misspelt key is a filter that looks set and
+isn't.
+
 **Schedule them.** Each source takes up to six run times a day (`06:30`,
 `18:00`, …) in its own timezone. An in-process scheduler ticks every minute
 and starts whatever is due. The next slot is written to `nextRunAt` *before*
@@ -228,6 +261,17 @@ the run starts, so a failing actor can't retry-loop and a restart can't fire
 the same slot twice. Slots missed by more than six hours — a long outage —
 are skipped rather than stampeded through on boot. Runs interrupted by a
 deploy are re-attached to on the next boot.
+
+**Every lead says how it got in.** A `captureMethod` tag — Apify, Excel, CSV,
+Google Sheet, Manual — sits beside the name on the Leads page, filters in the
+bar next to "Any source", and groups under "How it got in". It's set by
+whatever created the row and never changed afterwards: a lead that arrived on
+a spreadsheet and is later found again by a scrape still arrived on a
+spreadsheet. `source` is *where the business was found*; `captureMethod` is
+*which door it came through* — the two sound alike and answer different
+questions. PDF, DOCUMENT and API are declared but nothing writes them yet;
+they're there because adding a Postgres enum value and using it need separate
+migrations, and reserving them costs nothing.
 
 **What arrives.** Each row is mapped to a lead (`GOOGLE_MAPS`,
 `GENERIC_CONTACT`, automatic detection, or a custom field map), scored 0–100
@@ -242,8 +286,14 @@ and review counts, but never overwrites an edit, never downgrades a status,
 and never creates a second row. Permanently closed businesses and rows below
 the source's minimum score are dropped rather than saved.
 
+**A run that stops early still counts.** Apify charges for what it did, so a
+timed-out or aborted run has its dataset read and filed like any other, with
+the reason kept alongside the results rather than instead of them.
+
 Actor runs cost money on Apify. The whole feature is Owner-gated server-side
-(`requireRole("OWNER")`), and `maxItems` caps every run.
+(`requireRole("OWNER")`), the cost ceiling goes to Apify with the run rather
+than being applied to the results afterwards, and the monthly budget stops
+runs starting at all.
 
 ## Importing a lead sheet
 
@@ -338,7 +388,7 @@ deploy stays the source of truth wherever you chose to make it one.
 
 | Settings panel | Get keys from | Env override |
 |---|---|---|
-| Lead capture (Apify) | https://console.apify.com/settings/integrations | `APIFY_TOKEN` |
+| Lead capture (Apify) | https://console.apify.com/settings/integrations | `APIFY_TOKEN`, `SCRAPER_TIMEZONE`, `APIFY_MONTHLY_BUDGET_USD`, `APIFY_MAX_CONCURRENT_RUNS` |
 | AI analyst (Anthropic) | https://console.anthropic.com/settings/keys | `ANTHROPIC_API_KEY` |
 | Google Drive | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` *(only behind a proxy that rewrites the host)* |
 | Payments (Stripe) | https://dashboard.stripe.com/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
@@ -452,6 +502,8 @@ Dakyworld OS/
         sheetPlan.ts     Table detection, header synonyms, plan validation, row extraction
         leadImport.ts    Runs an approved plan: groups, columns, leads, dedupe
         scraperRunner.ts Starts Apify runs, polls them, ingests the results
+        captureConfig.ts How every scrape behaves: market, cost ceilings, proxy, defaults
+        captureNotify.ts The run report — failures, and runs that quietly found nothing
         carePlanBilling.ts  Retainer periods, overage settlement, invoice raising
         invoiceNumber.ts    Monthly invoice numbering, collision-safe
         emailContext.ts     What we know about a recipient, as facts

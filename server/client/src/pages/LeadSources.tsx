@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type {
+  ActorHealthReport,
   ApifyActorSummary,
   AppSettings,
+  CaptureConfig,
   ScraperOverview,
   ScraperRun,
   ScraperSource,
@@ -40,6 +42,18 @@ export function LeadSources() {
     queryKey: ["scraper-runs"],
     queryFn: () => api.get<ScraperRun[]>("/scrapers/runs?take=15"),
     refetchInterval: (overview?.runningCount ?? 0) > 0 ? 4000 : false,
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.get<AppSettings>("/settings"),
+  });
+
+  // Cheap and cached: what it buys is a source card that says its actor has
+  // gone missing before the 06:00 run does.
+  const { data: health } = useQuery({
+    queryKey: ["actor-health", 0],
+    queryFn: () => api.get<ActorHealthReport>("/scrapers/actors"),
   });
 
   const refresh = () => {
@@ -87,7 +101,7 @@ export function LeadSources() {
         }
       />
 
-      <ApifyConnection />
+      <ApifyConnection settings={settings} overview={overview} />
 
       {overview && (
         <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -108,7 +122,7 @@ export function LeadSources() {
           />
           <StatTile
             label="Running now"
-            value={overview.runningCount}
+            value={`${overview.concurrency.running}/${overview.concurrency.limit}`}
             sub={overview.lastRun ? <>last run <RelativeTime value={overview.lastRun.startedAt} /></> : "No runs yet"}
           />
         </div>
@@ -128,6 +142,7 @@ export function LeadSources() {
             <SourceCard
               key={source.id}
               source={source}
+              health={health?.actors.find((actor) => actor.actorId === source.actorId) ?? null}
               onRun={() => runNow.mutate(source.id)}
               running={runNow.isPending && runNow.variables === source.id}
               runError={runNow.variables === source.id && runNow.isError ? (runNow.error as Error).message : null}
@@ -146,6 +161,7 @@ export function LeadSources() {
 
       <SourcePicker
         open={picking}
+        defaults={settings?.capture.config}
         onClose={() => setPicking(false)}
         onPick={(draft) => {
           setPicking(false);
@@ -162,21 +178,19 @@ export function LeadSources() {
 /**
  * A read-out, not a form. The Apify token is edited on the Settings page along
  * with every other credential — duplicating the form here would mean two places
- * to keep in step and two places to look when something is wrong.
+ * to keep in step and two places to look when something is wrong. What does
+ * belong here is the month's spend, because this is the page where you decide
+ * to start another run.
  */
-function ApifyConnection() {
-  const { data } = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => api.get<AppSettings>("/settings"),
-  });
-
-  const apify = data?.apify;
+function ApifyConnection({ settings, overview }: { settings?: AppSettings; overview?: ScraperOverview }) {
+  const apify = settings?.apify;
+  const spend = overview?.spend;
 
   return (
     <Card className="mb-8">
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
-          <StatusDot tone={apify?.connected ? "ok" : apify?.token ? "bad" : "idle"} />
+          <StatusDot tone={spend?.blocked ? "bad" : apify?.connected ? "ok" : apify?.token ? "bad" : "idle"} />
           <h2 className="font-serif text-lg">Apify connection</h2>
         </div>
         <p className="min-w-[16rem] flex-1 text-sm text-ink/60">
@@ -184,6 +198,15 @@ function ApifyConnection() {
             <>
               Connected as <strong>{apify.account?.username ?? "your account"}</strong>
               {apify.account?.plan?.id && <> on the {apify.account.plan.id} plan</>}.
+              {spend && (
+                <>
+                  {" "}
+                  <span className={spend.blocked ? "text-red-600" : "text-ink/50"}>
+                    ${spend.spentUsd.toFixed(2)} spent this month
+                    {spend.budgetUsd != null ? ` of a $${spend.budgetUsd.toFixed(2)} budget` : ""}.
+                  </span>
+                </>
+              )}
             </>
           ) : apify?.error ? (
             <span className="text-red-600">{apify.error}</span>
@@ -198,6 +221,15 @@ function ApifyConnection() {
           {apify?.connected ? "Manage in Settings" : "Add a token"}
         </Link>
       </div>
+      {spend?.blocked && (
+        <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          The monthly Apify budget has been reached, so runs are being refused. Raise it under{" "}
+          <Link to="/settings?tab=capture" className="underline">
+            Settings → Lead capture
+          </Link>
+          , or wait for the billing month to roll over.
+        </p>
+      )}
     </Card>
   );
 }
@@ -206,6 +238,7 @@ function ApifyConnection() {
 
 function SourceCard({
   source,
+  health,
   onRun,
   running,
   runError,
@@ -214,6 +247,7 @@ function SourceCard({
   onDelete,
 }: {
   source: ScraperSource;
+  health: ActorHealthReport["actors"][number] | null;
   onRun: () => void;
   running: boolean;
   runError: string | null;
@@ -223,6 +257,7 @@ function SourceCard({
 }) {
   const lastRun = source.runs?.[0];
   const isLive = lastRun && (lastRun.status === "RUNNING" || lastRun.status === "QUEUED");
+  const unknownKeys = health?.usedBy.find((entry) => entry.id === source.id)?.unknownKeys ?? [];
 
   return (
     <div className={`border border-ink/10 bg-white p-5 ${source.enabled ? "" : "opacity-60"}`}>
@@ -295,8 +330,28 @@ function SourceCard({
       </dl>
 
       {runError && <p className="mt-3 text-sm text-red-600">{runError}</p>}
-      {lastRun?.error && lastRun.status === "FAILED" && (
-        <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{lastRun.error}</p>
+      {lastRun?.error && (
+        <p
+          className={`mt-3 border px-3 py-2 text-sm ${
+            lastRun.status === "SUCCEEDED"
+              ? "border-amber-200 bg-amber-50 text-amber-800"
+              : "border-red-200 bg-red-50 text-red-700"
+          }`}
+        >
+          {lastRun.error}
+        </p>
+      )}
+      {health && !health.reachable && (
+        <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Apify wouldn&rsquo;t return this actor. It may have been renamed, made private or removed — this source will fail on
+          its next run.
+        </p>
+      )}
+      {unknownKeys.length > 0 && (
+        <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          The actor doesn&rsquo;t accept {unknownKeys.map((key) => `“${key}”`).join(", ")} — Apify drops those keys silently, so
+          whatever they were meant to do isn&rsquo;t happening.
+        </p>
       )}
     </div>
   );
@@ -382,7 +437,18 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
 
 // --- Add a source ----------------------------------------------------------
 
-function SourcePicker({ open, onClose, onPick }: { open: boolean; onClose: () => void; onPick: (draft: SourceDraft) => void }) {
+function SourcePicker({
+  open,
+  defaults,
+  onClose,
+  onPick,
+}: {
+  open: boolean;
+  /** Settings → Lead capture, so a new source starts where the Owner set it to. */
+  defaults?: CaptureConfig;
+  onClose: () => void;
+  onPick: (draft: SourceDraft) => void;
+}) {
   const [search, setSearch] = useState("");
   const [submitted, setSubmitted] = useState("");
 
@@ -400,8 +466,20 @@ function SourcePicker({ open, onClose, onPick }: { open: boolean; onClose: () =>
     enabled: open,
   });
 
-  const fromTemplate = (template: ScraperTemplate): SourceDraft => ({
+  // The configured defaults, then whatever the template is specifically about.
+  const blank: SourceDraft = {
     ...BLANK_SOURCE,
+    ...(defaults && {
+      maxItems: defaults.maxItems,
+      minScore: defaults.minScore,
+      autoQualify: defaults.autoQualify,
+      qualifyScore: defaults.qualifyScore,
+      timezone: defaults.timezone,
+    }),
+  };
+
+  const fromTemplate = (template: ScraperTemplate): SourceDraft => ({
+    ...blank,
     name: template.name,
     actorId: template.actorId,
     description: template.description,
@@ -409,12 +487,13 @@ function SourcePicker({ open, onClose, onPick }: { open: boolean; onClose: () =>
     preset: template.preset,
     leadSource: template.leadSource,
     groupName: template.groupName,
+    // A template's own numbers are chosen for its segment, so they win.
     maxItems: template.maxItems,
     minScore: template.minScore,
   });
 
   const fromActor = (actor: ApifyActorSummary): SourceDraft => ({
-    ...BLANK_SOURCE,
+    ...blank,
     name: actor.title ?? actor.name,
     actorId: actor.fullName,
     description: actor.description ?? "",
@@ -476,7 +555,7 @@ function SourcePicker({ open, onClose, onPick }: { open: boolean; onClose: () =>
 
           <button
             type="button"
-            onClick={() => onPick(BLANK_SOURCE)}
+            onClick={() => onPick(blank)}
             className="mt-4 font-mono text-[11px] uppercase tracking-[.12em] text-bronze"
           >
             Or enter an actor id by hand →
@@ -505,6 +584,7 @@ function ActorList({ actors, onPick }: { actors: ApifyActorSummary[]; onPick: (a
             <span className="mt-0.5 block font-mono text-[10px] text-ink/40">
               {actor.fullName}
               {actor.stats?.totalRuns ? ` · ${Intl.NumberFormat().format(actor.stats.totalRuns)} runs` : ""}
+              {actor.pricingModel && actor.pricingModel !== "FREE" ? ` · ${actor.pricingModel.replace(/_/g, " ").toLowerCase()}` : ""}
             </span>
           </span>
         </button>

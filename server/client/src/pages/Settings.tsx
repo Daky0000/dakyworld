@@ -2,8 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
-import type { AppSettings } from "../lib/types";
-import { Badge, Button, Field, PageHeader, StatusDot } from "../components/ui";
+import type { ActorHealthReport, AppSettings, CaptureConfig } from "../lib/types";
+import { Badge, Button, Field, PageHeader, StatusDot, Toggle } from "../components/ui";
 
 /**
  * Everything the Owner configures, in one place.
@@ -782,7 +782,436 @@ function CapturePanel({ settings }: { settings: AppSettings }) {
         </form>
       )}
       <ErrorNote error={connect.error ?? disconnect.error} />
+
+      <CaptureBehaviour settings={settings} />
+      <ActorHealthList />
     </Panel>
+  );
+}
+
+/** This month's Apify spend against whatever ceiling it has. */
+function SpendMeter({ settings }: { settings: AppSettings }) {
+  const usage = settings.apify.usage;
+  if (!usage) return null;
+
+  const budget = settings.capture.config.monthlyBudgetUsd;
+  const ceiling = budget ?? usage.includedUsd;
+  const fraction = ceiling && ceiling > 0 ? Math.min(1, usage.spentUsd / ceiling) : null;
+  const blocked = budget != null && usage.spentUsd >= budget;
+
+  return (
+    <div className="w-full">
+      <div className="flex flex-wrap items-baseline gap-2 text-sm">
+        <span className="font-medium">${usage.spentUsd.toFixed(2)}</span>
+        <span className="text-ink/50">
+          this billing month
+          {ceiling ? ` of $${ceiling.toFixed(2)} ${budget != null ? "budget" : "included"}` : ""}
+        </span>
+        {blocked && <Badge tone="muted">runs paused</Badge>}
+      </div>
+      {fraction != null && (
+        <div className="mt-1.5 h-1 w-full max-w-sm bg-ink/10">
+          <div
+            className={`h-1 ${blocked ? "bg-red-500" : fraction > 0.8 ? "bg-amber-500" : "bg-ink"}`}
+            style={{ width: `${Math.max(2, fraction * 100)}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Capture behaviour -----------------------------------------------------
+
+const CAPTURE_TIMEZONES = ["Africa/Accra", "Africa/Lagos", "Africa/Nairobi", "Africa/Johannesburg", "Europe/London", "UTC"];
+
+const PROXY_LABELS: Record<CaptureConfig["proxyMode"], string> = {
+  NONE: "No proxy — cheapest, blocked most often",
+  AUTO: "Apify proxy, automatic group (recommended)",
+  DATACENTER: "Datacenter — fast and cheap",
+  RESIDENTIAL: "Residential — dearest, hardest to block",
+};
+
+const NOTIFY_LABELS: Record<CaptureConfig["notify"], string> = {
+  OFF: "Never email me",
+  FAILURES: "Only when something goes wrong or a run finds nothing",
+  ALL: "After every run",
+};
+
+/**
+ * The half of lead capture that isn't the token: the market being searched,
+ * what a run may cost, what a new source starts as, and who hears about it.
+ *
+ * One form, one save. Each of these is a global default rather than a
+ * per-source setting precisely because keeping ten sources in step by hand is
+ * how they end up out of step.
+ */
+function CaptureBehaviour({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const qc = useQueryClient();
+  const saved = settings.capture.config;
+  const env = settings.capture.envManaged;
+  const [form, setForm] = useState<CaptureConfig>(saved);
+
+  // Reset the draft when the *saved values* change, not when the settings
+  // object is merely re-fetched — a background refetch on window focus would
+  // otherwise throw away whatever was being typed.
+  const savedKey = JSON.stringify(saved);
+  useEffect(() => setForm(JSON.parse(savedKey) as CaptureConfig), [savedKey]);
+
+  const update = useMutation({
+    mutationFn: () => api.put<AppSettings>("/settings/capture", form),
+    onSuccess: (result) => {
+      save(result);
+      void qc.invalidateQueries({ queryKey: ["scraper-overview"] });
+      void qc.invalidateQueries({ queryKey: ["scraper-sources"] });
+    },
+  });
+
+  const set = <K extends keyof CaptureConfig>(key: K, value: CaptureConfig[K]) => setForm({ ...form, [key]: value });
+  const dirty = JSON.stringify(form) !== JSON.stringify(saved);
+
+  return (
+    <div className="mt-8 border-t border-ink/10 pt-6">
+      <SpendMeter settings={settings} />
+
+      <div className="mt-6 space-y-6">
+        <Group
+          title="The market"
+          blurb={
+            <>
+              Where the searches look. Any source whose actor input contains{" "}
+              <code className="font-mono text-xs">{"{{location}}"}</code>,{" "}
+              <code className="font-mono text-xs">{"{{country}}"}</code> or{" "}
+              <code className="font-mono text-xs">{"{{language}}"}</code> follows this — so widening the market is one
+              change here, not ten edits across sources.
+            </>
+          }
+        >
+          <Field label="Search location" hint="Exactly as you'd type it into Google Maps.">
+            <input value={form.location} onChange={(event) => set("location", event.target.value)} className="input" />
+          </Field>
+          <Field label="Country code" hint="Two letters, e.g. gh.">
+            <input
+              value={form.countryCode}
+              onChange={(event) => set("countryCode", event.target.value.toLowerCase())}
+              maxLength={2}
+              className="input font-mono text-xs"
+            />
+          </Field>
+          <Field label="Results language">
+            <input value={form.language} onChange={(event) => set("language", event.target.value)} className="input" />
+          </Field>
+        </Group>
+
+        <Group
+          title="What a run may cost"
+          blurb="Apify bills per run. These are the limits that stop one bad input JSON spending a month's credits overnight — a run refused here costs nothing."
+        >
+          <Field
+            label="Monthly budget (USD)"
+            hint={env.monthlyBudgetUsd ? "Pinned by the deploy." : "Blank means no ceiling. Runs are refused once the month's spend reaches it."}
+          >
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={form.monthlyBudgetUsd ?? ""}
+              disabled={env.monthlyBudgetUsd}
+              onChange={(event) => set("monthlyBudgetUsd", event.target.value === "" ? null : Number(event.target.value))}
+              placeholder="No ceiling"
+              className="input disabled:opacity-40"
+            />
+          </Field>
+          <Field
+            label="Max charge per run (USD)"
+            hint="Apify stops a pay-per-event actor once a run reaches this. Blank means only the monthly budget applies."
+          >
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={form.maxRunChargeUsd ?? ""}
+              onChange={(event) => set("maxRunChargeUsd", event.target.value === "" ? null : Number(event.target.value))}
+              placeholder="No cap"
+              className="input"
+            />
+          </Field>
+          <Field label="Runs at once" hint={env.maxConcurrentRuns ? "Pinned by the deploy." : "Scrapes are slow; more at once mostly means more spent at once."}>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={form.maxConcurrentRuns}
+              disabled={env.maxConcurrentRuns}
+              onChange={(event) => set("maxConcurrentRuns", Number(event.target.value))}
+              className="input disabled:opacity-40"
+            />
+          </Field>
+          <Field label="Run timeout (minutes)" hint="Actors ship defaults measured in days. This is the one that matters.">
+            <input
+              type="number"
+              min={1}
+              max={360}
+              value={Math.round(form.runTimeoutSecs / 60)}
+              onChange={(event) => set("runTimeoutSecs", Math.max(60, Number(event.target.value) * 60))}
+              className="input"
+            />
+          </Field>
+          <Field label="Memory per run" hint="Leave on the actor's own default unless a run reports running out.">
+            <select
+              value={form.memoryMbytes}
+              onChange={(event) => set("memoryMbytes", Number(event.target.value))}
+              className="input"
+            >
+              <option value={0}>Actor's default</option>
+              <option value={1024}>1 GB</option>
+              <option value={2048}>2 GB</option>
+              <option value={4096}>4 GB</option>
+              <option value={8192}>8 GB</option>
+            </select>
+          </Field>
+          <Field
+            label="Proxy"
+            hint="Only used by actors that take one — the Google Maps actors handle their own."
+            full
+          >
+            <select
+              value={form.proxyMode}
+              onChange={(event) => set("proxyMode", event.target.value as CaptureConfig["proxyMode"])}
+              className="input"
+            >
+              {(Object.keys(PROXY_LABELS) as CaptureConfig["proxyMode"][]).map((mode) => (
+                <option key={mode} value={mode}>
+                  {PROXY_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {form.proxyMode === "RESIDENTIAL" && (
+            <Field label="Proxy country" hint="Two letters, e.g. GH. Blank lets Apify choose.">
+              <input
+                value={form.proxyCountry ?? ""}
+                onChange={(event) => set("proxyCountry", event.target.value.toUpperCase() || null)}
+                maxLength={2}
+                className="input font-mono text-xs"
+              />
+            </Field>
+          )}
+        </Group>
+
+        <Group
+          title="What a new source starts as"
+          blurb="Filled in when a source is added, and editable per source afterwards. Changing these doesn't touch sources that already exist."
+        >
+          <Field label="Max leads per run">
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={form.maxItems}
+              onChange={(event) => set("maxItems", Number(event.target.value))}
+              className="input"
+            />
+          </Field>
+          <Field label="Minimum score to keep" hint="Below this a row is dropped rather than filed.">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={form.minScore}
+              onChange={(event) => set("minScore", Number(event.target.value))}
+              className="input"
+            />
+          </Field>
+          <Field label="Auto-qualify above" hint="Straight to QUALIFYING instead of NEW.">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={form.qualifyScore}
+              disabled={!form.autoQualify}
+              onChange={(event) => set("qualifyScore", Number(event.target.value))}
+              className="input disabled:opacity-40"
+            />
+          </Field>
+          <Field label="Schedule timezone" hint={env.timezone ? "Pinned by the deploy." : undefined}>
+            <select
+              value={form.timezone}
+              disabled={env.timezone}
+              onChange={(event) => set("timezone", event.target.value)}
+              className="input disabled:opacity-40"
+            >
+              {[...new Set([form.timezone, ...CAPTURE_TIMEZONES])].map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="sm:col-span-2">
+            <Toggle
+              checked={form.autoQualify}
+              onChange={(next) => set("autoQualify", next)}
+              label="Auto-qualify strong leads"
+            />
+          </div>
+        </Group>
+
+        <Group
+          title="Being told about it"
+          blurb="Scrapes run at whatever hour the schedule says. A run that fails and a run that quietly files nothing look identical from the Leads page — an empty morning."
+        >
+          <Field label="Email me" full>
+            <select
+              value={form.notify}
+              onChange={(event) => set("notify", event.target.value as CaptureConfig["notify"])}
+              className="input"
+            >
+              {(Object.keys(NOTIFY_LABELS) as CaptureConfig["notify"][]).map((mode) => (
+                <option key={mode} value={mode}>
+                  {NOTIFY_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {form.notify !== "OFF" && (
+            <Field label="Send reports to" hint={`Blank uses ${settings.email.fromEmail ?? "the address the app sends from"}.`}>
+              <input
+                type="email"
+                value={form.notifyEmail ?? ""}
+                onChange={(event) => set("notifyEmail", event.target.value || null)}
+                placeholder={settings.email.fromEmail ?? "you@dakyworld.com"}
+                className="input"
+              />
+            </Field>
+          )}
+          <Field label="Keep run history for (days)" hint="0 keeps everything. Captured leads are never deleted.">
+            <input
+              type="number"
+              min={0}
+              max={3650}
+              value={form.retentionDays}
+              onChange={(event) => set("retentionDays", Number(event.target.value))}
+              className="input"
+            />
+          </Field>
+        </Group>
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <Button onClick={() => update.mutate()} disabled={!dirty || update.isPending}>
+          {update.isPending ? "Saving…" : dirty ? "Save capture settings" : "Saved"}
+        </Button>
+        {dirty && (
+          <button type="button" onClick={() => setForm(saved)} className="font-mono text-[11px] uppercase tracking-[.12em] text-ink/40">
+            Discard
+          </button>
+        )}
+        {!dirty && (
+          <button
+            type="button"
+            onClick={() => setForm(settings.capture.defaults)}
+            className="font-mono text-[11px] uppercase tracking-[.12em] text-ink/40"
+          >
+            Reset to defaults
+          </button>
+        )}
+      </div>
+      <ErrorNote error={update.error} />
+    </div>
+  );
+}
+
+function Group({ title, blurb, children }: { title: string; blurb: ReactNode; children: ReactNode }) {
+  return (
+    <section className="border border-ink/10 bg-ivory/40 p-4">
+      <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/50">{title}</h3>
+      <p className="mt-1 max-w-2xl text-xs text-ink/50">{blurb}</p>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">{children}</div>
+    </section>
+  );
+}
+
+// --- Actor health ----------------------------------------------------------
+
+const PRICING_LABELS: Record<string, string> = {
+  FREE: "free",
+  FLAT_PRICE_PER_MONTH: "monthly rental",
+  PRICE_PER_DATASET_ITEM: "per result",
+  PAY_PER_EVENT: "per event",
+};
+
+/**
+ * An actor is someone else's code on someone else's account: it gets renamed,
+ * made private or repriced, and the first sign is a scheduled run failing at
+ * 06:00. This asks Apify now instead.
+ */
+function ActorHealthList() {
+  // Bumping this changes the query key, which is what re-runs the check —
+  // and past zero it also tells the server to ignore its schema cache.
+  const [refreshed, setRefreshed] = useState(0);
+  const { data, isFetching } = useQuery({
+    queryKey: ["actor-health", refreshed],
+    queryFn: () => api.get<ActorHealthReport>(`/scrapers/actors${refreshed ? "?refresh=1" : ""}`),
+  });
+
+  return (
+    <div className="mt-8 border-t border-ink/10 pt-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/50">Actors in use</h3>
+          <p className="mt-1 max-w-2xl text-xs text-ink/50">
+            Every actor the templates and your sources point at, checked against Apify.
+          </p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => setRefreshed((n) => n + 1)} disabled={isFetching}>
+          {isFetching ? "Checking…" : "Re-check"}
+        </Button>
+      </div>
+
+      <div className="mt-4 grid gap-2">
+        {data?.actors.map((actor) => {
+          const problems = actor.usedBy.filter((source) => source.unknownKeys.length > 0);
+          return (
+            <div key={actor.actorId} className="border border-ink/10 bg-white px-4 py-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusDot tone={!actor.reachable ? "bad" : problems.length ? "warn" : "ok"} />
+                <a
+                  href={`https://apify.com/${actor.actorId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-xs hover:text-bronze hover:underline"
+                >
+                  {actor.actorId} ↗
+                </a>
+                {actor.pricingModel && <Badge tone="muted">{PRICING_LABELS[actor.pricingModel] ?? actor.pricingModel}</Badge>}
+                {actor.proxyRequired && <Badge tone="muted">needs a proxy</Badge>}
+                {actor.inTemplates && actor.usedBy.length === 0 && <span className="text-xs text-ink/40">template only</span>}
+                {actor.usedBy.length > 0 && (
+                  <span className="text-xs text-ink/50">
+                    used by {actor.usedBy.map((source) => source.name).join(", ")}
+                  </span>
+                )}
+              </div>
+              {!actor.reachable && (
+                <p className="mt-1.5 text-xs text-red-600">
+                  Apify wouldn't return this actor — it may have been renamed, made private, or removed. Any source pointing at
+                  it will fail on its next run.
+                </p>
+              )}
+              {problems.map((source) => (
+                <p key={source.id} className="mt-1.5 text-xs text-amber-700">
+                  <strong>{source.name}</strong> sends {source.unknownKeys.map((key) => `“${key}”`).join(", ")}, which this
+                  actor doesn't accept — Apify ignores those silently, so the setting isn't doing anything.
+                </p>
+              ))}
+            </div>
+          );
+        })}
+        {data?.actors.length === 0 && <p className="text-sm text-ink/50">No actors configured yet.</p>}
+      </div>
+    </div>
   );
 }
 
