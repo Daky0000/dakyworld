@@ -5,7 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import { renderProposalPdf, type ProposalBody } from "../services/pdf.js";
 import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
 import { AnalystError } from "../lib/anthropic.js";
-import { writeProposal, type ProposalDraft } from "../lib/proposalWriter.js";
+import { writeProposal } from "../lib/proposalWriter.js";
 import { resolveProposalContext } from "../services/proposalContext.js";
 import { auditCompany, sortFindings } from "../services/companyAudit.js";
 
