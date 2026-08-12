@@ -317,6 +317,34 @@ typographic one. So the wordmark is drawn from type, and the moment somebody
 puts a file at `server/assets/logo.png` it is used instead — no code change.
 See `server/assets/README.md` for the export size.
 
+### Preview and download
+
+**Preview** on any proposal opens the finished document in the app. It is the
+real rendered PDF in an iframe, not an HTML approximation — an approximation is
+a second implementation of the same document, and the two drift, so you end up
+approving a layout on screen and sending a different one. What is previewed is
+byte-for-byte what downloads.
+
+Two formats, both on the same letterhead:
+
+| | |
+|---|---|
+| `GET /api/proposals/:id/document.pdf` | The preview and the PDF download (`?download=1` switches the disposition). |
+| `GET /api/proposals/:id/document.docx` | Word, for clients who want to edit or redline. |
+
+Both are side-effect-free GETs, which is what lets an `<iframe>` and a download
+link point straight at them; the session cookie rides along on same-origin.
+The writer's review screen also has **Preview the document**, which renders an
+*unsaved* draft through the same renderer — so the layout is approved before
+the proposal is committed.
+
+Word gets its letterhead the way a printer does: the identity lives in the
+page's header and footer so it repeats on every page, and the corner ribbons
+are floating images anchored to the page behind the text. Word cannot draw a
+diagonal, so those two ribbons are generated as PNGs at run time by
+`services/png.ts` — a small hand-rolled encoder, which keeps the geometry
+defined once, in points, next to the numbers the PDF strokes.
+
 ## Drafting a proposal
 
 The proposal writer (**Proposals → Draft a proposal**, or **Draft proposal** on
@@ -571,6 +599,8 @@ Dakyworld OS/
       services/
         pdf.ts           Proposal and invoice documents, laid out on the letterhead
         letterhead.ts    The printed identity: ribbons, wordmark, contacts, footer, watermark
+        proposalDocx.ts  The same proposal as Word, letterhead in the header/footer
+        png.ts           A small PNG encoder — the corner ribbons, for Word
         leadMapping.ts   Scraped row -> lead: field resolution, scoring, dedupe keys
         leadFields.ts    The leads table's shape: built-in columns, custom ones, coercion
         spreadsheet.ts   .xlsx/.csv -> plain grids, nothing interpreted

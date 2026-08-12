@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, postForBlob } from "../lib/api";
 import type { AuditFinding, CompanyAudit, Lead, Proposal, ProposalDraftResponse } from "../lib/types";
 import { Badge, Button, Drawer, Field } from "./ui";
 
@@ -86,6 +86,34 @@ export function ProposalWriter({
     },
   });
 
+  /**
+   * Renders the unsaved draft through the same renderer the saved proposal
+   * uses, so the Owner can see the real document on the letterhead before
+   * committing to it — rather than approving an HTML summary and finding out
+   * what it looks like afterwards.
+   */
+  const preview = useMutation({
+    mutationFn: async () => {
+      if (!result) throw new Error("Nothing to preview");
+      const blob = await postForBlob("/proposals/document/preview.pdf", {
+        title,
+        clientName: result.subject.companyName,
+        serviceType,
+        scopeSummary: result.draft.headline,
+        priceAmount: price,
+        currency: "GHS",
+        priceTier: priceTier || null,
+        body: result.draft,
+      });
+      return URL.createObjectURL(blob);
+    },
+    onSuccess: (url) => {
+      window.open(url, "_blank", "noopener");
+      // The tab has the bytes by now; holding the object URL only leaks memory.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    },
+  });
+
   const save = useMutation({
     mutationFn: () => {
       if (!result) throw new Error("Nothing to save");
@@ -144,6 +172,9 @@ export function ProposalWriter({
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={() => save.mutate()} disabled={save.isPending || !title}>
               {save.isPending ? "Saving…" : "Save as a draft proposal"}
+            </Button>
+            <Button variant="secondary" onClick={() => preview.mutate()} disabled={preview.isPending}>
+              {preview.isPending ? "Rendering…" : "Preview the document"}
             </Button>
             <Button variant="secondary" onClick={() => setStage("setup")}>
               Back

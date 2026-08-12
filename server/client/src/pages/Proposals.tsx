@@ -5,11 +5,13 @@ import type { Proposal } from "../lib/types";
 import { Badge, Button, Card, EmptyState, Money, PageHeader } from "../components/ui";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
 import { ProposalWriter } from "../components/ProposalWriter";
+import { ProposalPreview } from "../components/ProposalPreview";
 
 export function Proposals() {
   const qc = useQueryClient();
   const [emailing, setEmailing] = useState<ComposerTarget | null>(null);
   const [writing, setWriting] = useState(false);
+  const [previewing, setPreviewing] = useState<Proposal | null>(null);
   const { data: proposals, isLoading } = useQuery({
     queryKey: ["proposals"],
     queryFn: () => api.get<Proposal[]>("/proposals"),
@@ -29,13 +31,6 @@ export function Proposals() {
   const reject = useMutation({
     mutationFn: (id: string) => api.post(`/proposals/${id}/reject`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["proposals"] }),
-  });
-  const generatePdf = useMutation({
-    mutationFn: (id: string) => api.post<Proposal>(`/proposals/${id}/generate-pdf`),
-    onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ["proposals"] });
-      if (updated?.pdfUrl) window.open(updated.pdfUrl, "_blank");
-    },
   });
 
   return (
@@ -66,7 +61,7 @@ export function Proposals() {
                     {p.confidence != null && p.confidence < 0.55 && <Badge tone="muted">low confidence</Badge>}
                   </div>
                   <div className="mt-1 text-sm text-ink/60">
-                    {p.client?.name ?? p.lead?.contactName ?? "Unassigned"} · {p.serviceType}
+                    {p.client?.name ?? p.lead?.companyName ?? p.lead?.contactName ?? "Unassigned"} · {p.serviceType}
                   </div>
                   <div className="mt-2 text-sm">
                     <Money amount={p.priceAmount} currency={p.currency} />
@@ -74,9 +69,7 @@ export function Proposals() {
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                  <Button variant="secondary" onClick={() => generatePdf.mutate(p.id)}>
-                    PDF
-                  </Button>
+                  <Button onClick={() => setPreviewing(p)}>Preview</Button>
                   {/* The proposal PDF renders at send time, so a change made
                       after the draft was written still reaches the client. */}
                   <Button
@@ -114,6 +107,7 @@ export function Proposals() {
       )}
 
       <ProposalWriter open={writing} onClose={() => setWriting(false)} />
+      <ProposalPreview proposal={previewing} open={previewing !== null} onClose={() => setPreviewing(null)} />
       <EmailComposer target={emailing} open={emailing !== null} onClose={() => setEmailing(null)} />
     </div>
   );

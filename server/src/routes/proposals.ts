@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { renderProposalPdf, type ProposalBody } from "../services/pdf.js";
+import { renderProposalDocx } from "../services/proposalDocx.js";
 import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
 import { AnalystError } from "../lib/anthropic.js";
 import { writeProposal } from "../lib/proposalWriter.js";
@@ -166,6 +167,123 @@ proposalsRouter.post("/audit", async (req, res, next) => {
       : (await resolveProposalContext(input)).audit;
 
     res.json({ ...audit, findings: sortFindings(audit.findings) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Preview and download --------------------------------------------------
+
+/** The record, in the shape both renderers take. */
+async function documentData(id: string) {
+  const proposal = await prisma.proposal.findUnique({
+    where: { id },
+    include: { client: true, lead: true },
+  });
+  if (!proposal) return null;
+
+  return {
+    proposal,
+    data: {
+      title: proposal.title,
+      // Addressed to the business, not to whoever answered the phone.
+      clientName: proposal.client?.name ?? proposal.lead?.companyName ?? proposal.lead?.contactName ?? "Prospect",
+      serviceType: proposal.serviceType,
+      scopeSummary: proposal.scopeSummary,
+      priceAmount: proposal.priceAmount.toString(),
+      currency: proposal.currency,
+      priceTier: proposal.priceTier,
+      expiresAt: proposal.expiresAt,
+      body: (proposal.body as ProposalBody | null) ?? null,
+    },
+  };
+}
+
+/** `Dakyworld-Proposal-Adjei-Dental-Centre` — what it should be called on disk. */
+function fileStem(clientName: string): string {
+  const slug = clientName
+    .normalize("NFKD")
+    .replace(/[^\dA-Za-z]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+  return `Dakyworld-Proposal${slug ? `-${slug}` : ""}`;
+}
+
+/**
+ * GET /api/proposals/:id/document.pdf — the finished document, streamed.
+ *
+ * A GET with no side effects, because that is what an `<iframe>` and a download
+ * link can both point at: the preview in the app is the same bytes the client
+ * receives, not an HTML approximation of them that can drift. `?download=1`
+ * switches the disposition to attachment.
+ */
+proposalsRouter.get("/:id/document.pdf", async (req, res, next) => {
+  try {
+    const found = await documentData(req.params.id);
+    if (!found) return res.status(404).json({ error: "Proposal not found" });
+
+    const pdf = await renderProposalPdf(found.data);
+    const disposition = req.query.download ? "attachment" : "inline";
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `${disposition}; filename="${fileStem(found.data.clientName)}.pdf"`);
+    res.setHeader("Content-Length", pdf.length);
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/proposals/:id/document.docx — the same document as Word, on the same
+ * letterhead. Always an attachment: no browser previews .docx inline.
+ */
+proposalsRouter.get("/:id/document.docx", async (req, res, next) => {
+  try {
+    const found = await documentData(req.params.id);
+    if (!found) return res.status(404).json({ error: "Proposal not found" });
+
+    const docx = await renderProposalDocx(found.data);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileStem(found.data.clientName)}.docx"`);
+    res.setHeader("Content-Length", docx.length);
+    res.send(docx);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/proposals/document/preview.pdf — the same renderer, over a draft
+ * that has not been saved. Lets the writer's review screen show the real
+ * document before the Owner commits to it.
+ */
+proposalsRouter.post("/document/preview.pdf", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        title: z.string().min(1),
+        clientName: z.string().min(1),
+        serviceType: z.string().default("Proposal"),
+        scopeSummary: z.string().default(""),
+        priceAmount: z.union([z.number(), z.string()]).default(0),
+        currency: z.string().default("GHS"),
+        priceTier: z.string().nullable().optional(),
+        expiresAt: z.coerce.date().nullable().optional(),
+        body: z.record(z.unknown()).nullable().optional(),
+      })
+      .parse(req.body);
+
+    const pdf = await renderProposalPdf({
+      ...input,
+      priceAmount: String(input.priceAmount),
+      priceTier: input.priceTier ?? null,
+      expiresAt: input.expiresAt ?? null,
+      body: (input.body as ProposalBody | null) ?? null,
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${fileStem(input.clientName)}.pdf"`);
+    res.setHeader("Content-Length", pdf.length);
+    res.send(pdf);
   } catch (err) {
     next(err);
   }

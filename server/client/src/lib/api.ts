@@ -33,6 +33,28 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * An absolute path to an API endpoint, for the places the browser fetches on
+ * its own — an `<iframe>` showing a PDF, a download link. The session is an
+ * HTTP-only cookie on the same origin, so both carry it without any help.
+ */
+export const apiUrl = (path: string) => `${BASE}${path}`;
+
+/** For endpoints that answer with a file rather than JSON. */
+export async function postForBlob(path: string, body: unknown): Promise<Blob> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ error: res.statusText }));
+    throw new ApiError(res.status, detail.error ?? res.statusText);
+  }
+  return res.blob();
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
