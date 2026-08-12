@@ -182,7 +182,10 @@ proposalsRouter.post("/:id/generate-pdf", async (req, res, next) => {
     });
     if (!proposal) return res.status(404).json({ error: "Proposal not found" });
 
-    const clientName = proposal.client?.name ?? proposal.lead?.contactName ?? "Prospect";
+    // A proposal is addressed to the business, not to whoever answered the
+    // phone — "Prepared for: Kwame Mensah" reads as a personal quote.
+    const clientName =
+      proposal.client?.name ?? proposal.lead?.companyName ?? proposal.lead?.contactName ?? "Prospect";
     const pdf = await renderProposalPdf({
       title: proposal.title,
       clientName,

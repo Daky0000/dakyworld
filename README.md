@@ -295,6 +295,28 @@ Actor runs cost money on Apify. The whole feature is Owner-gated server-side
 than being applied to the results afterwards, and the monthly budget stops
 runs starting at all.
 
+## The letterhead
+
+Proposals and invoices are the two things a client actually keeps, so they go
+out on the printed identity rather than as plain typed pages. Every page of
+every PDF is stamped by `services/letterhead.ts`: the diagonal corner ribbons,
+the wordmark lock-up with its tagline, the contact block, the footer rule with
+"ONE PARTNER. ALL YOUR IT.", and the oversized D watermark low on the right.
+A three-page proposal is branded all the way through, not just on page one.
+
+Colour and type come from `01 Brand/Dakyworld_Visual_Identity_Guide` — the
+five-colour palette, and the 60-30-10 rule that keeps gold to accents. The gold
+on a page here is two corner wedges, four hairline icons and one rule, which is
+deliberately under that ceiling.
+
+**The logo.** The identity guide says outright that logo artwork was never
+produced and that the mark is a wordmark — "no icon crutch". The letterhead
+template has since gained a D monogram, but that artwork isn't in this
+repository, and a wrong logo on a document a client keeps is worse than a clean
+typographic one. So the wordmark is drawn from type, and the moment somebody
+puts a file at `server/assets/logo.png` it is used instead — no code change.
+See `server/assets/README.md` for the export size.
+
 ## Drafting a proposal
 
 The proposal writer (**Proposals → Draft a proposal**, or **Draft proposal** on
@@ -547,7 +569,8 @@ Dakyworld OS/
                      care-plans, emails (+ the public unsubscribe), users,
                      dashboard, scrapers, imports, settings (every runtime key)
       services/
-        pdf.ts           Branded proposal/invoice PDF rendering
+        pdf.ts           Proposal and invoice documents, laid out on the letterhead
+        letterhead.ts    The printed identity: ribbons, wordmark, contacts, footer, watermark
         leadMapping.ts   Scraped row -> lead: field resolution, scoring, dedupe keys
         leadFields.ts    The leads table's shape: built-in columns, custom ones, coercion
         spreadsheet.ts   .xlsx/.csv -> plain grids, nothing interpreted

@@ -1,0 +1,312 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type PDFDocument from "pdfkit";
+
+type PDFDoc = InstanceType<typeof PDFDocument>;
+
+/**
+ * The Dakyworld letterhead, drawn onto every page of every document the app
+ * produces.
+ *
+ * A proposal and an invoice are the two things a client actually keeps. Until
+ * now they came out as plain typed pages with a wordmark on top, which reads
+ * as a document somebody generated rather than one a company sent. This is the
+ * printed identity from the letterhead template: the corner ribbons, the
+ * wordmark lock-up, the contact block, the footer rule and the watermark.
+ *
+ * Colours and type are from `01 Brand/Dakyworld_Visual_Identity_Guide` —
+ * five colours, and the 60-30-10 rule that keeps gold to accents. The gold
+ * here is two corner wedges, four hairline icons and one rule; that is
+ * deliberately under the 10%.
+ *
+ * **On the logo.** The identity guide is explicit that logo artwork does not
+ * exist yet and that the mark is a wordmark — "no icon crutch". The letterhead
+ * template has since gained a D monogram, but that artwork is not in this
+ * repository, and a wrong logo on a document a client keeps is worse than a
+ * clean typographic one. So the wordmark is drawn from type, and
+ * `assets/logo.png` is used instead the moment somebody puts it there.
+ */
+
+// --- The palette, and nothing else -----------------------------------------
+
+export const OBSIDIAN = "#0B0B0C";
+export const IVORY = "#F7F4EE";
+export const GOLD = "#C7A24C";
+export const BRONZE = "#8A6A2F";
+export const SLATE = "#6E6A63";
+export const DIVIDER = "#E5E2DB";
+/**
+ * The watermark only — a tint of ivory, never a sixth brand colour. Kept very
+ * close to white on purpose: body text runs over it, and a watermark you can
+ * read through is decoration, while one you can't is a legibility problem.
+ */
+const WATERMARK = "#F5F2EB";
+
+// --- Page geometry ---------------------------------------------------------
+
+export const PAGE_W = 595.28;
+export const PAGE_H = 841.89;
+export const MARGIN_X = 56;
+/** Content starts below the letterhead block and ends above the footer rule. */
+export const CONTENT_TOP = 168;
+export const CONTENT_BOTTOM = 96;
+export const CONTENT_W = PAGE_W - MARGIN_X * 2;
+
+const COMPANY = {
+  name: "DAKYWORLD",
+  tagline: "ONE IT COMPANY. EVERYTHING YOUR BUSINESS NEEDS.",
+  footerLine: "ONE PARTNER. ALL YOUR IT.",
+  location: "Kumasi, Ghana",
+  email: "hello@dakyworld.com",
+  phone: "+233 545 950 611",
+  web: "dakyworld.com",
+};
+
+// --- The real logo, if it has been supplied --------------------------------
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+/**
+ * Drop the exported logo here and every PDF picks it up on the next render —
+ * no code change, no redeploy beyond the one that carries the file. Checked
+ * once per process because the answer cannot change while it runs.
+ */
+const LOGO_CANDIDATES = ["logo.png", "logo.jpg", "logo.jpeg"].flatMap((name) => [
+  path.resolve(here, "../../assets", name),
+  path.resolve(here, "../../../assets", name),
+]);
+
+let logoPath: string | null | undefined;
+
+function findLogo(): string | null {
+  if (logoPath !== undefined) return logoPath;
+  logoPath = LOGO_CANDIDATES.find((candidate) => fs.existsSync(candidate)) ?? null;
+  return logoPath;
+}
+
+// --- Corner ribbons --------------------------------------------------------
+
+/**
+ * The diagonal wedges at top-right and bottom-left. Two shapes per corner: an
+ * obsidian triangle in the corner itself and a gold band running parallel just
+ * inside it, with an ivory gap between so neither muddies the other.
+ */
+function cornerRibbons(doc: PDFDoc) {
+  const wedge = 74;
+  const bandOuter = 112;
+  const bandInner = 90;
+
+  // Top right.
+  doc.save();
+  doc.fillColor(OBSIDIAN);
+  doc.moveTo(PAGE_W - wedge, 0).lineTo(PAGE_W, 0).lineTo(PAGE_W, wedge).closePath().fill();
+  doc.fillColor(GOLD);
+  doc
+    .moveTo(PAGE_W - bandOuter, 0)
+    .lineTo(PAGE_W - bandInner, 0)
+    .lineTo(PAGE_W, bandInner)
+    .lineTo(PAGE_W, bandOuter)
+    .closePath()
+    .fill();
+  doc.restore();
+
+  // Bottom left, mirrored.
+  doc.save();
+  doc.fillColor(OBSIDIAN);
+  doc.moveTo(0, PAGE_H - wedge).lineTo(0, PAGE_H).lineTo(wedge, PAGE_H).closePath().fill();
+  doc.fillColor(GOLD);
+  doc
+    .moveTo(0, PAGE_H - bandOuter)
+    .lineTo(0, PAGE_H - bandInner)
+    .lineTo(bandInner, PAGE_H)
+    .lineTo(bandOuter, PAGE_H)
+    .closePath()
+    .fill();
+  doc.restore();
+}
+
+// --- Contact icons ---------------------------------------------------------
+
+/**
+ * Line icons at 1.5px-equivalent stroke, per the identity guide. Drawn rather
+ * than imported so the documents carry no icon-font dependency, and kept to
+ * four shapes that read at 8pt.
+ */
+function icon(doc: PDFDoc, kind: "pin" | "mail" | "phone" | "globe", x: number, y: number) {
+  const s = 8;
+  doc.save();
+  doc.strokeColor(GOLD).lineWidth(0.7);
+
+  if (kind === "pin") {
+    doc.circle(x + s / 2, y + s / 2 - 0.6, s / 2 - 1).stroke();
+    doc.circle(x + s / 2, y + s / 2 - 0.6, 0.9).fillColor(GOLD).fill();
+    doc
+      .moveTo(x + s / 2 - 1.8, y + s / 2 + 1.4)
+      .lineTo(x + s / 2, y + s)
+      .lineTo(x + s / 2 + 1.8, y + s / 2 + 1.4)
+      .stroke();
+  } else if (kind === "mail") {
+    doc.rect(x + 0.4, y + 1.2, s - 0.8, s - 3).stroke();
+    doc
+      .moveTo(x + 0.4, y + 1.2)
+      .lineTo(x + s / 2, y + s / 2 + 0.6)
+      .lineTo(x + s - 0.4, y + 1.2)
+      .stroke();
+  } else if (kind === "phone") {
+    // A handset, drawn as a tilted rounded bar.
+    doc.roundedRect(x + 1.6, y + 0.6, s - 3.2, s - 1.2, 1.4).stroke();
+    doc.moveTo(x + 2.8, y + s - 2.2).lineTo(x + s - 2.8, y + s - 2.2).stroke();
+  } else {
+    doc.circle(x + s / 2, y + s / 2, s / 2 - 0.8).stroke();
+    doc.moveTo(x + 0.8, y + s / 2).lineTo(x + s - 0.8, y + s / 2).stroke();
+    doc
+      .moveTo(x + s / 2, y + 0.8)
+      .bezierCurveTo(x + s / 2 - 2.4, y + s / 2, x + s / 2 - 2.4, y + s / 2, x + s / 2, y + s - 0.8)
+      .stroke();
+    doc
+      .moveTo(x + s / 2, y + 0.8)
+      .bezierCurveTo(x + s / 2 + 2.4, y + s / 2, x + s / 2 + 2.4, y + s / 2, x + s / 2, y + s - 0.8)
+      .stroke();
+  }
+  doc.restore();
+}
+
+// --- The lock-up -----------------------------------------------------------
+
+function wordmark(doc: PDFDoc) {
+  const logo = findLogo();
+  const top = 46;
+
+  if (logo) {
+    // Fitted into a fixed box so a logo of any exported size lands identically.
+    try {
+      doc.image(logo, MARGIN_X, top, { fit: [190, 46] });
+      return;
+    } catch {
+      // A corrupt file must not take the whole document down; fall through.
+    }
+  }
+
+  doc.save();
+  doc
+    .fillColor(OBSIDIAN)
+    .font("Helvetica-Bold")
+    .fontSize(21)
+    .text(COMPANY.name, MARGIN_X, top, { characterSpacing: 1.4, lineBreak: false });
+
+  const markWidth = doc.widthOfString(COMPANY.name, { characterSpacing: 1.4 });
+  doc.fillColor(OBSIDIAN).font("Helvetica").fontSize(7).text("®", MARGIN_X + markWidth + 2, top + 1, { lineBreak: false });
+
+  // The swoosh: one gold stroke under the wordmark, thickening left to right.
+  // It is the only decorative element on the page, which is what lets it work.
+  doc
+    .save()
+    .strokeColor(GOLD)
+    .lineWidth(1.6)
+    .moveTo(MARGIN_X, top + 27)
+    .bezierCurveTo(MARGIN_X + markWidth * 0.3, top + 31, MARGIN_X + markWidth * 0.7, top + 24.5, MARGIN_X + markWidth + 6, top + 27.5)
+    .stroke()
+    .restore();
+
+  doc
+    .fillColor(BRONZE)
+    .font("Helvetica-Bold")
+    .fontSize(5.6)
+    .text(COMPANY.tagline, MARGIN_X, top + 34, { characterSpacing: 0.85, lineBreak: false });
+  doc.restore();
+}
+
+function contactBlock(doc: PDFDoc) {
+  const dividerX = 372;
+  const textX = 396;
+  const iconX = 380;
+  const top = 44;
+  const step = 17;
+
+  doc.save();
+  doc.strokeColor(DIVIDER).lineWidth(1).moveTo(dividerX, top).lineTo(dividerX, top + step * 3 + 12).stroke();
+
+  const rows: { kind: "pin" | "mail" | "phone" | "globe"; text: string }[] = [
+    { kind: "pin", text: COMPANY.location },
+    { kind: "mail", text: COMPANY.email },
+    { kind: "phone", text: COMPANY.phone },
+    { kind: "globe", text: COMPANY.web },
+  ];
+
+  rows.forEach((row, index) => {
+    const y = top + index * step;
+    icon(doc, row.kind, iconX, y);
+    doc.fillColor(SLATE).font("Helvetica").fontSize(8.5).text(row.text, textX, y, { lineBreak: false });
+  });
+  doc.restore();
+}
+
+// --- Footer ----------------------------------------------------------------
+
+function footerBar(doc: PDFDoc) {
+  const y = PAGE_H - 64;
+  doc.save();
+  doc.strokeColor(DIVIDER).lineWidth(1).moveTo(MARGIN_X, y).lineTo(PAGE_W - MARGIN_X, y).stroke();
+
+  doc
+    .fillColor(OBSIDIAN)
+    .font("Helvetica-Bold")
+    .fontSize(7.5)
+    .text(COMPANY.footerLine, MARGIN_X, y + 12, { characterSpacing: 2.1, lineBreak: false });
+
+  // Right-aligned: the site, then the social handles as plain letterforms.
+  const socials = "f    X    ig    in";
+  const socialWidth = doc.font("Helvetica-Bold").fontSize(7.5).widthOfString(socials, { characterSpacing: 1.2 });
+  doc.fillColor(SLATE).font("Helvetica-Bold").fontSize(7.5).text(socials, PAGE_W - MARGIN_X - socialWidth, y + 12, {
+    characterSpacing: 1.2,
+    lineBreak: false,
+  });
+
+  const web = COMPANY.web;
+  const webWidth = doc.font("Helvetica").fontSize(8).widthOfString(web);
+  const webX = PAGE_W - MARGIN_X - socialWidth - 18 - webWidth;
+  doc.fillColor(SLATE).font("Helvetica").fontSize(8).text(web, webX, y + 11.5, { lineBreak: false });
+  icon(doc, "globe", webX - 12, y + 10.5);
+  doc.restore();
+}
+
+// --- Watermark -------------------------------------------------------------
+
+/**
+ * The oversized D behind the content. Stamped first, so everything sits over
+ * it, and placed low-right where a page's last third is usually the emptiest —
+ * a watermark centred in the text column fights every line that crosses it.
+ */
+function watermark(doc: PDFDoc) {
+  doc.save();
+  doc.fillColor(WATERMARK).font("Helvetica-Bold").fontSize(270).text("D", PAGE_W - 245, PAGE_H - 395, {
+    lineBreak: false,
+    characterSpacing: 0,
+  });
+  doc.restore();
+}
+
+// --- Stamping --------------------------------------------------------------
+
+/**
+ * Everything above, in back-to-front order, then the cursor put back at the
+ * top of the content area. PDFKit resets x/y when it adds a page and then
+ * emits `pageAdded`, so drawing here would otherwise leave the cursor
+ * wherever the last footer glyph landed.
+ */
+export function stampLetterhead(doc: PDFDoc) {
+  watermark(doc);
+  cornerRibbons(doc);
+  wordmark(doc);
+  contactBlock(doc);
+  footerBar(doc);
+
+  doc.fillColor(OBSIDIAN).font("Helvetica").fontSize(10);
+  doc.x = MARGIN_X;
+  doc.y = CONTENT_TOP;
+}
+
+/** True when a real logo file is in place, for the settings read-out. */
+export function hasLogoAsset(): boolean {
+  return findLogo() !== null;
+}
