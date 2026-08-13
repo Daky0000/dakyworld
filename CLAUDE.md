@@ -22,6 +22,11 @@ while that subdomain actually pointed at Railway, so Pages served nothing and
 the apex returned 404 with a bad certificate. If the apex ever breaks again,
 check `CNAME` against DNS before anything else.
 
+**[DOMAINS.md](DOMAINS.md) is the runbook** — which host owns which domain, the
+DNS records that must never be deleted (email, SPF, the `os` CNAME), and the
+outstanding zone cleanup that is blocking `dakyworld.com`. Read it before
+touching DNS or Pages settings.
+
 Railway's Root Directory is set to `server`, so **`server/railway.json` is the
 file that applies**; the root `railway.json` is a fallback for a configuration
 that isn't active. Keep them in step.
