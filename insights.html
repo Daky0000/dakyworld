@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#08101f">
+<meta name="description" content="Dakyworld Insights — practical thinking on technology, AI, automation, security, websites and digital operations for growing businesses.">
+<title>Insights — Dakyworld®</title>
+<link rel="icon" href="assets/brand/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="assets/brand/favicon-32-dark.png" sizes="32x32" type="image/png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="assets/brand/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="assets/pages.css">
+</head>
+<body>
+<a href="#main" class="skip-link">Skip to content</a>
+<div class="page-progress" aria-hidden="true"><i id="pageProgress"></i></div>
+<div class="cursor-glow" id="cursorGlow" aria-hidden="true"></div>
+
+<header class="site-header" id="siteHeader">
+  <div class="header-wrap">
+    <div class="header-shell">
+
+      <a href="index.html" class="brand" aria-label="Dakyworld home">
+        <img
+          class="brand-logo"
+          src="assets/brand/header-lockup-on-dark.png"
+          alt="Dakyworld"
+          width="379"
+          height="68"
+        >
+      </a>
+
+      <nav class="main-nav" id="mainNav" aria-label="Main">
+        <a href="services.html">Coverage</a>
+        <a href="work.html">Work</a>
+        <a href="how-we-work.html">Process</a>
+        <a href="pricing.html">Pricing</a>
+        <a href="about.html">About</a>
+
+        <a href="contact.html" class="nav-cta">
+          Let's talk
+          <!-- Numeric entity rather than a literal glyph: an entity survives a
+               re-save whatever the editor's encoding. -->
+          <span aria-hidden="true">&#8599;</span>
+        </a>
+      </nav>
+
+      <button
+        class="menu-toggle"
+        id="menuToggle"
+        type="button"
+        aria-label="Open navigation"
+        aria-controls="mainNav"
+        aria-expanded="false"
+      >
+        <span aria-hidden="true"></span>
+      </button>
+
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero hero--split hero--journal">
+  <div class="wrap hero-inner">
+    <div>
+      <div class="eyebrow">Dakyworld / Insights</div>
+      <h1 class="display">Useful thinking about <span>technology.</span></h1>
+      <p class="hero-copy">
+        Practical ideas for businesses that want technology to work harder,
+        from AI and automation to security, websites, cloud systems and digital operations.
+        No jargon for the sake of jargon. Just things worth knowing.
+      </p>
+      <div class="hero-tags">
+        <span>AI</span><span>Automation</span><span>Security</span>
+        <span>Web</span><span>Business Systems</span><span>Digital Strategy</span>
+      </div>
+    </div>
+    <div class="hero-stat">
+      <div class="big">01<span style="color:var(--lime)">.</span></div>
+      <p>Ideas, lessons and practical guides from the people who build, secure and automate digital systems for growing businesses.</p>
+    </div>
+  </div>
+</section>
+
+<section class="featured reveal">
+  <div class="wrap">
+    <article class="feature-card">
+      <div class="feature-visual">
+        <div class="feature-orb"></div>
+        <div class="feature-chip one">AI / OPERATIONS</div>
+        <div class="feature-chip two">2026 · GUIDE</div>
+        <div class="feature-chip three">START HERE →</div>
+      </div>
+      <div class="feature-content">
+        <div class="category">Featured insight</div>
+        <h2 class="display">Your business does not need more software. It needs better systems.</h2>
+        <p>
+          Adding another tool rarely fixes a broken process. The real opportunity is
+          understanding how information moves through your business, then connecting
+          the people, tools and automation around it.
+        </p>
+        <div class="feature-meta"><span>8 min read</span><span>•</span><span>Digital operations</span></div>
+        <!-- No article pages exist yet. When the post is written, swap this span
+             for: <a href="blog/better-business-systems.html" class="read-link"> -->
+        <span class="read-link">Coming soon <b>→</b></span>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="journal">
+  <div class="wrap">
+
+    <div class="toolbar reveal">
+      <div>
+        <div class="eyebrow">Latest thinking</div>
+        <h2 class="display">The Dakyworld <span>journal.</span></h2>
+      </div>
+      <div class="categories" role="group" aria-label="Filter articles by category">
+        <button class="category-btn active" data-filter="all" aria-pressed="true">All</button>
+        <button class="category-btn" data-filter="ai" aria-pressed="false">AI</button>
+        <button class="category-btn" data-filter="automation" aria-pressed="false">Automation</button>
+        <button class="category-btn" data-filter="security" aria-pressed="false">Security</button>
+        <button class="category-btn" data-filter="web" aria-pressed="false">Web</button>
+        <button class="category-btn" data-filter="business" aria-pressed="false">Business</button>
+      </div>
+    </div>
+
+    <div class="article-grid">
+
+      <article class="article reveal" data-category="ai">
+        <div class="article-image ai"><div class="article-icon">01</div></div>
+        <div class="article-body">
+          <div class="article-category">AI / Business</div>
+          <h3 class="display">Where AI actually creates value inside a growing business</h3>
+          <p>Forget the AI theatre. Start with the repetitive decisions, handoffs and tasks that already cost your team time.</p>
+          <div class="article-meta"><span>6 min read · Aug 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+      <article class="article reveal" data-category="security">
+        <div class="article-image security"><div class="article-icon">02</div></div>
+        <div class="article-body">
+          <div class="article-category">Security</div>
+          <h3 class="display">Your website is part of your business infrastructure</h3>
+          <p>Backups, access control, patching and monitoring are not optional extras when your website supports revenue.</p>
+          <div class="article-meta"><span>7 min read · Aug 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+      <article class="article reveal" data-category="automation">
+        <div class="article-image automation"><div class="article-icon">03</div></div>
+        <div class="article-body">
+          <div class="article-category">Automation</div>
+          <h3 class="display">The 30-hour question: what is your team still doing manually?</h3>
+          <p>A practical way to find repetitive work worth automating before buying another platform.</p>
+          <div class="article-meta"><span>5 min read · Jul 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+      <article class="article reveal" data-category="web">
+        <div class="article-image web"><div class="article-icon">04</div></div>
+        <div class="article-body">
+          <div class="article-category">Web / Growth</div>
+          <h3 class="display">Why a beautiful website can still be a poor business tool</h3>
+          <p>Design matters, but speed, clarity, conversion paths and maintainability decide whether the site earns its keep.</p>
+          <div class="article-meta"><span>6 min read · Jul 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+      <article class="article reveal" data-category="business">
+        <div class="article-image business"><div class="article-icon">05</div></div>
+        <div class="article-body">
+          <div class="article-category">Business Systems</div>
+          <h3 class="display">When should a business outsource its IT department?</h3>
+          <p>The signs that your company has outgrown ad-hoc technical support, and what a proper outsourced function looks like.</p>
+          <div class="article-meta"><span>8 min read · Jun 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+      <article class="article reveal" data-category="security">
+        <div class="article-image security"><div class="article-icon">06</div></div>
+        <div class="article-body">
+          <div class="article-category">Security</div>
+          <h3 class="display">Five access-control mistakes quietly creating business risk</h3>
+          <p>Former employees, shared passwords, forgotten admin accounts and other problems that are easy to overlook.</p>
+          <div class="article-meta"><span>5 min read · Jun 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+      <article class="article reveal" data-category="ai">
+        <div class="article-image ai"><div class="article-icon">07</div></div>
+        <div class="article-body">
+          <div class="article-category">AI / Teams</div>
+          <h3 class="display">AI adoption is a workflow problem before it is a training problem</h3>
+          <p>Giving people access to tools is easy. Building useful habits around those tools is where the work starts.</p>
+          <div class="article-meta"><span>7 min read · May 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+      <article class="article reveal" data-category="automation">
+        <div class="article-image automation"><div class="article-icon">08</div></div>
+        <div class="article-body">
+          <div class="article-category">Automation</div>
+          <h3 class="display">Build the pipeline once, stop rebuilding the same report every week</h3>
+          <p>How connected systems can turn recurring reporting from a Friday afternoon task into a background process.</p>
+          <div class="article-meta"><span>6 min read · May 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+      <article class="article reveal" data-category="web">
+        <div class="article-image cloud"><div class="article-icon">09</div></div>
+        <div class="article-body">
+          <div class="article-category">Web / Performance</div>
+          <h3 class="display">A faster website is not just a technical improvement</h3>
+          <p>Speed affects trust, user experience, search visibility and the number of people who reach the next step.</p>
+          <div class="article-meta"><span>5 min read · Apr 2026</span><span class="article-arrow">→</span></div>
+        </div>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<section class="newsletter">
+  <div class="wrap newsletter-inner">
+    <div>
+      <div class="eyebrow">Stay in the loop</div>
+      <h2 class="display">Useful ideas.<br><span>No inbox noise.</span></h2>
+      <p>Get occasional practical notes on AI, automation, security and digital operations. No daily newsletter circus.</p>
+    </div>
+    <form class="newsletter-form" id="newsletterForm" novalidate>
+      <input type="email" placeholder="Your work email" aria-label="Your work email" required>
+      <button type="submit">Subscribe</button>
+      <p class="newsletter-status" id="newsletterStatus" role="status" hidden></p>
+    </form>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="footer-grid">
+      <div><a href="index.html" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96"></a><p class="mt-5 max-w-sm text-sm leading-7" style="color:rgba(255,255,255,.45)">The IT department you hire instead of building one. One monthly fee, everything technical, owned.</p></div>
+      <div><h3>Explore</h3><ul><li><a href="services.html">Coverage</a></li><li><a href="work.html">Work</a></li><li><a href="how-we-work.html">Process</a></li><li><a href="pricing.html">Pricing</a></li></ul></div>
+      <div><h3>Company</h3><ul><li><a href="about.html">About</a></li><li><a href="insights.html">Insights</a></li><li><a href="contact.html">Contact</a></li></ul></div>
+      <div><h3>Get in touch</h3><ul><li><a href="mailto:hello@dakyworld.com">hello@dakyworld.com</a></li><li><a href="tel:+233545950611">+233 545 950 611</a></li><li>Kumasi, Ghana</li></ul></div>
+    </div>
+    <div class="footer-bottom"><span>© <span id="year">2026</span> Dakyworld · All rights reserved</span><span>Kumasi · Serving West Africa</span><span><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></span></div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

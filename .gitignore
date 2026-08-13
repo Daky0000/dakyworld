@@ -1,6 +1,8 @@
 node_modules/
 dist/
 build/
+# Temp copies of a page, made to screenshot it with the reveal CSS stripped.
+__tmp_*.html
 .env
 .env.local
 *.log

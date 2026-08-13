@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Dakyworld is the IT company established businesses hire to run all their IT — instead of hiring multiple people. One affordable monthly cost. Websites, security, email, automation: handled.">
+<title>Dakyworld® — Hire One IT Company, Not a Whole Team</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23F7F4EE'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='19' font-weight='600' fill='%23030202' text-anchor='middle'%3ED%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  fontFamily: { serif:['"Playfair Display"','Georgia','serif'], sans:['Inter','sans-serif'], mono:['"JetBrains Mono"','monospace'] },
+  colors: { ink:'#030202', panel:'#0A0A0B', ivory:'#F7F4EE', gold:'#C7A24C', bronze:'#8A6A2F' },
+}}}
+</script>
+<style>
+  :root {
+    --ivory:#F7F4EE;
+    --muted:rgba(11,11,12,.62);
+    --faint:rgba(11,11,12,.38);
+    --line:rgba(11,11,12,.14);
+    --line-strong:rgba(11,11,12,.28);
+    --pg:clamp(14px,2.4vw,40px);
+    --pmax:1536px;
+    --hh:58px;
+  }
+  html { scroll-behavior:smooth; }
+  body { margin:0; background:#F7F4EE; color:var(--muted); font-family:Inter,sans-serif; -webkit-font-smoothing:antialiased; overflow-x:hidden; }
+  ::selection { background:#0B0B0C; color:#F7F4EE; }
+  :focus-visible { outline:1px solid #0B0B0C; outline-offset:3px; }
+  .noise { pointer-events:none; position:fixed; inset:0; z-index:80; opacity:.045; mix-blend-mode:multiply;
+    background-image:radial-gradient(circle at 20% 30%, rgba(11,11,12,.35) 0 1px, transparent 1px),
+                     radial-gradient(circle at 80% 70%, rgba(11,11,12,.25) 0 1px, transparent 1px);
+    background-size:22px 22px, 31px 31px; }
+  .scanline { pointer-events:none; position:fixed; inset:0; z-index:79; opacity:.045;
+    background:linear-gradient(to bottom, transparent 0, transparent 4px, rgba(11,11,12,.15) 5px, transparent 6px);
+    background-size:100% 7px; }
+  .hl { border-color:var(--line); }
+  .frame { position:relative; border:1px solid var(--line); background:#020202; }
+  .corner { position:absolute; width:10px; height:10px; pointer-events:none; border-color:var(--line-strong); }
+  .c-tl { top:-1px; left:-1px; border-top:1px solid; border-left:1px solid; }
+  .c-tr { top:-1px; right:-1px; border-top:1px solid; border-right:1px solid; }
+  .c-bl { bottom:-1px; left:-1px; border-bottom:1px solid; border-left:1px solid; }
+  .c-br { bottom:-1px; right:-1px; border-bottom:1px solid; border-right:1px solid; }
+  .xmark { position:absolute; width:9px; height:9px; pointer-events:none; }
+  .xmark::before, .xmark::after { content:""; position:absolute; background:rgba(11,11,12,.32); }
+  .xmark::before { width:100%; height:1px; top:50%; left:0; transform:translateY(-50%); }
+  .xmark::after { height:100%; width:1px; top:0; left:50%; transform:translateX(-50%); }
+  .lbl { font-size:14px; line-height:1; text-transform:uppercase; letter-spacing:.16em; color:var(--faint); font-weight:500; font-family:'JetBrains Mono',monospace; }
+  .lbl-b { color:var(--muted); }
+  .site-header { position:fixed; z-index:100; top:var(--pg);
+    left:max(var(--pg), calc((100vw - var(--pmax)) / 2));
+    right:max(var(--pg), calc((100vw - var(--pmax)) / 2)); }
+  .hero-shell { width:min(calc(100vw - var(--pg)*2), var(--pmax)); margin-inline:auto;
+    padding-top:calc(var(--pg) + var(--hh) + 12px); }
+  .hero-frame { height:calc(100svh - var(--pg)*2 - var(--hh) - 12px); min-height:640px; }
+  /* Branded image treatment — brighter for v2 */
+  .ph { filter:grayscale(.4) contrast(1.02) brightness(1.04); transform:scale(1.001);
+    transition:filter .8s cubic-bezier(.16,1,.3,1), transform .8s cubic-bezier(.16,1,.3,1); }
+  .group:hover .ph, a:hover .ph { filter:grayscale(0) contrast(1) brightness(1.1); transform:scale(1.035); }
+  .veil { position:absolute; inset:0; pointer-events:none;
+    background:linear-gradient(180deg, rgba(20,16,12,.22) 0%, rgba(20,16,12,.08) 45%, rgba(20,16,12,.68) 100%),
+               radial-gradient(60% 50% at 70% 20%, rgba(199,162,76,.18), transparent 70%); }
+  .cap { position:absolute; left:14px; right:14px; top:12px; z-index:20; display:flex; justify-content:space-between;
+    font-family:'JetBrains Mono',monospace; font-size:14px; text-transform:uppercase; letter-spacing:.16em;
+    color:#fff; mix-blend-mode:difference; pointer-events:none; }
+  /* Cursor image preview */
+  #cursor-prev { position:fixed; z-index:90; pointer-events:none; width:270px; aspect-ratio:4/3;
+    border:1px solid var(--line-strong); background:#FFFFFF; overflow:hidden;
+    opacity:0; transform:scale(.94); transition:opacity .3s cubic-bezier(.16,1,.3,1), transform .3s cubic-bezier(.16,1,.3,1); }
+  #cursor-prev.on { opacity:1; transform:scale(1); }
+  #cursor-prev img { width:100%; height:100%; object-fit:cover; filter:grayscale(.2) contrast(1.02) brightness(1.05); }
+  html.js .reveal { opacity:0; transform:translateY(22px); transition:opacity .8s cubic-bezier(.16,1,.3,1), transform .8s cubic-bezier(.16,1,.3,1); }
+  html.js .reveal.in { opacity:1; transform:none; }
+  html.js .line-mask { display:block; overflow:hidden; }
+  html.js .line-mask > span { display:block; transform:translateY(110%); transition:transform 1.1s cubic-bezier(.16,1,.3,1) .15s; }
+  html.js.hero-in .line-mask > span { transform:none; }
+  .nlink { position:relative; }
+  .nlink::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:1px; background:rgba(11,11,12,.8);
+    transform:scaleX(0); transform-origin:left center; transition:transform .35s cubic-bezier(.16,1,.3,1); }
+  .nlink:hover::after, .nlink.on::after { transform:scaleX(1); }
+  .nlink.on { color:#0B0B0C; }
+  @media (prefers-reduced-motion:reduce) {
+    html { scroll-behavior:auto; }
+    html.js .reveal { opacity:1 !important; transform:none !important; transition:none !important; }
+    html.js .line-mask > span { transform:none !important; transition:none !important; }
+    .ph { transition:none !important; }
+    #cursor-prev { display:none !important; }
+  }
+</style>
+</head>
+<body class="relative bg-ivory">
+<a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[200] focus:bg-ink focus:text-ivory focus:px-4 focus:py-3 focus:text-sm focus:font-medium">Skip to content</a>
+<div class="noise" aria-hidden="true"></div>
+<div class="scanline" aria-hidden="true"></div>
+
+<!-- ================= HEADER ================= -->
+<header class="site-header text-ink">
+  <div class="relative border hl bg-white/75 backdrop-blur-xl px-3 md:px-4" style="min-height:var(--hh); display:flex; align-items:center;">
+    <span class="corner c-tl"></span><span class="corner c-tr"></span><span class="corner c-bl"></span><span class="corner c-br"></span>
+    <div class="flex w-full items-center justify-between gap-4">
+      <a href="index-v2.html" class="group flex items-center gap-3">
+        <span class="relative flex h-8 w-8 items-center justify-center border hl bg-ink text-ivory transition duration-300 group-hover:rotate-45">
+          <span class="font-serif text-[14px] font-semibold leading-none transition duration-300 group-hover:-rotate-45">D</span>
+        </span>
+        <span class="leading-none">
+          <span class="block font-mono text-[14px] font-medium uppercase tracking-[.18em] text-ink">Dakyworld®</span>
+          <span class="mt-1 hidden font-mono text-[14px] uppercase tracking-[.16em] text-ink/40 sm:block">Outsourced IT Department</span>
+        </span>
+      </a>
+      <nav class="hidden items-center gap-8 md:flex" aria-label="Primary">
+        <a href="services.html" class="nlink font-mono text-[14px] font-medium uppercase tracking-[.16em] text-ink/60 transition hover:text-ink">Coverage</a>
+        <a href="work.html" class="nlink font-mono text-[14px] font-medium uppercase tracking-[.16em] text-ink/60 transition hover:text-ink">Work</a>
+        <a href="how-we-work.html" class="nlink font-mono text-[14px] font-medium uppercase tracking-[.16em] text-ink/60 transition hover:text-ink">Process</a>
+        <a href="pricing.html" class="nlink font-mono text-[14px] font-medium uppercase tracking-[.16em] text-ink/60 transition hover:text-ink">Pricing</a>
+        <a href="about.html" class="nlink font-mono text-[14px] font-medium uppercase tracking-[.16em] text-ink/60 transition hover:text-ink">About</a>
+      </nav>
+      <div class="hidden md:flex">
+        <a href="contact.html" class="group inline-flex items-center gap-3 border hl bg-ink px-4 py-2.5 font-mono text-[14px] font-medium uppercase tracking-[.16em] text-ivory transition hover:bg-black">
+          Book a call
+          <i data-lucide="arrow-up-right" class="h-3.5 w-3.5 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5"></i>
+        </a>
+      </div>
+      <button id="menuBtn" class="relative flex h-9 w-9 items-center justify-center border hl bg-white/40 text-ink transition hover:bg-ink hover:text-ivory md:hidden" aria-label="Menu" aria-expanded="false">
+        <i data-lucide="menu" class="h-4 w-4"></i>
+      </button>
+    </div>
+  </div>
+  <div id="mobileMenu" class="hidden border border-t-0 hl bg-white/92 backdrop-blur-xl p-3 md:hidden">
+    <nav class="grid gap-1" aria-label="Mobile">
+      <a href="services.html" class="flex items-center justify-between border-b hl px-2 py-3 font-mono text-[14px] uppercase tracking-[.16em] text-ink/75">Coverage <span class="text-ink/30">01</span></a>
+      <a href="work.html" class="flex items-center justify-between border-b hl px-2 py-3 font-mono text-[14px] uppercase tracking-[.16em] text-ink/75">Work <span class="text-ink/30">02</span></a>
+      <a href="how-we-work.html" class="flex items-center justify-between border-b hl px-2 py-3 font-mono text-[14px] uppercase tracking-[.16em] text-ink/75">Process <span class="text-ink/30">03</span></a>
+      <a href="pricing.html" class="flex items-center justify-between border-b hl px-2 py-3 font-mono text-[14px] uppercase tracking-[.16em] text-ink/75">Pricing <span class="text-ink/30">04</span></a>
+      <a href="about.html" class="flex items-center justify-between px-2 py-3 font-mono text-[14px] uppercase tracking-[.16em] text-ink/75">About <span class="text-ink/30">05</span></a>
+      <a href="contact.html" class="mt-2 flex items-center justify-center gap-3 bg-ink px-4 py-3 font-mono text-[14px] font-medium uppercase tracking-[.16em] text-ivory">Book a call <i data-lucide="arrow-up-right" class="h-3.5 w-3.5"></i></a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ================= HERO (kept moody + bright photo, deliberate contrast moment) ================= -->
+<section class="relative min-h-[100svh] overflow-hidden text-ivory">
+  <div class="absolute inset-0 opacity-70" aria-hidden="true" style="background:
+    radial-gradient(circle at 74% 16%, rgba(199,162,76,.16), transparent 40%),
+    linear-gradient(180deg,#2a231d 0%,#171310 52%,#0c0a08 100%);"></div>
+
+  <div class="hero-shell relative z-10">
+    <div class="hero-frame frame relative w-full overflow-hidden p-2 md:p-3">
+      <span class="xmark -left-1 -top-1"></span><span class="xmark -right-1 -top-1"></span>
+      <span class="xmark -bottom-1 -left-1"></span><span class="xmark -bottom-1 -right-1"></span>
+
+      <div class="relative h-full w-full overflow-hidden bg-[#050404]">
+        <!-- cinematic photo, brighter -->
+        <img src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?q=80&w=2000&auto=format&fit=crop" alt="Server room corridor glowing in the dark" class="absolute inset-0 h-full w-full object-cover opacity-70" style="filter:grayscale(.3) contrast(1.02) brightness(1.02);">
+        <div class="absolute inset-0" aria-hidden="true" style="background:
+          radial-gradient(700px 420px at 78% 24%, rgba(199,162,76,.22), transparent 60%);"></div>
+        <div class="absolute inset-y-0 left-0 w-[78%] bg-gradient-to-r from-black/75 via-black/30 to-transparent" aria-hidden="true"></div>
+        <div class="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/75 via-black/20 to-transparent" aria-hidden="true"></div>
+        <div class="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/55 to-transparent" aria-hidden="true"></div>
+        <div class="absolute inset-0 opacity-[0.07]" aria-hidden="true" style="background-size:44px 44px;
+          background-image:linear-gradient(to right, rgba(247,244,238,1) 1px, transparent 1px),
+                           linear-gradient(to bottom, rgba(247,244,238,1) 1px, transparent 1px);"></div>
+
+        <!-- top-left copy -->
+        <div class="reveal absolute left-5 top-6 z-20 max-w-[250px] md:left-9 md:top-9">
+          <p class="text-[14px] leading-[1.5] text-ivory/85 md:text-[14px]" style="text-shadow:0 10px 30px rgba(0,0,0,.7)">Your entire IT department. One company. One monthly cost.</p>
+        </div>
+
+        <!-- live status chip -->
+        <div class="reveal absolute right-5 top-6 z-20 hidden md:right-9 md:top-9 md:block">
+          <div class="flex items-center gap-2 border hl bg-black/40 px-3 py-2 backdrop-blur-md">
+            <span class="h-1.5 w-1.5 rounded-full bg-gold"></span>
+            <span class="lbl lbl-b" style="color:rgba(247,244,238,.75)">Systems watched · 24/7</span>
+          </div>
+        </div>
+
+        <!-- main copy -->
+        <div class="absolute bottom-16 left-5 z-20 max-w-[980px] md:bottom-[76px] md:left-9 lg:left-12">
+          <div class="space-y-5 md:space-y-6">
+            <p class="reveal font-mono text-[14px] font-medium uppercase tracking-[.18em] text-ivory/65">Dakyworld® / The IT Company You Hire Instead of a Team</p>
+            <h1 class="font-serif text-[19vw] leading-[.8] text-ivory md:text-[12vw] lg:text-[150px]" style="letter-spacing:-0.05em; text-shadow:0 20px 70px rgba(0,0,0,.7);">
+              <span class="line-mask"><span>dakyworld</span></span>
+            </h1>
+            <p class="reveal max-w-xl text-sm leading-relaxed text-ivory/85 md:text-[19px] md:leading-[1.55]" style="transition-delay:.25s; text-shadow:0 8px 30px rgba(0,0,0,.6)">
+              Don't hire an IT team. <em class="font-serif italic text-gold">Hire us.</em><br>
+              All your IT — run by one company, at one affordable cost.
+            </p>
+            <div class="reveal flex flex-col gap-3 pt-1 sm:flex-row sm:items-center" style="transition-delay:.35s">
+              <a href="contact.html" class="inline-flex min-h-[52px] items-center justify-center border border-ivory bg-ivory px-8 font-mono text-[14px] font-medium uppercase tracking-[.14em] text-ink transition-all duration-300 hover:bg-white">Hire your IT department</a>
+              <a href="services.html" class="inline-flex min-h-[52px] items-center justify-center border border-ivory/40 bg-black/20 px-8 font-mono text-[14px] font-medium uppercase tracking-[.14em] text-ivory backdrop-blur-sm transition-all duration-300 hover:border-ivory hover:bg-ivory/10">See what we handle</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- bottom rail -->
+        <div class="absolute inset-x-0 bottom-0 z-20 grid grid-cols-1 border-t hl bg-black/25 backdrop-blur-md md:grid-cols-[1fr_auto_1fr]">
+          <span class="flex min-h-[42px] items-center px-4 font-mono text-[14px] uppercase tracking-[.14em] text-ivory/65 md:px-5">Accepting new clients</span>
+          <span class="hidden min-h-[42px] items-center justify-center border-x hl px-5 font-mono text-[14px] uppercase tracking-[.14em] text-ivory/65 md:flex">Ghana &amp; West Africa · 24/7/365</span>
+          <span class="hidden min-h-[42px] items-center justify-end px-5 font-mono text-[14px] uppercase tracking-[.14em] text-ivory/65 md:flex">Scroll +</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= THE IDEA ================= -->
+<section class="relative border-t hl bg-[#FBF9F5] px-[var(--pg)] py-24 md:py-32">
+  <div class="mx-auto grid max-w-screen-2xl items-center gap-12 lg:grid-cols-12">
+    <div class="lg:col-span-7">
+      <div class="reveal">
+        <div class="lbl mb-6">[ The idea ]</div>
+        <h2 class="font-serif text-3xl leading-tight text-ink md:text-5xl">A full IT team costs many salaries.<br><em class="italic text-gold">We cost less than one.</em></h2>
+        <p class="mt-6 max-w-xl text-sm leading-relaxed md:text-base">Websites. Security. Email. Automation. Branding.<br>One company runs it all — so you never hire for it.</p>
+      </div>
+      <div class="reveal mt-12 grid grid-cols-1 gap-px border hl bg-[rgba(11,11,12,.10)] sm:grid-cols-2">
+        <div class="bg-white p-7 md:p-9">
+          <div class="lbl mb-4">Without us</div>
+          <p class="font-serif text-lg text-ink/70 md:text-xl">Developer + security person + cloud administrator + automation specialist…</p>
+          <p class="lbl mt-5" style="color:rgba(11,11,12,.45)">4+ salaries · recruiting · turnover</p>
+        </div>
+        <div class="bg-white p-7 md:p-9">
+          <div class="lbl mb-4" style="color:#C7A24C">With Dakyworld</div>
+          <p class="font-serif text-lg text-ink md:text-xl">One company. All of it handled.</p>
+          <p class="lbl mt-5" style="color:#C7A24C">One affordable monthly cost</p>
+        </div>
+      </div>
+    </div>
+    <div class="reveal group lg:col-span-5">
+      <div class="frame overflow-hidden p-1">
+        <span class="xmark -right-1 -top-1"></span><span class="xmark -bottom-1 -left-1"></span>
+        <div class="relative aspect-[4/5] overflow-hidden">
+          <div class="cap"><span>Dakyworld®</span><span>Your team, working<br>— not troubleshooting</span></div>
+          <img src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?q=80&w=1400&auto=format&fit=crop" alt="A team working together around laptops" class="ph h-full w-full object-cover">
+          <div class="veil"></div>
+        </div>
+      </div>
+      <p class="lbl mt-4 flex justify-between"><span>[ Fig. 01 ]</span><span>The business, running its business</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= BENEFITS ================= -->
+<section class="relative border-t hl px-[var(--pg)] py-24 md:py-32">
+  <div class="mx-auto max-w-screen-2xl">
+    <div class="reveal mb-14 flex items-end justify-between gap-6">
+      <h2 class="font-serif text-3xl text-ink md:text-5xl">What you <em class="italic text-gold">gain.</em></h2>
+      <span class="lbl hidden md:block">[ Benefits ]</span>
+    </div>
+    <div class="reveal grid grid-cols-1 border border-b-0 border-r-0 hl sm:grid-cols-2 lg:grid-cols-3">
+      <div class="border-b border-r hl p-7 md:p-9">
+        <div class="lbl mb-5">01</div>
+        <h3 class="mb-2 text-base font-medium text-ink">One cost, whole team</h3>
+        <p class="text-sm leading-relaxed">Every IT skill you need — for less than one salary.</p>
+      </div>
+      <div class="border-b border-r hl p-7 md:p-9">
+        <div class="lbl mb-5">02</div>
+        <h3 class="mb-2 text-base font-medium text-ink">Nothing to manage</h3>
+        <p class="text-sm leading-relaxed">No recruiting. No payroll. No turnover.</p>
+      </div>
+      <div class="border-b border-r hl p-7 md:p-9">
+        <div class="lbl mb-5">03</div>
+        <h3 class="mb-2 text-base font-medium text-ink">Always watched</h3>
+        <p class="text-sm leading-relaxed">24/7 monitoring. Critical issues contained in under 4 hours.</p>
+      </div>
+      <div class="border-b border-r hl p-7 md:p-9">
+        <div class="lbl mb-5">04</div>
+        <h3 class="mb-2 text-base font-medium text-ink">Time returned</h3>
+        <p class="text-sm leading-relaxed">30+ hours back every month. Your team does its real job.</p>
+      </div>
+      <div class="border-b border-r hl p-7 md:p-9">
+        <div class="lbl mb-5">05</div>
+        <h3 class="mb-2 text-base font-medium text-ink">Nothing lost</h3>
+        <p class="text-sm leading-relaxed">Nightly backups. Zero data-loss incidents. Ever.</p>
+      </div>
+      <div class="border-b border-r hl p-7 md:p-9">
+        <div class="lbl mb-5">06</div>
+        <h3 class="mb-2 text-base font-medium text-ink">Built to grow</h3>
+        <p class="text-sm leading-relaxed">Automation and AI that make your business faster.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= EDITORIAL BAND (photo band, brighter but kept as a dark accent moment) ================= -->
+<section class="relative border-t hl px-[var(--pg)] py-6 md:py-8">
+  <div class="reveal group mx-auto max-w-screen-2xl">
+    <div class="frame overflow-hidden p-1">
+      <span class="xmark -left-1 -top-1"></span><span class="xmark -right-1 -top-1"></span>
+      <span class="xmark -bottom-1 -left-1"></span><span class="xmark -bottom-1 -right-1"></span>
+      <div class="relative aspect-[16/10] overflow-hidden sm:aspect-[21/9]">
+        <div class="cap"><span>Dakyworld® / Operations</span><span>Watched · Patched · Backed up</span></div>
+        <img src="https://images.unsplash.com/photo-1605810230434-7631ac76ec81?q=80&w=2000&auto=format&fit=crop" alt="A wall of live monitoring screens" class="ph h-full w-full object-cover">
+        <div class="veil"></div>
+        <div class="absolute bottom-0 left-0 z-20 p-6 md:p-10">
+          <p class="lbl mb-3" style="color:#C7A24C">While you sleep</p>
+          <p class="max-w-md font-serif text-2xl leading-snug text-ivory md:text-4xl">Your systems are being watched, patched, and backed up.</p>
+        </div>
+        <div class="absolute bottom-6 right-6 z-20 hidden md:block">
+          <span class="border hl bg-black/40 px-3 py-2 font-mono text-[14px] uppercase tracking-[.14em] text-ivory/80 backdrop-blur-md">Uptime 99.98% · Threats blocked 1,204</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= COVERAGE ================= -->
+<section class="relative border-t hl bg-[#FBF9F5] px-[var(--pg)] py-24 md:py-32">
+  <div class="mx-auto max-w-screen-2xl">
+    <div class="grid gap-12 lg:grid-cols-12">
+      <div class="reveal lg:col-span-4">
+        <div class="lbl mb-6">[ Coverage ]</div>
+        <h2 class="font-serif text-3xl text-ink md:text-5xl">Everything IT. <em class="italic text-gold">Handled.</em></h2>
+        <p class="mt-6 max-w-sm text-sm leading-relaxed">Seven disciplines. One retainer.<br>Hover to look inside.</p>
+        <a href="services.html" class="group mt-8 inline-flex items-center gap-2 font-mono text-[14px] uppercase tracking-[.16em] text-ink/65 transition hover:text-ink">Full coverage <i data-lucide="arrow-right" class="h-3 w-3 transition group-hover:translate-x-1"></i></a>
+      </div>
+      <div class="reveal border-t hl lg:col-span-8">
+        <a href="services.html" class="cov group flex items-center justify-between gap-6 border-b hl py-6 transition hover:bg-ink/[.03]" data-prev="https://images.unsplash.com/photo-1461749280684-dccba630e2f6?q=80&w=900&auto=format&fit=crop">
+          <div class="flex items-baseline gap-6"><span class="lbl">01</span><span class="font-serif text-xl text-ink/85 transition group-hover:translate-x-2 group-hover:text-ink md:text-3xl" style="letter-spacing:-0.02em">Websites &amp; Web Platforms</span></div>
+          <span class="lbl shrink-0 transition group-hover:text-gold" style="transition-property:color">Built · Fast</span>
+        </a>
+        <a href="services.html" class="cov group flex items-center justify-between gap-6 border-b hl py-6 transition hover:bg-ink/[.03]" data-prev="https://images.unsplash.com/photo-1550751827-4bd374c3f58b?q=80&w=900&auto=format&fit=crop">
+          <div class="flex items-baseline gap-6"><span class="lbl">02</span><span class="font-serif text-xl text-ink/85 transition group-hover:translate-x-2 group-hover:text-ink md:text-3xl" style="letter-spacing:-0.02em">Security &amp; Backups</span></div>
+          <span class="lbl shrink-0 transition group-hover:text-gold" style="transition-property:color">Watched 24/7</span>
+        </a>
+        <a href="services.html" class="cov group flex items-center justify-between gap-6 border-b hl py-6 transition hover:bg-ink/[.03]" data-prev="https://images.unsplash.com/photo-1544197150-b99a580bb7a8?q=80&w=900&auto=format&fit=crop">
+          <div class="flex items-baseline gap-6"><span class="lbl">03</span><span class="font-serif text-xl text-ink/85 transition group-hover:translate-x-2 group-hover:text-ink md:text-3xl" style="letter-spacing:-0.02em">Email, Workspace &amp; Cloud</span></div>
+          <span class="lbl shrink-0 transition group-hover:text-gold" style="transition-property:color">Always on</span>
+        </a>
+        <a href="services.html" class="cov group flex items-center justify-between gap-6 border-b hl py-6 transition hover:bg-ink/[.03]" data-prev="https://images.unsplash.com/photo-1485827404703-89b55fcc595e?q=80&w=900&auto=format&fit=crop">
+          <div class="flex items-baseline gap-6"><span class="lbl">04</span><span class="font-serif text-xl text-ink/85 transition group-hover:translate-x-2 group-hover:text-ink md:text-3xl" style="letter-spacing:-0.02em">Automation &amp; AI</span></div>
+          <span class="lbl shrink-0 transition group-hover:text-gold" style="transition-property:color">Busywork, gone</span>
+        </a>
+        <a href="services.html" class="cov group flex items-center justify-between gap-6 border-b hl py-6 transition hover:bg-ink/[.03]" data-prev="https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=900&auto=format&fit=crop">
+          <div class="flex items-baseline gap-6"><span class="lbl">05</span><span class="font-serif text-xl text-ink/85 transition group-hover:translate-x-2 group-hover:text-ink md:text-3xl" style="letter-spacing:-0.02em">Integrations &amp; Systems</span></div>
+          <span class="lbl shrink-0 transition group-hover:text-gold" style="transition-property:color">Connected</span>
+        </a>
+        <a href="services.html" class="cov group flex items-center justify-between gap-6 border-b hl py-6 transition hover:bg-ink/[.03]" data-prev="https://images.unsplash.com/photo-1600880292203-757bb62b4baf?q=80&w=900&auto=format&fit=crop">
+          <div class="flex items-baseline gap-6"><span class="lbl">06</span><span class="font-serif text-xl text-ink/85 transition group-hover:translate-x-2 group-hover:text-ink md:text-3xl" style="letter-spacing:-0.02em">Branding &amp; Design</span></div>
+          <span class="lbl shrink-0 transition group-hover:text-gold" style="transition-property:color">Brand, built</span>
+        </a>
+        <a href="services.html" class="cov group flex items-center justify-between gap-6 border-b hl py-6 transition hover:bg-ink/[.03]" data-prev="https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=900&auto=format&fit=crop">
+          <div class="flex items-baseline gap-6"><span class="lbl">07</span><span class="font-serif text-xl text-ink/85 transition group-hover:translate-x-2 group-hover:text-ink md:text-3xl" style="letter-spacing:-0.02em">Training &amp; Consulting</span></div>
+          <span class="lbl shrink-0 transition group-hover:text-gold" style="transition-property:color">Team, upskilled</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOW IT WORKS ================= -->
+<section class="relative border-t hl px-[var(--pg)] py-24 md:py-32">
+  <div class="mx-auto max-w-screen-2xl">
+    <div class="reveal mb-14 flex items-end justify-between gap-6">
+      <h2 class="font-serif text-3xl text-ink md:text-5xl">Three steps. <em class="italic text-gold">Then silence.</em></h2>
+      <span class="lbl hidden md:block">[ How it works ]</span>
+    </div>
+    <div class="reveal grid grid-cols-1 gap-px border hl bg-[rgba(11,11,12,.10)] md:grid-cols-3">
+      <div class="bg-white p-8 md:p-10">
+        <div class="mb-10 flex items-center justify-between"><span class="font-serif text-3xl text-gold">01</span><i data-lucide="file-check-2" class="h-4 w-4 text-ink/40"></i></div>
+        <h3 class="mb-2 text-base font-medium text-ink">You hire us</h3>
+        <p class="text-sm leading-relaxed">One retainer. Signed in a day.</p>
+      </div>
+      <div class="bg-white p-8 md:p-10">
+        <div class="mb-10 flex items-center justify-between"><span class="font-serif text-3xl text-gold">02</span><i data-lucide="settings" class="h-4 w-4 text-ink/40"></i></div>
+        <h3 class="mb-2 text-base font-medium text-ink">We take over your IT</h3>
+        <p class="text-sm leading-relaxed">Everything technical — secured, mapped, run daily.</p>
+      </div>
+      <div class="bg-white p-8 md:p-10">
+        <div class="mb-10 flex items-center justify-between"><span class="font-serif text-3xl text-gold">03</span><i data-lucide="check-circle" class="h-4 w-4 text-ink/40"></i></div>
+        <h3 class="mb-2 text-base font-medium text-ink">You stop thinking about it</h3>
+        <p class="text-sm leading-relaxed">One clear report a month proves it's working.</p>
+      </div>
+    </div>
+    <div class="reveal mt-10 text-center">
+      <a href="how-we-work.html" class="group inline-flex items-center gap-2 font-mono text-[14px] uppercase tracking-[.16em] text-ink/65 transition hover:text-ink">See the full process <i data-lucide="arrow-right" class="h-3 w-3 transition group-hover:translate-x-1"></i></a>
+    </div>
+  </div>
+</section>
+
+<!-- ================= QUOTE ================= -->
+<section class="relative border-t hl bg-[#FBF9F5] px-[var(--pg)] py-24 md:py-32">
+  <div class="mx-auto grid max-w-screen-2xl items-center gap-12 lg:grid-cols-12">
+    <div class="reveal group lg:col-span-5">
+      <div class="frame overflow-hidden p-1">
+        <span class="xmark -left-1 -top-1"></span><span class="xmark -right-1 -bottom-1"></span>
+        <div class="relative aspect-[4/5] overflow-hidden">
+          <div class="cap"><span>Client</span><span>SearchPathArabia</span></div>
+          <img src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=1200&auto=format&fit=crop" alt="Portrait of a business professional" class="ph h-full w-full object-cover">
+          <div class="veil"></div>
+        </div>
+      </div>
+      <p class="lbl mt-4 flex justify-between"><span>[ Fig. 02 ]</span><span>Operations, back to normal</span></p>
+    </div>
+    <div class="reveal lg:col-span-6 lg:col-start-7">
+      <div class="lbl mb-8">[ From a client ]</div>
+      <blockquote class="font-serif text-2xl leading-snug text-ink md:text-4xl">
+        "They fixed our security breach in 48 hours with <em class="italic text-gold">zero data loss.</em>"
+      </blockquote>
+      <div class="mt-8 border-t hl pt-6">
+        <p class="text-sm font-medium text-ink">Operations Lead</p>
+        <p class="lbl mt-1.5">SearchPathArabia · Recruitment Platform</p>
+      </div>
+      <a href="work.html" class="group mt-10 inline-flex items-center gap-2 font-mono text-[14px] uppercase tracking-[.16em] text-ink/65 transition hover:text-ink">See our work <i data-lucide="arrow-right" class="h-3 w-3 transition group-hover:translate-x-1"></i></a>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CTA (inverted to dark, punctuation band in a bright page) ================= -->
+<section class="relative px-[var(--pg)] py-6 md:py-8">
+  <div class="reveal relative mx-auto max-w-screen-2xl overflow-hidden border border-ink/20 bg-ink text-ivory">
+    <span class="xmark -left-1 -top-1"></span><span class="xmark -right-1 -top-1"></span>
+    <span class="xmark -bottom-1 -left-1"></span><span class="xmark -bottom-1 -right-1"></span>
+    <div class="absolute inset-0 opacity-[0.06]" aria-hidden="true" style="background-size:40px 40px;
+      background-image:linear-gradient(to right, rgba(247,244,238,1) 1px, transparent 1px),
+                       linear-gradient(to bottom, rgba(247,244,238,1) 1px, transparent 1px);"></div>
+    <div class="relative grid gap-10 p-8 md:p-14 lg:grid-cols-12">
+      <div class="lg:col-span-8">
+        <div class="mb-6 font-mono text-[14px] uppercase tracking-[.16em] text-gold">// Ready when you are</div>
+        <h2 class="font-serif text-5xl leading-[.95] md:text-7xl" style="letter-spacing:-0.03em">Hand IT over <em class="italic text-gold">for good.</em></h2>
+      </div>
+      <div class="flex flex-col justify-end gap-5 lg:col-span-4">
+        <p class="max-w-sm text-sm leading-relaxed text-ivory/70">Book a 30-minute call. We'll show you exactly what we'd take over.</p>
+        <a href="contact.html" class="group inline-flex min-h-[52px] items-center justify-between gap-3 bg-ivory px-6 font-mono text-[14px] font-medium uppercase tracking-[.14em] text-ink transition hover:bg-white">
+          Hire us as your IT department
+          <i data-lucide="arrow-up-right" class="h-4 w-4 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5"></i>
+        </a>
+        <a href="mailto:hello@dakyworld.com" class="font-mono text-[14px] uppercase tracking-[.14em] text-ivory/60 transition hover:text-ivory">hello@dakyworld.com</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ================= FOOTER ================= -->
+<footer class="relative border-t hl">
+  <div class="mx-auto max-w-screen-2xl px-[var(--pg)] py-14">
+    <div class="grid gap-10 border-b hl pb-12 sm:grid-cols-2 lg:grid-cols-12">
+      <div class="lg:col-span-5">
+        <a href="index-v2.html" class="flex items-center gap-3">
+          <span class="flex h-8 w-8 items-center justify-center border hl bg-ink text-ivory"><span class="font-serif text-[14px] font-semibold">D</span></span>
+          <span class="font-mono text-[14px] font-medium uppercase tracking-[.18em] text-ink">Dakyworld®</span>
+        </a>
+        <p class="mt-5 max-w-xs text-sm leading-relaxed">The IT company you hire instead of an IT team. One monthly cost — everything technical, handled.</p>
+      </div>
+      <div class="lg:col-span-2 lg:col-start-7">
+        <h3 class="lbl">Explore</h3>
+        <ul class="mt-5 space-y-2.5 text-sm">
+          <li><a href="services.html" class="text-ink/70 transition hover:text-ink">Coverage</a></li>
+          <li><a href="work.html" class="text-ink/70 transition hover:text-ink">Work</a></li>
+          <li><a href="how-we-work.html" class="text-ink/70 transition hover:text-ink">Process</a></li>
+          <li><a href="pricing.html" class="text-ink/70 transition hover:text-ink">Pricing</a></li>
+        </ul>
+      </div>
+      <div class="lg:col-span-2">
+        <h3 class="lbl">Company</h3>
+        <ul class="mt-5 space-y-2.5 text-sm">
+          <li><a href="about.html" class="text-ink/70 transition hover:text-ink">About</a></li>
+          <li><a href="insights.html" class="text-ink/70 transition hover:text-ink">Insights</a></li>
+          <li><a href="contact.html" class="text-ink/70 transition hover:text-ink">Contact</a></li>
+        </ul>
+      </div>
+      <div class="lg:col-span-3">
+        <h3 class="lbl">Get in touch</h3>
+        <ul class="mt-5 space-y-2.5 text-sm">
+          <li><a href="mailto:hello@dakyworld.com" class="text-ink/70 transition hover:text-ink">hello@dakyworld.com</a></li>
+          <li><a href="tel:+233545950611" class="text-ink/70 transition hover:text-ink">+233 545 950 611</a></li>
+          <li class="text-ink/45">Kumasi, Ghana</li>
+        </ul>
+      </div>
+    </div>
+    <div class="mt-7 grid grid-cols-1 gap-px border hl bg-[rgba(11,11,12,.10)] md:grid-cols-[1fr_auto_1fr]">
+      <span class="flex min-h-[40px] items-center bg-ink px-4 font-mono text-[14px] uppercase tracking-[.14em] text-ivory/50">© <span id="year" class="mx-1">2026</span> Dakyworld · All rights reserved</span>
+      <span class="hidden min-h-[40px] items-center justify-center bg-ink px-5 font-mono text-[14px] uppercase tracking-[.14em] text-ivory/50 md:flex">Kumasi — Serving West Africa</span>
+      <span class="flex min-h-[40px] items-center gap-5 bg-ink px-4 font-mono text-[14px] uppercase tracking-[.14em] text-ivory/50 md:justify-end">
+        <a href="privacy.html" class="transition hover:text-ivory">Privacy</a>
+        <a href="terms.html" class="transition hover:text-ivory">Terms</a>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<!-- cursor preview -->
+<div id="cursor-prev" class="hidden lg:block" aria-hidden="true"><img id="cursor-prev-img" src="" alt=""></div>
+
+<script>
+  document.documentElement.classList.add('js');
+  lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+  requestAnimationFrame(function(){ requestAnimationFrame(function(){ document.documentElement.classList.add('hero-in'); }); });
+
+  var mb = document.getElementById('menuBtn'), mm = document.getElementById('mobileMenu');
+  if (mb && mm) {
+    mb.addEventListener('click', function(){ var open = mm.classList.toggle('hidden') === false; mb.setAttribute('aria-expanded', open?'true':'false'); });
+    mm.querySelectorAll('a').forEach(function(a){ a.addEventListener('click', function(){ mm.classList.add('hidden'); }); });
+  }
+
+  var io = new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} }); }, { threshold:0.1, rootMargin:'0px 0px -40px 0px' });
+  document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+
+  // Cursor image preview on coverage rows
+  (function(){
+    var prev = document.getElementById('cursor-prev');
+    var img = document.getElementById('cursor-prev-img');
+    if (!prev || !matchMedia('(pointer: fine)').matches) return;
+    document.querySelectorAll('.cov').forEach(function(row){
+      row.addEventListener('mouseenter', function(){ img.src = row.dataset.prev; prev.classList.add('on'); });
+      row.addEventListener('mouseleave', function(){ prev.classList.remove('on'); });
+      row.addEventListener('mousemove', function(e){
+        prev.style.left = (e.clientX + 28) + 'px';
+        prev.style.top = (e.clientY - 90) + 'px';
+      });
+    });
+  })();
+
+  var y = document.getElementById('year'); if (y) y.textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
