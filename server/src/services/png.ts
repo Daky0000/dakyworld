@@ -68,8 +68,8 @@ export function encodePng(width: number, height: number, pixels: Uint8Array): Bu
 // --- The ribbons ----------------------------------------------------------
 
 /**
- * The same geometry as services/letterhead.ts draws in the PDF: an obsidian
- * wedge in the corner itself, and a gold band running parallel just inside it.
+ * The same geometry as services/letterhead.ts draws in the PDF: an ink
+ * wedge in the corner itself, and a lime band running parallel just inside it.
  * A point belongs to one or the other by its distance from the corner measured
  * along the diagonal, which is what makes both edges a single comparison.
  */
@@ -78,8 +78,8 @@ const WEDGE_PT = 74;
 const BAND_INNER_PT = 90;
 const BAND_OUTER_PT = RIBBON_PT;
 
-const OBSIDIAN_RGB = [11, 11, 12] as const;
-const GOLD_RGB = [199, 162, 76] as const;
+const INK_RGB = [8, 16, 31] as const;
+const MARK_RGB = [184, 255, 61] as const;
 
 /** 3 device pixels per point — crisp at print resolution, still a tiny image. */
 const SCALE = 3;
@@ -89,8 +89,8 @@ const SUB = 3;
 type Corner = "top-right" | "bottom-left";
 
 function band(t: number): 0 | 1 | 2 {
-  if (t <= WEDGE_PT) return 1; // obsidian
-  if (t >= BAND_INNER_PT && t <= BAND_OUTER_PT) return 2; // gold
+  if (t <= WEDGE_PT) return 1; // ink
+  if (t >= BAND_INNER_PT && t <= BAND_OUTER_PT) return 2; // mark
   return 0;
 }
 
@@ -100,8 +100,8 @@ export function ribbonPng(corner: Corner): Buffer {
 
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
-      let obsidian = 0;
-      let gold = 0;
+      let ink = 0;
+      let mark = 0;
 
       for (let sy = 0; sy < SUB; sy++) {
         for (let sx = 0; sx < SUB; sx++) {
@@ -110,22 +110,22 @@ export function ribbonPng(corner: Corner): Buffer {
           // Distance from the page corner, along the diagonal.
           const t = corner === "top-right" ? RIBBON_PT - x + y : x + (RIBBON_PT - y);
           const which = band(t);
-          if (which === 1) obsidian += 1;
-          else if (which === 2) gold += 1;
+          if (which === 1) ink += 1;
+          else if (which === 2) mark += 1;
         }
       }
 
       const total = SUB * SUB;
       const offset = (py * size + px) * 4;
-      if (obsidian === 0 && gold === 0) continue;
+      if (ink === 0 && mark === 0) continue;
 
       // The two never overlap, so whichever has coverage decides the colour and
       // the combined coverage decides the alpha.
-      const rgb = obsidian >= gold ? OBSIDIAN_RGB : GOLD_RGB;
+      const rgb = ink >= mark ? INK_RGB : MARK_RGB;
       pixels[offset] = rgb[0];
       pixels[offset + 1] = rgb[1];
       pixels[offset + 2] = rgb[2];
-      pixels[offset + 3] = Math.round(((obsidian + gold) / total) * 255);
+      pixels[offset + 3] = Math.round(((ink + mark) / total) * 255);
     }
   }
 

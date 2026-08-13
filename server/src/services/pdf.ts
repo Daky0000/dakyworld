@@ -3,20 +3,18 @@ import {
   CONTENT_BOTTOM,
   CONTENT_TOP,
   CONTENT_W,
-  DIVIDER,
-  GOLD,
+  LINE,
+  ACCENT,
   MARGIN_X,
-  OBSIDIAN,
+  INK,
   PAGE_H,
   PAGE_W,
-  SLATE,
+  MUTED,
   stampLetterhead,
 } from "./letterhead.js";
 
 type PDFDoc = InstanceType<typeof PDFDocument>;
 
-/** Kept as the old names so the document bodies below read unchanged. */
-const INK = OBSIDIAN;
 /** The right-hand edge of the text column. */
 const RIGHT_EDGE = PAGE_W - MARGIN_X;
 
@@ -52,11 +50,11 @@ function collectBuffer(doc: PDFDoc): Promise<Buffer> {
  * large thing on the page.
  */
 function header(doc: PDFDoc, kicker: string, title: string) {
-  doc.fillColor(GOLD).font("Helvetica-Bold").fontSize(8).text(kicker.toUpperCase(), { characterSpacing: 1.6 });
+  doc.fillColor(ACCENT).font("Helvetica-Bold").fontSize(8).text(kicker.toUpperCase(), { characterSpacing: 1.6 });
   doc.moveDown(0.45);
   doc.fillColor(INK).font("Helvetica-Bold").fontSize(19).text(title, { lineGap: 2 });
   doc.moveDown(0.5);
-  doc.strokeColor(GOLD).lineWidth(1.6).moveTo(MARGIN_X, doc.y).lineTo(MARGIN_X + 46, doc.y).stroke();
+  doc.strokeColor(ACCENT).lineWidth(1.6).moveTo(MARGIN_X, doc.y).lineTo(MARGIN_X + 46, doc.y).stroke();
   doc.moveDown(1.1);
 }
 
@@ -111,7 +109,7 @@ function sectionTitle(doc: PDFDoc, text: string, needs = 96) {
 }
 
 function paragraph(doc: PDFDoc, text: string, size = 10) {
-  doc.fillColor(SLATE).font("Helvetica").fontSize(size).text(text, { align: "left", lineGap: 2 });
+  doc.fillColor(MUTED).font("Helvetica").fontSize(size).text(text, { align: "left", lineGap: 2 });
 }
 
 function money(currency: string, amount: number): string {
@@ -122,7 +120,7 @@ export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> 
   const doc = newDoc();
   header(doc, "Service Proposal", data.title);
 
-  doc.fillColor(SLATE).font("Helvetica").fontSize(10).text(`Prepared for: ${data.clientName}`);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(10).text(`Prepared for: ${data.clientName}`);
   doc.moveDown(1.2);
 
   const body = data.body ?? null;
@@ -151,9 +149,9 @@ export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> 
         if (doc.y > BREAK_AT) doc.addPage();
         doc.fillColor(INK).font("Helvetica-Bold").fontSize(10).text(finding.observed, { lineGap: 1.5 });
         doc.moveDown(0.2);
-        doc.fillColor(SLATE).font("Helvetica").fontSize(9).text(finding.costsThem, { lineGap: 1.5 });
+        doc.fillColor(MUTED).font("Helvetica").fontSize(9).text(finding.costsThem, { lineGap: 1.5 });
         doc.moveDown(0.15);
-        doc.fillColor(SLATE).font("Helvetica-Oblique").fontSize(8).text(`Checked: ${finding.evidence}`);
+        doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8).text(`Checked: ${finding.evidence}`);
         doc.moveDown(0.15);
         doc.fillColor(INK).font("Helvetica").fontSize(9).text(`What we would do: ${finding.fix}`, { lineGap: 1.5 });
         doc.moveDown(1.15);
@@ -166,9 +164,9 @@ export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> 
         if (doc.y > BREAK_AT) doc.addPage();
         doc.fillColor(INK).font("Helvetica-Bold").fontSize(10).text(phase.phase);
         for (const item of phase.deliverables) {
-          doc.fillColor(SLATE).font("Helvetica").fontSize(9).text(`·  ${item}`, { indent: 8, lineGap: 1 });
+          doc.fillColor(MUTED).font("Helvetica").fontSize(9).text(`·  ${item}`, { indent: 8, lineGap: 1 });
         }
-        doc.fillColor(SLATE).font("Helvetica-Oblique").fontSize(9).text(phase.outcome, { lineGap: 1.5 });
+        doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(9).text(phase.outcome, { lineGap: 1.5 });
         doc.moveDown(0.95);
       }
     }
@@ -176,15 +174,15 @@ export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> 
     sectionTitle(doc, "Investment");
     for (const item of body.investment.lineItems) {
       const y = doc.y;
-      doc.fillColor(SLATE).font("Helvetica").fontSize(9.5).text(item.description, MARGIN_X, y, { width: 330 });
+      doc.fillColor(MUTED).font("Helvetica").fontSize(9.5).text(item.description, MARGIN_X, y, { width: 330 });
       const price = item.amount > 0
         ? `${money(data.currency, item.amount)}${item.billing === "MONTHLY" ? "/mo" : ""}`
         : "after the call";
-      doc.fillColor(item.amount > 0 ? INK : SLATE).font("Helvetica").fontSize(9.5).text(price, RIGHT_EDGE - 140, y, { width: 140, align: "right" });
+      doc.fillColor(item.amount > 0 ? INK : MUTED).font("Helvetica").fontSize(9.5).text(price, RIGHT_EDGE - 140, y, { width: 140, align: "right" });
       doc.moveDown(0.35);
     }
     doc.moveDown(0.3);
-    doc.strokeColor(DIVIDER).lineWidth(1).moveTo(MARGIN_X, doc.y).lineTo(RIGHT_EDGE, doc.y).stroke();
+    doc.strokeColor(LINE).lineWidth(1).moveTo(MARGIN_X, doc.y).lineTo(RIGHT_EDGE, doc.y).stroke();
     doc.moveDown(0.5);
 
     const totalY = doc.y;
@@ -196,14 +194,14 @@ export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> 
     doc.moveDown(0.4);
     if (body.investment.recurring > 0) {
       const monthlyY = doc.y;
-      doc.fillColor(SLATE).font("Helvetica").fontSize(9.5).text("Then, monthly", MARGIN_X, monthlyY);
-      doc.fillColor(SLATE).font("Helvetica").fontSize(9.5).text(`${money(data.currency, body.investment.recurring)}/mo`, RIGHT_EDGE - 140, monthlyY, {
+      doc.fillColor(MUTED).font("Helvetica").fontSize(9.5).text("Then, monthly", MARGIN_X, monthlyY);
+      doc.fillColor(MUTED).font("Helvetica").fontSize(9.5).text(`${money(data.currency, body.investment.recurring)}/mo`, RIGHT_EDGE - 140, monthlyY, {
         width: 140,
         align: "right",
       });
       doc.moveDown(0.4);
     }
-    doc.fillColor(SLATE).font("Helvetica-Oblique").fontSize(8.5).text(body.investment.basis, MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 1 });
+    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8.5).text(body.investment.basis, MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 1 });
 
     sectionTitle(doc, "Timeline");
     paragraph(doc, body.timeline);
@@ -214,7 +212,7 @@ export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> 
     if (body.assumptions.length) {
       sectionTitle(doc, "What this assumes");
       for (const assumption of body.assumptions) {
-        doc.fillColor(SLATE).font("Helvetica").fontSize(9).text(`·  ${assumption}`, { indent: 8, lineGap: 1 });
+        doc.fillColor(MUTED).font("Helvetica").fontSize(9).text(`·  ${assumption}`, { indent: 8, lineGap: 1 });
       }
     }
 
@@ -224,7 +222,7 @@ export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> 
 
   doc.moveDown(0.8);
   if (data.expiresAt) {
-    doc.fillColor(SLATE).font("Helvetica").fontSize(9).text(`This proposal holds until ${data.expiresAt.toDateString()}.`);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(9).text(`This proposal holds until ${data.expiresAt.toDateString()}.`);
   }
 
   return collectBuffer(doc);
@@ -276,7 +274,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
   const doc = newDoc();
   header(doc, "Invoice", data.invoiceNumber);
 
-  doc.fillColor(SLATE).font("Helvetica").fontSize(10);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(10);
   doc.text(`Bill to: ${data.clientName}`);
   doc.text(`Issue date: ${data.issueDate.toDateString()}`);
   doc.text(`Due date: ${data.dueDate.toDateString()}`);
@@ -284,23 +282,23 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
 
   const c = INVOICE_COLS;
   const headY = doc.y;
-  doc.fillColor(SLATE).font("Helvetica-Bold").fontSize(8).text("DESCRIPTION", c.desc, headY, { characterSpacing: 0.9 });
+  doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(8).text("DESCRIPTION", c.desc, headY, { characterSpacing: 0.9 });
   doc.text("QTY", c.qtyRight - c.numWidth, headY, { width: c.numWidth, align: "right", characterSpacing: 0.9 });
   doc.text("UNIT PRICE", c.priceRight - c.numWidth, headY, { width: c.numWidth, align: "right", characterSpacing: 0.9 });
   doc.text("AMOUNT", c.amountRight - c.numWidth, headY, { width: c.numWidth, align: "right", characterSpacing: 0.9 });
   doc.x = MARGIN_X;
   doc.y = headY + 13;
-  doc.strokeColor(DIVIDER).lineWidth(1).moveTo(MARGIN_X, doc.y).lineTo(RIGHT_EDGE, doc.y).stroke();
+  doc.strokeColor(LINE).lineWidth(1).moveTo(MARGIN_X, doc.y).lineTo(RIGHT_EDGE, doc.y).stroke();
   doc.moveDown(0.5);
 
-  doc.font("Helvetica").fontSize(9).fillColor(SLATE);
+  doc.font("Helvetica").fontSize(9).fillColor(MUTED);
   for (const item of data.lineItems) {
     if (doc.y > BREAK_AT) doc.addPage();
     invoiceRow(doc, item, data.currency);
   }
 
   doc.moveDown(0.5);
-  doc.strokeColor(DIVIDER).lineWidth(1).moveTo(MARGIN_X, doc.y).lineTo(RIGHT_EDGE, doc.y).stroke();
+  doc.strokeColor(LINE).lineWidth(1).moveTo(MARGIN_X, doc.y).lineTo(RIGHT_EDGE, doc.y).stroke();
   doc.moveDown(0.7);
 
   // Written as two positioned cells rather than one right-aligned string:
@@ -316,7 +314,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
   doc.x = MARGIN_X;
   doc.y = totalY + 20;
 
-  doc.strokeColor(GOLD).lineWidth(1.6).moveTo(c.amountRight - 170, doc.y).lineTo(RIGHT_EDGE, doc.y).stroke();
+  doc.strokeColor(ACCENT).lineWidth(1.6).moveTo(c.amountRight - 170, doc.y).lineTo(RIGHT_EDGE, doc.y).stroke();
 
   return collectBuffer(doc);
 }

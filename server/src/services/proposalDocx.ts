@@ -48,11 +48,12 @@ const px = (pt: number) => Math.round((pt * 96) / 72);
 /** Border widths are eighths of a point. */
 const eighth = (pt: number) => Math.round(pt * 8);
 
-const OBSIDIAN = "0B0B0C";
-const GOLD = "C7A24C";
-const BRONZE = "8A6A2F";
-const SLATE = "6E6A63";
-const DIVIDER = "E5E2DB";
+const INK = "08101F";
+/** Legible accent: rules and small bold type. Lime is a mark colour, not type. */
+const ACCENT = "3157FF";
+const ACCENT_DEEP = "2440C4";
+const MUTED = "68738A";
+const LINE = "DFE4EC";
 
 const FONT = "Arial";
 
@@ -99,7 +100,7 @@ function text(
     size: half(options.size ?? 10),
     bold: options.bold,
     italics: options.italics,
-    color: options.color ?? OBSIDIAN,
+    color: options.color ?? INK,
     // Word's characterSpacing is in twentieths of a point, like everything else.
     characterSpacing: options.spacing === undefined ? undefined : twip(options.spacing),
   });
@@ -115,7 +116,7 @@ function para(children: TextRun[] | ImageRun[], options: { before?: number; afte
 
 function bullet(content: string) {
   return new Paragraph({
-    children: [text(`·  ${content}`, { size: 9, color: SLATE })],
+    children: [text(`·  ${content}`, { size: 9, color: MUTED })],
     indent: { left: twip(12) },
     spacing: { after: twip(1.5) },
   });
@@ -181,10 +182,10 @@ function letterheadHeader(): Header {
                     spacing: { after: twip(2) },
                     // The gold rule under the wordmark stands in for the
                     // swoosh the PDF strokes as a curve; Word cannot draw one.
-                    border: { bottom: { style: BorderStyle.SINGLE, size: eighth(1.6), color: GOLD, space: 2 } },
+                    border: { bottom: { style: BorderStyle.SINGLE, size: eighth(1.6), color: ACCENT, space: 2 } },
                   }),
                   new Paragraph({
-                    children: [text(COMPANY.tagline, { size: 5.6, bold: true, color: BRONZE, spacing: 0.85 })],
+                    children: [text(COMPANY.tagline, { size: 5.6, bold: true, color: ACCENT_DEEP, spacing: 0.85 })],
                     spacing: { before: twip(3) },
                   }),
                 ],
@@ -192,13 +193,13 @@ function letterheadHeader(): Header {
               new TableCell({
                 borders: {
                   ...CELL_BORDERS,
-                  left: { style: BorderStyle.SINGLE, size: eighth(0.75), color: DIVIDER, space: 8 },
+                  left: { style: BorderStyle.SINGLE, size: eighth(0.75), color: LINE, space: 8 },
                 },
                 width: { size: 42, type: WidthType.PERCENTAGE },
                 children: [COMPANY.location, COMPANY.email, COMPANY.phone, COMPANY.web].map(
                   (line) =>
                     new Paragraph({
-                      children: [text(line, { size: 8.5, color: SLATE })],
+                      children: [text(line, { size: 8.5, color: MUTED })],
                       spacing: { after: twip(2.5) },
                       indent: { left: twip(10) },
                     }),
@@ -220,11 +221,11 @@ function letterheadFooter(): Footer {
           text(COMPANY.footerLine, { size: 7.5, bold: true, spacing: 2.1 }),
           new TextRun({ children: [], font: FONT }),
           text("\t", { size: 7.5 }),
-          text(COMPANY.web, { size: 8, color: SLATE }),
-          text("     f     X     ig     in", { size: 7.5, bold: true, color: SLATE, spacing: 1.2 }),
+          text(COMPANY.web, { size: 8, color: MUTED }),
+          text("     f     X     ig     in", { size: 7.5, bold: true, color: MUTED, spacing: 1.2 }),
         ],
         tabStops: [{ type: TabStopType.RIGHT, position: twip(CONTENT_W_PT) }],
-        border: { top: { style: BorderStyle.SINGLE, size: eighth(0.75), color: DIVIDER, space: 8 } },
+        border: { top: { style: BorderStyle.SINGLE, size: eighth(0.75), color: LINE, space: 8 } },
       }),
     ],
   });
@@ -238,13 +239,13 @@ function body(data: ProposalPdfData): Paragraph[] {
   const money = (amount: number) => `${currency} ${amount.toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
 
   out.push(
-    para([text("SERVICE PROPOSAL", { size: 8, bold: true, color: GOLD, spacing: 1.6 })], { after: 3 }),
+    para([text("SERVICE PROPOSAL", { size: 8, bold: true, color: ACCENT, spacing: 1.6 })], { after: 3 }),
     new Paragraph({
       children: [text(data.title, { size: 19, bold: true })],
       spacing: { after: twip(6) },
-      border: { bottom: { style: BorderStyle.SINGLE, size: eighth(1.6), color: GOLD, space: 6 } },
+      border: { bottom: { style: BorderStyle.SINGLE, size: eighth(1.6), color: ACCENT, space: 6 } },
     }),
-    para([text(`Prepared for: ${data.clientName}`, { size: 10, color: SLATE })], { before: 14, after: 10 }),
+    para([text(`Prepared for: ${data.clientName}`, { size: 10, color: MUTED })], { before: 14, after: 10 }),
   );
 
   const doc = data.body ?? null;
@@ -253,11 +254,11 @@ function body(data: ProposalPdfData): Paragraph[] {
     // A proposal written by hand, before the writer existed.
     out.push(
       sectionHeading("Service"),
-      para([text(data.serviceType, { size: 10, color: SLATE })]),
+      para([text(data.serviceType, { size: 10, color: MUTED })]),
       sectionHeading("Scope"),
-      para([text(data.scopeSummary, { size: 10, color: SLATE })]),
+      para([text(data.scopeSummary, { size: 10, color: MUTED })]),
       sectionHeading("Investment"),
-      para([text(`${currency} ${data.priceAmount}${data.priceTier ? ` — ${data.priceTier}` : ""}`, { size: 10, color: SLATE })]),
+      para([text(`${currency} ${data.priceAmount}${data.priceTier ? ` — ${data.priceTier}` : ""}`, { size: 10, color: MUTED })]),
     );
     return out;
   }
@@ -266,7 +267,7 @@ function body(data: ProposalPdfData): Paragraph[] {
 
   out.push(sectionHeading("Where you are"));
   for (const block of doc.situation.split(/\n{2,}/)) {
-    out.push(para([text(block.trim(), { size: 10, color: SLATE })], { after: 6 }));
+    out.push(para([text(block.trim(), { size: 10, color: MUTED })], { after: 6 }));
   }
 
   if (doc.findings.length) {
@@ -274,8 +275,8 @@ function body(data: ProposalPdfData): Paragraph[] {
     for (const finding of doc.findings) {
       out.push(
         new Paragraph({ children: [text(finding.observed, { size: 10, bold: true })], spacing: { after: twip(3) }, keepNext: true }),
-        para([text(finding.costsThem, { size: 9, color: SLATE })], { after: 3 }),
-        para([text(`Checked: ${finding.evidence}`, { size: 8, italics: true, color: SLATE })], { after: 3 }),
+        para([text(finding.costsThem, { size: 9, color: MUTED })], { after: 3 }),
+        para([text(`Checked: ${finding.evidence}`, { size: 8, italics: true, color: MUTED })], { after: 3 }),
         para([text(`What we would do: ${finding.fix}`, { size: 9 })], { after: 12 }),
       );
     }
@@ -286,7 +287,7 @@ function body(data: ProposalPdfData): Paragraph[] {
     for (const phase of doc.scope) {
       out.push(new Paragraph({ children: [text(phase.phase, { size: 10, bold: true })], spacing: { after: twip(2) }, keepNext: true }));
       for (const item of phase.deliverables) out.push(bullet(item));
-      out.push(para([text(phase.outcome, { size: 9, italics: true, color: SLATE })], { before: 2, after: 10 }));
+      out.push(para([text(phase.outcome, { size: 9, italics: true, color: MUTED })], { before: 2, after: 10 }));
     }
   }
 
@@ -307,19 +308,19 @@ function investmentTable(data: ProposalPdfData): Table | null {
         new TableCell({
           borders: {
             ...CELL_BORDERS,
-            top: options.top ? { style: BorderStyle.SINGLE, size: eighth(0.75), color: DIVIDER, space: 2 } : NO_BORDER,
+            top: options.top ? { style: BorderStyle.SINGLE, size: eighth(0.75), color: LINE, space: 2 } : NO_BORDER,
           },
           width: { size: 68, type: WidthType.PERCENTAGE },
-          children: [para([text(label, { size: options.bold ? 11 : 9.5, bold: options.bold, color: options.bold ? OBSIDIAN : SLATE })], { before: 3, after: 3 })],
+          children: [para([text(label, { size: options.bold ? 11 : 9.5, bold: options.bold, color: options.bold ? INK : MUTED })], { before: 3, after: 3 })],
         }),
         new TableCell({
           borders: {
             ...CELL_BORDERS,
-            top: options.top ? { style: BorderStyle.SINGLE, size: eighth(0.75), color: DIVIDER, space: 2 } : NO_BORDER,
+            top: options.top ? { style: BorderStyle.SINGLE, size: eighth(0.75), color: LINE, space: 2 } : NO_BORDER,
           },
           width: { size: 32, type: WidthType.PERCENTAGE },
           children: [
-            para([text(amount, { size: options.bold ? 11 : 9.5, bold: options.bold, color: amount === "after the call" ? SLATE : OBSIDIAN })], {
+            para([text(amount, { size: options.bold ? 11 : 9.5, bold: options.bold, color: amount === "after the call" ? MUTED : INK })], {
               before: 3,
               after: 3,
               align: AlignmentType.RIGHT,
@@ -344,10 +345,10 @@ function investmentTable(data: ProposalPdfData): Table | null {
 function tail(data: ProposalPdfData): Paragraph[] {
   const doc = data.body;
   if (!doc) return [];
-  const out: Paragraph[] = [para([text(doc.investment.basis, { size: 8.5, italics: true, color: SLATE })], { before: 5, after: 4 })];
+  const out: Paragraph[] = [para([text(doc.investment.basis, { size: 8.5, italics: true, color: MUTED })], { before: 5, after: 4 })];
 
-  out.push(sectionHeading("Timeline"), para([text(doc.timeline, { size: 10, color: SLATE })]));
-  out.push(sectionHeading("Why Dakyworld"), para([text(doc.whyUs, { size: 10, color: SLATE })]));
+  out.push(sectionHeading("Timeline"), para([text(doc.timeline, { size: 10, color: MUTED })]));
+  out.push(sectionHeading("Why Dakyworld"), para([text(doc.whyUs, { size: 10, color: MUTED })]));
 
   if (doc.assumptions.length) {
     out.push(sectionHeading("What this assumes"));
@@ -357,7 +358,7 @@ function tail(data: ProposalPdfData): Paragraph[] {
   out.push(sectionHeading("Next step"), para([text(doc.nextStep, { size: 10.5, bold: true })]));
 
   if (data.expiresAt) {
-    out.push(para([text(`This proposal holds until ${data.expiresAt.toDateString()}.`, { size: 9, color: SLATE })], { before: 12 }));
+    out.push(para([text(`This proposal holds until ${data.expiresAt.toDateString()}.`, { size: 9, color: MUTED })], { before: 12 }));
   }
   return out;
 }

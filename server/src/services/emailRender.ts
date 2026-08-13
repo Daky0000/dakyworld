@@ -34,7 +34,7 @@ function escapeHtml(value: string): string {
 
 /** Bare URLs become links; nothing else in the body is interpreted as markup. */
 function linkify(value: string): string {
-  return value.replace(/\b(https?:\/\/[^\s<>"]+)/g, (url) => `<a href="${url}" style="color:#8A6A2F">${url}</a>`);
+  return value.replace(/\b(https?:\/\/[^\s<>"]+)/g, (url) => `<a href="${url}" style="color:#3157FF">${url}</a>`);
 }
 
 /**
@@ -52,16 +52,16 @@ export function toHtml(body: string, signature: string | null, unsubscribeUrl: s
     .join("");
 
   const signatureHtml = signature
-    ? `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #e6e2d9;color:#5b5751;font-size:13px;line-height:1.6">${linkify(
+    ? `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #dfe4ec;color:#68738a;font-size:13px;line-height:1.6">${linkify(
         escapeHtml(signature),
       ).replace(/\n/g, "<br>")}</div>`
     : "";
 
   const unsubscribeHtml = unsubscribeUrl
-    ? `<div style="margin-top:18px;color:#9a958c;font-size:11px">If you would rather not hear from us, <a href="${unsubscribeUrl}" style="color:#9a958c">unsubscribe</a> and we will not write again.</div>`
+    ? `<div style="margin-top:18px;color:#8993a6;font-size:11px">If you would rather not hear from us, <a href="${unsubscribeUrl}" style="color:#8993a6">unsubscribe</a> and we will not write again.</div>`
     : "";
 
-  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;color:#1a1a1a;max-width:580px">${paragraphs}${signatureHtml}${unsubscribeHtml}</div>`;
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;color:#08101f;max-width:580px">${paragraphs}${signatureHtml}${unsubscribeHtml}</div>`;
 }
 
 /** The text alternative — the same words, plus the same signature and opt-out. */

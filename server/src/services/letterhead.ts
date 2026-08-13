@@ -15,10 +15,14 @@ type PDFDoc = InstanceType<typeof PDFDocument>;
  * printed identity from the letterhead template: the corner ribbons, the
  * wordmark lock-up, the contact block, the footer rule and the watermark.
  *
- * Colours and type are from `01 Brand/Dakyworld_Visual_Identity_Guide` —
- * five colours, and the 60-30-10 rule that keeps gold to accents. The gold
- * here is two corner wedges, four hairline icons and one rule; that is
- * deliberately under the 10%.
+ * Colours and type follow the website design system (`Dakyworld Website/
+ * assets/site.css`) so a proposal and the site read as one company. Accent is
+ * kept to two corner wedges, four hairline icons and one rule.
+ *
+ * **Why two accents.** Lime is the brand's signature, but it is a solid mark
+ * colour, not a text colour: at 8pt on white it does not read. So lime paints
+ * the corner wedges, where it is a shape against ink, and blue carries the
+ * rules, icons and small accent type, where it has to be legible.
  *
  * **On the logo.** The identity guide is explicit that logo artwork does not
  * exist yet and that the mark is a wordmark — "no icon crutch". The letterhead
@@ -30,18 +34,22 @@ type PDFDoc = InstanceType<typeof PDFDocument>;
 
 // --- The palette, and nothing else -----------------------------------------
 
-export const OBSIDIAN = "#0B0B0C";
-export const IVORY = "#F7F4EE";
-export const GOLD = "#C7A24C";
-export const BRONZE = "#8A6A2F";
-export const SLATE = "#6E6A63";
-export const DIVIDER = "#E5E2DB";
+export const INK = "#08101F";
+export const CREAM = "#F5F7F2";
+/** Legible accent: rules, hairline icons, small bold type. */
+export const ACCENT = "#3157FF";
+/** The same blue, darkened, for accent type that sits under 8pt. */
+export const ACCENT_DEEP = "#2440C4";
+export const MUTED = "#68738A";
+export const LINE = "#DFE4EC";
+/** Solid mark colour. Shapes on ink only — never type, never on white. */
+export const MARK = "#B8FF3D";
 /**
- * The watermark only — a tint of ivory, never a sixth brand colour. Kept very
+ * The watermark only — a tint of cream, never an extra brand colour. Kept very
  * close to white on purpose: body text runs over it, and a watermark you can
  * read through is decoration, while one you can't is a legibility problem.
  */
-const WATERMARK = "#F5F2EB";
+const WATERMARK = "#F1F4F9";
 
 // --- Page geometry ---------------------------------------------------------
 
@@ -88,8 +96,9 @@ function findLogo(): string | null {
 
 /**
  * The diagonal wedges at top-right and bottom-left. Two shapes per corner: an
- * obsidian triangle in the corner itself and a gold band running parallel just
- * inside it, with an ivory gap between so neither muddies the other.
+ * ink triangle in the corner itself and a lime band running parallel just
+ * inside it, with a paper gap between so neither muddies the other. Lime is a
+ * shape here, never type, which is the only place it is legible on white.
  */
 function cornerRibbons(doc: PDFDoc) {
   const wedge = 74;
@@ -98,9 +107,9 @@ function cornerRibbons(doc: PDFDoc) {
 
   // Top right.
   doc.save();
-  doc.fillColor(OBSIDIAN);
+  doc.fillColor(INK);
   doc.moveTo(PAGE_W - wedge, 0).lineTo(PAGE_W, 0).lineTo(PAGE_W, wedge).closePath().fill();
-  doc.fillColor(GOLD);
+  doc.fillColor(MARK);
   doc
     .moveTo(PAGE_W - bandOuter, 0)
     .lineTo(PAGE_W - bandInner, 0)
@@ -112,9 +121,9 @@ function cornerRibbons(doc: PDFDoc) {
 
   // Bottom left, mirrored.
   doc.save();
-  doc.fillColor(OBSIDIAN);
+  doc.fillColor(INK);
   doc.moveTo(0, PAGE_H - wedge).lineTo(0, PAGE_H).lineTo(wedge, PAGE_H).closePath().fill();
-  doc.fillColor(GOLD);
+  doc.fillColor(MARK);
   doc
     .moveTo(0, PAGE_H - bandOuter)
     .lineTo(0, PAGE_H - bandInner)
@@ -135,11 +144,11 @@ function cornerRibbons(doc: PDFDoc) {
 function icon(doc: PDFDoc, kind: "pin" | "mail" | "phone" | "globe", x: number, y: number) {
   const s = 8;
   doc.save();
-  doc.strokeColor(GOLD).lineWidth(0.7);
+  doc.strokeColor(ACCENT).lineWidth(0.7);
 
   if (kind === "pin") {
     doc.circle(x + s / 2, y + s / 2 - 0.6, s / 2 - 1).stroke();
-    doc.circle(x + s / 2, y + s / 2 - 0.6, 0.9).fillColor(GOLD).fill();
+    doc.circle(x + s / 2, y + s / 2 - 0.6, 0.9).fillColor(ACCENT).fill();
     doc
       .moveTo(x + s / 2 - 1.8, y + s / 2 + 1.4)
       .lineTo(x + s / 2, y + s)
@@ -189,19 +198,19 @@ function wordmark(doc: PDFDoc) {
 
   doc.save();
   doc
-    .fillColor(OBSIDIAN)
+    .fillColor(INK)
     .font("Helvetica-Bold")
     .fontSize(21)
     .text(COMPANY.name, MARGIN_X, top, { characterSpacing: 1.4, lineBreak: false });
 
   const markWidth = doc.widthOfString(COMPANY.name, { characterSpacing: 1.4 });
-  doc.fillColor(OBSIDIAN).font("Helvetica").fontSize(7).text("®", MARGIN_X + markWidth + 2, top + 1, { lineBreak: false });
+  doc.fillColor(INK).font("Helvetica").fontSize(7).text("®", MARGIN_X + markWidth + 2, top + 1, { lineBreak: false });
 
   // The swoosh: one gold stroke under the wordmark, thickening left to right.
   // It is the only decorative element on the page, which is what lets it work.
   doc
     .save()
-    .strokeColor(GOLD)
+    .strokeColor(ACCENT)
     .lineWidth(1.6)
     .moveTo(MARGIN_X, top + 27)
     .bezierCurveTo(MARGIN_X + markWidth * 0.3, top + 31, MARGIN_X + markWidth * 0.7, top + 24.5, MARGIN_X + markWidth + 6, top + 27.5)
@@ -209,7 +218,7 @@ function wordmark(doc: PDFDoc) {
     .restore();
 
   doc
-    .fillColor(BRONZE)
+    .fillColor(ACCENT_DEEP)
     .font("Helvetica-Bold")
     .fontSize(5.6)
     .text(COMPANY.tagline, MARGIN_X, top + 34, { characterSpacing: 0.85, lineBreak: false });
@@ -224,7 +233,7 @@ function contactBlock(doc: PDFDoc) {
   const step = 17;
 
   doc.save();
-  doc.strokeColor(DIVIDER).lineWidth(1).moveTo(dividerX, top).lineTo(dividerX, top + step * 3 + 12).stroke();
+  doc.strokeColor(LINE).lineWidth(1).moveTo(dividerX, top).lineTo(dividerX, top + step * 3 + 12).stroke();
 
   const rows: { kind: "pin" | "mail" | "phone" | "globe"; text: string }[] = [
     { kind: "pin", text: COMPANY.location },
@@ -236,7 +245,7 @@ function contactBlock(doc: PDFDoc) {
   rows.forEach((row, index) => {
     const y = top + index * step;
     icon(doc, row.kind, iconX, y);
-    doc.fillColor(SLATE).font("Helvetica").fontSize(8.5).text(row.text, textX, y, { lineBreak: false });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(row.text, textX, y, { lineBreak: false });
   });
   doc.restore();
 }
@@ -246,10 +255,10 @@ function contactBlock(doc: PDFDoc) {
 function footerBar(doc: PDFDoc) {
   const y = PAGE_H - 64;
   doc.save();
-  doc.strokeColor(DIVIDER).lineWidth(1).moveTo(MARGIN_X, y).lineTo(PAGE_W - MARGIN_X, y).stroke();
+  doc.strokeColor(LINE).lineWidth(1).moveTo(MARGIN_X, y).lineTo(PAGE_W - MARGIN_X, y).stroke();
 
   doc
-    .fillColor(OBSIDIAN)
+    .fillColor(INK)
     .font("Helvetica-Bold")
     .fontSize(7.5)
     .text(COMPANY.footerLine, MARGIN_X, y + 12, { characterSpacing: 2.1, lineBreak: false });
@@ -257,7 +266,7 @@ function footerBar(doc: PDFDoc) {
   // Right-aligned: the site, then the social handles as plain letterforms.
   const socials = "f    X    ig    in";
   const socialWidth = doc.font("Helvetica-Bold").fontSize(7.5).widthOfString(socials, { characterSpacing: 1.2 });
-  doc.fillColor(SLATE).font("Helvetica-Bold").fontSize(7.5).text(socials, PAGE_W - MARGIN_X - socialWidth, y + 12, {
+  doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(7.5).text(socials, PAGE_W - MARGIN_X - socialWidth, y + 12, {
     characterSpacing: 1.2,
     lineBreak: false,
   });
@@ -265,7 +274,7 @@ function footerBar(doc: PDFDoc) {
   const web = COMPANY.web;
   const webWidth = doc.font("Helvetica").fontSize(8).widthOfString(web);
   const webX = PAGE_W - MARGIN_X - socialWidth - 18 - webWidth;
-  doc.fillColor(SLATE).font("Helvetica").fontSize(8).text(web, webX, y + 11.5, { lineBreak: false });
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(web, webX, y + 11.5, { lineBreak: false });
   icon(doc, "globe", webX - 12, y + 10.5);
   doc.restore();
 }
@@ -301,7 +310,7 @@ export function stampLetterhead(doc: PDFDoc) {
   contactBlock(doc);
   footerBar(doc);
 
-  doc.fillColor(OBSIDIAN).font("Helvetica").fontSize(10);
+  doc.fillColor(INK).font("Helvetica").fontSize(10);
   doc.x = MARGIN_X;
   doc.y = CONTENT_TOP;
 }

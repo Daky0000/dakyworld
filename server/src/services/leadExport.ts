@@ -12,10 +12,10 @@ import PDFDocument from "pdfkit";
 import type { Lead } from "@prisma/client";
 import type { ResolvedField } from "./leadFields.js";
 
-const INK = "#0B0B0C";
-const GOLD = "#C7A24C";
-const SLATE = "#6E6A63";
-const HAIRLINE = "#E5E2DB";
+const INK = "#08101F";
+const ACCENT = "#3157FF";
+const MUTED = "#68738A";
+const LINE = "#DFE4EC";
 
 /** One cell's value, whether it's a Lead scalar or a custom column. */
 function valueOf(lead: Lead, field: ResolvedField): unknown {
@@ -87,7 +87,7 @@ export async function renderLeadsXlsx(groups: ExportGroup[], title: string): Pro
 
     const headerRow = sheet.getRow(1);
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0B0B0C" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF08101F" } };
     headerRow.alignment = { vertical: "middle" };
     headerRow.height = 20;
 
@@ -128,11 +128,11 @@ export async function renderLeadsPdf(groups: ExportGroup[], title: string, subti
   const bottom = doc.page.height - doc.page.margins.bottom;
 
   doc.fillColor(INK).font("Helvetica-Bold").fontSize(18).text("Dakyworld");
-  doc.fillColor(SLATE).font("Helvetica").fontSize(8).text(title.toUpperCase());
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(title.toUpperCase());
   doc.moveDown(0.4);
-  doc.strokeColor(GOLD).lineWidth(2).moveTo(left, doc.y).lineTo(right, doc.y).stroke();
+  doc.strokeColor(ACCENT).lineWidth(2).moveTo(left, doc.y).lineTo(right, doc.y).stroke();
   doc.moveDown(0.6);
-  doc.fillColor(SLATE).font("Helvetica").fontSize(8).text(subtitle);
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(subtitle);
   doc.moveDown(0.8);
 
   for (const group of groups) {
@@ -145,7 +145,7 @@ export async function renderLeadsPdf(groups: ExportGroup[], title: string, subti
     if (doc.y > bottom - 80) doc.addPage();
 
     doc.fillColor(INK).font("Helvetica-Bold").fontSize(11).text(group.name);
-    doc.fillColor(SLATE).font("Helvetica").fontSize(8).text(`${group.leads.length} lead${group.leads.length === 1 ? "" : "s"}`);
+    doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(`${group.leads.length} lead${group.leads.length === 1 ? "" : "s"}`);
     doc.moveDown(0.3);
 
     const drawHeader = () => {
@@ -175,14 +175,14 @@ export async function renderLeadsPdf(groups: ExportGroup[], title: string, subti
         x += widths[index];
       });
       doc.y = top + 14;
-      doc.strokeColor(HAIRLINE).lineWidth(0.5).moveTo(left, doc.y).lineTo(right, doc.y).stroke();
+      doc.strokeColor(LINE).lineWidth(0.5).moveTo(left, doc.y).lineTo(right, doc.y).stroke();
     }
 
     doc.moveDown(1);
   }
 
   if (!groups.length) {
-    doc.fillColor(SLATE).font("Helvetica").fontSize(10).text("No leads matched these filters.");
+    doc.fillColor(MUTED).font("Helvetica").fontSize(10).text("No leads matched these filters.");
   }
 
   doc.end();
