@@ -210,7 +210,7 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
             </Field>
           </div>
 
-          <details className="mt-4 border border-ink/10 bg-white">
+          <details className="mt-4 rounded-2xl border border-line bg-white">
             <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">
               Field map (only if an actor names things unusually)
             </summary>
@@ -287,13 +287,13 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {form.scheduleTimes.map((time) => (
-              <span key={time} className="inline-flex items-center gap-2 bg-ink px-2 py-1 font-mono text-[11px] text-ivory">
+              <span key={time} className="inline-flex items-center gap-2 bg-ink px-2 py-1 font-mono text-[11px] text-cream">
                 {time}
                 <button
                   type="button"
                   aria-label={`Remove ${time}`}
                   onClick={() => setForm({ ...form, scheduleTimes: form.scheduleTimes.filter((entry) => entry !== time) })}
-                  className="text-ivory/60 hover:text-ivory"
+                  className="text-cream/60 hover:text-cream"
                 >
                   ×
                 </button>
@@ -344,10 +344,10 @@ function PreviewPanel({ preview }: { preview: MappingPreview }) {
         {preview.items.map((item, index) => {
           const lead = item.lead as Record<string, unknown> | undefined;
           return (
-            <div key={index} className="border border-ink/10 bg-white p-4 text-sm">
+            <div key={index} className="rounded-2xl border border-line bg-white p-4 text-sm">
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className="font-medium">{(lead?.contactName as string) ?? "Unreadable row"}</span>
-                {item.score != null && <Badge tone={item.wouldSave ? "gold" : "muted"}>score {item.score}</Badge>}
+                {item.score != null && <Badge tone={item.wouldSave ? "positive" : "muted"}>score {item.score}</Badge>}
                 {item.skipped && <Badge tone="muted">skipped: {item.skipped}</Badge>}
               </div>
               {lead && (

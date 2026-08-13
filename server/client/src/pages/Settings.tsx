@@ -95,14 +95,14 @@ export function Settings() {
       />
 
       <div className="grid gap-8 lg:grid-cols-[16rem_1fr]">
-        <nav className="h-fit border border-ink/10 bg-white">
+        <nav className="h-fit rounded-2xl border border-line bg-white">
           {SECTIONS.map((entry) => (
             <button
               key={entry.id}
               type="button"
               onClick={() => choose(entry.id)}
               className={`flex w-full items-start gap-3 border-b border-ink/5 px-4 py-3 text-left transition last:border-0 ${
-                section === entry.id ? "bg-ink text-ivory" : "hover:bg-ivory"
+                section === entry.id ? "bg-ink text-cream" : "hover:bg-cream"
               }`}
             >
               <span className="mt-1.5">
@@ -110,7 +110,7 @@ export function Settings() {
               </span>
               <span className="min-w-0">
                 <span className="block font-mono text-[11px] uppercase tracking-[.12em]">{entry.label}</span>
-                <span className={`mt-0.5 block text-xs ${section === entry.id ? "text-ivory/60" : "text-ink/45"}`}>
+                <span className={`mt-0.5 block text-xs ${section === entry.id ? "text-cream/60" : "text-ink/45"}`}>
                   {entry.blurb}
                 </span>
               </span>
@@ -204,7 +204,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
           <>
             Any mailbox with SMTP works. On Google Workspace you need an{" "}
             <a
-              className="text-bronze hover:underline"
+              className="text-blue hover:underline"
               href="https://myaccount.google.com/apppasswords"
               target="_blank"
               rel="noreferrer"
@@ -344,8 +344,8 @@ function Panel({
   children?: ReactNode;
 }) {
   return (
-    <section className="border border-ink/10 bg-white p-6">
-      <h2 className="font-serif text-2xl">{title}</h2>
+    <section className="rounded-2xl border border-line bg-white p-6">
+      <h2 className="font-display text-2xl">{title}</h2>
       <p className="mt-1 max-w-2xl text-sm text-ink/60">{what}</p>
       <div className="mt-4 border-y border-ink/10 py-4">{state}</div>
       {where && <p className="mt-4 max-w-2xl text-sm text-ink/55">{where}</p>}
@@ -377,7 +377,7 @@ function useSaveSettings() {
 function Connected({ children }: { children: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-3 text-sm">
-      <Badge tone="gold">connected</Badge>
+      <Badge tone="positive">connected</Badge>
       {children}
     </div>
   );
@@ -426,7 +426,7 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
         !analyst.configured && (
           <>
             Create a key at{" "}
-            <a className="text-bronze hover:underline" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
+            <a className="text-blue hover:underline" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
               console.anthropic.com → API keys
             </a>
             , and make sure the account has credit. The key is checked against Anthropic before it's saved.
@@ -570,7 +570,7 @@ function GooglePanel({
           hint="Add this to the OAuth client in Google Cloud, exactly as shown — Google matches it character for character."
         >
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all border border-ink/10 bg-ivory px-2 py-1.5 text-xs">{google.redirectUri}</code>
+            <code className="flex-1 break-all rounded-lg border border-line bg-cream px-2 py-1.5 text-xs">{google.redirectUri}</code>
             <Button
               variant="secondary"
               size="sm"
@@ -635,14 +635,14 @@ function GooglePanel({
             </div>
           </form>
 
-          <details className="mt-5 border border-ink/10 bg-ivory">
+          <details className="mt-5 rounded-2xl border border-line bg-cream">
             <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">
               How to create the OAuth client
             </summary>
             <ol className="list-decimal space-y-2 px-8 py-4 text-sm text-ink/65">
               <li>
                 In{" "}
-                <a className="text-bronze hover:underline" href="https://console.cloud.google.com" target="_blank" rel="noreferrer">
+                <a className="text-blue hover:underline" href="https://console.cloud.google.com" target="_blank" rel="noreferrer">
                   console.cloud.google.com
                 </a>
                 , create a project.
@@ -712,7 +712,7 @@ function CapturePanel({ settings }: { settings: AppSettings }) {
           <>
             Get a token at{" "}
             <a
-              className="text-bronze hover:underline"
+              className="text-blue hover:underline"
               href="https://console.apify.com/settings/integrations"
               target="_blank"
               rel="noreferrer"
@@ -1125,7 +1125,7 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
 
 function Group({ title, blurb, children }: { title: string; blurb: ReactNode; children: ReactNode }) {
   return (
-    <section className="border border-ink/10 bg-ivory/40 p-4">
+    <section className="rounded-2xl border border-line bg-cream/40 p-4">
       <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/50">{title}</h3>
       <p className="mt-1 max-w-2xl text-xs text-ink/50">{blurb}</p>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">{children}</div>
@@ -1174,14 +1174,14 @@ function ActorHealthList() {
         {data?.actors.map((actor) => {
           const problems = actor.usedBy.filter((source) => source.unknownKeys.length > 0);
           return (
-            <div key={actor.actorId} className="border border-ink/10 bg-white px-4 py-3 text-sm">
+            <div key={actor.actorId} className="rounded-xl border border-line bg-white px-4 py-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <StatusDot tone={!actor.reachable ? "bad" : problems.length ? "warn" : "ok"} />
                 <a
                   href={`https://apify.com/${actor.actorId}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="font-mono text-xs hover:text-bronze hover:underline"
+                  className="font-mono text-xs hover:text-blue hover:underline"
                 >
                   {actor.actorId} ↗
                 </a>
@@ -1251,7 +1251,7 @@ function PaymentsPanel({ settings }: { settings: AppSettings }) {
         !stripe.configured && (
           <>
             Secret key from{" "}
-            <a className="text-bronze hover:underline" href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noreferrer">
+            <a className="text-blue hover:underline" href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noreferrer">
               dashboard.stripe.com → Developers → API keys
             </a>
             . Use a <code className="font-mono text-xs">sk_test_…</code> key until you're ready to take real money.
@@ -1262,7 +1262,7 @@ function PaymentsPanel({ settings }: { settings: AppSettings }) {
         stripe.configured ? (
           <Connected>
             <span className="font-mono text-xs text-ink/50">{stripe.key}</span>
-            <Badge tone={stripe.livemode ? "gold" : "muted"}>{stripe.livemode ? "live mode" : "test mode"}</Badge>
+            <Badge tone={stripe.livemode ? "positive" : "muted"}>{stripe.livemode ? "live mode" : "test mode"}</Badge>
             {!stripe.webhookConfigured && <span className="text-xs text-amber-700">No webhook secret — invoices won't self-mark paid</span>}
             {!stripe.envManaged && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
@@ -1281,7 +1281,7 @@ function PaymentsPanel({ settings }: { settings: AppSettings }) {
           hint="In Stripe: Developers → Webhooks → Add endpoint, listening for checkout.session.completed. Then paste its signing secret below."
         >
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all border border-ink/10 bg-ivory px-2 py-1.5 text-xs">{stripe.webhookUrl}</code>
+            <code className="flex-1 break-all rounded-lg border border-line bg-cream px-2 py-1.5 text-xs">{stripe.webhookUrl}</code>
             <Button
               variant="secondary"
               size="sm"
@@ -1374,7 +1374,7 @@ function StoragePanel({ settings }: { settings: AppSettings }) {
         !cloudinary.configured && (
           <>
             All three values are on the{" "}
-            <a className="text-bronze hover:underline" href="https://console.cloudinary.com" target="_blank" rel="noreferrer">
+            <a className="text-blue hover:underline" href="https://console.cloudinary.com" target="_blank" rel="noreferrer">
               Cloudinary dashboard
             </a>{" "}
             under Product Environment Credentials.

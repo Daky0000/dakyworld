@@ -55,7 +55,7 @@ export function Proposals() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="font-serif text-lg">{p.title}</h3>
+                    <h3 className="font-display text-lg">{p.title}</h3>
                     <StatusBadge status={p.status} />
                     {p.body && <Badge tone="muted">drafted from {p.body.findings.length} findings</Badge>}
                     {p.confidence != null && p.confidence < 0.55 && <Badge tone="muted">low confidence</Badge>}
@@ -114,6 +114,6 @@ export function Proposals() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const tone = status === "WON" ? "gold" : status === "LOST" ? "muted" : "default";
+  const tone = status === "WON" ? "positive" : status === "LOST" ? "muted" : "default";
   return <Badge tone={tone}>{status}</Badge>;
 }

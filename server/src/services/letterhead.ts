@@ -35,13 +35,13 @@ type PDFDoc = InstanceType<typeof PDFDocument>;
 // --- The palette, and nothing else -----------------------------------------
 
 export const INK = "#08101F";
-export const CREAM = "#F5F7F2";
+export const CREAM = "#F4F5F0";
 /** Legible accent: rules, hairline icons, small bold type. */
 export const ACCENT = "#3157FF";
 /** The same blue, darkened, for accent type that sits under 8pt. */
 export const ACCENT_DEEP = "#2440C4";
-export const MUTED = "#68738A";
-export const LINE = "#DFE4EC";
+export const MUTED = "#69758A";
+export const LINE = "#DFE4EB";
 /** Solid mark colour. Shapes on ink only — never type, never on white. */
 export const MARK = "#B8FF3D";
 /**
@@ -79,17 +79,33 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  * no code change, no redeploy beyond the one that carries the file. Checked
  * once per process because the answer cannot change while it runs.
  */
-const LOGO_CANDIDATES = ["logo.png", "logo.jpg", "logo.jpeg"].flatMap((name) => [
-  path.resolve(here, "../../assets", name),
-  path.resolve(here, "../../../assets", name),
-]);
+function assetCandidates(names: string[]): string[] {
+  return names.flatMap((name) => [
+    path.resolve(here, "../../assets", name),
+    path.resolve(here, "../../../assets", name),
+  ]);
+}
 
-let logoPath: string | null | undefined;
+const LOGO_CANDIDATES = assetCandidates(["logo.png", "logo.jpg", "logo.jpeg"]);
+/** The square mark on its own, for the watermark. Optional. */
+const MARK_CANDIDATES = assetCandidates(["mark.png", "mark.jpg", "mark.jpeg"]);
+
+const found = new Map<string, string | null>();
+
+function findAsset(key: string, candidates: string[]): string | null {
+  const cached = found.get(key);
+  if (cached !== undefined) return cached;
+  const hit = candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+  found.set(key, hit);
+  return hit;
+}
 
 function findLogo(): string | null {
-  if (logoPath !== undefined) return logoPath;
-  logoPath = LOGO_CANDIDATES.find((candidate) => fs.existsSync(candidate)) ?? null;
-  return logoPath;
+  return findAsset("logo", LOGO_CANDIDATES);
+}
+
+function findMark(): string | null {
+  return findAsset("mark", MARK_CANDIDATES);
 }
 
 // --- Corner ribbons --------------------------------------------------------
@@ -189,7 +205,7 @@ function wordmark(doc: PDFDoc) {
   if (logo) {
     // Fitted into a fixed box so a logo of any exported size lands identically.
     try {
-      doc.image(logo, MARGIN_X, top, { fit: [190, 46] });
+      doc.image(logo, MARGIN_X, top, { fit: [LOGO_BOX.width, LOGO_BOX.height] });
       return;
     } catch {
       // A corrupt file must not take the whole document down; fall through.
@@ -287,6 +303,22 @@ function footerBar(doc: PDFDoc) {
  * a watermark centred in the text column fights every line that crosses it.
  */
 function watermark(doc: PDFDoc) {
+  const mark = findMark();
+
+  if (mark) {
+    // The real mark, dropped to a tint. Opacity rather than a pale copy of the
+    // artwork, so one file serves both this and any full-strength use.
+    doc.save();
+    try {
+      doc.opacity(0.05).image(mark, PAGE_W - 258, PAGE_H - 392, { fit: [232, 232] });
+      doc.restore();
+      return;
+    } catch {
+      // Fall through to the typographic watermark rather than lose the page.
+    }
+    doc.restore();
+  }
+
   doc.save();
   doc.fillColor(WATERMARK).font("Helvetica-Bold").fontSize(270).text("D", PAGE_W - 245, PAGE_H - 395, {
     lineBreak: false,
@@ -318,4 +350,35 @@ export function stampLetterhead(doc: PDFDoc) {
 /** True when a real logo file is in place, for the settings read-out. */
 export function hasLogoAsset(): boolean {
   return findLogo() !== null;
+}
+
+/** The box the lock-up is fitted into, shared by every letterhead renderer. */
+export const LOGO_BOX = { width: 190, height: 46 };
+
+/** Intrinsic size from a PNG's IHDR. Null for anything that is not a PNG. */
+function pngSize(data: Buffer): { width: number; height: number } | null {
+  const isPng = data.length > 24 && data.readUInt32BE(0) === 0x89504e47;
+  if (!isPng) return null;
+  return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
+}
+
+/**
+ * The lock-up as bytes, already fitted to LOGO_BOX, for renderers that embed
+ * rather than draw — the .docx letterhead, which has no "fit" of its own and
+ * needs the final points. Null when no artwork is present, which is the
+ * caller's cue to fall back to the typographic wordmark, exactly as the PDF does.
+ */
+export function readLogoAsset(): { data: Buffer; width: number; height: number } | null {
+  const logo = findLogo();
+  if (!logo) return null;
+  try {
+    const data = fs.readFileSync(logo);
+    const size = pngSize(data);
+    if (!size) return { data, ...LOGO_BOX };
+
+    const scale = Math.min(LOGO_BOX.width / size.width, LOGO_BOX.height / size.height);
+    return { data, width: size.width * scale, height: size.height * scale };
+  } catch {
+    return null;
+  }
 }

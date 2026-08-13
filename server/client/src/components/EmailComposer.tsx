@@ -245,7 +245,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
 
           {/* What we know. The whole reason this email can be specific. */}
           {context && context.facts.length > 0 && (
-            <div className="mb-5 border border-ink/10 bg-white">
+            <div className="mb-5 rounded-2xl border border-line bg-white">
               <button
                 type="button"
                 onClick={() => setShowFacts(!showFacts)}
@@ -267,8 +267,8 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
           )}
 
           {/* The drafter. */}
-          <div className="mb-5 border border-gold/40 bg-gold/[.06] p-4">
-            <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-bronze">
+          <div className="mb-5 border border-blue/30 bg-blue/[.05] p-4">
+            <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-blue">
               <StatusDot tone="live" /> Draft it with AI
             </div>
             <textarea
@@ -290,7 +290,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
                 {draft.isPending ? "Writing…" : body ? "Rewrite" : "Write a draft"}
               </Button>
             </div>
-            {rationale && <p className="mt-3 border-t border-gold/30 pt-2 text-[11px] italic text-ink/55">{rationale}</p>}
+            {rationale && <p className="mt-3 border-t border-blue/20 pt-2 text-[11px] italic text-ink/55">{rationale}</p>}
           </div>
 
           {relevantTemplates.length > 0 && (
@@ -335,7 +335,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
                   type="button"
                   title={value || "(empty for this recipient)"}
                   onClick={() => setBody((current) => `${current}{{${name}}}`)}
-                  className="border border-ink/10 bg-white px-1.5 py-0.5 font-mono text-[10px] text-ink/50 transition hover:border-ink/40 hover:text-ink"
+                  className="rounded-lg border border-line bg-white px-1.5 py-0.5 font-mono text-[10px] text-ink/50 transition hover:border-ink/40 hover:text-ink"
                 >
                   {`{{${name}}}`}
                 </button>
@@ -348,7 +348,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">Attached</div>
               <div className="space-y-1.5">
                 {attachments.map((attachment, index) => (
-                  <div key={index} className="flex items-center justify-between border border-ink/10 bg-white px-3 py-2 text-sm">
+                  <div key={index} className="flex items-center justify-between rounded-xl border border-line bg-white px-3 py-2 text-sm">
                     <span className="flex items-center gap-2">
                       <Badge tone="muted">{"kind" in attachment && attachment.kind ? attachment.kind : "file"}</Badge>
                       {"name" in attachment && attachment.name

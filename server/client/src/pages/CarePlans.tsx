@@ -173,8 +173,8 @@ function PlanCard({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <StatusDot tone={plan.status === "ACTIVE" ? "ok" : plan.status === "PAUSED" ? "warn" : "idle"} />
-            <h3 className="font-serif text-lg">{plan.client.name}</h3>
-            <Badge tone={plan.status === "ACTIVE" ? "gold" : "muted"}>{TIER_LABEL[plan.tier] ?? plan.tier}</Badge>
+            <h3 className="font-display text-lg">{plan.client.name}</h3>
+            <Badge tone={plan.status === "ACTIVE" ? "positive" : "muted"}>{TIER_LABEL[plan.tier] ?? plan.tier}</Badge>
             {plan.status !== "ACTIVE" && <Badge tone="muted">{plan.status}</Badge>}
             {!plan.autoInvoice && plan.status === "ACTIVE" && <Badge tone="muted">Manual billing</Badge>}
           </div>
@@ -367,7 +367,7 @@ function CycleRow({ cycle }: { cycle: CarePlanCycle }) {
             ) : (
               <span className="font-mono text-xs">{cycle.invoice.invoiceNumber}</span>
             )}
-            <Badge tone={cycle.invoice.status === "PAID" ? "gold" : "muted"}>{cycle.invoice.status}</Badge>
+            <Badge tone={cycle.invoice.status === "PAID" ? "positive" : "muted"}>{cycle.invoice.status}</Badge>
           </span>
         ) : (
           <span className="text-ink/30">—</span>

@@ -313,7 +313,7 @@ export function Leads() {
             ) : (
               <Link
                 to="/lead-sources"
-                className="inline-flex items-center gap-2 bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-ivory"
+                className="inline-flex items-center gap-2 bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-cream"
               >
                 Set up lead capture
               </Link>
@@ -540,7 +540,7 @@ function LeadGroupBlock({
       )}
 
       {!collapsed && (
-        <div className="overflow-x-auto border border-ink/10 bg-white">
+        <div className="overflow-x-auto rounded-2xl border border-line bg-white">
           {saveError instanceof Error && (
             <p className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{saveError.message}</p>
           )}
@@ -583,7 +583,7 @@ function LeadGroupBlock({
                   <tr
                     key={lead.id}
                     className={`group border-b border-ink/5 transition last:border-0 ${
-                      editing ? "bg-gold/10" : `cursor-pointer hover:bg-ivory/60 ${selected.has(lead.id) ? "bg-gold/5" : ""}`
+                      editing ? "bg-blue/10" : `cursor-pointer hover:bg-cream/60 ${selected.has(lead.id) ? "bg-blue/5" : ""}`
                     }`}
                     onClick={() => !editing && onOpen(lead.id)}
                   >
@@ -592,7 +592,7 @@ function LeadGroupBlock({
                         type="checkbox"
                         checked={selected.has(lead.id)}
                         onChange={() => onToggle(lead.id)}
-                        className="h-3.5 w-3.5 accent-[#0B0B0C]"
+                        className="h-3.5 w-3.5 accent-blue"
                         aria-label={`Select ${lead.contactName}`}
                       />
                     </td>
@@ -619,7 +619,7 @@ function LeadGroupBlock({
                     <td className="px-3 py-3 text-right" onClick={(event) => event.stopPropagation()}>
                       {editing ? (
                         <span className="flex justify-end gap-2 font-mono text-[10px] uppercase tracking-[.1em]">
-                          <button type="button" onClick={() => commit(lead)} className="text-bronze hover:underline">
+                          <button type="button" onClick={() => commit(lead)} className="text-blue hover:underline">
                             {savingId === lead.id ? "Saving…" : "Save"}
                           </button>
                           <button type="button" onClick={() => setEditingId(null)} className="text-ink/40 hover:text-ink">
@@ -674,7 +674,7 @@ function FilterBar({
     list.includes(value) ? list.filter((entry) => entry !== value) : [...list, value];
 
   return (
-    <div className="mb-6 border border-ink/10 bg-white">
+    <div className="mb-6 rounded-2xl border border-line bg-white">
       <div className="flex flex-wrap items-center gap-3 border-b border-ink/5 px-4 py-3">
         <input
           value={filters.q}
@@ -785,7 +785,7 @@ function FilterBar({
           <button
             type="button"
             onClick={() => onChange(EMPTY_FILTERS)}
-            className="font-mono text-[10px] uppercase tracking-[.14em] text-bronze"
+            className="font-mono text-[10px] uppercase tracking-[.14em] text-blue"
           >
             Clear ({activeFilterCount})
           </button>
@@ -801,7 +801,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       type="button"
       onClick={onClick}
       className={`px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
-        active ? "bg-ink text-ivory" : "bg-ink/5 text-ink/50 hover:text-ink"
+        active ? "bg-ink text-cream" : "bg-ink/5 text-ink/50 hover:text-ink"
       }`}
     >
       {children}
@@ -829,13 +829,13 @@ function BulkBar({
   onClear: () => void;
 }) {
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-ivory">
+    <div className="mb-4 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
       <span className="font-mono text-[11px] uppercase tracking-[.14em]">{count} selected</span>
       <select
         defaultValue=""
         disabled={pending}
         onChange={(event) => event.target.value && onStatus(event.target.value)}
-        className="bg-ivory px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-ink"
+        className="bg-cream px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-ink"
       >
         <option value="">Set status…</option>
         {STATUSES.map((status) => (
@@ -848,7 +848,7 @@ function BulkBar({
         defaultValue=""
         disabled={pending}
         onChange={(event) => event.target.value && onGroup(event.target.value === "none" ? null : event.target.value)}
-        className="bg-ivory px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-ink"
+        className="bg-cream px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-ink"
       >
         <option value="">Move to batch…</option>
         <option value="none">Ungrouped</option>
@@ -868,7 +868,7 @@ function BulkBar({
       </button>
       {error instanceof Error && <span className="text-xs text-red-300">{error.message}</span>}
       <span className="flex-1" />
-      <button type="button" onClick={onClear} className="font-mono text-[10px] uppercase tracking-[.14em] text-ivory/60">
+      <button type="button" onClick={onClear} className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60">
         Clear
       </button>
     </div>

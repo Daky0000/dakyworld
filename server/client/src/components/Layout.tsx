@@ -38,42 +38,45 @@ export function Layout() {
   // the browser chrome or guessing which nav tab you came in through.
   const canGoBack = location.pathname !== "/";
   return (
-    <div className="min-h-screen bg-ivory text-ink">
-      <header className="border-b border-ink/10 bg-white/70 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+    <div className="min-h-screen bg-cream text-ink">
+      {/* Sticky, like the website's shell — navigation is the one thing you
+          should never have to scroll back up for. Light rather than dark
+          glass: this is a working tool, not a landing page. */}
+      <header className="sticky top-0 z-40 border-b border-line bg-cream/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 py-3.5">
           <div className="flex items-center gap-3">
-            <span className="flex h-8 w-8 items-center justify-center border border-ink/20 bg-ink text-ivory">
-              <span className="font-serif text-sm font-semibold">D</span>
-            </span>
+            <img src="/brand/mark-on-light-96.png" alt="" width={34} height={34} className="h-[34px] w-[34px]" />
             <div className="leading-none">
-              <div className="font-mono text-xs font-medium uppercase tracking-[.18em]">Dakyworld OS</div>
-              <div className="mt-0.5 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Internal Operations</div>
+              <div className="font-display text-[15px] font-bold tracking-[-.03em]">
+                Dakyworld OS
+              </div>
+              <div className="mt-1 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Internal Operations</div>
             </div>
           </div>
-          <nav className="flex items-center gap-6">
+          <nav className="flex items-center gap-1.5">
             {visibleNav.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 end={item.end}
                 className={({ isActive }) =>
-                  `font-mono text-xs uppercase tracking-[.14em] transition ${
-                    isActive ? "text-ink" : "text-ink/50 hover:text-ink"
+                  `relative rounded-full px-3 py-1.5 text-[12px] font-semibold transition ${
+                    isActive ? "bg-ink text-white" : "text-muted hover:bg-ink/[.05] hover:text-ink"
                   }`
                 }
               >
                 {item.label}
               </NavLink>
             ))}
-            <span className="h-4 w-px bg-ink/15" aria-hidden />
+            <span className="mx-2 h-5 w-px bg-line" aria-hidden />
             <div className="flex items-center gap-3">
-              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40" title={user?.email}>
+              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/55" title={user?.email}>
                 {user?.name}
               </span>
               <button
                 type="button"
                 onClick={() => void logout()}
-                className="font-mono text-xs uppercase tracking-[.14em] text-ink/50 transition hover:text-ink"
+                className="rounded-full border border-line px-3 py-1.5 text-[12px] font-semibold text-muted transition hover:border-ink/40 hover:text-ink"
               >
                 Sign out
               </button>
@@ -86,7 +89,7 @@ export function Layout() {
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="mb-5 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+            className="mb-5 inline-flex items-center gap-2 rounded-full border border-line px-3 py-1.5 text-[11px] font-bold text-muted transition hover:border-ink/40 hover:text-ink"
           >
             <span aria-hidden>←</span> Back
           </button>

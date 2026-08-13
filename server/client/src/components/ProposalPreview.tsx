@@ -49,7 +49,7 @@ export function ProposalPreview({
           <a
             href={`${pdf}?download=1`}
             download
-            className="inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-ivory transition hover:bg-ink/90"
+            className="inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-cream transition hover:bg-ink/90"
           >
             Download PDF
           </a>
@@ -64,7 +64,7 @@ export function ProposalPreview({
             href={pdf}
             target="_blank"
             rel="noreferrer"
-            className="font-mono text-[11px] uppercase tracking-[.12em] text-bronze"
+            className="font-mono text-[11px] uppercase tracking-[.12em] text-blue"
           >
             Open in a new tab →
           </a>
@@ -75,7 +75,7 @@ export function ProposalPreview({
         key={proposal.id}
         src={pdf}
         title={`${proposal.title} — preview`}
-        className="h-[74vh] w-full border border-ink/10 bg-ivory"
+        className="h-[74vh] w-full rounded-2xl border border-line bg-cream"
       />
       <p className="mt-3 text-xs text-ink/40">
         This is the document itself, not a preview of it — what you see here is what downloads and what the client receives.

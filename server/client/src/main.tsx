@@ -15,7 +15,7 @@ const queryClient = new QueryClient();
  */
 function Gate() {
   const { user, loading } = useAuth();
-  if (loading) return <div className="min-h-screen bg-ivory" />;
+  if (loading) return <div className="min-h-screen bg-cream" />;
   return user ? <App /> : <Login />;
 }
 

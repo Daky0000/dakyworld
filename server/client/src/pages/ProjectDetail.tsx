@@ -58,11 +58,11 @@ export function ProjectDetail() {
       <div className="grid gap-8 lg:grid-cols-3">
         <Card>
           <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Budget</div>
-          <div className="mt-2 font-serif text-2xl">{project.budgetAmount ? <Money amount={project.budgetAmount} /> : "—"}</div>
+          <div className="mt-2 font-display text-2xl">{project.budgetAmount ? <Money amount={project.budgetAmount} /> : "—"}</div>
         </Card>
         <Card>
           <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Hours logged</div>
-          <div className="mt-2 font-serif text-2xl">{Number(project.actualHours).toFixed(1)}h</div>
+          <div className="mt-2 font-display text-2xl">{Number(project.actualHours).toFixed(1)}h</div>
         </Card>
         <Card>
           <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Scope</div>
@@ -72,12 +72,12 @@ export function ProjectDetail() {
 
       <div className="mt-10 grid gap-8 lg:grid-cols-2">
         <div>
-          <h2 className="mb-4 font-serif text-xl">Milestones</h2>
+          <h2 className="mb-4 font-display text-xl">Milestones</h2>
           <div className="space-y-2">
             {project.milestones.map((m) => (
-              <div key={m.id} className="flex items-center justify-between border border-ink/10 bg-white px-4 py-3 text-sm">
+              <div key={m.id} className="flex items-center justify-between rounded-xl border border-line bg-white px-4 py-3 text-sm">
                 <span>{m.title}</span>
-                <Badge tone={m.completedAt ? "gold" : "muted"}>{m.completedAt ? "Done" : m.dueDate ? new Date(m.dueDate).toLocaleDateString() : "No date"}</Badge>
+                <Badge tone={m.completedAt ? "positive" : "muted"}>{m.completedAt ? "Done" : m.dueDate ? new Date(m.dueDate).toLocaleDateString() : "No date"}</Badge>
               </div>
             ))}
             {project.milestones.length === 0 && <div className="text-sm text-ink/50">No milestones yet.</div>}
@@ -95,10 +95,10 @@ export function ProjectDetail() {
         </div>
 
         <div>
-          <h2 className="mb-4 font-serif text-xl">Tasks</h2>
+          <h2 className="mb-4 font-display text-xl">Tasks</h2>
           <div className="space-y-2">
             {project.tasks.map((t) => (
-              <div key={t.id} className="flex items-center justify-between border border-ink/10 bg-white px-4 py-3 text-sm">
+              <div key={t.id} className="flex items-center justify-between rounded-xl border border-line bg-white px-4 py-3 text-sm">
                 <div>
                   <div>{t.title}</div>
                   {t.assignee && <div className="text-xs text-ink/50">{t.assignee.name}</div>}

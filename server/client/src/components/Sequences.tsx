@@ -78,8 +78,8 @@ export function Sequences() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusDot tone={sequence.active ? "ok" : "idle"} />
-                    <h3 className="font-serif text-lg">{sequence.name}</h3>
-                    <Badge tone={sequence.active ? "gold" : "muted"}>{sequence.active ? "Running" : "Paused"}</Badge>
+                    <h3 className="font-display text-lg">{sequence.name}</h3>
+                    <Badge tone={sequence.active ? "positive" : "muted"}>{sequence.active ? "Running" : "Paused"}</Badge>
                     <Badge tone="muted">{TRIGGERS.find((option) => option.value === sequence.trigger)?.label ?? sequence.trigger}</Badge>
                     {sequence.requireApproval && <Badge tone="muted">Approval first</Badge>}
                   </div>
@@ -89,9 +89,9 @@ export function Sequences() {
                     {sequence.steps.map((step, index) => (
                       <span key={step.id ?? index} className="flex items-center gap-2">
                         {index > 0 && <span className="text-ink/25">→</span>}
-                        <span className="border border-ink/10 bg-white px-2 py-1">
+                        <span className="rounded-lg border border-line bg-white px-2 py-1">
                           {index === 0 ? `after ${step.delayDays}d` : `+${step.delayDays}d`}
-                          {step.useAi && <span className="ml-1 text-bronze">AI</span>}
+                          {step.useAi && <span className="ml-1 text-blue">AI</span>}
                         </span>
                       </span>
                     ))}
@@ -223,8 +223,8 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} aria-hidden />
-      <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto border border-ink/10 bg-ivory p-6">
-        <h3 className="mb-1 font-serif text-2xl">{form.id ? "Edit sequence" : "New sequence"}</h3>
+      <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-line bg-cream p-6">
+        <h3 className="mb-1 font-display text-2xl">{form.id ? "Edit sequence" : "New sequence"}</h3>
         <p className="mb-5 text-sm text-ink/55">Each step waits its own number of days, then sends inside the window below.</p>
 
         {error && <div className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
@@ -253,7 +253,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
           </Field>
 
           {form.trigger === "LEAD_CREATED" && (
-            <div className="sm:col-span-2 grid gap-3 border border-ink/10 bg-white p-4 sm:grid-cols-3">
+            <div className="sm:col-span-2 grid gap-3 rounded-2xl border border-line bg-white p-4 sm:grid-cols-3">
               <Field label="Minimum score">
                 <input
                   type="number"
@@ -316,7 +316,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
         {/* Steps */}
         <div className="mt-7">
           <div className="mb-3 flex items-center justify-between">
-            <h4 className="font-serif text-lg">Steps</h4>
+            <h4 className="font-display text-lg">Steps</h4>
             <Button
               variant="secondary"
               size="sm"
@@ -333,7 +333,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
 
           <div className="space-y-3">
             {form.steps.map((step, index) => (
-              <div key={index} className="border border-ink/10 bg-white p-4">
+              <div key={index} className="rounded-2xl border border-line bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">
                     Step {index + 1} · {index === 0 ? "after enrolment" : "after the step before"}

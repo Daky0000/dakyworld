@@ -41,7 +41,7 @@ export function Projects() {
                 <td className="px-4 py-3">{p.budgetAmount ? <Money amount={p.budgetAmount} /> : "—"}</td>
                 <td className="px-4 py-3">{Number(p.actualHours).toFixed(1)}h</td>
                 <td className="px-4 py-3">
-                  <Badge tone={p.status === "DELIVERED" ? "gold" : "default"}>{p.status}</Badge>
+                  <Badge tone={p.status === "DELIVERED" ? "positive" : "default"}>{p.status}</Badge>
                 </td>
               </tr>
             ))}

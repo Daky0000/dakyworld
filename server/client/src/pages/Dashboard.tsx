@@ -16,7 +16,7 @@ export function Dashboard() {
       {isLoading || !data ? (
         <div className="text-sm text-ink/50">Loading…</div>
       ) : (
-        <div className="grid grid-cols-1 gap-px border border-ink/10 bg-ink/10 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-px rounded-2xl border border-line bg-ink/10 sm:grid-cols-2 lg:grid-cols-4">
           <Stat label="Revenue this month" value={<Money amount={data.revenueThisMonth} />} />
           <Stat
             label="Monthly recurring revenue"
@@ -40,12 +40,12 @@ export function Dashboard() {
 
       {data && (
         <div className="mt-10">
-          <h2 className="mb-4 font-serif text-xl">Leads by status</h2>
+          <h2 className="mb-4 font-display text-xl">Leads by status</h2>
           <div className="flex flex-wrap gap-3">
             {data.leadsByStatus.map((row) => (
               <Card key={row.status} className="min-w-[140px]">
                 <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">{row.status}</div>
-                <div className="mt-2 font-serif text-2xl">{row._count}</div>
+                <div className="mt-2 font-display text-2xl">{row._count}</div>
               </Card>
             ))}
             {data.leadsByStatus.length === 0 && <div className="text-sm text-ink/50">No leads yet.</div>}
@@ -69,7 +69,7 @@ function RetainerHealth({ data }: { data: DashboardData }) {
   return (
     <div className="mt-10">
       <div className="mb-4 flex items-baseline justify-between gap-4">
-        <h2 className="font-serif text-xl">Retainers</h2>
+        <h2 className="font-display text-xl">Retainers</h2>
         <Link to="/care-plans" className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink">
           Manage →
         </Link>
@@ -87,7 +87,7 @@ function RetainerHealth({ data }: { data: DashboardData }) {
           </p>
         </Card>
       ) : (
-        <div className="grid grid-cols-2 gap-px border border-ink/10 bg-ink/10 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-px rounded-2xl border border-line bg-ink/10 sm:grid-cols-3 lg:grid-cols-5">
           <Stat
             label="Next invoice"
             value={plans.nextBilling ? <RelativeTime value={plans.nextBilling.at} /> : "—"}
@@ -118,7 +118,7 @@ function Stat({ label, value, sub }: { label: string; value: React.ReactNode; su
   return (
     <div className="bg-white p-6">
       <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">{label}</div>
-      <div className="mt-3 font-serif text-2xl">{value}</div>
+      <div className="mt-3 font-display text-2xl">{value}</div>
       {sub && <div className="mt-1 text-xs text-ink/50">{sub}</div>}
     </div>
   );

@@ -162,11 +162,11 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
                   })
                 }
                 className={`border px-3 py-2 text-left transition ${
-                  form.tier === option.value ? "border-ink bg-ink text-ivory" : "border-ink/15 hover:border-ink/40"
+                  form.tier === option.value ? "border-ink bg-ink text-cream" : "border-ink/15 hover:border-ink/40"
                 }`}
               >
                 <span className="block font-mono text-[10px] uppercase tracking-[.12em]">{option.label}</span>
-                <span className={`mt-1 block text-xs ${form.tier === option.value ? "text-ivory/60" : "text-ink/50"}`}>
+                <span className={`mt-1 block text-xs ${form.tier === option.value ? "text-cream/60" : "text-ink/50"}`}>
                   GHS {option.fee.toLocaleString()}/mo
                 </span>
               </button>

@@ -52,7 +52,7 @@ export function toHtml(body: string, signature: string | null, unsubscribeUrl: s
     .join("");
 
   const signatureHtml = signature
-    ? `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #dfe4ec;color:#68738a;font-size:13px;line-height:1.6">${linkify(
+    ? `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #dfe4eb;color:#69758a;font-size:13px;line-height:1.6">${linkify(
         escapeHtml(signature),
       ).replace(/\n/g, "<br>")}</div>`
     : "";

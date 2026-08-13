@@ -21,27 +21,26 @@ export function Login() {
     }
   }
 
-  const inputClass =
-    "w-full border border-ink/20 bg-white px-3 py-2 text-sm outline-none transition focus:border-ink";
+  // The shared .input component class, so the one sign-in form cannot drift
+  // away from every other field in the product.
+  const inputClass = "input";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-ivory px-6 text-ink">
+    <div className="flex min-h-screen items-center justify-center bg-cream px-6 text-ink">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center border border-ink/20 bg-ink text-ivory">
-            <span className="font-serif text-sm font-semibold">D</span>
-          </span>
+          <img src="/brand/mark-on-light-96.png" alt="" width={36} height={36} className="h-9 w-9" />
           <div className="leading-none">
-            <div className="font-mono text-xs font-medium uppercase tracking-[.18em]">Dakyworld OS</div>
-            <div className="mt-0.5 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Internal Operations</div>
+            <div className="font-display text-base font-bold tracking-[-.03em]">Dakyworld OS</div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Internal Operations</div>
           </div>
         </div>
 
-        <form onSubmit={onSubmit} className="border border-ink/10 bg-white p-6">
-          <h1 className="font-serif text-2xl">Sign in</h1>
+        <form onSubmit={onSubmit} className="rounded-2xl border border-line bg-white p-7">
+          <h1 className="font-display text-2xl tracking-[-.03em]">Sign in</h1>
 
           <label className="mt-6 block">
-            <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Email</span>
+            <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[.1em] text-muted">Email</span>
             <input
               type="email"
               value={email}
@@ -54,7 +53,7 @@ export function Login() {
           </label>
 
           <label className="mt-4 block">
-            <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Password</span>
+            <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[.1em] text-muted">Password</span>
             <input
               type="password"
               value={password}
@@ -66,15 +65,17 @@ export function Login() {
           </label>
 
           {error && (
-            <p role="alert" className="mt-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
               {error}
             </p>
           )}
 
+          {/* Sign in is the one action on this screen, so it is the one place
+              the lime pill belongs. */}
           <button
             type="submit"
             disabled={submitting}
-            className="mt-6 w-full bg-ink px-4 py-2.5 font-mono text-xs uppercase tracking-[.12em] text-ivory transition hover:bg-black disabled:opacity-50"
+            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-full bg-lime px-4 py-3 text-[13px] font-bold text-ink transition hover:-translate-y-px hover:shadow-[0_10px_28px_rgba(184,255,61,.32)] disabled:pointer-events-none disabled:opacity-50"
           >
             {submitting ? "Signing in…" : "Sign in"}
           </button>

@@ -93,7 +93,7 @@ export function CaptureTag({ method }: { method: CaptureMethod | undefined }) {
   if (!entry) return null;
   return (
     <span title={entry.hint}>
-      <Badge tone={entry.value === "APIFY" ? "gold" : "muted"}>{entry.label}</Badge>
+      <Badge tone={entry.value === "APIFY" ? "positive" : "muted"}>{entry.label}</Badge>
     </span>
   );
 }
@@ -174,7 +174,7 @@ export function LeadCell({
         <a
           href={`mailto:${value}`}
           onClick={(event) => event.stopPropagation()}
-          className="text-bronze hover:underline"
+          className="text-blue hover:underline"
         >
           {String(value)}
         </a>
@@ -184,7 +184,7 @@ export function LeadCell({
         <a
           href={`tel:${String(value).replace(/\s/g, "")}`}
           onClick={(event) => event.stopPropagation()}
-          className="whitespace-nowrap text-bronze hover:underline"
+          className="whitespace-nowrap text-blue hover:underline"
         >
           {String(value)}
         </a>
@@ -196,7 +196,7 @@ export function LeadCell({
           target="_blank"
           rel="noreferrer"
           onClick={(event) => event.stopPropagation()}
-          className="text-bronze hover:underline"
+          className="text-blue hover:underline"
         >
           {String(value).replace(/^https?:\/\//, "").replace(/\/$/, "")}
         </a>
@@ -519,7 +519,7 @@ export function ColumnManager({
           their meaning is fixed even though their label isn't.
         </p>
 
-        <div className="border border-ink/10 bg-white">
+        <div className="rounded-2xl border border-line bg-white">
           {fields.map((field, index) => (
             <div key={`${field.key}-${index}`} className="flex flex-wrap items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
               <div className="flex flex-col">
@@ -559,7 +559,7 @@ export function ColumnManager({
                   <input
                     value={field.key}
                     onChange={(event) => update(index, { key: event.target.value })}
-                    className="w-36 border border-ink/10 bg-ivory px-2 py-1 font-mono text-[11px] outline-none"
+                    className="w-36 rounded-lg border border-line bg-cream px-2 py-1 font-mono text-[11px] outline-none"
                     title="Storage key — change this and existing values move with it"
                   />
                   <select
@@ -583,7 +583,7 @@ export function ColumnManager({
                   type="checkbox"
                   checked={!field.hidden}
                   onChange={(event) => update(index, { hidden: !event.target.checked })}
-                  className="h-3.5 w-3.5 accent-[#0B0B0C]"
+                  className="h-3.5 w-3.5 accent-blue"
                 />
                 Show
               </label>

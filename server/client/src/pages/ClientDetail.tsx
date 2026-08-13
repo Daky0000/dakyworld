@@ -30,7 +30,7 @@ export function ClientDetail() {
 
       <Card className="mb-8">
         <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Lifetime value</div>
-        <div className="mt-2 font-serif text-2xl">
+        <div className="mt-2 font-display text-2xl">
           <Money amount={client.lifetimeValue} />
         </div>
       </Card>
@@ -62,7 +62,7 @@ export function ClientDetail() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h2 className="mb-3 font-serif text-lg">{title}</h2>
+      <h2 className="mb-3 font-display text-lg">{title}</h2>
       <div className="space-y-2">{children}</div>
     </div>
   );
@@ -70,7 +70,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Row({ left, right }: { left: React.ReactNode; right: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between border border-ink/10 bg-white px-4 py-3 text-sm">
+    <div className="flex items-center justify-between rounded-xl border border-line bg-white px-4 py-3 text-sm">
       <span>{left}</span>
       <span>{right}</span>
     </div>

@@ -24,7 +24,7 @@ type Stage = "setup" | "review";
 const SEVERITY_TONE: Record<AuditFinding["severity"], string> = {
   CRITICAL: "border-red-300 bg-red-50 text-red-800",
   HIGH: "border-amber-300 bg-amber-50 text-amber-800",
-  MEDIUM: "border-ink/15 bg-ivory text-ink/70",
+  MEDIUM: "border-ink/15 bg-cream text-ink/70",
   LOW: "border-ink/10 bg-white text-ink/55",
   GOOD: "border-emerald-200 bg-emerald-50 text-emerald-800",
 };
@@ -198,23 +198,23 @@ export function ProposalWriter({
                 placeholder="Search leads by name, company or city…"
                 className="input mb-3"
               />
-              <div className="max-h-72 overflow-y-auto border border-ink/10">
+              <div className="max-h-72 overflow-y-auto rounded-2xl border border-line">
                 {leads?.items.map((entry) => (
                   <button
                     key={entry.id}
                     type="button"
                     onClick={() => setLeadId(entry.id)}
                     className={`flex w-full items-baseline justify-between gap-3 border-b border-ink/5 px-3 py-2 text-left text-sm transition last:border-0 ${
-                      leadId === entry.id ? "bg-ink text-ivory" : "hover:bg-ivory"
+                      leadId === entry.id ? "bg-ink text-cream" : "hover:bg-cream"
                     }`}
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{entry.companyName ?? entry.contactName}</span>
-                      <span className={`block truncate text-xs ${leadId === entry.id ? "text-ivory/60" : "text-ink/45"}`}>
+                      <span className={`block truncate text-xs ${leadId === entry.id ? "text-cream/60" : "text-ink/45"}`}>
                         {entry.website ?? "no website"} · {entry.city ?? "no city"}
                       </span>
                     </span>
-                    <span className={`shrink-0 font-mono text-[10px] ${leadId === entry.id ? "text-ivory/60" : "text-ink/40"}`}>
+                    <span className={`shrink-0 font-mono text-[10px] ${leadId === entry.id ? "text-cream/60" : "text-ink/40"}`}>
                       {entry.leadScore}
                     </span>
                   </button>
@@ -332,14 +332,14 @@ function Review({
 
       <section>
         <SectionTitle>The document</SectionTitle>
-        <div className="border border-ink/10 bg-white p-5">
-          <h3 className="font-serif text-xl leading-snug">{draft.headline}</h3>
+        <div className="rounded-2xl border border-line bg-white p-5">
+          <h3 className="font-display text-xl leading-snug">{draft.headline}</h3>
           <p className="mt-3 whitespace-pre-wrap text-sm text-ink/70">{draft.situation}</p>
 
           <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">What we found</h4>
           <div className="mt-2 space-y-4">
             {draft.findings.map((finding, index) => (
-              <div key={index} className="border-l-2 border-gold pl-3">
+              <div key={index} className="border-l-2 border-blue pl-3">
                 <p className="font-medium">{finding.observed}</p>
                 <p className="mt-1 text-sm text-ink/70">{finding.costsThem}</p>
                 <p className="mt-1 font-mono text-[10px] text-ink/40">Checked: {finding.evidence}</p>

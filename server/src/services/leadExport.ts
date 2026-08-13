@@ -14,8 +14,8 @@ import type { ResolvedField } from "./leadFields.js";
 
 const INK = "#08101F";
 const ACCENT = "#3157FF";
-const MUTED = "#68738A";
-const LINE = "#DFE4EC";
+const MUTED = "#69758A";
+const LINE = "#DFE4EB";
 
 /** One cell's value, whether it's a Lead scalar or a custom column. */
 function valueOf(lead: Lead, field: ResolvedField): unknown {

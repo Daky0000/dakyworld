@@ -106,7 +106,7 @@ export function LeadDrawer({
               Draft proposal
             </Button>
             {lead.client ? (
-              <Link to={`/clients/${lead.client.id}`} className="font-mono text-xs uppercase tracking-[.12em] text-bronze">
+              <Link to={`/clients/${lead.client.id}`} className="font-mono text-xs uppercase tracking-[.12em] text-blue">
                 View client →
               </Link>
             ) : (
@@ -139,7 +139,7 @@ export function LeadDrawer({
           <Section title="Reach them">
             <DetailRow label="Email">
               {lead.contactEmail ? (
-                <a className="text-bronze hover:underline" href={`mailto:${lead.contactEmail}`}>
+                <a className="text-blue hover:underline" href={`mailto:${lead.contactEmail}`}>
                   {lead.contactEmail}
                 </a>
               ) : (
@@ -148,7 +148,7 @@ export function LeadDrawer({
             </DetailRow>
             <DetailRow label="Phone">
               {lead.contactPhone ? (
-                <a className="text-bronze hover:underline" href={`tel:${lead.contactPhone.replace(/\s/g, "")}`}>
+                <a className="text-blue hover:underline" href={`tel:${lead.contactPhone.replace(/\s/g, "")}`}>
                   {lead.contactPhone}
                 </a>
               ) : (
@@ -157,7 +157,7 @@ export function LeadDrawer({
             </DetailRow>
             <DetailRow label="Website">
               {lead.website ? (
-                <a className="break-all text-bronze hover:underline" href={lead.website} target="_blank" rel="noreferrer">
+                <a className="break-all text-blue hover:underline" href={lead.website} target="_blank" rel="noreferrer">
                   {lead.website.replace(/^https?:\/\//, "")}
                 </a>
               ) : (
@@ -169,7 +169,7 @@ export function LeadDrawer({
               <DetailRow label="Social">
                 <span className="flex flex-wrap gap-3">
                   {Object.entries(lead.socialLinks).map(([network, url]) => (
-                    <a key={network} href={url} target="_blank" rel="noreferrer" className="text-bronze hover:underline">
+                    <a key={network} href={url} target="_blank" rel="noreferrer" className="text-blue hover:underline">
                       {network}
                     </a>
                   ))}
@@ -187,7 +187,7 @@ export function LeadDrawer({
                   {lead.address}
                   {lead.latitude != null && lead.longitude != null && (
                     <a
-                      className="ml-2 text-bronze hover:underline"
+                      className="ml-2 text-blue hover:underline"
                       href={`https://www.google.com/maps/search/?api=1&query=${lead.latitude},${lead.longitude}`}
                       target="_blank"
                       rel="noreferrer"
@@ -231,13 +231,13 @@ export function LeadDrawer({
           <Section title="Where it came from">
             <DetailRow label="Source">{lead.source.replace(/_/g, " ")}</DetailRow>
             <DetailRow label="How it got in">
-              <Link to={`/leads?captureMethod=${lead.captureMethod}`} className="text-bronze hover:underline">
+              <Link to={`/leads?captureMethod=${lead.captureMethod}`} className="text-blue hover:underline">
                 {captureMethodLabel(lead.captureMethod)}
               </Link>
             </DetailRow>
             <DetailRow label="Captured by">
               {lead.scraperSource ? (
-                <Link to="/lead-sources" className="text-bronze hover:underline">
+                <Link to="/lead-sources" className="text-blue hover:underline">
                   {lead.scraperSource.name}
                 </Link>
               ) : (
@@ -275,7 +275,7 @@ export function LeadDrawer({
           <CommunicationsSection lead={lead} onLogged={invalidate} />
 
           {lead.enrichment && (
-            <details className="border border-ink/10 bg-white">
+            <details className="rounded-2xl border border-line bg-white">
               <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">
                 Raw scraped record
               </summary>
@@ -452,7 +452,7 @@ function CommunicationsSection({ lead, onLogged }: { lead: Lead; onLogged: () =>
   return (
     <Section title="Contact history">
       <form
-        className="mb-4 grid gap-3 border border-ink/10 bg-white p-4 sm:grid-cols-[8rem_1fr]"
+        className="mb-4 grid gap-3 rounded-2xl border border-line bg-white p-4 sm:grid-cols-[8rem_1fr]"
         onSubmit={(event) => {
           event.preventDefault();
           if (summary.trim()) log.mutate();

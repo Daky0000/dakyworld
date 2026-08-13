@@ -3,21 +3,46 @@
 @tailwind utilities;
 
 body {
-  font-family: "Inter", sans-serif;
+  font-family: "DM Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Design system §07: Space Grotesk carries the display voice, and it is set
+   tight wherever it appears. */
+.font-display {
+  letter-spacing: -0.03em;
+}
+
+::selection {
+  background: theme("colors.lime");
+  color: theme("colors.ink");
+}
+
+/* §45: keyboard focus is visible and always blue. */
+:focus-visible {
+  outline: 2px solid theme("colors.blue");
+  outline-offset: 3px;
 }
 
 @layer components {
+  /* §42: 12px corners, blue focus with a soft ring. Calm, not colourful. */
   .input {
-    @apply w-full border border-ink/20 bg-white px-3 py-2 text-sm outline-none transition focus:border-ink/50;
+    @apply w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm outline-none transition
+           placeholder:text-ink/30
+           focus:border-blue focus:shadow-[0_0_0_3px_rgba(49,87,255,.10)];
   }
 
   /* Compact control for filter bars and toolbars, where a full .input is too loud. */
   .filter-select {
-    @apply border border-ink/15 bg-white px-2 py-1.5 font-mono text-[11px] uppercase tracking-[.08em] text-ink/70 outline-none transition focus:border-ink/50;
+    @apply rounded-[10px] border border-line bg-white px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-[.08em]
+           text-muted outline-none transition
+           focus:border-blue focus:shadow-[0_0_0_3px_rgba(49,87,255,.10)];
   }
 
   /* JSON editors: actor input and field maps. */
   .code-input {
-    @apply w-full border border-ink/20 bg-ink/[.02] px-3 py-2 font-mono text-xs leading-relaxed outline-none transition focus:border-ink/50;
+    @apply w-full rounded-xl border border-line bg-ink/[.02] px-3.5 py-2.5 font-mono text-xs leading-relaxed
+           outline-none transition
+           focus:border-blue focus:shadow-[0_0_0_3px_rgba(49,87,255,.10)];
   }
 }

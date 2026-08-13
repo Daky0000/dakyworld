@@ -191,7 +191,7 @@ function ApifyConnection({ settings, overview }: { settings?: AppSettings; overv
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
           <StatusDot tone={spend?.blocked ? "bad" : apify?.connected ? "ok" : apify?.token ? "bad" : "idle"} />
-          <h2 className="font-serif text-lg">Apify connection</h2>
+          <h2 className="font-display text-lg">Apify connection</h2>
         </div>
         <p className="min-w-[16rem] flex-1 text-sm text-ink/60">
           {apify?.connected ? (
@@ -260,12 +260,12 @@ function SourceCard({
   const unknownKeys = health?.usedBy.find((entry) => entry.id === source.id)?.unknownKeys ?? [];
 
   return (
-    <div className={`border border-ink/10 bg-white p-5 ${source.enabled ? "" : "opacity-60"}`}>
+    <div className={`rounded-2xl border border-line bg-white p-5 ${source.enabled ? "" : "opacity-60"}`}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <StatusDot tone={isLive ? "live" : source.enabled ? (source.scheduleEnabled ? "ok" : "idle") : "idle"} />
-            <h3 className="font-serif text-lg">{source.name}</h3>
+            <h3 className="font-display text-lg">{source.name}</h3>
             <Badge tone="muted">{source.leadSource.replace(/_/g, " ")}</Badge>
             {!source.enabled && <Badge>paused</Badge>}
           </div>
@@ -275,7 +275,7 @@ function SourceCard({
               href={`https://apify.com/${source.actorId}`}
               target="_blank"
               rel="noreferrer"
-              className="hover:text-bronze hover:underline"
+              className="hover:text-blue hover:underline"
             >
               {source.actorId} ↗
             </a>
@@ -323,7 +323,7 @@ function SourceCard({
           )}
         </Stat>
         <Stat label="Leads captured">
-          <Link to={`/leads?scraperSourceId=${source.id}`} className="hover:text-bronze hover:underline">
+          <Link to={`/leads?scraperSourceId=${source.id}`} className="hover:text-blue hover:underline">
             {source._count?.leads ?? 0}
           </Link>
         </Stat>
@@ -369,7 +369,7 @@ function Stat({ label, children }: { label: string; children: React.ReactNode })
 // --- Runs ------------------------------------------------------------------
 
 function RunStatusBadge({ status }: { status: ScraperRun["status"] }) {
-  const tone = status === "SUCCEEDED" ? "gold" : status === "RUNNING" || status === "QUEUED" ? "default" : "muted";
+  const tone = status === "SUCCEEDED" ? "positive" : status === "RUNNING" || status === "QUEUED" ? "default" : "muted";
   return <Badge tone={tone}>{status.replace("_", " ").toLowerCase()}</Badge>;
 }
 
@@ -377,7 +377,7 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
   if (runs.length === 0) return <EmptyState message="No runs yet." />;
 
   return (
-    <div className="overflow-x-auto border border-ink/10 bg-white">
+    <div className="overflow-x-auto rounded-2xl border border-line bg-white">
       <table className="w-full min-w-[820px] text-left text-sm">
         <thead>
           <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
@@ -421,7 +421,7 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
                 {run.status === "SUCCEEDED" && run.leadsCreated > 0 && (
                   <Link
                     to={`/leads?scraperRunId=${run.id}`}
-                    className="font-mono text-[10px] uppercase tracking-[.12em] text-bronze"
+                    className="font-mono text-[10px] uppercase tracking-[.12em] text-blue"
                   >
                     View
                   </Link>
@@ -511,11 +511,11 @@ function SourcePicker({
                 key={template.id}
                 type="button"
                 onClick={() => onPick(fromTemplate(template))}
-                className="border border-ink/10 bg-white p-4 text-left transition hover:border-ink/40"
+                className="rounded-2xl border border-line bg-white p-4 text-left transition hover:border-ink/40"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{template.name}</span>
-                  <Badge tone="gold">{template.headline}</Badge>
+                  <Badge tone="positive">{template.headline}</Badge>
                 </div>
                 <p className="mt-1 text-sm text-ink/60">{template.description}</p>
                 <p className="mt-1 font-mono text-[11px] text-ink/40">{template.actorId}</p>
@@ -556,7 +556,7 @@ function SourcePicker({
           <button
             type="button"
             onClick={() => onPick(blank)}
-            className="mt-4 font-mono text-[11px] uppercase tracking-[.12em] text-bronze"
+            className="mt-4 font-mono text-[11px] uppercase tracking-[.12em] text-blue"
           >
             Or enter an actor id by hand →
           </button>
@@ -575,7 +575,7 @@ function ActorList({ actors, onPick }: { actors: ApifyActorSummary[]; onPick: (a
           key={actor.id}
           type="button"
           onClick={() => onPick(actor)}
-          className="flex items-start gap-3 border border-ink/10 bg-white p-3 text-left transition hover:border-ink/40"
+          className="flex items-start gap-3 rounded-2xl border border-line bg-white p-3 text-left transition hover:border-ink/40"
         >
           {actor.pictureUrl && <img src={actor.pictureUrl} alt="" className="h-8 w-8 shrink-0 object-contain" />}
           <span className="min-w-0">

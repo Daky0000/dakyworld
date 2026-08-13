@@ -261,7 +261,7 @@ function Connections({ connections }: { connections?: AppSettings }) {
         <span className="flex-1" />
         <Link
           to="/settings"
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-bronze transition hover:underline"
+          className="font-mono text-[10px] uppercase tracking-[.14em] text-blue transition hover:underline"
         >
           Set up in Settings →
         </Link>
@@ -383,7 +383,7 @@ function SourceStep({
                   type="button"
                   onClick={() => onSheets(active ? chosenSheets.filter((name) => name !== sheet) : [...chosenSheets, sheet])}
                   className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
-                    active ? "bg-ink text-ivory" : "bg-ink/5 text-ink/50 hover:text-ink"
+                    active ? "bg-ink text-cream" : "bg-ink/5 text-ink/50 hover:text-ink"
                   }`}
                 >
                   {sheet}
@@ -397,7 +397,7 @@ function SourceStep({
       {chosen && (
         <div className="mt-6 flex flex-wrap items-center gap-4 border-t border-ink/10 pt-5">
           <label className="flex items-center gap-2 text-sm text-ink/70">
-            <input type="checkbox" checked={useAi} onChange={(event) => onUseAi(event.target.checked)} className="h-3.5 w-3.5 accent-[#0B0B0C]" />
+            <input type="checkbox" checked={useAi} onChange={(event) => onUseAi(event.target.checked)} className="h-3.5 w-3.5 accent-blue" />
             Let the AI analyst read it
             {!connections?.analyst.configured && <span className="text-xs text-ink/40">(no API key set — pattern rules will be used)</span>}
           </label>
@@ -474,14 +474,14 @@ function DrivePicker({
       ) : !data?.files.length ? (
         <p className="text-sm text-ink/50">No spreadsheets found.</p>
       ) : (
-        <ul className="max-h-72 divide-y divide-ink/5 overflow-y-auto border border-ink/10">
+        <ul className="max-h-72 divide-y divide-ink/5 overflow-y-auto rounded-2xl border border-line">
           {data.files.map((file) => (
             <li key={file.id}>
               <button
                 type="button"
                 onClick={() => void pick(file)}
-                className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition hover:bg-ivory ${
-                  selected?.id === file.id ? "bg-gold/5" : ""
+                className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition hover:bg-cream ${
+                  selected?.id === file.id ? "bg-blue/5" : ""
                 }`}
               >
                 <span className="flex-1 truncate">{file.name}</span>
@@ -542,7 +542,7 @@ function ReviewStep({
       </div>
 
       {analysis.warning && <Note tone="warn">{analysis.warning}</Note>}
-      {plan.summary && <p className="mb-6 border-l-2 border-gold/60 bg-white px-4 py-3 text-sm text-ink/70">{plan.summary}</p>}
+      {plan.summary && <p className="mb-6 border-l-2 border-blue/60 bg-white px-4 py-3 text-sm text-ink/70">{plan.summary}</p>}
 
       <div className="space-y-6">
         {plan.tables.map((table, index) => (
@@ -558,7 +558,7 @@ function ReviewStep({
 
       {error instanceof Error && <Note tone="bad">{error.message}</Note>}
 
-      <div className="sticky bottom-4 mt-6 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-ivory">
+      <div className="sticky bottom-4 mt-6 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
         <span className="font-mono text-[11px] uppercase tracking-[.14em]">
           {included.length} batch{included.length === 1 ? "" : "es"} · {totalRows} leads
         </span>
@@ -567,7 +567,7 @@ function ReviewStep({
           type="button"
           onClick={onRecheck}
           disabled={rechecking}
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-ivory/70 transition hover:text-ivory disabled:opacity-50"
+          className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/70 transition hover:text-cream disabled:opacity-50"
         >
           {rechecking ? "Rechecking…" : "Recheck preview"}
         </button>
@@ -575,7 +575,7 @@ function ReviewStep({
           type="button"
           onClick={onCommit}
           disabled={committing || !included.length}
-          className="bg-ivory px-4 py-2 font-mono text-[11px] uppercase tracking-[.12em] text-ink transition hover:bg-white disabled:opacity-50"
+          className="bg-cream px-4 py-2 font-mono text-[11px] uppercase tracking-[.12em] text-ink transition hover:bg-white disabled:opacity-50"
         >
           {committing ? "Importing…" : "Import into leads"}
         </button>
@@ -611,14 +611,14 @@ function TableCard({
           type="checkbox"
           checked={table.include !== false}
           onChange={(event) => onChange({ include: event.target.checked })}
-          className="mt-2 h-4 w-4 accent-[#0B0B0C]"
+          className="mt-2 h-4 w-4 accent-blue"
           aria-label={`Import ${table.title}`}
         />
         <div className="min-w-[14rem] flex-1">
           <input
             value={table.title}
             onChange={(event) => onChange({ title: event.target.value })}
-            className="w-full border-b border-transparent bg-transparent font-serif text-xl outline-none transition focus:border-ink/30"
+            className="w-full border-b border-transparent bg-transparent font-display text-xl outline-none transition focus:border-ink/30"
           />
           <p className="mt-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
             {table.sheet} · rows {table.firstDataRow + 1}–{table.lastDataRow + 1}
@@ -627,7 +627,7 @@ function TableCard({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge tone={table.confidence >= 0.75 ? "gold" : "muted"}>{Math.round(table.confidence * 100)}% sure</Badge>
+          <Badge tone={table.confidence >= 0.75 ? "positive" : "muted"}>{Math.round(table.confidence * 100)}% sure</Badge>
           {preview && <Badge tone="muted">{preview.rowCount} rows</Badge>}
           {preview && preview.skipped > 0 && <Badge tone="default">{preview.skipped} skipped</Badge>}
         </div>
@@ -677,7 +677,7 @@ function TableCard({
       </div>
 
       {showColumns && (
-        <div className="mb-5 border border-ink/10">
+        <div className="mb-5 rounded-2xl border border-line">
           {table.columns.map((column, index) => (
             <div key={`${column.index}-${index}`} className="flex flex-wrap items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
               <span className="w-28 truncate font-mono text-[10px] uppercase tracking-[.1em] text-ink/40" title={column.header}>
@@ -718,17 +718,17 @@ function TableCard({
               )}
             </div>
           ))}
-          <p className="border-t border-ink/10 bg-ivory px-3 py-2 text-xs text-ink/50">
+          <p className="border-t border-ink/10 bg-cream px-3 py-2 text-xs text-ink/50">
             Change anything here and hit “Recheck preview” to see the effect before importing.
           </p>
         </div>
       )}
 
       {preview && preview.sample.length > 0 && (
-        <div className="overflow-x-auto border border-ink/10">
+        <div className="overflow-x-auto rounded-2xl border border-line">
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="border-b border-ink/10 bg-ivory font-mono text-[10px] uppercase tracking-[.1em] text-ink/50">
+              <tr className="border-b border-ink/10 bg-cream font-mono text-[10px] uppercase tracking-[.1em] text-ink/50">
                 {Object.keys(preview.sample[0]).map((header) => (
                   <th key={header} className="whitespace-nowrap px-3 py-2">
                     {header}
@@ -765,17 +765,17 @@ function Finished({
 }) {
   return (
     <Card className="mb-8">
-      <h2 className="font-serif text-2xl">Imported</h2>
+      <h2 className="font-display text-2xl">Imported</h2>
       <p className="mt-1 text-sm text-ink/60">
         {done.created} new lead{done.created === 1 ? "" : "s"}
         {done.updated > 0 && `, ${done.updated} existing one${done.updated === 1 ? "" : "s"} refreshed`}.
       </p>
-      <ul className="mt-5 divide-y divide-ink/5 border border-ink/10">
+      <ul className="mt-5 divide-y divide-ink/5 rounded-2xl border border-line">
         {done.groups.map((group) => (
           <li key={group.id} className="flex items-center gap-3 px-4 py-3">
             <span className="flex-1">{group.name}</span>
             <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{group.leads} rows</span>
-            <Link to={`/leads?groupId=${group.id}`} className="font-mono text-[10px] uppercase tracking-[.12em] text-bronze">
+            <Link to={`/leads?groupId=${group.id}`} className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">
               Open →
             </Link>
           </li>
@@ -784,7 +784,7 @@ function Finished({
       <div className="mt-5 flex gap-3">
         <Link
           to="/leads"
-          className="inline-flex items-center gap-2 bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-ivory"
+          className="inline-flex items-center gap-2 bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-cream"
         >
           Go to leads
         </Link>
@@ -801,7 +801,7 @@ function History({ history }: { history: LeadImportRecord[] }) {
   return (
     <section>
       <h2 className="mb-3 font-mono text-[11px] uppercase tracking-[.14em] text-ink/50">Recent imports</h2>
-      <div className="overflow-x-auto border border-ink/10 bg-white">
+      <div className="overflow-x-auto rounded-2xl border border-line bg-white">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead>
             <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
@@ -834,7 +834,7 @@ function History({ history }: { history: LeadImportRecord[] }) {
                 <td className="px-4 py-3 text-xs">
                   <span className="flex flex-wrap gap-2">
                     {(record.groups ?? []).map((group) => (
-                      <Link key={group.id} to={`/leads?groupId=${group.id}`} className="text-bronze hover:underline">
+                      <Link key={group.id} to={`/leads?groupId=${group.id}`} className="text-blue hover:underline">
                         {group.name}
                       </Link>
                     ))}
@@ -860,7 +860,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       type="button"
       onClick={onClick}
       className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] transition ${
-        active ? "bg-ink text-ivory" : "bg-ink/5 text-ink/50 hover:text-ink"
+        active ? "bg-ink text-cream" : "bg-ink/5 text-ink/50 hover:text-ink"
       }`}
     >
       {children}

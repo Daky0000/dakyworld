@@ -140,7 +140,7 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
             type="button"
             onClick={() => setFilter(value)}
             className={`border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
-              filter === value ? "border-ink bg-ink text-ivory" : "border-ink/15 text-ink/55 hover:border-ink/40"
+              filter === value ? "border-ink bg-ink text-cream" : "border-ink/15 text-ink/55 hover:border-ink/40"
             }`}
           >
             {value || "All"}
@@ -161,7 +161,7 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusDot tone={STATUS_TONE[message.status] ?? "idle"} />
                     <span className="font-medium">{message.subject}</span>
-                    <Badge tone={message.status === "SENT" ? "gold" : "muted"}>{message.status}</Badge>
+                    <Badge tone={message.status === "SENT" ? "positive" : "muted"}>{message.status}</Badge>
                     {message.kind === "AI_DRAFT" && <Badge tone="muted">AI</Badge>}
                     {message.step && <Badge tone="muted">{message.step.sequence.name} · step {message.step.position + 1}</Badge>}
                   </div>
@@ -313,8 +313,8 @@ function Templates() {
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
           <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={() => setEditing(null)} aria-hidden />
-          <div className="relative max-h-[85vh] w-full max-w-2xl overflow-y-auto border border-ink/10 bg-ivory p-6">
-            <h3 className="mb-4 font-serif text-xl">{editing.id ? "Edit template" : "New template"}</h3>
+          <div className="relative max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-line bg-cream p-6">
+            <h3 className="mb-4 font-display text-xl">{editing.id ? "Edit template" : "New template"}</h3>
             <div className="space-y-3">
               <input className="input" placeholder="Name" value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
               <select className="input" value={editing.purpose} onChange={(event) => setEditing({ ...editing, purpose: event.target.value as EmailTemplate["purpose"] })}>
@@ -397,7 +397,7 @@ function Suppression() {
       {!data || data.length === 0 ? (
         <EmptyState message="Nobody has unsubscribed." />
       ) : (
-        <div className="border border-ink/10 bg-white">
+        <div className="rounded-2xl border border-line bg-white">
           {data.map((row) => (
             <div key={row.id} className="flex items-center justify-between border-b border-ink/5 px-4 py-2.5 text-sm last:border-0">
               <span>

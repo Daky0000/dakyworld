@@ -20,6 +20,7 @@ import {
   WidthType,
 } from "docx";
 import { ribbon, RIBBON_PT } from "./png.js";
+import { readLogoAsset } from "./letterhead.js";
 import type { ProposalPdfData } from "./pdf.js";
 
 /**
@@ -52,8 +53,8 @@ const INK = "08101F";
 /** Legible accent: rules and small bold type. Lime is a mark colour, not type. */
 const ACCENT = "3157FF";
 const ACCENT_DEEP = "2440C4";
-const MUTED = "68738A";
-const LINE = "DFE4EC";
+const MUTED = "69758A";
+const LINE = "DFE4EB";
 
 const FONT = "Arial";
 
@@ -154,6 +155,45 @@ function ribbonImage(corner: "top-right" | "bottom-left") {
   });
 }
 
+/**
+ * The lock-up cell. Real artwork when it has been supplied, otherwise the
+ * wordmark drawn from type — the same choice, and the same fallback, that
+ * services/letterhead.ts makes for the PDF.
+ */
+function wordmarkBlock(): Paragraph[] {
+  const logo = readLogoAsset();
+
+  if (logo) {
+    return [
+      new Paragraph({
+        children: [
+          new ImageRun({
+            type: "png",
+            data: logo.data,
+            transformation: { width: px(logo.width), height: px(logo.height) },
+            altText: { name: "Dakyworld", description: "Dakyworld", title: "Dakyworld" },
+          }),
+        ],
+        spacing: { before: 0, after: 0 },
+      }),
+    ];
+  }
+
+  return [
+    new Paragraph({
+      children: [text(COMPANY.name, { size: 21, bold: true, spacing: 1.4 }), text("®", { size: 7, bold: true })],
+      spacing: { after: twip(2) },
+      // The blue rule under the wordmark stands in for the swoosh the PDF
+      // strokes as a curve; Word cannot draw one.
+      border: { bottom: { style: BorderStyle.SINGLE, size: eighth(1.6), color: ACCENT, space: 2 } },
+    }),
+    new Paragraph({
+      children: [text(COMPANY.tagline, { size: 5.6, bold: true, color: ACCENT_DEEP, spacing: 0.85 })],
+      spacing: { before: twip(3) },
+    }),
+  ];
+}
+
 function letterheadHeader(): Header {
   return new Header({
     children: [
@@ -176,19 +216,7 @@ function letterheadHeader(): Header {
               new TableCell({
                 borders: CELL_BORDERS,
                 width: { size: 58, type: WidthType.PERCENTAGE },
-                children: [
-                  new Paragraph({
-                    children: [text(COMPANY.name, { size: 21, bold: true, spacing: 1.4 }), text("®", { size: 7, bold: true })],
-                    spacing: { after: twip(2) },
-                    // The gold rule under the wordmark stands in for the
-                    // swoosh the PDF strokes as a curve; Word cannot draw one.
-                    border: { bottom: { style: BorderStyle.SINGLE, size: eighth(1.6), color: ACCENT, space: 2 } },
-                  }),
-                  new Paragraph({
-                    children: [text(COMPANY.tagline, { size: 5.6, bold: true, color: ACCENT_DEEP, spacing: 0.85 })],
-                    spacing: { before: twip(3) },
-                  }),
-                ],
+                children: wordmarkBlock(),
               }),
               new TableCell({
                 borders: {

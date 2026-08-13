@@ -58,7 +58,7 @@ export function Invoices() {
                 </td>
                 <td className="px-4 py-3">{new Date(inv.dueDate).toLocaleDateString()}</td>
                 <td className="px-4 py-3">
-                  <Badge tone={inv.status === "PAID" ? "gold" : inv.status === "OVERDUE" ? "muted" : "default"}>{inv.status}</Badge>
+                  <Badge tone={inv.status === "PAID" ? "positive" : inv.status === "OVERDUE" ? "muted" : "default"}>{inv.status}</Badge>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">

@@ -117,11 +117,11 @@ if (!hasBuiltClient) {
   app.get("/", (_req, res) => {
     res.type("html").send(`<!doctype html>
 <html><head><meta charset="utf-8"><title>Dakyworld OS API</title>
-<style>body{font-family:system-ui,sans-serif;background:#0B0B0C;color:#F7F4EE;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-.card{border:1px solid rgba(247,244,238,.15);padding:2.5rem 3rem;text-align:center}
+<style>body{font-family:"DM Sans",system-ui,sans-serif;background:#08101F;color:#F4F5F0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.card{border:1px solid rgba(255,255,255,.10);padding:2.5rem 3rem;text-align:center}
 h1{font-size:1.1rem;letter-spacing:.08em;text-transform:uppercase;margin:0 0 .5rem}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#C7A24C;margin-right:8px}
-a{color:#C7A24C;text-decoration:none}</style></head>
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#B8FF3D;margin-right:8px}
+a{color:#B8FF3D;text-decoration:none}</style></head>
 <body><div class="card"><h1><span class="dot"></span>Dakyworld OS API — Running</h1>
 <p><a href="/api/health">/api/health</a></p></div></body></html>`);
   });
