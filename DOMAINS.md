@@ -70,18 +70,34 @@ reachability. GitHub Pages' equivalents, as `AAAA` on `@`:
 2606:50c0:8003::153
 ```
 
-**6. Let GitHub attach the domain.** github.com/Daky0000/dakyworld → Settings →
-Pages. The custom domain field should already read `dakyworld.com` from the
-`CNAME` file; if it is blank or erroring, type it and Save to re-run the DNS
-check. Once the check passes, tick **Enforce HTTPS**. The certificate is issued
-automatically and can take up to an hour.
+**6. If GitHub says the domain is "already taken".** Setting the custom domain
+on the repo can fail with *"The custom domain dakyworld.com is already taken."*
+That is a Pages claim held outside the account — DNS is irrelevant to it, it
+will not clear on its own, and it is why the `CNAME` file never applied by
+itself. Fix it at account level: **GitHub → account Settings → Pages → Add a
+domain → `dakyworld.com`**. GitHub returns a challenge token; add it in
+Hostinger as TXT with the name **`_github-pages-challenge-Daky0000`** (name
+only — hPanel appends the domain). It cannot collide with SPF, which sits at
+`@`. Click Verify; the account then takes priority and the repo accepts the
+domain. Verifying the apex is expected to cover subdomains, clearing any
+`marketing.dakyworld.com` entry sitting unverified.
 
-**7. Verify.**
+**7. Let GitHub attach the domain.** github.com/Daky0000/dakyworld → Settings →
+Pages. The custom domain field should read `dakyworld.com` from the `CNAME`
+file; if it is blank, type it and Save. Once the check passes, tick **Enforce
+HTTPS**. The certificate is issued automatically and can take up to an hour.
+
+**8. Verify.**
 
 ```bash
-nslookup dakyworld.com          # expect only 185.199.108-111.153
+nslookup dakyworld.com 8.8.8.8  # expect only 185.199.108-111.153
 curl -sSI https://dakyworld.com # expect HTTP/2 200, Server: GitHub.com
 ```
+
+> **Do not check against `ns1`/`ns2.dns-parking.com`.** Those anycast nodes
+> served stale records for well over an hour after a confirmed zone edit, which
+> reads exactly like a change that failed to save and nearly caused a correct
+> edit to be undone. Use a public resolver as the source of truth.
 
 ## Do not delete these
 
@@ -100,7 +116,9 @@ offline.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Site not found` from GitHub | Pages has not attached the domain — DNS still resolves to Hostinger somewhere | Re-check step 2, then re-save the domain in Settings → Pages |
+| `Site not found` from GitHub | Pages has not attached the domain — either DNS still resolves to Hostinger, or the domain is claimed elsewhere | Confirm DNS on a public resolver, then do step 6 |
+| `The custom domain is already taken` | Another Pages site holds the claim; DNS is irrelevant | Step 6 — account-level domain verification |
+| A zone edit looks like it did not save | Hostinger's own nameservers serve stale records long after the change is live | Re-check against `8.8.8.8` before undoing anything |
 | Certificate warning | DNS is right, certificate not issued yet | Wait up to an hour, then tick Enforce HTTPS |
 | The empty WordPress page appears | A resolver is still caching the old address | Wait out the TTL, or test with `curl --resolve dakyworld.com:443:185.199.108.153 https://dakyworld.com/` |
 | os.dakyworld.com goes down | The `os` CNAME was deleted | Re-add `os` → `jvi1adna.up.railway.app` |
