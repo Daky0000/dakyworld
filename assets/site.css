@@ -639,7 +639,7 @@ details[open] p{animation:faqIn .45s cubic-bezier(.16,1,.3,1)}
 
 /* ── Footer ──────────────────────────────────────────────────────────── */
 footer{background:#050a14;color:#fff}
-.footer-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1.4fr;gap:40px;padding:75px 0 55px}
+.footer-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1.4fr;gap:40px;padding:82px 0 60px}
 .footer-grid h3{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.35)}
 .footer-grid ul{list-style:none;padding:0;margin:20px 0 0}
 .footer-grid li{margin:11px 0}
@@ -652,7 +652,7 @@ footer{background:#050a14;color:#fff}
 }
 .brand-footer img{display:block;height:44px;width:auto}
 .brand-footer:hover{transform:translateY(-2px)}
-.footer-bottom{border-top:1px solid rgba(255,255,255,.09);padding:22px 0;color:rgba(255,255,255,.35);font-size:12px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.footer-bottom{border-top:1px solid rgba(255,255,255,.09);padding:24px 0 30px;color:rgba(255,255,255,.35);font-size:12px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
 .footer-bottom a{color:inherit}
 .footer-bottom a:hover{color:var(--lime)}
 
