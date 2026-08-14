@@ -27,12 +27,23 @@
   navLinks.forEach(function (link, i) { link.style.setProperty('--i', i); });
 
   /* Mark the current page from the URL, and use aria-current so it is
-     announced rather than merely coloured. */
+     announced rather than merely coloured.
+
+     Both sides are reduced to a bare page name first, so this holds whether the
+     URL is /pricing, /pricing.html or the bare domain — GitHub Pages serves all
+     three, and a visitor can arrive on any of them from an old link. */
   (function markCurrentPage() {
-    var here = location.pathname.split('/').pop() || 'index.html';
+    function pageKey(path) {
+      var last = path.split('?')[0].split('#')[0].replace(/\/+$/, '').split('/').pop();
+      if (!last || last === 'index' || last === 'index.html') return 'home';
+      return last.replace(/\.html$/, '');
+    }
+
+    var here = pageKey(location.pathname);
     navLinks.forEach(function (link) {
-      var target = link.getAttribute('href').split('/').pop().split('#')[0];
-      if (target && target === here) link.setAttribute('aria-current', 'page');
+      if (pageKey(link.getAttribute('href')) === here) {
+        link.setAttribute('aria-current', 'page');
+      }
     });
   })();
 
