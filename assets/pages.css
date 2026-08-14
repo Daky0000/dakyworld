@@ -42,7 +42,7 @@
 .hero h1 span{color:var(--lime)}
 .hero-copy{
   margin:28px 0 0;max-width:660px;
-  color:rgba(255,255,255,.63);font-size:17px;line-height:1.7;
+  color:rgba(255,255,255,.9);font-size:17px;line-height:1.7;
 }
 
 .arch{
