@@ -7,6 +7,72 @@
   'use strict';
 
   document.documentElement.classList.add('js');
+
+  var HEADER_HTML = [
+    '<header class="site-header" id="siteHeader">',
+    '  <div class="header-wrap">',
+    '    <div class="header-shell">',
+    '',
+    '      <a href="index.html" class="brand" aria-label="Dakyworld home">',
+    '        <img',
+    '          class="brand-logo"',
+    '          src="assets/brand/header-lockup-on-dark.png"',
+    '          alt="Dakyworld"',
+    '          width="379"',
+    '          height="68"',
+    '        >',
+    '      </a>',
+    '',
+    '      <nav class="main-nav" id="mainNav" aria-label="Main">',
+    '        <a href="services.html">Capabilities</a>',
+    '        <a href="work.html">Selected Work</a>',
+    '        <a href="how-we-work.html">How We Work</a>',
+    '        <a href="pricing.html">Pricing</a>',
+    '        <a href="about.html">About</a>',
+    '',
+    '        <a href="contact.html" class="nav-cta">',
+    '          Schedule a Consultation',
+    '          <span aria-hidden="true">&#8599;</span>',
+    '        </a>',
+    '      </nav>',
+    '',
+    '      <button',
+    '        class="menu-toggle"',
+    '        id="menuToggle"',
+    '        type="button"',
+    '        aria-label="Open navigation"',
+    '        aria-controls="mainNav"',
+    '        aria-expanded="false"',
+    '      >',
+    '        <span aria-hidden="true"></span>',
+    '      </button>',
+    '',
+    '    </div>',
+    '  </div>',
+    '</header>'
+  ].join('\n');
+
+  var FOOTER_HTML = [
+    '<footer>',
+    '  <div class="footer-grid">',
+    '    <div><a href="index.html" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96"></a><p class="mt-5 max-w-sm text-sm leading-7" style="color:rgba(255,255,255,.45)">Your outsourced IT department for growing businesses. One monthly retainer. One accountable team. The technology your business depends on, properly managed.</p></div>',
+    '    <div><h3>Explore</h3><ul><li><a href="services.html">Capabilities</a></li><li><a href="work.html">Selected Work</a></li><li><a href="how-we-work.html">How We Work</a></li><li><a href="pricing.html">Pricing</a></li></ul></div>',
+    '    <div><h3>Company</h3><ul><li><a href="about.html">About</a></li><li><a href="insights.html">Insights</a></li><li><a href="contact.html">Schedule a Consultation</a></li></ul></div>',
+    '  </div>',
+    '  <div class="footer-bottom"><span>&copy; <span id="year">2026</span> Dakyworld &middot; All rights reserved</span><span>Kumasi &middot; Serving Ghana and West Africa</span><span><a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a></span></div>',
+    '</footer>'
+  ].join('\n');
+
+  function replaceGlobalMarkup() {
+    var existingHeader = document.querySelector('header.site-header');
+    if (existingHeader) existingHeader.outerHTML = HEADER_HTML;
+
+    var existingFooter = document.querySelector('footer');
+    if (existingFooter) existingFooter.outerHTML = FOOTER_HTML;
+  }
+
+  replaceGlobalMarkup();
+
   if (window.lucide) lucide.createIcons();
 
   var fine = window.matchMedia('(pointer:fine)').matches;
