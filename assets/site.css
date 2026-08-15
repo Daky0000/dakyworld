@@ -154,6 +154,27 @@ body.nav-open{overflow:hidden}
 .main-nav a:hover:not(.nav-cta)::after,
 .main-nav a[aria-current="page"]:not(.nav-cta)::after{transform:scaleX(1)}
 
+.nav-dropdown{position:relative}
+.nav-dropdown-trigger{
+  appearance:none;border:0;background:transparent;color:rgba(255,255,255,.62);
+  font:inherit;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;
+  padding:0;cursor:pointer;white-space:nowrap;transition:color .25s ease
+}
+.nav-dropdown-trigger:hover,.nav-dropdown-trigger[aria-expanded="true"]{color:#fff}
+.nav-dropdown-menu{
+  position:absolute;top:calc(100% + 16px);left:50%;transform:translateX(-50%);
+  width:290px;display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:18px;
+  background:rgba(8,16,31,.96);border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 26px 60px rgba(0,0,0,.28);z-index:30
+}
+.nav-dropdown-menu a{
+  display:block;gap:6px;padding:12px 14px;border-radius:12px;color:#fff;background:transparent;
+  text-decoration:none;transition:background .2s ease,transform .2s ease
+}
+.nav-dropdown-menu a small{display:block;color:rgba(255,255,255,.58);margin-top:4px;line-height:1.5}
+.nav-dropdown-menu a:hover{background:rgba(255,255,255,.05);transform:translateX(2px)}
+.nav-dropdown-menu[hidden]{display:none}
+
 /* Hovering one link dims the rest — the row reads as one group, not six items. */
 @media(min-width:901px){
   .main-nav:hover a:not(:hover):not(.nav-cta){color:rgba(255,255,255,.4)}

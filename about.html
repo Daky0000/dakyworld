@@ -37,11 +37,45 @@
       </a>
 
       <nav class="main-nav" id="mainNav" aria-label="Main">
-        <a href="/services">Coverage</a>
-        <a href="/work">Work</a>
-        <a href="/how-we-work">Process</a>
-        <a href="/pricing">Pricing</a>
-        <a href="/about">About</a>
+        <a href="/services.html">Coverage</a>
+        <a href="/work.html">Work</a>
+        <a href="/how-we-work.html">Process</a>
+        
+        <div class="nav-dropdown">
+          <button
+            class="nav-dropdown-trigger"
+            type="button"
+            aria-expanded="false"
+            aria-controls="pricing-menu"
+          >
+            Pricing
+            <span aria-hidden="true">⌄</span>
+          </button>
+
+          <div id="pricing-menu" class="nav-dropdown-menu" hidden>
+            <a href="/pricing.html">
+              <span>Choose How to Start</span>
+              <small>Find the right way to work with us</small>
+            </a>
+
+            <a href="/monthly-support.html">
+              <span>Monthly Support</span>
+              <small>Ongoing technology management</small>
+            </a>
+
+            <a href="/one-time-projects.html">
+              <span>One-Time Projects</span>
+              <small>Focused work with a defined outcome</small>
+            </a>
+
+            <a href="/foundation-build.html">
+              <span>Digital Foundation Build</span>
+              <small>Organise, secure and improve core systems</small>
+            </a>
+          </div>
+        </div>
+
+        <a href="/about.html">About</a>
 
         <a href="/contact" class="nav-cta">
           Let's talk

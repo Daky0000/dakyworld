@@ -38,11 +38,45 @@
       </a>
 
       <nav class="main-nav" id="mainNav" aria-label="Main">
-        <a href="/services">Coverage</a>
-        <a href="/work">Work</a>
-        <a href="/how-we-work">Process</a>
-        <a href="/pricing">Pricing</a>
-        <a href="/about">About</a>
+        <a href="/services.html">Coverage</a>
+        <a href="/work.html">Work</a>
+        <a href="/how-we-work.html">Process</a>
+        
+        <div class="nav-dropdown">
+          <button
+            class="nav-dropdown-trigger"
+            type="button"
+            aria-expanded="false"
+            aria-controls="pricing-menu"
+          >
+            Pricing
+            <span aria-hidden="true">⌄</span>
+          </button>
+
+          <div id="pricing-menu" class="nav-dropdown-menu" hidden>
+            <a href="/pricing.html">
+              <span>Choose How to Start</span>
+              <small>Find the right way to work with us</small>
+            </a>
+
+            <a href="/monthly-support.html">
+              <span>Monthly Support</span>
+              <small>Ongoing technology management</small>
+            </a>
+
+            <a href="/one-time-projects.html">
+              <span>One-Time Projects</span>
+              <small>Focused work with a defined outcome</small>
+            </a>
+
+            <a href="/foundation-build.html">
+              <span>Digital Foundation Build</span>
+              <small>Organise, secure and improve core systems</small>
+            </a>
+          </div>
+        </div>
+
+        <a href="/about.html">About</a>
 
         <a href="/contact" class="nav-cta">
           Let's talk
@@ -322,28 +356,39 @@
     var params = new URLSearchParams(window.location.search);
     var plan = params.get('plan');
     var project = params.get('project');
+    var service = params.get('service');
 
     var map = {
-      essentials: 'sme-essentials',
-      growth: 'growth-retainer',
-      enterprise: 'enterprise-concierge',
+      'essentials': 'sme-essentials',
+      'growth': 'growth-retainer',
+      'enterprise': 'enterprise-concierge',
       'foundation-build': 'digital-foundation-build',
-      branding: 'brand-identity-and-design',
-      'training-advisory': 'training-and-technology-advisory'
+      'branding': 'brand-identity-and-design',
+      'training-advisory': 'training-and-technology-advisory',
+      'monthly-support': 'monthly-support',
+      'one-time-projects': 'one-time-projects'
     };
 
-    var selected = plan ? map[plan] : project ? map[project] : null;
+    var selected = plan ? map[plan] : project ? map[project] : service ? map[service] : null;
     if (selected) {
       select.value = selected;
     }
 
-    var sourceValue = 'pricing-page';
-    if (window.location.pathname.indexOf('foundation-build') !== -1) sourceValue = 'foundation-build-page';
-    else if (window.location.pathname.indexOf('services') !== -1) sourceValue = 'services-page';
-    else if (window.location.pathname.indexOf('index') !== -1 || window.location.pathname === '/' || window.location.pathname === '') sourceValue = 'homepage';
-    source.value = sourceValue;
+    var sourceValue = 'direct';
+    var pathname = window.location.pathname;
+    if (pathname.indexOf('contact') !== -1) sourceValue = 'contact-page';
+    else if (pathname.indexOf('monthly-support') !== -1) sourceValue = 'monthly-support-page';
+    else if (pathname.indexOf('one-time-projects') !== -1) sourceValue = 'one-time-projects-page';
+    else if (pathname.indexOf('foundation-build') !== -1) sourceValue = 'foundation-build-page';
+    else if (pathname.indexOf('pricing') !== -1) sourceValue = 'pricing-page';
+    else if (pathname.indexOf('services') !== -1) sourceValue = 'services-page';
+    else if (pathname.indexOf('how-we-work') !== -1) sourceValue = 'how-we-work-page';
+    else if (pathname.indexOf('work') !== -1) sourceValue = 'work-page';
+    else if (pathname.indexOf('index') !== -1 || pathname === '/' || pathname === '') sourceValue = 'homepage';
+    
     var utmSource = params.get('utm_source');
-    if (utmSource) source.value = utmSource;
+    if (utmSource) sourceValue = utmSource;
+    source.value = sourceValue;
   })();
 </script>
 <script src="assets/site.js"></script>
