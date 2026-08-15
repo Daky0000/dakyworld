@@ -167,19 +167,20 @@
           </div>
 
           <div class="form-field full">
-            <label for="service">What can we help with?</label>
+            <label for="service">What are you interested in?</label>
             <select id="service" name="service" required>
-              <option value="">Choose one</option>
-              <option>Website or web development</option>
-              <option>AI and automation</option>
-              <option>Cybersecurity or IT support</option>
-              <option>Cloud tools or business systems</option>
-              <option>Software connections</option>
-              <option>Branding or design</option>
-              <option>Ongoing IT support</option>
-              <option>I am not sure yet</option>
+              <option value="">Please select</option>
+              <option value="sme-essentials">SME Essentials monthly support</option>
+              <option value="growth-retainer">Growth Retainer monthly support</option>
+              <option value="enterprise-concierge">Enterprise Concierge monthly support</option>
+              <option value="digital-foundation-build">Digital Foundation Build</option>
+              <option value="brand-identity-and-design">Brand identity and design</option>
+              <option value="training-and-technology-advisory">Training and technology advisory</option>
+              <option value="not-sure-yet">Not sure yet — help me choose</option>
             </select>
           </div>
+
+          <input type="hidden" name="enquiry_source" id="enquiry_source" value="">
 
           <div class="form-field full">
             <label for="message">What are you trying to achieve?</label>
@@ -311,6 +312,40 @@
   </div>
 </footer>
 
+<script>
+  (function () {
+    var form = document.getElementById('contactForm');
+    var select = document.getElementById('service');
+    var source = document.getElementById('enquiry_source');
+    if (!form || !select || !source) return;
+
+    var params = new URLSearchParams(window.location.search);
+    var plan = params.get('plan');
+    var project = params.get('project');
+
+    var map = {
+      essentials: 'sme-essentials',
+      growth: 'growth-retainer',
+      enterprise: 'enterprise-concierge',
+      'foundation-build': 'digital-foundation-build',
+      branding: 'brand-identity-and-design',
+      'training-advisory': 'training-and-technology-advisory'
+    };
+
+    var selected = plan ? map[plan] : project ? map[project] : null;
+    if (selected) {
+      select.value = selected;
+    }
+
+    var sourceValue = 'pricing-page';
+    if (window.location.pathname.indexOf('foundation-build') !== -1) sourceValue = 'foundation-build-page';
+    else if (window.location.pathname.indexOf('services') !== -1) sourceValue = 'services-page';
+    else if (window.location.pathname.indexOf('index') !== -1 || window.location.pathname === '/' || window.location.pathname === '') sourceValue = 'homepage';
+    source.value = sourceValue;
+    var utmSource = params.get('utm_source');
+    if (utmSource) source.value = utmSource;
+  })();
+</script>
 <script src="assets/site.js"></script>
 </body>
 </html>

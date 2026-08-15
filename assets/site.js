@@ -145,6 +145,27 @@
   }, { passive: true });
   onScroll();
 
+  /* Check if nav is overflowing and needs dropdown */
+  var headerShell = document.querySelector('.header-shell');
+  
+  function checkNavOverflow() {
+    if (!headerShell || !nav) return;
+    
+    // Get the shell's scrollable width
+    var shellWidth = headerShell.offsetWidth;
+    var navWidth = nav.offsetWidth;
+    var brandWidth = document.querySelector('.brand') ? document.querySelector('.brand').offsetWidth : 100;
+    var toggleWidth = toggle ? 42 : 0;
+    var padding = 20; // approximate padding buffer
+    
+    // Check if content would overflow
+    var totalWidth = brandWidth + navWidth + toggleWidth + padding;
+    var hasOverflow = totalWidth > shellWidth;
+    
+    // Set the data attribute
+    headerShell.setAttribute('data-nav-overflow', hasOverflow ? 'true' : 'false');
+  }
+
   if (toggle && nav) {
     toggle.addEventListener('click', function (e) {
       e.stopPropagation();            // don't trip the outside-click handler
@@ -176,7 +197,14 @@
         wasMobile = isMobile;
         if (!isMobile) setMenu(false);
       }
+      checkNavOverflow();
     });
+    
+    /* Initial check and check after fonts load */
+    checkNavOverflow();
+    if (document.fonts) {
+      document.fonts.ready.then(checkNavOverflow);
+    }
   }
 
   /* Scroll reveals ------------------------------------------------------ */

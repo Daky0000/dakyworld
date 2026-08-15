@@ -155,8 +155,44 @@ body.nav-open{overflow:hidden}
 .main-nav a[aria-current="page"]:not(.nav-cta)::after{transform:scaleX(1)}
 
 /* Hovering one link dims the rest — the row reads as one group, not six items. */
-@media(min-width:761px){
+@media(min-width:901px){
   .main-nav:hover a:not(:hover):not(.nav-cta){color:rgba(255,255,255,.4)}
+}
+
+/* Show menu toggle and hide nav when nav is marked as needing dropdown */
+.header-shell[data-nav-overflow="true"] .menu-toggle{
+  display:grid;place-items:center
+}
+.header-shell[data-nav-overflow="true"] .main-nav{
+  position:absolute;top:calc(100% + var(--gap));left:0;right:0;
+  flex-direction:column;align-items:stretch;gap:0;
+  padding:10px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:17px;
+  background:rgba(8,16,31,.97);
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+  box-shadow:0 22px 55px rgba(0,0,0,.25);
+  opacity:0;visibility:hidden;transform:translateY(-8px);
+  transition:opacity .25s ease,transform .3s var(--ease),visibility .3s;
+}
+.header-shell[data-nav-overflow="true"] .main-nav.open{
+  opacity:1;visibility:visible;transform:none
+}
+.header-shell[data-nav-overflow="true"] .main-nav a{
+  padding:14px 13px;border-radius:11px;font-size:15px;
+  opacity:0;transform:translateY(-6px);
+  transition:opacity .3s ease,transform .3s var(--ease),background .2s ease;
+}
+.header-shell[data-nav-overflow="true"] .main-nav.open a{
+  opacity:1;transform:none;
+  transition-delay:calc(60ms + var(--i,0) * 45ms);
+}
+.header-shell[data-nav-overflow="true"] .main-nav a:hover{
+  background:rgba(255,255,255,.06)
+}
+.header-shell[data-nav-overflow="true"] .main-nav a:not(.nav-cta)::after{
+  display:none
 }
 
 .nav-cta{
