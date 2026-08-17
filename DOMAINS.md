@@ -111,6 +111,62 @@ offline.
 | `CNAME` | `os` → `jvi1adna.up.railway.app` | Points os.dakyworld.com at the OS app |
 | `A` ×4 | `185.199.108–111.153` | GitHub Pages — serves the website |
 | `CNAME` | `www` → `dakyworld.com` | Sends www to the apex |
+| `TXT` | `hostingermail-a._domainkey` → the DKIM key | Signs outgoing mail. Without it DMARC cannot pass |
+| `TXT` | `_dmarc` → `v=DMARC1; p=…` | Tells receivers what to do with mail that fails |
+
+## The sender logo — what puts an icon next to your name
+
+The picture an inbox shows beside the sender is **not** in the email. Nothing
+in the HTML can set it. Three separate systems decide it, and each one has to
+be satisfied on its own.
+
+**BIMI** is the open standard, and it reads DNS. Two things must be true:
+
+1. **DMARC has to be at enforcement.** `p=none` publishes a policy and asks
+   receivers to ignore it, and every BIMI implementation refuses that. The
+   record has to say `p=quarantine` or `p=reject`, with no `pct` below 100 and
+   no `sp=none`.
+2. **A BIMI record has to point at a square SVG.** Ours is committed at
+   `assets/brand/bimi-logo.svg` and served by Pages at
+   <https://dakyworld.com/assets/brand/bimi-logo.svg>. It is SVG Tiny PS: no
+   script, no raster image, no external reference, `<title>` first, square
+   `viewBox`, opaque background, 12 KB against a 32 KB ceiling. It is a trace
+   of the mark rather than an export, because the identity has no vector
+   master — regenerate it from `og-mark-512.png` if the mark ever changes.
+
+```
+Name    _dmarc
+Type    TXT
+Value   v=DMARC1; p=quarantine; rua=mailto:dakyayipah@gmail.com; fo=1
+
+Name    default._bimi
+Type    TXT
+Value   v=BIMI1; l=https://dakyworld.com/assets/brand/bimi-logo.svg; a=;
+```
+
+> **Read a week of DMARC reports before flipping `p` to `quarantine`.** The
+> reports already arrive at the `rua` address. Anything sending as
+> `@dakyworld.com` that is not the Hostinger mailbox — a form plugin, an old
+> newsletter tool — starts landing in spam the moment the policy bites. SPF and
+> the `hostingermail-a` DKIM key are both live, so the OS app itself is safe
+> either way.
+
+**Then the certificate question, which is where the money is.** With the two
+records above and no certificate, the logo shows in **Yahoo and AOL**. Gmail
+needs a Common Mark Certificate (~USD 650–1,100 a year) and shows the blue
+verified tick only with a Verified Mark Certificate (~USD 750–1,750 a year,
+and a registered trademark). Apple Mail accepts a VMC only. When one is bought
+it goes in the same record as `a=https://dakyworld.com/assets/brand/<cert>.pem`.
+
+**The free route for Gmail** is unrelated to BIMI: a Google Account registered
+to `hello@dakyworld.com` with `assets/brand/avatar-512.png` as its profile
+photo. Gmail then draws the avatar from that profile. It is not documented as
+a guarantee — Google leans on the address being authenticated, and reports of
+it working are mixed when the mail is sent outside Google — but it costs
+nothing and takes ten minutes.
+
+`avatar-512.png` is the same mark on the same square, for every other place
+that asks for a picture: Gravatar, LinkedIn, WhatsApp Business, invoices.
 
 ## If it still is not working
 
@@ -123,6 +179,9 @@ offline.
 | The empty WordPress page appears | A resolver is still caching the old address | Wait out the TTL, or test with `curl --resolve dakyworld.com:443:185.199.108.153 https://dakyworld.com/` |
 | os.dakyworld.com goes down | The `os` CNAME was deleted | Re-add `os` → `jvi1adna.up.railway.app` |
 | Email stops arriving | An MX or the SPF TXT record was deleted | Re-add from the table above |
+| No logo beside the sender, anywhere | DMARC is still `p=none`, or the SVG URL 404s | Check both with `nslookup -type=txt _dmarc.dakyworld.com 8.8.8.8` and by opening the SVG URL |
+| Logo shows in Yahoo but not Gmail | Expected — Gmail requires a paid CMC or VMC | Buy a certificate, or use the Google Account route above |
+| Legitimate mail starts going to spam after enforcing | Something else sends as @dakyworld.com and isn't authenticated | Read the DMARC reports, add it to SPF or stop it, then re-enforce |
 
 ---
 
