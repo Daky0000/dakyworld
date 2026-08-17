@@ -848,3 +848,64 @@ export interface User {
   email: string;
   role: string;
 }
+
+// --- Agent workforce -------------------------------------------------------
+// Shadows the Agent model in server/prisma/schema.prisma. Only what the
+// workforce screen renders is typed here, deliberately — the server owns the
+// rest and a half-copied model is worse than none.
+
+export type AgentTier = "BOARD" | "EXECUTIVE" | "FUNCTIONAL" | "OPERATIONAL" | "SUB_AGENT";
+export type AgentStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "RETIRED";
+
+export interface Agent {
+  id: string;
+  key: string;
+  name: string;
+  title: string;
+  tier: AgentTier;
+  department: string;
+  managerKey: string | null;
+  managerName: string | null;
+  status: AgentStatus;
+  mission: string;
+  responsibilities: string[];
+  kpis: string[];
+  autonomyLevel: number;
+  dryRun: boolean;
+  toolkit: string[];
+  escalationPolicy: string | null;
+  prompt: Record<string, string>;
+}
+
+export interface AgentDetail extends Agent {
+  reports: Array<{ key: string; name: string; title: string }>;
+}
+
+export interface AgentList {
+  agents: Agent[];
+  summary: { total: number; active: number; aboveDraft: number };
+}
+
+// --- Quick capture ---------------------------------------------------------
+
+export type CaptureTargetKind = "WEBSITE" | "MAPS_SEARCH" | "LINKEDIN_COMPANY" | "FACEBOOK_PAGE" | "INSTAGRAM";
+
+export interface CaptureTarget {
+  kind: CaptureTargetKind;
+  value: string;
+  why: string;
+}
+
+export interface CaptureIntent {
+  targets: CaptureTarget[];
+  wants: string[];
+  question: string;
+  summary: string;
+  /** True when the classifier resolved it without a model call — i.e. it cost nothing. */
+  free: boolean;
+}
+
+export interface CaptureRunResult {
+  started: Array<{ kind: string; runId: string; count: number }>;
+  failed: Array<{ kind: string; reason: string }>;
+}

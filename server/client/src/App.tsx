@@ -12,6 +12,7 @@ import { CarePlans } from "./pages/CarePlans";
 import { Emails } from "./pages/Emails";
 import { Clients } from "./pages/Clients";
 import { Settings } from "./pages/Settings";
+import { Agents } from "./pages/Agents";
 import { ClientDetail } from "./pages/ClientDetail";
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/clients" element={<Clients />} />
         <Route path="/clients/:id" element={<ClientDetail />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/agents" element={<Agents />} />
       </Route>
     </Routes>
   );

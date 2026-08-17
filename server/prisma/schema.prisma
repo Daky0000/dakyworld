@@ -419,6 +419,9 @@ model ScraperSource {
   qualifyScore Int     @default(60)
 
   /// Daily run times as "HH:mm" in `timezone`. Empty = manual only.
+  /// Created by a quick-capture paste rather than configured by hand. Hidden
+  /// from the sources list so pasting doesn't fill it with one-offs.
+  adhoc           Boolean  @default(false)
   scheduleEnabled Boolean  @default(false)
   scheduleTimes   String[] @default([])
   timezone        String   @default("Africa/Accra")
@@ -461,6 +464,10 @@ model ScraperRun {
   @@index([sourceId, startedAt])
   @@index([status])
 }
+
+// Quick capture creates a throwaway source per paste rather than reusing one,
+// so two people pasting at once can't overwrite each other's input mid-run.
+// Hidden from the sources list; its runs still show in the run history.
 
 // ---------------------------------------------------------------------------
 // Settings & Integrations
@@ -1070,6 +1077,89 @@ model EmailSuppression {
   source String @default("MANUAL")
 
   createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Agent workforce
+// ---------------------------------------------------------------------------
+
+/// Where an agent sits: the board sets direction, executives set priorities,
+/// functional roles police quality and permissions, operational roles do the
+/// work, sub-agents are the narrow specialists inside a workflow.
+enum AgentTier {
+  BOARD
+  EXECUTIVE
+  FUNCTIONAL
+  OPERATIONAL
+  SUB_AGENT
+}
+
+enum AgentDepartment {
+  EXECUTIVE
+  REVENUE
+  DELIVERY
+  FINANCE
+  MARKETING
+  TECHNOLOGY
+  CLIENT
+  RISK
+  PEOPLE
+}
+
+enum AgentStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  RETIRED
+}
+
+/// One agent's employee record — a job, not a naked prompt.
+///
+/// Seeded from services/agentRegistry.ts and never overwritten by a deploy,
+/// the same rule EmailTemplate.builtin follows: a deploy must not undo an edit
+/// the Owner made to words that go out under his own name.
+///
+/// `autonomyLevel` and `dryRun` are the two that decide whether anything can
+/// leave the building. Everything seeds at level 1 with dry run on, and only a
+/// person raises them.
+model Agent {
+  id    String @id @default(cuid())
+  /// Stable identifier the seed and the event router address it by.
+  key   String @unique
+  name  String
+  title String
+
+  tier       AgentTier       @default(OPERATIONAL)
+  department AgentDepartment
+  /// Self-reference by key rather than id, so the seed can describe the org
+  /// chart without caring what order rows were created in.
+  managerKey String?
+
+  status           AgentStatus @default(DRAFT)
+  mission          String
+  responsibilities String[]    @default([])
+  kpis             String[]    @default([])
+
+  /// 0 observe · 1 draft · 2 recommend · 3 execute-with-policy · 4 autonomous · 5 delegated.
+  autonomyLevel Int     @default(1)
+  /// Sits above the autonomy level: on means nothing it decides takes effect.
+  dryRun        Boolean @default(true)
+
+  /// Tool keys this agent may use. The grant model arrives with the tool layer.
+  toolkit          String[] @default([])
+  escalationPolicy String?
+  /// The ten layered prompt sections, keyed by name. One column rather than a
+  /// version table until prompts are actually edited in the app.
+  prompt           Json     @default("{}")
+
+  /// Bumped in the seed when the built-in wording changes, so a later deploy
+  /// can tell an untouched agent from one somebody has edited.
+  seedRevision Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, department])
+  @@index([tier])
 }
 
 // ---------------------------------------------------------------------------

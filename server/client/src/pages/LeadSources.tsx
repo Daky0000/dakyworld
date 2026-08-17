@@ -14,6 +14,7 @@ import type {
 } from "../lib/types";
 import { BLANK_SOURCE, SourceEditor, type SourceDraft } from "../components/SourceEditor";
 import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, RelativeTime, StatTile, StatusDot } from "../components/ui";
+import { QuickCapture } from "../components/QuickCapture";
 
 /**
  * Lead capture — where the Owner connects Apify, configures which actors run,
@@ -100,6 +101,8 @@ export function LeadSources() {
           </div>
         }
       />
+
+      <QuickCapture />
 
       <ApifyConnection settings={settings} overview={overview} />
 

@@ -17,11 +17,14 @@ import { emailsRouter, unsubscribeRouter } from "./routes/emails.js";
 import { usersRouter } from "./routes/users.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
+import { agentsRouter } from "./routes/agents.js";
+import { captureRouter } from "./routes/capture.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
+import { ensureAgents } from "./services/agentRegistry.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -110,6 +113,8 @@ app.use("/api/emails", emailsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/scrapers", scrapersRouter);
+app.use("/api/agents", agentsRouter);
+app.use("/api/capture", captureRouter);
 app.use("/api/settings", settingsRouter);
 
 if (!hasBuiltClient) {
@@ -152,6 +157,10 @@ bootstrapOwner()
       // The letters that ship with the app, copied in once so they can be
       // edited. Failing here must not take the API down.
       void ensureBuiltinTemplates().catch((err) => console.error("Template seed failed:", err));
+      // Adds agents that don't exist yet; never overwrites one the Owner has changed.
+      void ensureAgents()
+        .then((added) => added && console.log(`  → Seeded ${added} agent(s) into the workforce`))
+        .catch((err) => console.error("Agent seed failed:", err));
       if (DEV_NO_AUTH) {
         console.log("  → DEV_NO_AUTH=true: implicit Owner, no login required (ignored when NODE_ENV=production).");
       } else if (!process.env.OWNER_EMAIL || !process.env.OWNER_PASSWORD) {
