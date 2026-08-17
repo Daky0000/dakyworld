@@ -13,6 +13,7 @@ import { Emails } from "./pages/Emails";
 import { Clients } from "./pages/Clients";
 import { Settings } from "./pages/Settings";
 import { Agents } from "./pages/Agents";
+import { Tools } from "./pages/Tools";
 import { ClientDetail } from "./pages/ClientDetail";
 
 export default function App() {
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/clients/:id" element={<ClientDetail />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/agents" element={<Agents />} />
+        <Route path="/agents/tools" element={<Tools />} />
       </Route>
     </Routes>
   );

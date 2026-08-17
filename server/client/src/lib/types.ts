@@ -909,3 +909,23 @@ export interface CaptureRunResult {
   started: Array<{ kind: string; runId: string; count: number }>;
   failed: Array<{ kind: string; reason: string }>;
 }
+
+// --- Tools -----------------------------------------------------------------
+
+export type ToolState = "READY" | "NEEDS_KEY" | "PLANNED";
+
+export interface ToolStatus {
+  key: string;
+  name: string;
+  purpose: string;
+  settingsTab: string | null;
+  needs: string | null;
+  state: ToolState;
+  scopes: string[];
+  spends: boolean;
+}
+
+export interface ToolsResponse {
+  tools: ToolStatus[];
+  summary: { ready: number; needsKey: number; planned: number };
+}

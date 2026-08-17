@@ -43,7 +43,15 @@ const navItems: NavItem[] = [
   { to: "/clients", label: "Clients" },
   // Raising an agent's autonomy is the one action here that lets software act
   // on a client without being asked, so it sits with Settings behind the Owner.
-  { to: "/agents", label: "Agents", ownerOnly: true },
+  {
+    to: "/agents",
+    label: "Agents",
+    ownerOnly: true,
+    children: [
+      { to: "/agents", label: "Workforce", end: true },
+      { to: "/agents/tools", label: "Tools" },
+    ],
+  },
   { to: "/settings", label: "Settings", ownerOnly: true },
 ];
 
