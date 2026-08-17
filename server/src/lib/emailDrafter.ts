@@ -1,6 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { EmailPurpose } from "@prisma/client";
-import { AnalystError, analystKey } from "./anthropic.js";
+import { callClaude } from "./claude.js";
+import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
 import type { RecipientContext } from "../services/emailContext.js";
 
@@ -24,7 +24,7 @@ import type { RecipientContext } from "../services/emailContext.js";
  *    generating outbound mail with a model is defensible at all.
  */
 
-export const DRAFTER_MODEL = "claude-opus-5";
+export const DRAFTER_MODEL = MODEL_DEFAULT;
 
 /** The email-specific half of the voice; the shared half is in services/dakyworld.ts. */
 const VOICE = `${BRAND_VOICE}
@@ -148,59 +148,35 @@ function buildPrompt(request: DraftRequest): string {
 }
 
 export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
-  const apiKey = await analystKey();
-  if (!apiKey) {
-    throw new AnalystError(
-      503,
-      "No Anthropic API key is set. Add one under Settings → AI analyst to draft emails, or write this one by hand.",
-    );
-  }
-
-  const client = new Anthropic({ apiKey });
-  let response;
-  try {
-    response = await client.messages.create({
-      model: DRAFTER_MODEL,
-      max_tokens: 4000,
-      system: `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${VOICE}\n\nNever invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`,
-      output_config: {
-        effort: "medium",
-        format: { type: "json_schema", schema: SCHEMA as unknown as Record<string, unknown> },
-      },
-      messages: [{ role: "user", content: buildPrompt(request) }],
-    });
-  } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) {
-      throw new AnalystError(400, "Anthropic rejected the API key. Check it under Settings → AI analyst.");
-    }
-    if (err instanceof Anthropic.RateLimitError) {
-      throw new AnalystError(429, "Anthropic is rate-limiting this key. Try again in a minute.");
-    }
-    if (err instanceof Anthropic.APIError) throw new AnalystError(err.status ?? 502, `The drafter failed: ${err.message}`);
-    throw new AnalystError(502, `Could not reach Anthropic: ${(err as Error).message}`);
-  }
-
-  if (response.stop_reason === "refusal") {
-    throw new AnalystError(422, "The drafter declined to write this one. Rephrase the brief, or write it by hand.");
-  }
-
-  const text = response.content.find((block): block is Anthropic.TextBlock => block.type === "text")?.text ?? "";
-  if (!text.trim()) throw new AnalystError(502, "The drafter returned nothing. Try again.");
-
-  let parsed: { subject: string; body: string; rationale: string; confidence: number };
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new AnalystError(502, "The draft could not be read. Try again.");
-  }
+  const { data, model, inputTokens, outputTokens } = await callClaude<{
+    subject: string;
+    body: string;
+    rationale: string;
+    confidence: number;
+  }>({
+    purpose: "email.draft",
+    system: `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${VOICE}\n\nNever invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`,
+    prompt: () => buildPrompt(request),
+    schema: SCHEMA as unknown as Record<string, unknown>,
+    effort: "medium",
+    messages: {
+      noKey: "No Anthropic API key is set. Add one under Settings → AI analyst to draft emails, or write this one by hand.",
+      auth: "Anthropic rejected the API key. Check it under Settings → AI analyst.",
+      rate: "Anthropic is rate-limiting this key. Try again in a minute.",
+      refusal: "The drafter declined to write this one. Rephrase the brief, or write it by hand.",
+      empty: "The drafter returned nothing. Try again.",
+      truncated: "The drafter ran out of room before finishing. Try again, or shorten the brief.",
+      parse: "The draft could not be read. Try again.",
+    },
+  });
 
   return {
-    subject: parsed.subject.trim(),
-    body: parsed.body.trim(),
-    rationale: parsed.rationale,
-    confidence: parsed.confidence,
-    model: response.model,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
+    subject: data.subject.trim(),
+    body: data.body.trim(),
+    rationale: data.rationale,
+    confidence: data.confidence,
+    model,
+    inputTokens,
+    outputTokens,
   };
 }

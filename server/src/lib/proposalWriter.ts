@@ -1,5 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { AnalystError, analystKey } from "./anthropic.js";
+import { callClaude } from "./claude.js";
+import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE, SERVICE_LINES, catalogueForPrompt } from "../services/dakyworld.js";
 import { auditForPrompt } from "../services/companyAudit.js";
 import type { ProposalContext } from "../services/proposalContext.js";
@@ -29,7 +29,7 @@ import type { ProposalContext } from "../services/proposalContext.js";
  *    edits the number and the scope before it becomes a PDF.
  */
 
-export const PROPOSAL_MODEL = "claude-opus-5";
+export const PROPOSAL_MODEL = MODEL_DEFAULT;
 
 const SERVICE_IDS = SERVICE_LINES.map((service) => service.id);
 
@@ -248,58 +248,25 @@ function buildPrompt(context: ProposalContext, brief: string | null | undefined)
 }
 
 export async function writeProposal(context: ProposalContext, brief?: string | null): Promise<WriteResult> {
-  const apiKey = await analystKey();
-  if (!apiKey) {
-    throw new AnalystError(
-      503,
-      "No Anthropic API key is set. Add one under Settings → AI analyst to draft proposals, or write this one by hand.",
-    );
-  }
+  const { data, model, inputTokens, outputTokens } = await callClaude<ProposalDraft>({
+    purpose: "proposal.write",
+    system: SYSTEM,
+    prompt: () => buildPrompt(context, brief),
+    schema: SCHEMA as unknown as Record<string, unknown>,
+    // A proposal is written once and decides a deal; this is not the place to
+    // save a few seconds of thinking.
+    effort: "high",
+    maxTokens: 12000,
+    messages: {
+      noKey: "No Anthropic API key is set. Add one under Settings → AI analyst to draft proposals, or write this one by hand.",
+      auth: "Anthropic rejected the API key. Check it under Settings → AI analyst.",
+      rate: "Anthropic is rate-limiting this key. Try again in a minute.",
+      refusal: "The writer declined this one. Rephrase the brief, or write the proposal by hand.",
+      empty: "The writer returned nothing. Try again.",
+      truncated: "The writer ran out of room before finishing the proposal. Try again, or narrow the brief.",
+      parse: "The draft could not be read. Try again.",
+    },
+  });
 
-  const client = new Anthropic({ apiKey });
-  let response;
-  try {
-    response = await client.messages.create({
-      model: PROPOSAL_MODEL,
-      max_tokens: 8000,
-      system: SYSTEM,
-      output_config: {
-        // A proposal is written once and decides a deal; this is not the place
-        // to save a few seconds of thinking.
-        effort: "high",
-        format: { type: "json_schema", schema: SCHEMA as unknown as Record<string, unknown> },
-      },
-      messages: [{ role: "user", content: buildPrompt(context, brief) }],
-    });
-  } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) {
-      throw new AnalystError(400, "Anthropic rejected the API key. Check it under Settings → AI analyst.");
-    }
-    if (err instanceof Anthropic.RateLimitError) {
-      throw new AnalystError(429, "Anthropic is rate-limiting this key. Try again in a minute.");
-    }
-    if (err instanceof Anthropic.APIError) throw new AnalystError(err.status ?? 502, `The proposal writer failed: ${err.message}`);
-    throw new AnalystError(502, `Could not reach Anthropic: ${(err as Error).message}`);
-  }
-
-  if (response.stop_reason === "refusal") {
-    throw new AnalystError(422, "The writer declined this one. Rephrase the brief, or write the proposal by hand.");
-  }
-
-  const text = response.content.find((block): block is Anthropic.TextBlock => block.type === "text")?.text ?? "";
-  if (!text.trim()) throw new AnalystError(502, "The writer returned nothing. Try again.");
-
-  let draft: ProposalDraft;
-  try {
-    draft = JSON.parse(text) as ProposalDraft;
-  } catch {
-    throw new AnalystError(502, "The draft could not be read. Try again.");
-  }
-
-  return {
-    draft,
-    model: response.model,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
-  };
+  return { draft: data, model, inputTokens, outputTokens };
 }

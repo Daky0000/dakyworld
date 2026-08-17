@@ -1071,3 +1071,42 @@ model EmailSuppression {
 
   createdAt DateTime @default(now())
 }
+
+// ---------------------------------------------------------------------------
+// AI spend
+// ---------------------------------------------------------------------------
+
+/// Every Claude call the app makes, priced. Apify spend has had a ceiling since
+/// the scrapers were built; Anthropic spend had none, and no record of which
+/// feature caused it. Written by lib/claude.ts on success *and* failure — a
+/// rate-limit storm costs nothing but has to be visible.
+model LlmCall {
+  id String @id @default(cuid())
+
+  /// What asked for it: "email.draft", "proposal.write", "sheet.analyse".
+  purpose String
+  /// The model that actually served the request, as reported by the API — not
+  /// the one requested, which can differ when a refusal falls back.
+  model   String
+
+  inputTokens         Int @default(0)
+  outputTokens        Int @default(0)
+  cacheReadTokens     Int @default(0)
+  cacheCreationTokens Int @default(0)
+
+  /// Priced at the moment of the call, so a later rate change can't rewrite
+  /// history — the same reason CarePlanCycle snapshots its monthly fee.
+  costUsd    Decimal @default(0) @db.Decimal(10, 6)
+  durationMs Int?
+  /// low | medium | high | xhigh | max
+  effort     String?
+  stopReason String?
+
+  ok    Boolean @default(true)
+  error String?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([purpose, createdAt])
+}

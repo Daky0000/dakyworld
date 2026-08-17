@@ -33,6 +33,14 @@ export const SETTING = {
 
   /** Powers the spreadsheet analyst — see lib/anthropic.ts. */
   ANTHROPIC_KEY: "anthropic.apiKey",
+  /** Which model every Claude call uses unless it names another. */
+  ANTHROPIC_MODEL: "anthropic.model",
+  /**
+   * Per-model rate overrides as JSON, so a price change doesn't need a
+   * redeploy: `{"claude-opus-5":{"inputPerMTok":5,"outputPerMTok":25}}`.
+   * See lib/claudePricing.ts.
+   */
+  ANTHROPIC_PRICING: "anthropic.pricing",
   GOOGLE_CLIENT_ID: "google.clientId",
   GOOGLE_CLIENT_SECRET: "google.clientSecret",
   /** Written by the OAuth callback; the only Google credential that persists. */
@@ -70,6 +78,10 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.CAPTURE_MONTHLY_BUDGET]: "APIFY_MONTHLY_BUDGET_USD",
   [SETTING.CAPTURE_MAX_CONCURRENT]: "APIFY_MAX_CONCURRENT_RUNS",
   [SETTING.ANTHROPIC_KEY]: "ANTHROPIC_API_KEY",
+  // Worth pinning from the deploy for the same reason as the capture budget:
+  // the model decides what a call costs. Pricing overrides are deliberately
+  // database-only — they're a correction to a published rate, not a knob.
+  [SETTING.ANTHROPIC_MODEL]: "ANTHROPIC_MODEL",
   [SETTING.GOOGLE_CLIENT_ID]: "GOOGLE_CLIENT_ID",
   [SETTING.GOOGLE_CLIENT_SECRET]: "GOOGLE_CLIENT_SECRET",
   [SETTING.GOOGLE_REFRESH_TOKEN]: "GOOGLE_REFRESH_TOKEN",

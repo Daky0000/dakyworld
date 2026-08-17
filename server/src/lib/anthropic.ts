@@ -16,8 +16,8 @@
  * services/sheetPlan.ts, which handle a tidy sheet fine.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import { SETTING, getSetting } from "./settings.js";
+import { callClaude } from "./claude.js";
+import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BUILTIN_FIELDS, LEAD_SOURCES, LEAD_STATUSES } from "../services/leadFields.js";
 import { LEAD_FIELD_TYPES } from "../services/leadFields.js";
 import type { ImportPlan } from "../services/sheetPlan.js";
@@ -25,26 +25,14 @@ import type { SheetGrid } from "../services/spreadsheet.js";
 import { renderGrid, renderHints } from "../services/sheetPlan.js";
 import type { PlanTable } from "../services/sheetPlan.js";
 
+// The client, the error type and the key live in lib/claude.ts now that three
+// features share them. Re-exported because five call sites import them from
+// here and the paths aren't worth churning.
+export { AnalystError, analystKey, analystConfigured, verifyKey } from "./claude.js";
+
 /** Opus is the right tier here: getting the table boundaries wrong costs the
  *  Owner an afternoon of cleanup, and a sheet is analysed once, not per row. */
-export const ANALYST_MODEL = "claude-opus-5";
-
-export class AnalystError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "AnalystError";
-    this.status = status;
-  }
-}
-
-export async function analystKey(): Promise<string | null> {
-  return getSetting(SETTING.ANTHROPIC_KEY);
-}
-
-export async function analystConfigured(): Promise<boolean> {
-  return Boolean(await analystKey());
-}
+export const ANALYST_MODEL = MODEL_DEFAULT;
 
 // --- The output contract ---------------------------------------------------
 
@@ -183,72 +171,25 @@ export interface AnalysisResult {
  * the pattern rules with an explanation rather than failing outright.
  */
 export async function analyzeGrids(grids: SheetGrid[], hints: PlanTable[]): Promise<AnalysisResult> {
-  const apiKey = await analystKey();
-  if (!apiKey) {
-    throw new AnalystError(503, "No Anthropic API key is set. Add one under Lead capture → Connections to use the AI analyst.");
-  }
+  const { data, model, inputTokens, outputTokens } = await callClaude<ImportPlan>({
+    purpose: "sheet.analyse",
+    system: SYSTEM_PROMPT,
+    prompt: () => userPrompt(grids, hints),
+    schema: PLAN_SCHEMA as unknown as Record<string, unknown>,
+    // A sheet is read once, not per row, and a wrong table boundary costs an
+    // afternoon of cleanup — this is not the place to save thinking.
+    effort: "high",
+    maxTokens: 16000,
+    messages: {
+      noKey: "No Anthropic API key is set. Add one under Lead capture → Connections to use the AI analyst.",
+      auth: "Anthropic rejected the API key. Check it under Lead capture → Connections.",
+      rate: "Anthropic is rate-limiting this key. Try the import again in a minute.",
+      refusal: "The analyst declined to read this file. Check the review screen and map the columns by hand.",
+      empty: "The analyst returned nothing. Try again, or map the columns by hand.",
+      truncated: "This file is too large for the analyst to plan in one pass. Import fewer sheets at a time, or map the columns by hand.",
+      parse: "The analyst's plan could not be read. Try again, or map the columns by hand.",
+    },
+  });
 
-  const client = new Anthropic({ apiKey });
-
-  let response;
-  try {
-    response = await client.messages.create({
-      model: ANALYST_MODEL,
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT,
-      output_config: {
-        effort: "high",
-        format: { type: "json_schema", schema: PLAN_SCHEMA as unknown as Record<string, unknown> },
-      },
-      messages: [{ role: "user", content: userPrompt(grids, hints) }],
-    });
-  } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) {
-      throw new AnalystError(400, "Anthropic rejected the API key. Check it under Lead capture → Connections.");
-    }
-    if (err instanceof Anthropic.RateLimitError) {
-      throw new AnalystError(429, "Anthropic is rate-limiting this key. Try the import again in a minute.");
-    }
-    if (err instanceof Anthropic.APIError) {
-      throw new AnalystError(err.status ?? 502, `The analyst call failed: ${err.message}`);
-    }
-    throw new AnalystError(502, `Could not reach Anthropic: ${(err as Error).message}`);
-  }
-
-  // A refusal is a 200 with no usable content — check before reading it.
-  if (response.stop_reason === "refusal") {
-    throw new AnalystError(422, "The analyst declined to read this file. Check the review screen and map the columns by hand.");
-  }
-
-  const text = response.content.find((block): block is Anthropic.TextBlock => block.type === "text")?.text ?? "";
-  if (!text.trim()) {
-    throw new AnalystError(502, "The analyst returned nothing. Try again, or map the columns by hand.");
-  }
-
-  let parsed: ImportPlan;
-  try {
-    parsed = JSON.parse(text) as ImportPlan;
-  } catch {
-    throw new AnalystError(502, "The analyst's plan could not be read. Try again, or map the columns by hand.");
-  }
-
-  return {
-    plan: parsed,
-    model: response.model,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
-  };
-}
-
-/** Checks a key works before it is stored, the same way the Apify token is checked. */
-export async function verifyKey(apiKey: string): Promise<{ model: string }> {
-  const client = new Anthropic({ apiKey });
-  try {
-    const model = await client.models.retrieve(ANALYST_MODEL);
-    return { model: model.display_name ?? model.id };
-  } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) throw new AnalystError(400, "Anthropic rejected that API key.");
-    if (err instanceof Anthropic.APIError) throw new AnalystError(err.status ?? 502, err.message);
-    throw new AnalystError(502, `Could not reach Anthropic: ${(err as Error).message}`);
-  }
+  return { plan: data, model, inputTokens, outputTokens };
 }
