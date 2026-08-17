@@ -192,6 +192,22 @@ export function websiteDomain(website: string | null): string | null {
   }
 }
 
+/**
+ * "ghacem.com" -> "Ghacem". The first label is the business; everything after
+ * it is the registry (.com, .com.gh, .org). Good enough to work the lead and
+ * far better than dropping it — the Owner renames the handful that come out
+ * odd, which is a minute's work against a scrape that returned nothing.
+ */
+function nameFromDomain(domain: string | null): string | null {
+  if (!domain) return null;
+  const label = domain.split(".")[0]?.replace(/[-_]+/g, " ").trim();
+  if (!label || label.length < 2) return null;
+  return label
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 function clamp(value: number | null, min: number, max: number): number | null {
   if (value == null) return null;
   return value < min || value > max ? null : value;
@@ -226,11 +242,18 @@ export function mapItemToLead(item: Record<string, unknown>, options: MappingOpt
     return [...(custom ? [custom] : []), ...presetPaths, ...(preset === "CUSTOM" ? [] : shared)];
   };
 
-  const name = firstString(item, paths("contactName", NAME_PATHS));
-  // No name, no lead — a row we can't even label isn't worth a pipeline slot.
-  if (!name) return null;
-
   const website = cleanWebsite(firstString(item, paths("website", WEBSITE_PATHS)));
+
+  let name = firstString(item, paths("contactName", NAME_PATHS));
+  // A contact sweep returns a page, not a person. vdrmota/contact-info-scraper
+  // declares exactly these fields — url, domain, emails, phones, and a social
+  // link per network — and not one of them is a name, so every row it produced
+  // used to fail the check below and vanish without a trace. The domain is the
+  // row's natural label, so use it rather than throwing the lead away.
+  if (!name) name = nameFromDomain(websiteDomain(website));
+  // No name and nothing to derive one from — a row we can't even label isn't
+  // worth a pipeline slot.
+  if (!name) return null;
 
   const socialLinks: Record<string, string> = {};
   for (const [network, candidates] of Object.entries(SOCIAL_PATHS)) {
