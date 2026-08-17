@@ -76,6 +76,40 @@ Either way the credentials are checked against the server before they are
 stored, so a wrong paste fails on that screen rather than silently at 8am
 inside a sequence.
 
+### How an email looks
+
+Every message goes out on the same letterhead, drawn by
+[`services/emailLetterhead.ts`](server/src/services/emailLetterhead.ts) — the
+screen counterpart to the one `letterhead.ts` prints on proposals and
+invoices. A white sheet on a cream ground: the lock-up top left, the contact
+line quiet on the right, a hairline rule with one lime segment, the letter,
+the signature, and an ink footer band carrying the on-dark lock-up, the
+positioning line, the contact details and the legal line — the website's own
+footer at the width of a letter.
+
+**The logo travels with the message.** Both cuts are attached as inline parts
+and referenced as `cid:`, not linked from a server. Outlook blocks remote
+images by default and the apex domain has been unreliable enough to lose them
+for real (see [DOMAINS.md](DOMAINS.md)); an embedded part needs nothing
+outside the message. They are palette-reduced to about 3 KB each and flattened
+onto their backgrounds, because a client in dark mode inverts the background
+behind an image but never the image — a transparent ink wordmark would
+disappear. If the files are missing the letterhead falls back to a
+typographic wordmark rather than a broken image.
+
+**Fonts are Space Grotesk and DM Sans where a client will have them.** Apple
+Mail, iOS Mail and Samsung Mail load the linked webfonts and show the real
+faces; Gmail and Outlook strip the link, so every stack falls to a system sans
+with the same proportions, and Outlook is given Arial explicitly because the
+Word engine renders an unknown family as Times. This is the one medium where
+brand type cannot be insisted on.
+
+The body of the letter stays deliberately plain — paragraphs, one accent
+colour for links, no images, no tracking pixel. A business email that arrives
+looking like a newsletter reads as a campaign, and a campaign is easier to
+ignore. **Settings → Email → Send test** is the way to see the whole thing in
+a real inbox.
+
 ### Drafting
 
 Pick a lead or a client and the composer shows **what we actually know about

@@ -413,7 +413,7 @@ interface OutgoingMail {
   text: string;
   html: string;
   displayName: string;
-  attachments: Array<{ filename: string; content: string; contentType?: string }>;
+  attachments: Array<{ filename: string; content: string; contentType?: string; cid?: string }>;
 }
 
 function buildToolArguments(tool: McpTool, mail: OutgoingMail, mailbox: HostingerMailbox, useResourceId: boolean): Record<string, unknown> {
@@ -588,6 +588,9 @@ async function encodeAttachments(attachments: Attachment[]): Promise<OutgoingMai
       filename: attachment.filename,
       content: buffer.toString("base64"),
       ...(attachment.contentType ? { contentType: attachment.contentType } : {}),
+      // Inline artwork: the API links it to `<img src="cid:…">` the same way
+      // nodemailer does, so the letterhead survives both transports.
+      ...(attachment.cid ? { cid: attachment.cid } : {}),
     });
   }
 

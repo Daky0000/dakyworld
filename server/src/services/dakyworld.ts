@@ -29,6 +29,30 @@ export const VOICE = `How Dakyworld writes:
 // --- What can actually be sold ---------------------------------------------
 
 /**
+ * The details that go on anything a client keeps — the letterhead of every
+ * PDF, the Word cut of a proposal, and the header and footer of every email.
+ *
+ * One copy, for the same reason the voice above has one copy: three versions
+ * of a phone number is how a client ends up with the wrong one. The uppercase
+ * spellings are the printed forms; the documents letterspace them.
+ */
+export const COMPANY = {
+  name: "DAKYWORLD",
+  /** The wordmark as it is written in a sentence. */
+  displayName: "Dakyworld",
+  tagline: "ONE IT COMPANY. EVERYTHING YOUR BUSINESS NEEDS.",
+  footerLine: "ONE PARTNER. ALL YOUR IT.",
+  /** The same promise where caps would read as shouting — plain-text email. */
+  promise: "One partner. All your IT.",
+  location: "Kumasi, Ghana",
+  email: "hello@dakyworld.com",
+  phone: "+233 545 950 611",
+  web: "dakyworld.com",
+  /** What the company is, in the one sentence the website leads its footer with. */
+  positioning: "Your outsourced IT department for growing businesses in Ghana and West Africa.",
+} as const;
+
+/**
  * One sellable line. `anchorPrice` is a price Dakyworld genuinely publishes;
  * where there isn't one, it stays null and the writer must say the number
  * comes after the discovery call rather than make one up.

@@ -1,5 +1,7 @@
 import { createHmac } from "node:crypto";
 import { SETTING, getSetting } from "../lib/settings.js";
+import { textFooter, wrapEmail } from "./emailLetterhead.js";
+import { COMPANY } from "./dakyworld.js";
 import type { RecipientContext } from "./emailContext.js";
 
 /**
@@ -38,44 +40,50 @@ function linkify(value: string): string {
 }
 
 /**
- * Plain text to HTML. Deliberately minimal — a business email that arrives
- * looking like a newsletter reads as a campaign, and a campaign is easier to
- * ignore than a letter. System font stack, one accent colour, no images, no
- * tracking pixel.
+ * Plain text to HTML, on the Dakyworld letterhead.
+ *
+ * The letter itself stays deliberately plain — paragraphs, one accent colour
+ * for links, no images in the body, no tracking pixel — because a business
+ * email that arrives looking like a newsletter reads as a campaign, and a
+ * campaign is easier to ignore than a letter. What surrounds it is the
+ * identity: the lock-up above, the ink footer below. See emailLetterhead.ts.
  */
 export function toHtml(body: string, signature: string | null, unsubscribeUrl: string | null): string {
   const paragraphs = body
     .split(/\n{2,}/)
     .map((block) => block.trim())
     .filter(Boolean)
-    .map((block) => `<p style="margin:0 0 16px">${linkify(escapeHtml(block)).replace(/\n/g, "<br>")}</p>`)
+    .map((block) => `<p style="margin:0 0 18px">${linkify(escapeHtml(block)).replace(/\n/g, "<br>")}</p>`)
     .join("");
 
-  const signatureHtml = signature
-    ? `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #dfe4eb;color:#69758a;font-size:13px;line-height:1.6">${linkify(
-        escapeHtml(signature),
-      ).replace(/\n/g, "<br>")}</div>`
-    : "";
-
-  const unsubscribeHtml = unsubscribeUrl
-    ? `<div style="margin-top:18px;color:#8993a6;font-size:11px">If you would rather not hear from us, <a href="${unsubscribeUrl}" style="color:#8993a6">unsubscribe</a> and we will not write again.</div>`
-    : "";
-
-  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;color:#08101f;max-width:580px">${paragraphs}${signatureHtml}${unsubscribeHtml}</div>`;
+  return wrapEmail({
+    bodyHtml: paragraphs,
+    bodyText: body,
+    signature: signature ? linkify(escapeHtml(signature)).replace(/\n/g, "<br>") : null,
+    unsubscribeUrl,
+  });
 }
 
-/** The text alternative — the same words, plus the same signature and opt-out. */
+/**
+ * The text alternative — the same words and signature, closed by the same
+ * details the footer band carries, so the two parts say the same thing.
+ */
 export function toText(body: string, signature: string | null, unsubscribeUrl: string | null): string {
-  return [body.trim(), signature ? `\n--\n${signature}` : "", unsubscribeUrl ? `\nUnsubscribe: ${unsubscribeUrl}` : ""]
+  return [body.trim(), signature ? `\n${signature}` : "", `\n${textFooter(unsubscribeUrl)}`]
     .filter(Boolean)
     .join("\n");
 }
 
+/**
+ * Who signed it, and nothing else. The address, the phone number and the
+ * website are in the footer band the letterhead draws — a signature that
+ * repeats them makes the bottom of every email say the same thing twice.
+ */
 export async function signature(): Promise<string | null> {
   const stored = await getSetting(SETTING.MAIL_SIGNATURE);
   if (stored !== null) return stored.trim() || null;
   const name = (await getSetting(SETTING.MAIL_FROM_NAME)) ?? "Dan Kwame Ayipah";
-  return `${name}\nDakyworld — your outsourced IT department\nKumasi, Ghana · dakyworld.com`;
+  return `${name}\nFounder, ${COMPANY.displayName}`;
 }
 
 /**

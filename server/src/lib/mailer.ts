@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { SETTING, getSetting } from "./settings.js";
 import { HostingerMailError, hostingerConfigured, sendViaHostinger } from "./hostingerMail.js";
+import { inlineBrandImages } from "./brandAssets.js";
 
 /**
  * Outbound email.
@@ -53,6 +54,8 @@ export interface Attachment {
   path?: string;
   content?: Buffer;
   contentType?: string;
+  /** Set on the letterhead artwork, which the HTML points at as `cid:…`. */
+  cid?: string;
 }
 
 export async function readMailerConfig(): Promise<MailerConfig | null> {
@@ -187,9 +190,17 @@ export interface SendReceipt {
 }
 
 export async function sendMail(args: SendArgs): Promise<SendReceipt> {
+  // The letterhead artwork rides along as inline parts, added here rather than
+  // at compose time so a draft written last week still goes out on the current
+  // identity — and so nothing is attached to a message that doesn't show it.
+  const withBranding: SendArgs = {
+    ...args,
+    attachments: [...(args.attachments ?? []), ...inlineBrandImages(args.html)],
+  };
+
   if ((await activeTransport()) === "HOSTINGER") {
     try {
-      return await sendViaHostinger(args);
+      return await sendViaHostinger(withBranding);
     } catch (err) {
       // One error type reaches the routes, whichever transport failed.
       if (err instanceof HostingerMailError) throw new MailerError(err.status, err.message);
@@ -222,7 +233,7 @@ export async function sendMail(args: SendArgs): Promise<SendReceipt> {
     subject: args.subject,
     html: args.html,
     text: args.text,
-    attachments: args.attachments,
+    attachments: withBranding.attachments,
     headers,
   });
 

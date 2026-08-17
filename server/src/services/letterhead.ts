@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type PDFDocument from "pdfkit";
+import { COMPANY } from "./dakyworld.js";
 
 type PDFDoc = InstanceType<typeof PDFDocument>;
 
@@ -61,15 +62,9 @@ export const CONTENT_TOP = 168;
 export const CONTENT_BOTTOM = 96;
 export const CONTENT_W = PAGE_W - MARGIN_X * 2;
 
-const COMPANY = {
-  name: "DAKYWORLD",
-  tagline: "ONE IT COMPANY. EVERYTHING YOUR BUSINESS NEEDS.",
-  footerLine: "ONE PARTNER. ALL YOUR IT.",
-  location: "Kumasi, Ghana",
-  email: "hello@dakyworld.com",
-  phone: "+233 545 950 611",
-  web: "dakyworld.com",
-};
+// COMPANY — the name, tagline and address block — is imported at the top of
+// this file. It is shared with the Word cut and with email so a phone number
+// only ever changes in one place. See services/dakyworld.ts.
 
 // --- The real logo, if it has been supplied --------------------------------
 

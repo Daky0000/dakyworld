@@ -21,6 +21,7 @@ import {
 } from "docx";
 import { ribbon, RIBBON_PT } from "./png.js";
 import { readLogoAsset } from "./letterhead.js";
+import { COMPANY } from "./dakyworld.js";
 import type { ProposalPdfData } from "./pdf.js";
 
 /**
@@ -58,15 +59,8 @@ const LINE = "DFE4EB";
 
 const FONT = "Arial";
 
-const COMPANY = {
-  name: "DAKYWORLD",
-  tagline: "ONE IT COMPANY. EVERYTHING YOUR BUSINESS NEEDS.",
-  footerLine: "ONE PARTNER. ALL YOUR IT.",
-  location: "Kumasi, Ghana",
-  email: "hello@dakyworld.com",
-  phone: "+233 545 950 611",
-  web: "dakyworld.com",
-};
+// COMPANY is imported at the top: one address block for the PDF letterhead,
+// this Word cut and every email. See services/dakyworld.ts.
 
 // A4, and the same content area the PDF leaves itself.
 const PAGE = { width: twip(595.28), height: twip(841.89) };
