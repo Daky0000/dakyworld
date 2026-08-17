@@ -19,6 +19,8 @@ import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
 import { agentsRouter } from "./routes/agents.js";
 import { captureRouter } from "./routes/capture.js";
+import { toolsRouter } from "./routes/tools.js";
+import { securityHeaders } from "./middleware/security.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
@@ -41,6 +43,7 @@ const CLIENT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const hasBuiltClient = existsSync(path.join(CLIENT_DIST, "index.html"));
 
 app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? "http://localhost:5173", credentials: true }));
+app.use(securityHeaders);
 
 // Stripe webhook needs the raw request body for signature verification, so
 // it's mounted before the global express.json() parser below.
@@ -115,6 +118,7 @@ app.use("/api/dashboard", dashboardRouter);
 app.use("/api/scrapers", scrapersRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/capture", captureRouter);
+app.use("/api/tools", toolsRouter);
 app.use("/api/settings", settingsRouter);
 
 if (!hasBuiltClient) {

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { clearLoginAttempts, loginRateLimit } from "../middleware/security.js";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
@@ -23,7 +24,7 @@ const loginInput = z.object({
  * set, deactivated account and wrong password all return the same message, so
  * this can't be used to enumerate who has an account.
  */
-authRouter.post("/login", async (req, res, next) => {
+authRouter.post("/login", loginRateLimit, async (req, res, next) => {
   try {
     const parsed = loginInput.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Email and password are required" });
@@ -39,6 +40,9 @@ authRouter.post("/login", async (req, res, next) => {
       return res.status(401).json({ error: "Incorrect email or password" });
     }
 
+    // Signing in successfully clears the counter, so a person who mistyped
+    // twice and then got it right isn't locked out by their own attempts.
+    clearLoginAttempts(req);
     setSessionCookie(res, await createSession(user.id));
     res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
   } catch (err) {
