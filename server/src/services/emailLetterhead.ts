@@ -57,7 +57,7 @@ function escapeHtml(value: string): string {
 /**
  * The line Gmail and Apple Mail show next to the subject. Without one they
  * quote the first words of the letterhead instead, which reads as "Kumasi,
- * Ghana hello@dakyworld.com" in every inbox.
+ * Ghana info@dakyworld.com" in every inbox.
  */
 function preheader(text: string): string {
   const line = escapeHtml(text.replace(/\s+/g, " ").trim().slice(0, 140));

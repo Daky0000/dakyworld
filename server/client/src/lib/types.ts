@@ -415,6 +415,8 @@ export interface AppSettings {
     config: CaptureConfig;
     defaults: CaptureConfig;
     envManaged: { monthlyBudgetUsd: boolean; maxConcurrentRuns: boolean; timezone: boolean };
+    /** Which pre-defined actor runs which kind of capture. */
+    tasks: CaptureTaskInfo[];
   };
   analyst: { configured: boolean; envManaged: boolean; key: string | null; model: string };
   google: {
@@ -938,6 +940,28 @@ export interface CaptureIntent {
 export interface CaptureRunResult {
   started: Array<{ kind: string; runId: string; count: number }>;
   failed: Array<{ kind: string; reason: string }>;
+}
+
+/** One kind of capture and the pre-defined actor behind it. */
+export interface CaptureTaskInfo {
+  kind: CaptureTargetKind;
+  label: string;
+  family: "Website" | "Social media" | "Directories";
+  /** What this task takes, in plain words. */
+  takes: string;
+  example: string;
+  defaultActorId: string;
+  actorId: string;
+  /** True when this task has been pointed at an actor other than the shipped one. */
+  overridden: boolean;
+  input: Record<string, unknown>;
+}
+
+/** The answer to "would this value run as this task?", before anything is charged. */
+export interface CaptureCheck {
+  value: string;
+  problem: string | null;
+  suggestion: CaptureTargetKind | null;
 }
 
 // --- Tools -----------------------------------------------------------------

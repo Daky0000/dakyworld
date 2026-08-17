@@ -10,66 +10,110 @@
 
   var HEADER_HTML = [
     '<header class="site-header" id="siteHeader">',
-    '  <div class="header-wrap">',
-    '    <div class="header-shell">',
+    '  <div class="header-shell" id="headerShell">',
     '',
-    '      <a href="/" class="brand" aria-label="Dakyworld home">',
-    '        <img',
-    '          class="brand-logo"',
-    '          src="assets/brand/header-lockup-on-dark.png"',
-    '          alt="Dakyworld"',
-    '          width="379"',
-    '          height="68"',
-    '        >',
-    '      </a>',
-    '',
-    '      <nav class="main-nav" id="mainNav" aria-label="Main">',
-    '        <a href="/services">Coverage</a>',
-    '        <a href="/work">Work</a>',
-    '        <a href="/how-we-work">Process</a>',
-    '        <div class="nav-dropdown">',
-    '          <button class="nav-dropdown-trigger" type="button" aria-expanded="false" aria-controls="pricing-menu">',
-    '            Pricing',
-    '            <span aria-hidden="true">&#8964;</span>',
-    '          </button>',
-    '          <div id="pricing-menu" class="nav-dropdown-menu" hidden>',
-    '            <a href="/pricing"><span>Choose How to Start</span><small>Find the right way to work with us</small></a>',
-    '            <a href="/monthly-support"><span>Monthly Support</span><small>Ongoing technology management</small></a>',
-    '            <a href="/one-time-projects"><span>One-Time Projects</span><small>Focused work with a defined outcome</small></a>',
-    '            <a href="/foundation-build"><span>Digital Foundation Build</span><small>Organise, secure and improve core systems</small></a>',
-    '          </div>',
-    '        </div>',
-    '        <a href="/about">About</a>',
-    '        <a href="/contact" class="nav-cta">',
-    '          Let&#39;s talk',
-    '          <span aria-hidden="true">&#8599;</span>',
-    '        </a>',
-    '      </nav>',
-    '',
-    '      <button',
-    '        class="menu-toggle"',
-    '        id="menuToggle"',
-    '        type="button"',
-    '        aria-label="Open navigation"',
-    '        aria-controls="mainNav"',
-    '        aria-expanded="false"',
+    '    <a href="/" class="brand" aria-label="Dakyworld home">',
+    '      <img',
+    '        class="brand-logo"',
+    '        src="assets/brand/header-lockup-on-dark.png"',
+    '        alt="Dakyworld"',
+    '        width="379"',
+    '        height="68"',
     '      >',
-    '        <span aria-hidden="true"></span>',
-    '      </button>',
+    '    </a>',
     '',
-    '    </div>',
+    '    <nav class="main-nav" id="mainNav" aria-label="Main">',
+    '      <a href="/services">Coverage</a>',
+    '      <a href="/work">Work</a>',
+    '      <a href="/how-we-work">Process</a>',
+    '',
+    '      <!-- Pricing is a page, not just a menu: the trigger goes to it, and the',
+    '           two ways of working hang underneath. -->',
+    '      <div class="nav-dropdown">',
+    '        <a class="nav-dropdown-trigger" href="/pricing">',
+    '          Pricing',
+    '          <span aria-hidden="true">&#8964;</span>',
+    '        </a>',
+    '',
+    '        <div id="pricing-menu" class="nav-dropdown-menu" hidden>',
+    '          <a href="/monthly-support">',
+    '            <span>Monthly Support</span>',
+    '            <small>Ongoing technology management</small>',
+    '          </a>',
+    '',
+    '          <a href="/one-time-projects">',
+    '            <span>One-Time Projects</span>',
+    '            <small>Focused work with a defined outcome</small>',
+    '          </a>',
+    '        </div>',
+    '      </div>',
+    '',
+    '      <a href="/about">About</a>',
+    '',
+    '      <a href="/contact" class="nav-cta">',
+    '        Let&#39;s talk',
+    '        <!-- Numeric entity rather than a literal glyph: an entity survives a',
+    '             re-save whatever the editor\'s encoding. -->',
+    '        <span aria-hidden="true">&#8599;</span>',
+    '      </a>',
+    '    </nav>',
+    '',
+    '    <button',
+    '      class="menu-toggle"',
+    '      id="menuToggle"',
+    '      type="button"',
+    '      aria-label="Open navigation"',
+    '      aria-controls="mainNav"',
+    '      aria-expanded="false"',
+    '    >',
+    '      <span aria-hidden="true"></span>',
+    '    </button>',
+    '',
     '  </div>',
     '</header>'
   ].join('\n');
 
   var FOOTER_HTML = [
     '<footer>',
-    '  <div class="footer-grid">',
-    '    <div><a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96"></a><p class="mt-5 max-w-sm text-sm leading-7" style="color:rgba(255,255,255,.45)">Your outsourced IT department for growing businesses. One monthly retainer. One accountable team. The technology your business depends on, properly managed.</p></div>',
-    '    <div><h3>Explore</h3><ul><li><a href="/services">Coverage</a></li><li><a href="/work">Work</a></li><li><a href="/how-we-work">Process</a></li><li><a href="/pricing">Pricing</a></li></ul></div>',
-    '    <div><h3>Company</h3><ul><li><a href="/about">About</a></li><li><a href="/insights">Insights</a></li><li><a href="/contact">Let&#39;s talk</a></li></ul></div>',
+    '  <div class="wrap">',
+    '    <div class="footer-grid">',
+    '      <div>',
+    '        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96"></a>',
+    '        <p class="footer-blurb">Your outsourced IT department for growing businesses in Ghana and West Africa. One monthly retainer. One accountable team. The technology your business depends on, properly managed.</p>',
+    '      </div>',
+    '      <div>',
+    '        <h3>Explore</h3>',
+    '        <ul>',
+    '          <li><a href="/services">Coverage</a></li>',
+    '          <li><a href="/work">Work</a></li>',
+    '          <li><a href="/how-we-work">Process</a></li>',
+    '          <li><a href="/pricing">Pricing</a></li>',
+    '          <li><a href="/monthly-support">Monthly Support</a></li>',
+    '          <li><a href="/one-time-projects">One-Time Projects</a></li>',
+    '        </ul>',
+    '      </div>',
+    '      <div>',
+    '        <h3>Company</h3>',
+    '        <ul>',
+    '          <li><a href="/about">About</a></li>',
+    '          <li><a href="/insights">Insights</a></li>',
+    '          <li><a href="/contact">Let&#39;s talk</a></li>',
+    '          <li><a href="/privacy">Privacy</a></li>',
+    '          <li><a href="/terms">Terms</a></li>',
+    '        </ul>',
+    '      </div>',
+    '      <div>',
+    '        <h3>Get in touch</h3>',
+    '        <ul>',
+    '          <li><a href="mailto:info@dakyworld.com">info@dakyworld.com</a></li>',
+    '          <li><a href="tel:+233545950611">+233 545 950 611</a></li>',
+    '          <li>Kumasi, Ghana</li>',
+    '        </ul>',
+    '        <a href="/contact" class="footer-cta">Start a conversation <span aria-hidden="true">&#8599;</span></a>',
+    '      </div>',
+    '    </div>',
+    '    <div class="footer-bottom"><span>&copy; <span id="year">2026</span> Dakyworld &middot; All rights reserved</span><span>Kumasi &middot; Serving Ghana and West Africa</span><span>One partner. All your IT.</span></div>',
     '  </div>',
-    '  <div class="footer-bottom"><span>&copy; <span id="year">2026</span> Dakyworld &middot; All rights reserved</span><span>Kumasi &middot; Serving Ghana and West Africa</span><span><a href="/privacy">Privacy</a> &middot; <a href="/terms">Terms</a></span></div>',
     '</footer>'
   ].join('\n');
 
@@ -391,7 +435,7 @@
       var status = form.querySelector('.form-status');
       var message =
         'This form is not connected to an inbox yet — please email ' +
-        'hello@dakyworld.com or call +233 545 950 611 and we will reply the same day.';
+        'info@dakyworld.com or call +233 545 950 611 and we will reply the same day.';
 
       if (status) {
         status.textContent = message;
@@ -413,66 +457,17 @@
       var status = document.getElementById('newsletterStatus');
       if (status) {
         status.textContent =
-          'Sign-up is not live yet. Email hello@dakyworld.com with “subscribe” and we will add you.';
+          'Sign-up is not live yet. Email info@dakyworld.com with “subscribe” and we will add you.';
         status.hidden = false;
       }
       var button = newsletter.querySelector('button');
       if (button) settle(button, 'Not live yet');
     });
   }
-  /* Pricing dropdown menu ------------------------------------------------- */
-  var pricingWrapper = document.querySelector('.nav-dropdown');
-  var pricingBtn = document.querySelector('.nav-dropdown-trigger');
-  var pricingMenu = document.getElementById('pricing-menu');
-  if (pricingWrapper && pricingBtn && pricingMenu) {
-    function setPricingMenu(open) {
-      pricingMenu.hidden = !open;
-      pricingBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    }
+  /* The pricing menu opens on hover and on focus, in CSS — see site.css.
+     It used to toggle on click, which cannot survive the trigger becoming a
+     link to the pricing page: a click has to navigate there. */
 
-    pricingBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      setPricingMenu(pricingMenu.hidden);
-    });
-
-    document.addEventListener('click', function (e) {
-      if (!pricingWrapper.contains(e.target)) setPricingMenu(false);
-    });
-
-    pricingMenu.querySelectorAll('a').forEach(function (link) {
-      link.addEventListener('click', function () {
-        setPricingMenu(false);
-      });
-    });
-
-    pricingBtn.addEventListener('keydown', function (e) {
-      if (e.key === 'ArrowDown' && pricingMenu.hidden) {
-        e.preventDefault();
-        setPricingMenu(true);
-        setTimeout(function () { pricingMenu.querySelector('a') && pricingMenu.querySelector('a').focus(); }, 0);
-      }
-    });
-
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !pricingMenu.hidden) {
-        setPricingMenu(false);
-        pricingBtn.focus();
-      }
-    });
-
-    pricingMenu.addEventListener('keydown', function (e) {
-      if (e.key === 'Tab') {
-        var links = pricingMenu.querySelectorAll('a');
-        var last = links[links.length - 1];
-        if (e.shiftKey && document.activeElement === links[0]) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          setPricingMenu(false);
-        }
-      }
-    });
-  }
   /* Footer year ---------------------------------------------------------- */
   var year = document.getElementById('year');
   if (year) year.textContent = new Date().getFullYear();

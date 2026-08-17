@@ -23,80 +23,65 @@
 <div class="cursor-glow" id="cursorGlow" aria-hidden="true"></div>
 
 <header class="site-header" id="siteHeader">
-  <div class="header-wrap">
-    <div class="header-shell">
+  <div class="header-shell" id="headerShell">
 
-      <a href="/" class="brand" aria-label="Dakyworld home">
-        <img
-          class="brand-logo"
-          src="assets/brand/header-lockup-on-dark.png"
-          alt="Dakyworld"
-          width="379"
-          height="68"
-        >
-      </a>
-
-      <nav class="main-nav" id="mainNav" aria-label="Main">
-        <a href="/services.html">Coverage</a>
-        <a href="/work.html">Work</a>
-        <a href="/how-we-work.html">Process</a>
-        
-        <div class="nav-dropdown">
-          <button
-            class="nav-dropdown-trigger"
-            type="button"
-            aria-expanded="false"
-            aria-controls="pricing-menu"
-          >
-            Pricing
-            <span aria-hidden="true">⌄</span>
-          </button>
-
-          <div id="pricing-menu" class="nav-dropdown-menu" hidden>
-            <a href="/pricing.html">
-              <span>Choose How to Start</span>
-              <small>Find the right way to work with us</small>
-            </a>
-
-            <a href="/monthly-support.html">
-              <span>Monthly Support</span>
-              <small>Ongoing technology management</small>
-            </a>
-
-            <a href="/one-time-projects.html">
-              <span>One-Time Projects</span>
-              <small>Focused work with a defined outcome</small>
-            </a>
-
-            <a href="/foundation-build.html">
-              <span>Digital Foundation Build</span>
-              <small>Organise, secure and improve core systems</small>
-            </a>
-          </div>
-        </div>
-
-        <a href="/about.html">About</a>
-
-        <a href="/contact" class="nav-cta">
-          Let's talk
-          <!-- Numeric entity rather than a literal glyph: an entity survives a
-               re-save whatever the editor's encoding. -->
-          <span aria-hidden="true">&#8599;</span>
-        </a>
-      </nav>
-
-      <button
-        class="menu-toggle"
-        id="menuToggle"
-        type="button"
-        aria-label="Open navigation"
-        aria-controls="mainNav"
-        aria-expanded="false"
+    <a href="/" class="brand" aria-label="Dakyworld home">
+      <img
+        class="brand-logo"
+        src="assets/brand/header-lockup-on-dark.png"
+        alt="Dakyworld"
+        width="379"
+        height="68"
       >
-        <span aria-hidden="true"></span>
-      </button>
+    </a>
 
-    </div>
+    <nav class="main-nav" id="mainNav" aria-label="Main">
+      <a href="/services">Coverage</a>
+      <a href="/work">Work</a>
+      <a href="/how-we-work">Process</a>
+
+      <!-- Pricing is a page, not just a menu: the trigger goes to it, and the
+           two ways of working hang underneath. -->
+      <div class="nav-dropdown">
+        <a class="nav-dropdown-trigger" href="/pricing">
+          Pricing
+          <span aria-hidden="true">&#8964;</span>
+        </a>
+
+        <div id="pricing-menu" class="nav-dropdown-menu" hidden>
+          <a href="/monthly-support">
+            <span>Monthly Support</span>
+            <small>Ongoing technology management</small>
+          </a>
+
+          <a href="/one-time-projects">
+            <span>One-Time Projects</span>
+            <small>Focused work with a defined outcome</small>
+          </a>
+        </div>
+      </div>
+
+      <a href="/about">About</a>
+
+      <a href="/contact" class="nav-cta">
+        Let&#39;s talk
+        <!-- Numeric entity rather than a literal glyph: an entity survives a
+             re-save whatever the editor's encoding. -->
+        <span aria-hidden="true">&#8599;</span>
+      </a>
+    </nav>
+
+    <button
+      class="menu-toggle"
+      id="menuToggle"
+      type="button"
+      aria-label="Open navigation"
+      aria-controls="mainNav"
+      aria-expanded="false"
+    >
+      <span aria-hidden="true"></span>
+    </button>
+
   </div>
 </header>
 
@@ -262,7 +247,7 @@
       <h2 class="display mt-6">Your technology should work <span>quietly.</span></h2>
       <p class="mt-8">You should not have to spend your Monday chasing a developer, checking whether your website is working or worrying about a security issue.</p>
       <p class="mt-6">If technology has become another job for you to manage, we can help. We will review your current setup, explain what needs attention and suggest the next step.</p>
-      <p class="mt-6 text-sm" style="color:rgba(255,255,255,.4)"><a href="mailto:hello@dakyworld.com">hello@dakyworld.com</a> · <a href="tel:+233545950611">+233 545 950 611</a> · Kumasi, Ghana</p>
+      <p class="mt-6 text-sm" style="color:rgba(255,255,255,.4)"><a href="mailto:info@dakyworld.com">info@dakyworld.com</a> · <a href="tel:+233545950611">+233 545 950 611</a> · Kumasi, Ghana</p>
     </div>
     <div>
       <a href="/contact" class="btn btn-primary">Book a 30-minute consultation <span class="pip">→</span></a>
@@ -276,12 +261,42 @@
 <footer>
   <div class="wrap">
     <div class="footer-grid">
-      <div><a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96"></a><p class="mt-5 max-w-sm text-sm leading-7" style="color:rgba(255,255,255,.45)">The IT department you hire instead of building one. One monthly fee, everything technical, owned.</p></div>
-      <div><h3>Explore</h3><ul><li><a href="/services">Coverage</a></li><li><a href="/work">Work</a></li><li><a href="/how-we-work">Process</a></li><li><a href="/pricing">Pricing</a></li><li><a href="/foundation-build.html">Foundation Build</a></li></ul></div>
-      <div><h3>Company</h3><ul><li><a href="/about">About</a></li><li><a href="/insights">Insights</a></li><li><a href="/contact">Contact</a></li></ul></div>
-      <div><h3>Get in touch</h3><ul><li><a href="mailto:hello@dakyworld.com">hello@dakyworld.com</a></li><li><a href="tel:+233545950611">+233 545 950 611</a></li><li>Kumasi, Ghana</li></ul></div>
+      <div>
+        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96"></a>
+        <p class="footer-blurb">Your outsourced IT department for growing businesses in Ghana and West Africa. One monthly retainer. One accountable team. The technology your business depends on, properly managed.</p>
+      </div>
+      <div>
+        <h3>Explore</h3>
+        <ul>
+          <li><a href="/services">Coverage</a></li>
+          <li><a href="/work">Work</a></li>
+          <li><a href="/how-we-work">Process</a></li>
+          <li><a href="/pricing">Pricing</a></li>
+          <li><a href="/monthly-support">Monthly Support</a></li>
+          <li><a href="/one-time-projects">One-Time Projects</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Company</h3>
+        <ul>
+          <li><a href="/about">About</a></li>
+          <li><a href="/insights">Insights</a></li>
+          <li><a href="/contact">Let&#39;s talk</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/terms">Terms</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Get in touch</h3>
+        <ul>
+          <li><a href="mailto:info@dakyworld.com">info@dakyworld.com</a></li>
+          <li><a href="tel:+233545950611">+233 545 950 611</a></li>
+          <li>Kumasi, Ghana</li>
+        </ul>
+        <a href="/contact" class="footer-cta">Start a conversation <span aria-hidden="true">&#8599;</span></a>
+      </div>
     </div>
-    <div class="footer-bottom"><span>© <span id="year">2026</span> Dakyworld · All rights reserved</span><span>Kumasi · Serving West Africa</span><span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></span></div>
+    <div class="footer-bottom"><span>&copy; <span id="year">2026</span> Dakyworld &middot; All rights reserved</span><span>Kumasi &middot; Serving Ghana and West Africa</span><span>One partner. All your IT.</span></div>
   </div>
 </footer>
 

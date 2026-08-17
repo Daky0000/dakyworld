@@ -3,7 +3,15 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { requireRole } from "../middleware/auth.js";
 import { interpret } from "../services/captureIntent.js";
-import { QUICK_ACTORS, quickInput, type QuickActorKind } from "../services/scraperTemplates.js";
+import type { QuickActorKind } from "../services/scraperTemplates.js";
+import {
+  TASK_KINDS,
+  actorInput,
+  checkForTask,
+  describeTasks,
+  readActorOverrides,
+  resolveActor,
+} from "../services/captureActors.js";
 import { runSource } from "../services/scraperRunner.js";
 import { readCaptureConfig } from "../services/captureConfig.js";
 
@@ -28,11 +36,39 @@ captureRouter.post("/interpret", async (req, res, next) => {
   }
 });
 
+/**
+ * The tasks that can be run and the actor behind each. Quick capture offers
+ * these when it wants a target's task corrected, or when the words could not be
+ * read at all and the person names the task themselves.
+ */
+captureRouter.get("/tasks", async (_req, res, next) => {
+  try {
+    res.json({ tasks: await describeTasks() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Reads one value against one task without running anything, so the UI can say
+ * "that is an Instagram link" while somebody is still typing.
+ */
+captureRouter.post("/check", async (req, res, next) => {
+  try {
+    const { kind, value } = z
+      .object({ kind: z.enum(TASK_KINDS as [QuickActorKind, ...QuickActorKind[]]), value: z.string().max(500) })
+      .parse(req.body);
+    res.json(checkForTask(kind, value));
+  } catch (err) {
+    next(err);
+  }
+});
+
 const runInput = z.object({
   targets: z
     .array(
       z.object({
-        kind: z.enum(Object.keys(QUICK_ACTORS) as [QuickActorKind, ...QuickActorKind[]]),
+        kind: z.enum(TASK_KINDS as [QuickActorKind, ...QuickActorKind[]]),
         value: z.string().min(1).max(500),
       }),
     )
@@ -46,17 +82,28 @@ captureRouter.post("/run", async (req, res, next) => {
   try {
     const { targets, label } = runInput.parse(req.body);
     const config = await readCaptureConfig();
+    const overrides = await readActorOverrides();
     const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-
-    // One source per kind, not per target, so ten pasted URLs are one run.
-    const grouped = new Map<QuickActorKind, string[]>();
-    for (const t of targets) grouped.set(t.kind, [...(grouped.get(t.kind) ?? []), t.value]);
 
     const started: Array<{ kind: string; runId: string; count: number }> = [];
     const failed: Array<{ kind: string; reason: string }> = [];
 
+    // Every value is checked against the task it was given before a single run
+    // starts. These actors bill per event: an Instagram handle sent to the
+    // Facebook actor is money spent on nothing, and the person can only be
+    // asked which task they meant while it is still free to ask.
+    const grouped = new Map<QuickActorKind, string[]>();
+    for (const target of targets) {
+      const checked = checkForTask(target.kind, target.value);
+      if (checked.problem) {
+        failed.push({ kind: target.kind, reason: `${target.value} — ${checked.problem}` });
+        continue;
+      }
+      grouped.set(target.kind, [...(grouped.get(target.kind) ?? []), checked.value]);
+    }
+
     for (const [kind, values] of grouped) {
-      const actor = QUICK_ACTORS[kind];
+      const actor = await resolveActor(kind, overrides);
       try {
         // A throwaway source per paste: two people capturing at once must not
         // overwrite each other's input between the write and the run.
@@ -64,7 +111,7 @@ captureRouter.post("/run", async (req, res, next) => {
           data: {
             name: `${label ?? "Quick capture"} · ${actor.label} · ${stamp}`,
             actorId: actor.actorId,
-            input: quickInput(kind, values) as object,
+            input: actorInput(actor, values) as object,
             preset: actor.preset,
             leadSource: actor.leadSource,
             groupName: `${label ?? "Quick capture"} · {{date}}`,

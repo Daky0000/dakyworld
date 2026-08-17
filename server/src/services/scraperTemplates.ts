@@ -438,9 +438,6 @@ export const QUICK_ACTORS = {
 
 export type QuickActorKind = keyof typeof QUICK_ACTORS;
 
-/** Builds the actor input for one group of pasted values. */
-export function quickInput(kind: QuickActorKind, values: string[]): Record<string, unknown> {
-  const actor = QUICK_ACTORS[kind];
-  const payload = actor.wrap === "url-objects" ? values.map((url) => ({ url })) : values;
-  return { ...actor.input, [actor.inputKey]: payload };
-}
+// Building the input for one of these moved to services/captureActors.ts, which
+// merges in whatever the Owner has changed in Settings → Lead capture. The
+// pairings above are the defaults it starts from.

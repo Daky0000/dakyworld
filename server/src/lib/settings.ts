@@ -30,6 +30,12 @@ export const SETTING = {
   CAPTURE_NOTIFY: "capture.notify",
   CAPTURE_NOTIFY_EMAIL: "capture.notifyEmail",
   CAPTURE_RETENTION_DAYS: "capture.retentionDays",
+  /**
+   * Which Apify actor runs which kind of capture, as JSON, holding only what
+   * has been changed from the shipped pairing: `{"WEBSITE":{"actorId":"…"}}`.
+   * See services/captureActors.ts.
+   */
+  CAPTURE_ACTORS: "capture.actors",
 
   /** Powers the spreadsheet analyst — see lib/anthropic.ts. */
   ANTHROPIC_KEY: "anthropic.apiKey",

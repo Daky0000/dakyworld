@@ -5,6 +5,7 @@ import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "..
 import { maskSecret } from "../lib/secrets.js";
 import { ApifyError, clearApifyCaches, getAccount, getMonthlyUsage } from "../lib/apify.js";
 import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
+import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from "../services/captureActors.js";
 import { isValidTimezone } from "../services/scheduler.js";
 import { AnalystError, ANALYST_MODEL, verifyKey } from "../lib/anthropic.js";
 import {
@@ -88,6 +89,8 @@ async function describeCapture() {
     config: await readCaptureConfig(),
     defaults: CAPTURE_DEFAULTS,
     envManaged: captureEnvManaged(),
+    /** Which pre-defined actor runs which kind of capture — see captureActors.ts. */
+    tasks: await describeTasks(),
   };
 }
 
@@ -337,6 +340,44 @@ settingsRouter.put("/capture", async (req, res, next) => {
       .parse(req.body);
 
     await writeCaptureConfig(input);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Points one capture task at a different actor, or puts it back to the one the
+ * app ships with. Nothing is validated against Apify here: an actor id that
+ * does not exist fails loudly on the first run with Apify's own message, and
+ * checking it at save time would mean a network round trip on a screen that is
+ * usually just being read.
+ */
+settingsRouter.put("/capture/actors/:kind", async (req, res, next) => {
+  try {
+    const kind = req.params.kind as CaptureTask;
+    if (!TASK_KINDS.includes(kind)) return res.status(404).json({ error: `There is no capture task called ${req.params.kind}.` });
+
+    const { actorId, input } = z
+      .object({
+        // Written `username/actor-name` in Apify's UI; the runner normalises it.
+        actorId: z.string().max(120).optional(),
+        input: z.record(z.unknown()).optional(),
+      })
+      .parse(req.body);
+
+    await writeActorOverride(kind, { actorId, input });
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/capture/actors/:kind", async (req, res, next) => {
+  try {
+    const kind = req.params.kind as CaptureTask;
+    if (!TASK_KINDS.includes(kind)) return res.status(404).json({ error: `There is no capture task called ${req.params.kind}.` });
+    await writeActorOverride(kind, null);
     res.json(await describeAll(req));
   } catch (err) {
     next(err);

@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Badge, Button, Card } from "./ui";
-import type { CaptureIntent, CaptureRunResult, CaptureTargetKind } from "../lib/types";
+import type { CaptureIntent, CaptureRunResult, CaptureTargetKind, CaptureTaskInfo } from "../lib/types";
 
 /**
  * Paste a link, or say what you want.
@@ -13,6 +13,13 @@ import type { CaptureIntent, CaptureRunResult, CaptureTargetKind } from "../lib/
  *
  * It reads before it runs, always. Five pay-per-event actors sit behind this,
  * so what it understood is shown back first and a person presses the button.
+ *
+ * **And the reading can be overruled.** Every target carries the task it was
+ * read as, as a dropdown: "no, that is their Facebook Page, not their site."
+ * When the words could not be read at all, the same list is offered directly —
+ * pick the task, give it the input it wants, run it. Reading is a convenience,
+ * never the only way in. See services/captureActors.ts for what sits behind
+ * each task and what each one accepts.
  */
 
 const KIND_LABEL: Record<CaptureTargetKind, string> = {
@@ -35,14 +42,38 @@ export function QuickCapture() {
   const [text, setText] = useState("");
   const [intent, setIntent] = useState<CaptureIntent | null>(null);
   const [done, setDone] = useState<CaptureRunResult | null>(null);
+  /** Set when the task is being named by hand rather than read out of the text. */
+  const [manual, setManual] = useState<CaptureTargetKind | null>(null);
+
+  const { data: taskList } = useQuery({
+    queryKey: ["capture-tasks"],
+    queryFn: () => api.get<{ tasks: CaptureTaskInfo[] }>("/capture/tasks"),
+    staleTime: 5 * 60_000,
+  });
+  const tasks = taskList?.tasks ?? [];
 
   const read = useMutation({
     mutationFn: (value: string) => api.post<CaptureIntent>("/capture/interpret", { text: value }),
     onSuccess: (data) => {
       setIntent(data);
       setDone(null);
+      setManual(null);
     },
   });
+
+  /** Re-reads one target as a different task, without touching the others. */
+  const retask = (index: number, kind: CaptureTargetKind) => {
+    setIntent((current) =>
+      current
+        ? {
+            ...current,
+            targets: current.targets.map((target, i) =>
+              i === index ? { ...target, kind, why: `Set by hand to ${KIND_LABEL[kind]}.` } : target,
+            ),
+          }
+        : current,
+    );
+  };
 
   const run = useMutation({
     mutationFn: (targets: CaptureIntent["targets"]) =>
@@ -104,6 +135,20 @@ export function QuickCapture() {
 
       {error && <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error.message}</p>}
 
+      {/* Reading it failed — no Anthropic key, or a request the model would not
+          guess at. That is precisely when naming the task by hand matters, so
+          the picker appears here rather than leaving a dead end. */}
+      {read.isError && (
+        <TaskPicker
+          tasks={tasks}
+          chosen={manual}
+          onChoose={setManual}
+          busy={busy}
+          seed={text}
+          onRun={(kind, value) => run.mutate([{ kind, value, why: "" }])}
+        />
+      )}
+
       {intent && (
         <div className="mt-5 border-t border-line pt-5">
           {intent.summary && <p className="text-sm text-ink/70">{intent.summary}</p>}
@@ -115,8 +160,21 @@ export function QuickCapture() {
               </h3>
               <ul className="mt-2 space-y-2">
                 {intent.targets.map((target, i) => (
-                  <li key={`${target.kind}-${target.value}-${i}`} className="flex items-start gap-2.5">
-                    <Badge tone="muted">{KIND_LABEL[target.kind] ?? target.kind}</Badge>
+                  <li key={`${target.value}-${i}`} className="flex items-start gap-2.5">
+                    {/* The task is a choice, not a verdict — reading it wrong
+                        should cost a click, not a wasted paid run. */}
+                    <select
+                      className="shrink-0 border border-line bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink/70"
+                      value={target.kind}
+                      onChange={(event) => retask(i, event.target.value as CaptureTargetKind)}
+                      aria-label="What to run this as"
+                    >
+                      {(tasks.length ? tasks.map((t) => t.kind) : (Object.keys(KIND_LABEL) as CaptureTargetKind[])).map((kind) => (
+                        <option key={kind} value={kind}>
+                          {KIND_LABEL[kind] ?? kind}
+                        </option>
+                      ))}
+                    </select>
                     <div className="min-w-0">
                       <p className="truncate text-sm text-ink">{target.value}</p>
                       {target.why && <p className="text-xs text-ink/45">{target.why}</p>}
@@ -139,6 +197,19 @@ export function QuickCapture() {
           {intent.question && (
             <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{intent.question}</p>
           )}
+
+          {/* Nothing came out of the words: say what it is instead of rewording
+              it until the reader agrees. */}
+          {intent.targets.length === 0 && (
+            <TaskPicker
+              tasks={tasks}
+              chosen={manual}
+              onChoose={setManual}
+              busy={busy}
+              seed={text}
+              onRun={(kind, value) => run.mutate([{ kind, value, why: "" }])}
+            />
+          )}
         </div>
       )}
 
@@ -149,13 +220,88 @@ export function QuickCapture() {
               Started {done.started.length} run{done.started.length === 1 ? "" : "s"}. Leads appear below as they land.
             </p>
           )}
-          {done.failed.map((f) => (
-            <p key={f.kind} className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {done.failed.map((f, i) => (
+            <p key={`${f.kind}-${i}`} className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               {KIND_LABEL[f.kind as CaptureTargetKind] ?? f.kind}: {f.reason}
             </p>
           ))}
         </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * Naming the task by hand. Each one says what it takes, because the whole
+ * reason to be here is that the guess was wrong or there was nothing to guess
+ * from — a second wrong guess helps nobody.
+ */
+function TaskPicker({
+  tasks,
+  chosen,
+  onChoose,
+  onRun,
+  busy,
+  seed,
+}: {
+  tasks: CaptureTaskInfo[];
+  chosen: CaptureTargetKind | null;
+  onChoose: (kind: CaptureTargetKind | null) => void;
+  onRun: (kind: CaptureTargetKind, value: string) => void;
+  busy: boolean;
+  seed: string;
+}) {
+  const [value, setValue] = useState("");
+  const task = tasks.find((t) => t.kind === chosen) ?? null;
+
+  if (!tasks.length) return null;
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Or say what it is</h3>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {tasks.map((entry) => (
+          <button
+            key={entry.kind}
+            type="button"
+            onClick={() => {
+              onChoose(entry.kind);
+              // The words already typed are usually the input itself.
+              setValue(seed.trim().split("\n")[0] ?? "");
+            }}
+            className={`rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+              chosen === entry.kind ? "border-ink bg-ink text-cream" : "border-line text-ink/50 hover:border-blue/40 hover:text-ink"
+            }`}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+
+      {task && (
+        <form
+          className="mt-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (value.trim()) onRun(task.kind, value.trim());
+          }}
+        >
+          <p className="text-xs text-ink/50">{task.takes}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              className="input max-w-md flex-1"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              placeholder={task.example}
+              autoFocus
+            />
+            <Button variant="accent" type="submit" disabled={busy || !value.trim()}>
+              {busy ? "Starting…" : `Run as ${task.label}`}
+            </Button>
+          </div>
+          <p className="mt-1.5 font-mono text-[10px] text-ink/35">runs {task.actorId}</p>
+        </form>
+      )}
+    </div>
   );
 }

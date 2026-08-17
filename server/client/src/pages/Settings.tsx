@@ -979,9 +979,114 @@ function CapturePanel({ settings }: { settings: AppSettings }) {
       )}
       <ErrorNote error={connect.error ?? disconnect.error} />
 
+      <CaptureTasks settings={settings} />
       <CaptureBehaviour settings={settings} />
       <ActorHealthList />
     </Panel>
+  );
+}
+
+/**
+ * Which pre-defined actor runs which kind of capture.
+ *
+ * Quick capture works out what you typed — a site, a search phrase, a
+ * Facebook Page — and runs the actor paired with it here. The pairing shipped
+ * with the app and is worth changing exactly twice: when a better actor turns
+ * up, and when the one in use starts failing. Nothing else needs an actor id.
+ */
+function CaptureTasks({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const tasks = settings.capture.tasks ?? [];
+  const [editing, setEditing] = useState<string | null>(null);
+  const [actorId, setActorId] = useState("");
+
+  const point = useMutation({
+    mutationFn: (task: { kind: string; actorId: string }) =>
+      api.put<AppSettings>(`/settings/capture/actors/${task.kind}`, { actorId: task.actorId }),
+    onSuccess: (result) => {
+      save(result);
+      setEditing(null);
+    },
+  });
+  const reset = useMutation({
+    mutationFn: (kind: string) => api.delete<AppSettings>(`/settings/capture/actors/${kind}`),
+    onSuccess: save,
+  });
+
+  if (!tasks.length) return null;
+
+  return (
+    <div className="mt-8 border-t border-ink/10 pt-5">
+      <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">What runs what</div>
+      <p className="mb-4 max-w-2xl text-sm text-ink/55">
+        Type a link or a phrase into Quick capture and it works out which of these it is, then runs the actor paired with it. The
+        pairings below are the ones the app ships with — change one only to move a task onto a different actor.
+      </p>
+
+      <div className="divide-y divide-ink/5 border border-line">
+        {tasks.map((task) => (
+          <div key={task.kind} className="grid gap-3 px-4 py-3 sm:grid-cols-[13rem_1fr]">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-ink">{task.label}</span>
+                {task.overridden && <Badge>changed</Badge>}
+              </div>
+              <p className="mt-0.5 text-xs text-ink/45">{task.takes}</p>
+              <p className="mt-1 font-mono text-[10px] text-ink/35">e.g. {task.example}</p>
+            </div>
+
+            {editing === task.kind ? (
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  point.mutate({ kind: task.kind, actorId: actorId.trim() });
+                }}
+              >
+                <input
+                  className="input max-w-sm flex-1 font-mono text-xs"
+                  value={actorId}
+                  onChange={(event) => setActorId(event.target.value)}
+                  placeholder={task.defaultActorId}
+                  autoFocus
+                />
+                <Button type="submit" size="sm" disabled={point.isPending || !actorId.trim()}>
+                  {point.isPending ? "Saving…" : "Save"}
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+              </form>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <code className="font-mono text-xs text-ink/70">{task.actorId}</code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(task.kind);
+                    setActorId(task.actorId);
+                  }}
+                  className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline"
+                >
+                  Change
+                </button>
+                {task.overridden && (
+                  <button
+                    type="button"
+                    onClick={() => reset.mutate(task.kind)}
+                    disabled={reset.isPending}
+                    className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 hover:text-ink hover:underline"
+                  >
+                    Put back
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <ErrorNote error={point.error ?? reset.error} />
+    </div>
   );
 }
 

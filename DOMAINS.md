@@ -159,7 +159,7 @@ and a registered trademark). Apple Mail accepts a VMC only. When one is bought
 it goes in the same record as `a=https://dakyworld.com/assets/brand/<cert>.pem`.
 
 **The free route for Gmail** is unrelated to BIMI: a Google Account registered
-to `hello@dakyworld.com` with `assets/brand/avatar-512.png` as its profile
+to `info@dakyworld.com` with `assets/brand/avatar-512.png` as its profile
 photo. Gmail then draws the avatar from that profile. It is not documented as
 a guarantee — Google leans on the address being authenticated, and reports of
 it working are mixed when the mail is sent outside Google — but it costs

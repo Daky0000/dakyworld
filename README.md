@@ -270,6 +270,36 @@ email enrichment, contact sweep over a list of URLs), by searching the Apify
 Store from inside the app, or by typing an actor id. Nothing about a new
 source requires a deploy.
 
+### Quick capture: type the thing, the right actor runs
+
+Most capture is one company, not a campaign, and the ritual of adding a source
+to read one website was the reason it didn't get used. **Quick capture** takes
+what you type and works out which of five tasks it is — a website, a Google
+Maps search, a LinkedIn company, a Facebook Page, an Instagram account — then
+runs the actor paired with that task. Pasting a link costs nothing to read: a
+classifier does it in memory, and only prose reaches Claude.
+
+**Every pairing is visible and changeable.** Settings → Lead capture → *What
+runs what* lists each task, what it takes, and the actor behind it. Point one
+at a different actor when a better one turns up or the current one starts
+failing; *Put back* returns it to the one the app ships with. Only what you
+change is stored, so an override reads as an override. See
+[`services/captureActors.ts`](server/src/services/captureActors.ts).
+
+**Being read wrong costs a click, not a run.** Each target carries its task as
+a dropdown — "no, that is their Facebook Page, not their site". And when the
+words can't be read at all (no Anthropic key, or a request too vague to guess
+at), the same five tasks are offered directly: pick one, give it the input it
+asks for, run it. Reading is a convenience, never the only way in.
+
+**A task checks its input before anything is charged.** These actors bill per
+event, so an Instagram handle sent to the Facebook actor is money spent on
+nothing. Each task normalises what it is given — a profile URL becomes the bare
+handle, a bare domain gains its scheme — and refuses in a sentence when the two
+don't match, naming the task it should have been. A LinkedIn `/in/` profile and
+a Facebook personal profile are refused outright: those actors can only read
+company pages.
+
 **One place decides how every source behaves.** **Settings → Lead capture**
 holds what a source shouldn't have to repeat:
 
