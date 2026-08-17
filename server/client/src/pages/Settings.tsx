@@ -141,13 +141,25 @@ export function Settings() {
 // --- Email -----------------------------------------------------------------
 
 /**
- * The mailbox. SMTP rather than a provider API because every address Dakyworld
- * might send from already speaks it — no new account, no domain to verify
- * again before the first email can go out.
+ * The mailbox, two ways.
+ *
+ * **Hostinger is one field.** The mailbox on the domain is Hostinger's, and
+ * Hostinger gives it an MCP server, so connecting it needs an API token and
+ * nothing else — the address it sends from is read back from Hostinger rather
+ * than typed in. That is the difference between connecting mail in a minute and
+ * hunting a wrong port for an evening, so it is the first chip.
+ *
+ * **Everything else is SMTP**, which every other mailbox already speaks.
  */
 function EmailPanel({ settings }: { settings: AppSettings }) {
   const email = settings.email;
   const save = useSaveSettings();
+  // Tools links straight here with ?provider=hostinger, so arriving from that
+  // card lands on the token field rather than on a form of SMTP boxes.
+  const [params] = useSearchParams();
+  const [provider, setProvider] = useState<"hostinger" | "smtp">(
+    params.get("provider") === "hostinger" || email.transport === "HOSTINGER" ? "hostinger" : "smtp",
+  );
   const [host, setHost] = useState(email.host ?? "");
   const [port, setPort] = useState(email.port || 587);
   const [user, setUser] = useState(email.user ?? "");
@@ -176,17 +188,21 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
       setPassword("");
     },
   });
-  const remove = useMutation({ mutationFn: () => api.delete<AppSettings>("/settings/email"), onSuccess: save });
+  // Disconnecting means the live transport, not both — dropping the Hostinger
+  // token should not also wipe an SMTP mailbox that is sitting there configured.
+  const remove = useMutation({
+    mutationFn: () => api.delete<AppSettings>(email.transport === "HOSTINGER" ? "/settings/email/hostinger" : "/settings/email"),
+    onSuccess: save,
+  });
   const test = useMutation({
     mutationFn: () => api.post<{ ok: boolean; to: string }>("/settings/email/test", { to: testTo.trim() }),
     onSuccess: (result) => setTestResult(`Sent to ${result.to}. If it doesn't arrive, check the spam folder before anything else.`),
     onError: (err: Error) => setTestResult(err.message),
   });
 
-  /** The three mailboxes Dakyworld realistically sends from, pre-filled. */
+  /** The mailboxes Dakyworld realistically sends from. Hostinger is not an SMTP preset — it has its own form. */
   const presets = [
     { label: "Google Workspace", host: "smtp.gmail.com", port: 587, note: "Use an App Password, not the account password." },
-    { label: "Hostinger", host: "smtp.hostinger.com", port: 465, note: "The mailbox password, as set in hPanel." },
     { label: "Zoho Mail", host: "smtp.zoho.com", port: 465, note: "An app-specific password if 2FA is on." },
   ];
 
@@ -200,7 +216,17 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
         </>
       }
       where={
-        !email.configured && (
+        !email.configured &&
+        (provider === "hostinger" ? (
+          <>
+            The token is made in hPanel, under{" "}
+            <a className="text-blue hover:underline" href="https://hpanel.hostinger.com/emails" target="_blank" rel="noreferrer">
+              Emails
+            </a>{" "}
+            → your domain → Agentic mail → API → Create API token. Scope it to the mailbox you send from. It is shown once, so
+            copy it as it appears.
+          </>
+        ) : (
           <>
             Any mailbox with SMTP works. On Google Workspace you need an{" "}
             <a
@@ -213,7 +239,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
             </a>{" "}
             rather than the account password — Google refuses plain logins from applications.
           </>
-        )
+        ))
       }
       state={
         email.configured ? (
@@ -222,9 +248,13 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
               {email.fromName} &lt;{email.fromEmail}&gt;
             </span>
             <span className="font-mono text-xs text-ink/50">
-              {email.host}:{email.port}
+              {email.transport === "HOSTINGER"
+                ? email.hostinger.mcp?.ok
+                  ? `hostinger mcp · ${email.hostinger.mcp.tool}`
+                  : "hostinger mail api"
+                : `${email.host}:${email.port}`}
             </span>
-            {!email.envManaged && (
+            {!(email.transport === "HOSTINGER" ? email.hostinger.envManaged : email.envManaged) && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
                 Disconnect
               </Button>
@@ -235,27 +265,43 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
         )
       }
     >
-      {email.envManaged ? (
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Chip
+          selected={provider === "hostinger"}
+          title="One API token. Sends through Hostinger's MCP server."
+          onClick={() => setProvider("hostinger")}
+        >
+          Hostinger · MCP
+        </Chip>
+        {presets.map((preset) => (
+          <Chip
+            key={preset.label}
+            selected={provider === "smtp" && host === preset.host}
+            title={preset.note}
+            onClick={() => {
+              setProvider("smtp");
+              setHost(preset.host);
+              setPort(preset.port);
+            }}
+          >
+            {preset.label}
+          </Chip>
+        ))}
+        <Chip
+          selected={provider === "smtp" && !presets.some((preset) => preset.host === host)}
+          title="Any other mailbox, by SMTP."
+          onClick={() => setProvider("smtp")}
+        >
+          Other · SMTP
+        </Chip>
+      </div>
+
+      {provider === "hostinger" ? (
+        <HostingerForm settings={settings} />
+      ) : email.envManaged ? (
         <EnvNote variable="SMTP_HOST" />
       ) : (
         <>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {presets.map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                title={preset.note}
-                onClick={() => {
-                  setHost(preset.host);
-                  setPort(preset.port);
-                }}
-                className="border border-ink/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink/55 transition hover:border-ink hover:text-ink"
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-
           <form
             className="mt-4 grid gap-3 sm:grid-cols-2"
             onSubmit={(event) => {
@@ -326,7 +372,157 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
   );
 }
 
+/**
+ * Hostinger, in one field.
+ *
+ * The token is the whole configuration. The mailbox it may send from comes back
+ * from Hostinger and is stored, so nothing else is asked for — and when the
+ * token reaches more than one mailbox, the choice appears only then, already
+ * answered with the first.
+ */
+function HostingerForm({ settings }: { settings: AppSettings }) {
+  const email = settings.email;
+  const hostinger = email.hostinger;
+  const save = useSaveSettings();
+  const [token, setToken] = useState("");
+  const [fromName, setFromName] = useState(email.fromName ?? "Dan Kwame Ayipah");
+  const [sign, setSign] = useState(email.signature ?? "");
+
+  const connect = useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.put<AppSettings>("/settings/email/hostinger", body),
+    onSuccess: (result) => {
+      save(result);
+      setToken("");
+    },
+  });
+
+  if (hostinger.envManaged) return <EnvNote variable="HOSTINGER_MAIL_TOKEN" />;
+
+  const live = email.transport === "HOSTINGER" && hostinger.configured;
+
+  return (
+    <>
+      <form
+        className="mt-4 grid gap-3 sm:grid-cols-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (token.trim() || live) connect.mutate({ ...(token.trim() ? { token: token.trim() } : {}), fromName, signature: sign });
+        }}
+      >
+        <Field
+          label="API token"
+          hint={live ? "Stored encrypted. Paste a new one to rotate it." : "hPanel → Emails → Agentic mail → API. Shown once."}
+          full
+        >
+          <input
+            type="password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder={live ? `${hostinger.token} (unchanged)` : "Paste the token — that's all this needs"}
+            className="input"
+          />
+        </Field>
+
+        {/* Only worth a question when there is actually a choice to make. */}
+        {hostinger.mailboxes.length > 1 && (
+          <Field label="Send from" hint="Every mailbox this token can reach." full>
+            <select
+              className="input"
+              value={hostinger.mailboxId ?? ""}
+              onChange={(event) => connect.mutate({ mailboxId: event.target.value })}
+            >
+              {hostinger.mailboxes.map((mailbox) => (
+                <option key={mailbox.resourceId} value={mailbox.resourceId}>
+                  {mailbox.address}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+
+        <Field label="From name" full={!hostinger.mailboxAddress}>
+          <input value={fromName} onChange={(event) => setFromName(event.target.value)} className="input" />
+        </Field>
+        {/* Nothing to show until a token has said what the address is. */}
+        {hostinger.mailboxAddress && (
+          <Field label="From address" hint="Read back from Hostinger — the token decides this.">
+            <input value={hostinger.mailboxAddress} readOnly disabled className="input" />
+          </Field>
+        )}
+        <Field label="Signature" hint="Appended to every email the app sends." full>
+          <textarea rows={3} value={sign} onChange={(event) => setSign(event.target.value)} className="input" />
+        </Field>
+
+        <div className="sm:col-span-2 flex items-center gap-3">
+          <Button type="submit" disabled={connect.isPending || (!token.trim() && !live)}>
+            {connect.isPending ? "Checking with Hostinger…" : live ? "Save" : "Connect"}
+          </Button>
+          <span className="text-xs text-ink/45">Checked against Hostinger before it's saved.</span>
+        </div>
+      </form>
+
+      <ErrorNote error={connect.error} />
+      {hostinger.error && <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{hostinger.error}</p>}
+
+      {/* Which path a send will actually take. Worth stating plainly: the MCP
+          server and the plain Mail API fail in different ways. */}
+      {hostinger.mcp && (
+        <p
+          className={`mt-3 px-3 py-2 text-sm ${
+            hostinger.mcp.ok ? "border border-line bg-ink/[.02] text-ink/60" : "border border-amber-200 bg-amber-50 text-amber-800"
+          }`}
+        >
+          {hostinger.mcp.ok ? (
+            <>
+              MCP connected — sending through <code className="font-mono text-xs">{hostinger.mcp.tool}</code>, one of{" "}
+              {hostinger.mcp.tools.length} tools the mailbox offers.
+            </>
+          ) : (
+            <>
+              The MCP server didn't answer ({hostinger.mcp.error}). Mail still sends, through Hostinger's Mail API with the same
+              token.
+            </>
+          )}
+        </p>
+      )}
+
+      {live && (
+        <p className="mt-3 text-xs text-ink/45">
+          Two things SMTP does that this path can't: a reply-to address different from the mailbox, and the one-click unsubscribe
+          header. The unsubscribe link inside every cold email is unaffected.
+        </p>
+      )}
+    </>
+  );
+}
+
 // --- Shared shell ----------------------------------------------------------
+
+/** A one-click choice that stays visibly chosen. */
+function Chip({
+  children,
+  selected,
+  title,
+  onClick,
+}: {
+  children: ReactNode;
+  selected: boolean;
+  title?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={`border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+        selected ? "border-ink bg-ink text-cream" : "border-ink/15 text-ink/55 hover:border-ink hover:text-ink"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 function Panel({
   title,

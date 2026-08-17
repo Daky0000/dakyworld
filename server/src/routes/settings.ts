@@ -19,7 +19,15 @@ import {
   rememberState,
 } from "../lib/google.js";
 import { verifyStripeKey } from "../lib/stripe.js";
-import { MailerError, readMailerConfig, sendMail, verifySmtp } from "../lib/mailer.js";
+import { MailerError, activeTransport, readMailerConfig, sendMail, verifySmtp } from "../lib/mailer.js";
+import {
+  HostingerMailError,
+  clearHostingerSession,
+  fetchMailboxes,
+  probeMcp,
+  type HostingerMailbox,
+  type McpProbe,
+} from "../lib/hostingerMail.js";
 import { signature, toHtml, toText } from "../services/emailRender.js";
 
 /**
@@ -148,10 +156,63 @@ async function describeAll(req: Request) {
   };
 }
 
-/** The mailbox the app sends from. The password is never returned, only its shape. */
+/**
+ * What Hostinger says about the token: which mailboxes it may send from, and
+ * whether the MCP server answers. Both are network round trips and the Settings
+ * page polls, so they are cached for a minute the same way Apify's account is.
+ */
+const HOSTINGER_CACHE_MS = 60_000;
+let hostingerCache: { at: number; token: string; mailboxes: HostingerMailbox[]; error: string | null; mcp: McpProbe } | null = null;
+
+async function describeHostinger() {
+  const token = await getSetting(SETTING.HOSTINGER_MAIL_TOKEN);
+  const [mailboxId, address] = await Promise.all([
+    getSetting(SETTING.HOSTINGER_MAILBOX_ID),
+    getSetting(SETTING.HOSTINGER_MAILBOX_ADDRESS),
+  ]);
+
+  if (!token) {
+    return {
+      configured: false,
+      envManaged: isEnvManaged(SETTING.HOSTINGER_MAIL_TOKEN),
+      token: null,
+      mailboxId: null,
+      mailboxAddress: null,
+      mailboxes: [] as HostingerMailbox[],
+      error: null as string | null,
+      mcp: null as McpProbe | null,
+    };
+  }
+
+  if (!hostingerCache || hostingerCache.token !== token || Date.now() - hostingerCache.at > HOSTINGER_CACHE_MS) {
+    const [mailboxes, mcp] = await Promise.all([
+      fetchMailboxes(token).then(
+        (list) => ({ list, error: null as string | null }),
+        (err: Error) => ({ list: [] as HostingerMailbox[], error: err.message }),
+      ),
+      probeMcp(token),
+    ]);
+    hostingerCache = { at: Date.now(), token, mailboxes: mailboxes.list, error: mailboxes.error, mcp };
+  }
+
+  return {
+    configured: Boolean(mailboxId && address),
+    envManaged: isEnvManaged(SETTING.HOSTINGER_MAIL_TOKEN),
+    token: maskSecret(token),
+    mailboxId,
+    mailboxAddress: address,
+    mailboxes: hostingerCache.mailboxes,
+    error: hostingerCache.error,
+    mcp: hostingerCache.mcp,
+  };
+}
+
+/** The mailbox the app sends from. No credential is ever returned, only its shape. */
 async function describeEmail() {
   const config = await readMailerConfig();
-  const [host, port, user, fromName, fromEmail, replyTo, sign] = await Promise.all([
+  const [transport, hostinger, host, port, user, fromName, fromEmail, replyTo, sign] = await Promise.all([
+    activeTransport(),
+    describeHostinger(),
     getSetting(SETTING.SMTP_HOST),
     getSetting(SETTING.SMTP_PORT),
     getSetting(SETTING.SMTP_USER),
@@ -161,12 +222,17 @@ async function describeEmail() {
     getSetting(SETTING.MAIL_SIGNATURE),
   ]);
   return {
-    configured: config !== null,
+    transport,
+    /** Whether the transport that is actually live can send. */
+    configured: transport === "HOSTINGER" ? hostinger.configured : config !== null,
     envManaged: isEnvManaged(SETTING.SMTP_HOST),
+    transportEnvManaged: isEnvManaged(SETTING.MAIL_TRANSPORT),
     host,
     port: port ? Number(port) : 587,
     secure: config?.secure ?? false,
     user,
+    smtpConfigured: config !== null,
+    hostinger,
     fromName,
     fromEmail,
     replyTo,
@@ -515,10 +581,97 @@ settingsRouter.put("/email", async (req, res, next) => {
       else await deleteSetting(SETTING.MAIL_REPLY_TO);
     }
     if (input.signature !== undefined) await setSetting(SETTING.MAIL_SIGNATURE, input.signature);
+    // Connecting a mailbox is also choosing it: whatever was sending before,
+    // this is what sends now.
+    await setSetting(SETTING.MAIL_TRANSPORT, "SMTP");
 
     res.json(await describeAll(req));
   } catch (err) {
     if (err instanceof MailerError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+// --- Hostinger Agentic Mail ------------------------------------------------
+
+/**
+ * The one-field path. A token is all that is asked for: the mailbox it may send
+ * from is read back from Hostinger and stored, rather than typed in and got
+ * wrong. Sending afterwards goes through the MCP server — see
+ * lib/hostingerMail.ts for what happens when that server can't be reached.
+ *
+ * Re-postable without the token, which is how the mailbox is switched on an
+ * account that has more than one.
+ */
+settingsRouter.put("/email/hostinger", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.HOSTINGER_MAIL_TOKEN, "The Hostinger mail token", res)) return;
+    // Saving a token that a pinned transport would then ignore is worse than
+    // refusing: mail would look connected and still go out the other way.
+    if (isEnvManaged(SETTING.MAIL_TRANSPORT) && (await getSetting(SETTING.MAIL_TRANSPORT)) !== "HOSTINGER") {
+      return res.status(409).json({ error: "MAIL_TRANSPORT is pinned to SMTP by an environment variable. Change it in Railway first." });
+    }
+    const input = z
+      .object({
+        token: z.string().min(10, "That doesn't look like a Hostinger API token").optional(),
+        /** Only needed when the token can reach more than one mailbox. */
+        mailboxId: z.string().min(1).optional(),
+        fromName: z.string().min(1).max(120).optional(),
+        replyTo: z.string().email().or(z.literal("")).optional(),
+        signature: z.string().max(600).optional(),
+      })
+      .parse(req.body);
+
+    const token = input.token?.trim() || (await getSetting(SETTING.HOSTINGER_MAIL_TOKEN));
+    if (!token) return res.status(400).json({ error: "Paste the Hostinger API token first." });
+
+    // Verified before anything is stored, so a bad paste fails on this screen
+    // rather than at 8am inside a sequence.
+    const mailboxes = await fetchMailboxes(token);
+    const current = await getSetting(SETTING.HOSTINGER_MAILBOX_ID);
+    const chosen =
+      mailboxes.find((box) => box.resourceId === input.mailboxId) ??
+      mailboxes.find((box) => box.resourceId === current) ??
+      mailboxes[0];
+
+    await setSetting(SETTING.HOSTINGER_MAIL_TOKEN, token, { secret: true });
+    await setSetting(SETTING.HOSTINGER_MAILBOX_ID, chosen.resourceId);
+    await setSetting(SETTING.HOSTINGER_MAILBOX_ADDRESS, chosen.address);
+    // The rest of the app reads the from-address from one place, whichever
+    // transport put it there.
+    await setSetting(SETTING.MAIL_FROM_EMAIL, chosen.address);
+    if (input.fromName?.trim()) await setSetting(SETTING.MAIL_FROM_NAME, input.fromName.trim());
+    else if (!(await getSetting(SETTING.MAIL_FROM_NAME))) await setSetting(SETTING.MAIL_FROM_NAME, "Dakyworld");
+    if (input.replyTo !== undefined) {
+      if (input.replyTo) await setSetting(SETTING.MAIL_REPLY_TO, input.replyTo.trim());
+      else await deleteSetting(SETTING.MAIL_REPLY_TO);
+    }
+    if (input.signature !== undefined) await setSetting(SETTING.MAIL_SIGNATURE, input.signature);
+    await setSetting(SETTING.MAIL_TRANSPORT, "HOSTINGER");
+
+    hostingerCache = null;
+    clearHostingerSession();
+    res.json(await describeAll(req));
+  } catch (err) {
+    if (err instanceof HostingerMailError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+/** Hands sending back to SMTP, if that is connected; otherwise nothing sends. */
+settingsRouter.delete("/email/hostinger", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.HOSTINGER_MAIL_TOKEN, "The Hostinger mail token", res)) return;
+    await Promise.all([
+      deleteSetting(SETTING.HOSTINGER_MAIL_TOKEN),
+      deleteSetting(SETTING.HOSTINGER_MAILBOX_ID),
+      deleteSetting(SETTING.HOSTINGER_MAILBOX_ADDRESS),
+    ]);
+    await setSetting(SETTING.MAIL_TRANSPORT, "SMTP");
+    hostingerCache = null;
+    clearHostingerSession();
+    res.json(await describeAll(req));
+  } catch (err) {
     next(err);
   }
 });

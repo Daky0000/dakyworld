@@ -1,6 +1,6 @@
 import { analystConfigured } from "../lib/claude.js";
 import { apifyConfigured } from "../lib/apify.js";
-import { mailerConfigured } from "../lib/mailer.js";
+import { activeTransport, mailerConfigured } from "../lib/mailer.js";
 import { stripeConfigured } from "../lib/stripe.js";
 import { cloudinaryConfigured } from "../lib/cloudinary.js";
 import { googleConfigured, googleConnected } from "../lib/google.js";
@@ -37,13 +37,16 @@ export interface ToolStatus {
   scopes: string[];
   /** Said plainly when the tool can spend money. */
   spends: boolean;
+  /** A faster way to satisfy this tool than the general settings form, when one exists. */
+  shortcut?: { label: string; to: string } | null;
 }
 
 export async function toolStatuses(): Promise<ToolStatus[]> {
-  const [claude, apify, mail, stripe, cloudinary, google, googleLinked] = await Promise.all([
+  const [claude, apify, mail, transport, stripe, cloudinary, google, googleLinked] = await Promise.all([
     analystConfigured(),
     apifyConfigured(),
     mailerConfigured(),
+    activeTransport(),
     stripeConfigured(),
     cloudinaryConfigured(),
     googleConfigured(),
@@ -74,14 +77,24 @@ export async function toolStatuses(): Promise<ToolStatus[]> {
       spends: true,
     },
     {
+      // Named for the path that is actually live, because "email is connected"
+      // is not the same claim as "email is connected through the MCP server",
+      // and the second is the one that explains a Hostinger-shaped failure.
       key: "email",
-      name: "Email (SMTP)",
+      name: transport === "HOSTINGER" ? "Email (Hostinger MCP)" : "Email (SMTP)",
       purpose: "Outbound business email — drafts, sequences, invoices, client updates.",
       settingsTab: "email",
-      needs: "SMTP host, user and password. Google Workspace needs an App Password.",
+      needs:
+        transport === "HOSTINGER"
+          ? "A Hostinger Agentic Mail API token — nothing else."
+          : "SMTP host, user and password. Google Workspace needs an App Password.",
       state: flag(mail),
       scopes: ["read", "send"],
       spends: false,
+      // The domain's mailbox is Hostinger's, and Hostinger takes one token
+      // instead of five SMTP fields — so it gets its own way in from here.
+      shortcut:
+        transport === "HOSTINGER" ? null : { label: "Hostinger · one token ↗", to: "/settings?tab=email&provider=hostinger" },
     },
     {
       key: "apify",

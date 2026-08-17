@@ -373,6 +373,30 @@ export interface CaptureConfig {
   retentionDays: number;
 }
 
+/** SMTP, or the Hostinger mailbox over its own MCP server. */
+export type MailTransport = "SMTP" | "HOSTINGER";
+
+/** What the Hostinger MCP server answered when it was last asked. */
+export interface McpProbe {
+  ok: boolean;
+  /** The tool a send goes through. */
+  tool: string | null;
+  tools: string[];
+  error: string | null;
+}
+
+export interface HostingerMailStatus {
+  configured: boolean;
+  envManaged: boolean;
+  token: string | null;
+  mailboxId: string | null;
+  mailboxAddress: string | null;
+  /** Every mailbox the token can send from — one of them is the sender. */
+  mailboxes: Array<{ resourceId: string; address: string }>;
+  error: string | null;
+  mcp: McpProbe | null;
+}
+
 /** Everything the Owner configures at runtime — see the Settings page. */
 export interface AppSettings {
   apify: {
@@ -412,12 +436,18 @@ export interface AppSettings {
   };
   cloudinary: { configured: boolean; envManaged: boolean; cloudName: string | null; apiKey: string | null };
   email: {
+    /** Which of the two paths actually sends. */
+    transport: MailTransport;
+    /** Whether the live transport can send — not whether the other one could. */
     configured: boolean;
     envManaged: boolean;
+    transportEnvManaged: boolean;
     host: string | null;
     port: number;
     secure: boolean;
     user: string | null;
+    smtpConfigured: boolean;
+    hostinger: HostingerMailStatus;
     fromName: string | null;
     fromEmail: string | null;
     replyTo: string | null;
@@ -923,6 +953,8 @@ export interface ToolStatus {
   state: ToolState;
   scopes: string[];
   spends: boolean;
+  /** A faster way to satisfy this tool than its settings tab, when one exists. */
+  shortcut?: { label: string; to: string } | null;
 }
 
 export interface ToolsResponse {

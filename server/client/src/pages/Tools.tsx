@@ -102,14 +102,23 @@ function ToolCard({ tool }: { tool: ToolStatus }) {
             <Badge key={scope} tone="muted">{scope}</Badge>
           ))}
         </div>
-        {tool.settingsTab && tool.state !== "PLANNED" && (
-          <Link
-            to={`/settings?tab=${tool.settingsTab}`}
-            className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline"
-          >
-            {tool.state === "NEEDS_KEY" ? "Set it up ↗" : "Change ↗"}
-          </Link>
-        )}
+        <div className="flex shrink-0 items-center gap-3">
+          {/* The quick way in, when a tool has one — Hostinger's mailbox is a
+              token where SMTP is five fields. */}
+          {tool.shortcut && tool.state !== "PLANNED" && (
+            <Link to={tool.shortcut.to} className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline">
+              {tool.shortcut.label}
+            </Link>
+          )}
+          {tool.settingsTab && tool.state !== "PLANNED" && (
+            <Link
+              to={`/settings?tab=${tool.settingsTab}`}
+              className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/45 hover:text-ink hover:underline"
+            >
+              {tool.state === "NEEDS_KEY" ? "Set it up ↗" : "Change ↗"}
+            </Link>
+          )}
+        </div>
       </div>
     </Card>
   );

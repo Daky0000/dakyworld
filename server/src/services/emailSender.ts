@@ -154,7 +154,9 @@ export async function sendMessage(id: string): Promise<SendResult> {
       data: { status: "SENT", sentAt: new Date(), messageId: result.messageId, error: null },
     });
     await logCommunication(message);
-    return { sent: true, messageId: result.messageId };
+    // The Hostinger path answers a send with no body, so there is no
+    // Message-ID to report; sent is still sent.
+    return { sent: true, messageId: result.messageId ?? undefined };
   } catch (err) {
     const reason = err instanceof MailerError ? err.message : (err as Error).message;
     await prisma.emailMessage.update({ where: { id }, data: { status: "FAILED", failedAt: new Date(), error: reason } });

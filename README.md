@@ -51,15 +51,30 @@ insights, Slack notifications, a client-facing portal.
 The **Email** page (`/emails`, Owner / Finance / PM) is where everything
 outbound happens: one-off letters, deliverables, and the follow-up sequences.
 
-**Connect a mailbox first.** **Settings → Email** takes SMTP credentials for
-whatever address Dakyworld already sends from — Google Workspace, the
-Hostinger mailbox on the domain, Zoho. SMTP rather than a provider API because
-all of them already speak it, and none of them need a new account opening or a
-domain re-verifying before the first email can go out. The credentials are
-checked against the server before they are stored, so a wrong password fails
-on that screen rather than silently at 8am inside a sequence. On Google
-Workspace it must be an **App Password** — Google refuses plain logins from
-applications.
+**Connect a mailbox first**, in **Settings → Email**, one of two ways.
+
+**Hostinger — one API token.** The mailbox on the domain is Hostinger's, and
+Hostinger gives it an MCP server, so this route asks for a token and nothing
+else: click **Hostinger · MCP**, paste the token, done. The address it sends
+from is read back from Hostinger rather than typed in, because the token is
+already scoped to mailboxes. Make the token in hPanel under **Emails → your
+domain → Agentic mail → API → Create API token** — it is shown once. Sending
+then goes through `mcp.mail.hostinger.com`: the app handshakes, reads the tool
+list and fills the send tool's arguments from the schema the server publishes,
+so a renamed tool doesn't break it. If the MCP server can't be reached, the
+same token sends through Hostinger's Mail API instead and the panel says which
+path is live. Two things this path can't do, both stated on the screen: a
+reply-to address different from the mailbox, and the `List-Unsubscribe` header
+(the opt-out link inside every cold email is unaffected).
+
+**Anything else — SMTP.** Google Workspace, Zoho, a cPanel mailbox: all of
+them already speak it, and none need a new account opening or a domain
+re-verifying before the first email can go out. On Google Workspace it must be
+an **App Password** — Google refuses plain logins from applications.
+
+Either way the credentials are checked against the server before they are
+stored, so a wrong paste fails on that screen rather than silently at 8am
+inside a sequence.
 
 ### Drafting
 
@@ -495,8 +510,14 @@ deploy stays the source of truth wherever you chose to make it one.
 | Google Drive | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` *(only behind a proxy that rewrites the host)* |
 | Payments (Stripe) | https://dashboard.stripe.com/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
-| Email (SMTP) | Your own mailbox — Workspace, Hostinger, Zoho | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM_EMAIL` |
+| Email (SMTP) | Your own mailbox — Workspace, Zoho, cPanel | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM_EMAIL` |
+| Email (Hostinger MCP) | hPanel → Emails → Agentic mail → API | `HOSTINGER_MAIL_TOKEN`, `HOSTINGER_MAILBOX_ID`, `HOSTINGER_MAILBOX_ADDRESS`, `MAIL_TRANSPORT` |
 | General (public URL, timezone) | — | `APP_URL`, `SCRAPER_TIMEZONE` |
+
+`MAIL_TRANSPORT` picks between the two email panels — `SMTP` or `HOSTINGER`.
+Leave it unset and the app follows whichever was connected last.
+`HOSTINGER_MCP_URL` and `HOSTINGER_MAIL_API` exist only for pointing the client
+at a stand-in server; neither needs setting in production.
 
 `APP_SECRET` is the one that isn't a panel: it's the key those stored secrets
 are encrypted with, so it belongs in the environment.

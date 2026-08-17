@@ -54,9 +54,12 @@ export const SETTING = {
   /** The app's own public URL — what Google's redirect URI is built from. */
   APP_URL: "app.url",
 
-  // Outbound email. SMTP rather than a provider API because every mailbox
-  // Dakyworld might send from — Google Workspace, Hostinger, Zoho — speaks it,
-  // and none of them need a new account opening to start.
+  // Outbound email. SMTP works with every mailbox Dakyworld might send from —
+  // Google Workspace, Hostinger, Zoho — and none of them need a new account
+  // opening to start. Hostinger's own mailbox has a second, shorter route: an
+  // MCP server that takes one API token instead of five SMTP fields.
+  /** "SMTP" or "HOSTINGER" — which of the two paths below actually sends. */
+  MAIL_TRANSPORT: "mail.transport",
   SMTP_HOST: "smtp.host",
   SMTP_PORT: "smtp.port",
   SMTP_SECURE: "smtp.secure",
@@ -67,6 +70,13 @@ export const SETTING = {
   MAIL_REPLY_TO: "mail.replyTo",
   /** Appended to every outbound email — address, unsubscribe line, sign-off. */
   MAIL_SIGNATURE: "mail.signature",
+
+  // Hostinger Agentic Mail. The token is the whole configuration: the mailbox
+  // it may send from is read back from Hostinger rather than typed in, so
+  // connecting is one paste. See lib/hostingerMail.ts.
+  HOSTINGER_MAIL_TOKEN: "hostinger.mailToken",
+  HOSTINGER_MAILBOX_ID: "hostinger.mailboxId",
+  HOSTINGER_MAILBOX_ADDRESS: "hostinger.mailboxAddress",
 } as const;
 
 /** Env fallbacks, checked before the database. */
@@ -91,6 +101,10 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.CLOUDINARY_API_KEY]: "CLOUDINARY_API_KEY",
   [SETTING.CLOUDINARY_API_SECRET]: "CLOUDINARY_API_SECRET",
   [SETTING.APP_URL]: "APP_URL",
+  [SETTING.MAIL_TRANSPORT]: "MAIL_TRANSPORT",
+  [SETTING.HOSTINGER_MAIL_TOKEN]: "HOSTINGER_MAIL_TOKEN",
+  [SETTING.HOSTINGER_MAILBOX_ID]: "HOSTINGER_MAILBOX_ID",
+  [SETTING.HOSTINGER_MAILBOX_ADDRESS]: "HOSTINGER_MAILBOX_ADDRESS",
   [SETTING.SMTP_HOST]: "SMTP_HOST",
   [SETTING.SMTP_PORT]: "SMTP_PORT",
   [SETTING.SMTP_SECURE]: "SMTP_SECURE",

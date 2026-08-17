@@ -1,14 +1,20 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { SETTING, getSetting } from "./settings.js";
+import { HostingerMailError, hostingerConfigured, sendViaHostinger } from "./hostingerMail.js";
 
 /**
  * Outbound email.
  *
- * **SMTP, not a provider API.** Every mailbox Dakyworld might send from —
- * Google Workspace, the Hostinger mailbox on the domain, Zoho — already speaks
- * SMTP, and none of them need a new account opening or a domain re-verifying
- * to start. A provider API would be one more service to sign up for before the
- * first email could go out.
+ * **Two ways out, one door.** Everything in the app sends through `sendMail`
+ * and nothing else knows which transport is live:
+ *
+ * - **SMTP**, which works with any mailbox — Google Workspace, Zoho, a
+ *   cPanel address — because all of them already speak it, and none need a new
+ *   account opening or a domain re-verifying before the first email goes out.
+ * - **Hostinger Agentic Mail**, for the mailbox on the domain, over the MCP
+ *   server it ships with. Five SMTP fields collapse into one API token, which
+ *   is the difference between connecting mail in a minute and connecting it in
+ *   an evening. See lib/hostingerMail.ts.
  *
  * **Configured at use, like Stripe.** The credentials live encrypted in
  * `AppSetting` so they can be pasted in and rotated without a redeploy, which
@@ -79,8 +85,22 @@ export async function readMailerConfig(): Promise<MailerConfig | null> {
   };
 }
 
+export type MailTransport = "SMTP" | "HOSTINGER";
+
+/**
+ * Which path sends. The stored choice wins; with nothing stored it falls back
+ * to whichever is actually configured, so an existing SMTP deploy keeps sending
+ * without anyone visiting Settings.
+ */
+export async function activeTransport(): Promise<MailTransport> {
+  const stored = await getSetting(SETTING.MAIL_TRANSPORT);
+  if (stored === "HOSTINGER" || stored === "SMTP") return stored;
+  if (await readMailerConfig()) return "SMTP";
+  return (await hostingerConfigured()) ? "HOSTINGER" : "SMTP";
+}
+
 export async function mailerConfigured(): Promise<boolean> {
-  return (await readMailerConfig()) !== null;
+  return (await activeTransport()) === "HOSTINGER" ? hostingerConfigured() : (await readMailerConfig()) !== null;
 }
 
 function buildTransport(config: MailerConfig): Transporter {
@@ -138,6 +158,12 @@ export async function verifySmtp(config: MailerConfig): Promise<{ host: string }
   }
 }
 
+/**
+ * One message, as every caller describes it. Three fields are SMTP-only and are
+ * dropped on the Hostinger path, which takes no custom headers: `replyTo`,
+ * `inReplyTo` and `unsubscribeUrl`. The opt-out link inside the body of a cold
+ * email is rendered separately and is unaffected — see services/emailRender.ts.
+ */
 export interface SendArgs {
   to: string;
   toName?: string | null;
@@ -154,7 +180,23 @@ export interface SendArgs {
   unsubscribeUrl?: string | null;
 }
 
-export async function sendMail(args: SendArgs): Promise<{ messageId: string; accepted: string[] }> {
+export interface SendReceipt {
+  /** Null on the Hostinger path — it answers a send with no body, so there is no id to keep. */
+  messageId: string | null;
+  accepted: string[];
+}
+
+export async function sendMail(args: SendArgs): Promise<SendReceipt> {
+  if ((await activeTransport()) === "HOSTINGER") {
+    try {
+      return await sendViaHostinger(args);
+    } catch (err) {
+      // One error type reaches the routes, whichever transport failed.
+      if (err instanceof HostingerMailError) throw new MailerError(err.status, err.message);
+      throw err;
+    }
+  }
+
   const mailer = await getMailer();
   if (!mailer) {
     throw new MailerError(503, "Email isn't connected yet — add the mailbox under Settings → Email to send anything.");
