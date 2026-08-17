@@ -346,3 +346,101 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
 export function findTemplate(id: string): ScraperTemplate | undefined {
   return SCRAPER_TEMPLATES.find((template) => template.id === id);
 }
+
+// ---------------------------------------------------------------------------
+// Quick capture
+// ---------------------------------------------------------------------------
+
+/**
+ * What each pasted thing runs on. Separate from SCRAPER_TEMPLATES above, which
+ * is the browsable list on the Capture screen — these are never picked by hand,
+ * they're chosen by services/quickCapture.ts from what was pasted.
+ *
+ * Every `inputKey` and `wrap` below was read off the live actor schema on
+ * 17 Aug 2026, because an input key this app invents is not an error — Apify
+ * drops an undeclared key silently, so a run would look fine and return
+ * nothing. The three that were checked and rejected are recorded too, so
+ * nobody re-derives them:
+ *
+ *  - `apify/linkedin-company-scraper` — does not exist.
+ *  - `curious_coder/linkedin-company-scraper` — requires a pasted LinkedIn
+ *    session cookie. Not something to ask an employee for.
+ *  - `bebity/linkedin-premium-actor` — FLAT_PRICE_PER_MONTH subscription.
+ *
+ * All four below are PAY_PER_EVENT, which per services/captureConfig.ts means
+ * `maxItems` does not cap them — `maxTotalChargeUsd` is the ceiling that works.
+ */
+export interface QuickActor {
+  actorId: string;
+  /** The one input key the pasted values go into. */
+  inputKey: string;
+  /** Some actors want `[{url}]`, others a bare string list. */
+  wrap: "url-objects" | "strings";
+  preset: ScraperPreset;
+  leadSource: LeadSource;
+  label: string;
+  /** Fixed input alongside the pasted values. */
+  input: Record<string, unknown>;
+}
+
+export const QUICK_ACTORS = {
+  /** Already used by the "contact-details" template; requires a proxy. */
+  WEBSITE: {
+    actorId: "vdrmota/contact-info-scraper",
+    inputKey: "startUrls",
+    wrap: "url-objects",
+    preset: "GENERIC_CONTACT",
+    leadSource: "WEB_SCRAPE",
+    label: "Website",
+    input: { maxRequestsPerStartUrl: 20, maxDepth: 2, considerChildFrames: true },
+  },
+  /** The same actor ten of the templates use, driven by a phrase. */
+  MAPS_SEARCH: {
+    actorId: "lukaskrivka/google-maps-with-contact-details",
+    inputKey: "searchStringsArray",
+    wrap: "strings",
+    preset: "GOOGLE_MAPS",
+    leadSource: "GOOGLE_MAPS",
+    label: "Google Maps",
+    input: { locationQuery: MARKET, maxCrawledPlacesPerSearch: 20, language: "en", skipClosedPlaces: true, maxReviews: 0, maxImages: 0 },
+  },
+  /** `companies` takes plain company URLs. The only no-cookie option. */
+  LINKEDIN_COMPANY: {
+    actorId: "harvestapi/linkedin-company",
+    inputKey: "companies",
+    wrap: "strings",
+    preset: "CUSTOM",
+    leadSource: "LINKEDIN",
+    label: "LinkedIn company",
+    input: {},
+  },
+  /** Pages only — the actor's own description rules out personal profiles. */
+  FACEBOOK_PAGE: {
+    actorId: "apify/facebook-pages-scraper",
+    inputKey: "startUrls",
+    wrap: "url-objects",
+    preset: "CUSTOM",
+    leadSource: "SOCIAL",
+    label: "Facebook Page",
+    input: {},
+  },
+  /** Usernames, not URLs — quickCapture strips the handle out of the link. */
+  INSTAGRAM: {
+    actorId: "apify/instagram-profile-scraper",
+    inputKey: "usernames",
+    wrap: "strings",
+    preset: "CUSTOM",
+    leadSource: "SOCIAL",
+    label: "Instagram",
+    input: { includeAboutSection: true },
+  },
+} as const satisfies Record<string, QuickActor>;
+
+export type QuickActorKind = keyof typeof QUICK_ACTORS;
+
+/** Builds the actor input for one group of pasted values. */
+export function quickInput(kind: QuickActorKind, values: string[]): Record<string, unknown> {
+  const actor = QUICK_ACTORS[kind];
+  const payload = actor.wrap === "url-objects" ? values.map((url) => ({ url })) : values;
+  return { ...actor.input, [actor.inputKey]: payload };
+}
