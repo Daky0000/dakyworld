@@ -59,21 +59,52 @@ Local setup, the Docker Postgres line, and `DEV_NO_AUTH` are covered in
 
 **Server** — Express, one router per domain under `src/routes/`, mounted in
 `src/index.ts`. The mounting order matters: the unsubscribe route is public and
-registered *before* `attachUser`/`requireAuth`, and `/api/imports` is excluded
-from the JSON body parser because it takes uploads. `src/lib/` holds
-integration clients (Apify, Anthropic, Google, Stripe, Cloudinary, mailer) and
-`src/services/` holds the logic that composes them.
+registered *before* `attachUser`/`requireAuth`, `/api/imports` is excluded from
+the JSON body parser because it takes uploads, and **both webhook routes sit
+above the JSON parser** because a signature covers the exact bytes that were
+sent — Stripe's own route first, then the generic `/api/webhooks/:source`.
+`src/lib/` holds integration clients (Apify, Anthropic, Google, Stripe,
+Cloudinary, mailer, Slack, GitHub, Calendar, webhooks) and `src/services/`
+holds the logic that composes them.
+
+**The agent tool layer** — `src/services/tools/`. A tool is a catalogue entry
+with a scope, a Zod schema, a handler and (for anything outward-facing) a
+preview; `invoke.ts` is the only way one gets called, and it enforces the whole
+policy in one place: is the integration configured, has this agent been granted
+this tool, does its autonomy level allow acting rather than preparing, is the
+input the declared shape. Every call — including every refusal — lands in
+`ToolCall`. **An agent's `toolkit` is that grant**, so adding a key on the
+Agents screen hands over a real capability.
+
+Adding a tool means adding one entry to `catalogue.ts`. It inherits the
+permission model, the audit trail and the Tools screen by existing; nothing
+else needs touching.
 
 **Client** — Vite + React + React Router + TanStack Query, in `server/client/`.
 The server serves the built client from `client/dist` when it exists, and falls
 back to an API-only status page when it doesn't.
 
-**Database** — Prisma, 30 models. `prisma/schema.prisma` is the source of truth.
+**Database** — Prisma, 34 models. `prisma/schema.prisma` is the source of truth.
 
 **Integration keys live encrypted in the database**, not in env vars — the
 `AppSetting` model, keyed by `APP_SECRET`. That is deliberate: adding or
 rotating a key must never need a redeploy. Env vars still override where they
 exist. **Rotating `APP_SECRET` makes every stored key unreadable.**
+
+**Lead capture prices itself from Apify at run time.** `lib/apify.getActorPricing`
+reads an actor's published rates (a public endpoint — it works before a token
+is connected) and `services/captureCost.ts` turns an input into a count of
+billable events. Never hard-code an actor's price: they change, and a stale
+number in a spending guard fails silently. Three things depend on this — the
+estimate shown before a capture runs, the `maxTotalChargeUsd` ceiling derived
+for any pay-per-event run the Owner hasn't capped by hand, and the warnings
+about paid switches whose data nothing reads.
+
+**Actors are chosen on measured cost, not reputation.** The comment block at
+the top of `services/scraperTemplates.ts` records what each pairing costs and
+why it beat the alternative; re-price against `estimateCost` before changing
+one. The trap that cost the most: Google Maps bills a *filter* charge per place
+per filter, so `skipClosedPlaces` costs more than the closed places it avoids.
 
 **Auth** — `src/middleware/auth.ts`. `DEV_NO_AUTH=true` runs the API as one
 implicit Owner and is force-disabled when `NODE_ENV=production`. `requireRole()`

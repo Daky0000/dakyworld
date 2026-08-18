@@ -83,7 +83,6 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
       maxCrawledPlacesPerSearch: 20,
       language: "en",
       website: "withoutWebsite",
-      skipClosedPlaces: true,
       maxReviews: 0,
       maxImages: 0,
     },
@@ -115,7 +114,6 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
       maxCrawledPlacesPerSearch: 20,
       language: "en",
       website: "withoutWebsite",
-      skipClosedPlaces: true,
       maxReviews: 0,
       maxImages: 0,
     },
@@ -123,7 +121,7 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
   {
     id: "property-developers",
     name: "Property developers & estate agencies",
-    actorId: "lukaskrivka/google-maps-with-contact-details",
+    actorId: "compass/crawler-google-places",
     headline: "Already the biggest segment in the pipeline",
     description:
       "Developers, estate agents and property managers, with emails pulled from whatever site they do have. They sell high-value units off a listing page, so the site *is* the sales floor — and most of them are running one built by a nephew in 2019.",
@@ -142,15 +140,18 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "serviced apartments",
       ],
       locationQuery: MARKET,
+      // Crawls each place's own site for an email. $0.002 a place on top of
+      // the $0.004 for the place itself, and the only way this segment gets
+      // an address worth writing to.
+      scrapeContacts: true,
       maxCrawledPlacesPerSearch: 24,
       language: "en",
-      skipClosedPlaces: true,
     },
   },
   {
     id: "schools-training",
     name: "Schools, colleges & training institutes",
-    actorId: "lukaskrivka/google-maps-with-contact-details",
+    actorId: "compass/crawler-google-places",
     headline: "Buys websites, then buys training",
     description:
       "Private schools, colleges and vocational institutes. They need a site parents can find and a workspace that doesn't lose records — and they're the natural buyers of the staff digital-skills and AI-adoption workshops, which is a second sale to the same relationship.",
@@ -169,15 +170,18 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "training centre",
       ],
       locationQuery: MARKET,
+      // Crawls each place's own site for an email. $0.002 a place on top of
+      // the $0.004 for the place itself, and the only way this segment gets
+      // an address worth writing to.
+      scrapeContacts: true,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
-      skipClosedPlaces: true,
     },
   },
   {
     id: "professional-services",
     name: "Law, audit & consulting firms",
-    actorId: "lukaskrivka/google-maps-with-contact-details",
+    actorId: "compass/crawler-google-places",
     headline: "Where security and email actually sell",
     description:
       "Firms holding client money or client secrets. The website matters less to them than the rest of the offer — proper email and workspace, backups, breach response — which makes them retainer-shaped from the first conversation rather than project-shaped.",
@@ -197,15 +201,18 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "recruitment agency",
       ],
       locationQuery: MARKET,
+      // Crawls each place's own site for an email. $0.002 a place on top of
+      // the $0.004 for the place itself, and the only way this segment gets
+      // an address worth writing to.
+      scrapeContacts: true,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
-      skipClosedPlaces: true,
     },
   },
   {
     id: "manufacturers-distributors",
     name: "Manufacturers, distributors & wholesalers",
-    actorId: "lukaskrivka/google-maps-with-contact-details",
+    actorId: "compass/crawler-google-places",
     headline: "The automation and integrations buyers",
     description:
       "Businesses running on spreadsheets, WhatsApp and a stack of delivery notes. They rarely want a prettier website — they want the manual burden cut, which is the automation and integrations line, and the one with the clearest number attached to it.",
@@ -225,15 +232,18 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
         "logistics company",
       ],
       locationQuery: MARKET,
+      // Crawls each place's own site for an email. $0.002 a place on top of
+      // the $0.004 for the place itself, and the only way this segment gets
+      // an address worth writing to.
+      scrapeContacts: true,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
-      skipClosedPlaces: true,
     },
   },
   {
     id: "clinics-health",
     name: "Clinics, hospitals & diagnostic centres",
-    actorId: "lukaskrivka/google-maps-with-contact-details",
+    actorId: "compass/crawler-google-places",
     headline: "Patient records make security an easy conversation",
     description:
       "Private clinics, dental practices, labs and diagnostic centres. Booking and records are the pain, and the duty of care around patient data turns backups and access control from a nice-to-have into something they can be held to.",
@@ -246,15 +256,18 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
     input: {
       searchStringsArray: ["private clinic", "dental clinic", "diagnostic centre", "medical laboratory", "eye clinic", "pharmacy chain"],
       locationQuery: MARKET,
+      // Crawls each place's own site for an email. $0.002 a place on top of
+      // the $0.004 for the place itself, and the only way this segment gets
+      // an address worth writing to.
+      scrapeContacts: true,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
-      skipClosedPlaces: true,
     },
   },
   {
     id: "ngos-associations",
     name: "NGOs, churches & associations",
-    actorId: "lukaskrivka/google-maps-with-contact-details",
+    actorId: "compass/crawler-google-places",
     headline: "Branding and one-off builds, often donor-funded",
     description:
       "Organisations that answer to a board or a donor, so a real website and a coherent identity are reporting requirements as much as marketing. Budgets are smaller and slower, but the work is well-defined and the referrals travel.",
@@ -267,9 +280,12 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
     input: {
       searchStringsArray: ["non-governmental organisation", "charity", "church", "trade association", "cooperative society"],
       locationQuery: MARKET,
+      // Crawls each place's own site for an email. $0.002 a place on top of
+      // the $0.004 for the place itself, and the only way this segment gets
+      // an address worth writing to.
+      scrapeContacts: true,
       maxCrawledPlacesPerSearch: 20,
       language: "en",
-      skipClosedPlaces: true,
     },
   },
   {
@@ -291,7 +307,6 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
       maxCrawledPlacesPerSearch: 25,
       language: "en",
       website: "withoutWebsite",
-      skipClosedPlaces: true,
       maxReviews: 0,
       maxImages: 0,
     },
@@ -299,7 +314,7 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
   {
     id: "google-maps-contacts",
     name: "Any segment, with email addresses",
-    actorId: "lukaskrivka/google-maps-with-contact-details",
+    actorId: "compass/crawler-google-places",
     headline: "The generic shape — edit the searches",
     description:
       "Google Maps results, then each business's own site crawled for an email and social profiles. Slower and dearer per result than plain Maps, but it lands leads you can actually write to rather than only ring.",
@@ -312,9 +327,12 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
     input: {
       searchStringsArray: ["marketing agency", "private school", "hotel"],
       locationQuery: MARKET,
+      // Crawls each place's own site for an email. $0.002 a place on top of
+      // the $0.004 for the place itself, and the only way this segment gets
+      // an address worth writing to.
+      scrapeContacts: true,
       maxCrawledPlacesPerSearch: 25,
       language: "en",
-      skipClosedPlaces: true,
     },
   },
   {
@@ -367,8 +385,33 @@ export function findTemplate(id: string): ScraperTemplate | undefined {
  *    session cookie. Not something to ask an employee for.
  *  - `bebity/linkedin-premium-actor` — FLAT_PRICE_PER_MONTH subscription.
  *
- * All four below are PAY_PER_EVENT, which per services/captureConfig.ts means
+ * All five are PAY_PER_EVENT, which per services/captureConfig.ts means
  * `maxItems` does not cap them — `maxTotalChargeUsd` is the ceiling that works.
+ *
+ * **Every input below was re-priced against Apify's published rates on
+ * 18 Aug 2026** (services/captureCost.ts does the same arithmetic live). What
+ * changed, and why:
+ *
+ *  - **Maps moved from `lukaskrivka/google-maps-with-contact-details` to
+ *    `compass/crawler-google-places`.** Same underlying scraper, one is a
+ *    wrapper on the other, and compass is cheaper on every single event:
+ *    $0.004 a place against $0.005, $0.001 a filter against $0.0015, $0.002
+ *    for contact enrichment against $0.0025. A 60-place search with emails is
+ *    $0.42 instead of $0.63. It also makes enrichment a *switch*, which the
+ *    wrapper does not — so a search for businesses with no website stops
+ *    paying to crawl the website they haven't got.
+ *  - **`skipClosedPlaces` came off every template.** It is billed as a filter,
+ *    $0.001 on every place scraped, to avoid paying $0.004 for the ~3% that
+ *    are closed. The mapper already drops closed places for nothing. On 100
+ *    places that is $0.10 spent to save $0.012.
+ *  - **Instagram's `includeAboutSection` came off.** It costs $0.007 a
+ *    profile on top of the $0.0026 for the profile — nearly four times the
+ *    price — and adds the account's country and the month it was created,
+ *    neither of which this app reads.
+ *  - **The website sweep opens 8 pages a site, not 20.** Billed per page at
+ *    $0.002; contact details live on the home page and the contact page on
+ *    virtually every site, and `maxRequests` now caps the whole run so one
+ *    enormous site can't spend the batch's budget on its own.
  */
 export interface QuickActor {
   actorId: string;
@@ -392,24 +435,37 @@ export const QUICK_ACTORS = {
     preset: "GENERIC_CONTACT",
     leadSource: "WEB_SCRAPE",
     label: "Website",
-    input: { maxRequestsPerStartUrl: 20, maxDepth: 2, considerChildFrames: true },
+    // 8 pages a site, 40 across the whole paste: billed per page, and the
+    // contact details are on the home page or one click from it.
+    input: { maxRequestsPerStartUrl: 8, maxRequests: 40, maxDepth: 2, considerChildFrames: true },
   },
   /** The same actor ten of the templates use, driven by a phrase. */
   MAPS_SEARCH: {
-    actorId: "lukaskrivka/google-maps-with-contact-details",
+    actorId: "compass/crawler-google-places",
     inputKey: "searchStringsArray",
     wrap: "strings",
     preset: "GOOGLE_MAPS",
     leadSource: "GOOGLE_MAPS",
     label: "Google Maps",
-    input: { locationQuery: MARKET, maxCrawledPlacesPerSearch: 20, language: "en", skipClosedPlaces: true, maxReviews: 0, maxImages: 0 },
+    input: {
+      locationQuery: MARKET,
+      maxCrawledPlacesPerSearch: 20,
+      language: "en",
+      // Someone pasting a search wants people they can write to, and this is
+      // the only way an email comes back. $0.002 a place.
+      scrapeContacts: true,
+      maxReviews: 0,
+      maxImages: 0,
+    },
   },
   /** `companies` takes plain company URLs. The only no-cookie option. */
   LINKEDIN_COMPANY: {
     actorId: "harvestapi/linkedin-company",
     inputKey: "companies",
     wrap: "strings",
-    preset: "CUSTOM",
+    // AUTO, not CUSTOM: the mapper recognises a LinkedIn company row by its
+    // own keys. Stored as CUSTOM this actor produced nothing at all.
+    preset: "AUTO",
     leadSource: "LINKEDIN",
     label: "LinkedIn company",
     input: {},
@@ -419,7 +475,8 @@ export const QUICK_ACTORS = {
     actorId: "apify/facebook-pages-scraper",
     inputKey: "startUrls",
     wrap: "url-objects",
-    preset: "CUSTOM",
+    // See LINKEDIN_COMPANY above: CUSTOM meant every row was thrown away.
+    preset: "AUTO",
     leadSource: "SOCIAL",
     label: "Facebook Page",
     input: {},
@@ -429,10 +486,14 @@ export const QUICK_ACTORS = {
     actorId: "apify/instagram-profile-scraper",
     inputKey: "usernames",
     wrap: "strings",
-    preset: "CUSTOM",
+    // See LINKEDIN_COMPANY above: CUSTOM meant every row was thrown away.
+    preset: "AUTO",
     leadSource: "SOCIAL",
     label: "Instagram",
-    input: { includeAboutSection: true },
+    // Nothing here: `includeAboutSection` is a $0.007 add-on on a $0.0026
+    // profile and buys only the country and the join date. What matters —
+    // the name, the bio and the link in it — is in the free profile.
+    input: {},
   },
 } as const satisfies Record<string, QuickActor>;
 

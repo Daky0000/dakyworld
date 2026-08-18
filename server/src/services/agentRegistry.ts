@@ -67,7 +67,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     mission: "Own Dakyworld's long-term direction and protect it from reckless automation.",
     responsibilities: ["Weekly board brief", "Risk decisions", "Cross-department conflicts", "Strategic bets"],
     kpis: ["Revenue trend", "Cash runway", "Client retention", "Blocked high-risk actions"],
-    toolkit: ["analytics.read", "finance.read", "risk.read"],
+    toolkit: ["analytics.read", "finance.read", "crm.read"],
     escalationPolicy: "Never executes. Prepares a decision memo for the Owner.",
     prompt: layers({
       role: "You are the Chair of the Dakyworld Board. Dakyworld is an outsourced technology partner for growing businesses — websites, security, cloud, automation, integrations, branding and training.",
@@ -182,7 +182,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     mission: "Create demand and strengthen Dakyworld's positioning with defensible claims.",
     responsibilities: ["Content calendar", "Case studies", "Landing page drafts", "SEO briefs"],
     kpis: ["Qualified inbound", "Content published", "Search visibility"],
-    toolkit: ["content.draft", "analytics.read", "casestudy.read"],
+    toolkit: ["content.draft", "analytics.read", "client.read"],
     escalationPolicy: "New public claims and major brand changes need approval before publishing.",
     prompt: layers({
       role: "You are the Dakyworld CMO.",
@@ -205,7 +205,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     mission: "Own architecture, reliability, security and the evolution of Dakyworld's own systems.",
     responsibilities: ["Architecture proposals", "Incident reports", "Integration plans", "Technical debt backlog"],
     kpis: ["Uptime", "Failed integrations", "Time to recover", "Open security findings"],
-    toolkit: ["github.read", "monitoring.read", "security.scan", "analytics.read"],
+    toolkit: ["github.read", "integrations.read", "security.scan", "analytics.read"],
     escalationPolicy: "Production changes follow the deployment policy; destructive actions need approval.",
     prompt: layers({
       role: "You are the Dakyworld CTO.",
@@ -251,7 +251,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     mission: "Stop bad automation becoming bad business.",
     responsibilities: ["Risk ratings", "Approval gates", "QA reports", "Incident escalation"],
     kpis: ["High-risk actions blocked", "Policy violations", "Escaped defects"],
-    toolkit: ["audit.read", "security.scan", "policy.read"],
+    toolkit: ["company.audit", "security.scan", "integrations.read"],
     escalationPolicy: "May block any action. Never weakens a control to make a task succeed.",
     prompt: layers({
       role: "You are the Dakyworld Risk and QA Director.",
@@ -294,7 +294,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     ["email.sequencer", "Outbound Communications Manager", "REVENUE", "cro", "Run personalised outreach and follow-up without creating spam or reputational damage.", ["email.draft", "sequence.enrol", "suppression.check"], "Stop immediately on reply, unsubscribe or complaint. Respect send windows."],
     ["client.notifier", "Client Communications Agent", "CLIENT", "cco", "Keep clients informed with status, invoice, report and milestone communications.", ["email.draft", "client.read", "document.render"], "Never expose internal notes, costs, credentials or another client's data."],
     ["analytics.engine", "Business Intelligence Agent", "TECHNOLOGY", "cto", "Turn operating data into decisions: KPIs, churn detection, upsell discovery and forecasting.", ["analytics.read", "finance.read", "crm.read"], "Never manufacture attribution from insufficient data. Does not change pricing or strategy."],
-    ["integration.manager", "Automation & Integration Architect", "TECHNOLOGY", "cto", "Connect Dakyworld's systems so information moves automatically and safely.", ["webhooks.read", "integrations.read", "monitoring.read"], "Production changes follow QA and rollback policy. Never log a secret."],
+    ["integration.manager", "Automation & Integration Architect", "TECHNOLOGY", "cto", "Connect Dakyworld's systems so information moves automatically and safely.", ["webhooks.read", "integrations.read", "webhook.dispatch"], "Production changes follow QA and rollback policy. Never log a secret."],
   ] as const).map(([key, name, department, managerKey, mission, toolkit, escalationPolicy]) => ({
     key,
     name,

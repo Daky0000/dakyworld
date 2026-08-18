@@ -83,6 +83,45 @@ export const SETTING = {
   HOSTINGER_MAIL_TOKEN: "hostinger.mailToken",
   HOSTINGER_MAILBOX_ID: "hostinger.mailboxId",
   HOSTINGER_MAILBOX_ADDRESS: "hostinger.mailboxAddress",
+
+  // Slack, for internal alerts and escalation. Either route works and the
+  // token wins when both are set — see lib/slack.ts.
+  SLACK_WEBHOOK_URL: "slack.webhookUrl",
+  SLACK_BOT_TOKEN: "slack.botToken",
+  SLACK_DEFAULT_CHANNEL: "slack.defaultChannel",
+
+  // GitHub, read-mostly, for the technical agents. See lib/github.ts.
+  GITHUB_TOKEN: "github.token",
+  /** Lets a repository be named `os` rather than `dakyworld/os`. */
+  GITHUB_OWNER: "github.owner",
+
+  /**
+   * Which calendar bookings land in. Blank means the connected account's own.
+   * Calendar rides on the Google connection above rather than its own OAuth —
+   * see lib/calendar.ts.
+   */
+  GOOGLE_CALENDAR_ID: "google.calendarId",
+  /** What Google actually granted, so a connection missing a scope is visible. */
+  GOOGLE_SCOPES: "google.scopes",
+
+  /** Shared secret for inbound and outbound webhooks. See lib/webhooks.ts. */
+  WEBHOOK_SECRET: "webhooks.secret",
+  /**
+   * Where a lead created by an inbound webhook is filed, as a LeadSource.
+   * Defaults to OTHER, which is right for a form on the website.
+   */
+  WEBHOOK_LEAD_SOURCE: "webhooks.leadSource",
+
+  /**
+   * Which agents may call which tools, as JSON, holding only what has been
+   * changed from each agent's seeded toolkit. See services/tools/grants.ts.
+   */
+  AGENT_TOOL_GRANTS: "agents.toolGrants",
+  /**
+   * Hard ceiling on what one tool call may spend, in USD. The tool layer
+   * refuses anything above it rather than trusting an agent's arithmetic.
+   */
+  AGENT_MAX_CALL_USD: "agents.maxCallUsd",
 } as const;
 
 /** Env fallbacks, checked before the database. */
@@ -119,6 +158,17 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.MAIL_FROM_NAME]: "MAIL_FROM_NAME",
   [SETTING.MAIL_FROM_EMAIL]: "MAIL_FROM_EMAIL",
   [SETTING.MAIL_REPLY_TO]: "MAIL_REPLY_TO",
+  // Alerting and the developer tools follow the same rule as the rest: the
+  // deploy can pin them, the Settings screen can set them, env wins.
+  [SETTING.SLACK_WEBHOOK_URL]: "SLACK_WEBHOOK_URL",
+  [SETTING.SLACK_BOT_TOKEN]: "SLACK_BOT_TOKEN",
+  [SETTING.SLACK_DEFAULT_CHANNEL]: "SLACK_DEFAULT_CHANNEL",
+  [SETTING.GITHUB_TOKEN]: "GITHUB_TOKEN",
+  [SETTING.GITHUB_OWNER]: "GITHUB_OWNER",
+  [SETTING.GOOGLE_CALENDAR_ID]: "GOOGLE_CALENDAR_ID",
+  // Pinning this one from the deploy is the difference between rotating the
+  // secret in the UI and having every sender break on the next restart.
+  [SETTING.WEBHOOK_SECRET]: "WEBHOOK_SECRET",
 };
 
 // One process, one cache. Writes go through setSetting, which clears it.

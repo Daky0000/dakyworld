@@ -30,6 +30,11 @@ import {
   type McpProbe,
 } from "../lib/hostingerMail.js";
 import { signature, toHtml, toText } from "../services/emailRender.js";
+import { SlackError, sendSlack, slackTransport, verifySlack } from "../lib/slack.js";
+import { GitHubError, verifyGitHubToken } from "../lib/github.js";
+import { calendarReady, listCalendars } from "../lib/calendar.js";
+import { rotateWebhookSecret, webhookSecret } from "../lib/webhooks.js";
+import { clearReadinessCache } from "../services/tools/readiness.js";
 
 /**
  * Everything the Owner configures at runtime, in one place.
@@ -150,12 +155,77 @@ async function describeAll(req: Request) {
       apiKey: cloudKey ? maskSecret(cloudKey) : null,
     },
     email: await describeEmail(),
+    alerts: await describeSlack(),
+    developer: await describeGitHub(),
+    calendar: await describeCalendar(),
+    webhooks: await describeWebhooks(req, appUrl),
     general: {
       appUrl,
       appUrlEnvManaged: isEnvManaged(SETTING.APP_URL),
       resolvedAppUrl: origin(req, appUrl),
       timezone: timezone ?? "Africa/Accra",
     },
+  };
+}
+
+/** Slack: which route is live, and where messages land by default. */
+async function describeSlack() {
+  const [transport, webhook, token, channel] = await Promise.all([
+    slackTransport(),
+    getSetting(SETTING.SLACK_WEBHOOK_URL),
+    getSetting(SETTING.SLACK_BOT_TOKEN),
+    getSetting(SETTING.SLACK_DEFAULT_CHANNEL),
+  ]);
+  return {
+    configured: transport !== "NONE",
+    transport,
+    envManaged: isEnvManaged(SETTING.SLACK_WEBHOOK_URL) || isEnvManaged(SETTING.SLACK_BOT_TOKEN),
+    // Only the tail of a webhook URL: the whole thing is a credential — anyone
+    // holding it can post into the channel.
+    webhookUrl: webhook ? maskSecret(webhook) : null,
+    botToken: token ? maskSecret(token) : null,
+    defaultChannel: channel,
+  };
+}
+
+/** GitHub: whether the token is there, and what a bare repo name means. */
+async function describeGitHub() {
+  const [token, owner] = await Promise.all([getSetting(SETTING.GITHUB_TOKEN), getSetting(SETTING.GITHUB_OWNER)]);
+  return {
+    configured: Boolean(token),
+    envManaged: isEnvManaged(SETTING.GITHUB_TOKEN),
+    token: token ? maskSecret(token) : null,
+    owner,
+  };
+}
+
+/**
+ * Calendar rides on the Google connection, so the thing worth saying here is
+ * whether that connection actually carries the calendar scope — one made
+ * before Calendar was added does not, and reconnecting is the fix.
+ */
+async function describeCalendar() {
+  const ready = await calendarReady();
+  return {
+    ...ready,
+    configured: ready.connected && ready.scoped,
+    // Listing calendars is a Google round trip that fails for exactly the
+    // reason above, so an empty list here is information rather than an error.
+    calendars: ready.connected && ready.scoped ? await listCalendars().catch(() => []) : [],
+  };
+}
+
+/** Webhooks: the URL to hand a sender, and the secret they sign with. */
+async function describeWebhooks(req: Request, appUrl: string | null) {
+  const secret = await webhookSecret();
+  return {
+    configured: true,
+    envManaged: isEnvManaged(SETTING.WEBHOOK_SECRET),
+    secret: maskSecret(secret),
+    /** What the website contact form should post to. */
+    formUrl: `${origin(req, appUrl)}/api/webhooks/website-form`,
+    baseUrl: `${origin(req, appUrl)}/api/webhooks/`,
+    leadSource: (await getSetting(SETTING.WEBHOOK_LEAD_SOURCE)) ?? "OTHER",
   };
 }
 
@@ -773,6 +843,168 @@ settingsRouter.put("/general", async (req, res, next) => {
     if (timezone) await setSetting(SETTING.DEFAULT_TIMEZONE, timezone);
 
     res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// --- Alerts (Slack) --------------------------------------------------------
+
+settingsRouter.put("/slack", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.SLACK_WEBHOOK_URL, "The Slack connection", res)) return;
+    const { webhookUrl, botToken, defaultChannel } = z
+      .object({
+        webhookUrl: z.string().optional(),
+        botToken: z.string().optional(),
+        defaultChannel: z.string().max(80).optional(),
+      })
+      .parse(req.body);
+
+    // Verified before it is stored, so a typo is caught here rather than the
+    // first time an alert silently fails to arrive.
+    if (botToken?.trim()) {
+      try {
+        await verifySlack({ token: botToken.trim() });
+      } catch (err) {
+        return res.status(400).json({ error: (err as SlackError).message });
+      }
+      await setSetting(SETTING.SLACK_BOT_TOKEN, botToken.trim(), { secret: true });
+    }
+
+    if (webhookUrl?.trim()) {
+      try {
+        await verifySlack({ webhookUrl: webhookUrl.trim() });
+      } catch (err) {
+        return res.status(400).json({ error: (err as SlackError).message });
+      }
+      await setSetting(SETTING.SLACK_WEBHOOK_URL, webhookUrl.trim(), { secret: true });
+    }
+
+    if (defaultChannel !== undefined) {
+      if (defaultChannel.trim()) await setSetting(SETTING.SLACK_DEFAULT_CHANNEL, defaultChannel.trim());
+      else await deleteSetting(SETTING.SLACK_DEFAULT_CHANNEL);
+    }
+
+    clearReadinessCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Puts a real message in the channel — the only honest test of a webhook URL. */
+settingsRouter.post("/slack/test", async (req, res, next) => {
+  try {
+    const { channel } = z.object({ channel: z.string().max(80).optional() }).parse(req.body ?? {});
+    const result = await sendSlack({
+      title: "Dakyworld OS",
+      text: "Slack is connected. Alerts about captures, sequences and escalations will arrive here.",
+      channel: channel ?? null,
+    });
+    if (!result.delivered) return res.status(400).json({ error: "Slack isn't connected yet." });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof SlackError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+settingsRouter.delete("/slack", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.SLACK_WEBHOOK_URL, "The Slack connection", res)) return;
+    await Promise.all([
+      deleteSetting(SETTING.SLACK_WEBHOOK_URL),
+      deleteSetting(SETTING.SLACK_BOT_TOKEN),
+      deleteSetting(SETTING.SLACK_DEFAULT_CHANNEL),
+    ]);
+    clearReadinessCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Developer (GitHub) ----------------------------------------------------
+
+settingsRouter.put("/github", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.GITHUB_TOKEN, "The GitHub token", res)) return;
+    const { token, owner } = z
+      .object({ token: z.string().min(8, "That doesn't look like a GitHub token").optional(), owner: z.string().max(80).optional() })
+      .parse(req.body);
+
+    if (token?.trim()) {
+      try {
+        await verifyGitHubToken(token.trim());
+      } catch (err) {
+        return res.status(400).json({ error: `GitHub rejected that token: ${(err as GitHubError).message}` });
+      }
+      await setSetting(SETTING.GITHUB_TOKEN, token.trim(), { secret: true });
+    }
+
+    if (owner !== undefined) {
+      if (owner.trim()) await setSetting(SETTING.GITHUB_OWNER, owner.trim());
+      else await deleteSetting(SETTING.GITHUB_OWNER);
+    }
+
+    clearReadinessCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/github", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.GITHUB_TOKEN, "The GitHub token", res)) return;
+    await Promise.all([deleteSetting(SETTING.GITHUB_TOKEN), deleteSetting(SETTING.GITHUB_OWNER)]);
+    clearReadinessCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Calendar --------------------------------------------------------------
+
+settingsRouter.put("/calendar", async (req, res, next) => {
+  try {
+    const { calendarId } = z.object({ calendarId: z.string().max(200) }).parse(req.body);
+    if (calendarId.trim() && calendarId.trim() !== "primary") await setSetting(SETTING.GOOGLE_CALENDAR_ID, calendarId.trim());
+    else await deleteSetting(SETTING.GOOGLE_CALENDAR_ID);
+    clearReadinessCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Webhooks --------------------------------------------------------------
+
+settingsRouter.put("/webhooks", async (req, res, next) => {
+  try {
+    const { leadSource } = z.object({ leadSource: z.string().max(40) }).parse(req.body);
+    if (leadSource.trim()) await setSetting(SETTING.WEBHOOK_LEAD_SOURCE, leadSource.trim().toUpperCase());
+    else await deleteSetting(SETTING.WEBHOOK_LEAD_SOURCE);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Mints a new shared secret. Every sender has to be updated afterwards, which
+ * the UI says before it lets this happen — a rotation nobody follows up looks
+ * exactly like an endpoint that has stopped working.
+ */
+settingsRouter.post("/webhooks/rotate", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.WEBHOOK_SECRET, "The webhook secret", res)) return;
+    const secret = await rotateWebhookSecret();
+    // Returned in full exactly once — it is not readable again afterwards.
+    res.json({ secret, snapshot: await describeAll(req) });
   } catch (err) {
     next(err);
   }

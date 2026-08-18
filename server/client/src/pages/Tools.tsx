@@ -1,16 +1,22 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Badge, Card, EmptyState, PageHeader, StatTile, StatusDot } from "../components/ui";
-import type { ToolState, ToolStatus, ToolsResponse } from "../lib/types";
+import type { CatalogueResponse, CatalogueTool, ToolState, ToolStatus, ToolsResponse } from "../lib/types";
 
 /**
  * What the agents can actually reach.
  *
- * Three states rather than two, deliberately. "Needs a key" is something you
- * fix in a minute; "not built yet" is something I fix in a week. Collapsing
- * them into one red dot would have you hunting Settings for a Slack box that
- * doesn't exist.
+ * Two halves, because they answer different questions. **Connections** is
+ * "have I pasted the key" — one row per integration, and the only place a red
+ * dot means work for you. **Tools** is "what can an agent do with it" — the
+ * catalogue, which is what a grant on the Agents screen actually names.
+ *
+ * The third state this screen used to have, "not built yet", is gone: Slack,
+ * Calendar, GitHub and inbound webhooks were the four things in it, and all
+ * four are built. It survives in the type in case something is ever named
+ * before it works again, and the section only renders if anything is in it.
  */
 
 const GROUPS: Array<{ state: ToolState; heading: string; note: string }> = [
@@ -26,6 +32,10 @@ export function Tools() {
     queryKey: ["tools"],
     queryFn: () => api.get<ToolsResponse>("/tools"),
   });
+  const { data: catalogue } = useQuery({
+    queryKey: ["tools", "catalogue"],
+    queryFn: () => api.get<CatalogueResponse>("/tools/catalogue"),
+  });
 
   const tools = data?.tools ?? [];
 
@@ -38,13 +48,17 @@ export function Tools() {
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <StatTile label="Ready" value={data?.summary.ready ?? "—"} />
+        <StatTile label="Connections ready" value={data?.summary.ready ?? "—"} />
         <StatTile
           label="Waiting on a key"
           value={data?.summary.needsKey ?? "—"}
           sub={data?.summary.needsKey ? "you can fix these now" : undefined}
         />
-        <StatTile label="Not built yet" value={data?.summary.planned ?? "—"} sub="no key will help" />
+        <StatTile
+          label="Tools callable"
+          value={data ? `${data.summary.callable} / ${data.summary.total}` : "—"}
+          sub="what an agent could run right now"
+        />
       </div>
 
       {isLoading ? (
@@ -68,6 +82,8 @@ export function Tools() {
           );
         })
       )}
+
+      {catalogue && <Catalogue catalogue={catalogue} />}
     </div>
   );
 }
@@ -96,6 +112,13 @@ function ToolCard({ tool }: { tool: ToolStatus }) {
         </p>
       )}
 
+      {tool.tools.length > 0 && (
+        <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+          {tool.tools.length} tool{tool.tools.length === 1 ? "" : "s"}
+          {tool.outwardTools > 0 && ` · ${tool.outwardTools} reach outside`}
+        </p>
+      )}
+
       <div className="mt-3 flex items-center justify-between gap-3">
         <div className="flex flex-wrap gap-1.5">
           {tool.scopes.map((scope) => (
@@ -121,5 +144,76 @@ function ToolCard({ tool }: { tool: ToolStatus }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+/**
+ * The catalogue: the individual things an agent calls, grouped the way the
+ * work is grouped rather than by which vendor happens to provide them.
+ */
+function Catalogue({ catalogue }: { catalogue: CatalogueResponse }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">The catalogue</h2>
+          <p className="mt-1 text-sm text-ink/50">
+            {catalogue.summary.total} tools an agent can be granted. {catalogue.summary.outward} of them reach outside the company and{" "}
+            {catalogue.summary.spending} spend money — those stay behind dry run until an agent is explicitly trusted with them.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline"
+        >
+          {open ? "Hide" : "Show all"}
+        </button>
+      </div>
+
+      {open && (
+        <div className="space-y-5">
+          {catalogue.groups.map((group) => {
+            const list = catalogue.tools.filter((tool) => tool.group === group);
+            if (list.length === 0) return null;
+            return (
+              <div key={group}>
+                <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">{group}</h3>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {list.map((tool) => <CatalogueRow key={tool.key} tool={tool} />)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CatalogueRow({ tool }: { tool: CatalogueTool }) {
+  return (
+    <div className="border border-line bg-white px-3 py-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <StatusDot tone={tool.ready ? "ok" : "warn"} />
+            <span className="truncate text-sm font-medium">{tool.name}</span>
+          </div>
+          <code className="mt-0.5 block font-mono text-[10px] text-ink/40">{tool.key}</code>
+        </div>
+        <div className="flex shrink-0 gap-1">
+          {tool.spends && <Badge>$</Badge>}
+          {/* The property that decides whether dry run matters for this tool. */}
+          {tool.outward && <Badge tone="muted">outward</Badge>}
+        </div>
+      </div>
+      <p className="mt-1.5 text-xs leading-relaxed text-ink/55">{tool.purpose}</p>
+      {!tool.ready && tool.blockedReason && (
+        <p className="mt-1.5 text-xs text-amber-700">{tool.blockedReason}</p>
+      )}
+    </div>
   );
 }

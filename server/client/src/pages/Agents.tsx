@@ -119,7 +119,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
   });
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Pick<Agent, "autonomyLevel" | "dryRun" | "status">>) =>
+    mutationFn: (patch: Partial<Pick<Agent, "autonomyLevel" | "dryRun" | "status" | "toolkit">>) =>
       api.patch<Agent>(`/agents/${agentKey}`, patch),
     onSuccess: () => {
       setNotice(null);
@@ -188,16 +188,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
             </section>
           )}
 
-          {agent.toolkit.length > 0 && (
-            <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Tools it may use</h3>
-              <div className="flex flex-wrap gap-1.5">
-                {agent.toolkit.map((tool) => (
-                  <Badge key={tool} tone="muted">{tool}</Badge>
-                ))}
-              </div>
-            </section>
-          )}
+          <ToolGrants agent={agent} onToggle={(toolkit) => save.mutate({ toolkit })} saving={save.isPending} />
 
           {agent.kpis.length > 0 && (
             <section className="space-y-2">
@@ -231,5 +222,94 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
         </div>
       )}
     </Drawer>
+  );
+}
+
+/**
+ * What this agent may actually call.
+ *
+ * The toolkit stopped being decoration when the tool layer landed: it is the
+ * allow-list the invoker checks before every call, so a tick here is a real
+ * capability and clearing one takes it away immediately.
+ *
+ * Three things can stop a granted tool from firing and all three are shown,
+ * because they need three different fixes: the integration isn't connected
+ * (paste a key), the agent's autonomy is too low (raise it), or dry run is on
+ * (that one is usually deliberate).
+ */
+function ToolGrants({
+  agent,
+  onToggle,
+  saving,
+}: {
+  agent: AgentDetail;
+  onToggle: (toolkit: string[]) => void;
+  saving: boolean;
+}) {
+  const tools = agent.tools ?? [];
+  if (tools.length === 0) return null;
+
+  const granted = tools.filter((tool) => tool.granted);
+  const groups = [...new Set(tools.map((tool) => tool.group))];
+
+  const toggle = (key: string) => {
+    const next = agent.toolkit.includes(key)
+      ? agent.toolkit.filter((existing) => existing !== key)
+      : [...agent.toolkit, key];
+    onToggle(next);
+  };
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Tools it may use</h3>
+        <p className="mt-1 text-sm text-ink/55">
+          {granted.length} of {tools.length} granted
+          {granted.some((tool) => !tool.ready) && " · some need a key before they will do anything"}
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        {groups.map((group) => (
+          <div key={group}>
+            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">{group}</p>
+            <div className="space-y-1">
+              {tools
+                .filter((tool) => tool.group === group)
+                .map((tool) => (
+                  <label
+                    key={tool.key}
+                    className={`flex cursor-pointer items-start gap-2.5 border px-2.5 py-2 transition-colors ${
+                      tool.granted ? "border-blue/30 bg-blue/[.04]" : "border-line bg-white hover:bg-ink/[.02]"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={tool.granted}
+                      disabled={saving}
+                      onChange={() => toggle(tool.key)}
+                      className="mt-1 accent-blue"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium">{tool.name}</span>
+                        {tool.spends && <Badge>$</Badge>}
+                        {tool.outward && <Badge tone="muted">outward</Badge>}
+                      </span>
+                      <span className="mt-0.5 block text-xs leading-relaxed text-ink/55">{tool.purpose}</span>
+                      {tool.granted && !tool.ready && tool.blockedReason && (
+                        <span className="mt-1 block text-xs text-amber-700">{tool.blockedReason}</span>
+                      )}
+                      {tool.granted && tool.ready && tool.mustDryRun && tool.permissionNote && (
+                        <span className="mt-1 block text-xs text-ink/45">{tool.permissionNote}</span>
+                      )}
+                    </span>
+                  </label>
+                ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

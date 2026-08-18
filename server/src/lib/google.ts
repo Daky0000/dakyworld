@@ -22,12 +22,34 @@ const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
 
-/** Read-only, and nothing beyond what picking and reading a sheet needs. */
+/**
+ * Read-only over Drive and Sheets, read/write over Calendar.
+ *
+ * Calendar is the one scope here that can change something in the Owner's
+ * Google account, and it is requested because booking a consultation is a
+ * thing the agents are asked to do — a read-only calendar can report a clash
+ * but cannot hold the slot. Everything else stays read-only on purpose.
+ *
+ * **Adding a scope does not widen an existing grant.** A Google account
+ * connected before Calendar was added holds a refresh token that Calendar
+ * calls will be refused on, so `googleScopes()` records what was actually
+ * granted and Settings offers a reconnect rather than failing at the moment
+ * somebody tries to book something.
+ */
 const SCOPES = [
   "https://www.googleapis.com/auth/drive.readonly",
   "https://www.googleapis.com/auth/spreadsheets.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
+
+/** The scope a feature needs, for the "reconnect to enable this" check. */
+export const GOOGLE_SCOPE = {
+  DRIVE: "https://www.googleapis.com/auth/drive.readonly",
+  SHEETS: "https://www.googleapis.com/auth/spreadsheets.readonly",
+  CALENDAR: "https://www.googleapis.com/auth/calendar.events",
+} as const;
 
 export const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -177,6 +199,8 @@ export async function exchangeCode(code: string, origin: string): Promise<{ emai
   }
 
   await setSetting(SETTING.GOOGLE_REFRESH_TOKEN, tokens.refresh_token, { secret: true });
+  // What Google actually granted, which is not always what was asked for.
+  await setSetting(SETTING.GOOGLE_SCOPES, tokens.scope ?? SCOPES.join(" "));
   accessTokenCache = { token: tokens.access_token, expiresAt: Date.now() + tokens.expires_in * 1000 - 60_000 };
 
   const email = await fetchEmail(tokens.access_token);
@@ -217,9 +241,41 @@ async function accessToken(): Promise<string> {
   return tokens.access_token;
 }
 
-async function apiGet<T>(url: string): Promise<T> {
+/** The scopes the stored connection carries. Empty when nothing is connected. */
+export async function googleScopes(): Promise<string[]> {
+  const raw = await getSetting(SETTING.GOOGLE_SCOPES);
+  return raw ? raw.split(/\s+/).filter(Boolean) : [];
+}
+
+/** True when the connected account granted this scope. */
+export async function hasGoogleScope(scope: string): Promise<boolean> {
+  const granted = await googleScopes();
+  // A pre-Calendar connection has no record of its scopes at all; treat that
+  // as "only the original read-only pair", which is what it was.
+  if (granted.length === 0) return false;
+  return granted.includes(scope);
+}
+
+/**
+ * One authenticated call to any Google API, refreshing the access token when
+ * it has expired and clearing it when Google says it is no longer good.
+ *
+ * Exported so lib/calendar.ts can be a client for one API rather than a second
+ * copy of the OAuth plumbing — there is one connection, one token cache and
+ * one place that knows what a 401 from Google means.
+ */
+export async function googleAuthorizedFetch<T>(url: string, options: { method?: "GET" | "POST"; body?: unknown } = {}): Promise<T> {
   const token = await accessToken();
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+  const response = await fetch(url, {
+    method: options.method ?? "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+
   if (!response.ok) {
     const detail = await response
       .json()
@@ -232,6 +288,10 @@ async function apiGet<T>(url: string): Promise<T> {
     throw new GoogleError(response.status, detail ?? `Google returned ${response.status}`);
   }
   return (await response.json()) as T;
+}
+
+async function apiGet<T>(url: string): Promise<T> {
+  return googleAuthorizedFetch<T>(url);
 }
 
 // --- Drive -----------------------------------------------------------------

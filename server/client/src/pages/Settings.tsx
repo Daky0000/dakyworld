@@ -17,15 +17,28 @@ import { Badge, Button, Field, PageHeader, StatusDot, Toggle } from "../componen
  * wherever someone chose to make it one.
  */
 
-type SectionId = "email" | "analyst" | "google" | "capture" | "payments" | "storage" | "general";
+type SectionId =
+  | "email"
+  | "analyst"
+  | "google"
+  | "capture"
+  | "payments"
+  | "storage"
+  | "alerts"
+  | "developer"
+  | "webhooks"
+  | "general";
 
 const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
   { id: "email", label: "Email", blurb: "The mailbox everything sends from" },
   { id: "analyst", label: "AI analyst", blurb: "Reads sheets, drafts emails" },
-  { id: "google", label: "Google Drive", blurb: "Import a sheet without downloading it" },
+  { id: "google", label: "Google", blurb: "Drive imports and the calendar" },
   { id: "capture", label: "Lead capture", blurb: "Apify scrapers and their schedule" },
   { id: "payments", label: "Payments", blurb: "Stripe checkout links on invoices" },
   { id: "storage", label: "File storage", blurb: "Where generated PDFs are kept" },
+  { id: "alerts", label: "Alerts", blurb: "Slack, for anything worth interrupting you" },
+  { id: "developer", label: "Developer", blurb: "GitHub, for the technical agents" },
+  { id: "webhooks", label: "Webhooks", blurb: "Events in from the website and partners" },
   { id: "general", label: "General", blurb: "Public URL and default timezone" },
 ];
 
@@ -82,6 +95,14 @@ export function Settings() {
         return data.cloudinary.configured ? "ok" : "idle";
       case "email":
         return data.email.configured ? "ok" : "idle";
+      case "alerts":
+        return data.alerts.configured ? "ok" : "idle";
+      case "developer":
+        return data.developer.configured ? "ok" : "idle";
+      // Always available — the secret mints itself, so there is nothing to
+      // wait on and a warning dot here would be permanent noise.
+      case "webhooks":
+        return "ok";
       default:
         return "ok";
     }
@@ -129,6 +150,9 @@ export function Settings() {
               {section === "capture" && <CapturePanel settings={data} />}
               {section === "payments" && <PaymentsPanel settings={data} />}
               {section === "storage" && <StoragePanel settings={data} />}
+              {section === "alerts" && <AlertsPanel settings={data} />}
+              {section === "developer" && <DeveloperPanel settings={data} />}
+              {section === "webhooks" && <WebhooksPanel settings={data} />}
               {section === "general" && <GeneralPanel settings={data} />}
             </>
           )}
@@ -844,8 +868,8 @@ function GooglePanel({
                 , create a project.
               </li>
               <li>
-                <strong>APIs &amp; Services → Library</strong>: enable the <strong>Google Drive API</strong> and the{" "}
-                <strong>Google Sheets API</strong>. Both.
+                <strong>APIs &amp; Services → Library</strong>: enable the <strong>Google Drive API</strong>, the{" "}
+                <strong>Google Sheets API</strong> and the <strong>Google Calendar API</strong>. All three.
               </li>
               <li>
                 <strong>OAuth consent screen</strong>: User type <em>External</em>, add yourself as a test user, then{" "}
@@ -864,8 +888,80 @@ function GooglePanel({
           </details>
         </>
       )}
+      <CalendarSection settings={settings} onReconnect={() => connect.mutate()} />
       <ErrorNote error={saveClient.error ?? connect.error ?? disconnect.error ?? removeClient.error} />
     </Panel>
+  );
+}
+
+/**
+ * Which calendar the agents book into.
+ *
+ * Calendar rides on the same Google connection as Drive rather than asking for
+ * a second one, and the price of that is visible here: an account connected
+ * before calendar access was added holds a token that calendar calls are
+ * refused on. Saying so with a reconnect button beats discovering it at the
+ * moment somebody tries to book a consultation.
+ */
+function CalendarSection({ settings, onReconnect }: { settings: AppSettings; onReconnect: () => void }) {
+  const save = useSaveSettings();
+  const calendar = settings.calendar;
+  const [chosen, setChosen] = useState(calendar.calendarId);
+
+  const choose = useMutation({
+    mutationFn: (calendarId: string) => api.put<AppSettings>("/settings/calendar", { calendarId }),
+    onSuccess: save,
+  });
+
+  if (!settings.google.connected) return null;
+
+  return (
+    <div className="mt-6 border-t border-ink/10 pt-5">
+      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Calendar</h3>
+
+      {!calendar.scoped ? (
+        <div className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-sm text-amber-900">
+            This account was connected before calendar access existed, so booking is off. Reconnecting grants it — nothing else
+            changes.
+          </p>
+          <Button className="mt-2" size="sm" onClick={onReconnect}>
+            Reconnect Google
+          </Button>
+        </div>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-ink/55">
+            Where an agent books a consultation. A shared calendar the team can see beats the account's own once more than one
+            person needs to know what was booked.
+          </p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <Field label="Book into">
+              <select
+                value={chosen}
+                onChange={(event) => setChosen(event.target.value)}
+                className="input"
+              >
+                <option value="primary">The connected account's own calendar</option>
+                {calendar.calendars
+                  .filter((entry) => !entry.primary)
+                  .map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            {chosen !== calendar.calendarId && (
+              <Button size="sm" onClick={() => choose.mutate(chosen)} disabled={choose.isPending}>
+                {choose.isPending ? "Saving…" : "Save"}
+              </Button>
+            )}
+          </div>
+          <ErrorNote error={choose.error} />
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1741,6 +1837,334 @@ function StoragePanel({ settings }: { settings: AppSettings }) {
         </form>
       )}
       <ErrorNote error={connect.error ?? remove.error} />
+    </Panel>
+  );
+}
+
+
+// --- Alerts (Slack) --------------------------------------------------------
+
+/**
+ * Slack, two ways in, and the cheap one is usually right.
+ *
+ * A webhook URL is one paste and no app review; it posts to the single channel
+ * it was created for, which is all "tell me when a capture fails" needs. A bot
+ * token is only worth the setup once escalations should land somewhere
+ * different from run reports — that is the one thing a webhook cannot do.
+ */
+function AlertsPanel({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [botToken, setBotToken] = useState("");
+  const [channel, setChannel] = useState(settings.alerts.defaultChannel ?? "");
+
+  const connect = useMutation({
+    mutationFn: () => api.put<AppSettings>("/settings/slack", { webhookUrl, botToken, defaultChannel: channel }),
+    onSuccess: (result) => {
+      setWebhookUrl("");
+      setBotToken("");
+      save(result);
+    },
+  });
+  const remove = useMutation({ mutationFn: () => api.delete<AppSettings>("/settings/slack"), onSuccess: save });
+  const test = useMutation({ mutationFn: () => api.post<{ delivered: boolean; channel: string | null }>("/settings/slack/test", {}) });
+
+  const alerts = settings.alerts;
+
+  return (
+    <Panel
+      title="Alerts"
+      what={
+        <>
+          Where the system interrupts you: a scheduled capture that failed at 06:00, a lead worth stopping for, an agent that
+          escalated. Without it those arrive by email, which works — this is for the ones you want to see immediately.
+        </>
+      }
+      where={
+        !alerts.configured && (
+          <>
+            The quickest route is an{" "}
+            <a className="text-blue hover:underline" href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noreferrer">
+              incoming webhook
+            </a>{" "}
+            — create one against a channel and paste the URL. A bot token (<code className="font-mono">xoxb-…</code> with{" "}
+            <code className="font-mono">chat:write</code>) is only needed if agents should choose the channel per message.
+          </>
+        )
+      }
+      state={
+        alerts.configured ? (
+          <Connected>
+            <span>{alerts.transport === "TOKEN" ? "Bot token" : "Incoming webhook"}</span>
+            <span className="font-mono text-xs text-ink/50">{alerts.botToken ?? alerts.webhookUrl}</span>
+            {alerts.defaultChannel && <span className="text-ink/50">→ {alerts.defaultChannel}</span>}
+            <Button variant="ghost" size="sm" onClick={() => test.mutate()} disabled={test.isPending}>
+              {test.isPending ? "Sending…" : "Send a test"}
+            </Button>
+            {!alerts.envManaged && (
+              <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
+                Remove
+              </Button>
+            )}
+          </Connected>
+        ) : (
+          <NotConnected>Alerts arrive by email only.</NotConnected>
+        )
+      }
+    >
+      {test.isSuccess && (
+        <p className="mt-3 border border-line bg-ink/[.02] px-3 py-2 text-sm text-ink/60">
+          Sent. If nothing arrived, the bot probably isn't in that channel yet.
+        </p>
+      )}
+
+      {alerts.envManaged ? (
+        <EnvNote variable="SLACK_WEBHOOK_URL" />
+      ) : (
+        <form
+          className="mt-4 grid gap-3 sm:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (webhookUrl.trim() || botToken.trim() || channel !== (alerts.defaultChannel ?? "")) connect.mutate();
+          }}
+        >
+          <Field label="Incoming webhook URL">
+            <input
+              value={webhookUrl}
+              onChange={(event) => setWebhookUrl(event.target.value)}
+              placeholder="https://hooks.slack.com/services/…"
+              autoComplete="off"
+              className="input font-mono text-xs"
+            />
+          </Field>
+          <Field label="Bot token (optional)">
+            <input
+              type="password"
+              value={botToken}
+              onChange={(event) => setBotToken(event.target.value)}
+              placeholder="xoxb-…"
+              autoComplete="off"
+              className="input font-mono text-xs"
+            />
+          </Field>
+          <Field label="Default channel">
+            <input
+              value={channel}
+              onChange={(event) => setChannel(event.target.value)}
+              placeholder="#alerts"
+              className="input"
+            />
+          </Field>
+          <div className="sm:col-span-2">
+            <Button type="submit" disabled={connect.isPending}>
+              {connect.isPending ? "Checking…" : "Save"}
+            </Button>
+          </div>
+        </form>
+      )}
+      <ErrorNote error={connect.error ?? remove.error ?? test.error} />
+    </Panel>
+  );
+}
+
+// --- Developer (GitHub) ----------------------------------------------------
+
+function DeveloperPanel({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const [token, setToken] = useState("");
+  const [owner, setOwner] = useState(settings.developer.owner ?? "");
+
+  const connect = useMutation({
+    mutationFn: () => api.put<AppSettings>("/settings/github", { token, owner }),
+    onSuccess: (result) => {
+      setToken("");
+      save(result);
+    },
+  });
+  const remove = useMutation({ mutationFn: () => api.delete<AppSettings>("/settings/github"), onSuccess: save });
+
+  const developer = settings.developer;
+
+  return (
+    <Panel
+      title="Developer"
+      what={
+        <>
+          What the technical agents read to answer "what shipped this week" and "what is open against this client" — repositories,
+          recent commits and issues. They can raise an issue; they cannot touch code.
+        </>
+      }
+      where={
+        !developer.configured && (
+          <>
+            A{" "}
+            <a
+              className="text-blue hover:underline"
+              href="https://github.com/settings/personal-access-tokens"
+              target="_blank"
+              rel="noreferrer"
+            >
+              fine-grained token
+            </a>{" "}
+            with <strong>Contents: read</strong>, <strong>Issues: read and write</strong> and <strong>Metadata: read</strong> on the
+            repositories that matter. A classic token with <code className="font-mono">repo</code> also works and is broader than
+            needed.
+          </>
+        )
+      }
+      state={
+        developer.configured ? (
+          <Connected>
+            <span className="font-mono text-xs text-ink/50">{developer.token}</span>
+            {developer.owner && <span className="text-ink/50">default owner: {developer.owner}</span>}
+            {!developer.envManaged && (
+              <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
+                Remove
+              </Button>
+            )}
+          </Connected>
+        ) : (
+          <NotConnected>The technical agents have no repository context.</NotConnected>
+        )
+      }
+    >
+      {developer.envManaged ? (
+        <EnvNote variable="GITHUB_TOKEN" />
+      ) : (
+        <form
+          className="mt-4 grid gap-3 sm:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (token.trim() || owner !== (developer.owner ?? "")) connect.mutate();
+          }}
+        >
+          <Field label="Personal access token">
+            <input
+              type="password"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="github_pat_…"
+              autoComplete="off"
+              className="input font-mono text-xs"
+            />
+          </Field>
+          <Field label="Default owner">
+            <input
+              value={owner}
+              onChange={(event) => setOwner(event.target.value)}
+              placeholder="dakyworld"
+              className="input"
+            />
+          </Field>
+          <p className="text-xs text-ink/45 sm:col-span-2">
+            With a default owner set, a repository can be named <code className="font-mono">os</code> rather than{" "}
+            <code className="font-mono">dakyworld/os</code>.
+          </p>
+          <div className="sm:col-span-2">
+            <Button type="submit" disabled={connect.isPending}>
+              {connect.isPending ? "Checking…" : "Save"}
+            </Button>
+          </div>
+        </form>
+      )}
+      <ErrorNote error={connect.error ?? remove.error} />
+    </Panel>
+  );
+}
+
+// --- Webhooks --------------------------------------------------------------
+
+/**
+ * The URL to give the website's contact form, and the secret anything else
+ * signs with.
+ *
+ * The form is deliberately allowed to post unsigned: dakyworld.com is a static
+ * site on GitHub Pages with nowhere to keep a secret, and losing a real enquiry
+ * to a configuration mismatch is worse than accepting an unsigned post that can
+ * only ever create a lead. Everything else must sign, and an unsigned event
+ * from anywhere else is recorded and ignored rather than acted on.
+ */
+function WebhooksPanel({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  const rotate = useMutation({
+    mutationFn: () => api.post<{ secret: string; snapshot: AppSettings }>("/settings/webhooks/rotate", {}),
+    onSuccess: (result) => {
+      setRevealed(result.secret);
+      setConfirming(false);
+      save(result.snapshot);
+    },
+  });
+
+  const webhooks = settings.webhooks;
+
+  return (
+    <Panel
+      title="Webhooks"
+      what={
+        <>
+          Events in from other systems. The contact form on dakyworld.com posting here creates a scored, de-duplicated lead in the
+          pipeline instead of an email somebody retypes on Monday.
+        </>
+      }
+      state={
+        <div className="space-y-3 text-sm">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Contact form posts to</p>
+            <code className="mt-1 block break-all font-mono text-xs text-ink/70">{webhooks.formUrl}</code>
+          </div>
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Anything else</p>
+            <code className="mt-1 block break-all font-mono text-xs text-ink/70">{webhooks.baseUrl}&lt;source&gt;</code>
+          </div>
+        </div>
+      }
+    >
+      <div className="mt-4 space-y-4">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Signing secret</p>
+          <p className="mt-1 text-sm text-ink/55">
+            Senders other than the website form must sign: an{" "}
+            <code className="font-mono">x-dakyworld-signature</code> header holding the HMAC-SHA256 of{" "}
+            <code className="font-mono">{"`${timestamp}.${body}`"}</code>, with the timestamp in{" "}
+            <code className="font-mono">x-dakyworld-timestamp</code>. Requests more than five minutes old are refused.
+          </p>
+          <p className="mt-2 font-mono text-xs text-ink/50">{webhooks.secret}</p>
+
+          {revealed && (
+            <p className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              New secret — copy it now, it is not shown again:
+              <code className="mt-1 block break-all font-mono">{revealed}</code>
+            </p>
+          )}
+
+          {webhooks.envManaged ? (
+            <EnvNote variable="WEBHOOK_SECRET" />
+          ) : confirming ? (
+            <div className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-sm text-amber-900">
+                Every sender already using the old secret will start being rejected until you update it. Only the website form,
+                which posts unsigned, keeps working.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" onClick={() => rotate.mutate()} disabled={rotate.isPending}>
+                  {rotate.isPending ? "Rotating…" : "Rotate anyway"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button className="mt-3" size="sm" variant="secondary" onClick={() => setConfirming(true)}>
+              Rotate secret
+            </Button>
+          )}
+        </div>
+      </div>
+      <ErrorNote error={rotate.error} />
     </Panel>
   );
 }

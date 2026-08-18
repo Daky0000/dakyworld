@@ -459,6 +459,16 @@ model ScraperRun {
   error        String?
   input        Json?
 
+  /// What Apify billed for this run, in USD. Null while it is still going, or
+  /// when Apify reported no charge for it.
+  costUsd Float?
+  /// What the run was expected to cost when it started, so the two can be
+  /// compared afterwards.
+  estimateUsd Float?
+  /// Why rows didn't become leads: `{ dropped: [{ reason, count, sample }], shapes: {...} }`.
+  /// A run that fetches 40 rows and files 0 leads has to be able to say why.
+  diagnostics Json?
+
   leads Lead[]
 
   @@index([sourceId, startedAt])
@@ -1199,4 +1209,81 @@ model LlmCall {
 
   @@index([createdAt])
   @@index([purpose, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// The tool layer
+// ---------------------------------------------------------------------------
+
+/// Every call an agent — or a person testing one — makes through the tool
+/// catalogue (services/tools/catalogue.ts).
+///
+/// The catalogue itself is code: a tool is a name, a scope, a schema and a
+/// handler, and none of that belongs in a table. What belongs here is what
+/// happened, because an agent that can spend money, write to a client record
+/// or send an email has to leave a trail that survives the process that made
+/// it. `dryRun` rows are the ones that were prepared and deliberately not
+/// carried out, which is how the blueprint's autonomy levels are audited.
+model ToolCall {
+  id String @id @default(cuid())
+
+  /// Catalogue key, e.g. `lead.read`, `email.send`, `capture.run`.
+  tool String
+  /// The agent that asked, when one did. Null for a call made by a person.
+  agentKey String?
+  /// The signed-in user, when a person made or approved the call.
+  userId String?
+
+  input  Json?
+  output Json?
+
+  ok    Boolean @default(true)
+  error String?
+  /// True when the call was prepared and stopped short of taking effect.
+  dryRun Boolean @default(false)
+  /// Set when the tool refused: out of scope, over a limit, or policy-gated.
+  refusedReason String?
+
+  /// What the call cost, when the tool spends money.
+  costUsd    Decimal @default(0) @db.Decimal(10, 6)
+  durationMs Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([tool, createdAt])
+  @@index([agentKey, createdAt])
+}
+
+/// Anything another system sends us. Recorded before it is acted on, so a
+/// payload that crashes a handler is still on disk to look at.
+///
+/// Stripe keeps its own dedicated route because its signature scheme and its
+/// raw-body requirement are its own; everything else — a form on the website,
+/// a partner system, a Zap — arrives here against a shared secret.
+model WebhookEvent {
+  id String @id @default(cuid())
+
+  /// Which endpoint it came in on: the last path segment, e.g. `website-form`.
+  source String
+  /// The event name the sender gave it, when it gave one.
+  event  String?
+
+  payload Json
+  headers Json?
+
+  /// False when the signature didn't match. Kept rather than dropped: a run of
+  /// these is either a misconfigured sender or somebody probing.
+  verified Boolean @default(false)
+
+  /// Set once something has acted on it.
+  handledAt DateTime?
+  /// What it produced — `{ "leadId": "…" }` — or why it produced nothing.
+  result    Json?
+  error     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([source, createdAt])
+  @@index([handledAt])
 }

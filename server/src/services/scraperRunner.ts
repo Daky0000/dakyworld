@@ -7,11 +7,13 @@ import {
   getDatasetItems,
   getMonthlyUsage,
   getRun,
+  runCost,
   startRun,
   type ApifyRunStatus,
   type StartRunOptions,
 } from "../lib/apify.js";
-import { buildDedupeKey, mapItemToLead, scoreLead, type NormalizedLead, type Preset } from "./leadMapping.js";
+import { buildDedupeKey, describeShape, mapRow, scoreLead, type NormalizedLead, type Preset } from "./leadMapping.js";
+import { estimateCost, suggestedCharge } from "./captureCost.js";
 import { enrolNewLeads } from "./emailSequences.js";
 import { captureTokens, proxyInput, readCaptureConfig, runOptions, type CaptureConfig } from "./captureConfig.js";
 import { reportRun } from "./captureNotify.js";
@@ -199,12 +201,34 @@ async function buildRunInput(source: ScraperSource, config: CaptureConfig) {
  * ignored and at worst rejected, so the actor's own pricing decides. When the
  * pricing can't be read, `maxItems` is the safer guess — it's the older
  * parameter and the one every actor tolerates.
+ *
+ * A pay-per-event actor with no ceiling at all is the hole this closes. Every
+ * actor the app ships is pay-per-event, `maxItems` does nothing to them, and
+ * until the Owner set a per-run cap by hand there was no number at which a run
+ * stopped: one search string returning thousands of places spent whatever it
+ * spent. Failing that, the ceiling is now derived from what the run was
+ * estimated to cost (see captureCost.suggestedCharge), so an unattended
+ * overnight schedule can overspend by about a factor of two rather than
+ * without limit.
  */
-function costCeiling(source: ScraperSource, config: CaptureConfig, pricingModel: string | null | undefined) {
-  if (pricingModel === "PAY_PER_EVENT") {
-    return config.maxRunChargeUsd != null ? { maxTotalChargeUsd: config.maxRunChargeUsd } : {};
-  }
-  return { maxItems: source.maxItems };
+async function costCeiling(
+  source: ScraperSource,
+  config: CaptureConfig,
+  input: Record<string, unknown>,
+  pricingModel: string | null | undefined,
+  declaredKeys: string[] | null,
+): Promise<{ options: StartRunOptions; estimateUsd: number | null }> {
+  const estimate = await estimateCost(source.actorId, input, source.maxItems, declaredKeys).catch(() => null);
+  const estimateUsd = estimate?.totalUsd ?? null;
+
+  if (pricingModel !== "PAY_PER_EVENT") return { options: { maxItems: source.maxItems }, estimateUsd };
+  if (config.maxRunChargeUsd != null) return { options: { maxTotalChargeUsd: config.maxRunChargeUsd }, estimateUsd };
+  if (!estimate) return { options: {}, estimateUsd };
+
+  // Apify refuses a ceiling below the actor's own floor, so a cheap run gets
+  // the floor rather than a rejected start.
+  const ceiling = suggestedCharge(estimate, estimate.minChargeUsd);
+  return { options: ceiling != null ? { maxTotalChargeUsd: ceiling } : {}, estimateUsd };
 }
 
 export async function runSource(sourceId: string, trigger: ScraperRunTrigger = "MANUAL") {
@@ -215,17 +239,16 @@ export async function runSource(sourceId: string, trigger: ScraperRunTrigger = "
   await assertCanRun(config, sourceId);
 
   const { input, proxyField, schema } = await buildRunInput(source, config);
+  const { options: ceiling, estimateUsd } = await costCeiling(source, config, input, schema?.pricingModel, schema?.properties ?? null);
+
   const run = await prisma.scraperRun.create({
-    data: { sourceId, trigger, status: "QUEUED", input: input as Prisma.InputJsonValue },
+    data: { sourceId, trigger, status: "QUEUED", input: input as Prisma.InputJsonValue, estimateUsd },
   });
 
   try {
     // The caps go to Apify rather than being applied to the dataset after the
     // fact, so the row limit saves money instead of only saving pipeline noise.
-    const apifyRun = await startWithProxyFallback(source.actorId, input, proxyField, {
-      ...runOptions(config),
-      ...costCeiling(source, config, schema?.pricingModel),
-    });
+    const apifyRun = await startWithProxyFallback(source.actorId, input, proxyField, { ...runOptions(config), ...ceiling });
     const updated = await prisma.scraperRun.update({
       where: { id: run.id },
       data: { apifyRunId: apifyRun.id, datasetId: apifyRun.defaultDatasetId, status: toRunStatus(apifyRun.status) },
@@ -324,11 +347,16 @@ async function pollUntilDone(runId: string) {
             ? null
             : (apifyRun.statusMessage ?? `Apify run ${apifyRun.status.toLowerCase().replace("-", " ")}`);
 
+        // What it actually cost, read once the run is over and the charges are
+        // final. Never allowed to fail the ingest: a missing cost is a gap in
+        // the record, not a reason to lose the leads.
+        const cost = await runCost(apifyRun, run.source.actorId).catch(() => null);
+
         // A run that timed out or was stopped has still been paid for, and its
         // dataset holds everything found up to that point. Those rows are as
         // good as any others — file them, and keep the reason alongside.
-        if (datasetId) await ingestRun(runId, datasetId, run.source, note);
-        else await failRun(runId, note ?? "Apify run finished without a dataset", run.source);
+        if (datasetId) await ingestRun(runId, datasetId, run.source, note, cost?.totalUsd ?? null);
+        else await failRun(runId, note ?? "Apify run finished without a dataset", run.source, cost?.totalUsd ?? null);
         return;
       }
 
@@ -348,10 +376,12 @@ async function pollUntilDone(runId: string) {
   }
 }
 
-async function failRun(runId: string, error: string, source?: ScraperSource) {
+async function failRun(runId: string, error: string, source?: ScraperSource, costUsd: number | null = null) {
   const run = await prisma.scraperRun.update({
     where: { id: runId },
-    data: { status: "FAILED", error, finishedAt: new Date() },
+    // A failed run is often a *charged* run — Apify bills for what it did
+    // before it fell over — so the cost is recorded even here.
+    data: { status: "FAILED", error, finishedAt: new Date(), ...(costUsd != null ? { costUsd } : {}) },
   });
   if (source) await notify(run, source);
 }
@@ -387,9 +417,15 @@ export async function resumeInterruptedRuns() {
  * and filed — Apify has already charged for them — and the note is kept as the
  * run's error so the UI can say what went wrong beside what was salvaged.
  */
-export async function ingestRun(runId: string, datasetId: string | null, source: ScraperSource, note: string | null = null) {
+export async function ingestRun(
+  runId: string,
+  datasetId: string | null,
+  source: ScraperSource,
+  note: string | null = null,
+  costUsd: number | null = null,
+) {
   if (!datasetId) {
-    await failRun(runId, note ?? "Apify run finished without a dataset", source);
+    await failRun(runId, note ?? "Apify run finished without a dataset", source, costUsd);
     return;
   }
 
@@ -397,17 +433,24 @@ export async function ingestRun(runId: string, datasetId: string | null, source:
   try {
     items = await getDatasetItems(datasetId, Math.min(source.maxItems, 1000));
   } catch (err) {
-    await failRun(runId, `Could not read the results: ${(err as Error).message}`, source);
+    await failRun(runId, `Could not read the results: ${(err as Error).message}`, source, costUsd);
     return;
   }
 
-  const stats = await ingestItems(items.slice(0, source.maxItems), source, runId);
+  const { diagnostics, ...stats } = await ingestItems(items.slice(0, source.maxItems), source, runId);
 
   const finished = await prisma.scraperRun.update({
     where: { id: runId },
     // A note means the status is already the one Apify reported (timed out,
     // aborted); only a clean run gets promoted to SUCCEEDED here.
-    data: { ...stats, status: note ? undefined : "SUCCEEDED", error: note, finishedAt: new Date() },
+    data: {
+      ...stats,
+      status: note ? undefined : "SUCCEEDED",
+      error: note,
+      finishedAt: new Date(),
+      diagnostics: diagnostics as unknown as Prisma.InputJsonValue,
+      ...(costUsd != null ? { costUsd } : {}),
+    },
   });
   console.log(
     `[scraper] ${source.name}: ${stats.itemsFetched} items → ${stats.leadsCreated} new, ` +
@@ -432,6 +475,44 @@ export interface IngestStats {
   leadsUpdated: number;
   duplicates: number;
   filtered: number;
+  /** Why rows were dropped, and what the actor's rows were read as. */
+  diagnostics: RunDiagnostics;
+}
+
+/**
+ * The account of what happened to rows that never became leads.
+ *
+ * "40 items fetched, 0 leads" was the whole story a run could tell, and it is
+ * indistinguishable between an actor that returned rubbish, a score floor set
+ * too high, a batch of businesses already in the pipeline, and a mapper that
+ * couldn't read the shape at all — which is what it actually was. Each reason
+ * carries a sample row so the cause is visible without opening Apify.
+ */
+export interface RunDiagnostics {
+  /** What each row was recognised as: `{ "INSTAGRAM": 12 }`. */
+  shapes: Record<string, number>;
+  dropped: Array<{ reason: string; count: number; sample: Record<string, unknown> | null }>;
+}
+
+function emptyDiagnostics(): RunDiagnostics {
+  return { shapes: {}, dropped: [] };
+}
+
+/** Records one dropped row against its reason, keeping the first as a sample. */
+function noteDrop(diagnostics: RunDiagnostics, reason: string, item: Record<string, unknown>) {
+  const existing = diagnostics.dropped.find((entry) => entry.reason === reason);
+  if (existing) {
+    existing.count += 1;
+    return;
+  }
+  // One sample per reason, trimmed: a dataset row can be tens of kilobytes and
+  // this is stored on the run.
+  const sample = Object.fromEntries(
+    Object.entries(item)
+      .slice(0, 12)
+      .map(([key, value]) => [key, typeof value === "string" ? value.slice(0, 200) : value]),
+  );
+  diagnostics.dropped.push({ reason, count: 1, sample });
 }
 
 /** Shared by the runner and by the manual-import endpoint. */
@@ -446,21 +527,36 @@ export async function ingestItems(
     leadsUpdated: 0,
     duplicates: 0,
     filtered: 0,
+    diagnostics: emptyDiagnostics(),
   };
 
   const groupId = items.length ? await resolveGroup(source) : null;
   const fieldMap = (source.fieldMap ?? null) as Record<string, string> | null;
 
   for (const item of items) {
-    const mapped = mapItemToLead(item, { preset: source.preset as Preset, fieldMap });
-    if (!mapped || mapped.closed) {
+    const { lead: mapped, shape, reason } = mapRow(item, { preset: source.preset as Preset, fieldMap });
+    stats.diagnostics.shapes[shape] = (stats.diagnostics.shapes[shape] ?? 0) + 1;
+
+    if (!mapped) {
       stats.filtered += 1;
+      noteDrop(stats.diagnostics, reason ?? "Could not be read as a lead.", item);
+      continue;
+    }
+
+    if (mapped.closed) {
+      stats.filtered += 1;
+      noteDrop(stats.diagnostics, `Marked permanently or temporarily closed, so not a prospect (read as ${describeShape(shape)}).`, item);
       continue;
     }
 
     const score = scoreLead(mapped);
     if (score < source.minScore) {
       stats.filtered += 1;
+      noteDrop(
+        stats.diagnostics,
+        `Scored ${score}, below this source's minimum of ${source.minScore}. Usually means no email, no phone and no website came back.`,
+        item,
+      );
       continue;
     }
 
@@ -469,7 +565,10 @@ export async function ingestItems(
     else if (outcome === "updated") {
       stats.leadsUpdated += 1;
       stats.duplicates += 1;
-    } else stats.duplicates += 1;
+    } else {
+      stats.duplicates += 1;
+      noteDrop(stats.diagnostics, "Already in the pipeline and nothing new to add — the existing lead was left as it was.", item);
+    }
   }
 
   return stats;

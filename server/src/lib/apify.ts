@@ -62,8 +62,25 @@ interface RequestOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Reading the stored token means reading the database. The store, actor and
+ * pricing endpoints are public, so a lookup marked `optionalAuth` has to
+ * survive the database being unreachable rather than reporting the actor as
+ * unpriceable.
+ */
+async function resolveToken(options: RequestOptions): Promise<string | null> {
+  if (options.anonymous) return null;
+  if (options.token !== undefined) return options.token;
+  try {
+    return await getApifyToken();
+  } catch (err) {
+    if (options.optionalAuth) return null;
+    throw err;
+  }
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const token = options.anonymous ? null : (options.token ?? (await getApifyToken()));
+  const token = await resolveToken(options);
   if (!options.anonymous && !options.optionalAuth && !token) throw new ApifyNotConfiguredError();
 
   const url = new URL(`${API_BASE}${path}`);
@@ -166,6 +183,104 @@ export async function getMonthlyUsage(token?: string): Promise<ApifyUsage> {
 export function clearApifyCaches() {
   usageCache = null;
   schemaCache.clear();
+  pricingCache.clear();
+}
+
+// --- What an actor charges -------------------------------------------------
+
+/**
+ * Apify Store discount tiers. Prices fall as an account spends more, so every
+ * quote has to say which tier it is quoted at. FREE is the list price and the
+ * one to show: it is the most anyone pays, so an estimate made at it can only
+ * ever come in under.
+ */
+export type ApifyTier = "FREE" | "BRONZE" | "SILVER" | "GOLD" | "PLATINUM" | "DIAMOND";
+
+export interface ApifyChargeEvent {
+  key: string;
+  title: string;
+  description: string;
+  /** Null when the actor publishes the event without a price. */
+  priceUsd: number | null;
+  /** The event that fires once per result. */
+  primary: boolean;
+}
+
+export interface ApifyPricing {
+  actorId: string;
+  /** PAY_PER_EVENT · PRICE_PER_DATASET_ITEM · FREE · FLAT_PRICE_PER_MONTH · PAY_PER_PLATFORM_USAGE. */
+  model: string;
+  tier: ApifyTier;
+  /** PRICE_PER_DATASET_ITEM only — the price of one row. */
+  perResultUsd: number | null;
+  /** FLAT_PRICE_PER_MONTH only. */
+  perMonthUsd: number | null;
+  /** The floor Apify puts under `maxTotalChargeUsd` for this actor. */
+  minChargeUsd: number | null;
+  events: ApifyChargeEvent[];
+}
+
+const pricingCache = new Map<string, { at: number; pricing: ApifyPricing | null }>();
+const PRICING_CACHE_MS = 6 * 60 * 60_000;
+
+function tieredPrice(tiered: Record<string, { tieredEventPriceUsd?: number; tieredPricePerUnitUsd?: number }> | undefined, tier: ApifyTier) {
+  const entry = tiered?.[tier] ?? tiered?.FREE;
+  return entry?.tieredEventPriceUsd ?? entry?.tieredPricePerUnitUsd ?? null;
+}
+
+/**
+ * What one run of this actor will be billed at, read from Apify rather than
+ * written down here.
+ *
+ * Actor prices change — `apify/instagram-profile-scraper` moved from per-result
+ * to per-event in Aug 2025 — and a number hard-coded in this repo would go
+ * stale silently, which is the worst way for a spending guard to fail. The
+ * endpoint is public, so this also answers "what would that cost" before a
+ * token has been connected.
+ */
+export async function getActorPricing(actorId: string, tier: ApifyTier = "FREE", force = false): Promise<ApifyPricing | null> {
+  const id = normalizeActorId(actorId);
+  const key = `${id}:${tier}`;
+  const cached = pricingCache.get(key);
+  if (!force && cached && Date.now() - cached.at < PRICING_CACHE_MS) return cached.pricing;
+
+  let pricing: ApifyPricing | null = null;
+  try {
+    const actor = await request<any>(`/acts/${id}`, { optionalAuth: true });
+    // `pricingInfos` is a history, oldest first, and an announced price change
+    // appears in it before it takes effect — so the entry in force is the last
+    // one that has actually started, not simply the last one.
+    const history: any[] = Array.isArray(actor?.pricingInfos) ? actor.pricingInfos : [];
+    const now = Date.now();
+    const current =
+      [...history].reverse().find((entry) => !entry?.startedAt || Date.parse(entry.startedAt) <= now) ?? history.at(-1) ?? null;
+    const model: string = current?.pricingModel ?? "FREE";
+
+    const events: ApifyChargeEvent[] = Object.entries(
+      (current?.pricingPerEvent?.actorChargeEvents ?? {}) as Record<string, any>,
+    ).map(([eventKey, value]) => ({
+      key: eventKey,
+      title: value?.eventTitle ?? eventKey,
+      description: value?.eventDescription ?? "",
+      priceUsd: value?.eventPriceUsd ?? tieredPrice(value?.eventTieredPricingUsd, tier),
+      primary: Boolean(value?.isPrimaryEvent) || eventKey === "apify-default-dataset-item",
+    }));
+
+    pricing = {
+      actorId: displayActorId(id),
+      model,
+      tier,
+      perResultUsd: current?.pricePerUnitUsd ?? tieredPrice(current?.tieredPricing, tier),
+      perMonthUsd: current?.pricePerMonthUsd ?? null,
+      minChargeUsd: current?.minimalMaxTotalChargeUsd ?? null,
+      events,
+    };
+  } catch {
+    pricing = null;
+  }
+
+  pricingCache.set(key, { at: Date.now(), pricing });
+  return pricing;
 }
 
 // --- Actors ----------------------------------------------------------------
@@ -342,6 +457,46 @@ export interface ApifyRun {
   finishedAt?: string | null;
   stats?: { computeUnits?: number };
   statusMessage?: string;
+  /**
+   * What this run has cost so far. Apify reports it two ways depending on the
+   * actor's pricing model — a total in dollars for platform usage, and a count
+   * per charged event for pay-per-event — so both are read and the runner
+   * keeps whichever is populated.
+   */
+  usageTotalUsd?: number;
+  chargedEventCounts?: Record<string, number>;
+  pricingInfo?: { pricingModel?: string };
+}
+
+/** What a finished run was billed, folded into one number. */
+export interface ApifyRunCost {
+  totalUsd: number | null;
+  /** Per charged event, for a pay-per-event actor: `{ "place-scraped": 120 }`. */
+  events: Record<string, number> | null;
+}
+
+/**
+ * Reads a run's own cost. Pay-per-event actors report counts rather than
+ * dollars, so the counts are priced against the actor's published rates — the
+ * same rates the pre-run estimate used, which is what makes "we thought $0.60,
+ * it cost $0.58" a sentence the Owner can check.
+ */
+export async function runCost(run: ApifyRun, actorId: string): Promise<ApifyRunCost> {
+  const events = run.chargedEventCounts && Object.keys(run.chargedEventCounts).length ? run.chargedEventCounts : null;
+  if (typeof run.usageTotalUsd === "number" && run.usageTotalUsd > 0) {
+    return { totalUsd: run.usageTotalUsd, events };
+  }
+  if (!events) return { totalUsd: null, events: null };
+
+  const pricing = await getActorPricing(actorId);
+  if (!pricing) return { totalUsd: null, events };
+
+  let total = 0;
+  for (const [key, count] of Object.entries(events)) {
+    const price = pricing.events.find((event) => event.key === key)?.priceUsd;
+    if (price != null) total += price * count;
+  }
+  return { totalUsd: Number(total.toFixed(4)), events };
 }
 
 export interface StartRunOptions {

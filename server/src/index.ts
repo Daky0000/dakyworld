@@ -14,6 +14,7 @@ import { projectsRouter } from "./routes/projects.js";
 import { invoicesRouter } from "./routes/invoices.js";
 import { carePlansRouter } from "./routes/carePlans.js";
 import { emailsRouter, unsubscribeRouter } from "./routes/emails.js";
+import { webhooksRouter } from "./routes/webhooks.js";
 import { usersRouter } from "./routes/users.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
@@ -70,6 +71,12 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
   }
   res.json({ received: true });
 });
+
+// Everything that isn't Stripe comes in here, and for the same reason it sits
+// above the JSON parser: the signature covers the exact bytes that were sent,
+// so the body has to arrive raw. Public by design — a contact form on a static
+// site cannot log in. routes/webhooks.ts explains what guards it instead.
+app.use("/api/webhooks", express.raw({ type: "*/*", limit: "256kb" }), webhooksRouter);
 
 // The client is served ahead of the auth middleware below: attachUser does a
 // database round trip per request, and static assets have no business paying

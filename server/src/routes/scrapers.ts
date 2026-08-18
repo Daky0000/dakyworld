@@ -9,6 +9,7 @@ import {
   getActor,
   getActorSchema,
   getDatasetItems,
+  getActorPricing,
   getMonthlyUsage,
   listMyActors,
   normalizeActorId,
@@ -17,7 +18,8 @@ import {
 import { CaptureBudgetError, CaptureBusyError, ScrapeInProgressError, runSource, stopRun } from "../services/scraperRunner.js";
 import { computeNextRunAt, isValidTimezone, parseScheduleTime, syncSchedule } from "../services/scheduler.js";
 import { SCRAPER_TEMPLATES } from "../services/scraperTemplates.js";
-import { buildDedupeKey, mapItemToLead, scoreLead, type Preset } from "../services/leadMapping.js";
+import { buildDedupeKey, describeShape, mapRow, scoreLead, type Preset } from "../services/leadMapping.js";
+import { estimateCost } from "../services/captureCost.js";
 import { readCaptureConfig, unknownInputKeys } from "../services/captureConfig.js";
 
 export const scrapersRouter = Router();
@@ -177,7 +179,7 @@ scrapersRouter.get("/actors", async (req, res, next) => {
 
     const actors = await Promise.all(
       ids.map(async (actorId) => {
-        const schema = await getActorSchema(actorId, refresh);
+        const [schema, pricing] = await Promise.all([getActorSchema(actorId, refresh), getActorPricing(actorId, "FREE", refresh)]);
         const used = sources
           .filter((source) => normalizeActorId(source.actorId) === normalizeActorId(actorId))
           .map((source) => ({
@@ -193,7 +195,12 @@ scrapersRouter.get("/actors", async (req, res, next) => {
           actorId,
           reachable: schema !== null,
           title: schema?.title ?? null,
-          pricingModel: schema?.pricingModel ?? null,
+          pricingModel: pricing?.model ?? schema?.pricingModel ?? null,
+          // The rate card as Apify publishes it today. `usedBy` below says
+          // which sources are exposed to a change in it.
+          rates: pricing?.events.map((event) => ({ key: event.key, label: event.title, usd: event.priceUsd, primary: event.primary })) ?? [],
+          perResultUsd: pricing?.perResultUsd ?? null,
+          minChargeUsd: pricing?.minChargeUsd ?? null,
           proxyField: schema?.proxyField ?? null,
           proxyRequired: schema?.proxyRequired ?? false,
           inTemplates: templateActors.has(actorId),
@@ -346,20 +353,54 @@ scrapersRouter.post("/sources/:id/preview", async (req, res, next) => {
 
     const fieldMap = (source.fieldMap ?? null) as Record<string, string> | null;
     const preview = items.slice(0, 5).map((item) => {
-      const mapped = mapItemToLead(item, { preset: source.preset as Preset, fieldMap });
-      if (!mapped) return { skipped: "No usable name in this row", raw: item };
-      const score = scoreLead(mapped);
+      const { lead, shape, reason } = mapRow(item, { preset: source.preset as Preset, fieldMap });
+      // The shape travels with every row, mapped or not: "read as an Instagram
+      // profile" is the single most useful thing to know when the fields come
+      // out wrong, and it used to be invisible.
+      if (!lead) return { shape, readAs: describeShape(shape), skipped: reason, raw: item };
+      const score = scoreLead(lead);
       return {
-        lead: mapped,
+        lead,
+        shape,
+        readAs: describeShape(shape),
         score,
-        dedupeKey: buildDedupeKey(mapped),
-        wouldSave: !mapped.closed && score >= source.minScore,
-        skipped: mapped.closed ? "Marked closed" : score < source.minScore ? `Below the minimum score of ${source.minScore}` : null,
+        dedupeKey: buildDedupeKey(lead),
+        wouldSave: !lead.closed && score >= source.minScore,
+        skipped: lead.closed ? "Marked closed" : score < source.minScore ? `Below the minimum score of ${source.minScore}` : null,
         raw: item,
       };
     });
 
     res.json({ items: preview });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/scrapers/cost — what a given actor and input would cost to run.
+ *
+ * Deliberately not tied to a saved source: quick capture, the source editor
+ * and the template browser all need the same answer, and two of the three are
+ * asking about something that doesn't exist in the database yet. Reads Apify's
+ * published rates, so it is honest about actors this app has never seen.
+ */
+scrapersRouter.post("/cost", async (req, res, next) => {
+  try {
+    const { actorId, input, maxItems } = z
+      .object({
+        actorId: z.string().min(1).max(200),
+        input: z.record(z.unknown()).default({}),
+        maxItems: z.number().int().min(1).max(10_000).optional(),
+      })
+      .parse(req.body ?? {});
+
+    const config = await readCaptureConfig();
+    // The actor's declared keys tell the estimator which paid add-ons this
+    // actor bakes in rather than offering as a switch.
+    const schema = await getActorSchema(actorId).catch(() => null);
+    const estimate = await estimateCost(actorId, input, maxItems ?? config.maxItems, schema?.properties ?? null);
+    res.json(estimate);
   } catch (err) {
     next(err);
   }

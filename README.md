@@ -270,6 +270,57 @@ email enrichment, contact sweep over a list of URLs), by searching the Apify
 Store from inside the app, or by typing an actor id. Nothing about a new
 source requires a deploy.
 
+### What a capture costs, before it runs
+
+Every actor behind lead capture bills **per event**, and the events are not the
+results. A Google Maps run is charged per place, *plus* a filter charge on every
+place for every filter applied, *plus* another per place if it crawls the site
+for an email. So "100 places" is anywhere between $0.40 and $4.00 depending only
+on which switches are set in the input — and nothing said so until the invoice.
+
+The app now reads Apify's published rates at run time and works the arithmetic
+out itself ([`services/captureCost.ts`](server/src/services/captureCost.ts)).
+Three things come out of that:
+
+- **An estimate before you spend it.** Quick capture shows what the paste will
+  cost beside the button that runs it.
+- **A ceiling when you didn't set one.** Every actor here is pay-per-event,
+  which means `maxItems` does nothing to them — until August 2026 an unattended
+  overnight run had no number at which it stopped. It now gets a
+  `maxTotalChargeUsd` of roughly twice its estimate.
+- **Warnings about paid switches that buy nothing.** `maxReviews: 10` on a Maps
+  source costs $0.005 a review for text the app never reads.
+
+Runs record what they actually cost next to what was estimated, so the estimate
+either earns its trust over time or visibly doesn't.
+
+**The actors were re-priced against those rates in August 2026** and three
+changed. Google Maps moved from `lukaskrivka/google-maps-with-contact-details`
+to `compass/crawler-google-places` — the same underlying scraper, one being a
+wrapper on the other, and cheaper on every event: a 60-place search with emails
+costs $0.42 instead of $0.63. Instagram's "about this account" add-on came off
+every capture: $0.007 a profile on top of the $0.0026 for the profile itself,
+for the account's country and the month it was created. And `skipClosedPlaces`
+came off every Maps template — it is billed as a filter on *every* place
+scraped, so on 100 places it spent about $0.10 to avoid roughly $0.012 of
+closed ones, which the mapper already discards for nothing.
+
+### Why a run found nothing
+
+"40 found, 0 new" reads exactly the same whether the actor returned rubbish, the
+score floor was too high, every business was already in the pipeline, or the
+mapper couldn't read the rows at all. Each run now records why every dropped row
+was dropped, with a count and a sample, and the runs table has a **why?** link
+against the filtered column.
+
+That last case was real: the Instagram, Facebook and LinkedIn quick-capture
+actors were stored with the `CUSTOM` preset, which switched off every candidate
+field path, so each of their rows failed the "no usable name" check and
+vanished. The run charged, the dataset filled, and the pipeline stayed empty.
+The mapper now recognises a row by its own keys — a Maps place, a contact sweep,
+an Instagram profile, a Facebook Page, a LinkedIn company — and `CUSTOM` means
+"try my field map first", not "try nothing else".
+
 ### Quick capture: type the thing, the right actor runs
 
 Most capture is one company, not a campaign, and the ritual of adding a source
@@ -576,6 +627,10 @@ deploy stays the source of truth wherever you chose to make it one.
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
 | Email (SMTP) | Your own mailbox — Workspace, Zoho, cPanel | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM_EMAIL` |
 | Email (Hostinger MCP) | hPanel → Emails → Agentic mail → API | `HOSTINGER_MAIL_TOKEN`, `HOSTINGER_MAILBOX_ID`, `HOSTINGER_MAILBOX_ADDRESS`, `MAIL_TRANSPORT` |
+| Alerts (Slack) | https://api.slack.com/messaging/webhooks | `SLACK_WEBHOOK_URL`, `SLACK_BOT_TOKEN`, `SLACK_DEFAULT_CHANNEL` |
+| Developer (GitHub) | https://github.com/settings/personal-access-tokens | `GITHUB_TOKEN`, `GITHUB_OWNER` |
+| Calendar | Rides on the Google connection above | `GOOGLE_CALENDAR_ID` |
+| Webhooks | Nothing to get — the secret mints itself | `WEBHOOK_SECRET` |
 | General (public URL, timezone) | — | `APP_URL`, `SCRAPER_TIMEZONE` |
 
 `MAIL_TRANSPORT` picks between the two email panels — `SMTP` or `HOSTINGER`.
@@ -600,10 +655,62 @@ pattern-rule mapping; without Google credentials, imports still accept
 uploaded files.
 
 The Google OAuth client must be of type **Web application**, with the Drive
-API and Google Sheets API enabled, and with the redirect URI shown in
-**Settings → Google Drive** added to it verbatim — the app derives it from the
-public URL (Settings → General, or `APP_URL`, or the request host), and Google
-matches it character for character.
+API, Google Sheets API and **Google Calendar API** enabled, and with the
+redirect URI shown in **Settings → Google** added to it verbatim — the app
+derives it from the public URL (Settings → General, or `APP_URL`, or the
+request host), and Google matches it character for character.
+
+### The four the agents were waiting on
+
+These were named in the agent blueprint and reported as "not built yet" until
+August 2026. All four are now real, so the Tools screen has no unbuilt column
+left — everything is either ready or waiting on a key.
+
+**Slack** is for the things worth interrupting you: a scheduled capture that
+failed at 06:00, an agent that escalated. An incoming webhook URL is one paste
+and covers it. A bot token (`xoxb-…` with `chat:write`) is only worth the setup
+once escalations should land in a different channel from run reports, which is
+the one thing a webhook can't do.
+
+**GitHub** gives the technical agents repository context — recent commits, open
+issues, what shipped. A fine-grained token with *Contents: read*, *Issues: read
+and write* and *Metadata: read* is enough. They can raise an issue; they cannot
+touch code.
+
+**Calendar** rides on the Google connection rather than asking for a second
+one. A connection made before calendar access existed doesn't carry the scope,
+and Settings → Google says so with a Reconnect button instead of failing at the
+moment somebody tries to book a consultation.
+
+**Webhooks** take events in from other systems. The contact form on
+dakyworld.com posting to `/api/webhooks/website-form` creates a scored,
+de-duplicated lead in the pipeline — an enquiry from somebody already found by
+a scrape merges into that lead instead of duplicating it. Senders other than
+the form must sign: HMAC-SHA256 over `` `${timestamp}.${body}` `` in an
+`x-dakyworld-signature` header, with the timestamp in `x-dakyworld-timestamp`,
+and anything over five minutes old is refused. The form itself is deliberately
+allowed unsigned — a static GitHub Pages site has nowhere to keep a secret, and
+losing real enquiries to that is worse than accepting an unsigned post that can
+only ever create a lead. Everything that arrives is recorded either way.
+
+### What the agents can actually do
+
+**Tools** (`/tools`) has two halves. *Connections* is one row per integration —
+the only place a red dot means work for you. *The catalogue* is the individual
+things an agent calls: `lead.read`, `email.send`, `capture.run`, and about
+thirty others.
+
+The toolkit on each agent is a **real grant**: the tool layer checks it before
+every call, so ticking a box on the Agents screen hands over a capability and
+clearing it takes the capability away. Three separate things can stop a granted
+tool from firing, and the agent's drawer names which — the integration isn't
+connected, the agent's autonomy level is too low, or dry run is on. Outward-
+facing tools (sending an email, booking a meeting, opening an issue) need
+autonomy 3; spending money needs 4. Below that they *prepare* the action and
+show you what they would have done.
+
+Every call is recorded in `ToolCall`, including the ones that were refused.
+That log is what answers "why did nothing happen last night".
 
 ## Deploying
 

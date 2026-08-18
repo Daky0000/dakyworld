@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Badge, Button, Card } from "./ui";
-import type { CaptureIntent, CaptureRunResult, CaptureTargetKind, CaptureTaskInfo } from "../lib/types";
+import type { CaptureEstimate, CaptureIntent, CaptureRunResult, CaptureTargetKind, CaptureTaskInfo } from "../lib/types";
 
 /**
  * Paste a link, or say what you want.
@@ -74,6 +74,23 @@ export function QuickCapture() {
         : current,
     );
   };
+
+  /**
+   * What this paste will cost, at Apify's published rates, before the button
+   * that spends it is pressed. Re-asked whenever a target's task is changed,
+   * because the actor behind each task charges differently — running the same
+   * URL as a website sweep rather than a Facebook Page is a different bill.
+   */
+  const targetsKey = intent ? intent.targets.map((target) => `${target.kind}:${target.value}`).join("|") : "";
+  const { data: estimate } = useQuery({
+    queryKey: ["capture-estimate", targetsKey],
+    queryFn: () =>
+      api.post<CaptureEstimate>("/capture/estimate", {
+        targets: intent?.targets.map(({ kind, value }) => ({ kind, value })) ?? [],
+      }),
+    enabled: Boolean(intent?.targets.length),
+    staleTime: 60_000,
+  });
 
   const run = useMutation({
     mutationFn: (targets: CaptureIntent["targets"]) =>
@@ -182,6 +199,8 @@ export function QuickCapture() {
                   </li>
                 ))}
               </ul>
+              {estimate && <CostNote estimate={estimate} />}
+
               <div className="mt-4 flex items-center gap-2">
                 {/* The one lime action on this screen: it's what spends money. */}
                 <Button variant="accent" onClick={() => run.mutate(intent.targets)} disabled={busy}>
@@ -302,6 +321,51 @@ function TaskPicker({
           <p className="mt-1.5 font-mono text-[10px] text-ink/35">runs {task.actorId}</p>
         </form>
       )}
+    </div>
+  );
+}
+
+/**
+ * What the run will cost, said before it is spent.
+ *
+ * Every actor behind quick capture bills per event, and the events are not the
+ * results: a Maps search is charged per place *and* per filter applied to each
+ * place *and* per site crawled for an email. Nothing in the app said so until
+ * the bill arrived, so a "$0.42" here is the difference between a considered
+ * click and a surprise at the end of the month.
+ *
+ * A price that couldn't be read is said out loud rather than shown as zero.
+ */
+function CostNote({ estimate }: { estimate: CaptureEstimate }) {
+  const waste = estimate.tasks.flatMap((task) => task.estimate.waste);
+
+  return (
+    <div className="mt-3 border border-line bg-ink/[.02] px-3 py-2">
+      <p className="text-sm text-ink/70">
+        {estimate.totalUsd == null ? (
+          "Apify wouldn't quote a price for this, so it can't be costed in advance."
+        ) : (
+          <>
+            About <strong>${estimate.totalUsd.toFixed(2)}</strong>
+            {estimate.partial && " for the parts that could be priced"} on Apify.
+          </>
+        )}
+      </p>
+      {estimate.tasks.length > 1 && (
+        <ul className="mt-1 space-y-0.5">
+          {estimate.tasks.map((task) => (
+            <li key={task.kind} className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+              {task.label} × {task.count} —{" "}
+              {task.estimate.totalUsd == null ? "not priced" : `$${task.estimate.totalUsd.toFixed(2)}`}
+            </li>
+          ))}
+        </ul>
+      )}
+      {waste.map((line) => (
+        <p key={line} className="mt-1.5 text-xs text-amber-700">
+          {line}
+        </p>
+      ))}
     </div>
   );
 }

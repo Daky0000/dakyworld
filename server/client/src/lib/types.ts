@@ -169,8 +169,52 @@ export interface ScraperRun {
   duplicates: number;
   filtered: number;
   error?: string | null;
+  /** What Apify billed. Null while the run is still going. */
+  costUsd?: number | null;
+  /** What it was expected to cost when it started, for comparison. */
+  estimateUsd?: number | null;
+  /** Why rows didn't become leads. The answer to "40 items, 0 leads". */
+  diagnostics?: RunDiagnostics | null;
   source?: { id: string; name: string; actorId: string };
   leads?: Lead[];
+}
+
+export interface RunDiagnostics {
+  /** What each row was recognised as: `{ "INSTAGRAM": 12 }`. */
+  shapes: Record<string, number>;
+  dropped: Array<{ reason: string; count: number; sample: Record<string, unknown> | null }>;
+}
+
+// --- What a capture costs ---------------------------------------------------
+
+export interface CostLine {
+  label: string;
+  unitUsd: number;
+  units: number;
+  totalUsd: number;
+  /** An extra switched on by the input, rather than the base charge. */
+  addOn: boolean;
+}
+
+export interface CostEstimate {
+  actorId: string;
+  model: string;
+  /** Null when Apify wouldn't price the actor. */
+  totalUsd: number | null;
+  perResultUsd: number | null;
+  results: number;
+  minChargeUsd: number | null;
+  lines: CostLine[];
+  /** Paid switches that are on and buy nothing this app reads. */
+  waste: string[];
+  caveats: string[];
+}
+
+export interface CaptureEstimate {
+  tasks: Array<{ kind: string; label: string; actorId: string; count: number; estimate: CostEstimate }>;
+  totalUsd: number | null;
+  /** True when at least one actor couldn't be priced, so the total is partial. */
+  partial: boolean;
 }
 
 export interface ScraperSource {
@@ -267,6 +311,9 @@ export interface ScraperOverview {
 export interface MappingPreview {
   items: {
     lead?: Record<string, unknown>;
+    /** What the mapper recognised the row as — the first thing worth knowing. */
+    shape?: string;
+    readAs?: string;
     score?: number;
     dedupeKey?: string | null;
     wouldSave?: boolean;
@@ -437,6 +484,33 @@ export interface AppSettings {
     webhookUrl: string;
   };
   cloudinary: { configured: boolean; envManaged: boolean; cloudName: string | null; apiKey: string | null };
+  alerts: {
+    configured: boolean;
+    /** Which route is live. A webhook posts to one channel; a token can choose. */
+    transport: "TOKEN" | "WEBHOOK" | "NONE";
+    envManaged: boolean;
+    webhookUrl: string | null;
+    botToken: string | null;
+    defaultChannel: string | null;
+  };
+  developer: { configured: boolean; envManaged: boolean; token: string | null; owner: string | null };
+  calendar: {
+    connected: boolean;
+    /** False when the Google connection predates calendar access and needs redoing. */
+    scoped: boolean;
+    configured: boolean;
+    calendarId: string;
+    calendars: Array<{ id: string; name: string; primary: boolean }>;
+  };
+  webhooks: {
+    configured: boolean;
+    envManaged: boolean;
+    secret: string;
+    /** What the website contact form should post to. */
+    formUrl: string;
+    baseUrl: string;
+    leadSource: string;
+  };
   email: {
     /** Which of the two paths actually sends. */
     transport: MailTransport;
@@ -911,6 +985,21 @@ export interface Agent {
 
 export interface AgentDetail extends Agent {
   reports: Array<{ key: string; name: string; title: string }>;
+  /** Every catalogue tool, with whether this agent may call it and why not. */
+  tools: Array<{
+    key: string;
+    name: string;
+    group: string;
+    purpose: string;
+    scope: "read" | "write" | "send" | "charge";
+    spends: boolean;
+    outward: boolean;
+    granted: boolean;
+    ready: boolean;
+    blockedReason: string | null;
+    mustDryRun: boolean;
+    permissionNote: string | null;
+  }>;
 }
 
 export interface AgentList {
@@ -979,9 +1068,69 @@ export interface ToolStatus {
   spends: boolean;
   /** A faster way to satisfy this tool than its settings tab, when one exists. */
   shortcut?: { label: string; to: string } | null;
+  /** Catalogue keys an agent can be granted against this integration. */
+  tools: string[];
+  outwardTools: number;
 }
 
 export interface ToolsResponse {
   tools: ToolStatus[];
-  summary: { ready: number; needsKey: number; planned: number };
+  summary: { ready: number; needsKey: number; planned: number; callable: number; total: number };
+}
+
+/** One callable tool, as the catalogue describes it. */
+export interface CatalogueTool {
+  key: string;
+  name: string;
+  group: string;
+  purpose: string;
+  scope: "read" | "write" | "send" | "charge";
+  requires: string;
+  spends: boolean;
+  /** True when a call is visible to somebody outside the company. */
+  outward: boolean;
+  canPreview: boolean;
+  ready: boolean;
+  blockedReason: string | null;
+  /** Present only when the catalogue was asked about one agent. */
+  granted?: boolean;
+  mustDryRun?: boolean;
+  permissionNote?: string | null;
+}
+
+export interface CatalogueResponse {
+  tools: CatalogueTool[];
+  groups: string[];
+  summary: { total: number; ready: number; outward: number; spending: number };
+}
+
+export interface ToolCallResult {
+  tool: string;
+  ok: boolean;
+  output: unknown;
+  dryRun: boolean;
+  /** Set on a dry run: what would have happened. */
+  wouldDo?: string;
+  error?: string;
+  refusedReason?: string;
+  costUsd: number;
+  durationMs: number;
+}
+
+export interface ToolCallRecord {
+  id: string;
+  tool: string;
+  agentKey: string | null;
+  ok: boolean;
+  dryRun: boolean;
+  error: string | null;
+  refusedReason: string | null;
+  costUsd: string | number;
+  durationMs: number | null;
+  createdAt: string;
+}
+
+export interface ToolCallsResponse {
+  calls: ToolCallRecord[];
+  lastThirtyDays: { calls: number; spendUsd: string | number };
 }

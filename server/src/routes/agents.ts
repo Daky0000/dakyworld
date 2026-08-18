@@ -2,14 +2,25 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { requireRole } from "../middleware/auth.js";
+import { TOOLS, findTool } from "../services/tools/catalogue.js";
+import { toolReadiness } from "../services/tools/readiness.js";
+import { permissionFor } from "../services/tools/invoke.js";
 
 /**
- * The workforce, read-only for now.
+ * The workforce.
  *
- * Autonomy and dry run are the only two things writable here, and only by the
- * Owner: they are what decides whether anything an agent decides can reach a
- * client. Everything else about an agent is seeded from code and changed in a
- * diff, not at runtime.
+ * Autonomy, dry run and the toolkit are what the Owner may change, and only
+ * the Owner: between them they decide whether anything an agent works out can
+ * reach a client, a card or the public site. Everything else about an agent —
+ * its mission, its prompt, who it reports to — is seeded from code and changed
+ * in a diff, not at runtime.
+ *
+ * **The toolkit is a real grant.** It used to be a list of strings nothing
+ * read; since the tool layer landed it is the allow-list the invoker checks
+ * before every call, so adding a key here gives an agent a capability and
+ * removing one takes it away. Which is why this endpoint refuses a key that
+ * isn't in the catalogue rather than storing it: an agent granted a tool that
+ * doesn't exist looks equipped and is not.
  */
 export const agentsRouter = Router();
 
@@ -43,7 +54,35 @@ agentsRouter.get("/:key", async (req, res, next) => {
     if (!agent) return res.status(404).json({ error: "No such agent." });
     const manager = agent.managerKey ? await prisma.agent.findUnique({ where: { key: agent.managerKey } }) : null;
     const reports = await prisma.agent.findMany({ where: { managerKey: agent.key }, select: { key: true, name: true, title: true } });
-    res.json({ ...agent, managerName: manager?.name ?? null, reports });
+
+    // What this agent can actually do right now, which is the toolkit crossed
+    // with what is configured and what its autonomy allows. Three different
+    // reasons a granted tool might not fire, and all three are worth seeing
+    // here rather than discovering in a failed run.
+    const tools = await Promise.all(
+      TOOLS.map(async (tool) => {
+        const [readiness, permission] = await Promise.all([
+          toolReadiness(tool.requires),
+          permissionFor(tool, { agentKey: agent.key, userId: null, dryRun: false }),
+        ]);
+        return {
+          key: tool.key,
+          name: tool.name,
+          group: tool.group,
+          purpose: tool.purpose,
+          scope: tool.scope,
+          spends: tool.spends,
+          outward: tool.outward,
+          granted: agent.toolkit.includes(tool.key),
+          ready: readiness.ready,
+          blockedReason: readiness.reason,
+          mustDryRun: permission.mustDryRun,
+          permissionNote: permission.reason,
+        };
+      }),
+    );
+
+    res.json({ ...agent, managerName: manager?.name ?? null, reports, tools });
   } catch (err) {
     next(err);
   }
@@ -54,6 +93,8 @@ const patchInput = z.object({
   autonomyLevel: z.number().int().min(0).max(5).optional(),
   dryRun: z.boolean().optional(),
   status: z.enum(["DRAFT", "ACTIVE", "PAUSED", "RETIRED"]).optional(),
+  /** Catalogue keys this agent may call. Replaces the list wholesale. */
+  toolkit: z.array(z.string().max(64)).max(60).optional(),
 });
 
 agentsRouter.patch("/:key", async (req, res, next) => {
@@ -70,8 +111,16 @@ agentsRouter.patch("/:key", async (req, res, next) => {
       });
     }
 
-    const updated = await prisma.agent.update({ where: { key: req.params.key }, data: input });
-    res.json(updated);
+    // A key with nothing behind it is an agent that looks equipped and can't
+    // act, so it is dropped rather than stored — but dropped *and reported*,
+    // because a grant silently disappearing is its own kind of lie. This is
+    // also how a database seeded before the tool layer sheds the handful of
+    // names that never had code behind them: the first save cleans them up.
+    const dropped = input.toolkit?.filter((key) => !findTool(key)) ?? [];
+    const data = { ...input, ...(input.toolkit ? { toolkit: input.toolkit.filter((key) => findTool(key)) } : {}) };
+
+    const updated = await prisma.agent.update({ where: { key: req.params.key }, data });
+    res.json({ ...updated, ...(dropped.length ? { droppedGrants: dropped } : {}) });
   } catch (err) {
     next(err);
   }

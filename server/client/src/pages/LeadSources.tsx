@@ -392,6 +392,7 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
             <th className="px-4 py-3">New</th>
             <th className="px-4 py-3">Enriched</th>
             <th className="px-4 py-3">Filtered</th>
+            <th className="px-4 py-3">Cost</th>
             <th className="px-4 py-3" />
           </tr>
         </thead>
@@ -414,7 +415,28 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
               <td className="px-4 py-3">{run.itemsFetched}</td>
               <td className="px-4 py-3 font-medium">{run.leadsCreated}</td>
               <td className="px-4 py-3 text-ink/60">{run.leadsUpdated}</td>
-              <td className="px-4 py-3 text-ink/60">{run.filtered}</td>
+              <td className="px-4 py-3 text-ink/60">
+                {run.filtered}
+                {/* A run that found rows and filed none has to say why, or the
+                    only way to find out is to open the raw dataset in Apify. */}
+                {run.filtered > 0 && run.diagnostics && <WhyDropped diagnostics={run.diagnostics} />}
+              </td>
+              <td className="px-4 py-3 text-xs text-ink/60">
+                {run.costUsd != null ? (
+                  <>
+                    <span className="font-medium text-ink/75">${Number(run.costUsd).toFixed(2)}</span>
+                    {/* The estimate beside the bill is what makes the estimate
+                        trustworthy over time — or visibly not. */}
+                    {run.estimateUsd != null && (
+                      <span className="block text-ink/40">est ${Number(run.estimateUsd).toFixed(2)}</span>
+                    )}
+                  </>
+                ) : run.estimateUsd != null ? (
+                  <span className="text-ink/40">est ${Number(run.estimateUsd).toFixed(2)}</span>
+                ) : (
+                  <span className="text-ink/30">—</span>
+                )}
+              </td>
               <td className="px-4 py-3">
                 {(run.status === "RUNNING" || run.status === "QUEUED") && (
                   <Button size="sm" variant="ghost" onClick={() => onStop(run.id)}>
@@ -434,6 +456,41 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/**
+ * Why rows didn't become leads.
+ *
+ * "40 found, 0 new" reads identically whether the actor returned rubbish, the
+ * score floor was set too high, every business was already in the pipeline, or
+ * the mapper couldn't read the shape at all — and it was the last of those for
+ * every Instagram, Facebook and LinkedIn capture until Aug 2026. Each reason
+ * carries a count, so the common case is one line rather than forty.
+ */
+function WhyDropped({ diagnostics }: { diagnostics: NonNullable<ScraperRun["diagnostics"]> }) {
+  const [open, setOpen] = useState(false);
+  if (!diagnostics.dropped?.length) return null;
+
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="font-mono text-[10px] uppercase tracking-[.1em] text-blue hover:underline"
+      >
+        {open ? "hide" : "why?"}
+      </button>
+      {open && (
+        <ul className="mt-1 max-w-sm space-y-1">
+          {diagnostics.dropped.map((entry) => (
+            <li key={entry.reason} className="text-xs leading-relaxed text-ink/55">
+              <span className="font-medium text-ink/70">{entry.count}×</span> {entry.reason}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

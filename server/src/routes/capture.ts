@@ -14,6 +14,8 @@ import {
 } from "../services/captureActors.js";
 import { runSource } from "../services/scraperRunner.js";
 import { readCaptureConfig } from "../services/captureConfig.js";
+import { estimateCost } from "../services/captureCost.js";
+import { getActorSchema } from "../lib/apify.js";
 
 /**
  * Quick capture: paste a link or say what you want, then confirm.
@@ -59,6 +61,57 @@ captureRouter.post("/check", async (req, res, next) => {
       .object({ kind: z.enum(TASK_KINDS as [QuickActorKind, ...QuickActorKind[]]), value: z.string().max(500) })
       .parse(req.body);
     res.json(checkForTask(kind, value));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/capture/estimate — what running these targets will cost.
+ *
+ * The confirmation step already said what would be captured; it could not say
+ * what it would cost, which is the other half of the decision when five
+ * pay-per-event actors sit behind the button. Grouped exactly the way `/run`
+ * groups them, so the number shown is the number billed.
+ */
+captureRouter.post("/estimate", async (req, res, next) => {
+  try {
+    const { targets } = z
+      .object({
+        targets: z
+          .array(z.object({ kind: z.enum(TASK_KINDS as [QuickActorKind, ...QuickActorKind[]]), value: z.string().max(500) }))
+          .max(50),
+      })
+      .parse(req.body ?? {});
+
+    const config = await readCaptureConfig();
+    const overrides = await readActorOverrides();
+
+    const grouped = new Map<QuickActorKind, string[]>();
+    for (const target of targets) {
+      const checked = checkForTask(target.kind, target.value);
+      if (checked.problem) continue;
+      grouped.set(target.kind, [...(grouped.get(target.kind) ?? []), checked.value]);
+    }
+
+    const perTask = await Promise.all(
+      [...grouped].map(async ([kind, values]) => {
+        const actor = await resolveActor(kind, overrides);
+        const input = actorInput(actor, values);
+        const schema = await getActorSchema(actor.actorId).catch(() => null);
+        const estimate = await estimateCost(actor.actorId, input, config.maxItems, schema?.properties ?? null);
+        return { kind, label: actor.label, actorId: actor.actorId, count: values.length, estimate };
+      }),
+    );
+
+    const priced = perTask.filter((task) => task.estimate.totalUsd != null);
+    res.json({
+      tasks: perTask,
+      totalUsd: priced.length ? Number(priced.reduce((sum, task) => sum + (task.estimate.totalUsd ?? 0), 0).toFixed(4)) : null,
+      // True when at least one actor couldn't be priced, so the total is a
+      // partial figure rather than the whole bill.
+      partial: priced.length !== perTask.length,
+    });
   } catch (err) {
     next(err);
   }
