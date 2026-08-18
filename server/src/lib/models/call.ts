@@ -49,6 +49,15 @@ const BASE = {
 const TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_TOKENS = 8000;
 
+/**
+ * Perplexity's floor. Asking for fewer is a 400, not a short answer.
+ *
+ * Nothing this app asks for is anywhere near it, but a caller is free to pass
+ * `maxTokens`, and a limit that turns into "that provider rejected the API
+ * key" is the worst possible way to find out.
+ */
+const PERPLEXITY_MIN_TOKENS = 16;
+
 const DEFAULT_MESSAGES: Record<FailureKind, string> = {
   noKey: "No model is connected for this. Add a key under Settings → AI models.",
   auth: "That model provider rejected the API key. Check it under Settings → AI models.",
@@ -327,7 +336,7 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
     { authorization: `Bearer ${apiKey}` },
     {
       model,
-      max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
+      max_tokens: Math.max(request.maxTokens ?? DEFAULT_MAX_TOKENS, PERPLEXITY_MIN_TOKENS),
       messages: [
         { role: "system", content: request.system },
         { role: "user", content: request.prompt() },
@@ -636,12 +645,22 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string): 
       return { model: (await providerModel(provider)) || model };
     }
     // Perplexity has no free listing endpoint, so the check is the smallest
-    // possible real request. It costs a fraction of a cent and is the only way
-    // to find out whether the key works.
+    // real request it will accept. It costs a fraction of a cent and is the
+    // only way to find out whether the key works.
+    //
+    // `max_tokens` is 16 because that is Perplexity's floor — asking for 1
+    // is a 400 ("max_tokens must be at least 16"), which the caller then reads
+    // as a rejected key. `disable_search` keeps it off the per-search fee,
+    // which is the part of a Perplexity call that actually costs money.
     const response = await fetch(`${BASE.perplexity}/v1/sonar`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+      body: JSON.stringify({
+        model,
+        max_tokens: PERPLEXITY_MIN_TOKENS,
+        disable_search: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
     });
     if (!response.ok) throw new ProviderError({ status: response.status, kind: "auth", detail: await response.text() });
     return { model: (await providerModel(provider)) || model };

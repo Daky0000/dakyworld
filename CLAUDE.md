@@ -113,6 +113,10 @@ Three things that will bite:
   larger than the tokens on a short call. `REQUEST_FEES` is added to every
   priced Perplexity call; a cost worked out from tokens alone understates one
   by an order of magnitude.
+- **Perplexity's `max_tokens` floor is 16.** Below it the answer is a 400, not a
+  short reply, and a 400 during key verification reads to the Owner as a
+  rejected key. `PERPLEXITY_MIN_TOKENS` clamps both the probe and every real
+  call.
 
 A tool that routes declares `requires: "models"` and a `job`, never a vendor —
 naming one would make it refuse work the fallback could still do. What it must
