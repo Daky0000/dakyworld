@@ -7,15 +7,20 @@ import { readCaptureConfig } from "./captureConfig.js";
 import { billDuePlans } from "./carePlanBilling.js";
 import { dispatchDueEmails } from "./emailSender.js";
 import { runDueSequences } from "./emailSequences.js";
+import { runDueTasks } from "./agents/runner.js";
 
 /**
- * The app's clock. Two things run on it:
+ * The app's clock. Three things run on it:
  *
  *  - **Lead capture.** Each source carries a list of local times ("06:30",
  *    "18:00") and a timezone; this ticks once a minute and starts whichever
  *    ones are due.
  *  - **Care plan billing.** Each active plan bills on its own day of the
  *    month — see `carePlanBilling.ts`.
+ *  - **The agent workforce.** Queued tasks belonging to agents that are ACTIVE
+ *    are started, up to a concurrency ceiling — see `agents/runner.ts`. Unlike
+ *    the other two this one does not wait: an agent's run can take minutes,
+ *    and holding the tick open for it would stop an invoice going out.
  *
  * Both follow the same discipline: the next due instant is stored on the row
  * and advanced *before* the work starts, so a failure can't be retried in a
@@ -92,6 +97,7 @@ export async function tick(now = new Date()) {
     billDuePlans(now),
     dispatchDueEmails(now),
     runDueSequences(now),
+    runDueTasks(now),
     housekeepingTick(now),
   ]);
   for (const result of results) {
@@ -175,7 +181,7 @@ export function startScheduler() {
 
   void resumeInterruptedRuns().catch((err) => console.error("[scheduler] resume failed:", err));
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
-  console.log("  → Scheduler running (lead capture, care plan billing, email — checks every minute)");
+  console.log("  → Scheduler running (lead capture, care plan billing, email, agent tasks — checks every minute)");
 }
 
 export function stopScheduler() {

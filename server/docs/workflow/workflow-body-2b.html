@@ -1,0 +1,98 @@
+<!-- ===================== 05 · THE RUNTIME ===================== -->
+<div class="stage newpage">
+  <div class="stage-head">
+    <div class="no">Section 05</div>
+    <h2>How an agent actually runs</h2>
+    <p class="lede">Every stage in this document is carried out by the same machine. A task is created, an agent claims it, a loop turns, and the task ends in one of five states — each of which means something different and needs something different from you.</p>
+  </div>
+
+  <h3 class="band">The life of one task</h3>
+  <table>
+    <tr><th style="width:8mm">#</th><th style="width:40mm">What happens</th><th>Detail</th></tr>
+    <tr>
+      <td>1</td><td><b>A task is created</b></td>
+      <td>By you, by the clock, by an event, or by a manager agent handing work to one of its reports. It names the agent, the brief, and the record it is about.</td>
+    </tr>
+    <tr>
+      <td>2</td><td><b>A runner claims it</b></td>
+      <td>The claim is a conditional write, so two runners reaching for the same task cannot both get it. Only agents set to <b>Active</b> are picked up — a queue can be filled before its agent is switched on.</td>
+    </tr>
+    <tr>
+      <td>3</td><td><b>It is told who it is</b></td>
+      <td>Its ten prompt layers, its skills, the company's own details, <em>and what it already concluded about this subject</em> — see the memory band below.</td>
+    </tr>
+    <tr>
+      <td>4</td><td><b>It is told what this is</b></td>
+      <td>The record resolved in full: the lead's score, status, contact details and discovery notes; the invoice's age and amount; the project's open tasks. It fetches anything further with a tool, which is what makes a fact citable.</td>
+    </tr>
+    <tr>
+      <td>5</td><td><b>It is handed its tools</b></td>
+      <td>Only what its toolkit grants, plus <code>escalate</code>, <code>remember</code> and — for a manager — <code>delegate</code>.</td>
+    </tr>
+    <tr>
+      <td>6</td><td><b>The loop turns</b></td>
+      <td>It calls a tool, reads the answer, decides again. Every call goes through the same four gates as before; the timeline is written as it happens, so a task that is still running shows what it has done so far.</td>
+    </tr>
+    <tr>
+      <td>7</td><td><b>It ends</b></td>
+      <td>In one of the five states below, with a summary in its own words: what it did, what it found, what a person should do next.</td>
+    </tr>
+  </table>
+
+  <h3 class="band">The five ways a task ends</h3>
+  <table>
+    <tr><th style="width:36mm">State</th><th style="width:44mm">What it means</th><th>What you do</th></tr>
+    <tr>
+      <td><b>Done</b></td>
+      <td>It finished, and everything it did took effect.</td>
+      <td>Nothing. Read the summary if you want to.</td>
+    </tr>
+    <tr>
+      <td><b>Ready to approve</b></td>
+      <td>It finished, and <em>some or all of the work was prepared rather than carried out</em> — the agent is in dry run, or below the autonomy those tools need.</td>
+      <td>Read the timeline: the prepared steps say exactly what would have happened. Approve it, or raise the agent's autonomy to stop being asked.</td>
+    </tr>
+    <tr>
+      <td><b>Stopped and asked</b></td>
+      <td>It hit one of the conditions in Section 11 and used <code>escalate</code> rather than guessing.</td>
+      <td>Answer the question in the drawer. The answer is appended to the brief and it carries on from there.</td>
+    </tr>
+    <tr>
+      <td><b>Failed</b></td>
+      <td>Something broke — no API key, a model error, a tool that threw.</td>
+      <td>The reason is on the task. A rate limit re-queues itself; everything else waits for you.</td>
+    </tr>
+    <tr>
+      <td><b>Cancelled</b></td>
+      <td>You stopped it before it started.</td>
+      <td>Nothing. A task mid-run cannot be cancelled — the loop is not interruptible, and a status that claimed otherwise would be a lie.</td>
+    </tr>
+  </table>
+
+  <div class="callout">
+    <h4>“Ready to approve” is the point of autonomy level 1, not a failure of it</h4>
+    <p>An agent at level 1 with dry run on still does the whole job — it reads the records, works out what should happen, and prepares every action. What it does not do is let any of it take effect. So the normal outcome at the shipped settings is <b>one thing to approve rather than five things to do</b>, and the timeline tells you precisely what each prepared step would have done. That is why the commissioning order in Section 12 starts where it does.</p>
+  </div>
+
+  <h3 class="band">What an agent remembers</h3>
+  <p>Every agent's prompt has always ended with the rule — <em>retain decisions, their reasons and their outcomes; never retain secrets</em>. There was nowhere to put them, so every task started from nothing and an agent could reach the same wrong conclusion about the same lead every morning without noticing it had been there before. Now it keeps them, and is handed them back.</p>
+
+  <table>
+    <tr><th style="width:34mm">Kind</th><th>What goes in it</th></tr>
+    <tr><td><b>Decision</b></td><td>A choice it made, and why. “Wrote about the missing website rather than the slow checkout — the audit found no site at all, which is the stronger opening.”</td></tr>
+    <tr><td><b>Outcome</b></td><td>What came of it. The half that makes a decision worth keeping.</td></tr>
+    <tr><td><b>Fact</b></td><td>Something it learnt about a lead, a client or the business.</td></tr>
+    <tr><td><b>Lesson</b></td><td>A general conclusion about its own work: “this approach does not land on this segment”.</td></tr>
+    <tr><td><b>Preference</b></td><td>Something you told it to do differently. You can write one directly from its drawer.</td></tr>
+  </table>
+
+  <p><b>Recall is by subject, not by similarity.</b> A memory is filed against the thing it is about — a lead, a client, or <code>self</code> for a standing lesson — and an agent picking up a task about a lead is handed what <em>it</em> concluded about <em>that</em> lead, plus its own standing lessons, and nothing about anybody else. A search across everything would occasionally surface a fact about a different client in the context of this one, and the failure mode of that is a letter to the wrong company containing the right facts.</p>
+
+  <div class="callout warn">
+    <h4>A memory is never allowed to hold a credential</h4>
+    <p>Not because an agent would not be told — every prompt says so — but because a memory is a durable record that is <em>re-read into a prompt every time its subject comes up</em>. A token written into one is a token re-read every morning for a year. So the store refuses anything credential-shaped outright: known key formats, private keys, and the sentence somebody writes when they are about to hand one over. It is deliberately eager, because refusing a memory costs a rephrase and accepting one costs far more.</p>
+  </div>
+
+  <h3 class="band">Delegation runs down the chart only</h3>
+  <p>A manager may hand work to one of <em>its own direct reports</em> — never sideways, never upward. The child task carries the same record and the same priority, and the manager does not wait for it: it carries on with its own part, and the two show up on the same board. An agent routing work around the person who owns a lane is the failure this prevents, and the rule is enforced in code rather than asked for in a prompt.</p>
+</div>

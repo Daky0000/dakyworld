@@ -49,6 +49,7 @@ model User {
   sessions         Session[]
   emailsWritten    EmailMessage[]
   uploadedFiles    StoredFile[]
+  agentTasks       AgentTask[]
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -102,6 +103,7 @@ model Client {
   communications Communication[]
   emails         EmailMessage[]
   enrollments    EmailEnrollment[]
+  agentTasks   AgentTask[]
 }
 
 model Contact {
@@ -228,6 +230,8 @@ model Lead {
   communications Communication[]
   emails         EmailMessage[]
   enrollments    EmailEnrollment[]
+
+  agentTasks   AgentTask[]
 
   @@index([status])
   @@index([groupId])
@@ -545,6 +549,8 @@ model Proposal {
   project Project?
   emails  EmailMessage[]
 
+  agentTasks   AgentTask[]
+
   @@index([status])
 }
 
@@ -585,6 +591,7 @@ model Project {
   communications Communication[]
   emails         EmailMessage[]
   carePlan       CarePlan?
+  agentTasks   AgentTask[]
 }
 
 model ProjectAssignment {
@@ -786,6 +793,7 @@ model Invoice {
   lineItems InvoiceLineItem[]
   cycle     CarePlanCycle?
   emails    EmailMessage[]
+  agentTasks   AgentTask[]
 }
 
 model InvoiceLineItem {
@@ -1180,6 +1188,9 @@ model Agent {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  tasks    AgentTask[]
+  memories AgentMemory[]
+
   @@index([status, department])
   @@index([tier])
 }
@@ -1396,4 +1407,228 @@ model McpServer {
   updatedAt DateTime @updatedAt
 
   @@index([enabled])
+}
+
+// ---------------------------------------------------------------------------
+// The agent runtime
+// ---------------------------------------------------------------------------
+
+/// Where a task came from. Worth keeping separate from who owns it: "the clock
+/// started this" and "you asked for this" fail in different ways and are
+/// investigated differently.
+enum AgentTaskOrigin {
+  /// A person asked for it.
+  OWNER
+  /// The scheduler raised it on a cadence.
+  SCHEDULE
+  /// Something happened — a webhook, a status change, a due date.
+  EVENT
+  /// A manager agent delegated it to one of its reports.
+  AGENT
+}
+
+enum AgentTaskStatus {
+  /// Waiting for a runner. The normal resting state.
+  QUEUED
+  /// A runner has claimed it and the loop is turning.
+  RUNNING
+  /// It finished, but its work was prepared rather than done — the agent was
+  /// in dry run, or below the autonomy its tools needed. There is something
+  /// here to approve.
+  NEEDS_APPROVAL
+  /// It stopped and asked. The reason is on blockedReason.
+  BLOCKED
+  DONE
+  FAILED
+  CANCELLED
+}
+
+/// One piece of work assigned to one agent.
+///
+/// The roster answered "who could do this" and the tool layer answered "what
+/// are they allowed to do". Neither answered "what is being done right now, by
+/// whom, and how far along is it" — which is the only question anybody
+/// actually asks of a workforce. This is that record.
+///
+/// A task is the unit of everything: the scheduler raises them, agents claim
+/// them, managers delegate them to reports as children, every tool call made
+/// while working on one is attributed to it, and what ends one is always a
+/// state change somebody can see.
+model AgentTask {
+  id String @id @default(cuid())
+
+  agent    Agent  @relation(fields: [agentKey], references: [key], onDelete: Cascade)
+  agentKey String
+
+  /// One line, for the roster. The brief is the instruction.
+  title String
+  brief String
+  /// Structured context the runner puts in front of the agent verbatim.
+  input Json?
+
+  origin      AgentTaskOrigin @default(OWNER)
+  /// The person who asked, when a person did.
+  createdBy   User?           @relation(fields: [createdById], references: [id])
+  createdById String?
+
+  /// Set when a manager delegated this to a report.
+  parent   AgentTask?  @relation("Delegation", fields: [parentId], references: [id])
+  parentId String?
+  children AgentTask[] @relation("Delegation")
+
+  status AgentTaskStatus @default(QUEUED)
+  /// 1 urgent, 2 normal, 3 whenever. Drives the order the runner picks in.
+  priority Int @default(2)
+  /// Not before this. Null means as soon as there is capacity.
+  scheduledFor DateTime?
+  /// What it is measured against, when there is one.
+  dueAt        DateTime?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  /// Bumped on each claim, so a task that keeps dying is visible rather than
+  /// retried forever in silence.
+  attempts Int @default(0)
+
+  /// What it did, in its own words — the last thing it said before finishing.
+  summary String?
+  result  Json?
+  /// Why it stopped short. Set only when BLOCKED.
+  blockedReason String?
+  error         String?
+
+  /// What the run cost in model tokens, and how much of the tool layer it used.
+  costUsd   Decimal @default(0) @db.Decimal(10, 6)
+  toolCalls Int     @default(0)
+  /// How many of those were prepared rather than carried out. A task that is
+  /// all preview is a task waiting on an autonomy decision.
+  dryRunCalls Int @default(0)
+
+  steps AgentTaskStep[]
+
+  // What the work is about. All optional: a task can be about the company
+  // rather than about a record.
+  lead       Lead?     @relation(fields: [leadId], references: [id])
+  leadId     String?
+  client     Client?   @relation(fields: [clientId], references: [id])
+  clientId   String?
+  project    Project?  @relation(fields: [projectId], references: [id])
+  projectId  String?
+  proposal   Proposal? @relation(fields: [proposalId], references: [id])
+  proposalId String?
+  invoice    Invoice?  @relation(fields: [invoiceId], references: [id])
+  invoiceId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agentKey, status])
+  @@index([status, priority, scheduledFor])
+  @@index([createdAt])
+  @@index([parentId])
+}
+
+enum AgentStepKind {
+  STARTED
+  /// Something the agent said on the way — the reasoning it chose to share.
+  THOUGHT
+  TOOL_CALL
+  /// A call that was prepared rather than carried out.
+  PREPARED
+  /// A call the policy refused.
+  REFUSED
+  DELEGATED
+  REMEMBERED
+  BLOCKED
+  FINISHED
+  FAILED
+}
+
+/// The timeline of one task, written as it happens.
+///
+/// ToolCall already records every call the tool layer made. This is a
+/// different thing, and both are needed: ToolCall answers "what did the system
+/// do"; this answers "what was this agent trying to achieve when it did it",
+/// in order, in words a person can read while it is still running.
+model AgentTaskStep {
+  id String @id @default(cuid())
+
+  task   AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId String
+  /// Monotonic within a task. Ordering by timestamp alone puts two events
+  /// written in the same millisecond in an arbitrary order.
+  seq Int
+
+  kind    AgentStepKind
+  message String
+
+  /// The catalogue key, when this step was a tool call.
+  tool String?
+  /// The ToolCall row it produced, so the two records join up.
+  toolCallId String?
+  ok         Boolean?
+  dryRun     Boolean?
+
+  /// Trimmed input and output, for the drawer.
+  data Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([taskId, seq])
+}
+
+enum AgentMemoryKind {
+  /// A choice it made, and why.
+  DECISION
+  /// What happened as a result. The half that makes a decision worth keeping.
+  OUTCOME
+  /// Something it learnt about a lead, a client or the business.
+  FACT
+  /// A general lesson: this approach does not work on this segment.
+  LESSON
+  /// Something the Owner told it to do differently.
+  PREFERENCE
+}
+
+/// What an agent remembers between tasks.
+///
+/// Every seeded agent's prompt already carries the rule: retain decisions,
+/// their reasons and their outcomes; never retain secrets, tokens, passwords
+/// or personal data beyond what the task needs. Until now there was nowhere to
+/// retain them, so every task started from nothing and an agent could make the
+/// same wrong call every morning without ever noticing.
+///
+/// Recall is by subject — `lead:abc123`, `client:xyz`, or `self` for the
+/// general lessons — so an agent picking up a task about a lead is handed what
+/// it previously concluded about that lead, and nothing about anybody else.
+model AgentMemory {
+  id String @id @default(cuid())
+
+  agent    Agent  @relation(fields: [agentKey], references: [key], onDelete: Cascade)
+  agentKey String
+
+  kind AgentMemoryKind
+
+  /// What this is about, as `kind:id` — the key recall matches on. `self` for
+  /// anything that applies to the agent's own way of working.
+  subject String
+  content String
+
+  /// 1 to 5. Ranks recall when there is more than fits in a prompt.
+  importance Int @default(3)
+
+  /// The task that formed it, so "why does it think that" is answerable.
+  sourceTaskId String?
+
+  /// Kept so a memory nothing ever recalls can be found and removed.
+  useCount   Int       @default(0)
+  lastUsedAt DateTime?
+  /// Set on anything that stops being true on a date.
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agentKey, subject])
+  @@index([agentKey, createdAt])
 }

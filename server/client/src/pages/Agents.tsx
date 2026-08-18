@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, StatTile, StatusDot, Toggle } from "../components/ui";
 import type { Agent, AgentDetail, AgentList } from "../lib/types";
+import { AgentMemories, AgentWork } from "../components/AgentWork";
 
 /** What each level actually permits, in the Owner's terms rather than the blueprint's. */
 const LEVELS = [
@@ -39,6 +40,9 @@ const TIER_BLURB: Record<string, string> = {
 };
 
 function toneFor(agent: Agent): "live" | "ok" | "warn" | "idle" | "bad" {
+  // A task actually turning outranks every configured state: the dot is there
+  // to say what is happening, not what was set.
+  if (agent.work && agent.work.running > 0) return "live";
   if (agent.status === "PAUSED") return "warn";
   if (agent.status === "RETIRED") return "bad";
   if (agent.status === "ACTIVE") return agent.dryRun ? "ok" : "live";
@@ -75,7 +79,11 @@ export function Agents() {
           value={data?.summary.aboveDraft ?? "—"}
           sub={data?.summary.aboveDraft ? "review these" : "nothing yet"}
         />
-        <StatTile label="Specialists" value={data?.summary.specialists ?? "—"} sub="one craft each" />
+        <StatTile
+          label="Working now"
+          value={data?.summary.working ?? "—"}
+          sub={data?.summary.waiting ? `${data.summary.waiting} waiting on you` : "nothing in flight"}
+        />
       </div>
 
       {isLoading ? (
@@ -121,9 +129,15 @@ export function Agents() {
                         {agent.skills.length > 4 && <span className="px-1 py-0.5 text-[11px] text-ink/35">+{agent.skills.length - 4}</span>}
                       </div>
                     )}
-                    {agent.dryRun && (
+                    {(agent.work?.running || agent.work?.queued || agent.work?.waiting) ? (
+                      <p className="mt-3 flex flex-wrap items-center gap-x-3 font-mono text-[10px] uppercase tracking-[.12em]">
+                        {agent.work.running > 0 && <span className="text-blue">working on {agent.work.running}</span>}
+                        {agent.work.queued > 0 && <span className="text-ink/45">{agent.work.queued} queued</span>}
+                        {agent.work.waiting > 0 && <span className="text-amber-700">{agent.work.waiting} waiting on you</span>}
+                      </p>
+                    ) : agent.dryRun ? (
                       <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">Dry run · nothing takes effect</p>
-                    )}
+                    ) : null}
                   </Card>
                 </button>
               ))}
@@ -351,6 +365,10 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
 
           {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
 
+          {/* First, because "what is it doing" outranks "how is it configured"
+              every time somebody opens this. */}
+          <AgentWork agent={agent} />
+
           <section className="space-y-3">
             <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it may do unasked</h3>
             <div className="flex flex-wrap gap-1.5">
@@ -405,6 +423,8 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
           )}
 
           <ToolGrants agent={agent} onToggle={(toolkit) => save.mutate({ toolkit })} saving={save.isPending} />
+
+          <AgentMemories agent={agent} />
 
           {agent.kpis.length > 0 && (
             <section className="space-y-2">

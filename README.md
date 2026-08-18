@@ -820,6 +820,70 @@ The shipped nine have their wording in the code so a deploy can improve it; the
 API refuses to rename them, and refuses to delete them (retire them instead —
 deleting one would only mean the next deploy created it again).
 
+### They run the work
+
+Click an agent and you see what it is doing. That is the point of the whole
+layer, and until now the answer was "nothing" — the roster was a list of jobs
+and a set of permissions with no engine behind it.
+
+**A task is the unit of everything.** You give one to an agent in the words you
+would use with a person; the clock raises them on a cadence; an event raises
+them when something happens; and a manager hands one to a report. It carries a
+brief, a priority, and the record it is about.
+
+**Then it works.** It claims the task, is told who it is (its ten prompt
+layers, its skills, the company's own details), is told what it already
+concluded about this subject, is handed only the tools its toolkit grants, and
+turns a loop: call a tool, read the answer, decide again. Every call still goes
+through the same four gates — nothing here can act outside what the Agents
+screen allows.
+
+**The timeline is written as it happens**, so a task that is still running shows
+what it has done so far rather than a spinner. Each step says which it was:
+
+| | |
+|---|---|
+| **Tool call** | It ran, and it took effect. |
+| **Prepared** | It was downgraded to a preview — the agent is in dry run or below the autonomy that tool needs. The step says exactly what would have happened. |
+| **Refused** | The policy said no, with the reason. The agent is told, and carries on or escalates. |
+| **Remembered** | It kept something for next time. |
+| **Delegated** | It handed a piece to one of its reports. |
+
+**Five ways a task ends**, and they mean different things. *Done* — everything
+took effect. *Ready to approve* — some or all of the work was prepared and
+nothing has happened yet; read the timeline and approve it, or raise the
+agent's autonomy to stop being asked. *Stopped and asked* — it escalated
+rather than guessing; answer in the drawer and it carries on from there.
+*Failed* — the reason is on the task; a rate limit re-queues itself. *Cancelled.*
+
+At the shipped settings — level 1, dry run on — the normal outcome is **Ready
+to approve**: one thing to read rather than five things to do. That is what
+autonomy level 1 is for, not a limitation to work around.
+
+### What they remember
+
+Every agent's prompt has always ended with *retain decisions, their reasons and
+their outcomes; never retain secrets*. There was nowhere to put them, so every
+task started from nothing and an agent could reach the same wrong conclusion
+about the same lead every morning without noticing.
+
+Now it writes them as it works — a decision and why, what came of it, a fact
+about a client, a lesson about its own approach — and is handed them back the
+next time the same subject comes up. You can also tell it something directly
+from its drawer; that is filed as a standing preference and shown on every task.
+
+**Recall is by subject, not by similarity.** A memory is filed against a lead,
+a client, or `self`, and an agent is handed what *it* concluded about *that*
+subject and nothing about anybody else. A search across everything would
+occasionally surface a fact about a different client in the context of this
+one, and the failure mode of that is a letter to the wrong company containing
+the right facts.
+
+**A memory can never hold a credential.** Not because an agent would not be
+told — every prompt says so — but because a memory is re-read into a prompt
+every time its subject comes up, so a token in one is a token re-read every
+morning for a year. The store refuses anything credential-shaped outright.
+
 ### Connected tools
 
 The catalogue is code on purpose: what a tool *does* is behaviour, and

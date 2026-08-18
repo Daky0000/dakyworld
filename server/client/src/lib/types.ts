@@ -1076,6 +1076,8 @@ export interface Agent {
   avatar: string | null;
   /** True for an agent the Owner created rather than one the seed shipped. */
   custom: boolean;
+  /** What it has on right now. Present on the roster. */
+  work?: AgentWorkload;
   escalationPolicy: string | null;
   prompt: Record<string, string>;
 }
@@ -1097,11 +1099,118 @@ export interface AgentDetail extends Agent {
     mustDryRun: boolean;
     permissionNote: string | null;
   }>;
+  work: { running: number; queued: number; waiting: number; done: number; failed: number };
+  memories: number;
 }
 
 export interface AgentList {
   agents: Agent[];
-  summary: { total: number; active: number; aboveDraft: number; specialists: number };
+  summary: { total: number; active: number; aboveDraft: number; specialists: number; working: number; waiting: number };
+}
+
+// --- The runtime -----------------------------------------------------------
+
+export type AgentTaskStatus = "QUEUED" | "RUNNING" | "NEEDS_APPROVAL" | "BLOCKED" | "DONE" | "FAILED" | "CANCELLED";
+export type AgentTaskOrigin = "OWNER" | "SCHEDULE" | "EVENT" | "AGENT";
+export type AgentStepKind =
+  | "STARTED"
+  | "THOUGHT"
+  | "TOOL_CALL"
+  | "PREPARED"
+  | "REFUSED"
+  | "DELEGATED"
+  | "REMEMBERED"
+  | "BLOCKED"
+  | "FINISHED"
+  | "FAILED";
+
+/** How much work an agent has on. Shown on its card, so the roster is live. */
+export interface AgentWorkload {
+  running: number;
+  queued: number;
+  waiting: number;
+}
+
+export interface AgentTask {
+  id: string;
+  title: string;
+  status: AgentTaskStatus;
+  priority: number;
+  origin: AgentTaskOrigin;
+  summary: string | null;
+  blockedReason: string | null;
+  error: string | null;
+  costUsd: number;
+  toolCalls: number;
+  /** How many calls were prepared rather than carried out. */
+  dryRunCalls: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  scheduledFor: string | null;
+  dueAt: string | null;
+  createdAt: string;
+  agent: { key: string; name: string; title: string; avatar: string | null };
+  steps: number;
+  delegated: number;
+}
+
+/** One entry in a task's timeline, written as it happened. */
+export interface AgentTaskStep {
+  id: string;
+  seq: number;
+  kind: AgentStepKind;
+  message: string;
+  tool: string | null;
+  ok: boolean | null;
+  dryRun: boolean | null;
+  data: unknown;
+  createdAt: string;
+}
+
+export interface AgentTaskDetail extends Omit<AgentTask, "steps"> {
+  brief: string;
+  input: unknown;
+  result: unknown;
+  attempts: number;
+  steps: AgentTaskStep[];
+  parent: { id: string; title: string; agent: { name: string } } | null;
+  children: Array<{ id: string; title: string; status: AgentTaskStatus; agent: { key: string; name: string } }>;
+  about: {
+    lead: { id: string; contactName: string; companyName: string | null } | null;
+    client: { id: string; name: string } | null;
+    project: { id: string; name: string } | null;
+    proposal: { id: string; title: string } | null;
+    invoice: { id: string; invoiceNumber: string } | null;
+  };
+}
+
+/** An agent's board, split the way a person reads it. */
+export interface AgentWork {
+  running: AgentTask[];
+  queued: AgentTask[];
+  waiting: AgentTask[];
+  finished: AgentTask[];
+  summary: { running: number; queued: number; waiting: number; done: number; spendUsd: number };
+}
+
+export type AgentMemoryKind = "DECISION" | "OUTCOME" | "FACT" | "LESSON" | "PREFERENCE";
+
+export interface AgentMemory {
+  id: string;
+  kind: AgentMemoryKind;
+  /** `lead:abc`, `client:xyz`, or `self` for a standing lesson. */
+  subject: string;
+  content: string;
+  importance: number;
+  sourceTaskId: string | null;
+  useCount: number;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export interface AgentMemoryList {
+  memories: AgentMemory[];
+  summary: { total: number; subjects: number; neverUsed: number };
 }
 
 /** One agent's row on the "who may call this tool" screen. */

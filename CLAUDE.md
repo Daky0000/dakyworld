@@ -93,6 +93,33 @@ money, and whether it reaches outside the company. Those come from the
 the autonomy gate. Descriptions are shown to the Owner and passed to the model
 as descriptions; nothing in one is ever executed.
 
+**The agent runtime** — `src/services/agents/`. `runner.ts` is what turns a
+task into work: it claims an `AgentTask`, builds the prompt from the agent's
+ten prompt layers plus its recalled memories plus the resolved record, hands it
+only the tools its `toolkit` grants, and turns a manual tool-use loop
+(`lib/claudeAgent.ts`) until the agent finishes or escalates. Every call still
+goes through `invokeTool`, so the gate is unchanged.
+
+**Check `result.dryRun` before `result.refusedReason`.** A dry run carries a
+`refusedReason` too — it is the sentence explaining *why* the call was
+downgraded — so checking the refusal first files prepared work as refused,
+leaves `dryRunCalls` at zero, and finishes the task `DONE`. The Owner then
+reads "done" about work that never happened. This shipped broken once.
+
+Three tools exist outside the catalogue and every agent has them regardless of
+its toolkit, because they are how an agent takes part in the system rather than
+things it does to the business: `escalate` (stop and ask → `BLOCKED`),
+`remember` (write a memory), and `delegate` (hand work to a *direct report*
+only — never sideways or upward). A specialist gets the first two.
+
+**Memory is recalled by subject, not by similarity.** `agents/memory.ts` files
+a memory against `lead:abc`, `client:xyz` or `self`, and recall returns only
+what this agent concluded about the subjects this task is about. An embedding
+search would occasionally surface a fact about a different client in the
+context of this one, and the failure mode of that is a letter to the wrong
+company. `findSecret()` refuses to store anything credential-shaped — a memory
+is re-read into a prompt every time its subject comes up.
+
 **Agents come in two kinds.** The eighteen management agents recommend and
 decide; the nine `SUB_AGENT` specialists make things — Web Developer, Graphic
 Designer, Video Editor, Ad Designer and the rest, each with `skills` (a
@@ -106,7 +133,7 @@ cannot say otherwise.
 The server serves the built client from `client/dist` when it exists, and falls
 back to an API-only status page when it doesn't.
 
-**Database** — Prisma, 36 models. `prisma/schema.prisma` is the source of truth.
+**Database** — Prisma, 39 models. `prisma/schema.prisma` is the source of truth.
 
 **Integration keys live encrypted in the database**, not in env vars — the
 `AppSetting` model, keyed by `APP_SECRET`. That is deliberate: adding or
@@ -241,6 +268,10 @@ substitute, so headings come out serif. The files are still correct — do not
   the global parser in `index.ts` (`UPLOAD_PATHS`) and each mounts its own
   larger one *inside* its router, after the role check. Adding a third upload
   route means touching both places or it fails at 100 kB.
+- **The agent loop can be exercised without a key** by pointing
+  `ANTHROPIC_BASE_URL` at a local stub that answers `/v1/messages` and
+  `/v1/models/:id`. That is how the dry-run, refusal, escalation and recall
+  paths were verified; a compile is not evidence that a loop turns.
 - **Verifying an API response through `curl | python` on Windows mangles UTF-8**
   — Python decodes stdin as cp1252/gbk, so `·` comes back as a CJK ideograph and
   a correct render looks broken. Write the body to a file and read it with

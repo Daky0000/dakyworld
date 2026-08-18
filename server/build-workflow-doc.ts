@@ -239,7 +239,7 @@ ${faces
 </style>`;
 }
 
-const fragments = ["head", "body-1", "body-2", "body-3", "body-4", "body-5", "body-6"].map((name) =>
+const fragments = ["head", "body-1", "body-2", "body-2b", "body-2c", "body-3", "body-4", "body-5", "body-6"].map((name) =>
   fs.readFileSync(path.join(SRC, `workflow-${name}.html`), "utf8"),
 );
 const orgchart = fs.readFileSync(path.join(SRC, "orgchart.html"), "utf8");
