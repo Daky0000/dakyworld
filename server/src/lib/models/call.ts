@@ -439,10 +439,19 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
   } catch (err) {
     if (err instanceof ProviderError) {
       const kind = err.failure.kind;
-      // The caller's own wording for auth and rate limits; the vendor's own
-      // sentence for anything else, because a 400 about a schema is only
-      // useful verbatim.
-      const message = kind === "auth" || kind === "rate" ? say(kind) : err.failure.detail;
+      // The caller's own wording for a rate limit, which is the one failure
+      // where the vendor's sentence adds nothing and the advice is always
+      // "wait". Everything else keeps the vendor's own words: a 400 about a
+      // schema is only useful verbatim, and a 401 mid-run has to name what it
+      // actually was — Perplexity answers 401 for an account out of credits
+      // as readily as for a wrong key, and "check the key" sends somebody to
+      // regenerate one that was never the problem.
+      const message =
+        kind === "rate"
+          ? say("rate")
+          : kind === "auth"
+            ? describeRejection(serving, err.failure.status, err.failure.detail)
+            : err.failure.detail;
       throw await fail(err.failure.status, message);
     }
     throw await fail(502, `${PROVIDERS[serving].name} failed: ${(err as Error).message}`);
@@ -667,15 +676,50 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string): 
   } catch (err) {
     if (err instanceof ProviderError) {
       const status = err.failure.status;
-      throw new AnalystError(
-        status === 401 || status === 403 ? 400 : status,
-        status === 401 || status === 403
-          ? `${definition.vendor} rejected that API key.`
-          : `${definition.vendor} returned ${status}: ${(extractError(err.failure.detail) ?? err.failure.detail).slice(0, 200)}`,
-      );
+      const rejected = status === 401 || status === 403;
+      throw new AnalystError(rejected ? 400 : status, describeRejection(provider, status, err.failure.detail));
     }
     throw new AnalystError(502, `Could not reach ${definition.vendor}: ${(err as Error).message}`);
   }
+}
+
+/**
+ * What to tell the Owner when a vendor turned a key away.
+ *
+ * This started as `${vendor} rejected that API key.` and threw the response
+ * body away, which was wrong in the one place being precise matters most: a
+ * 401 does not only mean "wrong key". **Perplexity is prepaid** — it answers
+ * 401 for a key that is perfectly valid on an account with no credits left, so
+ * a flat "rejected that API key" sends somebody to regenerate a key that was
+ * never the problem.
+ *
+ * So the vendor's own sentence is always carried through, and the two vendors
+ * with a common non-obvious cause get that named as well. A guess is offered,
+ * never asserted: what is stated as fact is only ever what the vendor said.
+ */
+function describeRejection(provider: ProviderKey, status: number, body: string): string {
+  const definition = PROVIDERS[provider];
+  const said = extractError(body)?.trim();
+
+  if (status !== 401 && status !== 403) {
+    return `${definition.vendor} returned ${status}: ${(said ?? body).slice(0, 300)}`;
+  }
+
+  // The likely cause, where one vendor has a well-known one that is not a bad key.
+  const hint =
+    provider === "perplexity"
+      ? "Perplexity is prepaid, so it answers this for a valid key on an account with no credits as well as for a wrong one — check the balance on the API billing page before regenerating anything."
+      : provider === "openai"
+        ? "Check the key is from the right project, and that the project has credit."
+        : null;
+
+  return [
+    `${definition.vendor} would not accept that key.`,
+    said ? `It said: ${said.slice(0, 300)}` : null,
+    hint,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /** Re-exported so callers need one import rather than two. */

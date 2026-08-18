@@ -117,6 +117,12 @@ Three things that will bite:
   short reply, and a 400 during key verification reads to the Owner as a
   rejected key. `PERPLEXITY_MIN_TOKENS` clamps both the probe and every real
   call.
+- **Perplexity is prepaid, so 401 does not mean "wrong key".** It answers 401
+  for a perfectly valid key on an account with no credits left, and keys are
+  only issued against a non-zero balance in the first place. Never flatten a
+  401 into "rejected that API key" — `describeRejection()` carries the vendor's
+  own sentence through, which is the only thing that separates *regenerate the
+  key* from *top up the account*.
 
 A tool that routes declares `requires: "models"` and a `job`, never a vendor —
 naming one would make it refuse work the fallback could still do. What it must
