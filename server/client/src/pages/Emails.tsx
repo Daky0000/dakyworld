@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { EmailMessage, EmailStatusSummary, EmailSuppression, EmailTemplate } from "../lib/types";
-import { Badge, Button, Card, EmptyState, PageHeader, RelativeTime, StatTile, StatusDot } from "../components/ui";
-import { EmailComposer, PURPOSES, type ComposerTarget } from "../components/EmailComposer";
+import { Badge, Button, Card, Drawer, EmptyState, PageHeader, RelativeTime, StatTile, StatusDot } from "../components/ui";
+import { EmailComposer, EmailPreviewPane, PURPOSES, type ComposerTarget } from "../components/EmailComposer";
 import { Sequences } from "../components/Sequences";
 
 type Tab = "outbox" | "templates" | "sequences" | "suppression";
@@ -113,6 +113,7 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<string>("");
   const [search, setSearch] = useState("");
+  const [previewing, setPreviewing] = useState<string | null>(null);
 
   const { data: messages, isLoading } = useQuery({
     queryKey: ["emails", filter, search],
@@ -208,6 +209,18 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
                       </Button>
                     </>
                   )}
+                  {/* Every message can be looked at, including the sent ones —
+                      "what exactly did we send them" is the question an
+                      outbox is for. */}
+                  <Button variant="ghost" size="sm" onClick={() => setPreviewing(message.id)}>
+                    Preview
+                  </Button>
+                  {/* Every message can be looked at, including the sent ones —
+                      "what exactly did we send them" is the question an outbox
+                      exists to answer. */}
+                  <Button variant="ghost" size="sm" onClick={() => setPreviewing(message.id)}>
+                    Preview
+                  </Button>
                   {message.status !== "SENT" && message.status !== "SENDING" && (
                     <Button variant="ghost" size="sm" onClick={() => remove.mutate(message.id)}>
                       Delete
@@ -219,7 +232,18 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
           ))}
         </div>
       )}
+
+      <MessagePreview id={previewing} onClose={() => setPreviewing(null)} />
     </div>
+  );
+}
+
+/** One message, exactly as it looks in an inbox. See EmailPreviewPane. */
+function MessagePreview({ id, onClose }: { id: string | null; onClose: () => void }) {
+  return (
+    <Drawer open={Boolean(id)} onClose={onClose} wide title="Preview" subtitle="What the recipient sees">
+      {id && <EmailPreviewPane enabled messageId={id} request={{}} />}
+    </Drawer>
   );
 }
 

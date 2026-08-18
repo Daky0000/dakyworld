@@ -1,6 +1,7 @@
 import { callClaude } from "./claude.js";
 import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE, SERVICE_LINES, catalogueForPrompt } from "../services/dakyworld.js";
+import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { auditForPrompt } from "../services/companyAudit.js";
 import type { ProposalContext } from "../services/proposalContext.js";
 
@@ -250,7 +251,7 @@ function buildPrompt(context: ProposalContext, brief: string | null | undefined)
 export async function writeProposal(context: ProposalContext, brief?: string | null): Promise<WriteResult> {
   const { data, model, inputTokens, outputTokens } = await callClaude<ProposalDraft>({
     purpose: "proposal.write",
-    system: SYSTEM,
+    system: `${SYSTEM}\n\n${contactBlock(await companyProfile())}`,
     prompt: () => buildPrompt(context, brief),
     schema: SCHEMA as unknown as Record<string, unknown>,
     // A proposal is written once and decides a deal; this is not the place to

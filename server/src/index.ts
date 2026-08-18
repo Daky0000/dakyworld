@@ -21,6 +21,7 @@ import { scrapersRouter } from "./routes/scrapers.js";
 import { agentsRouter } from "./routes/agents.js";
 import { captureRouter } from "./routes/capture.js";
 import { toolsRouter } from "./routes/tools.js";
+import { mcpRouter } from "./routes/mcp.js";
 import { securityHeaders } from "./middleware/security.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
@@ -91,13 +92,17 @@ if (hasBuiltClient) {
   });
 }
 
-// A spreadsheet arrives base64-encoded inside the JSON body, so the import
-// routes need a far bigger ceiling than the rest of the API. Their parser is
-// mounted inside the imports router, behind requireAuth and an Owner check, so
-// an anonymous request can't push 28 MB at us — which means the global parser
-// has to leave those paths alone rather than rejecting them at 100 kB first.
+// A spreadsheet, a logo and an email attachment all arrive base64-encoded
+// inside the JSON body, so those routes need a far bigger ceiling than the
+// rest of the API. Each mounts its own parser inside its router, behind
+// requireAuth and a role check, so an anonymous request can't push 28 MB at
+// us — which means the global parser has to leave those paths alone rather
+// than rejecting them at 100 kB first.
+const UPLOAD_PATHS = ["/api/imports", "/api/settings/system/brand", "/api/emails/attachments"];
 const jsonParser = express.json();
-app.use((req, res, next) => (req.path.startsWith("/api/imports") ? next() : jsonParser(req, res, next)));
+app.use((req, res, next) =>
+  UPLOAD_PATHS.some((prefix) => req.path.startsWith(prefix)) ? next() : jsonParser(req, res, next),
+);
 
 // Public: Railway's healthcheck runs before anyone has logged in.
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
@@ -126,6 +131,7 @@ app.use("/api/scrapers", scrapersRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/capture", captureRouter);
 app.use("/api/tools", toolsRouter);
+app.use("/api/mcp", mcpRouter);
 app.use("/api/settings", settingsRouter);
 
 if (!hasBuiltClient) {

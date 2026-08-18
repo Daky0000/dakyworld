@@ -529,12 +529,54 @@ export interface AppSettings {
     replyTo: string | null;
     signature: string | null;
   };
+  system: SystemSettings;
   general: {
     appUrl: string | null;
     appUrlEnvManaged: boolean;
     resolvedAppUrl: string;
     timezone: string;
   };
+}
+
+/** The four brand images. Keys match server/src/services/systemProfile.ts. */
+export type BrandSlot = "logoLight" | "logoDark" | "mark" | "favicon";
+
+/**
+ * The company's own details — the name, address, phone number and artwork that
+ * every email, PDF, proposal and public page is stamped with.
+ *
+ * One record, read by every renderer, so changing the phone number here
+ * changes it on the letterhead, in the email footer, in the Word cut of a
+ * proposal and in what the AI drafter is told. See the server's
+ * services/systemProfile.ts for the list of surfaces.
+ */
+export interface CompanyProfile {
+  name: string;
+  displayName: string;
+  legalName: string;
+  tagline: string;
+  footerLine: string;
+  promise: string;
+  positioning: string;
+  location: string;
+  addressLines: string[];
+  email: string;
+  phone: string;
+  phoneAlt: string;
+  web: string;
+  social: { linkedin: string; x: string; instagram: string; facebook: string; youtube: string };
+  currency: string;
+  registrationNumber: string;
+  vatNumber: string;
+}
+
+export interface SystemSettings {
+  profile: CompanyProfile;
+  /** What each field falls back to when it is left blank. */
+  defaults: CompanyProfile;
+  brand: Array<{ slot: BrandSlot; label: string; what: string; uploaded: boolean }>;
+  /** The uploaded artwork as data URLs, for the previews on the panel. */
+  images: Record<BrandSlot, string | null>;
 }
 
 export interface DriveFile {
@@ -788,10 +830,59 @@ export type EmailPurpose =
 export type EmailStatus = "DRAFT" | "SCHEDULED" | "SENDING" | "SENT" | "FAILED" | "CANCELLED";
 export type EmailKind = "MANUAL" | "TEMPLATE" | "AI_DRAFT" | "SEQUENCE" | "AUTOMATION";
 
+/**
+ * Four kinds, and the difference is when the bytes exist: `stored` is a real
+ * uploaded file, `file` is a URL fetched at send, and the two document kinds
+ * are rendered fresh at send so what a client receives is the document as it
+ * stands then. See the server's services/emailSender.ts.
+ */
 export type EmailAttachment =
+  | { kind: "stored"; fileId: string; name: string; contentType?: string; size?: number }
   | { kind?: "file"; name: string; url: string; contentType?: string }
   | { kind: "invoice"; invoiceId: string; name?: string }
   | { kind: "proposal"; proposalId: string; name?: string };
+
+/** What the upload endpoint answers with. */
+export interface StoredFile {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  createdAt: string;
+}
+
+/** One attachment as the preview describes it — enough to draw a chip. */
+export interface PreviewAttachment {
+  kind: "stored" | "file" | "invoice" | "proposal";
+  name: string;
+  contentType: string | null;
+  size: number | null;
+  fileId?: string | null;
+  url?: string | null;
+  note?: string | null;
+  /** True when the file it names is gone and the send will skip it. */
+  missing: boolean;
+}
+
+/**
+ * The email as it will actually land: full letterhead, placeholders filled,
+ * signature appended, opt-out present exactly when it would be.
+ */
+export interface EmailPreview {
+  subject: string;
+  html: string;
+  text: string;
+  toEmail: string;
+  toName: string | null;
+  from: { name: string; email: string; replyTo: string | null };
+  variables: Record<string, string>;
+  /** Placeholders nothing fills — the reason to look before sending. */
+  unresolved: string[];
+  attachments: PreviewAttachment[];
+  suppressed: string | null;
+  /** True when this is the stored record of a sent email rather than a re-render. */
+  historical: boolean;
+}
 
 export interface EmailMessage {
   id: string;
@@ -979,6 +1070,12 @@ export interface Agent {
   autonomyLevel: number;
   dryRun: boolean;
   toolkit: string[];
+  /** What this one is good at, in a client's words. Empty on the management tier. */
+  skills: string[];
+  /** One glyph for the roster. */
+  avatar: string | null;
+  /** True for an agent the Owner created rather than one the seed shipped. */
+  custom: boolean;
   escalationPolicy: string | null;
   prompt: Record<string, string>;
 }
@@ -1004,7 +1101,60 @@ export interface AgentDetail extends Agent {
 
 export interface AgentList {
   agents: Agent[];
-  summary: { total: number; active: number; aboveDraft: number };
+  summary: { total: number; active: number; aboveDraft: number; specialists: number };
+}
+
+/** One agent's row on the "who may call this tool" screen. */
+export interface ToolGrantee {
+  key: string;
+  name: string;
+  title: string;
+  tier: AgentTier;
+  department: string;
+  status: AgentStatus;
+  granted: boolean;
+  mustDryRun: boolean;
+  permissionNote: string | null;
+}
+
+export interface ToolAgents {
+  tool: { key: string; name: string; group: string; purpose: string; scope: string; spends: boolean; outward: boolean };
+  agents: ToolGrantee[];
+}
+
+// --- Connected tools (MCP) -------------------------------------------------
+
+/**
+ * An MCP server this app has been pointed at.
+ *
+ * How a capability gets added without a deploy. The server declares its own
+ * tools; each becomes a grantable catalogue entry under `mcp.<key>.<tool>`,
+ * called through the same invoker, gate and audit trail as a built-in one.
+ * `scope`, `spends` and `outward` are the Owner's settings, never the
+ * server's own claims about itself.
+ */
+export interface McpServerRow {
+  id: string;
+  key: string;
+  name: string;
+  purpose: string | null;
+  url: string;
+  hasAuth: boolean;
+  authHint: string | null;
+  enabled: boolean;
+  scope: "read" | "write" | "send" | "charge";
+  spends: boolean;
+  outward: boolean;
+  tools: Array<{ name: string; description: string | null }>;
+  toolCount: number;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface McpServerList {
+  servers: McpServerRow[];
+  summary: { total: number; enabled: number; tools: number; failing: number };
 }
 
 // --- Quick capture ---------------------------------------------------------

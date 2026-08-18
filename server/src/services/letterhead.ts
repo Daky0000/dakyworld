@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type PDFDocument from "pdfkit";
-import { COMPANY } from "./dakyworld.js";
+import { brandImage, companyProfile, decodeDataUrl, type CompanyProfile } from "./systemProfile.js";
 
 type PDFDoc = InstanceType<typeof PDFDocument>;
 
@@ -62,9 +62,10 @@ export const CONTENT_TOP = 168;
 export const CONTENT_BOTTOM = 96;
 export const CONTENT_W = PAGE_W - MARGIN_X * 2;
 
-// COMPANY — the name, tagline and address block — is imported at the top of
-// this file. It is shared with the Word cut and with email so a phone number
-// only ever changes in one place. See services/dakyworld.ts.
+// The name, tagline and address block come from services/systemProfile.ts,
+// which the Owner edits on the System settings screen. They are shared with
+// the Word cut and with email so a phone number only ever changes in one
+// place — and now changes without a deploy.
 
 // --- The real logo, if it has been supplied --------------------------------
 
@@ -85,22 +86,52 @@ const LOGO_CANDIDATES = assetCandidates(["logo.png", "logo.jpg", "logo.jpeg"]);
 /** The square mark on its own, for the watermark. Optional. */
 const MARK_CANDIDATES = assetCandidates(["mark.png", "mark.jpg", "mark.jpeg"]);
 
-const found = new Map<string, string | null>();
+const found = new Map<string, Buffer | null>();
 
-function findAsset(key: string, candidates: string[]): string | null {
+function findAsset(key: string, candidates: string[]): Buffer | null {
   const cached = found.get(key);
   if (cached !== undefined) return cached;
-  const hit = candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
-  found.set(key, hit);
-  return hit;
+  const hit = candidates.find((candidate) => fs.existsSync(candidate));
+  let buffer: Buffer | null = null;
+  if (hit) {
+    try {
+      buffer = fs.readFileSync(hit);
+    } catch {
+      buffer = null;
+    }
+  }
+  found.set(key, buffer);
+  return buffer;
 }
 
-function findLogo(): string | null {
-  return findAsset("logo", LOGO_CANDIDATES);
+/**
+ * Who the document is from, and the artwork it is stamped with, resolved once
+ * before a page is drawn.
+ *
+ * PDFKit stamps the chrome from a synchronous `pageAdded` handler, so nothing
+ * inside the drawing code can await a database read. Everything that needs one
+ * is gathered here instead and passed down — which is also why a logo uploaded
+ * on the settings screen reaches a PDF at all.
+ */
+export interface LetterheadIdentity {
+  profile: CompanyProfile;
+  /** The lock-up: uploaded first, the file in `server/assets/` second, null when neither. */
+  logo: Buffer | null;
+  /** The square mark, for the watermark. Same order. */
+  mark: Buffer | null;
 }
 
-function findMark(): string | null {
-  return findAsset("mark", MARK_CANDIDATES);
+export async function letterheadIdentity(): Promise<LetterheadIdentity> {
+  const [profile, uploadedLogo, uploadedMark] = await Promise.all([
+    companyProfile(),
+    brandImage("logoLight"),
+    brandImage("mark"),
+  ]);
+  return {
+    profile,
+    logo: (uploadedLogo ? decodeDataUrl(uploadedLogo)?.buffer : null) ?? findAsset("logo", LOGO_CANDIDATES),
+    mark: (uploadedMark ? decodeDataUrl(uploadedMark)?.buffer : null) ?? findAsset("mark", MARK_CANDIDATES),
+  };
 }
 
 // --- Corner ribbons --------------------------------------------------------
@@ -193,8 +224,8 @@ function icon(doc: PDFDoc, kind: "pin" | "mail" | "phone" | "globe", x: number, 
 
 // --- The lock-up -----------------------------------------------------------
 
-function wordmark(doc: PDFDoc) {
-  const logo = findLogo();
+function wordmark(doc: PDFDoc, identity: LetterheadIdentity) {
+  const { logo, profile } = identity;
   const top = 46;
 
   if (logo) {
@@ -212,9 +243,9 @@ function wordmark(doc: PDFDoc) {
     .fillColor(INK)
     .font("Helvetica-Bold")
     .fontSize(21)
-    .text(COMPANY.name, MARGIN_X, top, { characterSpacing: 1.4, lineBreak: false });
+    .text(profile.name, MARGIN_X, top, { characterSpacing: 1.4, lineBreak: false });
 
-  const markWidth = doc.widthOfString(COMPANY.name, { characterSpacing: 1.4 });
+  const markWidth = doc.widthOfString(profile.name, { characterSpacing: 1.4 });
   doc.fillColor(INK).font("Helvetica").fontSize(7).text("®", MARGIN_X + markWidth + 2, top + 1, { lineBreak: false });
 
   // The swoosh: one gold stroke under the wordmark, thickening left to right.
@@ -232,11 +263,11 @@ function wordmark(doc: PDFDoc) {
     .fillColor(ACCENT_DEEP)
     .font("Helvetica-Bold")
     .fontSize(5.6)
-    .text(COMPANY.tagline, MARGIN_X, top + 34, { characterSpacing: 0.85, lineBreak: false });
+    .text(profile.tagline, MARGIN_X, top + 34, { characterSpacing: 0.85, lineBreak: false });
   doc.restore();
 }
 
-function contactBlock(doc: PDFDoc) {
+function contactBlock(doc: PDFDoc, profile: CompanyProfile) {
   const dividerX = 372;
   const textX = 396;
   const iconX = 380;
@@ -247,10 +278,10 @@ function contactBlock(doc: PDFDoc) {
   doc.strokeColor(LINE).lineWidth(1).moveTo(dividerX, top).lineTo(dividerX, top + step * 3 + 12).stroke();
 
   const rows: { kind: "pin" | "mail" | "phone" | "globe"; text: string }[] = [
-    { kind: "pin", text: COMPANY.location },
-    { kind: "mail", text: COMPANY.email },
-    { kind: "phone", text: COMPANY.phone },
-    { kind: "globe", text: COMPANY.web },
+    { kind: "pin", text: profile.location },
+    { kind: "mail", text: profile.email },
+    { kind: "phone", text: profile.phone },
+    { kind: "globe", text: profile.web },
   ];
 
   rows.forEach((row, index) => {
@@ -263,7 +294,7 @@ function contactBlock(doc: PDFDoc) {
 
 // --- Footer ----------------------------------------------------------------
 
-function footerBar(doc: PDFDoc) {
+function footerBar(doc: PDFDoc, profile: CompanyProfile) {
   const y = PAGE_H - 64;
   doc.save();
   doc.strokeColor(LINE).lineWidth(1).moveTo(MARGIN_X, y).lineTo(PAGE_W - MARGIN_X, y).stroke();
@@ -272,7 +303,7 @@ function footerBar(doc: PDFDoc) {
     .fillColor(INK)
     .font("Helvetica-Bold")
     .fontSize(7.5)
-    .text(COMPANY.footerLine, MARGIN_X, y + 12, { characterSpacing: 2.1, lineBreak: false });
+    .text(profile.footerLine, MARGIN_X, y + 12, { characterSpacing: 2.1, lineBreak: false });
 
   // Right-aligned: the site, then the social handles as plain letterforms.
   const socials = "f    X    ig    in";
@@ -282,7 +313,7 @@ function footerBar(doc: PDFDoc) {
     lineBreak: false,
   });
 
-  const web = COMPANY.web;
+  const web = profile.web;
   const webWidth = doc.font("Helvetica").fontSize(8).widthOfString(web);
   const webX = PAGE_W - MARGIN_X - socialWidth - 18 - webWidth;
   doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(web, webX, y + 11.5, { lineBreak: false });
@@ -297,8 +328,7 @@ function footerBar(doc: PDFDoc) {
  * it, and placed low-right where a page's last third is usually the emptiest —
  * a watermark centred in the text column fights every line that crosses it.
  */
-function watermark(doc: PDFDoc) {
-  const mark = findMark();
+function watermark(doc: PDFDoc, mark: Buffer | null) {
 
   if (mark) {
     // The real mark, dropped to a tint. Opacity rather than a pale copy of the
@@ -330,21 +360,21 @@ function watermark(doc: PDFDoc) {
  * emits `pageAdded`, so drawing here would otherwise leave the cursor
  * wherever the last footer glyph landed.
  */
-export function stampLetterhead(doc: PDFDoc) {
-  watermark(doc);
+export function stampLetterhead(doc: PDFDoc, identity: LetterheadIdentity) {
+  watermark(doc, identity.mark);
   cornerRibbons(doc);
-  wordmark(doc);
-  contactBlock(doc);
-  footerBar(doc);
+  wordmark(doc, identity);
+  contactBlock(doc, identity.profile);
+  footerBar(doc, identity.profile);
 
   doc.fillColor(INK).font("Helvetica").fontSize(10);
   doc.x = MARGIN_X;
   doc.y = CONTENT_TOP;
 }
 
-/** True when a real logo file is in place, for the settings read-out. */
-export function hasLogoAsset(): boolean {
-  return findLogo() !== null;
+/** True when there is real artwork to stamp, for the settings read-out. */
+export async function hasLogoAsset(): Promise<boolean> {
+  return (await letterheadIdentity()).logo !== null;
 }
 
 /** The box the lock-up is fitted into, shared by every letterhead renderer. */
@@ -363,17 +393,12 @@ function pngSize(data: Buffer): { width: number; height: number } | null {
  * needs the final points. Null when no artwork is present, which is the
  * caller's cue to fall back to the typographic wordmark, exactly as the PDF does.
  */
-export function readLogoAsset(): { data: Buffer; width: number; height: number } | null {
-  const logo = findLogo();
-  if (!logo) return null;
-  try {
-    const data = fs.readFileSync(logo);
-    const size = pngSize(data);
-    if (!size) return { data, ...LOGO_BOX };
+export function readLogoAsset(identity: LetterheadIdentity): { data: Buffer; width: number; height: number } | null {
+  const data = identity.logo;
+  if (!data) return null;
+  const size = pngSize(data);
+  if (!size) return { data, ...LOGO_BOX };
 
-    const scale = Math.min(LOGO_BOX.width / size.width, LOGO_BOX.height / size.height);
-    return { data, width: size.width * scale, height: size.height * scale };
-  } catch {
-    return null;
-  }
+  const scale = Math.min(LOGO_BOX.width / size.width, LOGO_BOX.height / size.height);
+  return { data, width: size.width * scale, height: size.height * scale };
 }

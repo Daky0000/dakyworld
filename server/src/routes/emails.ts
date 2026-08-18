@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { requireRole } from "../middleware/auth.js";
@@ -6,11 +6,15 @@ import { mailerConfigured } from "../lib/mailer.js";
 import { draftEmail } from "../lib/emailDrafter.js";
 import { analystConfigured } from "../lib/anthropic.js";
 import { resolveContext } from "../services/emailContext.js";
-import { composeMessage, isSuppressed, sendMessage } from "../services/emailSender.js";
+import { COLD_PURPOSES, composeMessage, isSuppressed, parseAttachments, sendMessage, type StoredAttachment } from "../services/emailSender.js";
 import { fillPlaceholders, renderEmail, toHtml, verifyUnsubscribeToken } from "../services/emailRender.js";
 import { BUILTIN_TEMPLATES, ensureBuiltinTemplates } from "../services/emailTemplates.js";
 import { enrol, nextSendSlot, runDueSequences, stopEnrollment, stopOnReply } from "../services/emailSequences.js";
 import { appUrl } from "../services/emailSender.js";
+import { companyProfile, type CompanyProfile } from "../services/systemProfile.js";
+import { FileStoreError, MAX_UPLOAD_BODY, deleteFile, fileSummary, readFile, storeFile } from "../services/fileStore.js";
+import { LOGO_CID, LOGO_DARK_CID, brandDataUrl } from "../lib/brandAssets.js";
+import { SETTING, getSetting } from "../lib/settings.js";
 
 /**
  * Everything to do with outbound email.
@@ -40,6 +44,13 @@ const PURPOSES = [
 ] as const;
 
 const attachment = z.union([
+  z.object({
+    kind: z.literal("stored"),
+    fileId: z.string().cuid(),
+    name: z.string(),
+    contentType: z.string().optional(),
+    size: z.number().int().nonnegative().optional(),
+  }),
   z.object({ kind: z.literal("file").optional(), name: z.string(), url: z.string().url(), contentType: z.string().optional() }),
   z.object({ kind: z.literal("invoice"), invoiceId: z.string().cuid(), name: z.string().optional() }),
   z.object({ kind: z.literal("proposal"), proposalId: z.string().cuid(), name: z.string().optional() }),
@@ -47,6 +58,12 @@ const attachment = z.union([
 
 // Writing to a client under the company's name is not a junior privilege.
 emailsRouter.use(requireRole("OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"));
+
+// An attachment arrives base64-encoded inside the JSON body, so this one path
+// parses bodies far larger than the rest of the API allows. Deliberately after
+// the role check, and scoped to the one route, so nobody unauthenticated gets
+// to hand us 15 MB to decode. See index.ts -> UPLOAD_PATHS.
+emailsRouter.use("/attachments", express.json({ limit: MAX_UPLOAD_BODY }));
 
 // --- Status ----------------------------------------------------------------
 
@@ -327,25 +344,286 @@ emailsRouter.delete("/:id", async (req, res, next) => {
   }
 });
 
-/** Preview without saving — what the recipient will actually see. */
+/**
+ * What the recipient will actually see, without saving anything.
+ *
+ * The old version of this rendered the body alone, which answered a different
+ * and much less useful question — a letter with no letterhead is not what
+ * lands in the inbox. This runs the same `renderEmail` a real send runs, so
+ * placeholders are filled from the recipient's own record, the signature is
+ * appended, the opt-out appears exactly when it would, and the whole thing is
+ * wrapped in the identity currently stored under System settings.
+ *
+ * One difference, and it is deliberate: `forPreview` swaps the `cid:` logo
+ * references for data URLs, because the iframe showing this has no message to
+ * resolve a `cid:` against and would otherwise show two broken images.
+ */
 emailsRouter.post("/preview", async (req, res, next) => {
   try {
     const input = z
       .object({
         subject: z.string().default(""),
         body: z.string().default(""),
+        purpose: z.enum(PURPOSES).default("CUSTOM"),
         leadId: z.string().cuid().nullish(),
         clientId: z.string().cuid().nullish(),
-        toEmail: z.string().email().nullish(),
+        // Deliberately looser than the compose route: a preview is looked at
+        // *while* an address is being typed, and refusing to render "ama@" is
+        // refusing at exactly the moment somebody wants to see the letter.
+        // Anything that isn't a usable address falls through to the recipient
+        // on the record, and then to a placeholder.
+        toEmail: z
+          .string()
+          .nullish()
+          .transform((value) => (value && /^\S+@\S+\.\S+$/.test(value) ? value : null)),
         toName: z.string().nullish(),
+        attachments: z.array(attachment).max(10).optional(),
       })
       .parse(req.body);
+
     const context = await resolveContext(input);
-    res.json({
-      subject: fillPlaceholders(input.subject, context.variables),
-      html: toHtml(fillPlaceholders(input.body, context.variables), null, null),
+    // A preview with nobody picked yet still has to render, so the opt-out
+    // link has something to sign. Nothing is sent from here.
+    const toEmail = input.toEmail ?? context.email ?? "someone@example.com";
+    const rendered = await renderEmail({
+      subject: input.subject,
+      body: input.body,
       variables: context.variables,
+      toEmail,
+      appUrl: await appUrl(),
+      includeUnsubscribe: COLD_PURPOSES.has(input.purpose),
+      forPreview: true,
     });
+
+    res.json({
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      toEmail,
+      toName: input.toName ?? context.name,
+      from: await describeSender(),
+      variables: context.variables,
+      unresolved: unresolvedPlaceholders([input.subject, input.body].join("\n"), context.variables),
+      attachments: await describeAttachments(input.attachments ?? []),
+      suppressed: await isSuppressed(toEmail),
+      historical: false,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** The same, for a message already in the outbox — a draft, or a record of one sent. */
+emailsRouter.get("/:id/preview", async (req, res, next) => {
+  try {
+    const message = await prisma.emailMessage.findUnique({ where: { id: req.params.id } });
+    if (!message) return res.status(404).json({ error: "Email not found" });
+
+    const attachments = await describeAttachments(parseAttachments(message.attachments));
+    const from = await describeSender();
+
+    // A sent message is shown exactly as it went out — its stored HTML rather
+    // than a re-render, because re-rendering on today's letterhead would
+    // misrepresent what the recipient actually received. Only the cid:
+    // references are swapped for data URLs so an iframe can display them.
+    if (message.status === "SENT") {
+      return res.json({
+        subject: message.subject,
+        html: await inlineCids(message.bodyHtml),
+        text: message.bodyText,
+        toEmail: message.toEmail,
+        toName: message.toName,
+        from,
+        variables: {},
+        unresolved: [],
+        attachments,
+        suppressed: null,
+        historical: true,
+      });
+    }
+
+    const context = await resolveContext({ leadId: message.leadId, clientId: message.clientId, toEmail: message.toEmail });
+    const rendered = await renderEmail({
+      subject: message.subject,
+      body: message.bodyText,
+      variables: context.variables,
+      toEmail: message.toEmail,
+      appUrl: await appUrl(),
+      includeUnsubscribe: COLD_PURPOSES.has(message.purpose),
+      forPreview: true,
+    });
+    res.json({
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      toEmail: message.toEmail,
+      toName: message.toName,
+      from,
+      variables: context.variables,
+      unresolved: unresolvedPlaceholders([message.subject, message.bodyText].join("\n"), context.variables),
+      attachments,
+      suppressed: await isSuppressed(message.toEmail),
+      historical: false,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Who the message will appear to be from, for the preview's header row. */
+async function describeSender(): Promise<{ name: string; email: string; replyTo: string | null }> {
+  const profile = await companyProfile();
+  const [name, email, replyTo] = await Promise.all([
+    getSetting(SETTING.MAIL_FROM_NAME),
+    getSetting(SETTING.MAIL_FROM_EMAIL),
+    getSetting(SETTING.MAIL_REPLY_TO),
+  ]);
+  return { name: name || profile.displayName, email: email || profile.email, replyTo };
+}
+
+/**
+ * `{{first_name}}` left in the text with nothing to fill it.
+ *
+ * This is the one thing a preview is genuinely for. A placeholder nothing
+ * fills renders as the literal braces — deliberately, see emailRender — so the
+ * result is an email opening "Hi {{frist_name}}". Naming them above the
+ * preview is cheaper than reading every line looking for one.
+ */
+function unresolvedPlaceholders(text: string, variables: Record<string, string>): string[] {
+  const found = new Set<string>();
+  for (const match of text.matchAll(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi)) {
+    if (variables[match[1].toLowerCase()] === undefined) found.add(match[1]);
+  }
+  return [...found];
+}
+
+/** Turns `cid:` references in stored HTML into data URLs an iframe can show. */
+async function inlineCids(html: string): Promise<string> {
+  let out = html;
+  for (const cid of [LOGO_CID, LOGO_DARK_CID]) {
+    if (!out.includes(`cid:${cid}`)) continue;
+    const dataUrl = await brandDataUrl(cid);
+    // Nothing to swap in: strip the tag rather than leave a broken image.
+    out = dataUrl ? out.split(`cid:${cid}`).join(dataUrl) : out.replace(new RegExp(`<img[^>]*cid:${cid}[^>]*>`, "g"), "");
+  }
+  return out;
+}
+
+/** Each attachment as a chip: what it is, how big, and whether it still exists. */
+async function describeAttachments(entries: StoredAttachment[]) {
+  return Promise.all(
+    entries.map(async (entry) => {
+      if ("kind" in entry && entry.kind === "stored") {
+        const file = await fileSummary(entry.fileId);
+        return {
+          kind: "stored" as const,
+          name: entry.name,
+          contentType: file?.contentType ?? entry.contentType ?? null,
+          size: file?.size ?? entry.size ?? null,
+          fileId: entry.fileId,
+          url: null as string | null,
+          note: null as string | null,
+          // The one state worth shouting about: the send skips it silently.
+          missing: !file,
+        };
+      }
+      if ("kind" in entry && entry.kind === "invoice") {
+        const invoice = await prisma.invoice.findUnique({ where: { id: entry.invoiceId }, select: { invoiceNumber: true } });
+        return {
+          kind: "invoice" as const,
+          name: entry.name ?? (invoice ? `${invoice.invoiceNumber}.pdf` : "Invoice.pdf"),
+          contentType: "application/pdf",
+          size: null,
+          fileId: null,
+          url: null,
+          note: "Rendered fresh when it sends.",
+          missing: !invoice,
+        };
+      }
+      if ("kind" in entry && entry.kind === "proposal") {
+        const proposal = await prisma.proposal.findUnique({ where: { id: entry.proposalId }, select: { title: true } });
+        return {
+          kind: "proposal" as const,
+          name: entry.name ?? (proposal ? `${proposal.title}.pdf` : "Proposal.pdf"),
+          contentType: "application/pdf",
+          size: null,
+          fileId: null,
+          url: null,
+          note: "Rendered fresh when it sends.",
+          missing: !proposal,
+        };
+      }
+      const linked = entry as { name: string; url: string; contentType?: string };
+      return {
+        kind: "file" as const,
+        name: linked.name,
+        contentType: linked.contentType ?? null,
+        size: null,
+        fileId: null,
+        url: linked.url,
+        note: null,
+        missing: false,
+      };
+    }),
+  );
+}
+
+// --- Attachments -----------------------------------------------------------
+
+/**
+ * A real file, uploaded and held until a message refers to it.
+ *
+ * The upload happens when the file is picked rather than when Send is pressed,
+ * so a 6 MB scan is already on the server while the letter is still being
+ * written and Send is instant. The bytes and the limits are in
+ * services/fileStore.ts; attaching by URL still exists beside this and is
+ * still the better answer for anything large.
+ */
+emailsRouter.post("/attachments", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        filename: z.string().min(1).max(200),
+        contentType: z.string().max(120).nullish(),
+        dataBase64: z.string().min(4),
+      })
+      .parse(req.body);
+
+    const file = await storeFile({
+      filename: input.filename,
+      contentType: input.contentType,
+      dataBase64: input.dataBase64,
+      uploadedById: req.dbUser?.id ?? null,
+    });
+    res.status(201).json(file);
+  } catch (err) {
+    if (err instanceof FileStoreError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+/**
+ * The file back. Inline rather than as a download, so the preview panel can
+ * show a PDF or an image in place; `?download=1` forces the save dialog.
+ */
+emailsRouter.get("/attachments/:id", async (req, res, next) => {
+  try {
+    const file = await readFile(req.params.id);
+    if (!file) return res.status(404).json({ error: "That file is no longer here." });
+    res.setHeader("Content-Type", file.contentType);
+    res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename="${file.filename.replace(/"/g, "")}"`);
+    // Private: it is a client's document, not a public asset.
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(file.data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+emailsRouter.delete("/attachments/:id", async (req, res, next) => {
+  try {
+    await deleteFile(req.params.id);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
@@ -635,7 +913,8 @@ unsubscribeRouter.get("/unsubscribe", async (req, res, next) => {
   try {
     const email = typeof req.query.email === "string" ? req.query.email.toLowerCase().trim() : "";
     const token = typeof req.query.token === "string" ? req.query.token : "";
-    if (!email) return res.status(400).type("html").send(page("That link is missing an address.", false));
+    const profile = await companyProfile();
+    if (!email) return res.status(400).type("html").send(page(profile, "That link is missing an address.", false));
 
     const verified = token ? verifyUnsubscribeToken(email, token) : false;
     await prisma.emailSuppression.upsert({
@@ -645,7 +924,7 @@ unsubscribeRouter.get("/unsubscribe", async (req, res, next) => {
     });
     await stopOnReply({ email });
 
-    res.type("html").send(page("You have been unsubscribed. We will not email you again.", true));
+    res.type("html").send(page(profile, "You have been unsubscribed. We will not email you again.", true));
   } catch (err) {
     next(err);
   }
@@ -668,11 +947,11 @@ unsubscribeRouter.post("/unsubscribe", async (req, res, next) => {
   }
 });
 
-function page(message: string, ok: boolean): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dakyworld</title>
+function page(profile: CompanyProfile, message: string, ok: boolean): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${profile.displayName}</title>
 <style>body{font-family:"DM Sans",-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#08101F;color:#F4F5F0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
 .card{border:1px solid rgba(255,255,255,.10);padding:40px;max-width:440px;text-align:center}
 h1{font-size:.8rem;letter-spacing:.18em;text-transform:uppercase;margin:0 0 18px;color:#B8FF3D}
 p{margin:0;line-height:1.6;font-size:15px;color:${ok ? "#F4F5F0" : "rgba(244,245,240,.7)"}}</style></head>
-<body><div class="card"><h1>Dakyworld</h1><p>${message}</p></div></body></html>`;
+<body><div class="card"><h1>${profile.displayName}</h1><p>${message}</p></div></body></html>`;
 }

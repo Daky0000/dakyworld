@@ -1,9 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { Badge, Card, EmptyState, PageHeader, StatTile, StatusDot } from "../components/ui";
-import type { CatalogueResponse, CatalogueTool, ToolState, ToolStatus, ToolsResponse } from "../lib/types";
+import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, StatTile, StatusDot, Toggle } from "../components/ui";
+import type {
+  CatalogueResponse,
+  CatalogueTool,
+  McpServerList,
+  McpServerRow,
+  ToolAgents,
+  ToolState,
+  ToolStatus,
+  ToolsResponse,
+} from "../lib/types";
 
 /**
  * What the agents can actually reach.
@@ -28,6 +37,7 @@ const GROUPS: Array<{ state: ToolState; heading: string; note: string }> = [
 const DOT: Record<ToolState, "ok" | "warn" | "idle"> = { READY: "ok", NEEDS_KEY: "warn", PLANNED: "idle" };
 
 export function Tools() {
+  const [granting, setGranting] = useState<string | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ["tools"],
     queryFn: () => api.get<ToolsResponse>("/tools"),
@@ -83,7 +93,11 @@ export function Tools() {
         })
       )}
 
-      {catalogue && <Catalogue catalogue={catalogue} />}
+      <Connections />
+
+      {catalogue && <Catalogue catalogue={catalogue} onAssign={setGranting} />}
+
+      <GrantDrawer toolKey={granting} onClose={() => setGranting(null)} />
     </div>
   );
 }
@@ -151,7 +165,7 @@ function ToolCard({ tool }: { tool: ToolStatus }) {
  * The catalogue: the individual things an agent calls, grouped the way the
  * work is grouped rather than by which vendor happens to provide them.
  */
-function Catalogue({ catalogue }: { catalogue: CatalogueResponse }) {
+function Catalogue({ catalogue, onAssign }: { catalogue: CatalogueResponse; onAssign: (key: string) => void }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -182,7 +196,7 @@ function Catalogue({ catalogue }: { catalogue: CatalogueResponse }) {
               <div key={group}>
                 <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">{group}</h3>
                 <div className="grid gap-2 md:grid-cols-2">
-                  {list.map((tool) => <CatalogueRow key={tool.key} tool={tool} />)}
+                  {list.map((tool) => <CatalogueRow key={tool.key} tool={tool} onAssign={onAssign} />)}
                 </div>
               </div>
             );
@@ -193,7 +207,7 @@ function Catalogue({ catalogue }: { catalogue: CatalogueResponse }) {
   );
 }
 
-function CatalogueRow({ tool }: { tool: CatalogueTool }) {
+function CatalogueRow({ tool, onAssign }: { tool: CatalogueTool; onAssign: (key: string) => void }) {
   return (
     <div className="border border-line bg-white px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
@@ -214,6 +228,438 @@ function CatalogueRow({ tool }: { tool: CatalogueTool }) {
       {!tool.ready && tool.blockedReason && (
         <p className="mt-1.5 text-xs text-amber-700">{tool.blockedReason}</p>
       )}
+      <button
+        type="button"
+        onClick={() => onAssign(tool.key)}
+        className="mt-2 font-mono text-[10px] uppercase tracking-[.1em] text-blue hover:underline"
+      >
+        Who can use it
+      </button>
     </div>
+  );
+}
+
+/**
+ * Who may call this tool.
+ *
+ * The Agents screen answers "what may this agent do". This answers the same
+ * question from the other side — "who can send email", "who can spend on
+ * images" — which is the one you actually ask when a capability worries you.
+ * Both write the same `toolkit` field: there is one grant and two ways of
+ * looking at it, not two grants.
+ */
+function GrantDrawer({ toolKey, onClose }: { toolKey: string | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const { data } = useQuery({
+    queryKey: ["tool-agents", toolKey],
+    queryFn: () => api.get<ToolAgents>(`/tools/${encodeURIComponent(toolKey!)}/agents`),
+    enabled: Boolean(toolKey),
+  });
+
+  const assign = useMutation({
+    mutationFn: ({ agentKey, granted }: { agentKey: string; granted: boolean }) =>
+      api.post(`/tools/${encodeURIComponent(toolKey!)}/agents`, { agentKey, granted }),
+    onSuccess: () => {
+      setNotice(null);
+      void qc.invalidateQueries({ queryKey: ["tool-agents", toolKey] });
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+    },
+    onError: (err: Error) => setNotice(err.message),
+  });
+
+  const agents = data?.agents ?? [];
+  const granted = agents.filter((agent) => agent.granted);
+
+  return (
+    <Drawer
+      open={Boolean(toolKey)}
+      onClose={() => {
+        setNotice(null);
+        onClose();
+      }}
+      title={data?.tool.name ?? "Tool"}
+      subtitle={data ? `${granted.length} of ${agents.length} agents can call it` : undefined}
+    >
+      {!data ? (
+        <p className="text-sm text-ink/50">Loading…</p>
+      ) : (
+        <div className="space-y-5">
+          <p className="text-sm text-ink/65">{data.tool.purpose}</p>
+
+          <div className="flex flex-wrap gap-1.5">
+            <Badge tone="muted">{data.tool.scope}</Badge>
+            {data.tool.spends && <Badge>costs money</Badge>}
+            {data.tool.outward && <Badge tone="muted">reaches outside</Badge>}
+          </div>
+
+          {(data.tool.spends || data.tool.outward) && (
+            <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Granting this is not the same as letting an agent use it unattended — it still needs the autonomy level and dry run to allow
+              it. Both are on the agent's own card.
+            </p>
+          )}
+
+          {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+
+          <div className="space-y-1">
+            {agents.map((agent) => (
+              <label
+                key={agent.key}
+                className={`flex cursor-pointer items-start gap-2.5 border px-2.5 py-2 transition-colors ${
+                  agent.granted ? "border-blue/30 bg-blue/[.04]" : "border-line bg-white hover:bg-ink/[.02]"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={agent.granted}
+                  disabled={assign.isPending}
+                  onChange={() => assign.mutate({ agentKey: agent.key, granted: !agent.granted })}
+                  className="mt-1 accent-blue"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-sm font-medium">{agent.name}</span>
+                    <span className="text-xs text-ink/40">{agent.title}</span>
+                    {agent.status !== "ACTIVE" && <Badge tone="muted">{agent.status.toLowerCase()}</Badge>}
+                  </span>
+                  {/* Granted and still unable to act is a different problem
+                      from not granted, and needs a different fix. */}
+                  {agent.granted && agent.mustDryRun && agent.permissionNote && (
+                    <span className="mt-0.5 block text-xs text-ink/45">{agent.permissionNote}</span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
+// --- Connected tools (MCP) -------------------------------------------------
+
+/**
+ * Servers this app has been pointed at.
+ *
+ * The catalogue is code on purpose — what a tool *does* is behaviour, and
+ * behaviour editable at runtime is behaviour nobody can review. This is how a
+ * capability gets added without breaking that: a connected server declares its
+ * own tools, and each becomes a grantable entry called through the same
+ * invoker, the same autonomy gate and the same audit trail as a built-in one.
+ * What is configured here is which servers are trusted and how far — a
+ * permission, which is exactly the kind of thing that belongs in a screen.
+ */
+function Connections() {
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<McpServerRow | null>(null);
+
+  const { data } = useQuery({ queryKey: ["mcp"], queryFn: () => api.get<McpServerList>("/mcp") });
+
+  const refresh = useMutation({
+    mutationFn: (id: string) => api.post(`/mcp/${id}/refresh`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["mcp"] });
+      void qc.invalidateQueries({ queryKey: ["tools"] });
+    },
+  });
+
+  const toggle = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.patch(`/mcp/${id}`, { enabled }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["mcp"] });
+      void qc.invalidateQueries({ queryKey: ["tools"] });
+    },
+  });
+
+  const servers = data?.servers ?? [];
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Connected tools</h2>
+          <p className="mt-1 max-w-2xl text-sm text-ink/50">
+            Anything that speaks MCP. Its tools join the catalogue and are granted, called and audited exactly like the built-in ones — this
+            is how a new capability arrives without a deploy. Image generation is the obvious one: connect a server that draws and{" "}
+            <code className="font-mono text-xs">image.generate</code> starts working.
+          </p>
+        </div>
+        <Button size="sm" onClick={() => setAdding(true)}>
+          Connect a server
+        </Button>
+      </div>
+
+      {servers.length === 0 ? (
+        <EmptyState message="Nothing connected yet. The built-in tools work without this — a connection adds what this app doesn't do itself." />
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {servers.map((server) => (
+            <Card key={server.id} className="h-full">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <StatusDot tone={server.lastError ? "bad" : server.enabled ? "ok" : "idle"} />
+                    <span className="font-display text-lg tracking-[-.02em]">{server.name}</span>
+                  </div>
+                  <code className="mt-0.5 block truncate font-mono text-[10px] text-ink/40">{server.url}</code>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  {server.spends && <Badge>$</Badge>}
+                  {server.outward && <Badge tone="muted">outward</Badge>}
+                  <Badge tone="muted">{server.scope}</Badge>
+                </div>
+              </div>
+
+              {server.purpose && <p className="mt-2 text-sm text-ink/60">{server.purpose}</p>}
+
+              {server.lastError ? (
+                <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{server.lastError}</p>
+              ) : (
+                <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+                  {server.toolCount} tool{server.toolCount === 1 ? "" : "s"}
+                  {server.hasAuth ? " · authorised" : " · no credential"}
+                </p>
+              )}
+
+              {server.tools.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {server.tools.slice(0, 6).map((tool) => (
+                    <span key={tool.name} title={tool.description ?? undefined} className="rounded-lg border border-line bg-cream px-1.5 py-0.5 font-mono text-[10px] text-ink/55">
+                      {tool.name}
+                    </span>
+                  ))}
+                  {server.tools.length > 6 && <span className="px-1 py-0.5 text-[10px] text-ink/35">+{server.tools.length - 6}</span>}
+                </div>
+              )}
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Toggle
+                  checked={server.enabled}
+                  onChange={(enabled) => toggle.mutate({ id: server.id, enabled })}
+                  label={server.enabled ? "Agents may call it" : "Switched off"}
+                />
+                <button
+                  type="button"
+                  onClick={() => refresh.mutate(server.id)}
+                  disabled={refresh.isPending}
+                  className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/45 transition hover:text-ink"
+                >
+                  {refresh.isPending ? "Checking…" : "Re-check"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditing(server)}
+                  className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/45 transition hover:text-ink"
+                >
+                  Settings
+                </button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <ConnectionDrawer open={adding} server={null} onClose={() => setAdding(false)} />
+      <ConnectionDrawer open={Boolean(editing)} server={editing} onClose={() => setEditing(null)} />
+    </section>
+  );
+}
+
+/**
+ * Connecting one, or changing what it is trusted with.
+ *
+ * The three risk settings are the point of the form. A server telling us its
+ * tool only reads is a server telling us it may act with nobody watching, so
+ * they are set here and read from here — see the server's
+ * services/tools/mcpTools.ts.
+ */
+function ConnectionDrawer({ open, server, onClose }: { open: boolean; server: McpServerRow | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    key: "",
+    name: "",
+    purpose: "",
+    url: "",
+    authHeader: "",
+    scope: "read" as McpServerRow["scope"],
+    spends: false,
+    outward: false,
+  });
+  const [notice, setNotice] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setNotice(null);
+    setWarning(null);
+    setForm({
+      key: server?.key ?? "",
+      name: server?.name ?? "",
+      purpose: server?.purpose ?? "",
+      url: server?.url ?? "",
+      // Never read back — a credential that can be displayed is a credential
+      // that leaks. Blank leaves the stored one alone.
+      authHeader: "",
+      scope: server?.scope ?? "read",
+      spends: server?.spends ?? false,
+      outward: server?.outward ?? false,
+    });
+  }, [open, server]);
+
+  const done = (result: { error?: string | null }) => {
+    void qc.invalidateQueries({ queryKey: ["mcp"] });
+    void qc.invalidateQueries({ queryKey: ["tools"] });
+    if (result.error) {
+      setWarning(result.error);
+      return;
+    }
+    onClose();
+  };
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body = {
+        name: form.name.trim(),
+        purpose: form.purpose.trim() || null,
+        url: form.url.trim(),
+        scope: form.scope,
+        spends: form.spends,
+        outward: form.outward,
+        ...(form.authHeader.trim() ? { authHeader: form.authHeader.trim() } : {}),
+      };
+      return server
+        ? api.patch<{ server: McpServerRow; error: string | null }>(`/mcp/${server.id}`, body)
+        : api.post<{ server: McpServerRow; error: string | null }>("/mcp", { ...body, key: form.key.trim() });
+    },
+    onSuccess: done,
+    onError: (err: Error) => setNotice(err.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => api.delete<{ revokedGrants: number }>(`/mcp/${server!.id}`),
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: ["mcp"] });
+      void qc.invalidateQueries({ queryKey: ["tools"] });
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+      if (result.revokedGrants > 0) console.info(`[mcp] revoked ${result.revokedGrants} grant(s) with the connection.`);
+      onClose();
+    },
+    onError: (err: Error) => setNotice(err.message),
+  });
+
+  const ready = form.name.trim() && form.url.trim() && (server || /^[a-z][a-z0-9-]*$/.test(form.key.trim()));
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title={server ? server.name : "Connect a server"}
+      subtitle={server ? "What it is trusted with" : "Anything that speaks MCP over HTTP"}
+      footer={
+        <div className="flex items-center justify-between gap-2">
+          {server ? (
+            <Button variant="ghost" onClick={() => remove.mutate()} disabled={remove.isPending}>
+              {remove.isPending ? "Removing…" : "Remove"}
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={() => save.mutate()} disabled={!ready || save.isPending}>
+              {save.isPending ? "Connecting…" : server ? "Save" : "Connect"}
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+        {warning && (
+          <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Saved, but the server didn't answer: {warning}
+          </p>
+        )}
+
+        <Field label="Name" full hint="What you call it. Appears on every tool it contributes.">
+          <input className="input" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+        </Field>
+
+        {!server && (
+          <Field
+            label="Key"
+            full
+            hint="Lowercase, no spaces. It becomes part of every tool key — mcp.yourkey.toolname — and can't be changed afterwards without revoking every grant that names it."
+          >
+            <input
+              className="input font-mono text-xs"
+              placeholder="magnific"
+              value={form.key}
+              onChange={(event) => setForm({ ...form, key: event.target.value.toLowerCase() })}
+            />
+          </Field>
+        )}
+
+        <Field label="Endpoint" full hint="The MCP endpoint itself, not the service's homepage.">
+          <input className="input font-mono text-xs" placeholder="https://…/mcp" value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} />
+        </Field>
+
+        <Field
+          label="Authorisation header"
+          full
+          hint={server?.hasAuth ? "A credential is stored. Leave blank to keep it, or paste a new one to replace it." : "Sent verbatim as the Authorization header — include the scheme."}
+        >
+          <input
+            className="input font-mono text-xs"
+            type="password"
+            placeholder="Bearer sk-…"
+            value={form.authHeader}
+            onChange={(event) => setForm({ ...form, authHeader: event.target.value })}
+          />
+        </Field>
+
+        <Field label="What it's for" full hint="Optional. A sentence, so the next person knows why it's connected.">
+          <input className="input" value={form.purpose} onChange={(event) => setForm({ ...form, purpose: event.target.value })} />
+        </Field>
+
+        <div className="border border-line bg-cream p-4">
+          <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">What it's trusted with</h3>
+          <p className="mt-1 text-xs leading-relaxed text-ink/55">
+            These three decide how a call is gated, and they are read from here rather than from anything the server says about itself. A
+            server describing its own tool as harmless is a server asking to act unwatched.
+          </p>
+
+          <div className="mt-3 space-y-3">
+            <Field label="Riskiest thing its tools do">
+              <select className="input" value={form.scope} onChange={(event) => setForm({ ...form, scope: event.target.value as McpServerRow["scope"] })}>
+                <option value="read">Reads — fetches things, changes nothing</option>
+                <option value="write">Writes — changes something we own</option>
+                <option value="send">Sends — acts on the outside world</option>
+                <option value="charge">Charges — moves money</option>
+              </select>
+            </Field>
+            <Toggle checked={form.spends} onChange={(spends) => setForm({ ...form, spends })} label="Calls cost money" />
+            <Toggle
+              checked={form.outward}
+              onChange={(outward) => setForm({ ...form, outward })}
+              label="Calls are visible outside the company"
+            />
+          </div>
+        </div>
+
+        {!server && (
+          <p className="border border-line bg-white px-3 py-2 text-xs text-ink/55">
+            It arrives switched off. Connecting a server and letting agents call it are two decisions — turn it on once you've seen what it
+            advertises.
+          </p>
+        )}
+      </div>
+    </Drawer>
   );
 }

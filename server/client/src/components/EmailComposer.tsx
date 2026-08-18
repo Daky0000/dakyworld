@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type {
@@ -7,9 +7,11 @@ import type {
   EmailContext,
   EmailDraft,
   EmailMessage,
+  EmailPreview,
   EmailPurpose,
   EmailTemplate,
   Lead,
+  StoredFile,
 } from "../lib/types";
 import { Badge, Button, Drawer, Field, StatusDot } from "./ui";
 
@@ -72,6 +74,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
   const [rationale, setRationale] = useState<string | null>(null);
   const [showFacts, setShowFacts] = useState(true);
   const [pickingRecipient, setPickingRecipient] = useState(false);
+  const [tab, setTab] = useState<"write" | "preview">("write");
   const [manual, setManual] = useState<{ leadId?: string; clientId?: string; toEmail?: string; toName?: string } | null>(null);
 
   const recipient = manual ?? target ?? {};
@@ -93,6 +96,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
     setRationale(null);
     setManual(null);
     setScheduleAt("");
+    setTab("write");
     setPickingRecipient(!target?.leadId && !target?.clientId && !target?.toEmail && !target?.message);
   }, [open, key, loadedKey, target]);
 
@@ -225,7 +229,44 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
 
       {pickingRecipient && !hasRecipient && <RecipientPicker onPick={(picked) => { setManual(picked); setPickingRecipient(false); }} />}
 
+      {/* Two halves of the same job: write it, then look at it. The preview is
+          the server's own render, so what is shown here is what leaves — see
+          EmailPreviewPane. */}
       {hasRecipient && (
+        <div className="mb-5 flex gap-1.5 border-b border-ink/10">
+          {(["write", "preview"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setTab(option)}
+              className={`-mb-px border-b-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition ${
+                tab === option ? "border-ink text-ink" : "border-transparent text-ink/40 hover:text-ink/70"
+              }`}
+            >
+              {option === "write" ? "Write" : "Preview"}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {hasRecipient && tab === "preview" && (
+        <EmailPreviewPane
+          enabled={open}
+          messageId={target?.message?.status === "SENT" ? target.message.id : undefined}
+          request={{
+            subject,
+            body,
+            purpose,
+            leadId: recipient.leadId ?? null,
+            clientId: recipient.clientId ?? null,
+            toEmail: toEmail || null,
+            toName: recipient.toName ?? context?.name ?? null,
+            attachments,
+          }}
+        />
+      )}
+
+      {hasRecipient && tab === "write" && (
         <>
           <div className="mb-5 grid gap-4 sm:grid-cols-2">
             <Field label="To">
@@ -343,34 +384,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
             </div>
           )}
 
-          {attachments.length > 0 && (
-            <div className="mt-5">
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">Attached</div>
-              <div className="space-y-1.5">
-                {attachments.map((attachment, index) => (
-                  <div key={index} className="flex items-center justify-between rounded-xl border border-line bg-white px-3 py-2 text-sm">
-                    <span className="flex items-center gap-2">
-                      <Badge tone="muted">{"kind" in attachment && attachment.kind ? attachment.kind : "file"}</Badge>
-                      {"name" in attachment && attachment.name
-                        ? attachment.name
-                        : "invoiceId" in attachment
-                          ? "Invoice PDF — rendered when it sends"
-                          : "Proposal PDF — rendered when it sends"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setAttachments(attachments.filter((_, position) => position !== index))}
-                      className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 hover:text-ink"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <AttachmentAdder onAdd={(attachment) => setAttachments([...attachments, attachment])} />
+          <AttachmentPanel attachments={attachments} onChange={setAttachments} />
         </>
       )}
     </Drawer>
@@ -449,29 +463,341 @@ function RecipientPicker({ onPick }: { onPick: (picked: { leadId?: string; clien
   );
 }
 
-/** A file by URL. Invoice and proposal PDFs attach themselves from their own pages. */
-function AttachmentAdder({ onAdd }: { onAdd: (attachment: EmailAttachment) => void }) {
+// --- Attachments -----------------------------------------------------------
+
+const MAX_ATTACHMENT_MB = 10;
+
+function formatBytes(bytes: number | null | undefined): string | null {
+  if (typeof bytes !== "number") return null;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** The label on a chip — what this attachment actually is. */
+function attachmentLabel(attachment: EmailAttachment): string {
+  if ("name" in attachment && attachment.name) return attachment.name;
+  if ("invoiceId" in attachment) return "Invoice PDF";
+  if ("proposalId" in attachment) return "Proposal PDF";
+  return "attachment";
+}
+
+/**
+ * Attaching a file, two ways.
+ *
+ * **Drop it, or pick it.** The bytes go up the moment the file is chosen
+ * rather than when Send is pressed, so a 6 MB scan is already on the server
+ * while the letter is still being written — and Send stays instant. Ten
+ * megabytes is the ceiling per file: providers reject a message over about 25
+ * MB once base64 has added its third, and a message carries more than one.
+ *
+ * **Or link it.** Anything large has a better answer than an inbox, and the
+ * link form stays for exactly that.
+ */
+function AttachmentPanel({
+  attachments,
+  onChange,
+}: {
+  attachments: EmailAttachment[];
+  onChange: (next: EmailAttachment[]) => void;
+}) {
+  const [uploading, setUploading] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [showLink, setShowLink] = useState(false);
   const [url, setUrl] = useState("");
-  const [name, setName] = useState("");
+  const [linkName, setLinkName] = useState("");
+
+  const upload = async (files: FileList | File[]) => {
+    setError(null);
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
+        setError(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_ATTACHMENT_MB} MB — attach it as a link instead.`);
+        continue;
+      }
+      setUploading((current) => [...current, file.name]);
+      try {
+        const dataBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error(`${file.name} could not be read.`));
+          reader.onload = () => resolve(String(reader.result));
+          reader.readAsDataURL(file);
+        });
+        const stored = await api.post<StoredFile>("/emails/attachments", {
+          filename: file.name,
+          contentType: file.type || null,
+          dataBase64,
+        });
+        onChange([
+          ...attachments,
+          { kind: "stored", fileId: stored.id, name: stored.filename, contentType: stored.contentType, size: stored.size },
+        ]);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setUploading((current) => current.filter((name) => name !== file.name));
+      }
+    }
+  };
+
+  // `attachments` is read inside the async loop above, so this component reads
+  // it fresh on every call rather than closing over a stale array — which is
+  // why each upload appends to the prop rather than to a local queue.
+  const remove = (index: number) => onChange(attachments.filter((_, position) => position !== index));
 
   return (
     <div className="mt-5 border-t border-ink/10 pt-4">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">Attach a file by link</div>
-      <div className="flex flex-wrap gap-2">
-        <input className="input flex-1" placeholder="https://… (Drive, Cloudinary, anywhere public)" value={url} onChange={(event) => setUrl(event.target.value)} />
-        <input className="input w-40" placeholder="Filename" value={name} onChange={(event) => setName(event.target.value)} />
-        <Button
-          variant="secondary"
-          disabled={!url.trim()}
-          onClick={() => {
-            onAdd({ name: name.trim() || url.split("/").pop() || "attachment", url: url.trim() });
-            setUrl("");
-            setName("");
-          }}
+      <div className="mb-2 flex items-center justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+          Attachments{attachments.length > 0 ? ` (${attachments.length})` : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowLink(!showLink)}
+          className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40 transition hover:text-ink"
         >
-          Attach
-        </Button>
+          {showLink ? "Hide link form" : "Attach a link instead"}
+        </button>
       </div>
+
+      {attachments.length > 0 && (
+        <div className="mb-3 space-y-1.5">
+          {attachments.map((attachment, index) => {
+            const size = "size" in attachment ? formatBytes(attachment.size) : null;
+            const kind = "kind" in attachment && attachment.kind ? attachment.kind : "file";
+            return (
+              <div key={index} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 py-2 text-sm">
+                <span className="flex min-w-0 items-center gap-2">
+                  <Badge tone="muted">{kind === "stored" ? "file" : kind}</Badge>
+                  <span className="truncate">{attachmentLabel(attachment)}</span>
+                  {size && <span className="shrink-0 text-xs text-ink/40">{size}</span>}
+                  {(kind === "invoice" || kind === "proposal") && (
+                    <span className="shrink-0 text-xs text-ink/40">rendered when it sends</span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => remove(index)}
+                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 transition hover:text-ink"
+                >
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {uploading.map((name) => (
+        <div key={name} className="mb-1.5 flex items-center gap-2 rounded-xl border border-blue/30 bg-blue/[.04] px-3 py-2 text-sm text-ink/60">
+          <StatusDot tone="live" />
+          <span className="truncate">Uploading {name}…</span>
+        </div>
+      ))}
+
+      <label
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          if (event.dataTransfer.files.length) void upload(event.dataTransfer.files);
+        }}
+        className={`flex cursor-pointer items-center justify-center rounded-xl border border-dashed px-4 py-5 text-center text-sm transition ${
+          dragging ? "border-blue bg-blue/[.06] text-ink" : "border-ink/20 text-ink/50 hover:border-ink/40 hover:text-ink/70"
+        }`}
+      >
+        <input
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            if (event.target.files?.length) void upload(event.target.files);
+            event.target.value = "";
+          }}
+        />
+        <span>
+          Drop files here, or <span className="underline underline-offset-2">choose them</span>
+          <span className="block text-xs text-ink/35">Up to {MAX_ATTACHMENT_MB} MB each</span>
+        </span>
+      </label>
+
+      {error && <p className="mt-2 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+      {showLink && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <input
+            className="input flex-1"
+            placeholder="https://… (Drive, Cloudinary, anywhere public)"
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+          />
+          <input className="input w-40" placeholder="Filename" value={linkName} onChange={(event) => setLinkName(event.target.value)} />
+          <Button
+            variant="secondary"
+            disabled={!url.trim()}
+            onClick={() => {
+              onChange([...attachments, { name: linkName.trim() || url.split("/").pop() || "attachment", url: url.trim() }]);
+              setUrl("");
+              setLinkName("");
+            }}
+          >
+            Attach
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Preview ---------------------------------------------------------------
+
+/**
+ * The email as it will land.
+ *
+ * Rendered by the server through exactly the code a real send runs — the same
+ * `renderEmail`, so the letterhead, the signature and the opt-out are the ones
+ * that will actually go out, not an approximation drawn in the browser. The
+ * one difference is that the logos arrive as data URLs, because an iframe has
+ * no message to resolve a `cid:` against.
+ *
+ * The iframe is sandboxed with nothing granted. Email HTML is inert by
+ * definition, but this panel also shows the record of email somebody else
+ * wrote, and a preview pane is not the place to find out otherwise.
+ */
+export function EmailPreviewPane({
+  request,
+  messageId,
+  enabled,
+}: {
+  request: Record<string, unknown>;
+  messageId?: string;
+  enabled: boolean;
+}) {
+  const [width, setWidth] = useState<"desktop" | "mobile">("desktop");
+
+  const { data, isFetching, error } = useQuery({
+    queryKey: ["email-preview", messageId ?? "compose", JSON.stringify(request)],
+    queryFn: () =>
+      messageId ? api.get<EmailPreview>(`/emails/${messageId}/preview`) : api.post<EmailPreview>("/emails/preview", request),
+    enabled,
+    // The composer sends this on every keystroke pause; a stale render for a
+    // few seconds is fine and a request per character is not.
+    staleTime: 4000,
+    // A render that was refused will be refused again — retrying only means
+    // the panel says "Rendering…" for ten seconds instead of saying why.
+    retry: false,
+  });
+
+  if (error) {
+    return <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{(error as Error).message}</p>;
+  }
+  if (!data) return <p className="text-sm text-ink/50">Rendering…</p>;
+
+  return (
+    <div className="space-y-4">
+      {/* The envelope: what the inbox row will say before anything is opened. */}
+      <div className="rounded-2xl border border-line bg-white">
+        <dl className="divide-y divide-ink/5 text-sm">
+          <Row label="From">
+            {data.from.name} <span className="text-ink/45">&lt;{data.from.email}&gt;</span>
+          </Row>
+          <Row label="To">
+            {data.toName ? `${data.toName} ` : ""}
+            <span className="text-ink/45">&lt;{data.toEmail}&gt;</span>
+          </Row>
+          <Row label="Subject">
+            <span className="font-medium">{data.subject || <span className="text-ink/35">no subject</span>}</span>
+          </Row>
+          {data.attachments.length > 0 && (
+            <Row label="Attached">
+              <span className="flex flex-wrap gap-1.5">
+                {data.attachments.map((attachment, index) => (
+                  <span
+                    key={index}
+                    title={attachment.note ?? undefined}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-1.5 py-0.5 text-xs ${
+                      attachment.missing ? "border-red-200 bg-red-50 text-red-700" : "border-line bg-cream text-ink/60"
+                    }`}
+                  >
+                    {attachment.name}
+                    {formatBytes(attachment.size) && <span className="text-ink/35">{formatBytes(attachment.size)}</span>}
+                    {attachment.missing && <span>· missing</span>}
+                  </span>
+                ))}
+              </span>
+            </Row>
+          )}
+        </dl>
+      </div>
+
+      {data.unresolved.length > 0 && (
+        <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Nothing fills {data.unresolved.map((name) => `{{${name}}}`).join(", ")} for this recipient — it will go out with the braces
+          showing. Check the spelling, or write the words in.
+        </p>
+      )}
+
+      {data.suppressed && (
+        <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {data.toEmail} has unsubscribed ({data.suppressed}). Nothing will send to this address.
+        </p>
+      )}
+
+      {data.historical && (
+        <p className="border border-line bg-cream px-3 py-2 text-xs text-ink/55">
+          This is the message exactly as it was sent, not a fresh render — a sent email is the record that it was sent.
+        </p>
+      )}
+
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+          {isFetching ? "Rendering…" : "As it will arrive"}
+        </span>
+        <div className="flex gap-1.5">
+          {(["desktop", "mobile"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setWidth(option)}
+              className={`border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+                width === option ? "border-ink bg-ink text-cream" : "border-ink/15 text-ink/50 hover:border-ink/40"
+              }`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex justify-center rounded-2xl border border-line bg-cream p-3">
+        <iframe
+          title="Email preview"
+          sandbox=""
+          srcDoc={data.html}
+          className="h-[640px] rounded-xl border border-ink/10 bg-white transition-[width]"
+          style={{ width: width === "mobile" ? 400 : "100%" }}
+        />
+      </div>
+
+      <details className="rounded-2xl border border-line bg-white px-4 py-3">
+        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+          The plain-text half
+        </summary>
+        <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-ink/60">{data.text}</p>
+      </details>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-3 px-4 py-2">
+      <dt className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{label}</dt>
+      <dd className="min-w-0 flex-1 break-words">{children}</dd>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { requireRole } from "../middleware/auth.js";
 import { summarise, toolStatuses } from "../services/toolRegistry.js";
-import { TOOLS, findTool } from "../services/tools/catalogue.js";
+import { listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
 import { invokeTool, permissionFor } from "../services/tools/invoke.js";
 
@@ -41,8 +41,12 @@ toolsRouter.get("/catalogue", async (req, res, next) => {
   try {
     const agentKey = typeof req.query.agentKey === "string" ? req.query.agentKey : null;
 
+    // Built-in tools plus whatever the connected MCP servers advertise — one
+    // catalogue, because a tool from a server is granted, called and audited
+    // on exactly the same terms as one from this repository.
+    const tools = await listAllTools();
     const catalogue = await Promise.all(
-      TOOLS.map(async (tool) => {
+      tools.map(async (tool) => {
         const readiness = await toolReadiness(tool.requires);
         const permission = agentKey
           ? await permissionFor(tool, { agentKey, userId: null, dryRun: false })
@@ -68,7 +72,7 @@ toolsRouter.get("/catalogue", async (req, res, next) => {
 
     res.json({
       tools: catalogue,
-      groups: [...new Set(TOOLS.map((tool) => tool.group))],
+      groups: [...new Set(tools.map((tool) => tool.group))],
       summary: {
         total: catalogue.length,
         ready: catalogue.filter((tool) => tool.ready).length,
@@ -95,7 +99,7 @@ const callInput = z.object({
 toolsRouter.post("/call/:key", async (req, res, next) => {
   try {
     const { input, dryRun, agentKey } = callInput.parse(req.body ?? {});
-    if (!findTool(req.params.key)) return res.status(404).json({ error: `There is no tool called ${req.params.key}.` });
+    if (!(await resolveTool(req.params.key))) return res.status(404).json({ error: `There is no tool called ${req.params.key}.` });
 
     const result = await invokeTool(req.params.key, input, {
       agentKey: agentKey ?? null,
@@ -137,6 +141,71 @@ toolsRouter.get("/calls", async (req, res, next) => {
       calls,
       lastThirtyDays: { calls: spend._count, spendUsd: spend._sum.costUsd ?? 0 },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Who may call this tool, and changing that from here.
+ *
+ * The Agents screen answers "what may this agent do"; this answers the same
+ * question from the other side — "who can send email", "who can spend on
+ * images" — which is the one you actually ask when a capability worries you.
+ * It writes the same `toolkit` field the Agents screen writes, because there
+ * is one grant and two ways of looking at it, not two grants.
+ */
+toolsRouter.get("/:key/agents", async (req, res, next) => {
+  try {
+    const tool = await resolveTool(req.params.key);
+    if (!tool) return res.status(404).json({ error: `There is no tool called ${req.params.key}.` });
+
+    const agents = await prisma.agent.findMany({
+      orderBy: [{ tier: "asc" }, { name: "asc" }],
+      select: { key: true, name: true, title: true, tier: true, department: true, status: true, autonomyLevel: true, dryRun: true, toolkit: true },
+    });
+
+    res.json({
+      tool: { key: tool.key, name: tool.name, group: tool.group, purpose: tool.purpose, scope: tool.scope, spends: tool.spends, outward: tool.outward },
+      agents: await Promise.all(
+        agents.map(async (agent) => {
+          const permission = await permissionFor(tool, { agentKey: agent.key, userId: null, dryRun: false });
+          return {
+            key: agent.key,
+            name: agent.name,
+            title: agent.title,
+            tier: agent.tier,
+            department: agent.department,
+            status: agent.status,
+            granted: agent.toolkit.includes(tool.key),
+            // Granted and still unable to act is a different problem from not
+            // granted, and needs a different fix. Both are worth seeing here.
+            mustDryRun: permission.mustDryRun,
+            permissionNote: permission.reason,
+          };
+        }),
+      ),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+toolsRouter.post("/:key/agents", async (req, res, next) => {
+  try {
+    const tool = await resolveTool(req.params.key);
+    if (!tool) return res.status(404).json({ error: `There is no tool called ${req.params.key}.` });
+
+    const { agentKey, granted } = z.object({ agentKey: z.string().max(64), granted: z.boolean() }).parse(req.body);
+    const agent = await prisma.agent.findUnique({ where: { key: agentKey } });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const toolkit = granted
+      ? [...new Set([...agent.toolkit, tool.key])]
+      : agent.toolkit.filter((existing) => existing !== tool.key);
+
+    await prisma.agent.update({ where: { key: agentKey }, data: { toolkit } });
+    res.json({ agentKey, granted, toolkit });
   } catch (err) {
     next(err);
   }

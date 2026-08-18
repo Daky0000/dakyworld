@@ -163,12 +163,86 @@ doesn't match, because refusing an opt-out over a token mismatch is
 indefensible. Suppressed addresses are checked before **every** send, including
 from inside a running sequence.
 
+### Attaching a file, and looking before you send
+
+Drop a file onto the composer or pick one — it uploads the moment it is chosen
+rather than when Send is pressed, so a 6 MB scan is already on the server while
+the letter is still being written and Send stays instant. Ten megabytes is the
+ceiling per file: providers reject a message over about 25 MB once base64 has
+added its third, and a message carries more than one attachment. Anything
+bigger has a better answer, and *Attach a link instead* is still there for it.
+
+An invoice or a proposal attached from its own page is different again: those
+are rendered **at send time**, so what a client receives is the document as it
+stands when it goes out, not as it stood when the email was drafted three days
+earlier.
+
+**Preview** is the second tab of the composer, and it is the server's own
+render — the same `renderEmail` a real send runs. The letterhead, the
+signature, the opt-out and the filled-in placeholders are the ones that will
+actually leave, not an approximation drawn in the browser. It shows the
+envelope as an inbox will (from, to, subject, the attachment chips with their
+sizes), a desktop/mobile width toggle, and the plain-text half underneath.
+
+The single most useful thing it does is name the placeholders **nothing fills**
+for this recipient. A typo renders as the literal braces — deliberately, since
+blanking it would send "Hi ," to a client — so an email opening
+"Hi {{frist_name}}" is a real failure mode, and reading one line above the
+preview is cheaper than reading every line of the letter.
+
+Every message in the outbox has a Preview too, including the sent ones. A sent
+message is shown exactly as it went out rather than re-rendered on today's
+letterhead: what the recipient received is the record, and re-rendering it
+would misrepresent it.
+
 ### What it deliberately doesn't do
 
 It sends; it does not read a mailbox. There is no inbox, no open tracking, and
 no click tracking — a tracking pixel is how a business letter starts being
 filtered as marketing. Replies are recorded the way calls already are, by
 logging them, which is what stops the sequence.
+
+## System settings
+
+**Settings → System** is the one place the company describes itself.
+
+The name, the address, both phone numbers, the website, the social links, the
+registered company number and the logo used to be constants in the code:
+correct, single-sourced, and changeable only by a developer with a deploy. They
+are now a record, and everything that describes Dakyworld reads it — the email
+letterhead and its dark footer band, the plain-text half of every email, the
+PDF letterhead on every invoice and proposal, the Word cut of a proposal, the
+unsubscribe page, and the brief the AI drafter and the proposal writer are
+given before they write a word.
+
+Change the phone number here and the next email, the next invoice and the next
+proposal carry the new one. There is no second copy to keep in step, which was
+the entire point of holding them in one file before and is the entire point of
+holding them in one record now.
+
+**Blank means "use the default".** Every required field shows its shipped value
+as placeholder text; leaving it empty falls back to that rather than printing
+nothing, because a letterhead with no email address on it is never what anyone
+meant. The genuinely optional details — a second phone line, a VAT number, a
+social handle — have no default, so blank there means what it looks like and
+the line simply isn't printed.
+
+### The logo
+
+Four slots: the lock-up on light, the lock-up on dark, the mark on its own, and
+a favicon. Anything uploaded wins over the artwork shipped in `server/assets/`;
+remove an upload and it falls back. If neither exists the wordmark is set in
+type, which is why an email never arrives with a broken image at the top.
+
+Uploads are held **in the database**, not written to disk. Railway's filesystem
+is ephemeral: a file written at runtime survives until the next deploy and then
+silently reverts, which is worse than not working because it looks like it
+worked.
+
+Keep them under 1 MB — the limit is enforced, and these ride along on every
+single message. A logo is embedded in the message rather than linked to, so it
+shows in Outlook with images blocked and on a domain that is mid-migration; the
+cost of that is that its size is paid on every send.
 
 ## Care plans
 
@@ -712,6 +786,84 @@ show you what they would have done.
 Every call is recorded in `ToolCall`, including the ones that were refused.
 That log is what answers "why did nothing happen last night".
 
+### The specialists
+
+The management tier recommends and decides. Under it sit nine **specialists**,
+and these are the ones that make things:
+
+| | Reports to | What it is for |
+|---|---|---|
+| Web Developer | Technical Director | Builds and fixes the sites, from markup to DNS to the handover |
+| Automation Engineer | Technical Director | Maps a workflow, wires the systems together, removes the manual steps |
+| QA Tester | Technical Director | Finds what is broken before a client does |
+| Graphic Designer | Growth & Content | Identity, layout, social templates, the artwork clients keep |
+| Video Editor | Growth & Content | Structure, captions, motion, the cut per platform |
+| Ad Designer | Growth & Content | Paid-social creative and the test that settles it |
+| Copywriter | Growth & Content | Pages, case studies, email copy, SEO briefs |
+| SEO Specialist | Growth & Content | The technical faults costing a client rankings, then the words |
+| Support Desk | Operations Director | Triage, first response, and routing before an SLA is at risk |
+
+Each is deliberately narrow. "A creative agent" would be one prompt asked to
+design a logo, cut a video and write an ad, and it would be mediocre at all
+three — those are three crafts with three vocabularies and three definitions of
+finished. One job each also means "who do I ask for a video edit" has an answer.
+
+**Skills and tools are different things.** Skills are what a specialist is
+asked for, written in a client's words — "Subtitles and burned-in captions",
+"Local SEO and Google Business Profile" — and they are what a job is matched
+against. Tools are what it can reach, and only tools are a permission.
+
+**Hire a specialist** adds one of your own: a 3D artist, a bookkeeper, a
+translator. It arrives at level 1 with dry run on and no tools, exactly as the
+built-in ones do, and unlike them its wording can be rewritten from the screen.
+The shipped nine have their wording in the code so a deploy can improve it; the
+API refuses to rename them, and refuses to delete them (retire them instead —
+deleting one would only mean the next deploy created it again).
+
+### Connected tools
+
+The catalogue is code on purpose: what a tool *does* is behaviour, and
+behaviour that can be edited at runtime is behaviour nobody can review. That
+left one thing impossible — adding a capability without a deploy — and **MCP**
+is the way out that doesn't break the rule.
+
+Connect a server under *Tools → Connected tools*. It declares its own tools
+with their own schemas, and each becomes a grantable catalogue entry named
+`mcp.<server>.<tool>`, called through the same invoker, the same grant check,
+the same autonomy gate and the same `ToolCall` audit row as a built-in one.
+Nothing about the policy is different because the tool came from outside.
+
+Three things are **never** taken from the server, and they are the three the
+form asks you for: how risky its tools are, whether calls cost money, and
+whether calls are visible outside the company. A server describing its own tool
+as harmless is a server asking to act unwatched.
+
+A connection arrives switched off. Connecting a server and letting agents call
+it are two decisions, and doing both in one step means the first silently makes
+the second. Removing a connection revokes every grant that named it.
+
+### The studio tools
+
+Five tools exist for the specialists specifically. Four are Claude-backed and
+produce a **specification**, which is the honest boundary of what this app does
+on its own and also what a designer, an editor or a developer actually wants
+handed to them:
+
+- `design.brief` — purpose, audience, hierarchy, the exact set-ready copy, the
+  palette from the brand system, and real pixel dimensions per placement.
+- `video.plan` — structure with second counts that add up, the shot list, the
+  caption script, the cut per platform.
+- `ad.concept` — genuinely different angles rather than variants of one idea,
+  with the platform specs, the test plan, and the claims that need checking.
+- `web.page` — a complete self-contained HTML page on the brand design system,
+  with real copy, plus a list of what a developer must change before it ships.
+
+The fifth, `image.generate`, makes an actual picture, and it can only do that
+through a connected MCP server. It is a **named capability rather than a named
+provider**: an agent's toolkit says "this one draws", and which service draws is
+a connection you make and can change without touching an agent. With nothing
+connected it refuses with a sentence saying so, rather than failing obscurely.
+
 ## Deploying
 
 Client and server deploy as **one Railway service** on one domain
@@ -841,3 +993,10 @@ Phase 1's slice (Leads, Proposals, Projects, Invoices, Clients). Care Plans,
 Time & Capacity reporting, and Communications logging have working API
 routes' data model in place and can get a UI page added the same way the
 existing pages were built, without any schema changes.
+
+Since then: `Agent` and `ToolCall` (the workforce and its audit trail),
+`StoredFile` (an uploaded email attachment, held as bytes so attaching a file
+works before any storage credential has been pasted), and `McpServer` (a
+connected tool server and the tools it advertises). The company's own details
+and its logos live in `AppSetting` rather than in a model of their own — see
+**System settings** above.

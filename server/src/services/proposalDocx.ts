@@ -20,8 +20,8 @@ import {
   WidthType,
 } from "docx";
 import { ribbon, RIBBON_PT } from "./png.js";
-import { readLogoAsset } from "./letterhead.js";
-import { COMPANY } from "./dakyworld.js";
+import { letterheadIdentity, readLogoAsset, type LetterheadIdentity } from "./letterhead.js";
+import type { CompanyProfile } from "./systemProfile.js";
 import type { ProposalPdfData } from "./pdf.js";
 
 /**
@@ -59,7 +59,7 @@ const LINE = "DFE4EB";
 
 const FONT = "Arial";
 
-// COMPANY is imported at the top: one address block for the PDF letterhead,
+// The identity comes from services/systemProfile.ts: one address block for the PDF letterhead,
 // this Word cut and every email. See services/dakyworld.ts.
 
 // A4, and the same content area the PDF leaves itself.
@@ -154,8 +154,9 @@ function ribbonImage(corner: "top-right" | "bottom-left") {
  * wordmark drawn from type — the same choice, and the same fallback, that
  * services/letterhead.ts makes for the PDF.
  */
-function wordmarkBlock(): Paragraph[] {
-  const logo = readLogoAsset();
+function wordmarkBlock(identity: LetterheadIdentity): Paragraph[] {
+  const { profile } = identity;
+  const logo = readLogoAsset(identity);
 
   if (logo) {
     return [
@@ -165,7 +166,7 @@ function wordmarkBlock(): Paragraph[] {
             type: "png",
             data: logo.data,
             transformation: { width: px(logo.width), height: px(logo.height) },
-            altText: { name: "Dakyworld", description: "Dakyworld", title: "Dakyworld" },
+            altText: { name: profile.displayName, description: profile.displayName, title: profile.displayName },
           }),
         ],
         spacing: { before: 0, after: 0 },
@@ -175,20 +176,20 @@ function wordmarkBlock(): Paragraph[] {
 
   return [
     new Paragraph({
-      children: [text(COMPANY.name, { size: 21, bold: true, spacing: 1.4 }), text("®", { size: 7, bold: true })],
+      children: [text(profile.name, { size: 21, bold: true, spacing: 1.4 }), text("®", { size: 7, bold: true })],
       spacing: { after: twip(2) },
       // The blue rule under the wordmark stands in for the swoosh the PDF
       // strokes as a curve; Word cannot draw one.
       border: { bottom: { style: BorderStyle.SINGLE, size: eighth(1.6), color: ACCENT, space: 2 } },
     }),
     new Paragraph({
-      children: [text(COMPANY.tagline, { size: 5.6, bold: true, color: ACCENT_DEEP, spacing: 0.85 })],
+      children: [text(profile.tagline, { size: 5.6, bold: true, color: ACCENT_DEEP, spacing: 0.85 })],
       spacing: { before: twip(3) },
     }),
   ];
 }
 
-function letterheadHeader(): Header {
+function letterheadHeader(identity: LetterheadIdentity): Header {
   return new Header({
     children: [
       // Both ribbons hang off one carrier paragraph. In a header they repeat on
@@ -210,7 +211,7 @@ function letterheadHeader(): Header {
               new TableCell({
                 borders: CELL_BORDERS,
                 width: { size: 58, type: WidthType.PERCENTAGE },
-                children: wordmarkBlock(),
+                children: wordmarkBlock(identity),
               }),
               new TableCell({
                 borders: {
@@ -218,7 +219,7 @@ function letterheadHeader(): Header {
                   left: { style: BorderStyle.SINGLE, size: eighth(0.75), color: LINE, space: 8 },
                 },
                 width: { size: 42, type: WidthType.PERCENTAGE },
-                children: [COMPANY.location, COMPANY.email, COMPANY.phone, COMPANY.web].map(
+                children: [identity.profile.location, identity.profile.email, identity.profile.phone, identity.profile.web].map(
                   (line) =>
                     new Paragraph({
                       children: [text(line, { size: 8.5, color: MUTED })],
@@ -235,15 +236,15 @@ function letterheadHeader(): Header {
   });
 }
 
-function letterheadFooter(): Footer {
+function letterheadFooter(profile: CompanyProfile): Footer {
   return new Footer({
     children: [
       new Paragraph({
         children: [
-          text(COMPANY.footerLine, { size: 7.5, bold: true, spacing: 2.1 }),
+          text(profile.footerLine, { size: 7.5, bold: true, spacing: 2.1 }),
           new TextRun({ children: [], font: FONT }),
           text("\t", { size: 7.5 }),
-          text(COMPANY.web, { size: 8, color: MUTED }),
+          text(profile.web, { size: 8, color: MUTED }),
           text("     f     X     ig     in", { size: 7.5, bold: true, color: MUTED, spacing: 1.2 }),
         ],
         tabStops: [{ type: TabStopType.RIGHT, position: twip(CONTENT_W_PT) }],
@@ -387,9 +388,10 @@ function tail(data: ProposalPdfData): Paragraph[] {
 
 export async function renderProposalDocx(data: ProposalPdfData): Promise<Buffer> {
   const table = investmentTable(data);
+  const identity = await letterheadIdentity();
 
   const document = new Document({
-    creator: "Dakyworld",
+    creator: identity.profile.displayName,
     title: data.title,
     description: `Service proposal for ${data.clientName}`,
     sections: [
@@ -397,8 +399,8 @@ export async function renderProposalDocx(data: ProposalPdfData): Promise<Buffer>
         properties: {
           page: { size: PAGE, margin: MARGIN },
         },
-        headers: { default: letterheadHeader() },
-        footers: { default: letterheadFooter() },
+        headers: { default: letterheadHeader(identity) },
+        footers: { default: letterheadFooter(identity.profile) },
         children: [...body(data), ...(table ? [table] : []), ...tail(data)],
       },
     ],

@@ -20,6 +20,8 @@ import { resolveProposalContext } from "../proposalContext.js";
 import { toolStatuses } from "../toolRegistry.js";
 import { callClaude } from "../../lib/claude.js";
 import { BRAND, VOICE, catalogueForPrompt } from "../dakyworld.js";
+import { allMcpTools, callOn, imageProvider, mcpTools } from "./mcpTools.js";
+import { companyProfile } from "../systemProfile.js";
 
 /**
  * Every tool an agent can actually call.
@@ -923,6 +925,398 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     input: z.object({}),
     run: async () => toolStatuses(),
   },
+
+  // --- Studio ---------------------------------------------------------------
+  //
+  // What the specialist agents actually make. Four of these are Claude-backed
+  // and produce a *specification* — a design brief, an edit plan, an ad
+  // concept, a page — because that is the honest boundary of what this app can
+  // do on its own, and because a spec is what a designer, an editor or a
+  // developer actually needs handed to them.
+  //
+  // The fifth, `image.generate`, makes a picture, and it can only do that
+  // through a connected MCP server. It is deliberately a *named capability*
+  // rather than a named provider: an agent's toolkit says "this one draws",
+  // and which service draws is a connection the Owner makes and can change
+  // without touching a seed. See services/tools/mcpTools.ts.
+  {
+    key: "design.brief",
+    name: "Write a design brief",
+    group: "Studio",
+    purpose: "Turns a request for artwork into a brief a designer can work from: purpose, audience, sizes, hierarchy, colour and the exact copy.",
+    scope: "read",
+    requires: "claude",
+    spends: false,
+    outward: false,
+    input: z.object({
+      what: z.string().min(3).max(600).describe("What is being designed — 'social post announcing the new site', 'trade-show pull-up banner'."),
+      audience: z.string().max(300).optional(),
+      /** Where it will be seen. Drives the sizes and the safe areas. */
+      placements: z.array(z.string().max(80)).max(8).optional(),
+      mustSay: z.array(z.string().max(200)).max(10).optional(),
+      clientId: z.string().cuid().optional(),
+    }),
+    run: async (input) => {
+      const client = input.clientId
+        ? await prisma.client.findUnique({ where: { id: input.clientId }, select: { name: true, company: true, sector: true } })
+        : null;
+      const profile = await companyProfile();
+
+      return callClaude<{
+        title: string;
+        objective: string;
+        audience: string;
+        keyMessage: string;
+        hierarchy: string[];
+        copy: { role: string; text: string }[];
+        artDirection: string;
+        palette: { role: string; hex: string; use: string }[];
+        typography: string;
+        sizes: { placement: string; dimensions: string; note: string }[];
+        avoid: string[];
+      }>({
+        purpose: "design.brief",
+        system: `You write design briefs for ${profile.displayName}, an outsourced IT company. A brief is instructions for a designer, not a description of a finished thing.
+
+${BRAND}
+
+${VOICE}
+
+The brand design system, which every brief must work inside:
+- Ink #08101F, Navy #0B0A16, Blue #3157FF, Blue-light #6490FF, Cyan #6FE4FF, Lime #B8FF3D, Cream #F4F5F0, Muted #69758A, Line #DFE4EB.
+- Space Grotesk for display, DM Sans for body.
+- Lime is a mark colour and an action colour only, roughly 1-5% of a surface. It is never type on white. On a light surface the accent is blue.
+- Blue is structure, selection and emphasis.
+
+Write copy that could be set as-is. Never invent a client result, a statistic or a claim. Give real pixel dimensions for every placement you are given, and say what is in the safe area.`,
+        prompt: () =>
+          [
+            `Design: ${input.what}`,
+            input.audience ? `Audience: ${input.audience}` : "",
+            input.placements?.length ? `Placements: ${input.placements.join(", ")}` : "Placements: pick the two or three that fit.",
+            input.mustSay?.length ? `Must say:\n${input.mustSay.map((line: string) => `- ${line}`).join("\n")}` : "",
+            client ? `For the client: ${client.company ?? client.name}${client.sector ? ` (${client.sector})` : ""}.` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        schema: {
+          type: "object",
+          required: ["title", "objective", "audience", "keyMessage", "hierarchy", "copy", "artDirection", "palette", "typography", "sizes", "avoid"],
+          properties: {
+            title: { type: "string" },
+            objective: { type: "string", description: "What this piece has to achieve, in one sentence." },
+            audience: { type: "string" },
+            keyMessage: { type: "string", description: "The one thing a viewer must take away." },
+            hierarchy: { type: "array", items: { type: "string" }, description: "What is read first, second, third." },
+            copy: {
+              type: "array",
+              items: { type: "object", required: ["role", "text"], properties: { role: { type: "string" }, text: { type: "string" } } },
+              description: "Every word that appears, set-ready. Roles like headline, subhead, CTA.",
+            },
+            artDirection: { type: "string" },
+            palette: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["role", "hex", "use"],
+                properties: { role: { type: "string" }, hex: { type: "string" }, use: { type: "string" } },
+              },
+            },
+            typography: { type: "string" },
+            sizes: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["placement", "dimensions", "note"],
+                properties: { placement: { type: "string" }, dimensions: { type: "string" }, note: { type: "string" } },
+              },
+            },
+            avoid: { type: "array", items: { type: "string" }, description: "What would break the brand system on this piece." },
+          },
+        },
+        effort: "medium",
+      }).then((result) => result.data);
+    },
+  },
+  {
+    key: "video.plan",
+    name: "Plan a video edit",
+    group: "Studio",
+    purpose: "Turns raw footage and an objective into an edit plan: structure, shot list, on-screen text, captions, music direction and the cut per platform.",
+    scope: "read",
+    requires: "claude",
+    spends: false,
+    outward: false,
+    input: z.object({
+      objective: z.string().min(3).max(600),
+      footage: z.string().max(2000).optional().describe("What has been shot, in the editor's words."),
+      durationSeconds: z.number().int().min(5).max(1800).optional(),
+      platforms: z.array(z.string().max(40)).max(6).optional(),
+      clientId: z.string().cuid().optional(),
+    }),
+    run: async (input) => {
+      const profile = await companyProfile();
+      return callClaude<{
+        title: string;
+        angle: string;
+        structure: { section: string; seconds: number; whatHappens: string; onScreenText: string }[];
+        shotList: string[];
+        captionScript: string;
+        musicDirection: string;
+        cuts: { platform: string; aspect: string; duration: string; note: string }[];
+        thumbnailIdea: string;
+      }>({
+        purpose: "video.plan",
+        system: `You plan video edits for ${profile.displayName}.
+
+${BRAND}
+
+${VOICE}
+
+An edit plan is instructions to an editor with a timeline open. Give real second counts that add up to the target duration. On-screen text is set in Space Grotesk; keep it to a handful of words per card. Lime is a mark colour, never a text colour on a light frame. Never invent a client result or a statistic — if a number would help and you were not given one, say what to ask for.`,
+        prompt: () =>
+          [
+            `Objective: ${input.objective}`,
+            input.footage ? `Footage available:\n${input.footage}` : "Footage: not described — plan around what would need shooting and say so.",
+            `Target duration: ${input.durationSeconds ?? 45} seconds`,
+            input.platforms?.length ? `Platforms: ${input.platforms.join(", ")}` : "Platforms: pick what fits.",
+          ].join("\n\n"),
+        schema: {
+          type: "object",
+          required: ["title", "angle", "structure", "shotList", "captionScript", "musicDirection", "cuts", "thumbnailIdea"],
+          properties: {
+            title: { type: "string" },
+            angle: { type: "string", description: "Why anyone watches past the first two seconds." },
+            structure: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["section", "seconds", "whatHappens", "onScreenText"],
+                properties: {
+                  section: { type: "string" },
+                  seconds: { type: "number" },
+                  whatHappens: { type: "string" },
+                  onScreenText: { type: "string" },
+                },
+              },
+            },
+            shotList: { type: "array", items: { type: "string" } },
+            captionScript: { type: "string", description: "The burned-in caption track, as one block of text." },
+            musicDirection: { type: "string" },
+            cuts: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["platform", "aspect", "duration", "note"],
+                properties: { platform: { type: "string" }, aspect: { type: "string" }, duration: { type: "string" }, note: { type: "string" } },
+              },
+            },
+            thumbnailIdea: { type: "string" },
+          },
+        },
+        effort: "medium",
+      }).then((result) => result.data);
+    },
+  },
+  {
+    key: "ad.concept",
+    name: "Write ad concepts",
+    group: "Studio",
+    purpose: "Paid-social concepts: the hook, the visual, the primary text, the headline and the call to action, sized per platform.",
+    scope: "read",
+    requires: "claude",
+    spends: false,
+    outward: false,
+    input: z.object({
+      offer: z.string().min(3).max(600).describe("What is being advertised."),
+      audience: z.string().max(400).optional(),
+      platforms: z.array(z.string().max(40)).max(6).optional(),
+      /** How many distinct angles to write. Variants of one idea test nothing. */
+      concepts: z.number().int().min(1).max(5).default(3),
+      budgetNote: z.string().max(300).optional(),
+    }),
+    run: async (input) => {
+      const profile = await companyProfile();
+      return callClaude<{
+        concepts: {
+          name: string;
+          angle: string;
+          hook: string;
+          visual: string;
+          primaryText: string;
+          headline: string;
+          description: string;
+          callToAction: string;
+          whyItMightWork: string;
+        }[];
+        specs: { platform: string; placement: string; dimensions: string; textLimit: string }[];
+        testPlan: string;
+        claimsToCheck: string[];
+      }>({
+        purpose: "ad.concept",
+        system: `You write paid-social advertising for ${profile.displayName}.
+
+${BRAND}
+
+${VOICE}
+
+${catalogueForPrompt()}
+
+Each concept is a genuinely different angle, not a rewording of the last one — two variants of one idea test nothing. Respect the platform's character limits and say what they are. Never invent a client, a result or a statistic; anything you cannot evidence goes in claimsToCheck instead of in the copy. No exclamation marks, no emoji, no "in today's fast-paced world".`,
+        prompt: () =>
+          [
+            `Offer: ${input.offer}`,
+            input.audience ? `Audience: ${input.audience}` : "",
+            input.platforms?.length ? `Platforms: ${input.platforms.join(", ")}` : "Platforms: Facebook and Instagram feed.",
+            input.budgetNote ? `Budget context: ${input.budgetNote}` : "",
+            `Write ${input.concepts} concepts.`,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        schema: {
+          type: "object",
+          required: ["concepts", "specs", "testPlan", "claimsToCheck"],
+          properties: {
+            concepts: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["name", "angle", "hook", "visual", "primaryText", "headline", "description", "callToAction", "whyItMightWork"],
+                properties: {
+                  name: { type: "string" },
+                  angle: { type: "string" },
+                  hook: { type: "string", description: "The first line, which decides whether the rest is read." },
+                  visual: { type: "string", description: "What the image or video shows — enough for a designer to make it." },
+                  primaryText: { type: "string" },
+                  headline: { type: "string" },
+                  description: { type: "string" },
+                  callToAction: { type: "string" },
+                  whyItMightWork: { type: "string" },
+                },
+              },
+            },
+            specs: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["platform", "placement", "dimensions", "textLimit"],
+                properties: { platform: { type: "string" }, placement: { type: "string" }, dimensions: { type: "string" }, textLimit: { type: "string" } },
+              },
+            },
+            testPlan: { type: "string", description: "What to run first, against what, and what result would settle it." },
+            claimsToCheck: { type: "array", items: { type: "string" } },
+          },
+        },
+        effort: "medium",
+      }).then((result) => result.data);
+    },
+  },
+  {
+    key: "web.page",
+    name: "Build a page",
+    group: "Studio",
+    purpose: "Produces a complete, self-contained HTML page on the brand design system — the thing a developer opens and edits rather than starts from nothing.",
+    scope: "read",
+    requires: "claude",
+    spends: false,
+    outward: false,
+    input: z.object({
+      page: z.string().min(3).max(400).describe("What page this is — 'service page for automation', 'landing page for the care plans'."),
+      sections: z.array(z.string().max(120)).max(12).optional(),
+      goal: z.string().max(400).optional().describe("What a visitor should do."),
+      notes: z.string().max(2000).optional(),
+    }),
+    run: async (input) => {
+      const profile = await companyProfile();
+      const result = await callClaude<{ html: string; sections: string[]; notes: string[] }>({
+        purpose: "web.page",
+        system: `You build web pages for ${profile.displayName}.
+
+${BRAND}
+
+${VOICE}
+
+${catalogueForPrompt()}
+
+Output one complete HTML document. Rules it must follow:
+- Self-contained: all CSS in one <style> block, no frameworks, no external scripts. Google Fonts is the one allowed external link.
+- The brand system: Ink #08101F, Navy #0B0A16, Blue #3157FF, Blue-light #6490FF, Cyan #6FE4FF, Lime #B8FF3D, Cream #F4F5F0, Muted #69758A, Line #DFE4EB. Space Grotesk for display, DM Sans for body.
+- Lime is a mark and an action colour only, roughly 1-5% of the surface, and never type on white. Blue is structure and emphasis.
+- Responsive with real breakpoints. Semantic HTML, one h1, alt text on every image, visible focus states, and contrast that passes AA.
+- Real copy in Dakyworld's voice, not lorem ipsum. Never invent a client, a result or a statistic. Only quote a price that is in the catalogue above.
+- The company's own contact details are: ${profile.email}, ${profile.phone}, ${profile.web}, ${profile.location}.`,
+        prompt: () =>
+          [
+            `Page: ${input.page}`,
+            input.goal ? `What a visitor should do: ${input.goal}` : "",
+            input.sections?.length ? `Sections:\n${input.sections.map((section: string) => `- ${section}`).join("\n")}` : "",
+            input.notes ? `Notes:\n${input.notes}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        schema: {
+          type: "object",
+          required: ["html", "sections", "notes"],
+          properties: {
+            html: { type: "string", description: "The complete document, from <!doctype html> to </html>." },
+            sections: { type: "array", items: { type: "string" }, description: "The sections you built, in order." },
+            notes: { type: "array", items: { type: "string" }, description: "What a developer should change before this ships — real images, real links, anything you had to assume." },
+          },
+        },
+        // A page is long output and gets read closely by whoever ships it.
+        effort: "high",
+        maxTokens: 16000,
+      });
+      return result.data;
+    },
+  },
+  {
+    key: "image.generate",
+    name: "Generate an image",
+    group: "Studio",
+    purpose: "Makes a picture through whichever image service is connected. Which one is a connection under Settings, not a choice baked into an agent.",
+    scope: "send",
+    requires: "mcp",
+    // Every image service charges per picture. Named, so the spend gate applies
+    // and the call is refused for an agent below autonomy 4.
+    spends: true,
+    outward: false,
+    input: z.object({
+      prompt: z.string().min(3).max(2000),
+      /** Passed straight through when the provider takes one. */
+      aspectRatio: z.string().max(16).optional(),
+      count: z.number().int().min(1).max(4).default(1),
+      style: z.string().max(300).optional(),
+    }),
+    run: async (input) => {
+      const provider = await imageProvider();
+      if (!provider) {
+        throw new Error(
+          "No connected server generates images. Add one under Settings → Connected tools — anything that speaks MCP and advertises an image tool will do.",
+        );
+      }
+      const result = await callOn(provider.server, provider.tool.name, {
+        prompt: input.style ? `${input.prompt}. Style: ${input.style}` : input.prompt,
+        ...(input.aspectRatio ? { aspect_ratio: input.aspectRatio, aspectRatio: input.aspectRatio } : {}),
+        ...(input.count > 1 ? { n: input.count, count: input.count } : {}),
+      });
+      if (result.isError) throw new Error(result.text || "The image service reported that it failed.");
+      return {
+        provider: provider.server.name,
+        tool: provider.tool.name,
+        text: result.text,
+        // Where the pictures are. A provider answers with links, not bytes.
+        images: result.parts.filter((part) => part.type === "image" || part.mimeType?.startsWith("image/")),
+        structured: result.structured,
+      };
+    },
+    preview: async (input) => {
+      const provider = await imageProvider();
+      return provider
+        ? `Would ask ${provider.server.name} for ${input.count} image(s): "${input.prompt.slice(0, 160)}". Nothing was generated and nothing was charged.`
+        : `Would generate an image, but no image service is connected — so nothing would happen. Connect one under Settings → Connected tools.`;
+    },
+  },
   {
     key: "security.scan",
     name: "Security scan",
@@ -953,6 +1347,34 @@ export const TOOLS: ToolDefinition<any, any>[] = [
 
 export const TOOLS_BY_KEY = new Map(TOOLS.map((tool) => [tool.key, tool]));
 
+/** A built-in tool by key. Synchronous, and blind to anything an MCP server adds. */
 export function findTool(key: string): ToolDefinition | undefined {
   return TOOLS_BY_KEY.get(key);
+}
+
+/**
+ * The whole catalogue: what is in this repository, plus whatever the connected
+ * MCP servers advertise.
+ *
+ * Everything that answers "what can be granted" and "what can be called" goes
+ * through here rather than through `TOOLS`, so a tool from a server is
+ * grantable, callable, auditable and refusable on exactly the same terms as a
+ * built-in one. `TOOLS` remains the list of tools whose behaviour lives in a
+ * diff, which is a different and still useful question.
+ */
+export async function listTools(): Promise<ToolDefinition[]> {
+  return [...TOOLS, ...(await mcpTools())];
+}
+
+/** The same, including servers switched off, so a screen can show what they would add. */
+export async function listAllTools(): Promise<ToolDefinition[]> {
+  return [...TOOLS, ...(await allMcpTools())];
+}
+
+/** By key, across both halves. This is what the invoker resolves against. */
+export async function resolveTool(key: string): Promise<ToolDefinition | undefined> {
+  const builtin = TOOLS_BY_KEY.get(key);
+  if (builtin) return builtin;
+  if (!key.startsWith("mcp.")) return undefined;
+  return (await allMcpTools()).find((tool) => tool.key === key);
 }

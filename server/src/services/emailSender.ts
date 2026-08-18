@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma.js";
 import { MailerError, sendMail, type Attachment } from "../lib/mailer.js";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { renderInvoicePdf, renderProposalPdf } from "./pdf.js";
+import { readFile } from "./fileStore.js";
 import { renderEmail } from "./emailRender.js";
 import { resolveContext } from "./emailContext.js";
 
@@ -20,8 +21,19 @@ import { resolveContext } from "./emailContext.js";
  * gets sent again.
  */
 
-/** An attachment as stored on the message: a file, or a document this app renders on demand. */
+/**
+ * An attachment as stored on the message. Four kinds, and the difference
+ * between them is *when the bytes exist*:
+ *
+ * - `stored` — a real file somebody uploaded, held in StoredFile. The bytes
+ *   exist now and do not change.
+ * - `file` — a URL. The bytes live somewhere else and are fetched at send.
+ * - `invoice` / `proposal` — a document this app renders, and renders **at
+ *   send time**, so what the client receives is the document as it stands when
+ *   it is sent rather than as it stood when the email was drafted.
+ */
 export type StoredAttachment =
+  | { kind: "stored"; fileId: string; name: string; contentType?: string; size?: number }
   | { kind?: "file"; name: string; url: string; contentType?: string }
   | { kind: "invoice"; invoiceId: string; name?: string }
   | { kind: "proposal"; proposalId: string; name?: string };
@@ -41,6 +53,19 @@ export async function resolveAttachments(stored: StoredAttachment[]): Promise<At
   const resolved: Attachment[] = [];
 
   for (const entry of stored) {
+    if ("kind" in entry && entry.kind === "stored") {
+      const file = await readFile(entry.fileId);
+      // A file deleted between drafting and sending is skipped rather than
+      // failing the send: the letter is the point, and a message that never
+      // leaves because one attachment went missing helps nobody.
+      if (!file) {
+        console.warn(`[email] attachment ${entry.fileId} (${entry.name}) is gone — sending without it.`);
+        continue;
+      }
+      resolved.push({ filename: entry.name || file.filename, content: file.data, contentType: file.contentType });
+      continue;
+    }
+
     if ("kind" in entry && entry.kind === "invoice") {
       const invoice = await prisma.invoice.findUnique({ where: { id: entry.invoiceId }, include: { client: true, lineItems: true } });
       if (!invoice) continue;
@@ -97,8 +122,14 @@ export async function appUrl(): Promise<string> {
   return (await getSetting(SETTING.APP_URL)) ?? "https://os.dakyworld.com";
 }
 
-/** Only a cold approach carries an opt-out. See emailRender for why. */
-const COLD_PURPOSES = new Set(["COLD_OUTREACH", "FOLLOW_UP", "MEETING_REQUEST", "REACTIVATION", "ANNOUNCEMENT"]);
+/**
+ * Only a cold approach carries an opt-out. See emailRender for why.
+ *
+ * Exported so the preview renders the same message the send would: an opt-out
+ * that appears in the preview and not in the email — or the other way round —
+ * makes the preview worse than useless.
+ */
+export const COLD_PURPOSES = new Set(["COLD_OUTREACH", "FOLLOW_UP", "MEETING_REQUEST", "REACTIVATION", "ANNOUNCEMENT"]);
 
 export interface SendResult {
   sent: boolean;

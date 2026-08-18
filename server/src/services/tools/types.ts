@@ -34,7 +34,9 @@ export type ToolRequirement =
   | "google"
   | "calendar"
   | "github"
-  | "webhooks";
+  | "webhooks"
+  /** A connected MCP server. See services/tools/mcpTools.ts. */
+  | "mcp";
 
 export interface ToolContext {
   /** The agent making the call, when one is. Null when a person is. */
@@ -52,8 +54,23 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   /** `lead.read`, `email.send` — matches the vocabulary in the agent seeds. */
   key: string;
   name: string;
-  /** How the Tools screen groups it. */
-  group: "Pipeline" | "Clients" | "Delivery" | "Money" | "Communication" | "Research" | "Documents" | "Operations";
+  /**
+   * How the Tools screen groups it. `Studio` is the creative work the
+   * specialist agents do; `Connected` is everything an MCP server contributes,
+   * which is grouped apart because it is the only part of the catalogue that
+   * is not in this repository.
+   */
+  group:
+    | "Pipeline"
+    | "Clients"
+    | "Delivery"
+    | "Money"
+    | "Communication"
+    | "Research"
+    | "Documents"
+    | "Operations"
+    | "Studio"
+    | "Connected";
   purpose: string;
   scope: ToolScope;
   requires: ToolRequirement;

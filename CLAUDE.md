@@ -80,16 +80,55 @@ Adding a tool means adding one entry to `catalogue.ts`. It inherits the
 permission model, the audit trail and the Tools screen by existing; nothing
 else needs touching.
 
+**The catalogue has two halves.** `TOOLS` is the code half. `mcpTools.ts` is
+the other: every enabled `McpServer` contributes its advertised tools as
+`mcp.<server>.<tool>` entries, built from the server's own JSON Schema.
+`listTools()` / `listAllTools()` / `resolveTool()` span both, and **everything
+that grants or calls a tool must go through those rather than through `TOOLS`**
+— `findTool` is the built-in half only and is blind to connected servers.
+
+Three things are never taken from a remote server: its scope, whether it spends
+money, and whether it reaches outside the company. Those come from the
+`McpServer` row the Owner filled in, so a server cannot describe its way past
+the autonomy gate. Descriptions are shown to the Owner and passed to the model
+as descriptions; nothing in one is ever executed.
+
+**Agents come in two kinds.** The eighteen management agents recommend and
+decide; the nine `SUB_AGENT` specialists make things — Web Developer, Graphic
+Designer, Video Editor, Ad Designer and the rest, each with `skills` (a
+client's words, matched by a router) separate from `toolkit` (a permission).
+Seeded agents are wording-in-a-diff and the API refuses to rewrite them;
+`custom: true` agents are the Owner's and can be renamed, rewritten and
+deleted. Both kinds seed at autonomy 1 with dry run on, and the create route
+cannot say otherwise.
+
 **Client** — Vite + React + React Router + TanStack Query, in `server/client/`.
 The server serves the built client from `client/dist` when it exists, and falls
 back to an API-only status page when it doesn't.
 
-**Database** — Prisma, 34 models. `prisma/schema.prisma` is the source of truth.
+**Database** — Prisma, 36 models. `prisma/schema.prisma` is the source of truth.
 
 **Integration keys live encrypted in the database**, not in env vars — the
 `AppSetting` model, keyed by `APP_SECRET`. That is deliberate: adding or
 rotating a key must never need a redeploy. Env vars still override where they
 exist. **Rotating `APP_SECRET` makes every stored key unreadable.**
+
+**The company's own details are data, not constants.**
+`services/systemProfile.ts` holds the name, address, phone numbers, socials and
+registration details, merged over the `COMPANY` defaults in `dakyworld.ts` and
+edited under Settings → System. Uploaded logos live in `AppSetting` as data
+URLs, not on disk — Railway's filesystem is ephemeral, so a file written at
+runtime reverts on the next deploy and *looks like it worked*. Every surface
+that describes the company reads the profile: `emailLetterhead`, `emailRender`,
+`letterhead` (via `letterheadIdentity()`), `pdf`, `proposalDocx`, the
+unsubscribe page, and the system prompts of the drafter and the proposal writer
+(via `contactBlock()`). **Never import `COMPANY` into a new renderer** — that
+reintroduces the hard-coded copy this replaced.
+
+PDFKit stamps the letterhead from a synchronous `pageAdded` handler, so nothing
+in the drawing code can await a database read. `letterheadIdentity()` gathers
+the profile and the artwork once, before the document is built, and is passed
+down. That is why `stampLetterhead` takes a second argument.
 
 **Lead capture prices itself from Apify at run time.** `lib/apify.getActorPricing`
 reads an actor's published rates (a public endpoint — it works before a token
@@ -148,6 +187,9 @@ automatically by the letterhead at render time; the typographic fallbacks in
 `letterhead.ts` and `proposalDocx.ts` exist for when the files are absent and
 should stay.
 
+Artwork uploaded under Settings → System wins over both. Order everywhere is
+**uploaded → shipped file → type**.
+
 ## Render it and look at it
 
 Reviewing document and layout code by reading it does not work here — a
@@ -195,6 +237,14 @@ substitute, so headings come out serif. The files are still correct — do not
 - Tailwind's config maps `blue`, `lime` and `cyan` to single brand values, which
   replaces those default scales. `blue-500` and friends do not exist; the red,
   amber and emerald scales are untouched and carry error/warning/success states.
+- **Uploads ride in the JSON body as base64**, so their paths are excluded from
+  the global parser in `index.ts` (`UPLOAD_PATHS`) and each mounts its own
+  larger one *inside* its router, after the role check. Adding a third upload
+  route means touching both places or it fails at 100 kB.
+- **Verifying an API response through `curl | python` on Windows mangles UTF-8**
+  — Python decodes stdin as cp1252/gbk, so `·` comes back as a CJK ideograph and
+  a correct render looks broken. Write the body to a file and read it with
+  `encoding="utf-8"`, and set `PYTHONIOENCODING=utf-8` before printing any.
 
 ## Committing
 

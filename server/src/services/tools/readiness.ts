@@ -7,6 +7,7 @@ import { googleConfigured, googleConnected } from "../../lib/google.js";
 import { slackConfigured } from "../../lib/slack.js";
 import { githubConfigured } from "../../lib/github.js";
 import { calendarReady } from "../../lib/calendar.js";
+import { prisma } from "../../lib/prisma.js";
 import type { ToolRequirement } from "./types.js";
 
 /**
@@ -66,6 +67,12 @@ async function compute(requirement: ToolRequirement): Promise<Readiness> {
     case "webhooks":
       // The secret mints itself on first use, so there is nothing to configure.
       return ok;
+    case "mcp": {
+      // Ready when at least one server is switched on. Which server answers a
+      // given tool is the tool's own business — see services/tools/mcpTools.ts.
+      const connected = await prisma.mcpServer.count({ where: { enabled: true } });
+      return connected > 0 ? ok : no("No MCP server is connected. Add one under Settings → Connected tools.");
+    }
     case "google": {
       const [configured, connected] = await Promise.all([googleConfigured(), googleConnected()]);
       if (!configured) return no("Google OAuth isn't set up. Add the client ID and secret under Settings → Google.");

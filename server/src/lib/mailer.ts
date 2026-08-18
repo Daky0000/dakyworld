@@ -195,7 +195,7 @@ export async function sendMail(args: SendArgs): Promise<SendReceipt> {
   // identity — and so nothing is attached to a message that doesn't show it.
   const withBranding: SendArgs = {
     ...args,
-    attachments: [...(args.attachments ?? []), ...inlineBrandImages(args.html)],
+    attachments: [...(args.attachments ?? []), ...(await inlineBrandImages(args.html))],
   };
 
   if ((await activeTransport()) === "HOSTINGER") {

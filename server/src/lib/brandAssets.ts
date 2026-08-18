@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { brandImage, decodeDataUrl, type BrandSlot } from "../services/systemProfile.js";
 
 /**
  * The logo files an email carries with it.
@@ -14,10 +15,17 @@ import { fileURLToPath } from "node:url";
  * Outlook, and on a domain that is mid-migration. Both transports support it —
  * nodemailer natively, and Hostinger's send API takes a `cid` per attachment.
  *
- * **Small on purpose.** These are palette-reduced cuts of the real lock-ups,
- * about 5 KB each rather than the 100 KB masters, because they ride along on
- * every single message. Regenerate them from `assets/brand/` if the identity
- * changes — the recipe is in server/assets/README.md.
+ * **Two sources, in order.** Artwork uploaded on the System settings screen
+ * wins; the files shipped in `server/assets/` are the fallback. That order is
+ * what makes changing the logo a thing the Owner does rather than a deploy —
+ * and the fallback is what keeps every email rendering before anything has
+ * been uploaded.
+ *
+ * **Small on purpose.** The shipped files are palette-reduced cuts of the real
+ * lock-ups, about 5 KB each rather than the 100 KB masters, because they ride
+ * along on every single message. Regenerate them from `assets/brand/` if the
+ * identity changes — the recipe is in server/assets/README.md. An upload is
+ * held to the same standard by the size limit on the route.
  */
 
 /** Referenced from the HTML as `<img src="cid:dakyworld-logo">`. */
@@ -37,11 +45,19 @@ const FILES: Record<string, string> = {
   [LOGO_DARK_CID]: "logo-email-dark.png",
 };
 
-// Read once per process: the files cannot change while it runs, and re-reading
-// them for every email in a sequence would be pointless disk work.
+/** Which uploaded slot stands in for each cid. */
+const SLOTS: Record<string, BrandSlot> = {
+  [LOGO_CID]: "logoLight",
+  [LOGO_DARK_CID]: "logoDark",
+};
+
+// The shipped files are read once per process: they cannot change while it
+// runs, and re-reading them for every email in a sequence would be pointless
+// disk work. The uploaded ones are cached by systemProfile instead, so that
+// clearing that cache is all a save has to do.
 const loaded = new Map<string, Buffer | null>();
 
-function read(cid: string): Buffer | null {
+function readShipped(cid: string): Buffer | null {
   const cached = loaded.get(cid);
   if (cached !== undefined) return cached;
 
@@ -51,9 +67,41 @@ function read(cid: string): Buffer | null {
   return buffer;
 }
 
-/** True when the artwork is actually on disk, so the shell can fall back to type. */
-export function hasBrandImage(cid: string): boolean {
-  return read(cid) !== null;
+export interface BrandArtwork {
+  content: Buffer;
+  contentType: string;
+  filename: string;
+}
+
+/** The artwork for one cid: uploaded first, shipped second, null when neither exists. */
+export async function brandArtwork(cid: string): Promise<BrandArtwork | null> {
+  const slot = SLOTS[cid];
+  if (slot) {
+    const stored = await brandImage(slot);
+    const decoded = stored ? decodeDataUrl(stored) : null;
+    if (decoded) {
+      const extension = decoded.contentType.split("/")[1]?.replace("+xml", "") ?? "png";
+      return { content: decoded.buffer, contentType: decoded.contentType, filename: `${cid}.${extension}` };
+    }
+  }
+
+  const shipped = readShipped(cid);
+  return shipped ? { content: shipped, contentType: "image/png", filename: FILES[cid] } : null;
+}
+
+/** True when there is artwork to point a `cid:` at, so the shell can fall back to type. */
+export async function hasBrandImage(cid: string): Promise<boolean> {
+  return (await brandArtwork(cid)) !== null;
+}
+
+/**
+ * The same artwork as a data URL, for the places that cannot resolve a `cid:`
+ * — the preview iframe in the composer, and anything rendered to a page rather
+ * than to a message.
+ */
+export async function brandDataUrl(cid: string): Promise<string | null> {
+  const artwork = await brandArtwork(cid);
+  return artwork ? `data:${artwork.contentType};base64,${artwork.content.toString("base64")}` : null;
 }
 
 export interface InlineImage {
@@ -68,13 +116,13 @@ export interface InlineImage {
  * HTML rather than attached unconditionally, so a plain message — or one built
  * before this existed — carries no attachment at all.
  */
-export function inlineBrandImages(html: string): InlineImage[] {
+export async function inlineBrandImages(html: string): Promise<InlineImage[]> {
   const images: InlineImage[] = [];
   for (const cid of Object.keys(FILES)) {
     if (!html.includes(`cid:${cid}`)) continue;
-    const content = read(cid);
-    if (!content) continue;
-    images.push({ filename: FILES[cid], content, contentType: "image/png", cid });
+    const artwork = await brandArtwork(cid);
+    if (!artwork) continue;
+    images.push({ filename: artwork.filename, content: artwork.content, contentType: artwork.contentType, cid });
   }
   return images;
 }

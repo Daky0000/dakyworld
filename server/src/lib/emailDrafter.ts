@@ -2,6 +2,7 @@ import type { EmailPurpose } from "@prisma/client";
 import { callClaude } from "./claude.js";
 import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
+import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import type { RecipientContext } from "../services/emailContext.js";
 
 /**
@@ -155,7 +156,7 @@ export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
     confidence: number;
   }>({
     purpose: "email.draft",
-    system: `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${VOICE}\n\nNever invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`,
+    system: `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${contactBlock(await companyProfile())}\n\n${VOICE}\n\nNever invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`,
     prompt: () => buildPrompt(request),
     schema: SCHEMA as unknown as Record<string, unknown>,
     effort: "medium",

@@ -1,6 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting } from "../../lib/settings.js";
-import { findTool } from "./catalogue.js";
+import { resolveTool } from "./catalogue.js";
 import { toolReadiness } from "./readiness.js";
 import type { ToolContext, ToolDefinition, ToolResult } from "./types.js";
 
@@ -83,7 +83,10 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
 
 export async function invokeTool(key: string, rawInput: unknown, options: InvokeOptions): Promise<ToolResult> {
   const startedAt = Date.now();
-  const tool = findTool(key);
+  // Resolved across both halves of the catalogue: a tool an MCP server
+  // contributes is called through exactly this path, and so meets every check
+  // below on the same terms as a built-in one.
+  const tool = await resolveTool(key);
 
   if (!tool) {
     await record({ tool: key, options, ok: false, refusedReason: `There is no tool called ${key}.`, durationMs: 0 });

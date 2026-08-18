@@ -11,6 +11,8 @@ import {
   PAGE_W,
   MUTED,
   stampLetterhead,
+  letterheadIdentity,
+  type LetterheadIdentity,
 } from "./letterhead.js";
 
 type PDFDoc = InstanceType<typeof PDFDocument>;
@@ -24,13 +26,13 @@ const RIGHT_EDGE = PAGE_W - MARGIN_X;
  * and `pageAdded` stamps the chrome onto every page after the first, so a
  * three-page proposal is branded all the way through rather than only on top.
  */
-function newDoc(): PDFDoc {
+function newDoc(identity: LetterheadIdentity): PDFDoc {
   const doc = new PDFDocument({
     size: "A4",
     margins: { top: CONTENT_TOP, bottom: CONTENT_BOTTOM, left: MARGIN_X, right: MARGIN_X },
   });
-  doc.on("pageAdded", () => stampLetterhead(doc));
-  stampLetterhead(doc);
+  doc.on("pageAdded", () => stampLetterhead(doc, identity));
+  stampLetterhead(doc, identity);
   return doc;
 }
 
@@ -117,7 +119,7 @@ function money(currency: string, amount: number): string {
 }
 
 export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> {
-  const doc = newDoc();
+  const doc = newDoc(await letterheadIdentity());
   header(doc, "Service Proposal", data.title);
 
   doc.fillColor(MUTED).font("Helvetica").fontSize(10).text(`Prepared for: ${data.clientName}`);
@@ -271,7 +273,7 @@ function invoiceRow(
 }
 
 export async function renderInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
-  const doc = newDoc();
+  const doc = newDoc(await letterheadIdentity());
   header(doc, "Invoice", data.invoiceNumber);
 
   doc.fillColor(MUTED).font("Helvetica").fontSize(10);

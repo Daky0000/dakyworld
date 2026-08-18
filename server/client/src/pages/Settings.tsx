@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
-import type { ActorHealthReport, AppSettings, CaptureConfig } from "../lib/types";
+import type { ActorHealthReport, AppSettings, BrandSlot, CaptureConfig, CompanyProfile } from "../lib/types";
 import { Badge, Button, Field, PageHeader, StatusDot, Toggle } from "../components/ui";
 
 /**
@@ -18,6 +18,7 @@ import { Badge, Button, Field, PageHeader, StatusDot, Toggle } from "../componen
  */
 
 type SectionId =
+  | "system"
   | "email"
   | "analyst"
   | "google"
@@ -30,6 +31,7 @@ type SectionId =
   | "general";
 
 const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
+  { id: "system", label: "System", blurb: "Your name, address, phone and logo" },
   { id: "email", label: "Email", blurb: "The mailbox everything sends from" },
   { id: "analyst", label: "AI analyst", blurb: "Reads sheets, drafts emails" },
   { id: "google", label: "Google", blurb: "Drive imports and the calendar" },
@@ -45,7 +47,7 @@ const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
 export function Settings() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [section, setSection] = useState<SectionId>((searchParams.get("tab") as SectionId) || "email");
+  const [section, setSection] = useState<SectionId>((searchParams.get("tab") as SectionId) || "system");
 
   const { data, isLoading } = useQuery({
     queryKey: ["settings"],
@@ -144,6 +146,7 @@ export function Settings() {
             <p className="text-sm text-ink/50">Loading…</p>
           ) : (
             <>
+              {section === "system" && <SystemPanel settings={data} />}
               {section === "email" && <EmailPanel settings={data} />}
               {section === "analyst" && <AnalystPanel settings={data} />}
               {section === "google" && <GooglePanel settings={data} result={googleResult} params={searchParams} />}
@@ -159,6 +162,305 @@ export function Settings() {
         </div>
       </div>
     </div>
+  );
+}
+
+// --- System ----------------------------------------------------------------
+
+/**
+ * The company's own details, in the one place they are held.
+ *
+ * These used to be constants in the server's `services/dakyworld.ts` — correct
+ * and single-sourced, and changeable only by a developer with a deploy. This
+ * is the same single source, made editable. What is typed here is what appears
+ * on the email letterhead, on every PDF, in the Word cut of a proposal, in the
+ * plain-text footer, on the unsubscribe page, and in the brief the AI drafter
+ * and the proposal writer are given. Nothing has a second copy.
+ *
+ * **Blank is not empty.** A field left blank falls back to the shipped default
+ * rather than printing nothing, which is why every input shows that default as
+ * placeholder text. The genuinely optional details — a second phone line, a
+ * VAT number — have no default, so blank there means what it looks like.
+ */
+function SystemPanel({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const [form, setForm] = useState<CompanyProfile>(settings.system.profile);
+  const [address, setAddress] = useState(settings.system.profile.addressLines.join("\n"));
+
+  // Reload the form when the snapshot changes underneath it — an upload
+  // returns a fresh snapshot, and the fields must not revert to a stale copy.
+  const [loadedFor, setLoadedFor] = useState(settings.system.profile);
+  useEffect(() => {
+    if (loadedFor === settings.system.profile) return;
+    setLoadedFor(settings.system.profile);
+    setForm(settings.system.profile);
+    setAddress(settings.system.profile.addressLines.join("\n"));
+  }, [settings.system.profile, loadedFor]);
+
+  const update = useMutation({
+    mutationFn: () =>
+      api.put<AppSettings>("/settings/system", {
+        ...form,
+        addressLines: address.split("\n").map((line) => line.trim()).filter(Boolean),
+      }),
+    onSuccess: save,
+  });
+
+  const set = <K extends keyof CompanyProfile>(key: K, value: CompanyProfile[K]) =>
+    setForm((current) => ({ ...current, [key]: value }));
+
+  const defaults = settings.system.defaults;
+  const dirty =
+    JSON.stringify({ ...form, addressLines: address.split("\n").map((l) => l.trim()).filter(Boolean) }) !==
+    JSON.stringify(settings.system.profile);
+
+  return (
+    <div className="space-y-6">
+      <Panel
+        title="System"
+        what="Who the business is, everywhere it says so. Change a detail here and it changes on every email, every PDF, every proposal and everything the AI writes — there is no second copy to keep in step."
+        state={
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-ink/60">
+            <span className="font-display text-lg tracking-[-.02em] text-ink">{settings.system.profile.displayName}</span>
+            <span>{settings.system.profile.location}</span>
+            <span>{settings.system.profile.email}</span>
+            <span>{settings.system.profile.phone}</span>
+          </div>
+        }
+      >
+        <div className="mt-6 space-y-6">
+          <Band title="Identity">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Name in a sentence" hint="How the company is written in prose, and how emails sign off.">
+                <input className="input" value={form.displayName} placeholder={defaults.displayName} onChange={(e) => set("displayName", e.target.value)} />
+              </Field>
+              <Field label="Printed name" hint="The letterspaced form on a letterhead. Usually the name in capitals.">
+                <input className="input" value={form.name} placeholder={defaults.name} onChange={(e) => set("name", e.target.value)} />
+              </Field>
+              <Field label="Registered name" hint="The legal entity, for invoices and terms. Leave blank to use the name above.">
+                <input className="input" value={form.legalName} placeholder={defaults.legalName} onChange={(e) => set("legalName", e.target.value)} />
+              </Field>
+              <Field label="Default currency" hint="What money is quoted in unless a record says otherwise.">
+                <input className="input" value={form.currency} placeholder={defaults.currency} onChange={(e) => set("currency", e.target.value)} />
+              </Field>
+            </div>
+          </Band>
+
+          <Band title="What you say about yourself">
+            <div className="space-y-4">
+              <Field label="Positioning" full hint="The one sentence in the footer of every email and on the website.">
+                <input className="input" value={form.positioning} placeholder={defaults.positioning} onChange={(e) => set("positioning", e.target.value)} />
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Tagline" hint="Set small and letterspaced under the logo on documents. Capitals.">
+                  <input className="input" value={form.tagline} placeholder={defaults.tagline} onChange={(e) => set("tagline", e.target.value)} />
+                </Field>
+                <Field label="Footer line" hint="The short promise across the bottom of a page. Capitals.">
+                  <input className="input" value={form.footerLine} placeholder={defaults.footerLine} onChange={(e) => set("footerLine", e.target.value)} />
+                </Field>
+              </div>
+              <Field label="The same promise, in sentence case" full hint="Used in plain-text email, where capitals read as shouting.">
+                <input className="input" value={form.promise} placeholder={defaults.promise} onChange={(e) => set("promise", e.target.value)} />
+              </Field>
+            </div>
+          </Band>
+
+          <Band title="How to reach you">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Email" hint="Shown on the letterhead and in the footer of every email.">
+                <input className="input" value={form.email} placeholder={defaults.email} onChange={(e) => set("email", e.target.value)} />
+              </Field>
+              <Field label="Website" hint="Without https:// — it is added where a link is needed.">
+                <input className="input" value={form.web} placeholder={defaults.web} onChange={(e) => set("web", e.target.value)} />
+              </Field>
+              <Field label="Phone" hint="The main line.">
+                <input className="input" value={form.phone} placeholder={defaults.phone} onChange={(e) => set("phone", e.target.value)} />
+              </Field>
+              <Field label="Second line" hint="WhatsApp, a landline. Left blank it simply isn't printed.">
+                <input className="input" value={form.phoneAlt} placeholder="optional" onChange={(e) => set("phoneAlt", e.target.value)} />
+              </Field>
+              <Field label="City and country" hint="The short location line beside the logo.">
+                <input className="input" value={form.location} placeholder={defaults.location} onChange={(e) => set("location", e.target.value)} />
+              </Field>
+              <Field label="Postal address" hint="One line per line. Only used where a full address is needed.">
+                <textarea rows={3} className="input" value={address} placeholder="optional" onChange={(e) => setAddress(e.target.value)} />
+              </Field>
+            </div>
+          </Band>
+
+          <Band title="Where you can be found">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {(["linkedin", "x", "instagram", "facebook", "youtube"] as const).map((network) => (
+                <Field key={network} label={SOCIAL_LABEL[network]} hint="A full URL. Blank ones are not shown.">
+                  <input
+                    className="input"
+                    value={form.social[network]}
+                    placeholder="optional"
+                    onChange={(e) => set("social", { ...form.social, [network]: e.target.value })}
+                  />
+                </Field>
+              ))}
+            </div>
+          </Band>
+
+          <Band title="Registration">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Company number" hint="Printed in the legal line at the foot of an email.">
+                <input className="input" value={form.registrationNumber} placeholder="optional" onChange={(e) => set("registrationNumber", e.target.value)} />
+              </Field>
+              <Field label="VAT number" hint="Printed on invoices where one exists.">
+                <input className="input" value={form.vatNumber} placeholder="optional" onChange={(e) => set("vatNumber", e.target.value)} />
+              </Field>
+            </div>
+          </Band>
+        </div>
+
+        <div className="mt-6 flex items-center gap-3">
+          <Button onClick={() => update.mutate()} disabled={!dirty || update.isPending}>
+            {update.isPending ? "Saving…" : dirty ? "Save changes" : "Saved"}
+          </Button>
+          {dirty && <span className="text-xs text-ink/45">This changes every email, PDF and proposal from the next one onward.</span>}
+        </div>
+        <ErrorNote error={update.error} />
+      </Panel>
+
+      <BrandPanel settings={settings} />
+    </div>
+  );
+}
+
+/** A titled band inside the System form, which is long enough to need them. */
+function Band({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h3 className="mb-3 border-b border-ink/10 pb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+const SOCIAL_LABEL: Record<string, string> = {
+  linkedin: "LinkedIn",
+  x: "X",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  youtube: "YouTube",
+};
+
+/**
+ * The artwork.
+ *
+ * Uploaded logos are held in the database rather than written to disk, because
+ * Railway's filesystem is ephemeral — a file written at runtime survives until
+ * the next deploy and then silently reverts, which is worse than not working
+ * at all because it looks like it worked. Removing an upload falls the slot
+ * back to the artwork shipped in `server/assets/`.
+ */
+function BrandPanel({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const [busy, setBusy] = useState<BrandSlot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const upload = useMutation({
+    mutationFn: ({ slot, dataUrl }: { slot: BrandSlot; dataUrl: string }) =>
+      api.put<AppSettings>(`/settings/system/brand/${slot}`, { dataUrl }),
+    onSuccess: save,
+    onError: (err: Error) => setError(err.message),
+    onSettled: () => setBusy(null),
+  });
+
+  const remove = useMutation({
+    mutationFn: (slot: BrandSlot) => api.delete<AppSettings>(`/settings/system/brand/${slot}`),
+    onSuccess: save,
+    onError: (err: Error) => setError(err.message),
+    onSettled: () => setBusy(null),
+  });
+
+  const pick = (slot: BrandSlot, file: File) => {
+    setError(null);
+    setBusy(slot);
+    const reader = new FileReader();
+    reader.onerror = () => {
+      setError("That file could not be read.");
+      setBusy(null);
+    };
+    reader.onload = () => upload.mutate({ slot, dataUrl: String(reader.result) });
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <Panel
+      title="Logo and artwork"
+      what="What is stamped on a document and embedded in an email. Logos are attached to the message itself rather than linked, so they show even in Outlook with images blocked."
+      where="Under 1 MB each, PNG with a transparent background for preference. Anything left empty falls back to the artwork shipped with the app."
+      state={
+        <div className="text-sm text-ink/60">
+          {settings.system.brand.filter((entry) => entry.uploaded).length} of {settings.system.brand.length} uploaded
+        </div>
+      }
+    >
+      {error && <p className="mt-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        {settings.system.brand.map((entry) => {
+          const image = settings.system.images[entry.slot];
+          const onDark = entry.slot === "logoDark";
+          return (
+            <div key={entry.slot} className="rounded-2xl border border-line bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">{entry.label}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-ink/55">{entry.what}</p>
+                </div>
+                {entry.uploaded ? <Badge tone="positive">uploaded</Badge> : <Badge tone="muted">shipped</Badge>}
+              </div>
+
+              <div
+                className={`mt-3 flex h-24 items-center justify-center rounded-xl border border-dashed border-ink/15 px-4 ${
+                  onDark ? "bg-ink" : "bg-cream"
+                }`}
+              >
+                {image ? (
+                  <img src={image} alt={entry.label} className="max-h-16 max-w-full object-contain" />
+                ) : (
+                  <span className={`font-mono text-[10px] uppercase tracking-[.12em] ${onDark ? "text-cream/40" : "text-ink/30"}`}>
+                    nothing uploaded
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <label className="cursor-pointer border border-ink/20 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink/60 transition hover:border-ink hover:text-ink">
+                  {busy === entry.slot ? "Uploading…" : entry.uploaded ? "Replace" : "Upload"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) pick(entry.slot, file);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+                {entry.uploaded && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBusy(entry.slot);
+                      remove.mutate(entry.slot);
+                    }}
+                    className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40 transition hover:text-ink"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
   );
 }
 

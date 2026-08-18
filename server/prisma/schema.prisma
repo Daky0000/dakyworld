@@ -48,6 +48,7 @@ model User {
   performanceNotes PerformanceNote[]
   sessions         Session[]
   emailsWritten    EmailMessage[]
+  uploadedFiles    StoredFile[]
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -1157,10 +1158,21 @@ model Agent {
 
   /// Tool keys this agent may use. The grant model arrives with the tool layer.
   toolkit          String[] @default([])
+  /// What this one is actually good at, in a client's words rather than a
+  /// tool key's. Read by the router when it picks who a job belongs to, and
+  /// shown on the roster so "who do I ask for a video edit" has an answer.
+  skills           String[] @default([])
   escalationPolicy String?
   /// The ten layered prompt sections, keyed by name. One column rather than a
   /// version table until prompts are actually edited in the app.
   prompt           Json     @default("{}")
+
+  /// True for an agent the Owner created on the Agents screen rather than one
+  /// the seed shipped. A deploy never touches these, and only these can be
+  /// renamed, rewritten or deleted — a seeded agent's wording is a diff.
+  custom Boolean @default(false)
+  /// One glyph for the roster, so eighteen cards are scannable. Optional.
+  avatar String?
 
   /// Bumped in the seed when the built-in wording changes, so a later deploy
   /// can tell an untouched agent from one somebody has edited.
@@ -1286,4 +1298,102 @@ model WebhookEvent {
 
   @@index([source, createdAt])
   @@index([handledAt])
+}
+
+// ---------------------------------------------------------------------------
+// Stored files
+// ---------------------------------------------------------------------------
+
+/// A file somebody uploaded, held as bytes.
+///
+/// Email attachments needed somewhere to live. The obvious answer was
+/// Cloudinary, which this app already talks to — and it is the wrong answer
+/// for the first attachment somebody tries to send, because Cloudinary needs
+/// three credentials that may never be pasted. A file store that works with
+/// nothing configured is worth more than one that is cheaper per gigabyte at a
+/// scale this app will not reach.
+///
+/// So: bytes in Postgres, behind a hard size limit, served back by
+/// `/api/files/:id` to a signed-in user and read directly by the mailer when a
+/// message goes out. Attaching a file by URL still works and is still the
+/// right choice for anything large — see EmailMessage.attachments.
+model StoredFile {
+  id String @id @default(cuid())
+
+  /// The name the recipient sees on the attachment.
+  filename    String
+  contentType String
+  /// Bytes. Held alongside the data so a listing needn't read the blob.
+  size        Int
+
+  data Bytes
+
+  /// What it was uploaded for, so an orphan is identifiable later.
+  purpose String @default("EMAIL_ATTACHMENT")
+
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id])
+  uploadedById String?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([purpose, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// MCP servers
+// ---------------------------------------------------------------------------
+
+/// An MCP server this app has been pointed at, and the tools it advertises.
+///
+/// The tool catalogue is code on purpose — what a tool *does* is behaviour,
+/// and behaviour editable at runtime is behaviour nobody can review. That rule
+/// holds, and this is how a new capability gets added without breaking it: the
+/// Owner connects a server, the server declares its own tools with their own
+/// schemas, and each one becomes a grantable catalogue entry under a
+/// `mcp.<server>.<tool>` key. The code that decides *whether* a call is allowed
+/// is unchanged — an MCP tool goes through the same invoker, the same grant
+/// check, the same autonomy gate and the same audit row as a built-in one.
+///
+/// `tools` is a cache of the last successful `tools/list`, so the Agents screen
+/// can offer grants without a network round trip per render. It is refreshed on
+/// demand and whenever a call finds it stale.
+model McpServer {
+  id String @id @default(cuid())
+
+  /// Short slug used in every tool key this server contributes. Immutable —
+  /// changing it would silently revoke every grant that names it.
+  key   String @unique
+  name  String
+  /// What this server is for, in the Owner's words.
+  purpose String?
+
+  /// Streamable HTTP endpoint. SSE-only servers are reached through the same URL.
+  url String
+  /// Sent as `Authorization: <value>`. Encrypted, like every other credential.
+  authHeader String?
+
+  /// Off by default: connecting a server and granting its tools are two decisions.
+  enabled Boolean @default(false)
+
+  /// The riskiest thing this server's tools are treated as doing. The invoker
+  /// reads scope from here rather than trusting a remote description — a server
+  /// cannot talk its way into a lower gate than the Owner gave it.
+  scope   String  @default("read")
+  /// True when calls here cost money, so the spend gate applies.
+  spends  Boolean @default(false)
+  /// True when a call is visible outside the company, so dry run applies.
+  outward Boolean @default(false)
+
+  /// The last successful tools/list, as `[{ name, description, inputSchema }]`.
+  tools Json @default("[]")
+
+  lastCheckedAt DateTime?
+  /// Why the last check failed, when it did.
+  lastError     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
 }

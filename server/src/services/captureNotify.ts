@@ -1,7 +1,8 @@
 import type { ScraperRun, ScraperSource } from "@prisma/client";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { readMailerConfig, sendMail } from "../lib/mailer.js";
-import { signature, toHtml, toText } from "./emailRender.js";
+import { logoSources, signature, toHtml, toText } from "./emailRender.js";
+import { companyProfile } from "./systemProfile.js";
 import { readCaptureConfig } from "./captureConfig.js";
 import { sendSlack, slackConfigured } from "../lib/slack.js";
 import type { RunDiagnostics } from "./scraperRunner.js";
@@ -78,8 +79,16 @@ export async function reportRun(run: ScraperRun, source: ScraperSource): Promise
     .filter(Boolean)
     .join("\n");
 
-  const sign = await signature();
-  await sendMail({ to, subject, html: toHtml(body, sign, null), text: toText(body, sign, null) });
+  // The same letterhead a client would get, on the same live identity — this
+  // lands in the Owner's own inbox and should not be the one surface still
+  // carrying whatever the constants used to say.
+  const [sign, profile, shell] = await Promise.all([signature(), companyProfile(), logoSources(false)]);
+  await sendMail({
+    to,
+    subject,
+    html: toHtml(body, sign, null, { profile, ...shell }),
+    text: toText(body, sign, null, profile),
+  });
 
   // Slack second, and never allowed to undo the email: the report has already
   // been delivered by the time this runs.

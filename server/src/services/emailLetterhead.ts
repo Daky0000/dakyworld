@@ -1,5 +1,5 @@
-import { LOGO_CID, LOGO_DARK_CID, hasBrandImage } from "../lib/brandAssets.js";
-import { COMPANY } from "./dakyworld.js";
+import { LOGO_CID, LOGO_DARK_CID } from "../lib/brandAssets.js";
+import { DEFAULT_PROFILE, type CompanyProfile } from "./systemProfile.js";
 import { ACCENT, INK, LINE, MARK, MUTED } from "./letterhead.js";
 
 /**
@@ -65,19 +65,25 @@ function preheader(text: string): string {
   return `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${PAGE};opacity:0">${line}${"&#847;&zwnj;&nbsp;".repeat(40)}</div>`;
 }
 
-/** The lock-up, or the wordmark set in type when the artwork isn't on disk. */
-function logo(): string {
-  if (hasBrandImage(LOGO_CID)) {
-    return `<img src="cid:${LOGO_CID}" width="168" height="31" alt="Dakyworld" style="display:block;border:0;outline:none;text-decoration:none;height:auto;width:168px;max-width:168px">`;
+/**
+ * The lock-up, or the wordmark set in type when there is no artwork.
+ *
+ * `src` is a `cid:` reference for a real send and a data URL for the preview
+ * screen, which has no message to attach parts to. Both are decided by the
+ * caller — see `ShellArgs.logoSrc`.
+ */
+function logo(src: string | null, profile: CompanyProfile): string {
+  if (src) {
+    return `<img src="${src}" width="168" height="31" alt="${escapeHtml(profile.displayName)}" style="display:block;border:0;outline:none;text-decoration:none;height:auto;width:168px;max-width:168px">`;
   }
-  return `<span style="font-family:${DISPLAY_FONT};font-size:22px;font-weight:700;letter-spacing:-.02em;color:${INK}">Dakyworld<span style="color:${MARK}">.</span></span>`;
+  return `<span style="font-family:${DISPLAY_FONT};font-size:22px;font-weight:700;letter-spacing:-.02em;color:${INK}">${escapeHtml(profile.displayName)}<span style="color:${MARK}">.</span></span>`;
 }
 
-function footerLogo(): string {
-  if (hasBrandImage(LOGO_DARK_CID)) {
-    return `<img src="cid:${LOGO_DARK_CID}" width="132" height="24" alt="Dakyworld" style="display:block;border:0;outline:none;text-decoration:none;height:auto;width:132px;max-width:132px">`;
+function footerLogo(src: string | null, profile: CompanyProfile): string {
+  if (src) {
+    return `<img src="${src}" width="132" height="24" alt="${escapeHtml(profile.displayName)}" style="display:block;border:0;outline:none;text-decoration:none;height:auto;width:132px;max-width:132px">`;
   }
-  return `<span style="font-family:${DISPLAY_FONT};font-size:18px;font-weight:700;letter-spacing:-.02em;color:${PAPER}">Dakyworld<span style="color:${MARK}">.</span></span>`;
+  return `<span style="font-family:${DISPLAY_FONT};font-size:18px;font-weight:700;letter-spacing:-.02em;color:${PAPER}">${escapeHtml(profile.displayName)}<span style="color:${MARK}">.</span></span>`;
 }
 
 function link(href: string, text: string, color: string): string {
@@ -91,13 +97,13 @@ function link(href: string, text: string, color: string): string {
  * thing on the sheet: it is there so a reply-all or a printed copy still knows
  * who sent it, not to be read.
  */
-function header(): string {
+function header(profile: CompanyProfile, logoSrc: string | null): string {
   return `<tr>
 <td class="pad" style="padding:28px 32px 0">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td align="left" valign="middle">${logo()}</td>
+<td align="left" valign="middle">${logo(logoSrc, profile)}</td>
 <td align="right" valign="middle" class="stack" style="font-family:${BODY_FONT};font-size:11px;line-height:18px;color:${MUTED}">
-${escapeHtml(COMPANY.location)}<br>${link(`mailto:${COMPANY.email}`, COMPANY.email, MUTED)}
+${escapeHtml(profile.location)}<br>${link(`mailto:${profile.email}`, profile.email, MUTED)}
 </td>
 </tr></table>
 </td>
@@ -140,32 +146,63 @@ ${optOut}
 }
 
 /** The website's footer, compressed: lock-up, positioning, contact, legal. */
-function footer(): string {
+function footer(profile: CompanyProfile, logoSrc: string | null): string {
+  // A blank second phone line or an absent handle is simply not printed —
+  // separators are joined across what exists, not around gaps.
   const contact = [
-    link(`mailto:${COMPANY.email}`, COMPANY.email, ON_INK_LINK),
-    link(`tel:${COMPANY.phone.replace(/\s/g, "")}`, COMPANY.phone, ON_INK_LINK),
-    link(`https://${COMPANY.web}`, COMPANY.web, ON_INK_LINK),
-  ].join(`<span style="color:${ON_INK_QUIET}"> &nbsp;·&nbsp; </span>`);
+    link(`mailto:${profile.email}`, profile.email, ON_INK_LINK),
+    link(`tel:${profile.phone.replace(/\s/g, "")}`, profile.phone, ON_INK_LINK),
+    profile.phoneAlt ? link(`tel:${profile.phoneAlt.replace(/\s/g, "")}`, profile.phoneAlt, ON_INK_LINK) : "",
+    link(`https://${profile.web}`, profile.web, ON_INK_LINK),
+  ]
+    .filter(Boolean)
+    .join(`<span style="color:${ON_INK_QUIET}"> &nbsp;·&nbsp; </span>`);
+
+  const socials = Object.entries(profile.social)
+    .filter(([, url]) => url)
+    .map(([name, url]) => link(url, SOCIAL_LABEL[name] ?? name, ON_INK_LINK))
+    .join(`<span style="color:${ON_INK_QUIET}"> &nbsp;·&nbsp; </span>`);
+
+  const socialRow = socials
+    ? `<tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_INK};padding:0 0 14px">${socials}</td></tr>`
+    : "";
+
+  const legal = [
+    `&copy; ${new Date().getFullYear()} ${escapeHtml(profile.name)}`,
+    escapeHtml(profile.footerLine),
+    escapeHtml(profile.location.toUpperCase()),
+    profile.registrationNumber ? escapeHtml(`REG ${profile.registrationNumber}`) : "",
+  ]
+    .filter(Boolean)
+    .join(" &nbsp;·&nbsp; ");
 
   // bgcolor as well as the CSS: Outlook's Word engine honours the attribute
   // and drops the declaration, which is how a dark band arrives white.
   return `<tr>
 <td bgcolor="${FOOTER_INK}" class="pad" style="padding:26px 32px 24px;background:${FOOTER_INK}">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-<tr><td style="padding:0 0 14px">${footerLogo()}</td></tr>
+<tr><td style="padding:0 0 14px">${footerLogo(logoSrc, profile)}</td></tr>
 <tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_INK};padding:0 0 12px">${escapeHtml(
-    COMPANY.positioning,
+    profile.positioning,
   )}</td></tr>
 <tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_INK};padding:0 0 14px">${contact}</td></tr>
+${socialRow}
 <tr><td style="border-top:1px solid #171F2C;padding:12px 0 0;font-family:${BODY_FONT};font-size:10px;line-height:17px;letter-spacing:.07em;color:${ON_INK_QUIET}">
-&copy; ${new Date().getFullYear()} ${escapeHtml(COMPANY.name)} &nbsp;·&nbsp; ${escapeHtml(
-    COMPANY.footerLine,
-  )} &nbsp;·&nbsp; ${escapeHtml(COMPANY.location.toUpperCase())}
+${legal}
 </td></tr>
 </table>
 </td>
 </tr>`;
 }
+
+/** How each handle is labelled in the band. Keys match CompanyProfile.social. */
+const SOCIAL_LABEL: Record<string, string> = {
+  linkedin: "LinkedIn",
+  x: "X",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  youtube: "YouTube",
+};
 
 // --- The whole document -------------------------------------------------------
 
@@ -176,9 +213,27 @@ export interface ShellArgs {
   bodyText: string;
   signature: string | null;
   unsubscribeUrl: string | null;
+  /** Who is sending. Defaults to the shipped constants when nothing is stored. */
+  profile?: CompanyProfile;
+  /**
+   * What the two lock-ups point at. A real send passes `cid:` references and
+   * attaches the parts; the preview screen passes data URLs, because an
+   * `<iframe>` has no message to resolve a `cid:` against. Null on either
+   * falls the shell back to setting the wordmark in type.
+   */
+  logoSrc?: string | null;
+  footerLogoSrc?: string | null;
 }
 
-export function wrapEmail({ bodyHtml, bodyText, signature, unsubscribeUrl }: ShellArgs): string {
+export function wrapEmail({
+  bodyHtml,
+  bodyText,
+  signature,
+  unsubscribeUrl,
+  profile = DEFAULT_PROFILE,
+  logoSrc = `cid:${LOGO_CID}`,
+  footerLogoSrc = `cid:${LOGO_DARK_CID}`,
+}: ShellArgs): string {
   return `<!doctype html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
@@ -187,7 +242,7 @@ export function wrapEmail({ bodyHtml, bodyText, signature, unsubscribeUrl }: She
 <meta name="x-apple-disable-message-reformatting">
 <meta name="color-scheme" content="light">
 <meta name="supported-color-schemes" content="light">
-<title>${escapeHtml(COMPANY.displayName)}</title>
+<title>${escapeHtml(profile.displayName)}</title>
 <!--[if mso]><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <style>
@@ -211,9 +266,9 @@ ${preheader(bodyText)}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAGE}" style="background:${PAGE}">
 <tr><td align="center" style="padding:28px 12px 34px">
 <table role="presentation" class="sheet" width="${WIDTH}" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAPER}" style="width:${WIDTH}px;max-width:${WIDTH}px;background:${PAPER};border:1px solid ${LINE};border-radius:4px">
-${header()}
+${header(profile, logoSrc)}
 ${letter(bodyHtml, signature, unsubscribeUrl)}
-${footer()}
+${footer(profile, footerLogoSrc)}
 </table>
 </td></tr>
 </table>
@@ -226,11 +281,12 @@ ${footer()}
  * after the signature looks truncated next to the HTML one, and it is the part
  * spam filters read most closely.
  */
-export function textFooter(unsubscribeUrl: string | null): string {
+export function textFooter(unsubscribeUrl: string | null, profile: CompanyProfile = DEFAULT_PROFILE): string {
+  const contact = [profile.location, profile.email, profile.phone, profile.phoneAlt, profile.web].filter(Boolean).join(" · ");
   return [
     "--",
-    `${COMPANY.displayName} — ${COMPANY.promise}`,
-    `${COMPANY.location} · ${COMPANY.email} · ${COMPANY.phone} · ${COMPANY.web}`,
+    `${profile.displayName} — ${profile.promise}`,
+    contact,
     unsubscribeUrl ? `Unsubscribe: ${unsubscribeUrl}` : "",
   ]
     .filter(Boolean)

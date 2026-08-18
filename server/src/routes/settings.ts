@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import express, { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { requireRole } from "../middleware/auth.js";
 import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
@@ -29,12 +29,22 @@ import {
   type HostingerMailbox,
   type McpProbe,
 } from "../lib/hostingerMail.js";
-import { signature, toHtml, toText } from "../services/emailRender.js";
+import { logoSources, signature, toHtml, toText } from "../services/emailRender.js";
 import { SlackError, sendSlack, slackTransport, verifySlack } from "../lib/slack.js";
 import { GitHubError, verifyGitHubToken } from "../lib/github.js";
 import { calendarReady, listCalendars } from "../lib/calendar.js";
 import { rotateWebhookSecret, webhookSecret } from "../lib/webhooks.js";
 import { clearReadinessCache } from "../services/tools/readiness.js";
+import {
+  BRAND_SLOTS,
+  DEFAULT_PROFILE,
+  brandImages,
+  companyProfile,
+  deleteBrandImage,
+  saveBrandImage,
+  saveCompanyProfile,
+  type BrandSlot,
+} from "../services/systemProfile.js";
 
 /**
  * Everything the Owner configures at runtime, in one place.
@@ -50,6 +60,11 @@ export const settingsRouter = Router();
 
 // These credentials spend real money and reach outside the company.
 settingsRouter.use(requireRole("OWNER"));
+
+// A logo rides in the JSON body as a data URL, so this one path parses bodies
+// larger than the 100 kB the rest of the API allows. Deliberately after the
+// role check, and scoped to the one route: see index.ts → UPLOAD_PATHS.
+settingsRouter.use("/system/brand", express.json({ limit: "2mb" }));
 
 // --- Apify -----------------------------------------------------------------
 
@@ -159,12 +174,32 @@ async function describeAll(req: Request) {
     developer: await describeGitHub(),
     calendar: await describeCalendar(),
     webhooks: await describeWebhooks(req, appUrl),
+    system: await describeSystem(),
     general: {
       appUrl,
       appUrlEnvManaged: isEnvManaged(SETTING.APP_URL),
       resolvedAppUrl: origin(req, appUrl),
       timezone: timezone ?? "Africa/Accra",
     },
+  };
+}
+
+/**
+ * The company's own details and artwork.
+ *
+ * Sent whole rather than as a diff against the defaults: the form needs to
+ * show what is currently printed on a letterhead, and "blank, meaning it falls
+ * back to Dakyworld" is a distinction the screen makes with placeholder text
+ * rather than with an empty field.
+ */
+async function describeSystem() {
+  const [profile, images] = await Promise.all([companyProfile(), brandImages()]);
+  return {
+    profile,
+    defaults: DEFAULT_PROFILE,
+    /** Which slots have artwork uploaded. The bytes go out only on request. */
+    brand: BRAND_SLOTS.map((entry) => ({ ...entry, uploaded: Boolean(images[entry.slot]) })),
+    images,
   };
 }
 
@@ -791,13 +826,15 @@ settingsRouter.delete("/email/hostinger", async (req, res, next) => {
 settingsRouter.post("/email/test", async (req, res, next) => {
   try {
     const { to } = z.object({ to: z.string().email() }).parse(req.body);
-    const sign = await signature();
-    const body = `This is a test from Dakyworld OS.\n\nIf you are reading it, the mailbox is connected and the app can send on your behalf — proposals, invoices, deliverables and sequences will all go out through this address.`;
+    // On the live identity, not the shipped defaults: a test whose letterhead
+    // says something different from a real email is not a test of anything.
+    const [sign, profile, shell] = await Promise.all([signature(), companyProfile(), logoSources(false)]);
+    const body = `This is a test from ${profile.displayName} OS.\n\nIf you are reading it, the mailbox is connected and the app can send on your behalf — proposals, invoices, deliverables and sequences will all go out through this address.`;
     await sendMail({
       to,
-      subject: "Dakyworld OS — mail is working",
-      html: toHtml(body, sign, null),
-      text: toText(body, sign, null),
+      subject: `${profile.displayName} OS — mail is working`,
+      html: toHtml(body, sign, null, { profile, ...shell }),
+      text: toText(body, sign, null, profile),
     });
     res.json({ ok: true, to });
   } catch (err) {
@@ -1005,6 +1042,107 @@ settingsRouter.post("/webhooks/rotate", async (req, res, next) => {
     const secret = await rotateWebhookSecret();
     // Returned in full exactly once — it is not readable again afterwards.
     res.json({ secret, snapshot: await describeAll(req) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- System (the company's own details) ------------------------------------
+
+/**
+ * One address, one phone number, one logo.
+ *
+ * Everything the company says about itself used to be a constant in
+ * `services/dakyworld.ts`: correct, single-sourced, and only changeable by a
+ * developer with a deploy. This is the same single source made editable —
+ * see services/systemProfile.ts for what reads it.
+ *
+ * There is no env-managed guard here, unlike every credential above. These are
+ * not secrets and there is no deployment reason to pin them; the reason the
+ * screen exists is that the Owner changes them.
+ */
+const profileInput = z.object({
+  name: z.string().max(80).optional(),
+  displayName: z.string().max(80).optional(),
+  legalName: z.string().max(120).optional(),
+  tagline: z.string().max(160).optional(),
+  footerLine: z.string().max(120).optional(),
+  promise: z.string().max(160).optional(),
+  positioning: z.string().max(300).optional(),
+  location: z.string().max(120).optional(),
+  addressLines: z.array(z.string().max(120)).max(6).optional(),
+  email: z.string().email("That isn't a valid email address").or(z.literal("")).optional(),
+  phone: z.string().max(40).optional(),
+  phoneAlt: z.string().max(40).optional(),
+  web: z.string().max(120).optional(),
+  social: z
+    .object({
+      linkedin: z.string().max(200).optional(),
+      x: z.string().max(200).optional(),
+      instagram: z.string().max(200).optional(),
+      facebook: z.string().max(200).optional(),
+      youtube: z.string().max(200).optional(),
+    })
+    .optional(),
+  currency: z.string().max(6).optional(),
+  registrationNumber: z.string().max(60).optional(),
+  vatNumber: z.string().max(60).optional(),
+});
+
+settingsRouter.put("/system", async (req, res, next) => {
+  try {
+    const input = profileInput.parse(req.body);
+    await saveCompanyProfile(input);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * A logo, as a data URL in the JSON body.
+ *
+ * The same shape `/api/imports` uses for a workbook, and for the same reason:
+ * nothing else in this API takes multipart, and one upload path is easier to
+ * reason about than two. 1 MB is a generous ceiling for a lock-up that rides
+ * along on every email — a master export belongs in `assets/brand/`, not here.
+ */
+const MAX_LOGO_BYTES = 1_000_000;
+const LOGO_TYPES = ["image/png", "image/jpeg", "image/svg+xml", "image/webp", "image/gif"];
+
+settingsRouter.put("/system/brand/:slot", async (req, res, next) => {
+  try {
+    const slot = req.params.slot as BrandSlot;
+    if (!BRAND_SLOTS.some((entry) => entry.slot === slot)) {
+      return res.status(404).json({ error: `There is no brand slot called ${req.params.slot}.` });
+    }
+    const { dataUrl } = z.object({ dataUrl: z.string().min(20) }).parse(req.body);
+
+    const match = /^data:([\w/+.-]+);base64,(.+)$/s.exec(dataUrl.trim());
+    if (!match) return res.status(400).json({ error: "That doesn't look like an image — re-pick the file." });
+    if (!LOGO_TYPES.includes(match[1])) {
+      return res.status(400).json({ error: `${match[1]} isn't an image type email clients render. Use PNG, JPEG, SVG, WebP or GIF.` });
+    }
+    if (Buffer.from(match[2], "base64").length > MAX_LOGO_BYTES) {
+      return res.status(400).json({ error: "That file is over 1 MB. Export a smaller cut — this rides along on every email." });
+    }
+
+    await saveBrandImage(slot, dataUrl.trim());
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Removes an upload, which falls the slot back to the artwork shipped on disk. */
+settingsRouter.delete("/system/brand/:slot", async (req, res, next) => {
+  try {
+    const slot = req.params.slot as BrandSlot;
+    if (!BRAND_SLOTS.some((entry) => entry.slot === slot)) {
+      return res.status(404).json({ error: `There is no brand slot called ${req.params.slot}.` });
+    }
+    await deleteBrandImage(slot);
+    res.json(await describeAll(req));
   } catch (err) {
     next(err);
   }

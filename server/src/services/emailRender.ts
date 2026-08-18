@@ -1,7 +1,8 @@
 import { createHmac } from "node:crypto";
 import { SETTING, getSetting } from "../lib/settings.js";
+import { LOGO_CID, LOGO_DARK_CID, brandDataUrl, hasBrandImage } from "../lib/brandAssets.js";
 import { textFooter, wrapEmail } from "./emailLetterhead.js";
-import { COMPANY } from "./dakyworld.js";
+import { companyProfile, type CompanyProfile } from "./systemProfile.js";
 import type { RecipientContext } from "./emailContext.js";
 
 /**
@@ -48,7 +49,12 @@ function linkify(value: string): string {
  * campaign is easier to ignore than a letter. What surrounds it is the
  * identity: the lock-up above, the ink footer below. See emailLetterhead.ts.
  */
-export function toHtml(body: string, signature: string | null, unsubscribeUrl: string | null): string {
+export function toHtml(
+  body: string,
+  signature: string | null,
+  unsubscribeUrl: string | null,
+  shell: { profile?: CompanyProfile; logoSrc?: string | null; footerLogoSrc?: string | null } = {},
+): string {
   const paragraphs = body
     .split(/\n{2,}/)
     .map((block) => block.trim())
@@ -61,6 +67,7 @@ export function toHtml(body: string, signature: string | null, unsubscribeUrl: s
     bodyText: body,
     signature: signature ? linkify(escapeHtml(signature)).replace(/\n/g, "<br>") : null,
     unsubscribeUrl,
+    ...shell,
   });
 }
 
@@ -68,8 +75,8 @@ export function toHtml(body: string, signature: string | null, unsubscribeUrl: s
  * The text alternative — the same words and signature, closed by the same
  * details the footer band carries, so the two parts say the same thing.
  */
-export function toText(body: string, signature: string | null, unsubscribeUrl: string | null): string {
-  return [body.trim(), signature ? `\n${signature}` : "", `\n${textFooter(unsubscribeUrl)}`]
+export function toText(body: string, signature: string | null, unsubscribeUrl: string | null, profile?: CompanyProfile): string {
+  return [body.trim(), signature ? `\n${signature}` : "", `\n${textFooter(unsubscribeUrl, profile)}`]
     .filter(Boolean)
     .join("\n");
 }
@@ -83,7 +90,8 @@ export async function signature(): Promise<string | null> {
   const stored = await getSetting(SETTING.MAIL_SIGNATURE);
   if (stored !== null) return stored.trim() || null;
   const name = (await getSetting(SETTING.MAIL_FROM_NAME)) ?? "Dan Kwame Ayipah";
-  return `${name}\nFounder, ${COMPANY.displayName}`;
+  return `${name}
+Founder, ${(await companyProfile()).displayName}`;
 }
 
 /**
@@ -125,16 +133,37 @@ export async function renderEmail(args: {
   toEmail: string;
   appUrl: string;
   includeUnsubscribe: boolean;
+  /**
+   * True when the result will be shown on a page rather than sent. The two
+   * differ in one respect and it matters: an `<iframe>` cannot resolve a
+   * `cid:` reference, so the preview carries the artwork as data URLs and a
+   * real send carries the `cid:` the attached parts answer to.
+   */
+  forPreview?: boolean;
 }): Promise<RenderedEmail> {
   const subject = fillPlaceholders(args.subject, args.variables).trim();
   const body = fillPlaceholders(args.body, args.variables).trim();
-  const sign = await signature();
+  const [sign, profile, shell] = await Promise.all([signature(), companyProfile(), logoSources(args.forPreview ?? false)]);
   const optOut = args.includeUnsubscribe ? await unsubscribeUrl(args.toEmail, args.appUrl) : null;
 
   return {
     subject,
     bodyText: body,
-    html: toHtml(body, sign, optOut),
-    text: toText(body, sign, optOut),
+    html: toHtml(body, sign, optOut, { profile, ...shell }),
+    text: toText(body, sign, optOut, profile),
   };
+}
+
+/**
+ * Where the two lock-ups point. Null on either means there is no artwork for
+ * that slot at all, and the shell sets the wordmark in type instead — which is
+ * better than a broken image icon at the top of a client's inbox.
+ */
+export async function logoSources(forPreview: boolean): Promise<{ logoSrc: string | null; footerLogoSrc: string | null }> {
+  if (forPreview) {
+    const [logoSrc, footerLogoSrc] = await Promise.all([brandDataUrl(LOGO_CID), brandDataUrl(LOGO_DARK_CID)]);
+    return { logoSrc, footerLogoSrc };
+  }
+  const [light, dark] = await Promise.all([hasBrandImage(LOGO_CID), hasBrandImage(LOGO_DARK_CID)]);
+  return { logoSrc: light ? `cid:${LOGO_CID}` : null, footerLogoSrc: dark ? `cid:${LOGO_DARK_CID}` : null };
 }
