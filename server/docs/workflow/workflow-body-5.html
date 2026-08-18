@@ -1,0 +1,129 @@
+<!-- ===================== STAGE 9 RETAINER ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 9 · The retainer</div>
+    <h2>Where a one-off project is meant to lead</h2>
+    <p class="lede">Most clients arrive through a project — usually a website build — and the business only compounds if they move onto a care plan afterwards. This stage is the one that turns delivered work into recurring revenue, and it is the most automatic stage in the document.</p>
+  </div>
+
+  <div class="step auto">
+    <header><span class="id">9.1</span><h4>The billing day comes round</h4><span class="who">Clock</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>06:00 local time on the plan’s own billing day — before the working day starts, so an invoice is waiting rather than arriving mid-morning.</dd>
+      <dt>Does</dt><dd>Raises the invoice for the coming month <em>and</em> the closing month’s overage on the same document. A retainer is invoiced in advance because that is what a retainer is; hours cannot be, because how many were used is only known once the month has ended. So every cycle settles one cycle late.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="none">carePlanBilling — scheduler, not an agent</span></dd>
+      <dt>Gate</dt><dd>Three defences against billing twice: <b>(1)</b> the next billing date is advanced <em>before</em> any invoice is written; <b>(2)</b> the period is derived from the calendar, not from when the job happened to run; <b>(3)</b> a duplicate period is a database constraint violation rather than a duplicate invoice.</dd>
+      <dt>Ends when</dt><dd>An invoice exists at <b>DRAFT</b> and the cycle is recorded as settled.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The plan is PAUSED or CHURNED — no invoice, and the history is kept. A restart after a long outage bills at most three missed months, never a year.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">9.2</span><h4>Keep the plan honest</h4><span class="who">Recurring Revenue Manager</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>Monthly, after billing.</dd>
+      <dt>Does</dt><dd>Reconciles hours used against hours included, flags overage before the client sees it on an invoice, and reports what the retainer actually delivered that month.</dd>
+      <dt>Tools</dt><dd class="tools"><span>careplan.read</span><span>time.read</span><span>invoice.draft</span></dd>
+      <dt>Gate</dt><dd>Level 3 to draft. Actual charges stay policy-gated regardless of level.</dd>
+      <dt>Ends when</dt><dd>The month is reconciled and the value report exists.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">It would double-bill, or the usage figure cannot be traced to time entries. Never invent usage.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">9.3</span><h4>Book the review before it is late</h4><span class="who">Client Success Director</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A review falls due — the <code>CARE_PLAN_REVIEW_DUE</code> trigger.</dd>
+      <dt>Does</dt><dd>Offers slots and books the periodic review, with the month’s value report attached so the meeting starts from evidence rather than from “how’s it going”.</dd>
+      <dt>Tools</dt><dd class="tools"><span>careplan.read</span><span>calendar.read</span><span class="out">calendar.write</span><span>email.draft</span></dd>
+      <dt>Gate</dt><dd>Level 3 to book and to send.</dd>
+      <dt>Ends when</dt><dd>The review is in the calendar.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">It would promise an outcome the project data does not support.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">9.4</span><h4>Notice a client going quiet</h4><span class="who">Client Success Director</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>Weekly health review.</dd>
+      <dt>Does</dt><dd>Watches for the four things that precede churn: silence, dissatisfaction, scope creep and payment friction. Scores each client and names the ones at risk with the reason.</dd>
+      <dt>Tools</dt><dd class="tools"><span>client.read</span><span>careplan.read</span><span>projects.read</span><span>analytics.read</span></dd>
+      <dt>Gate</dt><dd>Read-only.</dd>
+      <dt>Ends when</dt><dd>Each client has status, value delivered, current risk, next action and owner.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Churn risk, a complaint, or a request that changes scope or price — all three escalate rather than being handled.</dd>
+    </dl>
+  </div>
+
+  <div class="step auto">
+    <header><span class="id">9.5</span><h4>Reactivate the ones that went cold</h4><span class="who">Outbound Communications</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A lead that went LOST, or a client that churned, passes a set age.</dd>
+      <dt>Does</dt><dd>Runs the reactivation series — which carries an unsubscribe link, because this is a cold approach to somebody who has stopped hearing from you.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="out">sequence.enrol</span><span>suppression.check</span></dd>
+      <dt>Gate</dt><dd>Level 3.</dd>
+      <dt>Ends when</dt><dd>They reply — which stops every sequence and returns them to Stage 4 — or the series ends.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">They left unhappily. That is on the record, and it is a conversation you have, not one a sequence has.</dd>
+    </dl>
+  </div>
+</div>
+
+<!-- ===================== SUPPORT LOOP ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Running alongside</div>
+    <h2>The support loop</h2>
+    <p class="lede">This one has no start and no end. It runs continuously against every client on a plan, and it is the only workflow in the document with a clock running against it that a client can see.</p>
+  </div>
+
+  <div class="step">
+    <header><span class="id">S.1</span><h4>Triage</h4><span class="who">Support Desk</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A client makes contact — email, form or phone logged.</dd>
+      <dt>Does</dt><dd>Acknowledges, assesses severity against that client’s care plan, and either fixes what is routine — email, access, DNS, hosting — or routes it with everything the next person needs.</dd>
+      <dt>Tools</dt><dd class="tools"><span>client.read</span><span>careplan.read</span><span>projects.read</span><span>tasks.write</span><span>email.draft</span></dd>
+      <dt>Gate</dt><dd>Drafting a reply is level 1; sending it is level 3.</dd>
+      <dt>Ends when</dt><dd>Resolved, or assigned to a named specialist with a due time.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">A security incident, a data question, or anything touching money. Those go up immediately rather than being answered — <b>the published commitment is a four-hour response on priority-one security incidents</b>, and it is a commitment because a person meets it.</dd>
+    </dl>
+  </div>
+
+  <div class="step gate">
+    <header><span class="id">S.2</span><h4>Escalate</h4><span class="who">Risk &amp; QA Director</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>Any agent, at any stage, hits a condition in Section 11.</dd>
+      <dt>Does</dt><dd>Reviews the proposed action against policy. If it exceeds policy, blocks it and explains why in one sentence, with the smallest compliant path forward.</dd>
+      <dt>Tools</dt><dd class="tools"><span>company.audit</span><span>security.scan</span><span>integrations.read</span><span class="out">slack.send</span></dd>
+      <dt>Gate</dt><dd>May block anything at any level. Never weakens a control to make a task succeed.</dd>
+      <dt>Ends when</dt><dd>Allowed with a reason, or blocked with a reason and an alternative.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">It is unsure. Uncertainty touching money, client data, a public claim or production always resolves conservatively.</dd>
+    </dl>
+  </div>
+</div>
+
+<!-- ===================== SECTION 11 ESCALATION ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Section 11</div>
+    <h2>What always stops and asks</h2>
+    <p class="lede">These override every autonomy level, including 4. An agent at level 4 with dry run off still stops here — because these are policy, and policy is not a permission setting.</p>
+  </div>
+
+  <table>
+    <tr><th style="width:44mm">Condition</th><th style="width:38mm">Goes to</th><th>Why it is not delegable</th></tr>
+    <tr><td><b>Any discount or pricing exception</b></td><td>You, via the Sales Director</td><td>A price is a commercial position, not a calculation.</td></tr>
+    <tr><td><b>A refund, or a contested charge</b></td><td>You, via the Finance Controller</td><td>Money leaving is the least reversible thing this system can do.</td></tr>
+    <tr><td><b>A claim that cannot be evidenced</b></td><td>Growth &amp; Content, then you</td><td>One invented statistic destroys the credibility of every true one beside it.</td></tr>
+    <tr><td><b>A new public claim, or a brand change</b></td><td>You</td><td>Published words are permanent in a way sent ones are not.</td></tr>
+    <tr><td><b>Anything touching production or a client’s DNS</b></td><td>Technical Director</td><td>Downtime at a client costs them money by the hour.</td></tr>
+    <tr><td><b>A security incident or a data question</b></td><td>Risk &amp; QA, immediately</td><td>Four-hour response is a published commitment.</td></tr>
+    <tr><td><b>Credential rotation, or anything destructive</b></td><td>Technical Director</td><td>Rotating the app secret makes every stored key unreadable.</td></tr>
+    <tr><td><b>Hiring, retiring, or any permission change</b></td><td>You</td><td>No agent may widen its own reach, or another agent’s.</td></tr>
+    <tr><td><b>A date or outcome the project data does not support</b></td><td>Client Success</td><td>A missed promise costs more than a slow answer.</td></tr>
+    <tr><td><b>Low confidence, or contradictory evidence</b></td><td>The agent’s own manager</td><td>An agent that is unsure and acts anyway is worse than one that stops.</td></tr>
+  </table>
+
+  <div class="callout warn">
+    <h4>The failure modes this document is designed around</h4>
+    <p><b>Billing twice</b> — three independent defences, Stage 9.1. <b>Sending to somebody who opted out</b> — suppression checked at the socket, not at compose, Stage 3.3. <b>An agent looking equipped and not being</b> — a grant naming a tool that does not exist is dropped on save and reported. <b>Silent failure</b> — every refusal is recorded with its reason, which is what makes “why did nothing happen last night” answerable at all.</p>
+  </div>
+</div>

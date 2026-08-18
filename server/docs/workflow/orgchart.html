@@ -1,0 +1,139 @@
+<style>
+/* The chart is a lane per executive rather than a tree: a tree of 27 nodes at
+   A4 width is unreadable, and the question this answers — "who owns this, and
+   who do they answer to" — is a column question, not a branching one. */
+/* Moves as one block: a chart split across a page break answers neither
+   of the two questions it exists to answer. */
+.org { margin-bottom: 6mm; page-break-inside: avoid; }
+.org .tier-label {
+  font-family: var(--mono); font-size: 6.8pt; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 2mm;
+}
+.org .govern { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3mm; margin-bottom: 3mm; }
+.org .lanes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2.5mm; }
+
+.node { border: 1px solid var(--line); padding: 2.2mm 2.6mm; background: var(--paper); }
+.node .nm { font-weight: 700; font-size: 8.2pt; line-height: 1.25; }
+.node .ky { font-family: var(--mono); font-size: 6.4pt; color: var(--muted); margin-top: .6mm; }
+.node .rl { font-size: 7pt; color: var(--muted); line-height: 1.3; margin-top: 1mm; }
+
+.node.board { background: var(--ink); border-color: var(--ink); color: var(--cream); }
+.node.board .ky { color: rgba(244,245,240,.5); }
+.node.board .rl { color: rgba(244,245,240,.68); }
+.node.func { border-left: 3px solid var(--ink); }
+.node.exec { border-top: 3px solid var(--blue); background: var(--cream); }
+.node.op { border-left: 3px solid var(--blue-light); }
+.node.sub { border-left: 3px solid var(--lime); }
+
+.lane .stack { display: flex; flex-direction: column; gap: 1.5mm; margin-top: 1.5mm; }
+.lane .connector { height: 3mm; border-left: 1px solid var(--line); margin-left: 4mm; }
+.readnote { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; margin-bottom: 5mm; }
+.readnote p { margin: 0; font-size: 8.6pt; line-height: 1.5; }
+.org .key { display: flex; gap: 5mm; flex-wrap: wrap; font-size: 7.4pt; color: var(--muted); margin-top: 4mm; }
+.org .key i { display: inline-block; width: 3px; height: 8pt; vertical-align: -1pt; margin-right: 1.2mm; }
+</style>
+
+<div class="readnote">
+  <p><b>Who owns this?</b> Read down a lane. Every piece of work belongs to exactly one department and, within it, to exactly one agent. Work that belongs to nobody does not get done; work that belongs to two gets done twice, and differently.</p>
+  <p><b>Where does this stop?</b> Read up. An escalation always goes to the named manager — never sideways, never to “the system”. A specialist that cannot answer hands it to its executive; an executive that cannot hands it to the CEO; the CEO and the Board Chair hand it to you.</p>
+</div>
+
+<div class="org">
+  <p class="tier-label">Governance — recommends, blocks, and manages the workforce itself</p>
+  <div class="govern">
+    <div class="node board">
+      <div class="nm">Board Chair</div>
+      <div class="ky">board.chair</div>
+      <div class="rl">Strategy, risk and capital discipline. Never executes — every output is a memo to you.</div>
+    </div>
+    <div class="node func">
+      <div class="nm">Risk &amp; QA Director</div>
+      <div class="ky">risk.qa</div>
+      <div class="rl">May block any action. Never weakens a control to make a task succeed.</div>
+    </div>
+    <div class="node func">
+      <div class="nm">AI People Operations</div>
+      <div class="ky">people.ops</div>
+      <div class="rl">Scores the agents themselves. Cannot grant a permission, including to itself.</div>
+    </div>
+  </div>
+
+  <p class="tier-label" style="margin-top:5mm">Executive — turns strategy into weekly priorities</p>
+  <div class="node exec" style="margin-bottom:3mm">
+    <div class="nm">Chief Executive <span style="font-weight:400;color:var(--muted)">— reports to the Board Chair</span></div>
+    <div class="ky">ceo</div>
+    <div class="rl">Picks the few actions with the highest business impact each week, and says what is deliberately not being done.</div>
+  </div>
+
+  <p class="tier-label" style="margin-top:5mm">Departments — each owns a lane end to end</p>
+  <div class="lanes">
+
+    <div class="lane">
+      <div class="node exec"><div class="nm">Sales Director</div><div class="ky">cro · Revenue</div></div>
+      <div class="connector"></div>
+      <div class="stack">
+        <div class="node op"><div class="nm">Lead Lifecycle Manager</div><div class="ky">lead.orchestrator</div></div>
+        <div class="node op"><div class="nm">Outbound Comms Manager</div><div class="ky">email.sequencer</div></div>
+        <div class="node op"><div class="nm">Commercial Operations</div><div class="ky">commercial.ops</div></div>
+      </div>
+    </div>
+
+    <div class="lane">
+      <div class="node exec"><div class="nm">Operations Director</div><div class="ky">coo · Delivery</div></div>
+      <div class="connector"></div>
+      <div class="stack">
+        <div class="node op"><div class="nm">Delivery Director</div><div class="ky">delivery.director</div></div>
+        <div class="node sub"><div class="nm">Support Desk</div><div class="ky">support.desk</div></div>
+      </div>
+    </div>
+
+    <div class="lane">
+      <div class="node exec"><div class="nm">Technical Director</div><div class="ky">cto · Technology</div></div>
+      <div class="connector"></div>
+      <div class="stack">
+        <div class="node op"><div class="nm">Business Intelligence</div><div class="ky">analytics.engine</div></div>
+        <div class="node op"><div class="nm">Integration Architect</div><div class="ky">integration.manager</div></div>
+        <div class="node sub"><div class="nm">Web Developer</div><div class="ky">dev.web</div></div>
+        <div class="node sub"><div class="nm">Automation Engineer</div><div class="ky">dev.automation</div></div>
+        <div class="node sub"><div class="nm">QA Tester</div><div class="ky">qa.tester</div></div>
+      </div>
+    </div>
+
+    <div class="lane">
+      <div class="node exec"><div class="nm">Growth &amp; Content</div><div class="ky">cmo · Marketing</div></div>
+      <div class="connector"></div>
+      <div class="stack">
+        <div class="node sub"><div class="nm">Graphic Designer</div><div class="ky">design.graphic</div></div>
+        <div class="node sub"><div class="nm">Video Editor</div><div class="ky">video.editor</div></div>
+        <div class="node sub"><div class="nm">Ad Designer</div><div class="ky">ads.designer</div></div>
+        <div class="node sub"><div class="nm">Copywriter</div><div class="ky">content.writer</div></div>
+        <div class="node sub"><div class="nm">SEO Specialist</div><div class="ky">seo.specialist</div></div>
+      </div>
+    </div>
+
+    <div class="lane">
+      <div class="node exec"><div class="nm">Finance Controller</div><div class="ky">cfo · Finance</div></div>
+      <div class="connector"></div>
+      <div class="stack">
+        <div class="node op"><div class="nm">Recurring Revenue Manager</div><div class="ky">careplan.manager</div></div>
+      </div>
+    </div>
+
+    <div class="lane">
+      <div class="node exec"><div class="nm">Client Success</div><div class="ky">cco · Client</div></div>
+      <div class="connector"></div>
+      <div class="stack">
+        <div class="node op"><div class="nm">Client Communications</div><div class="ky">client.notifier</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="key">
+    <span><i style="background:#08101F"></i>Governs — recommends or blocks, never executes</span>
+    <span><i style="background:#3157FF"></i>Executive — owns a department</span>
+    <span><i style="background:#6490FF"></i>Operational — runs one workflow end to end</span>
+    <span><i style="background:#B8FF3D"></i>Specialist — makes the thing</span>
+  </div>
+</div>
+

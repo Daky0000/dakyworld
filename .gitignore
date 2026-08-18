@@ -9,3 +9,7 @@ __tmp_*.html
 .DS_Store
 server/prisma/dev.db
 *.tsbuildinfo
+# The generated intermediate for the workflow PDF. The sources in
+# docs/workflow/ and the PDF itself are tracked; this is neither, and it
+# carries 136 KB of base64 fonts that churn the diff on every rebuild.
+server/docs/agent-master-workflow.html

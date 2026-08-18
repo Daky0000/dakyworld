@@ -1,0 +1,185 @@
+<!-- ===================== STAGE 6 DELIVERY ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 6 · Delivery</div>
+    <h2>The specialists do the work</h2>
+    <p class="lede">Every step above this one produces a decision, a status or a document. This is the stage where something is actually made — and it is the only stage where the agent doing the work is chosen by <em>craft</em> rather than by department.</p>
+  </div>
+
+  <div class="step gate">
+    <header><span class="id">6.0</span><h4>Route the task to a craft</h4><span class="who">Delivery Director</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A task moves to TODO with no owner.</dd>
+      <dt>Does</dt><dd>Matches the task against the <code>skills</code> on each specialist — “Subtitles and burned-in captions”, “Local SEO and Google Business Profile” — and assigns it. Skills are written in a client’s words for exactly this reason.</dd>
+      <dt>Tools</dt><dd class="tools"><span>agents.read</span><span>tasks.write</span><span>projects.read</span></dd>
+      <dt>Gate</dt><dd>Level 3 to assign unattended.</dd>
+      <dt>Ends when</dt><dd>The task has an owner and a due date.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">No specialist’s skills cover it. That is a hiring signal, not an assignment problem — and hiring a specialist is one screen.</dd>
+    </dl>
+  </div>
+
+  <h3 class="band">6.1 · The build lane — Web Developer, Automation Engineer, QA</h3>
+
+  <div class="step">
+    <header><span class="id">6.1.a</span><h4>Build the pages</h4><span class="who">Web Developer</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A build task is assigned.</dd>
+      <dt>Does</dt><dd>Produces a complete, self-contained page on the brand design system — real copy in Dakyworld’s voice, semantic markup, one <code>h1</code>, alt text, visible focus states, contrast that passes AA, and real breakpoints. Returns with it a list of what a developer must change before it ships.</dd>
+      <dt>Tools</dt><dd class="tools"><span>web.page</span><span>github.read</span><span class="out">github.issue</span><span>tasks.write</span></dd>
+      <dt>Gate</dt><dd><code>web.page</code> writes nothing outward and runs at level 1. Opening an issue is outward: level 3.</dd>
+      <dt>Ends when</dt><dd>The page exists and the task moves to REVIEW.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The change touches production, a client’s DNS, or a live site’s availability. Nothing goes near production without a stated rollback.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">6.1.b</span><h4>Wire the systems together</h4><span class="who">Automation Engineer</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>An automation task is assigned.</dd>
+      <dt>Does</dt><dd>Maps the current path step by step before proposing a new one, then builds it — saying which steps disappear and which merely move. Every integration names its failure mode and what happens to a record when it fires.</dd>
+      <dt>Tools</dt><dd class="tools"><span>webhooks.read</span><span class="out">webhook.dispatch</span><span>integrations.read</span><span>github.read</span></dd>
+      <dt>Gate</dt><dd>Dispatching outward: level 3.</dd>
+      <dt>Ends when</dt><dd>The workflow runs and the manual steps it replaced are named.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">It would write into a client’s system, move money, or send on a client’s behalf. Those are prepared and approved, never run unasked. A secret is never logged.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">6.1.c</span><h4>Try to break it</h4><span class="who">QA Tester</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A task reaches REVIEW.</dd>
+      <dt>Does</dt><dd>Tests against the acceptance criteria, then against what a real person would do instead. Checks TLS, mail authentication, forms, links and accessibility. Every defect carries steps, expected, actual and severity.</dd>
+      <dt>Tools</dt><dd class="tools"><span>company.audit</span><span>security.scan</span><span class="out">github.issue</span><span>tasks.write</span></dd>
+      <dt>Gate</dt><dd>Level 3 to raise an issue.</dd>
+      <dt>Ends when</dt><dd>Every task is DONE or has a defect against it.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">It has not actually exercised the work. It never signs off on inspection alone, and a blocker goes up the same day it is found.</dd>
+    </dl>
+  </div>
+
+  <h3 class="band">6.2 · The studio lane — Design, Video, Ads, Copy, SEO</h3>
+
+  <p style="margin-bottom:4mm">Four of the five studio tools produce a <b>specification</b> rather than a finished artefact. That is the honest boundary of what this system does alone — and it is also what a designer, an editor or a developer actually wants handed to them. The fifth, <code>image.generate</code>, makes a real picture, and can only do so through a connected MCP server.</p>
+
+  <table>
+    <tr><th style="width:32mm">Specialist</th><th style="width:30mm">Tool</th><th>What comes back</th></tr>
+    <tr>
+      <td><b>Graphic Designer</b></td><td class="mono">design.brief</td>
+      <td>Objective, audience, reading hierarchy, the exact set-ready copy, the palette drawn from the brand system, real pixel dimensions per placement, and what would break the system on this piece.</td>
+    </tr>
+    <tr>
+      <td><b>Video Editor</b></td><td class="mono">video.plan</td>
+      <td>Structure with second counts that add up to the target, the shot list, the burned-in caption script, music direction, and the cut per platform with aspect and duration.</td>
+    </tr>
+    <tr>
+      <td><b>Ad Designer</b></td><td class="mono">ad.concept</td>
+      <td>Genuinely different angles — not variants of one idea, which test nothing — each with hook, visual, primary text, headline and CTA; plus the platform specs, the test plan, and the claims that need checking first.</td>
+    </tr>
+    <tr>
+      <td><b>Copywriter</b></td><td class="mono">content.draft</td>
+      <td>The copy, the audience, the proof behind every claim, and a separate list of anything unevidenced. Spends on Claude.</td>
+    </tr>
+    <tr>
+      <td><b>SEO Specialist</b></td><td class="mono">company.audit</td>
+      <td>The technical faults costing rankings, ranked by what they cost, each with its evidence and its fix. Fix what is broken before chasing what is missing.</td>
+    </tr>
+    <tr>
+      <td><b>Designer / Ads</b></td><td class="mono">image.generate</td>
+      <td>An actual image, through whichever MCP server is connected. <b>Spends — level 4.</b> With none connected it refuses with a sentence saying what to connect.</td>
+    </tr>
+  </table>
+
+  <div class="callout">
+    <h4>Why <code>image.generate</code> names a capability rather than a provider</h4>
+    <p>A specialist’s toolkit says “this one draws”. Which service draws is a connection you make on the Tools screen and can change without touching an agent, a seed or a deploy. That is the same reason the tool catalogue has two halves: what a tool <em>does</em> stays in code where it can be reviewed, and <em>which servers are trusted and how far</em> is configuration, because that is a permission and permissions are yours.</p>
+  </div>
+</div>
+
+<!-- ===================== STAGE 7 HANDOVER ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 7 · Handover</div>
+    <h2>Finishing properly</h2>
+    <p class="lede">A project that is technically finished and not handed over is a project the client thinks is late. This stage is short on purpose.</p>
+  </div>
+
+  <div class="step">
+    <header><span class="id">7.1</span><h4>Hand over the work</h4><span class="who">Client Communications</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>Every milestone is complete and QA has signed off.</dd>
+      <dt>Does</dt><dd>Sends the handover: what was built, what changed for their business, what they need to do, and the files attached. Moves the project to <b>DELIVERED</b>.</dd>
+      <dt>Tools</dt><dd class="tools"><span>email.draft</span><span class="out">email.send</span><span>document.render</span><span>projects.read</span></dd>
+      <dt>Gate</dt><dd>Level 3.</dd>
+      <dt>Ends when</dt><dd>Project status is DELIVERED and the client has the deliverables.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">It would expose internal notes, internal costs, credentials, or another client’s data. Never.</dd>
+    </dl>
+  </div>
+
+  <div class="step auto">
+    <header><span class="id">7.2</span><h4>Ask for the thing you never ask for</h4><span class="who">Automatic</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The project reaches DELIVERED and a <code>PROJECT_COMPLETED</code> sequence is active.</dd>
+      <dt>Does</dt><dd>Runs the short series that asks for a testimonial and opens the care-plan conversation — the two things that are always meant to happen after a good delivery and almost never do.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="out">sequence.enrol</span></dd>
+      <dt>Gate</dt><dd>Level 3.</dd>
+      <dt>Ends when</dt><dd>They reply, or the series ends.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The delivery went badly. A testimonial request after a difficult project is worse than silence — check the project’s own record first.</dd>
+    </dl>
+  </div>
+</div>
+
+<!-- ===================== STAGE 8 MONEY ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 8 · Invoicing and collection</div>
+    <h2>Getting paid</h2>
+    <p class="lede">Not being paid is the failure everybody plans for. Being paid <em>twice</em> is the one that costs a client relationship, and three separate mechanisms exist to prevent it.</p>
+  </div>
+
+  <div class="step">
+    <header><span class="id">8.1</span><h4>Raise the invoice</h4><span class="who">Finance Controller</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A milestone completes, a project is delivered, or a retainer period comes due.</dd>
+      <dt>Does</dt><dd>Drafts the invoice against the accepted proposal, takes the next number in sequence, and renders the PDF on the letterhead.</dd>
+      <dt>Tools</dt><dd class="tools"><span>invoice.draft</span><span>finance.read</span><span>document.render</span></dd>
+      <dt>Gate</dt><dd>A write; level 3 unattended. Every figure must trace to a source record — never a number the agent worked out.</dd>
+      <dt>Ends when</dt><dd>The invoice exists at <b>DRAFT</b> with a number, a due date and line items.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Any non-routine charge, refund or dispute; or any figure it cannot trace. Never charges without a validated billing rule.</dd>
+    </dl>
+  </div>
+
+  <div class="step gate">
+    <header><span class="id">8.2</span><h4>Send it</h4><span class="who">You</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The draft exists.</dd>
+      <dt>Does</dt><dd>You send it. The PDF is rendered at send time, so a line item changed this morning is on the invoice that goes out this afternoon. A Stripe payment link is attached when Stripe is connected.</dd>
+      <dt>Tools</dt><dd class="tools"><span>email.draft</span><span class="out">email.send</span><span>document.render</span></dd>
+      <dt>Gate</dt><dd><b>A person, always.</b> Every invoice raised by the system is DRAFT, deliberately — a status that says “sent” with no email behind it is worse than one that waits.</dd>
+      <dt>Ends when</dt><dd>Status is <b>SENT</b>, then <b>VIEWED</b> when they open it.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Always.</dd>
+    </dl>
+  </div>
+
+  <div class="step auto">
+    <header><span class="id">8.3</span><h4>Chase it</h4><span class="who">Automatic</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The due date passes and the invoice is not PAID. Status moves to <b>OVERDUE</b>.</dd>
+      <dt>Does</dt><dd>Starts the <code>INVOICE_OVERDUE</code> series — reminders that escalate in tone on a schedule rather than in somebody’s head.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="out">sequence.enrol</span><span>finance.read</span></dd>
+      <dt>Gate</dt><dd>Level 3.</dd>
+      <dt>Ends when</dt><dd>Payment lands and the status moves to <b>PAID</b>, which stops the series.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The client has raised a dispute, or the amount is contested. A reminder sent into a dispute makes it worse.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">8.4</span><h4>Watch the money</h4><span class="who">Finance Controller</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>Weekly, or on request.</dd>
+      <dt>Does</dt><dd>Reconciles invoice status against payment status and reports: cash position, days sales outstanding, MRR, what is owed and how late, unusual discounts, low-margin projects, and spend spikes.</dd>
+      <dt>Tools</dt><dd class="tools"><span>finance.read</span><span>analytics.read</span><span>careplan.read</span></dd>
+      <dt>Gate</dt><dd>Read-only. Runs at any level.</dd>
+      <dt>Ends when</dt><dd>The report exists, with what needs a decision named.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Any figure it cannot trace to a record.</dd>
+    </dl>
+  </div>
+</div>

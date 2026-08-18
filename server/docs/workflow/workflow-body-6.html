@@ -1,0 +1,91 @@
+<!-- ===================== SECTION 12 ROLLOUT ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Section 12</div>
+    <h2>Commissioning it</h2>
+    <p class="lede">Everything above is built and every agent is at level 1 with dry run on. That is the correct starting position, not a limitation — the sensible order is to lift the gate where the cost of being wrong is lowest, watch the audit trail, and only then move up.</p>
+  </div>
+
+  <table>
+    <tr><th style="width:16mm">Phase</th><th style="width:44mm">Raise</th><th style="width:22mm">To</th><th>Watch for a week</th></tr>
+    <tr>
+      <td><b>1</b></td>
+      <td>Business Intelligence, Finance Controller, Risk &amp; QA, Board Chair, CEO</td>
+      <td>Level 2, dry run on</td>
+      <td>Nothing can go wrong: every tool they hold is read-only. This is where you find out whether the reports are worth reading.</td>
+    </tr>
+    <tr>
+      <td><b>2</b></td>
+      <td>Lead Lifecycle Manager, SEO Specialist, QA Tester</td>
+      <td>Level 2, dry run <b>off</b></td>
+      <td>Lead statuses start moving on their own. Check a day of them against what you would have decided.</td>
+    </tr>
+    <tr>
+      <td><b>3</b></td>
+      <td>The studio — Graphic Designer, Video Editor, Ad Designer, Copywriter, Web Developer</td>
+      <td>Level 2, dry run off</td>
+      <td>Briefs, plans and pages arriving. None of it reaches a client; all of it is judged on whether a person would use it as-is.</td>
+    </tr>
+    <tr>
+      <td><b>4</b></td>
+      <td>Outbound Communications, Client Communications, Support Desk</td>
+      <td>Level 3</td>
+      <td><b>Email starts leaving the building.</b> Start with one sequence, on a filter you would defend, to fewer than twenty people.</td>
+    </tr>
+    <tr>
+      <td><b>5</b></td>
+      <td>Delivery Director, Automation Engineer, Commercial Operations</td>
+      <td>Level 3</td>
+      <td>Tasks assigning themselves and proposals drafting themselves. Invoices still stop at DRAFT — that never changes.</td>
+    </tr>
+    <tr>
+      <td><b>6</b></td>
+      <td>Lead Lifecycle Manager only</td>
+      <td>Level 4</td>
+      <td><b>Money.</b> Capture runs start on their own schedule against the budget ceiling. Check the spend daily for the first week.</td>
+    </tr>
+  </table>
+
+  <div class="callout">
+    <h4>The two numbers to keep on the Agents screen</h4>
+    <p><b>“Can act unattended”</b> counts the agents above level 2 or with dry run off. It should only ever go up because you decided it should. <b>Tool spend, last thirty days</b> is on the Tools screen: every call that cost money, with the agent that made it. If either surprises you, the audit trail has the answer, because every call is in it.</p>
+  </div>
+
+  <h3 class="band">Still to connect before some of this runs</h3>
+  <table>
+    <tr><th style="width:38mm">Needs</th><th style="width:44mm">Unblocks</th><th>Where</th></tr>
+    <tr><td>Anthropic API key</td><td>Every drafter and writer: <code>email.draft</code>, <code>proposal.draft</code>, <code>content.draft</code>, and all four studio specification tools</td><td>Settings → AI analyst</td></tr>
+    <tr><td>Mailbox (Hostinger token, or SMTP)</td><td>All of Stage 3, 5.3, 7.1, 8.2, 8.3</td><td>Settings → Email</td></tr>
+    <tr><td>Apify token</td><td>Stage 1 door A entirely</td><td>Settings → Lead capture</td></tr>
+    <tr><td>Google account with calendar scope</td><td>4.1, 9.3 — booking anything</td><td>Settings → Google</td></tr>
+    <tr><td>Stripe secret key</td><td>Payment links on invoices, and reconciling what has actually been paid</td><td>Settings → Payments</td></tr>
+    <tr><td>An MCP server that draws</td><td><code>image.generate</code> for the Graphic and Ad designers</td><td>Tools → Connected tools</td></tr>
+    <tr><td>GitHub token</td><td>6.1.a and 6.1.c raising issues against real repositories</td><td>Settings → Developer</td></tr>
+    <tr><td>Slack webhook or bot token</td><td>Escalations interrupting you rather than waiting in a screen</td><td>Settings → Alerts</td></tr>
+  </table>
+</div>
+
+<!-- ===================== APPENDIX A ===================== -->
+<div class="stage newpage">
+  <div class="stage-head">
+    <div class="no">Appendix A</div>
+    <h2>Every agent, and what it may reach</h2>
+    <p class="lede">The seeded toolkit for each agent. This is the grant the invoker checks before every call — widen or narrow it on the agent’s own card, or from the tool’s side on the Tools screen. Both write the same field.</p>
+  </div>
+  __AGENTTABLE__
+</div>
+
+<!-- ===================== APPENDIX B ===================== -->
+<div class="stage newpage">
+  <div class="stage-head">
+    <div class="no">Appendix B</div>
+    <h2>Every tool, and what it costs to be wrong</h2>
+    <p class="lede">The full catalogue. <b>Outward</b> means a call is visible to somebody outside the company and needs level 3. <b>Spends</b> means it charges money and needs level 4. Anything unmarked is read-only and runs at any level.</p>
+  </div>
+  __TOOLTABLE__
+
+  <div class="callout">
+    <h4>Adding a tool</h4>
+    <p>Two ways, and they are deliberately different. <b>In code</b> — one entry in the catalogue, which inherits the permission model, the audit trail and both screens by existing. <b>By connection</b> — an MCP server, whose tools join the same catalogue as <code>mcp.&lt;server&gt;.&lt;tool&gt;</code> and pass every gate above on identical terms. What a tool <em>does</em> stays reviewable in a diff; which servers are trusted, and how far, is yours to set.</p>
+  </div>
+</div>

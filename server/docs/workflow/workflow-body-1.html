@@ -1,0 +1,172 @@
+<!-- ===================== COVER ===================== -->
+<div class="cover">
+  <img class="lockup" src="__LOGO_DARK__" alt="Dakyworld">
+  <div class="rule"><i></i><i></i></div>
+  <h1>The Agent Master&nbsp;Workflow</h1>
+  <p class="sub">Every action the agent workforce takes, from the moment a business is found to the month a retainer renews — what starts it, who owns it, which tools it calls, what stops it, and where it ends.</p>
+  <nav class="contents">
+    <div class="col">
+      <b>Before anything runs</b>
+      <span>00 &middot; How to read this</span>
+      <span>01 &middot; The rules that govern every step</span>
+      <span>02 &middot; The clock</span>
+      <span>03 &middot; Who reports to whom</span>
+      <span>04 &middot; The whole thing, on one page</span>
+    </div>
+    <div class="col">
+      <b>The nine stages</b>
+      <span>1 &middot; Acquisition</span>
+      <span>2 &middot; Qualification</span>
+      <span>3 &middot; Outreach</span>
+      <span>4 &middot; Consultation and proposal</span>
+      <span>5 &middot; Onboarding</span>
+      <span>6 &middot; Delivery</span>
+      <span>7 &middot; Handover</span>
+      <span>8 &middot; Invoicing and collection</span>
+      <span>9 &middot; The retainer</span>
+    </div>
+    <div class="col">
+      <b>Standing rules</b>
+      <span>The support loop</span>
+      <span>11 &middot; What always stops and asks</span>
+      <span>12 &middot; Commissioning it</span>
+      <span>A &middot; Every agent, and what it may reach</span>
+      <span>B &middot; Every tool, and what it costs to be wrong</span>
+    </div>
+  </nav>
+  <div class="meta">
+    <span>Document<b>Operating standard</b></span>
+    <span>Applies to<b>27 agents · 39 tools</b></span>
+    <span>Version<b>1.0 — 18 Aug 2026</b></span>
+  </div>
+</div>
+
+<!-- ===================== 00 · HOW TO READ ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Section 00</div>
+    <h2>How to read this</h2>
+    <p class="lede">Every step below answers the same six questions in the same order. If a step cannot answer all six it is not a step — it is a wish, and it does not belong in a workflow.</p>
+  </div>
+
+  <table>
+    <tr><th style="width:26mm">Field</th><th>What it means, and why it is there</th></tr>
+    <tr><td><b>Starts when</b></td><td>The exact trigger. A clock tick, a status change, an inbound event, or a person pressing something. A step with no trigger never runs; a step with two triggers runs twice.</td></tr>
+    <tr><td><b>Does</b></td><td>The work itself, in one or two sentences. Written so that somebody reading only this column can tell whether it happened.</td></tr>
+    <tr><td><b>Tools</b></td><td>The exact catalogue keys called. These are real: they match <code>server/src/services/tools/catalogue.ts</code>, and an agent that has not been granted one cannot run the step.</td></tr>
+    <tr><td><b>Gate</b></td><td>What has to be true for the step to take effect rather than merely be prepared. This is the autonomy level, the dry-run flag, and any spend ceiling.</td></tr>
+    <tr><td><b>Ends when</b></td><td>The state change that proves it finished. Almost always a status moving, a record being written, or a document existing.</td></tr>
+    <tr><td><b>Stops and asks if</b></td><td>The conditions under which the agent must not proceed. This column is the reason the rest of the document is safe.</td></tr>
+  </table>
+
+  <h3 class="band">The three kinds of step</h3>
+  <div class="legend">
+    <span><i style="background:#B8FF3D"></i><b>Automatic</b> — the clock or an event fires it. Nobody asks.</span>
+    <span><i style="background:#3157FF"></i><b>Agent</b> — an agent does the work, within its gate.</span>
+    <span><i style="background:#08101F"></i><b>Decision</b> — a person decides. The agent prepares and waits.</span>
+  </div>
+
+  <div class="callout">
+    <h4>Nothing in this document is live until you raise it</h4>
+    <p>Every agent ships at <b>autonomy 1 with dry run on</b>. At that setting each step below still runs, still reads the record, still produces its output — and stops before the output reaches a client, a card or a live system, showing you what it would have done instead. That is not a limitation to be worked around; it is how the workflow is meant to be commissioned. Section 12 sets out the order to lift it in.</p>
+  </div>
+</div>
+
+<!-- ===================== 01 · OPERATING RULES ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Section 01</div>
+    <h2>The rules that govern every step</h2>
+    <p class="lede">Five rules apply to all twenty-seven agents and all thirty-nine tools. They are enforced in one place — <code>services/tools/invoke.ts</code> — rather than repeated in each tool, which is what makes a new tool safe on the day it is added.</p>
+  </div>
+
+  <h3 class="band">Rule 1 · The autonomy ladder</h3>
+  <div class="ladder">
+    <div class="rung"><span class="lvl">0</span><span class="nm">Observe</span><span>Reads and reports. Takes no action of any kind.</span></div>
+    <div class="rung seed"><span class="lvl">1</span><span class="nm">Draft</span><span>Prepares work. Nothing leaves the building. <b>Every agent seeds here.</b></span></div>
+    <div class="rung"><span class="lvl">2</span><span class="nm">Recommend</span><span>Chooses an action and explains why. A person decides.</span></div>
+    <div class="rung"><span class="lvl">3</span><span class="nm">Execute</span><span>Acts outside the company without asking — an email leaves, a meeting is booked, an issue is opened. <b>The threshold for every outward-facing tool.</b></span></div>
+    <div class="rung"><span class="lvl">4</span><span class="nm">Autonomous</span><span>Spends money. Runs whole routine workflows; only escalations reach you. <b>The threshold for every tool that charges.</b></span></div>
+    <div class="rung locked"><span class="lvl">5</span><span class="nm">Delegated</span><span>Material financial and legal authority. Not settable from the app at all — it needs a recorded owner decision first, and the API refuses it.</span></div>
+  </div>
+
+  <h3 class="band">Rule 2 · The four gates, in order</h3>
+  <p>Every tool call passes through the same four checks before the handler runs. A call that fails any of them is refused <em>and recorded</em> — the refusals are what answer “why did nothing happen last night”.</p>
+  <table>
+    <tr><th style="width:8mm">#</th><th style="width:42mm">Gate</th><th>Refuses when</th></tr>
+    <tr><td>1</td><td><b>Readiness</b></td><td>The integration behind the tool has no credential. The refusal names the exact settings tab to paste it into.</td></tr>
+    <tr><td>2</td><td><b>Grant</b></td><td>The agent’s toolkit does not include this key. An agent with an empty toolkit can call nothing at all.</td></tr>
+    <tr><td>3</td><td><b>Autonomy</b></td><td>The tool is outward-facing and the agent is below level 3, or it spends and the agent is below level 4. This does not error — it <em>downgrades the call to a preview</em>, because a prepared action a person can approve is the useful outcome.</td></tr>
+    <tr><td>4</td><td><b>Schema</b></td><td>The arguments are not the declared shape. A model will confidently pass a string where a date was wanted; this catches it before the handler does something strange with it.</td></tr>
+  </table>
+
+  <h3 class="band">Rule 3 · Dry run is a floor, not a default</h3>
+  <p>An agent’s <code>dryRun</code> flag sits <em>above</em> its autonomy level. When it is on, every write, every outward action and every spend is prepared and stopped — and an owner asking for a real run from the call site cannot switch it off. Turning dry run off is a deliberate act on that agent’s own card, and it is the single most consequential control in the system.</p>
+
+  <h3 class="band">Rule 4 · Everything is written down</h3>
+  <p>Every call lands in <code>ToolCall</code>: which agent, which tool, the arguments, the result, whether it was a dry run, what it cost, how long it took, and — for a refusal — the reason. Nothing an agent does is invisible, including the things it was stopped from doing.</p>
+
+  <h3 class="band">Rule 5 · Money is named</h3>
+  <p>A tool that can spend is flagged as such in the catalogue, and that flag is not decoration: it raises the autonomy threshold to 4, records the cost against the call, and is checked against the ceiling in <code>agents.maxCallUsd</code>. Four tools spend today.</p>
+  <div class="tools" style="margin-bottom:5mm">
+    <span class="spend">capture.run</span><span class="spend">capture.plan</span><span class="spend">proposal.draft</span><span class="spend">content.draft</span><span class="spend">image.generate</span>
+  </div>
+
+  <div class="callout warn">
+    <h4>The one thing that is never delegated</h4>
+    <p>No agent can grant a permission — not to itself, not to another agent. <b>AI People Operations</b> can recommend that a toolkit be widened or narrowed and must escalate it; it cannot act on its own recommendation. The grant model has exactly one writer, and it is you.</p>
+  </div>
+</div>
+
+<!-- ===================== 02 · THE CLOCK ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Section 02</div>
+    <h2>The clock</h2>
+    <p class="lede">Five jobs run without anyone asking. They tick once a minute, are settled independently — lead capture failing must not stop an invoice going out — and each advances its own next-due marker <em>before</em> starting work, so a crash cannot be retried in a loop and a restart cannot fire the same slot twice.</p>
+  </div>
+
+  <table>
+    <tr><th style="width:34mm">Job</th><th style="width:30mm">Fires</th><th>What it does, and its safety rail</th></tr>
+    <tr>
+      <td><b>Lead capture</b></td>
+      <td>Per source, at its own local times</td>
+      <td>Starts any scraper source whose next run is due. A slot missed by more than <b>six hours</b> is skipped rather than stampeded through on boot. Refuses if the monthly budget or the concurrency limit is reached.</td>
+    </tr>
+    <tr>
+      <td><b>Care plan billing</b></td>
+      <td>06:00 local, on each plan’s billing day</td>
+      <td>Raises the retainer invoice. At most <b>three</b> missed months are billed after an outage. A duplicate is a database error, not a duplicate.</td>
+    </tr>
+    <tr>
+      <td><b>Scheduled email</b></td>
+      <td>Every minute</td>
+      <td>Sends anything whose scheduled time has passed, up to 25 per tick. Suppression is re-checked immediately before the socket opens.</td>
+    </tr>
+    <tr>
+      <td><b>Sequences</b></td>
+      <td>Every minute</td>
+      <td>Sends the next due step of every active enrolment, inside that sequence’s send window only.</td>
+    </tr>
+    <tr>
+      <td><b>Housekeeping</b></td>
+      <td>Every minute</td>
+      <td>Resumes interrupted capture runs and prunes run history past its retention window.</td>
+    </tr>
+  </table>
+
+  <div class="callout">
+    <h4>Why in-process rather than a cron container</h4>
+    <p>Dakyworld OS runs as a single Railway service. One interval inside it has no moving parts to keep in step with a deploy — no second image, no second set of environment variables, and no way for the schedule to be running a version of the code the app is not.</p>
+  </div>
+</div>
+
+<!-- ===================== 03 · ORG CHART ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Section 03</div>
+    <h2>Who reports to whom</h2>
+    <p class="lede">Three working tiers and one governing one. The distinction that matters is between agents whose output is a <em>decision</em> and agents whose output is a <em>thing</em>: the first three tiers decide, the specialists make. Every escalation runs up this chart, and an agent with nobody above it has nowhere to stop and ask.</p>
+  </div>
+  __ORGCHART__
+</div>

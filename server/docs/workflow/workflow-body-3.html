@@ -1,0 +1,175 @@
+<!-- ===================== STAGE 3 OUTREACH ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 3 · Outreach</div>
+    <h2>The first email, and the four that follow it</h2>
+    <p class="lede">This is the stage that most obviously pays for the whole system, and the one most able to do damage. Every control in it exists because outbound email done badly costs a sending domain its reputation — which is not recoverable in the same week.</p>
+  </div>
+
+  <div class="step auto">
+    <header><span class="id">3.1</span><h4>Enrol in a sequence</h4><span class="who">Automatic</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A lead is created, and an active sequence has trigger <code>LEAD_CREATED</code> with a filter the lead matches. Six other triggers exist — see the table below.</dd>
+      <dt>Does</dt><dd>Creates an enrolment and schedules step 1 into the next open send slot.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="out">sequence.enrol</span><span>suppression.check</span></dd>
+      <dt>Gate</dt><dd><b>Level 3.</b> Enrolling somebody is committing to write to them.</dd>
+      <dt>Ends when</dt><dd>An enrolment exists at ACTIVE with a <code>nextSendAt</code>.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">There is no email address, the address is suppressed, or the person is already in this sequence. All three report rather than failing the batch.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">3.2</span><h4>Write the email</h4><span class="who">Outbound Communications Manager</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A step comes due and is marked to be written rather than templated.</dd>
+      <dt>Does</dt><dd>Drafts from the audit findings and the record — and <em>only</em> from those. The facts it may use are shown to whoever is reading, in the same words the drafter saw, which is what makes the difference between a tailored email and a mail merge visible before it is sent rather than after.</dd>
+      <dt>Tools</dt><dd class="tools"><span>email.draft</span><span>lead.read</span><span>company.audit</span></dd>
+      <dt>Gate</dt><dd>Drafting writes nothing outward. It runs at level 1.</dd>
+      <dt>Ends when</dt><dd>A subject and a body exist, with the rationale for the angle taken.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The facts are thin. The instruction is to write a <em>shorter</em> email, never to fill the space with claims.</dd>
+    </dl>
+  </div>
+
+  <div class="step auto">
+    <header><span class="id">3.3</span><h4>Send it</h4><span class="who">Clock</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The minute tick finds a scheduled message whose time has passed, or a due sequence step inside its window.</dd>
+      <dt>Does</dt><dd>Re-checks suppression, claims the message as SENDING <em>before</em> the network call, renders on the current letterhead, attaches the logo as an inline part, and sends. A cold approach carries a one-click unsubscribe in its headers; a client being handed their finished website does not.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="out">email.send</span></dd>
+      <dt>Gate</dt><dd><b>Level 3.</b> Safe to call twice: a message already SENT returns without doing anything, which is what stops the scheduler and the Send button colliding.</dd>
+      <dt>Ends when</dt><dd>Status is SENT with a timestamp, and the send is logged to the lead’s history as a contact.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The address was suppressed between drafting and sending — the message is cancelled, not sent and not silently dropped. Suppression is checked at send, never at compose, because somebody can unsubscribe in between.</dd>
+    </dl>
+  </div>
+
+  <div class="step auto">
+    <header><span class="id">3.4</span><h4>Stop the moment they reply</h4><span class="who">Automatic</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A reply is logged, an unsubscribe link is clicked, or an address is added to suppression by hand.</dd>
+      <dt>Does</dt><dd>Stops <em>every</em> sequence that person is in, not just the one that reached them.</dd>
+      <dt>Tools</dt><dd class="tools"><span>sequence.stop</span><span>suppression.check</span></dd>
+      <dt>Gate</dt><dd>None. Stopping is always allowed, at any level, including 0.</dd>
+      <dt>Ends when</dt><dd>Every enrolment for that person is REPLIED or STOPPED.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Never. An opt-out is honoured even when the signature does not match — refusing one over a token mismatch is indefensible.</dd>
+    </dl>
+  </div>
+
+  <h3 class="band">The seven triggers a sequence can start on</h3>
+  <table>
+    <tr><th style="width:52mm">Trigger</th><th style="width:30mm">Fires on</th><th>What it is for</th></tr>
+    <tr><td class="mono">LEAD_CREATED</td><td>A new lead</td><td>The cold approach, on a filter — “website missing, score over 60”.</td></tr>
+    <tr><td class="mono">LEAD_STATUS_CHANGED</td><td>Pipeline movement</td><td>A lead going QUALIFIED starts a different, warmer series.</td></tr>
+    <tr><td class="mono">PROPOSAL_SENT</td><td>A proposal going out</td><td>The follow-up nobody remembers on day 3 and day 8.</td></tr>
+    <tr><td class="mono">PROJECT_COMPLETED</td><td>Delivery finishing</td><td>The testimonial ask, and the care-plan conversation.</td></tr>
+    <tr><td class="mono">INVOICE_OVERDUE</td><td>A due date passing</td><td>Payment reminders that escalate in tone on a schedule.</td></tr>
+    <tr><td class="mono">CARE_PLAN_REVIEW_DUE</td><td>A review falling due</td><td>Booking the periodic review before the client notices it is late.</td></tr>
+    <tr><td class="mono">MANUAL</td><td>You enrol them</td><td>Everything that is a judgement call.</td></tr>
+  </table>
+
+  <div class="callout warn">
+    <h4>The send window is not a preference</h4>
+    <p>Sequences send inside a window — <b>08:00–18:00, weekdays only, Africa/Accra</b> by default — computed in the sequence’s own timezone rather than the server’s. A step that comes due at 02:00 on a Sunday waits until Monday morning. Business email arriving at 3am reads as automation, and automation is easier to ignore and easier to report.</p>
+  </div>
+</div>
+
+<!-- ===================== STAGE 4 CONSULTATION → PROPOSAL ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 4 · Consultation and proposal</div>
+    <h2>Turning a conversation into a number</h2>
+    <p class="lede">The proposal writer is not allowed to invent a price. What it may quote is a fixed catalogue, and everything it says about the reader has to trace to something the audit observed — because a prospect who checks one claim and finds it true believes the rest, and one who finds an invented claim stops reading.</p>
+  </div>
+
+  <div class="step">
+    <header><span class="id">4.1</span><h4>Book the consultation</h4><span class="who">Sales Director</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A lead replies asking for a call, or accepts the meeting request in the sequence.</dd>
+      <dt>Does</dt><dd>Reads free time, offers slots, and creates the calendar event with the invitation.</dd>
+      <dt>Tools</dt><dd class="tools"><span>calendar.read</span><span class="out">calendar.write</span></dd>
+      <dt>Gate</dt><dd><b>Level 3</b> to actually book. Below it the slots are proposed and the invitation waits.</dd>
+      <dt>Ends when</dt><dd>An event exists and the lead has the invitation.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The Google connection predates calendar access — reconnecting is the fix, and the refusal says so rather than failing at the moment of booking.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">4.2</span><h4>Write the proposal</h4><span class="who">Commercial Operations</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The consultation has happened and the scope is understood.</dd>
+      <dt>Does</dt><dd>Writes findings-with-evidence, scope, and an investment table drawn from the published catalogue: website builds from <b>GHS 35,000</b>; care plans at <b>GHS 5,000 / 12,500 / 25,000+</b> a month. Anything with no published price says the number comes after the call rather than guessing one.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="spend">proposal.draft</span><span>lead.read</span><span>company.audit</span></dd>
+      <dt>Gate</dt><dd>Spends on Claude, so <b>level 4</b> to run unattended. Below that it is priced and prepared.</dd>
+      <dt>Ends when</dt><dd>A proposal exists at <b>DRAFT</b> with a price, a tier and an expiry.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Custom pricing, unclear scope, unusual terms — all three are approval-gated by policy, not by autonomy level. Anything it cannot evidence goes into a list of claims to check rather than into the document.</dd>
+    </dl>
+  </div>
+
+  <div class="step gate">
+    <header><span class="id">4.3</span><h4>Read it and send it</h4><span class="who">You</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The draft exists.</dd>
+      <dt>Does</dt><dd>You read it. The PDF and the Word cut are rendered on the letterhead; the covering email attaches the proposal, which is rendered <em>at send time</em> so the client receives the document as it stands then, not as it stood when the email was drafted.</dd>
+      <dt>Tools</dt><dd class="tools"><span>document.render</span><span>email.draft</span><span class="out">email.send</span></dd>
+      <dt>Gate</dt><dd><b>A person, always.</b> A proposal is a commercial commitment under your name.</dd>
+      <dt>Ends when</dt><dd>Status is <b>SENT</b>. A <code>PROPOSAL_SENT</code> sequence picks up the follow-up from here.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Always. This step is the gate.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">4.4</span><h4>Follow up, then close</h4><span class="who">Outbound Communications</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The proposal reaches SENT.</dd>
+      <dt>Does</dt><dd>Runs the follow-up series, stopping instantly on any reply. Status moves SENT → VIEWED → ACCEPTED as the client engages.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="out">sequence.enrol</span><span>email.draft</span><span>sequence.stop</span></dd>
+      <dt>Gate</dt><dd>Level 3 to send.</dd>
+      <dt>Ends when</dt><dd><b>WON</b> — go to Stage 5. Or <b>LOST</b>, with the objection recorded, and the lead becomes eligible for reactivation later.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Any negotiation on price. Discounting is never an agent decision.</dd>
+    </dl>
+  </div>
+</div>
+
+<!-- ===================== STAGE 5 ONBOARDING ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 5 · Onboarding</div>
+    <h2>From a signature to a plan</h2>
+    <p class="lede">The gap between “yes” and “work starting” is where new clients decide whether they made a mistake. Everything here exists to close it inside a day.</p>
+  </div>
+
+  <div class="step">
+    <header><span class="id">5.1</span><h4>Convert the lead</h4><span class="who">Commercial Operations</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A proposal reaches WON.</dd>
+      <dt>Does</dt><dd>Creates the client record, links the proposal, and moves the lead to <b>CONVERTED</b>. The lead is not deleted — it is the record of how this client was found.</dd>
+      <dt>Tools</dt><dd class="tools"><span>lead.update</span><span>client.read</span></dd>
+      <dt>Gate</dt><dd>A write; level 3 to take effect unattended.</dd>
+      <dt>Ends when</dt><dd>A client exists with the proposal attached.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">A client with the same name or domain already exists — merging two client records afterwards is far worse than pausing here.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">5.2</span><h4>Open the project</h4><span class="who">Delivery Director</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The client exists.</dd>
+      <dt>Does</dt><dd>Creates the project at <b>PLANNING</b>, breaks the accepted scope into milestones and tasks, and assigns each to the specialist whose craft it is — matched against the <code>skills</code> on the roster, not against who is free.</dd>
+      <dt>Tools</dt><dd class="tools"><span>projects.read</span><span>tasks.write</span><span>time.read</span></dd>
+      <dt>Gate</dt><dd>Writes to tasks; level 3 unattended.</dd>
+      <dt>Ends when</dt><dd>Every milestone has tasks, an owner and a date.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The scope as written cannot be broken into tasks — that means it was not agreed, it was described.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">5.3</span><h4>Welcome them properly</h4><span class="who">Client Communications</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The project reaches PLANNING.</dd>
+      <dt>Does</dt><dd>Sends the onboarding email: what happens next, what is needed from them, who they talk to, and when the first thing lands.</dd>
+      <dt>Tools</dt><dd class="tools"><span>email.draft</span><span class="out">email.send</span><span>client.read</span></dd>
+      <dt>Gate</dt><dd>Level 3. Carries no unsubscribe link — a client being onboarded is not being marketed to.</dd>
+      <dt>Ends when</dt><dd>The email is SENT and logged against the client.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">It would name a date the project data does not support. Never promise a date the plan does not contain.</dd>
+    </dl>
+  </div>
+</div>

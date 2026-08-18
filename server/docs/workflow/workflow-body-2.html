@@ -1,0 +1,146 @@
+<!-- ===================== 04 · THE WHOLE THING ON ONE PAGE ===================== -->
+<div class="stage newpage">
+  <div class="stage-head">
+    <div class="no">Section 04</div>
+    <h2>The whole thing, on one page</h2>
+    <p class="lede">Nine stages from a business nobody has heard of to a retainer renewing itself. Each row names who owns the stage, the state it takes in and the state it hands on — and every one of those states is a real status on a real record, not a label invented for this diagram.</p>
+  </div>
+  __MASTERFLOW__
+</div>
+
+<!-- ===================== 05 · STAGE 1 ACQUISITION ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 1 · Acquisition</div>
+    <h2>Getting a business into the pipeline</h2>
+    <p class="lede">Three doors, and only one of them is a person typing. Everything that arrives is scored, de-duplicated against everything already known, and filed with the run that found it — so “where did this lead come from” is answerable a year later.</p>
+  </div>
+
+  <h3 class="band">Door A — Scheduled capture</h3>
+
+  <div class="step auto">
+    <header><span class="id">1.A.1</span><h4>A capture source comes due</h4><span class="who">Clock</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The minute tick finds a source whose <code>nextRunAt</code> has passed. Each source carries its own local times and timezone.</dd>
+      <dt>Does</dt><dd>Advances <code>nextRunAt</code> <em>first</em>, then starts the run. A slot missed by more than six hours is skipped rather than replayed — coming back from an outage should not mean six hours of scrapes firing at once.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="none">scheduler — not an agent action</span></dd>
+      <dt>Gate</dt><dd>Refused outright if the month’s Apify spend is at the budget ceiling, or the concurrent-run limit is reached. Neither is negotiable by an agent.</dd>
+      <dt>Ends when</dt><dd>A <code>ScraperRun</code> row exists with a run id from Apify.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">No Apify token is connected, or the budget is exhausted. The run is not attempted and the reason is recorded.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">1.A.2</span><h4>Price it before it runs</h4><span class="who">Lead Lifecycle Manager</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A capture is being planned, by hand or by an agent.</dd>
+      <dt>Does</dt><dd>Reads the actor’s <em>published rates from Apify at run time</em> and turns the input into a count of billable events. A hard ceiling is derived for any pay-per-event run that has not been capped by hand.</dd>
+      <dt>Tools</dt><dd class="tools"><span>capture.cost</span><span class="spend">capture.plan</span><span>capture.spend</span></dd>
+      <dt>Gate</dt><dd><code>capture.plan</code> asks Claude and therefore spends; level 4 to run it for real, otherwise it is priced and shown.</dd>
+      <dt>Ends when</dt><dd>An estimate exists, with the ceiling that will be enforced.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The estimate exceeds the per-run ceiling. Never re-priced from memory: actor rates change, and a stale number in a spending guard fails silently.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">1.A.3</span><h4>Run the capture</h4><span class="who">Lead Lifecycle Manager</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>1.A.1 fires, or a person presses Run, or an agent at level 4 decides to.</dd>
+      <dt>Does</dt><dd>Executes the actor, normalises each row, builds a de-duplication key, scores it, and writes the ones that are new.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="spend">capture.run</span></dd>
+      <dt>Gate</dt><dd><b>Level 4.</b> This is the tool that spends real money on every call, and the only one an operational agent holds.</dd>
+      <dt>Ends when</dt><dd>The run records its tally: fetched, created, skipped as duplicates, filtered below the score floor.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The run would exceed its derived charge ceiling, or another run is already in flight for the same source.</dd>
+    </dl>
+  </div>
+
+  <div class="step auto">
+    <header><span class="id">1.A.4</span><h4>Score and file</h4><span class="who">Automatic</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>Each row of a run is normalised.</dd>
+      <dt>Does</dt><dd>Scores 0–100 from what is actually known: a contact email is worth the most, then a phone number, then a website — and a business on a free page-builder domain scores <em>higher</em> than one on a proper domain, because it is the strongest buying signal Dakyworld has. Review count and rating add credibility; a business with neither address nor city loses nothing but gains nothing.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="none">scoring — part of the run</span></dd>
+      <dt>Gate</dt><dd>None. Scoring reads and writes nothing outside the lead itself.</dd>
+      <dt>Ends when</dt><dd>The lead exists at status <b>NEW</b> with a score, a source, and the run that found it.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Below the source’s score floor it is not created at all. A run that creates nothing is a run whose floor is too high for the segment — the report says so rather than reporting failure.</dd>
+    </dl>
+  </div>
+
+  <h3 class="band">Door B — The website form</h3>
+
+  <div class="step auto">
+    <header><span class="id">1.B.1</span><h4>An enquiry arrives</h4><span class="who">Integration Architect</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A signed POST lands on the webhook endpoint from the contact form on dakyworld.com, a Typeform, or a Zap.</dd>
+      <dt>Does</dt><dd>Records the raw payload first, then reads the fields whatever the sender decided to call them — <code>name</code>, <code>full_name</code> and <code>Your Name</code> are all the same field, and rejecting an enquiry over a field name loses a real customer. Creates a scored lead, de-duplicated against everything the scrapers have already found.</dd>
+      <dt>Tools</dt><dd class="tools"><span>webhooks.read</span><span class="out">webhook.dispatch</span></dd>
+      <dt>Gate</dt><dd>Intake is not an agent action and needs no autonomy. Dispatching an event <em>outward</em> is, and needs level 3.</dd>
+      <dt>Ends when</dt><dd>A lead exists at <b>NEW</b>, and the event is marked handled with the lead id.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The signature does not match: the event is still recorded, flagged unverified, and not acted on. A run of these is either a misconfigured sender or somebody probing.</dd>
+    </dl>
+  </div>
+
+  <h3 class="band">Door C — A spreadsheet</h3>
+
+  <div class="step gate">
+    <header><span class="id">1.C.1</span><h4>Import a list</h4><span class="who">You</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A workbook is uploaded or picked out of Google Drive.</dd>
+      <dt>Does</dt><dd>Claude reads the grids, proposes which table is the data and what each column means, and shows a preview. You correct the plan; the commit writes the leads.</dd>
+      <dt>Tools</dt><dd class="tools"><span class="none">imports — Owner-only, not agent-callable</span></dd>
+      <dt>Gate</dt><dd><b>A person, always.</b> No agent can import a list — the blast radius of a mis-mapped column across 3,000 rows is too large to delegate.</dd>
+      <dt>Ends when</dt><dd>The batch exists as a <code>LeadGroup</code>, and every lead carries the import it came from.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Always. The plan is never committed without being looked at.</dd>
+    </dl>
+  </div>
+
+  <div class="callout">
+    <h4>What all three doors share</h4>
+    <p>Whichever door a business comes through, it lands as a <b>NEW</b> lead with a score, a de-duplication key, and a traceable origin — and it immediately becomes eligible for any active sequence whose trigger is <code>LEAD_CREATED</code> and whose filter it matches. That single fact is what makes Stage 3 automatic rather than remembered.</p>
+  </div>
+</div>
+
+<!-- ===================== 06 · STAGE 2 QUALIFICATION ===================== -->
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Stage 2 · Qualification</div>
+    <h2>Deciding who is worth writing to</h2>
+    <p class="lede">A score says how reachable a business is. It does not say whether they need anything. That is what the audit is for — and it is also what makes the first email specific rather than a mail merge, because every claim in it traces to something the audit actually observed.</p>
+  </div>
+
+  <div class="step">
+    <header><span class="id">2.1</span><h4>Audit the business</h4><span class="who">Lead Lifecycle Manager</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A lead reaches <b>NEW</b> with a website or a domain to look at.</dd>
+      <dt>Does</dt><dd>A live check of the site and the domain: TLS and certificate validity, whether the site is served over plain HTTP, mail authentication (SPF, DKIM, DMARC), DNS, CMS version and exposed platform detail, mobile usability, and whether the business is running on a free mailbox.</dd>
+      <dt>Tools</dt><dd class="tools"><span>company.audit</span><span>security.scan</span><span>lead.read</span></dd>
+      <dt>Gate</dt><dd>Read-only. Runs at any level, including 0.</dd>
+      <dt>Ends when</dt><dd>Findings exist, each with the evidence behind it.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Nothing. An audit that finds little is a result — it means write a shorter email, not invent a longer one.</dd>
+    </dl>
+  </div>
+
+  <div class="step">
+    <header><span class="id">2.2</span><h4>Qualify or disqualify</h4><span class="who">Lead Lifecycle Manager</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>The audit returns.</dd>
+      <dt>Does</dt><dd>Moves the lead to <b>QUALIFYING</b>, then to <b>QUALIFIED</b> when there is an identifiable technology problem Dakyworld sells the fix for, or <b>DISQUALIFIED</b> when there is not. Writes why, in one line, either way.</dd>
+      <dt>Tools</dt><dd class="tools"><span>lead.update</span><span>lead.read</span></dd>
+      <dt>Gate</dt><dd>A write to a lead. Below level 3 with dry run on it proposes the change and shows the reason; the status does not move until somebody agrees.</dd>
+      <dt>Ends when</dt><dd><code>LeadStatus</code> is QUALIFIED or DISQUALIFIED, with a recorded reason.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">The evidence contradicts itself, or the only reason to qualify is the score. A high score with no findings is a reachable business with no problem to solve.</dd>
+    </dl>
+  </div>
+
+  <div class="step gate">
+    <header><span class="id">2.3</span><h4>Is this worth doing at all?</h4><span class="who">Sales Director</span></header>
+    <dl>
+      <dt>Starts when</dt><dd>A batch of leads reaches QUALIFIED.</dd>
+      <dt>Does</dt><dd>Ranks them by the evidence rather than the score, and recommends the smallest credible next step for each — which is almost always the thirty-minute consultation, not a proposal.</dd>
+      <dt>Tools</dt><dd class="tools"><span>crm.read</span><span>lead.read</span><span>calendar.read</span></dd>
+      <dt>Gate</dt><dd>Read-only; the output is a recommendation whatever the level.</dd>
+      <dt>Ends when</dt><dd>Each opportunity has a named next step, an owner and a date.</dd>
+      <dt>Stops and asks if</dt><dd class="stop">Anything reputationally risky, or a business whose pain is real but outside what Dakyworld sells — no on-site work, no hardware, no office networking, ever.</dd>
+    </dl>
+  </div>
+</div>
