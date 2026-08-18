@@ -149,7 +149,17 @@ function merge(stored: unknown): CompanyProfile {
  */
 export async function companyProfile(): Promise<CompanyProfile> {
   if (cached) return cached;
-  const row = await prisma.appSetting.findUnique({ where: { key: PROFILE_KEY } });
+  // A document renderer must not need a reachable database to draw a
+  // letterhead. Without this, previewing a template offline — or a momentary
+  // connection blip mid-render — fails the whole PDF rather than falling back
+  // to the details the app ships with.
+  let row: { value: string } | null = null;
+  try {
+    row = await prisma.appSetting.findUnique({ where: { key: PROFILE_KEY } });
+  } catch {
+    console.error("[system] couldn't read the company profile — using the shipped defaults.");
+    return merge(null);
+  }
   let parsed: unknown = null;
   if (row) {
     try {
@@ -189,7 +199,15 @@ export async function saveCompanyProfile(input: unknown): Promise<CompanyProfile
  */
 export async function brandImage(slot: BrandSlot): Promise<string | null> {
   if (brandCache.has(slot)) return brandCache.get(slot) ?? null;
-  const row = await prisma.appSetting.findUnique({ where: { key: brandKey(slot) } });
+  // Same reasoning as companyProfile(): an unreachable database means no
+  // uploaded artwork, not a failed document. The files in server/assets/ and
+  // the typographic fallbacks take over from there.
+  let row: { value: string } | null = null;
+  try {
+    row = await prisma.appSetting.findUnique({ where: { key: brandKey(slot) } });
+  } catch {
+    return null;
+  }
   const value = row?.value ?? null;
   brandCache.set(slot, value);
   return value;

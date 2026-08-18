@@ -13,3 +13,5 @@ server/prisma/dev.db
 # docs/workflow/ and the PDF itself are tracked; this is neither, and it
 # carries 136 KB of base64 fonts that churn the diff on every rebuild.
 server/docs/agent-master-workflow.html
+# Rendered demo documents — regenerate with `npm run demo:docs`.
+server/tmp/
