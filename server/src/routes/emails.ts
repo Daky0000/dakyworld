@@ -4,6 +4,8 @@ import { prisma } from "../lib/prisma.js";
 import { requireRole } from "../middleware/auth.js";
 import { mailerConfigured } from "../lib/mailer.js";
 import { draftEmail } from "../lib/emailDrafter.js";
+import { polishEmail } from "../lib/emailPolish.js";
+import { isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
 import { analystConfigured } from "../lib/anthropic.js";
 import { resolveContext } from "../services/emailContext.js";
 import { COLD_PURPOSES, composeMessage, isSuppressed, parseAttachments, sendMessage, type StoredAttachment } from "../services/emailSender.js";
@@ -183,13 +185,59 @@ const draftInput = z.object({
   existingSubject: z.string().nullish(),
   existingBody: z.string().nullish(),
   extraFacts: z.array(z.string().max(500)).max(20).optional(),
+  /**
+   * Whether to go and look at the business before writing to it.
+   * "auto" looks when nobody has, or when the last look has gone stale.
+   */
+  prepare: z.enum(["auto", "always", "never"]).default("auto"),
+  /** The plain-English pass. On by default — see lib/emailPolish.ts. */
+  polish: z.boolean().default(true),
 });
 
-/** Writes a draft. Returns it — nothing is stored, and nothing is sent. */
+/**
+ * Writes a draft. Nothing is stored and nothing is sent.
+ *
+ * Three stages, in this order, and the order is the point:
+ *
+ *  1. **Look at them** — research, audit, a picture of their homepage — unless
+ *     somebody already has and it is still fresh. An email written from a
+ *     record nobody has looked at can only be generic, because generic is all
+ *     the record contains.
+ *  2. **Draft**, from those facts and no others.
+ *  3. **Polish**, which changes how it is said and not what it says, and
+ *     reports back on whether the email actually does its job.
+ *
+ * Every stage is allowed to fail. A missing key at stage one costs specificity
+ * and says so; a missing key at stage three returns the draft untouched. What
+ * comes back is always something a person can send.
+ */
 emailsRouter.post("/draft", async (req, res, next) => {
   try {
     const input = draftInput.parse(req.body);
+
+    // --- 1. Look ----------------------------------------------------------
+    let prep: Awaited<ReturnType<typeof prepareLead>> | null = null;
+    let prepError: string | null = null;
+    let lookedNow = false;
+    if (input.leadId && input.prepare !== "never") {
+      const stored = await storedPrep(input.leadId);
+      const needed = input.prepare === "always" || isStale(stored?.ranAt);
+      if (needed) {
+        try {
+          prep = await prepareLead(input.leadId);
+          lookedNow = true;
+        } catch (err) {
+          // Not fatal. The draft is worse without it, and the composer says so.
+          prepError = (err as Error).message;
+        }
+      }
+    }
+
+    // Resolved after the prep, so the draft is written from the filled-in
+    // record rather than the one that walked in.
     const context = await resolveContext(input);
+
+    // --- 2. Draft ---------------------------------------------------------
     const draft = await draftEmail({
       purpose: input.purpose,
       context,
@@ -198,7 +246,60 @@ emailsRouter.post("/draft", async (req, res, next) => {
       existingBody: input.existingBody,
       extraFacts: input.extraFacts,
     });
-    res.json({ ...draft, variables: context.variables, facts: context.facts });
+
+    // --- 3. Polish --------------------------------------------------------
+    let polished: Awaited<ReturnType<typeof polishEmail>> | null = null;
+    let polishError: string | null = null;
+    if (input.polish) {
+      try {
+        polished = await polishEmail({
+          subject: draft.subject,
+          body: draft.body,
+          purpose: input.purpose,
+          recipient: context.name,
+          facts: context.facts,
+        });
+      } catch (err) {
+        polishError = (err as Error).message;
+      }
+    }
+
+    res.json({
+      ...draft,
+      // What goes in the box: the polished version when there is one.
+      subject: polished?.subject ?? draft.subject,
+      body: polished?.body ?? draft.body,
+      variables: context.variables,
+      facts: context.facts,
+      /** The draft as written, so a person can flip back to it. */
+      beforePolish: polished ? { subject: draft.subject, body: draft.body } : null,
+      polish: polished
+        ? {
+            polishedBy: polished.polishedBy,
+            changes: polished.changes,
+            servesPurpose: polished.servesPurpose,
+            concerns: polished.concerns,
+            added: polished.added,
+          }
+        : null,
+      polishError,
+      prep: prep
+        ? {
+            ranAt: prep.ranAt,
+            ranNow: lookedNow,
+            researchedBy: prep.research?.researchedBy ?? null,
+            searchedLiveSources: prep.research?.searchedLiveSources ?? false,
+            filled: prep.filled,
+            proposedContact: prep.proposedContact,
+            look: prep.look,
+            shot: prep.shot,
+            notes: prep.notes,
+            costUsd: prep.costUsd,
+          }
+        : null,
+      prepError,
+      preparedAt: context.preparedAt ?? null,
+    });
   } catch (err) {
     next(err);
   }

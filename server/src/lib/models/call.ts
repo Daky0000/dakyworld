@@ -1,4 +1,4 @@
-import { AnalystError, callClaude, type Effort, type FailureKind } from "../claude.js";
+import { AnalystError, callClaude, type Effort, type FailureKind, type PromptImage } from "../claude.js";
 import { costOf, rateFor, type ModelRate } from "../claudePricing.js";
 import { recordLlmCall } from "../llmLedger.js";
 import { SETTING, getSetting } from "../settings.js";
@@ -85,7 +85,17 @@ export interface ModelRequest {
   messages?: Partial<Record<FailureKind, string>>;
   /** Perplexity only: how recent a source has to be to count. */
   recency?: "day" | "week" | "month" | "year";
+  /**
+   * Pictures to look at alongside the prompt — job `vision`, in practice.
+   *
+   * Only the vendors that declare `vision` are ever routed a job that sends
+   * these, so an adapter that ignores them is not a silent downgrade: it is
+   * unreachable. Perplexity's is, deliberately.
+   */
+  images?: PromptImage[];
 }
+
+export type { PromptImage };
 
 export interface ModelResult<T> {
   data: T;
@@ -248,7 +258,7 @@ async function callOpenAI(apiKey: string, model: string, request: ModelRequest):
       max_completion_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
       messages: [
         { role: "system", content: request.system },
-        { role: "user", content: request.prompt() },
+        { role: "user", content: openAiContent(request) },
       ],
       response_format: {
         type: "json_schema",
@@ -269,6 +279,22 @@ async function callOpenAI(apiKey: string, model: string, request: ModelRequest):
   };
 }
 
+/**
+ * A user turn for OpenAI: a bare string when there is nothing to look at, and
+ * the parts array when there is. Both are valid; the string keeps the common
+ * case reading the way it always has.
+ */
+function openAiContent(request: ModelRequest): unknown {
+  if (!request.images?.length) return request.prompt();
+  return [
+    ...request.images.map((image) => ({
+      type: "image_url",
+      image_url: { url: `data:${image.mediaType};base64,${image.base64}` },
+    })),
+    { type: "text", text: request.prompt() },
+  ];
+}
+
 // --- Gemini -----------------------------------------------------------------
 
 /**
@@ -284,7 +310,15 @@ async function callGemini(apiKey: string, model: string, request: ModelRequest):
     { "x-goog-api-key": apiKey },
     {
       systemInstruction: { parts: [{ text: request.system }] },
-      contents: [{ role: "user", parts: [{ text: request.prompt() }] }],
+      contents: [
+        {
+          role: "user",
+          parts: [
+            ...(request.images ?? []).map((image) => ({ inlineData: { mimeType: image.mediaType, data: image.base64 } })),
+            { text: request.prompt() },
+          ],
+        },
+      ],
       generationConfig: {
         maxOutputTokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
         responseMimeType: "application/json",
@@ -393,6 +427,7 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
       schema: request.schema,
       effort: request.effort,
       maxTokens: request.maxTokens,
+      images: request.images,
       messages: request.messages,
     });
     return {

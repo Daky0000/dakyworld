@@ -2,6 +2,9 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
 import type { ToolDefinition } from "./types.js";
 import { auditCompany } from "../companyAudit.js";
+import { isStale, prepareLead, storedPrep } from "../leadPrep.js";
+import { lookAtHomepage } from "../homepageLook.js";
+import { polishEmail } from "../../lib/emailPolish.js";
 import { composeMessage, sendMessage } from "../emailSender.js";
 import { enrol, stopOnReply } from "../emailSequences.js";
 import { runSource } from "../scraperRunner.js";
@@ -159,6 +162,53 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       const data = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
       if (Object.keys(data).length === 0) throw new Error("Nothing to change.");
       return prisma.lead.update({ where: { id }, data, select: leadSummary });
+    },
+  },
+  {
+    key: "lead.prepare",
+    name: "Look at a business",
+    group: "Pipeline",
+    purpose:
+      "Researches a lead from live sources, fills the blanks their scrape left, checks their site and mail domain, and photographs their homepage. What an email has to be written from.",
+    scope: "write",
+    requires: "models",
+    job: "research",
+    // Live search is billed per request as well as per token, and the
+    // screenshot is an Apify run. Both are small; neither is free.
+    spends: true,
+    outward: false,
+    input: z.object({
+      leadId: z.string().min(1),
+      skipResearch: z.boolean().default(false).describe("Skip the live-source pass, for a record that is already complete."),
+      skipLook: z.boolean().default(false).describe("Skip the screenshot and the model that reads it."),
+      force: z.boolean().default(false).describe("Look again even though the last look is still fresh."),
+    }),
+    preview: async (input) => {
+      const lead = await prisma.lead.findUnique({ where: { id: input.leadId }, select: { contactName: true, companyName: true, website: true } });
+      const who = lead?.companyName ?? lead?.contactName ?? "an unknown lead";
+      return `Research ${who} against live sources, fill any blank fields, check ${lead?.website ?? "their domain"}${
+        lead?.website && !input.skipLook ? ", and photograph their homepage and read it" : ""
+      }. Nothing on the record would be overwritten.`;
+    },
+    run: async (input) => {
+      if (!input.force) {
+        const stored = await storedPrep(input.leadId);
+        // Re-running a fresh look costs money and produces the same answer.
+        if (stored && !isStale(stored.ranAt)) {
+          return { reused: true, ranAt: stored.ranAt, facts: stored.facts, notes: stored.notes };
+        }
+      }
+      const prep = await prepareLead(input.leadId, { skipResearch: input.skipResearch, skipLook: input.skipLook });
+      return {
+        reused: false,
+        ranAt: prep.ranAt,
+        filled: prep.filled,
+        proposedContact: prep.proposedContact,
+        look: prep.look,
+        facts: prep.facts,
+        notes: prep.notes,
+        costUsd: prep.costUsd,
+      };
     },
   },
   {
@@ -648,6 +698,29 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         category: null,
         city: null,
       });
+    },
+  },
+  {
+    key: "site.look",
+    name: "Look at a homepage",
+    group: "Research",
+    purpose:
+      "Photographs a homepage and says what a first-time visitor actually sees — the half of a site review that reading the markup cannot answer.",
+    scope: "read",
+    // The screenshot is an Apify run; without a token there is no picture and
+    // nothing to look at, so that is the gate even though a model reads it.
+    requires: "apify",
+    job: "vision",
+    spends: true,
+    outward: false,
+    input: z.object({
+      website: z.string().min(1).max(200),
+      companyName: z.string().max(200).optional(),
+    }),
+    preview: async (input) => `Open ${input.website} in a browser, photograph the top of the homepage, and have a model describe what is there.`,
+    run: async (input) => {
+      const result = await lookAtHomepage({ website: input.website, companyName: input.companyName ?? null, audit: null });
+      return { look: result.look, shot: result.shot, notes: result.notes };
     },
   },
   {
@@ -1559,6 +1632,54 @@ Output one complete HTML document. Rules it must follow:
         ? `Would ask ${provider.server.name} for ${input.count} image(s): "${input.prompt.slice(0, 160)}". Nothing was generated and nothing was charged.`
         : `Would generate an image, but nothing here can draw one — so nothing would happen. Add a ChatGPT key under Settings → AI models.`;
     },
+  },
+  {
+    key: "email.polish",
+    name: "Polish an email",
+    group: "Documents",
+    purpose:
+      "The last read before a person sees a draft: makes it sound like somebody wrote it, keeps every fact exactly as it was, and says whether the email actually does its job.",
+    scope: "read",
+    requires: "models",
+    job: "humanise",
+    spends: true,
+    outward: false,
+    input: z.object({
+      subject: z.string().min(1).max(300),
+      body: z.string().min(20).max(12000),
+      purpose: z
+        .enum([
+          "COLD_OUTREACH",
+          "FOLLOW_UP",
+          "MEETING_REQUEST",
+          "PROPOSAL_COVER",
+          "DELIVERABLE_HANDOVER",
+          "PROJECT_UPDATE",
+          "INVOICE_DELIVERY",
+          "INVOICE_REMINDER",
+          "CARE_PLAN_REVIEW",
+          "ONBOARDING",
+          "REACTIVATION",
+          "THANK_YOU",
+          "ANNOUNCEMENT",
+          "CUSTOM",
+        ])
+        .default("CUSTOM"),
+      recipient: z.string().max(200).optional(),
+      facts: z
+        .array(z.string().max(500))
+        .max(60)
+        .optional()
+        .describe("What the draft was written from. Given so the polish can tell a fact from an invention."),
+    }),
+    run: async (input) =>
+      polishEmail({
+        subject: input.subject,
+        body: input.body,
+        purpose: input.purpose,
+        recipient: input.recipient ?? null,
+        facts: input.facts,
+      }),
   },
   {
     key: "security.scan",

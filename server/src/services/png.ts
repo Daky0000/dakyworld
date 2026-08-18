@@ -65,6 +65,159 @@ export function encodePng(width: number, height: number, pixels: Uint8Array): Bu
   ]);
 }
 
+// --- Reading one back -----------------------------------------------------
+
+/**
+ * Enough of a PNG decoder to crop a screenshot, and no more.
+ *
+ * A full-page screenshot of a homepage can come back 1280 by twelve thousand
+ * pixels, which is past what every vision model will accept and several
+ * megabytes of base64 nobody needed: the argument an email makes is about what
+ * a visitor sees when the page opens, not about the footer. Cropping needs a
+ * decoder, and a decoder for *this* — 8-bit, non-interlaced, straight out of a
+ * headless Chrome — is sixty lines of `zlib.inflateSync` and an unfilter loop,
+ * against an image library and its transitive tree.
+ *
+ * It handles what Chrome emits and refuses everything else by returning null.
+ * A refusal is not a failure: the caller keeps the original bytes and says so.
+ */
+
+export interface DecodedPng {
+  width: number;
+  height: number;
+  /** width * height * 4, RGBA, top row first — the shape `encodePng` takes. */
+  pixels: Uint8Array;
+}
+
+const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** Width and height without decoding anything — eight bytes into the IHDR. */
+export function pngSize(png: Buffer): { width: number; height: number } | null {
+  if (png.length < 24 || !png.subarray(0, 8).equals(SIGNATURE)) return null;
+  if (png.subarray(12, 16).toString("latin1") !== "IHDR") return null;
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}
+
+/** Channels per pixel for the colour types Chrome actually writes. */
+const CHANNELS: Record<number, number> = { 0: 1, 2: 3, 4: 2, 6: 4 };
+
+export function decodePng(png: Buffer): DecodedPng | null {
+  const size = pngSize(png);
+  if (!size) return null;
+
+  const bitDepth = png[24];
+  const colorType = png[25];
+  const interlace = png[28];
+  const channels = CHANNELS[colorType];
+  // Palettes, 16-bit samples and Adam7 are all real PNG and none of them come
+  // out of a screenshot. Refuse rather than decode them wrongly.
+  if (bitDepth !== 8 || interlace !== 0 || !channels) return null;
+
+  const idat: Buffer[] = [];
+  let offset = 8;
+  while (offset + 8 <= png.length) {
+    const length = png.readUInt32BE(offset);
+    const type = png.subarray(offset + 4, offset + 8).toString("latin1");
+    const start = offset + 8;
+    if (type === "IDAT") idat.push(png.subarray(start, start + length));
+    if (type === "IEND") break;
+    offset = start + length + 4; // + CRC
+  }
+  if (idat.length === 0) return null;
+
+  let raw: Buffer;
+  try {
+    raw = zlib.inflateSync(Buffer.concat(idat));
+  } catch {
+    return null;
+  }
+
+  const { width, height } = size;
+  const bpp = channels;
+  const stride = width * bpp;
+  if (raw.length < (stride + 1) * height) return null;
+
+  // Unfilter in place, one scanline at a time. Each filter is defined against
+  // the pixel to the left, the one above, and the one above-left.
+  const lines = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    // Checked before the row rather than inside it: a Buffer cell cannot hold
+    // a sentinel, so an unknown filter has to be caught while it still can be.
+    if (filter > 4) return null;
+    const source = raw.subarray(y * (stride + 1) + 1, y * (stride + 1) + 1 + stride);
+    const line = lines.subarray(y * stride, (y + 1) * stride);
+    const prior = y > 0 ? lines.subarray((y - 1) * stride, y * stride) : null;
+
+    for (let x = 0; x < stride; x++) {
+      const left = x >= bpp ? line[x - bpp] : 0;
+      const up = prior ? prior[x] : 0;
+      const upLeft = prior && x >= bpp ? prior[x - bpp] : 0;
+      const value = source[x];
+      line[x] =
+        filter === 0
+          ? value
+          : filter === 1
+            ? (value + left) & 0xff
+            : filter === 2
+              ? (value + up) & 0xff
+              : filter === 3
+                ? (value + ((left + up) >> 1)) & 0xff
+                : (value + paeth(left, up, upLeft)) & 0xff;
+    }
+  }
+
+  // Out to RGBA, whatever came in.
+  const pixels = new Uint8Array(width * height * 4);
+  for (let i = 0, p = 0; i < width * height; i++, p += 4) {
+    const at = i * bpp;
+    if (colorType === 6) {
+      pixels[p] = lines[at];
+      pixels[p + 1] = lines[at + 1];
+      pixels[p + 2] = lines[at + 2];
+      pixels[p + 3] = lines[at + 3];
+    } else if (colorType === 2) {
+      pixels[p] = lines[at];
+      pixels[p + 1] = lines[at + 1];
+      pixels[p + 2] = lines[at + 2];
+      pixels[p + 3] = 255;
+    } else if (colorType === 0) {
+      pixels[p] = pixels[p + 1] = pixels[p + 2] = lines[at];
+      pixels[p + 3] = 255;
+    } else {
+      pixels[p] = pixels[p + 1] = pixels[p + 2] = lines[at];
+      pixels[p + 3] = lines[at + 1];
+    }
+  }
+
+  return { width, height, pixels };
+}
+
+function paeth(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+}
+
+/**
+ * The top `rows` pixels of a PNG, re-encoded. Null when it could not be read,
+ * and the original when it is already short enough — so a caller can write
+ * `cropPngTop(png, 2400) ?? png` and be right either way.
+ */
+export function cropPngTop(png: Buffer, rows: number): Buffer | null {
+  const size = pngSize(png);
+  if (!size) return null;
+  if (size.height <= rows) return png;
+
+  const decoded = decodePng(png);
+  if (!decoded) return null;
+
+  const kept = Math.min(rows, decoded.height);
+  return encodePng(decoded.width, kept, decoded.pixels.subarray(0, decoded.width * kept * 4));
+}
+
 // --- The ribbons ----------------------------------------------------------
 
 /**

@@ -41,9 +41,17 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
   return <div className={`rounded-2xl border border-line bg-white p-6 ${className}`}>{children}</div>;
 }
 
-export function Badge({ children, tone = "default" }: { children: ReactNode; tone?: "default" | "positive" | "muted" }) {
+export function Badge({ children, tone = "default" }: { children: ReactNode; tone?: "default" | "positive" | "muted" | "warn" }) {
+  // Amber carries the warning state everywhere in this UI; lime is action and
+  // positive status only, so a caveat badge must never reach for it.
   const toneClass =
-    tone === "positive" ? "text-ink bg-lime/30" : tone === "muted" ? "text-ink/50 bg-ink/5" : "text-ink bg-ink/10";
+    tone === "positive"
+      ? "text-ink bg-lime/30"
+      : tone === "warn"
+        ? "text-amber-900 bg-amber-100"
+        : tone === "muted"
+          ? "text-ink/50 bg-ink/5"
+          : "text-ink bg-ink/10";
   return (
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[.1em] ${toneClass}`}

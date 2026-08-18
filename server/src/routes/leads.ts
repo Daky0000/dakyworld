@@ -15,6 +15,7 @@ import {
 } from "../services/leadFields.js";
 import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
 import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLeads, tagSlug } from "../services/leadTags.js";
+import { STALE_AFTER_DAYS, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
 
 export const leadsRouter = Router();
 
@@ -552,10 +553,11 @@ leadsRouter.get("/:id", async (req, res, next) => {
         scraperRun: { select: { id: true, startedAt: true, trigger: true } },
         proposals: true,
         communications: { orderBy: { occurredAt: "desc" }, include: { loggedBy: { select: { id: true, name: true } } } },
+        research: true,
       },
     });
     if (!lead) return res.status(404).json({ error: "Lead not found" });
-    res.json(lead);
+    res.json({ ...lead, researchStale: isStale(lead.research?.ranAt) });
   } catch (err) {
     next(err);
   }
@@ -620,6 +622,52 @@ leadsRouter.delete("/:id", async (req, res, next) => {
  * waiting for a proposal, carrying the scraped firmographics across so nothing
  * has to be retyped.
  */
+const prepareInput = z.object({
+  /** Skip the live-source pass, for a record that is already complete. */
+  skipResearch: z.boolean().default(false),
+  /** Skip the screenshot and the model that reads it. */
+  skipLook: z.boolean().default(false),
+  /** Overwrite a discovery note that is already there. Off by default. */
+  replaceDiscoveryNotes: z.boolean().default(false),
+});
+
+/**
+ * Goes and looks at this business: researches them, fills the blanks their
+ * scrape left, checks their site and mail domain, and photographs their
+ * homepage so a model can say what it looks like.
+ *
+ * Slow on purpose — a screenshot is a browser somewhere else opening a page.
+ * It is a separate call from drafting so the person watching can see which
+ * part is taking the time, and so the result is reusable: research is stored
+ * against the lead and every draft to them afterwards reads it for nothing.
+ *
+ * Nothing here is destructive. Fields are only ever written into blanks, and
+ * the one thing that could send a letter to the wrong person — a contact
+ * address found by searching — is returned for a person to accept rather than
+ * applied. See services/leadPrep.ts.
+ */
+leadsRouter.post("/:id/prepare", async (req, res, next) => {
+  try {
+    const options = prepareInput.parse(req.body ?? {});
+    const prep = await prepareLead(req.params.id, options);
+    res.json(prep);
+  } catch (err) {
+    if ((err as Error).message === "Lead not found") return res.status(404).json({ error: "Lead not found" });
+    next(err);
+  }
+});
+
+/** What the last look found, without running another one. */
+leadsRouter.get("/:id/research", async (req, res, next) => {
+  try {
+    const stored = await storedPrep(req.params.id);
+    if (!stored) return res.json({ research: null, stale: true, staleAfterDays: STALE_AFTER_DAYS });
+    res.json({ research: stored, stale: isStale(stored.ranAt), staleAfterDays: STALE_AFTER_DAYS });
+  } catch (err) {
+    next(err);
+  }
+});
+
 leadsRouter.post("/:id/convert", async (req, res, next) => {
   try {
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });

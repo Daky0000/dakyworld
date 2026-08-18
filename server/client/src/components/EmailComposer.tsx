@@ -72,6 +72,8 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
   const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [rationale, setRationale] = useState<string | null>(null);
+  const [draftResult, setDraftResult] = useState<EmailDraft | null>(null);
+  const [showingOriginal, setShowingOriginal] = useState(false);
   const [showFacts, setShowFacts] = useState(true);
   const [pickingRecipient, setPickingRecipient] = useState(false);
   const [tab, setTab] = useState<"write" | "preview">("write");
@@ -94,6 +96,8 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
     setBrief("");
     setNotice(null);
     setRationale(null);
+    setDraftResult(null);
+    setShowingOriginal(false);
     setManual(null);
     setScheduleAt("");
     setTab("write");
@@ -145,10 +149,36 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
       setSubject(result.subject);
       setBody(result.body);
       setRationale(result.rationale);
+      setDraftResult(result);
+      setShowingOriginal(false);
       setNotice(null);
+      // The draft may have filled in half the lead record on its way past.
+      if (result.prep?.ranNow) {
+        void qc.invalidateQueries({ queryKey: ["lead", recipient.leadId] });
+        void qc.invalidateQueries({ queryKey: ["leads"] });
+        void qc.invalidateQueries({ queryKey: ["email-context", recipient.leadId] });
+      }
     },
     onError: (err: Error) => setNotice(err.message),
   });
+
+  /**
+   * Flip the box between the polished version and the draft as written.
+   * Keeping both in state rather than re-asking means the choice costs
+   * nothing and cannot come back different.
+   */
+  const togglePolish = () => {
+    const before = draftResult?.beforePolish;
+    if (!draftResult || !before) return;
+    if (showingOriginal) {
+      setSubject(draftResult.subject);
+      setBody(draftResult.body);
+    } else {
+      setSubject(before.subject);
+      setBody(before.body);
+    }
+    setShowingOriginal(!showingOriginal);
+  };
 
   const save = useMutation({
     mutationFn: (mode: "send" | "draft" | "schedule") =>
@@ -325,14 +355,24 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
             />
             <div className="mt-2 flex items-center justify-between gap-3">
               <span className="text-[11px] text-ink/45">
-                Uses only what's above — it won't invent anything about them.
+                {recipient.leadId && !context?.preparedAt
+                  ? "Nobody has looked at this business yet — writing will research them and check their site first, which takes a minute."
+                  : "Uses only what's above — it won't invent anything about them, and Perplexity reads it before you do."}
               </span>
               <Button size="sm" onClick={() => draft.mutate()} disabled={draft.isPending}>
-                {draft.isPending ? "Writing…" : body ? "Rewrite" : "Write a draft"}
+                {draft.isPending
+                  ? recipient.leadId && !context?.preparedAt
+                    ? "Looking at them…"
+                    : "Writing…"
+                  : body
+                    ? "Rewrite"
+                    : "Write a draft"}
               </Button>
             </div>
             {rationale && <p className="mt-3 border-t border-blue/20 pt-2 text-[11px] italic text-ink/55">{rationale}</p>}
           </div>
+
+          {draftResult && <DraftReport result={draftResult} showingOriginal={showingOriginal} onToggle={togglePolish} />}
 
           {relevantTemplates.length > 0 && (
             <div className="mb-5">
@@ -801,3 +841,132 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     </div>
   );
 }
+
+/**
+ * What happened on the way to the draft in the box.
+ *
+ * Three models touched it — one went and looked at the business, one wrote it,
+ * one made it sound like a person — and a composer that hides that is asking
+ * somebody to send a letter under their own name on trust. So this shows the
+ * work: what the look found, what the polish changed, and anything the polish
+ * put in that the draft did not say, which should always be nothing and is
+ * shown loudly when it is not.
+ *
+ * The toggle back to the unpolished draft is the important control. The polish
+ * is usually an improvement and is occasionally not, and the only person who
+ * can tell is the one about to send it.
+ */
+function DraftReport({
+  result,
+  showingOriginal,
+  onToggle,
+}: {
+  result: EmailDraft;
+  showingOriginal: boolean;
+  onToggle: () => void;
+}) {
+  const prep = result.prep;
+  const polish = result.polish;
+
+  return (
+    <div className="mb-5 space-y-3">
+      {/* What the look found, when this request went and looked. */}
+      {prep && (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">
+            <span>{prep.ranNow ? "Looked at them just now" : "Read from an earlier look"}</span>
+            {prep.researchedBy && (
+              <Badge tone={prep.searchedLiveSources ? "muted" : "warn"}>
+                {prep.researchedBy}
+                {prep.searchedLiveSources ? " · live sources" : " · from memory, not live sources"}
+              </Badge>
+            )}
+          </div>
+          {prep.shot && (
+            <a href={prep.shot.imageUrl} target="_blank" rel="noreferrer" className="mb-3 block overflow-hidden rounded-xl border border-line">
+              <img src={prep.shot.imageUrl} alt="Their homepage" className="max-h-44 w-full object-cover object-top" loading="lazy" />
+            </a>
+          )}
+          {prep.look && <p className="text-xs leading-relaxed text-ink/70">{prep.look.firstImpression}</p>}
+          {Object.keys(prep.filled).length > 0 && (
+            <p className="mt-2 text-[11px] text-ink/45">
+              Filled in on their record: {Object.keys(prep.filled).join(", ")}.
+            </p>
+          )}
+          {prep.notes.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-[11px] text-ink/45">
+              {prep.notes.map((note, index) => (
+                <li key={index}>· {note}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {result.prepError && (
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          Nobody could go and look at this business first, so the draft is working from the record alone: {result.prepError}
+        </p>
+      )}
+
+      {/* The polish. */}
+      {polish && (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Read and polished by {polish.polishedBy}</span>
+            <Badge tone={polish.servesPurpose ? "positive" : "warn"}>
+              {polish.servesPurpose ? "Does its job" : "Does not do its job yet"}
+            </Badge>
+            <span className="flex-1" />
+            {result.beforePolish && (
+              <button type="button" onClick={onToggle} className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline">
+                {showingOriginal ? "Use the polished version" : "Show the unpolished draft"}
+              </button>
+            )}
+          </div>
+          {polish.changes.length > 0 && (
+            <>
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">What it changed</div>
+              <ul className="space-y-1 text-xs text-ink/65">
+                {polish.changes.map((change, index) => (
+                  <li key={index} className="leading-relaxed">
+                    · {change}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {polish.concerns.length > 0 && (
+            <div className="mt-3 border-t border-ink/10 pt-2">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-amber-800">Still weak, before you send it</div>
+              <ul className="space-y-1 text-xs text-amber-900">
+                {polish.concerns.map((concern, index) => (
+                  <li key={index} className="leading-relaxed">
+                    · {concern}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {polish.added.length > 0 && (
+            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em]">Added, and not in the facts — check before sending</div>
+              <ul className="space-y-1">
+                {polish.added.map((entry, index) => (
+                  <li key={index}>· {entry}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {result.polishError && (
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          The plain-English pass did not run, so this is the draft as written: {result.polishError}
+        </p>
+      )}
+    </div>
+  );
+}
+

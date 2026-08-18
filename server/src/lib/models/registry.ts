@@ -41,10 +41,14 @@ export type ModelJob =
   | "html"
   /** Is this true, and is it still true — answered against live sources. */
   | "factcheck"
+  /** Who is this company, answered against live sources rather than from memory. */
+  | "research"
   /** The same text, in plain English a person would actually say. */
-  | "humanise";
+  | "humanise"
+  /** Looking at a picture and saying what is in it — a screenshot of a page, mostly. */
+  | "vision";
 
-export const MODEL_JOBS: ModelJob[] = ["text", "image", "html", "factcheck", "humanise"];
+export const MODEL_JOBS: ModelJob[] = ["text", "image", "html", "factcheck", "research", "humanise", "vision"];
 
 export interface JobDescription {
   job: ModelJob;
@@ -102,12 +106,30 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     defaultProvider: "perplexity",
     fallback: "anthropic",
   },
+  research: {
+    job: "research",
+    name: "Research",
+    phrase: "researching a company",
+    blurb:
+      "Finds out who a prospect actually is — trade, address, reputation, who runs it — from live sources, and fills the blanks a scrape left behind.",
+    defaultProvider: "perplexity",
+    fallback: "anthropic",
+  },
   humanise: {
     job: "humanise",
     name: "Plain English",
     phrase: "plain-English rewrites",
     blurb: "Rewrites a draft to sound like a person wrote it and to be understood on one reading.",
     defaultProvider: "perplexity",
+    fallback: "anthropic",
+  },
+  vision: {
+    job: "vision",
+    name: "Looking",
+    phrase: "looking at a page",
+    blurb:
+      "Reads a screenshot of a prospect's homepage and says what a first-time visitor actually sees — the half of a site audit that markup cannot answer.",
+    defaultProvider: "openai",
     fallback: "anthropic",
   },
 };
@@ -146,7 +168,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keyHint: "sk-ant-…",
     // Deliberately every job: it is the floor, and a floor with holes in it
     // isn't one.
-    jobs: ["text", "image", "html", "factcheck", "humanise"],
+    jobs: ["text", "image", "html", "factcheck", "research", "humanise", "vision"],
     models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
   },
   openai: {
@@ -159,7 +181,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     defaultModel: "gpt-5.4",
     console: "https://platform.openai.com/api-keys",
     keyHint: "sk-proj-…",
-    jobs: ["text", "image", "html"],
+    jobs: ["text", "image", "html", "vision"],
     models: ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini"],
   },
   gemini: {
@@ -174,8 +196,9 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keyHint: "AIza…",
     // No image job: Gemini generates pictures through a separate model family
     // this app doesn't wire up, and offering a route that silently can't serve
-    // is worse than not offering it.
-    jobs: ["text", "html"],
+    // is worse than not offering it. It does read pictures, though, which is a
+    // different model family it does wire up — so `vision` is on the list.
+    jobs: ["text", "html", "vision"],
     models: ["gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
   },
   perplexity: {
@@ -190,7 +213,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keyHint: "pplx-…",
     // It searches the live web on every call, which is what makes it the right
     // answer for "is this still true" and the wrong one for drawing a picture.
-    jobs: ["text", "factcheck", "humanise"],
+    jobs: ["text", "factcheck", "research", "humanise"],
     models: ["sonar", "sonar-pro", "sonar-reasoning-pro"],
   },
 };

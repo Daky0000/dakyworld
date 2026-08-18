@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import type { Lead, LeadFieldDef, LeadGroup } from "../lib/types";
+import type { Lead, LeadFieldDef, LeadGroup, LeadResearch } from "../lib/types";
 import { CaptureTag, captureMethodLabel, useLeadFields } from "./LeadColumns";
 import { TagChip, TagPicker, useTagLookup } from "./LeadTags";
 import { ProposalWriter } from "./ProposalWriter";
@@ -261,6 +261,8 @@ export function LeadDrawer({
             </DetailRow>
           </Section>
 
+          <ResearchSection lead={lead} onDone={invalidate} />
+
           <CustomFieldsForm lead={lead} onSave={(customFields) => update.mutate({ customFields })} pending={update.isPending} />
 
           <QualificationForm lead={lead} onSave={(body) => update.mutate(body)} pending={update.isPending} />
@@ -497,6 +499,201 @@ function CommunicationsSection({ lead, onLogged }: { lead: Lead; onLogged: () =>
         </ol>
       )}
     </Section>
+  );
+}
+
+/**
+ * What was found by going and looking at this business.
+ *
+ * The em-dashes in "The business" above are the problem this answers. A lead
+ * arrives with a name, an email and blanks where the trade, the address and
+ * the reputation should be, and an email written from that record can only be
+ * generic. This runs the research, fills the blanks from live sources, checks
+ * their site, photographs their homepage and shows the lot — with the evidence
+ * beside every claim, because the Owner has to be able to check a sentence
+ * before it goes out under their name.
+ *
+ * The screenshot is here rather than only in the composer deliberately. It is
+ * the fastest way for a person to disagree with the model: one glance says
+ * whether the page really does look ten years old.
+ */
+function ResearchSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+  const research = lead.research ?? null;
+  const [error, setError] = useState<string | null>(null);
+
+  const look = useMutation({
+    mutationFn: () => api.post<unknown>(`/leads/${lead.id}/prepare`, {}),
+    onMutate: () => setError(null),
+    onSuccess: onDone,
+    onError: (err: unknown) => setError(err instanceof Error ? err.message : "The look failed"),
+  });
+
+  return (
+    <Section title="What we found by looking">
+      {!research ? (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <p className="text-sm text-ink/60">
+            Nobody has looked at this business yet. Researching them fills the blanks above from live sources, checks their site and
+            mail domain, and — if they have a website — photographs the homepage so a model can say what it looks like.
+          </p>
+          <p className="mt-2 text-[11px] text-ink/45">
+            Nothing already on the record is overwritten. A contact address found by searching is offered, never applied.
+          </p>
+          <div className="mt-3">
+            <Button size="sm" onClick={() => look.mutate()} disabled={look.isPending}>
+              {look.isPending ? "Looking…" : "Look at them"}
+            </Button>
+          </div>
+          {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
+        </div>
+      ) : (
+        <ResearchDetail
+          research={research}
+          stale={Boolean(lead.researchStale)}
+          onLookAgain={() => look.mutate()}
+          pending={look.isPending}
+          error={error}
+        />
+      )}
+    </Section>
+  );
+}
+
+function ResearchDetail({
+  research,
+  stale,
+  onLookAgain,
+  pending,
+  error,
+}: {
+  research: LeadResearch;
+  stale: boolean;
+  onLookAgain: () => void;
+  pending: boolean;
+  error: string | null;
+}) {
+  const findings = (research.audit?.findings ?? []).filter((finding) => finding.severity !== "GOOD");
+  const good = (research.audit?.findings ?? []).filter((finding) => finding.severity === "GOOD");
+  const filled = Object.entries(research.filled ?? {});
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/50">
+        <span>
+          Looked at <RelativeTime value={research.ranAt} />
+        </span>
+        {research.research && (
+          <Badge tone={research.research.searchedLiveSources ? "muted" : "warn"}>
+            {research.research.researchedBy}
+            {research.research.searchedLiveSources ? " · live sources" : " · from memory, not live sources"}
+          </Badge>
+        )}
+        {stale && <Badge tone="warn">Out of date</Badge>}
+        <span className="flex-1" />
+        <Button size="sm" variant="secondary" onClick={onLookAgain} disabled={pending}>
+          {pending ? "Looking…" : "Look again"}
+        </Button>
+      </div>
+      {error && <p className="text-sm text-red-700">{error}</p>}
+
+      {/* The picture first: it is the fastest way to disagree with the model. */}
+      {research.shot && (
+        <a
+          href={research.shot.imageUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="block overflow-hidden rounded-2xl border border-line bg-white"
+          title="Open the full screenshot"
+        >
+          <img src={research.shot.imageUrl} alt="Their homepage" className="max-h-72 w-full object-cover object-top" loading="lazy" />
+          <span className="block border-t border-ink/10 px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+            Their homepage · {research.shot.width}×{research.shot.height}
+            {research.shot.cropped ? " · top of page" : ""}
+          </span>
+        </a>
+      )}
+
+      {research.look && (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <p className="text-sm leading-relaxed text-ink/80">{research.look.firstImpression}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Badge tone={research.look.offerClear ? "muted" : "warn"}>
+              {research.look.offerClear ? "Says what they sell" : "Does not say what they sell"}
+            </Badge>
+            <Badge tone={research.look.contactClear ? "muted" : "warn"}>
+              {research.look.contactClear ? "Contact visible" : "No contact visible"}
+            </Badge>
+            {research.look.looksDated && <Badge tone="warn">Dated: {research.look.looksDated}</Badge>}
+          </div>
+          <ul className="mt-3 space-y-2 border-t border-ink/10 pt-3 text-xs text-ink/70">
+            {research.look.observations.map((observation, index) => (
+              <li key={index} className="leading-relaxed">
+                <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">{observation.severity}</span>{" "}
+                {observation.observed} <span className="text-ink/50">— {observation.soWhat}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 border-t border-ink/10 pt-2 text-[11px] italic text-ink/55">
+            Worth saying in the email: “{research.look.theOneThing}”
+          </p>
+        </div>
+      )}
+
+      {(findings.length > 0 || good.length > 0) && (
+        <details className="rounded-2xl border border-line bg-white">
+          <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">
+            Checked on their site and domain ({findings.length} to fix{good.length ? `, ${good.length} already fine` : ""})
+          </summary>
+          <ul className="space-y-3 border-t border-ink/10 px-4 py-3 text-xs text-ink/70">
+            {[...findings, ...good].map((finding) => (
+              <li key={finding.id} className="leading-relaxed">
+                <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">{finding.severity}</span>{" "}
+                {finding.observed}
+                <span className="block text-[11px] text-ink/40">Evidence: {finding.evidence}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {filled.length > 0 && (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Filled in from research</div>
+          <ul className="space-y-1 text-xs text-ink/70">
+            {filled.map(([field, entry]) => (
+              <li key={field} className="leading-relaxed">
+                <span className="text-ink/45">{field}:</span> {entry.value.slice(0, 160)}
+                {entry.source.startsWith("http") && (
+                  <a href={entry.source} target="_blank" rel="noreferrer" className="ml-2 text-blue hover:underline">
+                    source ↗
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {research.research?.proposedContact && (
+        <div className="rounded-2xl border border-blue/30 bg-blue/[.05] p-4 text-xs text-ink/70">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-blue">Contact details found — not applied</div>
+          {research.research.proposedContact.email && <div>Email: {research.research.proposedContact.email}</div>}
+          {research.research.proposedContact.phone && <div>Phone: {research.research.proposedContact.phone}</div>}
+          <p className="mt-1 text-[11px] text-ink/45">
+            Copy these into the fields above if they are right. A searched-for address is the one mistake with no reviewer in front of
+            it, so nothing writes it for you.
+          </p>
+        </div>
+      )}
+
+      {research.notes.length > 0 && (
+        <ul className="space-y-1 text-[11px] text-ink/45">
+          {research.notes.map((note, index) => (
+            <li key={index}>· {note}</li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

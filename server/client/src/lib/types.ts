@@ -138,6 +138,11 @@ export interface Lead {
   /** Values for columns that aren't Lead scalars, keyed by LeadFieldDef.key. */
   customFields?: Record<string, unknown> | null;
 
+  /** The last time somebody went and looked at this business. See LeadResearch. */
+  research?: LeadResearch | null;
+  /** True when nobody has looked, or the last look is old enough to redo. */
+  researchStale?: boolean;
+
   groupId?: string | null;
   group?: LeadGroup | null;
   scraperSourceId?: string | null;
@@ -1014,8 +1019,75 @@ export interface EmailContext {
   facts: string[];
   variables: Record<string, string>;
   suppressed: string | null;
+  leadId?: string;
+  clientId?: string;
+  /** When somebody last went and looked at this business. Null means nobody has. */
+  preparedAt?: string | null;
+  /** What the looking could not establish. */
+  prepNotes?: string[];
 }
 
+/** One thing a model saw in a picture of a homepage. */
+export interface HomepageObservation {
+  observed: string;
+  soWhat: string;
+  where: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "GOOD";
+}
+
+export interface HomepageLook {
+  firstImpression: string;
+  offerClear: boolean;
+  contactClear: boolean;
+  looksDated?: string | null;
+  observations: HomepageObservation[];
+  theOneThing: string;
+  lookedBy: string;
+}
+
+export interface Screenshot {
+  requested: string;
+  finalUrl?: string | null;
+  takenAt: string;
+  viewportWidth: number;
+  width: number;
+  height: number;
+  cropped: boolean;
+  imageUrl: string;
+  bytes: number;
+  costUsd?: number | null;
+}
+
+/**
+ * What was found by going and looking at a business, rather than by being
+ * handed a scraped row. Written by services/leadPrep.ts.
+ */
+export interface LeadResearch {
+  id: string;
+  leadId: string;
+  ranAt: string;
+  filled?: Record<string, { value: string; source: string }> | null;
+  research?: {
+    discoveryNote: string;
+    couldNotFind: string[];
+    researchedBy: string;
+    searchedLiveSources: boolean;
+    sources: { title: string; url: string; date?: string | null }[];
+    proposedContact?: { email: string | null; phone: string | null; source: string } | null;
+  } | null;
+  audit?: {
+    site?: { finalUrl?: string | null; reachable: boolean; platform?: string | null; https: boolean } | null;
+    findings: { id: string; area: string; severity: string; observed: string; evidence: string }[];
+    checked: string[];
+  } | null;
+  shot?: Screenshot | null;
+  look?: HomepageLook | null;
+  facts: string[];
+  notes: string[];
+  costUsd: string | number;
+}
+
+/** What the composer gets back from POST /emails/draft. */
 export interface EmailDraft {
   subject: string;
   body: string;
@@ -1024,6 +1096,32 @@ export interface EmailDraft {
   model: string;
   variables: Record<string, string>;
   facts: string[];
+  /** The draft as written, before the plain-English pass. Null when it did not run. */
+  beforePolish?: { subject: string; body: string } | null;
+  polish?: {
+    polishedBy: string;
+    changes: string[];
+    servesPurpose: boolean;
+    concerns: string[];
+    /** Anything the polish put in that the draft did not say. Should be empty. */
+    added: string[];
+  } | null;
+  polishError?: string | null;
+  /** Present when this request went and looked at the business first. */
+  prep?: {
+    ranAt: string;
+    ranNow: boolean;
+    researchedBy?: string | null;
+    searchedLiveSources: boolean;
+    filled: Record<string, { value: string; source: string }>;
+    proposedContact?: { email: string | null; phone: string | null; source: string } | null;
+    look?: HomepageLook | null;
+    shot?: Screenshot | null;
+    notes: string[];
+    costUsd: number;
+  } | null;
+  prepError?: string | null;
+  preparedAt?: string | null;
 }
 
 export interface EmailTemplate {

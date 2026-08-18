@@ -116,6 +116,38 @@ const PURPOSE_BRIEF: Record<EmailPurpose, string> = {
   CUSTOM: "Follow the sender's brief exactly. If the brief is thin, keep the email short rather than padding it.",
 };
 
+/**
+ * Which argument this email makes, decided by the one fact that changes it.
+ *
+ * A business with no website and a business with a bad one are not two degrees
+ * of the same conversation. The first has never had the thing and needs to be
+ * told what it would do for *them* — this trade, this town, these customers.
+ * The second has it, has probably stopped looking at it, and needs to be told
+ * what is on it right now. Getting this wrong produces the email everybody
+ * deletes: a pitch for a website, sent to somebody who has one.
+ */
+function angle(context: RecipientContext): string | null {
+  if (context.kind !== "lead") return null;
+
+  if (!context.variables.website?.trim()) {
+    return `They have no website. That is the email.
+
+Do not write about websites in general and do not list what a website contains. Write about what not having one costs *this* business: the customer who searched their trade in their town and found somebody else, the reviews they have earned with nowhere to send anyone, the enquiry that went to whoever appeared instead. Use their trade and their town by name — those two words are what make it about them rather than about anybody.
+
+If the facts show demand already exists — a rating, a review count, a busy social account — that is the strongest thing you have. The demand is real and there is nowhere for it to land. Say that.
+
+One concrete sentence about their situation beats three about ours.`;
+  }
+
+  return `They have a website and somebody has looked at it. The facts include what was checked on it and what it looks like.
+
+Open on the single most specific thing that was actually observed there, and say what it costs them. Not "your website could be improved" — the thing itself: what loads, what does not, what a visitor sees first, what is missing from the page.
+
+Do not list the findings. Take one, at most two, and make them concrete enough that they can check it themselves in ten seconds while still reading. Anything they can verify without leaving the email is worth more than anything they cannot.
+
+Never suggest a new website when the facts describe a site that mostly works. Fixing what was observed is the honest offer, and it is a smaller ask.`;
+}
+
 function buildPrompt(request: DraftRequest): string {
   const { context } = request;
   const parts = [
@@ -125,6 +157,9 @@ function buildPrompt(request: DraftRequest): string {
     "Everything known about the recipient. These are the only facts you may use — you may leave any of them out, but you may not add to them:",
     context.facts.map((fact) => `- ${fact}`).join("\n"),
   ];
+
+  const chosen = angle(context);
+  if (chosen) parts.push("", "The angle for this one:", chosen);
 
   if (request.extraFacts?.length) {
     parts.push("", "The sender has added these facts for this email specifically:", request.extraFacts.map((fact) => `- ${fact}`).join("\n"));

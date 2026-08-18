@@ -95,9 +95,10 @@ as descriptions; nothing in one is ever executed.
 
 **Models are chosen by job, never by vendor** — `src/lib/models/`. A caller
 says `callModel({ job: "text" })` and the routing decides who serves it:
-Gemini writes, ChatGPT draws and builds pages, Perplexity checks facts against
-live sources and rewrites drafts into plain English. **Every job falls back to
-Claude when the vendor picked for it has no key**, so nothing waits on a
+Gemini writes, ChatGPT draws, builds pages and looks at pictures, Perplexity
+researches companies, checks facts against live sources and rewrites drafts
+into plain English. **Every job falls back to Claude when the vendor picked
+for it has no key**, so nothing waits on a
 credential and each key the Owner pastes moves one job onto its chosen model.
 `registry.ts` holds the vendors, the shipped routing, the published rates and
 the fallback; `call.ts` holds one adapter per vendor.
@@ -130,6 +131,54 @@ do instead is **say who answered**: `content.factcheck` returns `checkedBy` and
 `checkedAgainstLiveSources`, because checking a claim against a model's
 training data is a much weaker thing than checking it against the live web and
 whoever reads the result has to be able to tell which they got.
+
+**Nothing writes to a lead until somebody has looked at it** —
+`src/services/leadPrep.ts`. A scraped row is a name, an email and three
+em-dashes, and an email written from that can only be generic, because generic
+is all the record holds. `prepareLead()` runs three stages before a word is
+drafted:
+
+1. `leadResearch.ts` — who they are, established against live sources
+   (`job: "research"` → Perplexity), filling only *blank* fields on the lead and
+   writing the discovery note.
+2. `companyAudit.ts` — their site and mail domain, fetched and resolved. The
+   checkable half.
+3. `siteShot.ts` + `homepageLook.ts` — a screenshot of the homepage through
+   Apify's `apify/screenshot-url`, read by a vision model (`job: "vision"`).
+   The half markup cannot answer: what a first-time visitor actually sees.
+
+Then `emailDrafter.ts` picks the **angle** from the one fact that changes it —
+no website is a different letter from a bad website — and `emailPolish.ts`
+(`job: "humanise"` → Perplexity) reads it last, changing how it is said and
+never what it says. `POST /emails/draft` runs all of it and returns the work:
+the pre-polish draft, what the polish changed, and anything it *added*, which
+should always be empty and is shown loudly when it is not.
+
+Four rules hold it honest, and each has a failure mode behind it:
+
+- **Fill a blank or leave it empty; never overwrite and never guess.** A scrape
+  read the address off the business's own listing; a search read it off
+  whatever ranked. Every filled value carries the URL it came from, and one
+  without a citable source is dropped on arrival.
+- **A researched contact address is offered, never applied.** Everything else
+  being wrong costs a sentence in a draft somebody reads. An email address
+  being wrong sends a letter about a stranger's business to a stranger.
+- **A `website` value is validated as a URL before it is stored.** It decides
+  which argument the email makes, so garbage there turns Dakyworld's strongest
+  opening into a pitch about a site that does not exist.
+- **Every stage degrades to a note, never an error.** No Perplexity key, no
+  Apify token, a site that blocks headless browsers — each is a sentence in
+  `notes[]`, and what comes back is still something a person can send.
+
+Results live on `LeadResearch` (one row per lead, `STALE_AFTER_DAYS = 30`), so
+the second draft to the same person costs nothing and the Owner can read what
+the email was argued from after it has gone.
+
+`services/png.ts` gained a decoder for this: a full-page screenshot arrives
+taller than any vision model accepts, so `cropPngTop` keeps the first 2400px.
+It is sixty lines of `zlib.inflateSync` and an unfilter loop rather than an
+image library, and it refuses anything that is not 8-bit non-interlaced — which
+is everything a headless Chrome emits.
 
 **The agent runtime** — `src/services/agents/`. `runner.ts` is what turns a
 task into work: it claims an `AgentTask`, builds the prompt from the agent's

@@ -18,6 +18,15 @@ export interface RecipientContext {
   name: string | null;
   /** Rendered for the prompt — plain lines, no JSON, nothing invented. */
   facts: string[];
+  /**
+   * When somebody last went and looked at this business — researched them,
+   * checked their site, photographed their homepage. Null means nobody has,
+   * and an email written from a record nobody has looked at can only be
+   * generic. See services/leadPrep.ts.
+   */
+  preparedAt?: string | null;
+  /** What the looking could not establish, in plain words. */
+  prepNotes?: string[];
   /** Values available to `{{placeholders}}` in a template. */
   variables: Record<string, string>;
   leadId?: string;
@@ -58,6 +67,7 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
       proposals: { orderBy: { createdAt: "desc" }, take: 3 },
       communications: { orderBy: { occurredAt: "desc" }, take: 5 },
       emails: { where: { status: "SENT" }, orderBy: { sentAt: "desc" }, take: 5, select: { subject: true, sentAt: true } },
+      research: true,
     },
   });
   if (!lead) throw new Error("Lead not found");
@@ -91,8 +101,23 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
   }
   if (lead.emails.length === 0) facts.push("We have never emailed this person before.");
 
+  // Everything that came from going and looking: what research established,
+  // what the audit found on their site and mail domain, and what a model saw
+  // in a picture of their homepage. This is the half of the context that makes
+  // a specific email possible, and it is deliberately appended last so the
+  // record's own facts read first.
+  if (lead.research?.facts?.length) {
+    facts.push(...lead.research.facts);
+  } else {
+    facts.push(
+      "Nobody has looked at this business yet — no research, no check of their site, no look at their homepage. Keep the email short rather than reaching for something specific that is not here.",
+    );
+  }
+
   return {
     kind: "lead",
+    preparedAt: lead.research?.ranAt.toISOString() ?? null,
+    prepNotes: lead.research?.notes ?? [],
     leadId: lead.id,
     email: lead.contactEmail,
     name: lead.contactName,

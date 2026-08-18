@@ -69,6 +69,24 @@ const DEFAULT_MESSAGES: Record<FailureKind, string> = {
   parse: "Claude's reply could not be read. Try again.",
 };
 
+/**
+ * A picture sent with the prompt.
+ *
+ * Base64 rather than a URL on purpose: the images this app sends a model are
+ * screenshots held behind a signed Apify link that expires, and a vendor
+ * fetching a URL for itself turns "the model could not see the page" into a
+ * failure nobody can reproduce an hour later. Bytes we already hold are bytes
+ * the model definitely got.
+ */
+export interface PromptImage {
+  /** "image/png", "image/jpeg", "image/webp". */
+  mediaType: string;
+  /** The image itself, base64, no data: prefix. */
+  base64: string;
+  /** What it is, for the prompt — "their homepage at 1280px wide". */
+  caption?: string;
+}
+
 export interface ClaudeRequest {
   /** Cost attribution: "email.draft", "proposal.write", "sheet.analyse". */
   purpose: string;
@@ -85,6 +103,8 @@ export interface ClaudeRequest {
   maxTokens?: number;
   /** Overrides the configured default. Rarely needed. */
   model?: string;
+  /** Pictures to look at alongside the prompt. */
+  images?: PromptImage[];
   /** Per-caller wording for the failures a person will read. */
   messages?: Partial<Record<FailureKind, string>>;
 }
@@ -152,6 +172,19 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
   const client = new Anthropic({ apiKey });
   const prompt = request.prompt();
 
+  // Pictures before the words. Claude reads a prompt that refers to "the
+  // screenshot above" far more reliably than one that refers forward to an
+  // image it has not reached yet, and every vendor here takes the same order.
+  const userContent = request.images?.length
+    ? [
+        ...request.images.map((image) => ({
+          type: "image" as const,
+          source: { type: "base64" as const, media_type: image.mediaType as "image/png", data: image.base64 },
+        })),
+        { type: "text" as const, text: prompt },
+      ]
+    : prompt;
+
   const send = (withFallbacks: boolean) =>
     client.beta.messages.create({
       model,
@@ -162,7 +195,7 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
         format: { type: "json_schema", schema: request.schema },
       },
       ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: userContent }],
     });
 
   let response;

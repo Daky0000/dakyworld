@@ -230,6 +230,8 @@ model Lead {
   communications Communication[]
   emails         EmailMessage[]
   enrollments    EmailEnrollment[]
+  /// What was learnt by going and looking, as opposed to what a scrape handed over.
+  research       LeadResearch?
 
   agentTasks   AgentTask[]
 
@@ -238,6 +240,54 @@ model Lead {
   @@index([scraperRunId])
   @@index([source, createdAt])
   @@index([captureMethod])
+}
+
+/// Everything found out about one lead by going and looking: the fields a
+/// live-source search filled in, the structural audit of their site and mail
+/// domain, a screenshot of their homepage, and what a model saw in it.
+///
+/// This is separate from `Lead.enrichment` on purpose. `enrichment` is the
+/// scraper's own untouched record — evidence of what a provider said. This is
+/// evidence of what *we* looked at, when, and what it cost, which is a
+/// different thing and has to be re-runnable without destroying the first.
+///
+/// One row per lead: research goes stale, and a stale row that is still
+/// readable is worse than one that says when it was taken. `ranAt` is what the
+/// staleness check reads.
+model LeadResearch {
+  id     String @id @default(cuid())
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId String @unique
+
+  ranAt DateTime @default(now())
+
+  /// `{ "<Lead field>": { value, source, confidence } }` — what this run put
+  /// into empty fields on the lead, and where each one came from, so a wrong
+  /// value can be traced to the page that claimed it.
+  filled Json?
+  /// The live-source pass: the discovery note it wrote, and the URLs it read.
+  research Json?
+  /// services/companyAudit.ts output as it stood at `ranAt`.
+  audit Json?
+  /// The homepage screenshot: where the image is and what was asked for.
+  shot Json?
+  /// What a model saw when it looked at that screenshot.
+  look Json?
+
+  /// The whole thing as plain lines, which is what the drafter actually reads.
+  /// Denormalised deliberately: the email that goes out has to be reproducible
+  /// from the row, not from re-deriving four JSON blobs a schema change later.
+  facts String[] @default([])
+  /// Anything that could not be checked, in plain words. Never a failure.
+  notes String[] @default([])
+
+  /// Models and Apify together, for this run.
+  costUsd Decimal @default(0) @db.Decimal(10, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ranAt])
 }
 
 /// A named bucket of leads — normally one scrape batch ("Accra dentists,

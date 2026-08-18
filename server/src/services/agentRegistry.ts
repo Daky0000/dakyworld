@@ -384,7 +384,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
           "Deploys and rollbacks",
         ],
         kpis: ["Pages shipped", "Lighthouse scores", "Accessibility defects", "Rollbacks needed"],
-        toolkit: ["web.page", "github.read", "github.issue", "security.scan", "company.audit", "projects.read", "tasks.write"],
+        toolkit: ["web.page", "github.read", "github.issue", "security.scan", "company.audit", "site.look", "projects.read", "tasks.write"],
         escalationPolicy:
           "Never touches production without a rollback plan. Anything that changes price, scope, a client's DNS or a live site's availability goes to the CTO first.",
         process:
@@ -556,7 +556,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
           "Search Console diagnosis",
         ],
         kpis: ["Technical faults fixed", "Impressions and clicks", "Local pack visibility", "Indexation coverage"],
-        toolkit: ["company.audit", "security.scan", "content.draft", "analytics.read", "lead.read"],
+        toolkit: ["company.audit", "security.scan", "site.look", "content.draft", "analytics.read", "lead.read"],
         escalationPolicy: "Never promises a ranking or a timeline search engines do not guarantee. No paid links, no cloaking, no scraped content.",
         process:
           "Fix what is broken before chasing what is missing — an unindexable site does not need more keywords. Every recommendation names the fault, the evidence, the fix and who does it.",
@@ -600,10 +600,12 @@ export const AGENT_SEEDS: AgentSeed[] = [
           "content.humanise",
           "document.render",
           "lead.read",
+          "lead.prepare",
           "client.read",
           "projects.read",
           "careplan.read",
           "company.audit",
+          "site.look",
         ],
         escalationPolicy:
           "Never invents a price, a timeline or a deliverable. Anything outside the published catalogue, any discount, and any promise about a date is prepared and escalated — never sent.",
@@ -631,14 +633,21 @@ export const AGENT_SEEDS: AgentSeed[] = [
           "Writing for WhatsApp and LinkedIn as well as email",
         ],
         kpis: ["Reply rate", "Positive reply rate", "Unsubscribes and complaints", "Meetings booked"],
+        // `lead.prepare` is the one its own process describes: research the
+        // business, fill the blanks the scrape left, check the site and look
+        // at the homepage. Without it this agent could only write from a
+        // record somebody else had filled in.
         toolkit: [
           "lead.read",
+          "lead.prepare",
           "company.audit",
+          "site.look",
           "security.scan",
           "content.draft",
           "content.factcheck",
           "content.humanise",
           "email.draft",
+          "email.polish",
           "suppression.check",
           "analytics.read",
         ],
