@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { prisma } from "./prisma.js";
+import { recordLlmCall } from "./llmLedger.js";
 import { SETTING, getSetting } from "./settings.js";
 import { costOf, defaultModel, rateFor } from "./claudePricing.js";
 
@@ -119,42 +119,6 @@ export async function analystConfigured(): Promise<boolean> {
   return Boolean(await analystKey());
 }
 
-/** Records the call. Never throws — accounting must not fail the feature. */
-async function record(entry: {
-  purpose: string;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  costUsd: number;
-  durationMs: number;
-  effort?: string;
-  stopReason?: string | null;
-  ok: boolean;
-  error?: string;
-}) {
-  try {
-    await prisma.llmCall.create({
-      data: {
-        purpose: entry.purpose,
-        model: entry.model,
-        inputTokens: entry.inputTokens,
-        outputTokens: entry.outputTokens,
-        cacheReadTokens: entry.cacheReadTokens,
-        cacheCreationTokens: entry.cacheCreationTokens,
-        costUsd: entry.costUsd.toFixed(6),
-        durationMs: entry.durationMs,
-        effort: entry.effort ?? null,
-        stopReason: entry.stopReason ?? null,
-        ok: entry.ok,
-        error: entry.error ?? null,
-      },
-    });
-  } catch (err) {
-    console.error("[claude] could not record spend:", (err as Error).message);
-  }
-}
 
 export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResult<T>> {
   const say = (kind: FailureKind) => request.messages?.[kind] ?? DEFAULT_MESSAGES[kind];
@@ -168,7 +132,7 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
 
   // Failures are recorded too, so every exit below goes through this.
   const fail = async (status: number, message: string, stopReason?: string | null) => {
-    await record({
+    await recordLlmCall({
       purpose: request.purpose,
       model,
       inputTokens: 0,
@@ -234,7 +198,7 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
   const costUsd = costOf(rate, tokens);
 
   const spent = async (ok: boolean, error?: string) =>
-    record({
+    recordLlmCall({
       purpose: request.purpose,
       model: response.model,
       ...tokens,

@@ -495,6 +495,7 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
           <p className="mt-1 text-sm text-ink/55">
             {data.summary.total} across {data.summary.subjects} subject{data.summary.subjects === 1 ? "" : "s"}
             {data.summary.neverUsed > 0 && ` · ${data.summary.neverUsed} never recalled`}
+            {agent.sharedMemories > 0 && ` · including ${agent.sharedMemories} the whole company holds`}
           </p>
         )}
       </div>
@@ -507,10 +508,19 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
       ) : (
         <div className="space-y-1.5">
           {memories.map((memory) => (
-            <div key={memory.id} className="flex items-start justify-between gap-3 border border-line bg-white px-3 py-2">
+            <div
+              key={memory.id}
+              className={`flex items-start justify-between gap-3 border px-3 py-2 ${
+                memory.scope === "SHARED" ? "border-blue/25 bg-blue/5" : "border-line bg-white"
+              }`}
+            >
               <span className="min-w-0 flex-1">
                 <span className="block text-sm leading-relaxed text-ink/75">{memory.content}</span>
                 <span className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-ink/35">
+                  {/* Marked, because these are the company's rather than this
+                      agent's — and forgetting one would take it away from all
+                      of them, which is why this row doesn't offer to. */}
+                  {memory.scope === "SHARED" && <span className="text-blue">every agent</span>}
                   <span>{memory.kind.toLowerCase()}</span>
                   <code className="text-ink/40">{memory.subject}</code>
                   <span>importance {memory.importance}</span>
@@ -519,13 +529,19 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
                   </span>
                 </span>
               </span>
-              <button
-                type="button"
-                onClick={() => remove.mutate(memory.id)}
-                className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-ink/35 transition hover:text-ink"
-              >
-                Forget
-              </button>
+              {memory.scope === "SHARED" ? (
+                <span className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-ink/25" title="Shared with every agent — manage it on the Agents screen">
+                  shared
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => remove.mutate(memory.id)}
+                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-ink/35 transition hover:text-ink"
+                >
+                  Forget
+                </button>
+              )}
             </div>
           ))}
         </div>

@@ -1,4 +1,5 @@
 import { analystConfigured } from "../../lib/claude.js";
+import { PROVIDER_KEYS, providerConfigured } from "../../lib/models/registry.js";
 import { apifyConfigured } from "../../lib/apify.js";
 import { mailerConfigured } from "../../lib/mailer.js";
 import { stripeConfigured } from "../../lib/stripe.js";
@@ -52,6 +53,15 @@ async function compute(requirement: ToolRequirement): Promise<Readiness> {
       return ok;
     case "claude":
       return (await analystConfigured()) ? ok : no("No Anthropic API key. Add one under Settings → Analyst.");
+    case "models": {
+      // Ready when *any* vendor is connected, because every job falls back to
+      // whichever one is. Which vendor serves which job is settings, not
+      // readiness — see lib/models/registry.ts.
+      const connected = await Promise.all(PROVIDER_KEYS.map((key) => providerConfigured(key)));
+      return connected.some(Boolean)
+        ? ok
+        : no("No AI model is connected. Add a key under Settings → AI models.");
+    }
     case "apify":
       return (await apifyConfigured()) ? ok : no("No Apify token. Add one under Settings → Lead capture.");
     case "email":

@@ -252,6 +252,10 @@ model LeadGroup {
   autoCreated Boolean  @default(false)
   /// Where an imported group came from — "Contacts!A5:F210" — so a re-import can be traced.
   sourceLabel String?
+  /// LeadTag slugs. A list carries its own labels — "cold-outreach", "q4-push" —
+  /// separately from the leads inside it, because what a batch *is* and what a
+  /// business in it *is* are different questions.
+  tags        String[] @default([])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -262,6 +266,40 @@ model LeadGroup {
   fields LeadField[]
 
   @@index([leadImportId])
+}
+
+/// The tag vocabulary.
+///
+/// `Lead.tags` and `LeadGroup.tags` stay plain string arrays rather than
+/// becoming a join table, because four different writers put tags on a lead —
+/// a scrape, a spreadsheet import, an inbound webhook, a person — and three of
+/// them invent the words as they go. A foreign key would make every one of
+/// those writes able to fail on a label nobody had registered yet.
+///
+/// So this is a *registry* rather than a constraint: every tag written
+/// anywhere is upserted here as it is used (`autoCreated`), which is what
+/// makes a tag list, a colour, a rename and a count possible at all. The
+/// arrays hold `slug`, never the label — renaming a tag then costs one row
+/// instead of an update across every lead that carries it.
+model LeadTag {
+  id    String @id @default(cuid())
+  /// What the arrays actually store. Lowercase, hyphenated, ≤40 chars.
+  slug  String @unique
+  /// What a person reads. Editable without touching a single lead.
+  label String
+  /// One of the brand tag colours — see services/leadTags.ts. Null means neutral.
+  colour      String?
+  description String?
+  /// True when a scrape, an import or a webhook coined it rather than the Owner.
+  /// The Owner naming a tag is a decision; a scraper coining one is a side effect.
+  autoCreated Boolean @default(false)
+  /// Kept so an unused tag can be found and cleared out.
+  lastUsedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([autoCreated])
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,6 +1223,15 @@ model Agent {
   /// Bumped in the seed when the built-in wording changes, so a later deploy
   /// can tell an untouched agent from one somebody has edited.
   seedRevision Int      @default(1)
+  /// Set the first time the Owner rewrites a *seeded* agent's wording.
+  ///
+  /// The wording of a built-in agent used to be read-only here on the grounds
+  /// that it is a diff. That was the wrong trade: a prompt is the instruction,
+  /// and an instruction the person accountable for the work cannot change is
+  /// not really theirs. So it is editable, and this is the flag that keeps the
+  /// shipped wording recoverable — set means "rewritten here", which is what
+  /// the Reset action on the Agents screen offers to undo.
+  promptEditedAt DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -1577,6 +1624,21 @@ model AgentTaskStep {
   @@index([taskId, seq])
 }
 
+/// Whose memory this is.
+///
+/// `AGENT` is what one agent concluded, and only it is shown that. `SHARED` is
+/// the company's: written once, recalled by every agent, and how the Owner
+/// tells the whole workforce something at once rather than eighteen times.
+///
+/// Recall stays **by subject** in both cases, which is the invariant that
+/// keeps a shared memory from becoming a leak: a shared fact about one client
+/// is still only recalled on a task about that client. What "shared" widens is
+/// *who* is shown it, never *when* it comes up.
+enum AgentMemoryScope {
+  AGENT
+  SHARED
+}
+
 enum AgentMemoryKind {
   /// A choice it made, and why.
   DECISION
@@ -1604,8 +1666,16 @@ enum AgentMemoryKind {
 model AgentMemory {
   id String @id @default(cuid())
 
-  agent    Agent  @relation(fields: [agentKey], references: [key], onDelete: Cascade)
-  agentKey String
+  /// Null on a shared memory — it belongs to the company, not to an agent, and
+  /// must outlive the agent that happened to write it.
+  agent    Agent?  @relation(fields: [agentKey], references: [key], onDelete: Cascade)
+  agentKey String?
+
+  scope AgentMemoryScope @default(AGENT)
+  /// Who wrote it, as a bare key rather than a relation — a shared memory
+  /// survives its author being retired, and "who concluded this" is still
+  /// worth answering afterwards. `owner` for one the Owner typed in.
+  authorKey String?
 
   kind AgentMemoryKind
 
@@ -1631,4 +1701,5 @@ model AgentMemory {
 
   @@index([agentKey, subject])
   @@index([agentKey, createdAt])
+  @@index([scope, subject])
 }

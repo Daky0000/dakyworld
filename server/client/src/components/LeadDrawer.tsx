@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type { Lead, LeadFieldDef, LeadGroup } from "../lib/types";
 import { CaptureTag, captureMethodLabel, useLeadFields } from "./LeadColumns";
+import { TagChip, TagPicker, useTagLookup } from "./LeadTags";
 import { ProposalWriter } from "./ProposalWriter";
 import { Badge, Button, Drawer, Field, Money, RelativeTime, ScoreBar } from "./ui";
 
@@ -215,17 +216,9 @@ export function LeadDrawer({
             <DetailRow label="Score">
               <ScoreBar score={lead.leadScore} />
             </DetailRow>
-            {lead.tags && lead.tags.length > 0 && (
-              <DetailRow label="Tags">
-                <span className="flex flex-wrap gap-1">
-                  {lead.tags.map((tag) => (
-                    <Badge key={tag} tone="muted">
-                      {tag}
-                    </Badge>
-                  ))}
-                </span>
-              </DetailRow>
-            )}
+            <DetailRow label="Tags">
+              <LeadTagsField lead={lead} onSave={(tags) => update.mutate({ tags })} pending={update.isPending} />
+            </DetailRow>
           </Section>
 
           <Section title="Where it came from">
@@ -513,6 +506,74 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">{title}</h3>
       {children}
     </section>
+  );
+}
+
+/**
+ * The lead's tags, editable in place.
+ *
+ * Read-only until somebody clicks, because the common case is looking rather
+ * than editing and a picker sitting open in a detail row is noise. `tags` on a
+ * PATCH replaces the array wholesale, so the draft starts from what is there
+ * and is saved whole.
+ */
+function LeadTagsField({ lead, onSave, pending }: { lead: Lead; onSave: (tags: string[]) => void; pending: boolean }) {
+  const lookup = useTagLookup();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string[]>(lead.tags ?? []);
+
+  // A bulk retag elsewhere can change these underneath an open drawer.
+  const [loadedFor, setLoadedFor] = useState(lead.tags);
+  useEffect(() => {
+    if (loadedFor === lead.tags) return;
+    setLoadedFor(lead.tags);
+    if (!editing) setDraft(lead.tags ?? []);
+  }, [lead.tags, loadedFor, editing]);
+
+  if (!editing) {
+    return (
+      <span className="flex flex-wrap items-center gap-1">
+        {(lead.tags ?? []).map((tag) => (
+          <TagChip key={tag} slug={tag} lookup={lookup} />
+        ))}
+        {(lead.tags ?? []).length === 0 && <span className="text-ink/35">None</span>}
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(lead.tags ?? []);
+            setEditing(true);
+          }}
+          className="ml-1 font-mono text-[10px] uppercase tracking-[.14em] text-blue transition hover:underline"
+        >
+          Edit
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span className="block">
+      <TagPicker value={draft} onChange={setDraft} />
+      <span className="mt-2 flex items-center gap-3">
+        <Button
+          size="sm"
+          disabled={pending}
+          onClick={() => {
+            onSave(draft);
+            setEditing(false);
+          }}
+        >
+          {pending ? "Saving…" : "Save tags"}
+        </Button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45"
+        >
+          Cancel
+        </button>
+      </span>
+    </span>
   );
 }
 

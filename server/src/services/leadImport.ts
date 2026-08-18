@@ -15,6 +15,7 @@ import { prisma } from "../lib/prisma.js";
 import { builtinField, isBuiltinKey } from "./leadFields.js";
 import { extractRows, type ImportPlan, type PlanTable } from "./sheetPlan.js";
 import type { SheetGrid } from "./spreadsheet.js";
+import { normaliseTags, registerTags } from "./leadTags.js";
 
 // --- Preview ---------------------------------------------------------------
 
@@ -275,8 +276,15 @@ export async function commitPlan(importId: string, grids: SheetGrid[], plan: Imp
 
     const toCreate: Prisma.LeadCreateManyInput[] = [];
 
+    // A "Tags" column arrives as whatever the sheet spelled it. Registered
+    // once for the whole table rather than per row, so a 400-row import is one
+    // round trip instead of 400 — and stored as slugs, which is what every
+    // other tag writer stores. See services/leadTags.ts.
+    await registerTags(prepared.flatMap((row) => (Array.isArray(row.lead.tags) ? (row.lead.tags as string[]) : [])));
+
     for (const row of prepared) {
       const scalars = row.lead as Prisma.LeadUncheckedCreateInput & Record<string, unknown>;
+      if (Array.isArray(scalars.tags)) scalars.tags = normaliseTags(scalars.tags as string[]);
       const base = {
         ...scalars,
         contactName: String(row.lead.contactName),

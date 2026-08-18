@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { prisma } from "./prisma.js";
+import { recordLlmCall } from "./llmLedger.js";
 import { AnalystError, analystKey, type Effort } from "./claude.js";
 import { costOf, defaultModel, rateFor } from "./claudePricing.js";
 
@@ -91,42 +91,6 @@ function rejectedTheBeta(err: unknown): boolean {
   return message.includes("fallback") || message.includes("beta");
 }
 
-/** Records the spend. Never throws — accounting must not fail the work. */
-async function record(entry: {
-  purpose: string;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  costUsd: number;
-  durationMs: number;
-  effort: string;
-  stopReason?: string | null;
-  ok: boolean;
-  error?: string;
-}) {
-  try {
-    await prisma.llmCall.create({
-      data: {
-        purpose: entry.purpose,
-        model: entry.model,
-        inputTokens: entry.inputTokens,
-        outputTokens: entry.outputTokens,
-        cacheReadTokens: entry.cacheReadTokens,
-        cacheCreationTokens: entry.cacheCreationTokens,
-        costUsd: entry.costUsd.toFixed(6),
-        durationMs: entry.durationMs,
-        effort: entry.effort,
-        stopReason: entry.stopReason ?? null,
-        ok: entry.ok,
-        error: entry.error ?? null,
-      },
-    });
-  } catch (err) {
-    console.error("[agent] could not record spend:", (err as Error).message);
-  }
-}
 
 export interface AgentRunRequest {
   /** Cost attribution: the agent key, so spend per agent is answerable. */
@@ -177,7 +141,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   let stoppedBecause: AgentRunResult["stoppedBecause"] = "iteration-cap";
 
   const finish = async (ok: boolean, error?: string): Promise<AgentRunResult> => {
-    await record({
+    await recordLlmCall({
       purpose: request.purpose,
       model: servedBy,
       inputTokens,

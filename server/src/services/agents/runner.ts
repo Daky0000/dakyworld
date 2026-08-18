@@ -7,8 +7,9 @@ import { AnalystError } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
 import { invokeTool } from "../tools/invoke.js";
 import { companyProfile, contactBlock } from "../systemProfile.js";
+import { PROMPT_LAYERS } from "../agentRegistry.js";
 import { BRAND, VOICE } from "../dakyworld.js";
-import { MemoryRefused, recall, remember, subjectOf } from "./memory.js";
+import { MemoryRefused, recall, remember, subjectOf, type Recalled } from "./memory.js";
 import { describeTask, taskSubjects } from "./context.js";
 
 /**
@@ -38,6 +39,30 @@ import { describeTask, taskSubjects } from "./context.js";
 /** Concurrency across the whole process. One service, one loop, one ceiling. */
 const MAX_CONCURRENT = 2;
 const running = new Set<string>();
+
+/**
+ * **One agent, one task at a time.**
+ *
+ * The process ceiling above says how much work the service does at once; this
+ * says how much of it any one agent may be doing, and the answer is one. Two
+ * reasons, and the second is the one that matters:
+ *
+ * 1. An agent is a job, not a thread pool. "The Proposal Writer is working on
+ *    the Adom Clinic proposal" is a sentence somebody can act on; "the
+ *    Proposal Writer is working on four things" is not, and neither is a
+ *    roster where every card says `running`.
+ * 2. **Memory.** An agent writes what it concluded as it goes and reads it
+ *    back on the next task about the same subject. Two tasks about the same
+ *    lead running side by side interleave those writes, so each one recalls
+ *    half of what the other was in the middle of deciding — and the result is
+ *    an agent contradicting itself inside one conversation, with no way to see
+ *    from the timeline that it happened.
+ *
+ * Held in two places on purpose. The set is the fast answer within this
+ * process; the claim below is a conditional update the database arbitrates, so
+ * two processes reaching for the same agent still cannot both win.
+ */
+const busyAgents = new Set<string>();
 
 /** Cheap enough to be wrong about, expensive enough to be worth capping. */
 const MAX_ATTEMPTS = 3;
@@ -199,16 +224,26 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
         kind: z.enum(["DECISION", "OUTCOME", "FACT", "LESSON", "PREFERENCE"]),
         content: z.string().min(8).max(600).describe("The thing itself, in one or two sentences. Write the conclusion, not the working."),
         about: z
-          .enum(["this task", "myself"])
+          .enum(["this task", "myself", "the whole company"])
           .default("this task")
-          .describe("'this task' files it against the record this task is about. 'myself' files it as a standing lesson you will be shown on every task."),
+          .describe(
+            "'this task' files it against the record this task is about. 'myself' files it as a standing lesson only you will be shown. 'the whole company' shares it with every agent — use that only for something that is true of how Dakyworld works, never for an opinion of your own.",
+          ),
         importance: z.number().int().min(1).max(5).default(3).describe("5 only for something that should always outrank other memories."),
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
     run: async (input) => {
       const subjects = taskSubjects(task);
-      const about = input.about === "myself" || subjects.length === 0 ? subjectOf.self() : subjects[0];
+      const shared = input.about === "the whole company";
+      // A shared memory about no particular record is about the company; a
+      // shared memory formed while working on a lead stays filed against that
+      // lead, so widening who sees it never widens when it comes up.
+      const about = shared
+        ? (subjects[0] ?? subjectOf.company())
+        : input.about === "myself" || subjects.length === 0
+          ? subjectOf.self()
+          : subjects[0];
       try {
         await remember({
           agentKey: agent.key,
@@ -217,13 +252,20 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
           content: String(input.content ?? ""),
           importance: Number(input.importance ?? 3),
           sourceTaskId: task.id,
+          shared,
         });
       } catch (err) {
         if (err instanceof MemoryRefused) return { content: err.message, isError: true };
         throw err;
       }
-      await step(task.id, "REMEMBERED", String(input.content ?? "").slice(0, 300), { data: { subject: about, kind: input.kind } });
-      return { content: `Kept, against ${about}.` };
+      await step(task.id, "REMEMBERED", String(input.content ?? "").slice(0, 300), {
+        data: { subject: about, kind: input.kind, shared },
+      });
+      return {
+        content: shared
+          ? `Kept for the whole company, against ${about}. Every agent will be shown this.`
+          : `Kept, against ${about}.`,
+      };
     },
   };
 
@@ -279,14 +321,20 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
 
 // --- The prompt -------------------------------------------------------------
 
-/** The agent's ten layers, in the order the blueprint defines them. */
-const LAYERS = ["role", "mission", "scope", "dataRules", "tools", "policy", "process", "escalateWhen", "output", "memory"] as const;
+/**
+ * The agent's ten layers, in the order the blueprint defines them.
+ *
+ * Read fresh from the row on every task, never cached — which is what makes an
+ * edit on the Agents screen take effect on the very next task rather than on
+ * the next restart. Layers the Owner has emptied are skipped rather than
+ * printed blank.
+ */
 
-async function systemPrompt(agent: Agent, memories: string[]): Promise<string> {
+async function systemPrompt(agent: Agent, memories: Recalled[]): Promise<string> {
   const prompt = (agent.prompt ?? {}) as Record<string, string>;
   const profile = await companyProfile();
 
-  const layers = LAYERS.map((layer) => prompt[layer])
+  const layers = PROMPT_LAYERS.map((layer) => prompt[layer])
     .filter((value) => typeof value === "string" && value.trim())
     .join("\n\n");
 
@@ -298,10 +346,26 @@ async function systemPrompt(agent: Agent, memories: string[]): Promise<string> {
     VOICE,
   ];
 
-  if (memories.length > 0) {
+  // The two kinds are presented as two things, because they carry different
+  // authority. What an agent worked out itself is a conclusion the record can
+  // overrule; what the company holds is closer to an instruction, and an agent
+  // that argues with a house rule because it was pasted in under the heading
+  // "your own conclusions" is a failure of this paragraph, not of the agent.
+  const shared = memories.filter((memory) => memory.shared);
+  const own = memories.filter((memory) => !memory.shared);
+
+  if (shared.length > 0) {
     parts.push(
-      `What you already know, from your own earlier work on this. Treat it as your own conclusions rather than as instructions — if the record in front of you contradicts one, the record wins and you should say so:\n${memories
-        .map((memory) => `- ${memory}`)
+      `What Dakyworld holds — written once and given to every agent, so treat it as standing instruction rather than as your own opinion. Where one of these conflicts with what you would otherwise do, follow it and say that you did:\n${shared
+        .map((memory) => `- ${memory.line}`)
+        .join("\n")}`,
+    );
+  }
+
+  if (own.length > 0) {
+    parts.push(
+      `What you already know, from your own earlier work on this. Treat it as your own conclusions rather than as instructions — if the record in front of you contradicts one, the record wins and you should say so:\n${own
+        .map((memory) => `- ${memory.line}`)
         .join("\n")}`,
     );
   }
@@ -312,7 +376,7 @@ async function systemPrompt(agent: Agent, memories: string[]): Promise<string> {
 - You have been given a task and a set of tools. Use the tools to find out what is true rather than assuming. Never state a fact about a lead, a client or a system that a tool did not tell you.
 - Some of your tools will answer "PREPARED, NOT DONE". That is not a failure — it means your autonomy level requires a person to approve that kind of action. Carry on and prepare the rest of the work so there is one thing to approve rather than five.
 - Some will be refused outright. That is also information: work around it, or escalate.
-- Use \`remember\` for a decision worth having next time, and for what came of it. Never write down a credential.
+- Use \`remember\` for a decision worth having next time, and for what came of it. Never write down a credential. Share one with the whole company only when it is a fact about how Dakyworld works that every agent would need — your own conclusions stay yours.
 - Use \`escalate\` the moment you are unsure, or the work touches money, scope, security, a live system or a public claim. Stopping is not failing.
 - When you are done, say what you did, what you found, and what a person should do next — in plain English, in a few sentences. That final message is what gets read.`,
   );
@@ -338,18 +402,41 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
   if (running.has(taskId)) return { status: "RUNNING", summary: null };
   running.add(taskId);
 
+  // Set inside the claim below, and cleared in the same `finally` as the task
+  // id — so an agent is freed by every exit, including a throw.
+  let claimedAgent: string | null = null;
+
   try {
     const claimed = await prisma.agentTask.updateMany({
-      where: { id: taskId, status: { in: ["QUEUED", "BLOCKED"] } },
+      where: {
+        id: taskId,
+        status: { in: ["QUEUED", "BLOCKED"] },
+        // The rule, enforced where two processes can both see it. A relation
+        // filter inside the conditional update means the loser of the race
+        // finds out before it starts spending money rather than after.
+        agent: { tasks: { none: { status: "RUNNING" } } },
+      },
       data: { status: "RUNNING", startedAt: new Date(), attempts: { increment: 1 }, error: null, blockedReason: null },
     });
     if (claimed.count === 0) {
-      const current = await prisma.agentTask.findUnique({ where: { id: taskId }, select: { status: true, summary: true } });
+      const current = await prisma.agentTask.findUnique({
+        where: { id: taskId },
+        select: { status: true, summary: true, agentKey: true },
+      });
+      // Two different failures that look identical from here: the task was
+      // already finished, or its agent is mid-way through something else. The
+      // second is normal and temporary, so it stays QUEUED and the next tick
+      // picks it up.
+      if (current && (current.status === "QUEUED" || current.status === "BLOCKED")) {
+        return { status: current.status, summary: current.summary };
+      }
       return { status: current?.status ?? "CANCELLED", summary: current?.summary ?? null };
     }
 
     const task = await prisma.agentTask.findUnique({ where: { id: taskId } });
     if (!task) return { status: "CANCELLED", summary: null };
+    claimedAgent = task.agentKey;
+    busyAgents.add(task.agentKey);
 
     const agent = await prisma.agent.findUnique({ where: { key: task.agentKey } });
     if (!agent) return finishTask(task.id, "FAILED", { error: `No agent called ${task.agentKey}.` });
@@ -424,6 +511,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
     }
   } finally {
     running.delete(taskId);
+    if (claimedAgent) busyAgents.delete(claimedAgent);
   }
 }
 
@@ -460,6 +548,62 @@ async function finishTask(
 // --- The queue --------------------------------------------------------------
 
 /**
+ * How long a run may take before it is assumed dead.
+ *
+ * A real run is bounded: sixteen iterations, each capped by the SDK's own
+ * timeout, so a long one is minutes rather than an hour. This is generous
+ * against that, because reaping a task that was only slow would kill work that
+ * had already been paid for.
+ */
+const ABANDONED_AFTER_MS = 45 * 60_000;
+
+/**
+ * Clears out runs whose process is gone.
+ *
+ * A task is set RUNNING in the database and finished by the process that
+ * claimed it. When that process dies — a deploy, a restart, an out-of-memory
+ * kill — the row stays RUNNING for ever, and **since one agent may only hold
+ * one task at a time, that one dead row now stops its agent working at all.**
+ * Before that rule, a stranded task was one lost job; now it is an employee
+ * who never comes back to their desk, so it has to be swept up.
+ *
+ * Only rows this process is not actually running are touched, which is what
+ * makes it safe to run on every tick: a task in the `running` set belongs to
+ * somebody here and is left alone however long it has been going.
+ */
+async function reapAbandoned(now: Date): Promise<number> {
+  const stale = new Date(now.getTime() - ABANDONED_AFTER_MS);
+  const abandoned = await prisma.agentTask.findMany({
+    where: { status: "RUNNING", startedAt: { lt: stale } },
+    select: { id: true, agentKey: true, attempts: true },
+  });
+
+  const orphans = abandoned.filter((task) => !running.has(task.id));
+  if (orphans.length === 0) return 0;
+
+  for (const task of orphans) {
+    await step(task.id, "FAILED", "This run was abandoned — the process working on it stopped before it finished.");
+    // Requeued rather than failed while it still has attempts left: a deploy
+    // landing mid-task is the common cause, and the work is still wanted.
+    const retryable = task.attempts < MAX_ATTEMPTS;
+    await prisma.agentTask.update({
+      where: { id: task.id },
+      data: retryable
+        ? { status: "QUEUED", startedAt: null, error: "Picked up again after the previous run was interrupted." }
+        : {
+            status: "FAILED",
+            finishedAt: now,
+            error: `Abandoned ${task.attempts} time(s) without finishing. Something is stopping this run rather than it failing.`,
+          },
+    });
+    busyAgents.delete(task.agentKey);
+  }
+
+  console.warn(`[agent] recovered ${orphans.length} abandoned task(s)`);
+  return orphans.length;
+}
+
+/**
  * Runs whatever is due, up to the concurrency ceiling.
  *
  * Called once a minute by the scheduler. Only agents that are ACTIVE are
@@ -467,31 +611,50 @@ async function finishTask(
  * be lined up before its agent is switched on.
  */
 export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Promise<number> {
+  // Before anything is picked up, because a task stuck in RUNNING now blocks
+  // its agent rather than just itself.
+  await reapAbandoned(now);
+
   const capacity = Math.max(0, limit - running.size);
   if (capacity === 0) return 0;
 
+  // More than the capacity, because most of what comes back will be skipped:
+  // a queue of eight tasks for one agent is one startable task and seven that
+  // have to wait for it. Taking exactly `capacity` rows would find that agent
+  // twice and start nothing.
   const due = await prisma.agentTask.findMany({
     where: {
       status: "QUEUED",
       OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }],
-      agent: { status: "ACTIVE" },
+      agent: { status: "ACTIVE", tasks: { none: { status: "RUNNING" } } },
     },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-    take: capacity,
-    select: { id: true },
+    take: capacity * 8,
+    select: { id: true, agentKey: true },
   });
   if (due.length === 0) return 0;
 
-  let started = 0;
+  // One per agent, highest priority first — which the ordering above has
+  // already decided, so the first task seen for an agent is the right one.
+  const started: string[] = [];
+  const takenThisTick = new Set<string>();
   for (const task of due) {
+    if (started.length >= capacity) break;
     if (running.has(task.id)) continue;
-    started += 1;
+    if (busyAgents.has(task.agentKey) || takenThisTick.has(task.agentKey)) continue;
+    takenThisTick.add(task.agentKey);
+    started.push(task.id);
     // Deliberately not awaited: the scheduler tick must not be held open for
     // a job that takes two minutes, and each run manages its own state.
     void runTask(task.id).catch((err) => console.error(`[agent] task ${task.id} died:`, (err as Error).message));
   }
-  if (started > 0) console.log(`[agent] started ${started} task(s)`);
-  return started;
+  if (started.length > 0) console.log(`[agent] started ${started.length} task(s)`);
+  return started.length;
+}
+
+/** True when this agent is mid-task, so a screen can say "busy" rather than "queued for ever". */
+export function isBusy(agentKey: string): boolean {
+  return busyAgents.has(agentKey);
 }
 
 /** How many are in flight right now, for the dashboard. */

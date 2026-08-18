@@ -47,6 +47,31 @@ export const SETTING = {
    * See lib/claudePricing.ts.
    */
   ANTHROPIC_PRICING: "anthropic.pricing",
+  // The other three model vendors. One key each is the whole configuration:
+  // which job goes to which vendor has a shipped default, and every job falls
+  // back to Claude while its key is missing. See lib/models/registry.ts.
+  /** ChatGPT — images and complete web pages. */
+  OPENAI_KEY: "openai.apiKey",
+  OPENAI_MODEL: "openai.model",
+  /** The image model, which is a different model from the same vendor. */
+  OPENAI_IMAGE_MODEL: "openai.imageModel",
+  /** Gemini — everything the system writes. */
+  GEMINI_KEY: "gemini.apiKey",
+  GEMINI_MODEL: "gemini.model",
+  /** Perplexity — fact-checking against live sources, and plain-English rewrites. */
+  PERPLEXITY_KEY: "perplexity.apiKey",
+  PERPLEXITY_MODEL: "perplexity.model",
+  /**
+   * Which vendor serves which job, as JSON, holding only what has been changed
+   * from the shipped routing: `{"text":"anthropic"}`.
+   */
+  MODEL_ROUTES: "models.routes",
+  /**
+   * Per-model rate overrides for the non-Claude vendors, same shape and same
+   * reasoning as `anthropic.pricing`.
+   */
+  MODEL_PRICING: "models.pricing",
+
   GOOGLE_CLIENT_ID: "google.clientId",
   GOOGLE_CLIENT_SECRET: "google.clientSecret",
   /** Written by the OAuth callback; the only Google credential that persists. */
@@ -137,6 +162,15 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   // the model decides what a call costs. Pricing overrides are deliberately
   // database-only — they're a correction to a published rate, not a knob.
   [SETTING.ANTHROPIC_MODEL]: "ANTHROPIC_MODEL",
+  // Pinnable from the deploy for the same reason as the Anthropic key: the
+  // model decides what a call costs, and a key baked into Railway shouldn't be
+  // silently replaceable through the UI.
+  [SETTING.OPENAI_KEY]: "OPENAI_API_KEY",
+  [SETTING.OPENAI_MODEL]: "OPENAI_MODEL",
+  [SETTING.GEMINI_KEY]: "GEMINI_API_KEY",
+  [SETTING.GEMINI_MODEL]: "GEMINI_MODEL",
+  [SETTING.PERPLEXITY_KEY]: "PERPLEXITY_API_KEY",
+  [SETTING.PERPLEXITY_MODEL]: "PERPLEXITY_MODEL",
   [SETTING.GOOGLE_CLIENT_ID]: "GOOGLE_CLIENT_ID",
   [SETTING.GOOGLE_CLIENT_SECRET]: "GOOGLE_CLIENT_SECRET",
   [SETTING.GOOGLE_REFRESH_TOKEN]: "GOOGLE_REFRESH_TOKEN",

@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma.js";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { buildDedupeKey, cleanWebsite, scoreLead, type NormalizedLead } from "./leadMapping.js";
 import { enrolNewLeads } from "./emailSequences.js";
+import { registerTags } from "./leadTags.js";
 
 /**
  * What to do with an event somebody else sent us.
@@ -113,7 +114,7 @@ export async function intakeFormLead(payload: Record<string, unknown>): Promise<
     country: lead.country,
     category: lead.category,
     discoveryNotes: lead.discoveryNotes,
-    tags: lead.tags,
+    tags: await registerTags(lead.tags),
     source,
     captureMethod: "API" as const,
     // An inbound enquiry is worth more than anything a scraper found: they
@@ -137,7 +138,7 @@ export async function intakeFormLead(payload: Record<string, unknown>): Promise<
         website: existing.website ?? lead.website,
         city: existing.city ?? lead.city,
         discoveryNotes: [existing.discoveryNotes, lead.discoveryNotes].filter(Boolean).join("\n\n---\n\n") || null,
-        tags: Array.from(new Set([...existing.tags, ...lead.tags])),
+        tags: Array.from(new Set([...existing.tags, ...(await registerTags(lead.tags))])),
         leadScore: Math.max(existing.leadScore, base.leadScore),
         status: existing.status === "NEW" ? "QUALIFYING" : existing.status,
       },

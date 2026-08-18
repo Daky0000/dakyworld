@@ -29,6 +29,7 @@ import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureAgents } from "./services/agentRegistry.js";
+import { backfillTags } from "./services/leadTags.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -178,6 +179,11 @@ bootstrapOwner()
       void ensureAgents()
         .then((added) => added && console.log(`  → Seeded ${added} agent(s) into the workforce`))
         .catch((err) => console.error("Agent seed failed:", err));
+      // Every tag written into a lead before the registry existed. Without
+      // this the Tags screen opens empty on a database full of tagged leads.
+      void backfillTags()
+        .then((added) => added && console.log(`  → Registered ${added} tag(s) already in use`))
+        .catch((err) => console.error("Tag backfill failed:", err));
       if (DEV_NO_AUTH) {
         console.log("  → DEV_NO_AUTH=true: implicit Owner, no login required (ignored when NODE_ENV=production).");
       } else if (!process.env.OWNER_EMAIL || !process.env.OWNER_PASSWORD) {

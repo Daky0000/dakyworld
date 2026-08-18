@@ -660,6 +660,35 @@ list, each with that list's own columns; PDF is a landscape read-out of the
 first eight columns, for printing or sending. Both take the same filters as
 the table, and both cap at 5,000 rows.
 
+### Tags
+
+Leads carry tags, and so do lists. They answer different questions and are
+deliberately kept apart: a lead is tagged with what the business *is* ("dental
+clinic", "no website"), and a list with what the batch is *for* ("cold
+outreach", "Q4 push", "do not contact until March"). Tagging a batch does not
+put that label on the two hundred businesses inside it.
+
+- **Filter by them** from the row above the status chips. Pick two and you get
+  either; switch to *All of them* and you get both.
+- **Tag in bulk.** Select leads and press *Tags…* — you can add and remove in
+  one action, which is what retagging a segment usually needs: the leads that
+  stop being *to-call* are the ones that become *called*.
+- **Tag one lead** from its drawer.
+- **Tag a list** from its heading on the leads table.
+
+**Leads → Tags** is the vocabulary itself: every tag, how many leads and lists
+carry it, a colour, and a note on what it means. The counts are the point —
+a tag on four hundred leads is a segment and a tag on one is a typo, and until
+they were counted there was no telling them apart.
+
+Tags marked *auto* were coined by a capture, an import or a webhook rather than
+by you; a scrape opens one per business category. Naming one adopts it: it
+keeps every lead already carrying it and stops being marked as invented.
+
+**Renaming a tag is always safe.** What a lead stores is the tag, not the word,
+so every lead carrying it follows the rename. Deleting one is the opposite —
+it comes off everything that had it, and the confirmation says how many.
+
 ### Editing the columns
 
 **Leads → Columns** edits the table itself. Rename anything, reorder it, hide
@@ -696,6 +725,9 @@ deploy stays the source of truth wherever you chose to make it one.
 |---|---|---|
 | Lead capture (Apify) | https://console.apify.com/settings/integrations | `APIFY_TOKEN`, `SCRAPER_TIMEZONE`, `APIFY_MONTHLY_BUDGET_USD`, `APIFY_MAX_CONCURRENT_RUNS` |
 | AI analyst (Anthropic) | https://console.anthropic.com/settings/keys | `ANTHROPIC_API_KEY` |
+| AI models — ChatGPT | https://platform.openai.com/api-keys | `OPENAI_API_KEY`, `OPENAI_MODEL` |
+| AI models — Gemini | https://aistudio.google.com/apikey | `GEMINI_API_KEY`, `GEMINI_MODEL` |
+| AI models — Perplexity | https://www.perplexity.ai/account/api/group | `PERPLEXITY_API_KEY`, `PERPLEXITY_MODEL` |
 | Google Drive | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` *(only behind a proxy that rewrites the host)* |
 | Payments (Stripe) | https://dashboard.stripe.com/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
@@ -733,6 +765,40 @@ API, Google Sheets API and **Google Calendar API** enabled, and with the
 redirect URI shown in **Settings → Google** added to it verbatim — the app
 derives it from the public URL (Settings → General, or `APP_URL`, or the
 request host), and Google matches it character for character.
+
+### Which model does what
+
+Under **Settings → AI models** every job the system asks a model for is listed
+with the model chosen for it:
+
+| Job | Goes to | What it covers |
+|---|---|---|
+| Writing | Gemini | Every piece of prose — proposal copy, email drafts, ad concepts, page copy, cold outreach |
+| Images | ChatGPT | Pictures for ads, social posts and mock-ups |
+| Web pages | ChatGPT | Complete HTML pages on the brand design system |
+| Fact-checking | Perplexity | Checks a draft's claims against live sources |
+| Plain English | Perplexity | Rewrites a draft to sound like a person wrote it |
+
+**You do not have to fill any of it in for the system to work.** Every job
+falls back to Claude while the model picked for it has no key, and the screen
+says which jobs are falling back rather than pretending they are configured.
+Paste one key and that job moves onto its own model; nothing else changes.
+
+Each key is checked against its provider before it is stored, so a typo fails
+on the screen. Every call is priced and written to the spend ledger whichever
+vendor served it — including Perplexity's per-search fee, which is larger than
+the tokens on a short call.
+
+Any job can be pointed somewhere else from the same screen. A vendor that
+cannot do a job is not offered for it: Gemini will not appear under Images,
+because a setting that looks saved and is never honoured is worse than no
+setting.
+
+**Fact-checking says who checked it.** Answered by Perplexity, the result
+carries the sources it read. Falling back to Claude, it says so plainly and
+reports that it was not checked against live sources — because checking a claim
+against a model's training data is a much weaker thing, and you have to be able
+to tell which one you got.
 
 ### The four the agents were waiting on
 
@@ -788,8 +854,8 @@ That log is what answers "why did nothing happen last night".
 
 ### The specialists
 
-The management tier recommends and decides. Under it sit nine **specialists**,
-and these are the ones that make things:
+The management tier recommends and decides. Under it sit eleven
+**specialists**, and these are the ones that make things:
 
 | | Reports to | What it is for |
 |---|---|---|
@@ -802,6 +868,8 @@ and these are the ones that make things:
 | Copywriter | Growth & Content | Pages, case studies, email copy, SEO briefs |
 | SEO Specialist | Growth & Content | The technical faults costing a client rankings, then the words |
 | Support Desk | Operations Director | Triage, first response, and routing before an SLA is at risk |
+| Proposal Writer | Commercial Operations | The proposal that wins the work: their words, the scope, the price, what happens next |
+| Cold Lead Writer | Outbound Communications | The first message to somebody who has never heard of you |
 
 Each is deliberately narrow. "A creative agent" would be one prompt asked to
 design a logo, cut a video and write an ad, and it would be mediocre at all
@@ -813,12 +881,57 @@ asked for, written in a client's words — "Subtitles and burned-in captions",
 "Local SEO and Google Business Profile" — and they are what a job is matched
 against. Tools are what it can reach, and only tools are a permission.
 
+The last two are the reason this list grew. A proposal used to be drafted by
+the Commercial Operations Manager in between pricing an invoice and chasing a
+payment, and a cold email by the Outbound Communications Manager in between
+running a sequence and checking a suppression list — by managers, in the gaps,
+as a task rather than as a craft. Writing to somebody who has never heard of
+you is a craft, and so is the document that decides a deal.
+
 **Hire a specialist** adds one of your own: a 3D artist, a bookkeeper, a
 translator. It arrives at level 1 with dry run on and no tools, exactly as the
-built-in ones do, and unlike them its wording can be rewritten from the screen.
-The shipped nine have their wording in the code so a deploy can improve it; the
-API refuses to rename them, and refuses to delete them (retire them instead —
-deleting one would only mean the next deploy created it again).
+built-in ones do. A built-in agent can be retired but not deleted — deleting
+one would only mean the next deploy created it again.
+
+### Changing what an agent is told
+
+Open an agent and press **Edit** under *Its instructions*. Every layer of the
+prompt is a box: who it is, what it is for, where it stops, how it works
+through a job, what makes it stop and ask, and the shape of what it hands back.
+
+This used to be read-only for the eleven built-in agents, which left two bad
+options for changing how one of your own agents works: edit a TypeScript file,
+or hire a duplicate and write the job out again. A prompt is the instruction —
+it is yours.
+
+Three things make that safe rather than reckless:
+
+- **The shipped wording is one click away.** *Reset to shipped* puts every
+  field back. *Show shipped* marks which layers you have changed without
+  undoing anything.
+- **A deploy never overwrites your edit.** The seed only ever creates agents it
+  has never seen; it has never updated one.
+- **Nothing about permissions is in there.** The toolkit, the autonomy level
+  and dry run are elsewhere, and neither an edit nor a reset touches them.
+  Changing what an agent is told to do is a different decision from changing
+  what it is allowed to reach.
+
+An edit takes effect on that agent's **next task**. One already running
+finishes on the wording it started with, and the screen says so.
+
+### One at a time
+
+An agent works on one task at a time. Queue five and it takes them in order,
+finishing each before it starts the next, and the fifth waits rather than
+racing the first.
+
+That is partly so the roster reads honestly — "the Proposal Writer is working
+on the Adom Clinic proposal" is a sentence you can act on, and "working on
+four things" is not. Mostly it is about memory: an agent writes down what it
+concluded as it goes and reads it back on the next task about the same
+subject, so two tasks about one lead running side by side would interleave
+those notes and the agent would end up contradicting itself with nothing in
+the timeline to explain why.
 
 ### They run the work
 
@@ -884,6 +997,30 @@ told — every prompt says so — but because a memory is re-read into a prompt
 every time its subject comes up, so a token in one is a token re-read every
 morning for a year. The store refuses anything credential-shaped outright.
 
+### What every agent knows
+
+At the bottom of the Agents screen is the company's own memory: written once,
+and put in front of every agent alongside whatever that one has worked out for
+itself.
+
+This is where a house rule goes. *We do not take on unregistered businesses.*
+*Quote every price in cedis.* *Never promise a delivery date in December.*
+Each of those used to have to be typed into every agent separately — and the
+one you hire next month would never have heard any of them.
+
+An agent can add to it too, when it concludes something about how Dakyworld
+works rather than about its own way of working. Those are marked with the
+agent that wrote them, so *why does it think that* stays answerable.
+
+**Sharing changes who sees a memory, never when it comes up.** Recall is still
+by subject, so a shared note about one client surfaces on tasks about that
+client and nowhere else. Left on `company` — which is the right answer nearly
+every time — it is shown on every task.
+
+Both kinds can be edited rather than only deleted. A conclusion that has gone
+stale should be corrected, not thrown away along with the record that it was
+ever held.
+
 ### Connected tools
 
 The catalogue is code on purpose: what a tool *does* is behaviour, and
@@ -908,10 +1045,10 @@ the second. Removing a connection revokes every grant that named it.
 
 ### The studio tools
 
-Five tools exist for the specialists specifically. Four are Claude-backed and
-produce a **specification**, which is the honest boundary of what this app does
-on its own and also what a designer, an editor or a developer actually wants
-handed to them:
+Seven tools exist for the specialists specifically. Most produce a
+**specification**, which is the honest boundary of what this app does on its
+own and also what a designer, an editor or a developer actually wants handed to
+them:
 
 - `design.brief` — purpose, audience, hierarchy, the exact set-ready copy, the
   palette from the brand system, and real pixel dimensions per placement.
@@ -921,12 +1058,21 @@ handed to them:
   with the platform specs, the test plan, and the claims that need checking.
 - `web.page` — a complete self-contained HTML page on the brand design system,
   with real copy, plus a list of what a developer must change before it ships.
+  Built by ChatGPT when a key is set.
+- `content.factcheck` — pulls every checkable claim out of a draft and judges
+  each against live sources: confirmed, outdated, unsupported or wrong, with
+  the URL it read. It says who checked it and whether the sources were live,
+  because those are different levels of assurance.
+- `content.humanise` — the same draft in plain English: the consultant
+  vocabulary gone, one idea per sentence, and every number, date and promise
+  left exactly as it was. Anything it cut is listed separately so you can put
+  it back.
 
-The fifth, `image.generate`, makes an actual picture, and it can only do that
-through a connected MCP server. It is a **named capability rather than a named
-provider**: an agent's toolkit says "this one draws", and which service draws is
-a connection you make and can change without touching an agent. With nothing
-connected it refuses with a sentence saying so, rather than failing obscurely.
+`image.generate` makes an actual picture. It is a **named capability rather
+than a named provider**: an agent's toolkit says "this one draws", and what
+draws is a connection you make. It goes to ChatGPT when a key is set, and to a
+connected MCP server otherwise; with neither, it refuses with a sentence saying
+which to set up rather than failing obscurely.
 
 ## Deploying
 
@@ -1057,6 +1203,10 @@ Phase 1's slice (Leads, Proposals, Projects, Invoices, Clients). Care Plans,
 Time & Capacity reporting, and Communications logging have working API
 routes' data model in place and can get a UI page added the same way the
 existing pages were built, without any schema changes.
+
+And `LeadTag` — the tag vocabulary, with the label, colour and description
+behind the slugs that `Lead.tags` and `LeadGroup.tags` actually store, which is
+what makes renaming a tag cost one row.
 
 Since then: `Agent` and `ToolCall` (the workforce and its audit trail),
 `StoredFile` (an uploaded email attachment, held as bytes so attaching a file

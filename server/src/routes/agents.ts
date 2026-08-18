@@ -5,17 +5,26 @@ import { requireRole } from "../middleware/auth.js";
 import { listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
 import { permissionFor } from "../services/tools/invoke.js";
-import { runTask } from "../services/agents/runner.js";
-import { MemoryRefused, forget, listMemories, remember } from "../services/agents/memory.js";
+import { isBusy, runTask } from "../services/agents/runner.js";
+import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, remember } from "../services/agents/memory.js";
+import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
 
 /**
  * The workforce.
  *
- * Autonomy, dry run and the toolkit are what the Owner may change, and only
- * the Owner: between them they decide whether anything an agent works out can
- * reach a client, a card or the public site. Everything else about an agent —
- * its mission, its prompt, who it reports to — is seeded from code and changed
- * in a diff, not at runtime.
+ * Autonomy, dry run and the toolkit are what decide whether anything an agent
+ * works out can reach a client, a card or the public site. They are the
+ * Owner's and nobody else's.
+ *
+ * **So is the wording.** A built-in agent's mission and prompt used to be
+ * read-only here, on the grounds that they are a diff — which was the wrong
+ * trade. A prompt is the instruction an agent works to, and an instruction the
+ * person accountable for the work cannot change is not really theirs; the
+ * Owner was left editing text files or hiring a duplicate agent to say the
+ * same job differently. Every agent's wording is editable now, an edit takes
+ * effect on the very next task it picks up (the runner reads the row, not a
+ * cache), and a seeded agent that has been rewritten carries `promptEditedAt`
+ * so the shipped wording stays one click away.
  *
  * **The toolkit is a real grant.** It used to be a list of strings nothing
  * read; since the tool layer landed it is the allow-list the invoker checks
@@ -120,9 +129,12 @@ agentsRouter.get("/:key", async (req, res, next) => {
       }),
     );
 
-    const [work, memories] = await Promise.all([
+    const [work, memories, shared] = await Promise.all([
       prisma.agentTask.groupBy({ by: ["status"], where: { agentKey: agent.key }, _count: true }),
-      prisma.agentMemory.count({ where: { agentKey: agent.key } }),
+      prisma.agentMemory.count({ where: { scope: "AGENT", agentKey: agent.key } }),
+      // Counted separately: these are the company's, and the drawer says so
+      // before offering to edit one.
+      prisma.agentMemory.count({ where: { scope: "SHARED" } }),
     ]);
     const byStatus = Object.fromEntries(work.map((row) => [row.status, row._count]));
 
@@ -140,6 +152,13 @@ agentsRouter.get("/:key", async (req, res, next) => {
         failed: byStatus.FAILED ?? 0,
       },
       memories,
+      sharedMemories: shared,
+      /** The ten prompt layers, in order, so the editor doesn't keep its own copy. */
+      promptLayers: PROMPT_LAYERS,
+      /** True when there is shipped wording to reset to. */
+      resettable: !agent.custom,
+      /** True when it is mid-task, so the screen can say a change lands after this one. */
+      busy: isBusy(agent.key),
     });
   } catch (err) {
     next(err);
@@ -177,18 +196,31 @@ agentsRouter.patch("/:key", async (req, res, next) => {
     const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
     if (!agent) return res.status(404).json({ error: "No such agent." });
 
-    // A seeded agent's wording lives in services/agentRegistry.ts and is
-    // changed in a diff, so a deploy can improve it. Only an agent the Owner
-    // created here can be rewritten here; the permission fields below are
-    // editable on both, because those are the Owner's alone either way.
+    // Rewriting a seeded agent is allowed and recorded. `ensureAgents()` only
+    // ever creates, so an edit made here survives every future deploy — the
+    // flag is what lets the screen offer the shipped wording back rather than
+    // what protects it.
     const rewriting = ["name", "title", "mission", "skills", "kpis", "responsibilities", "escalationPolicy", "avatar", "managerKey", "department", "prompt"].filter(
       (field) => input[field as keyof typeof input] !== undefined,
     );
-    if (rewriting.length > 0 && !agent.custom) {
-      return res.status(409).json({
-        error: `${agent.name} is a built-in agent, so its wording is changed in the code rather than here. Autonomy, dry run, status and its toolkit are yours to change.`,
-        fields: rewriting,
-      });
+
+    // An agent that reports to itself, directly or round a loop, has nowhere to
+    // escalate to — and escalation is the one thing every agent must always be
+    // able to do.
+    if (input.managerKey) {
+      const cycle = await reportsInto(input.managerKey, agent.key);
+      if (cycle) {
+        return res.status(400).json({
+          error: `That would make ${agent.name} report into its own chain, and an agent with nowhere to escalate to is an agent that can't stop and ask.`,
+        });
+      }
+    }
+
+    if (input.prompt) {
+      const unknown = Object.keys(input.prompt).filter((layer) => !PROMPT_LAYERS.includes(layer as never));
+      if (unknown.length > 0) {
+        return res.status(400).json({ error: `A prompt is made of the ten named layers. Not a layer: ${unknown.join(", ")}.` });
+      }
     }
 
     // Level 5 is delegated authority over money and legal exposure. The
@@ -206,10 +238,106 @@ agentsRouter.patch("/:key", async (req, res, next) => {
     // names that never had code behind them: the first save cleans them up.
     const known = new Set((await listAllTools()).map((tool) => tool.key));
     const dropped = input.toolkit?.filter((key) => !known.has(key)) ?? [];
-    const data = { ...input, ...(input.toolkit ? { toolkit: input.toolkit.filter((key) => known.has(key)) } : {}) };
+    const data = {
+      ...input,
+      ...(input.toolkit ? { toolkit: input.toolkit.filter((key) => known.has(key)) } : {}),
+      // Stamped only on a seeded agent: a custom one has no shipped wording to
+      // go back to, so the flag would mean nothing there.
+      ...(rewriting.length > 0 && !agent.custom ? { promptEditedAt: new Date() } : {}),
+    };
 
     const updated = await prisma.agent.update({ where: { key: req.params.key }, data });
-    res.json({ ...updated, ...(dropped.length ? { droppedGrants: dropped } : {}) });
+    res.json({
+      ...updated,
+      ...(dropped.length ? { droppedGrants: dropped } : {}),
+      // Said plainly, because the whole point of editing a prompt is that it
+      // changes what the agent does, and a person should know when.
+      ...(rewriting.length > 0
+        ? { appliesFrom: isBusy(agent.key) ? "the next task after the one it is working on" : "its next task" }
+        : {}),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Would putting `agentKey` under `managerKey` create a loop?
+ *
+ * Walks up from the proposed manager looking for the agent being moved. Bounded
+ * by the size of the roster rather than trusted to terminate, because the row
+ * it is walking is the one thing that might already be broken.
+ */
+async function reportsInto(managerKey: string, agentKey: string): Promise<boolean> {
+  let current: string | null = managerKey;
+  for (let hops = 0; hops < 64 && current; hops += 1) {
+    if (current === agentKey) return true;
+    const next: { managerKey: string | null } | null = await prisma.agent.findUnique({
+      where: { key: current },
+      select: { managerKey: true },
+    });
+    current = next?.managerKey ?? null;
+  }
+  return false;
+}
+
+/**
+ * Puts a seeded agent's shipped wording back.
+ *
+ * The counterpart to letting the wording be edited: an edit is only safe to
+ * make if it is safe to undo. Restores every wording field from
+ * `AGENT_SEEDS` — and deliberately not the toolkit, the autonomy level or the
+ * dry-run flag, which are permissions the Owner set rather than words a deploy
+ * shipped, and which resetting a prompt has no business touching.
+ */
+agentsRouter.post("/:key/prompt/reset", async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const seed = AGENT_SEEDS.find((entry) => entry.key === agent.key);
+    if (!seed) {
+      return res.status(409).json({
+        error: `${agent.name} was created here rather than shipped, so there is no earlier wording to go back to.`,
+      });
+    }
+
+    const updated = await prisma.agent.update({
+      where: { key: agent.key },
+      data: {
+        name: seed.name,
+        title: seed.title,
+        mission: seed.mission,
+        responsibilities: seed.responsibilities,
+        kpis: seed.kpis,
+        skills: seed.skills ?? [],
+        escalationPolicy: seed.escalationPolicy,
+        avatar: seed.avatar ?? null,
+        prompt: seed.prompt as unknown as object,
+        promptEditedAt: null,
+      },
+    });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** The shipped wording, without applying it — so an edit can be compared before it is undone. */
+agentsRouter.get("/:key/prompt/shipped", async (req, res, next) => {
+  try {
+    const seed = AGENT_SEEDS.find((entry) => entry.key === req.params.key);
+    if (!seed) return res.status(404).json({ error: "That agent was created here, so nothing was ever shipped for it." });
+    res.json({
+      layers: PROMPT_LAYERS,
+      prompt: seed.prompt,
+      name: seed.name,
+      title: seed.title,
+      mission: seed.mission,
+      skills: seed.skills ?? [],
+      kpis: seed.kpis,
+      escalationPolicy: seed.escalationPolicy,
+    });
   } catch (err) {
     next(err);
   }
@@ -530,6 +658,19 @@ agentsRouter.post("/tasks/:id/run", async (req, res, next) => {
       return res.status(409).json({ error: `${task.agent.name} is a ${task.agent.status.toLowerCase()} — set it to Active first.` });
     }
 
+    // One agent, one task at a time — see services/agents/runner.ts. Refused
+    // here rather than left to the claim, because "started: true" for something
+    // that silently stayed queued is the reply that wastes somebody's afternoon.
+    const alreadyWorking = await prisma.agentTask.findFirst({
+      where: { agentKey: task.agentKey, status: "RUNNING" },
+      select: { id: true, title: true },
+    });
+    if (alreadyWorking) {
+      return res.status(409).json({
+        error: `${task.agent.name} is already working on “${alreadyWorking.title}”. One agent takes one task at a time — this one starts as soon as that finishes.`,
+      });
+    }
+
     // An answer to an escalation, appended rather than replacing the brief:
     // what it was originally asked stays on the record.
     const { answer } = z.object({ answer: z.string().max(2000).optional() }).parse(req.body ?? {});
@@ -595,6 +736,112 @@ agentsRouter.post("/tasks/:id/approve", async (req, res, next) => {
 
 // --- What it remembers ------------------------------------------------------
 
+/**
+ * The company's memory — written once, read by every agent.
+ *
+ * Mounted at `/memory/shared` rather than under an agent key, because it does
+ * not belong to one. `/:key/memory` cannot claim these paths: its second
+ * segment is the literal "memory", and this one's is "shared".
+ *
+ * This is the thing per-agent memory could not do. "We do not take on
+ * unregistered businesses", "always quote in cedis", "never promise a date in
+ * December" — each of those had to be typed into nineteen agents one at a
+ * time, and the twentieth agent hired next month would never have heard any of
+ * them. Said here, it is said once and stays said.
+ */
+agentsRouter.get("/memory/shared", async (req, res, next) => {
+  try {
+    const memories = await listSharedMemories(typeof req.query.subject === "string" ? req.query.subject : undefined);
+    res.json({
+      memories,
+      summary: {
+        total: memories.length,
+        /** How many apply to every task, as opposed to one lead or one client. */
+        standing: memories.filter((memory) => memory.subject === "company").length,
+        subjects: new Set(memories.map((memory) => memory.subject)).size,
+        neverUsed: memories.filter((memory) => memory.useCount === 0).length,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.post("/memory/shared", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        content: z.string().min(8).max(600),
+        kind: z.enum(["DECISION", "OUTCOME", "FACT", "LESSON", "PREFERENCE"]).default("PREFERENCE"),
+        /**
+         * `company` for anything that applies to all work — which is what this
+         * is normally for. A record key (`lead:abc`) narrows it to tasks about
+         * that record, because sharing widens who sees a memory and must never
+         * widen when it surfaces.
+         */
+        subject: z.string().max(80).default("company"),
+        /** Shared memories already outrank an agent's own in recall; 5 is for a rule that must never be crowded out. */
+        importance: z.number().int().min(1).max(5).default(4),
+      })
+      .parse(req.body);
+
+    try {
+      // `owner` rather than an agent key: this was a person's decision, and the
+      // author is kept so "who concluded this" stays answerable.
+      const memory = await remember({ agentKey: "owner", shared: true, ...input });
+      res.status(201).json(memory);
+    } catch (err) {
+      if (err instanceof MemoryRefused) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.patch("/memory/shared/:id", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        content: z.string().min(8).max(600).optional(),
+        importance: z.number().int().min(1).max(5).optional(),
+        subject: z.string().max(80).optional(),
+        expiresAt: z.coerce.date().nullish(),
+      })
+      .parse(req.body);
+
+    const memory = await prisma.agentMemory.findUnique({ where: { id: req.params.id } });
+    if (!memory) return res.status(404).json({ error: "No such memory." });
+    if (memory.scope !== "SHARED") {
+      return res.status(409).json({ error: "That one belongs to a single agent. Edit it from that agent's drawer." });
+    }
+
+    try {
+      res.json(await editMemory(req.params.id, input));
+    } catch (err) {
+      if (err instanceof MemoryRefused) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.delete("/memory/shared/:id", async (req, res, next) => {
+  try {
+    const memory = await prisma.agentMemory.findUnique({ where: { id: req.params.id } });
+    if (!memory) return res.status(404).json({ error: "No such memory." });
+    if (memory.scope !== "SHARED") {
+      return res.status(409).json({ error: "That one belongs to a single agent. Delete it from that agent's drawer." });
+    }
+    await forget(req.params.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+
 agentsRouter.get("/:key/memory", async (req, res, next) => {
   try {
     const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
@@ -633,6 +880,45 @@ agentsRouter.post("/:key/memory", async (req, res, next) => {
     try {
       const memory = await remember({ agentKey: agent.key, ...input });
       res.status(201).json(memory);
+    } catch (err) {
+      if (err instanceof MemoryRefused) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Changes what a memory says.
+ *
+ * A memory is re-read into a prompt every time its subject comes up, which
+ * makes it an instruction as much as a record — and until this route existed
+ * the only way to correct one was to delete it, losing the fact that it had
+ * ever been held. Editing takes effect on the next task, the same way a prompt
+ * edit does, because recall reads the row.
+ */
+agentsRouter.patch("/:key/memory/:id", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        content: z.string().min(8).max(600).optional(),
+        importance: z.number().int().min(1).max(5).optional(),
+        subject: z.string().max(80).optional(),
+        expiresAt: z.coerce.date().nullish(),
+      })
+      .parse(req.body);
+
+    const memory = await prisma.agentMemory.findUnique({ where: { id: req.params.id } });
+    if (!memory) return res.status(404).json({ error: "No such memory." });
+
+    try {
+      const updated = await editMemory(req.params.id, input);
+      res.json({
+        ...updated,
+        // Worth saying out loud: this row is one every agent reads.
+        ...(memory.scope === "SHARED" ? { note: "This is shared — the change applies to every agent." } : {}),
+      });
     } catch (err) {
       if (err instanceof MemoryRefused) return res.status(400).json({ error: err.message });
       throw err;

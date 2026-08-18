@@ -18,9 +18,43 @@ export interface LeadGroup {
   autoCreated: boolean;
   /** "Contacts!5-210" for a group that came out of a spreadsheet. */
   sourceLabel?: string | null;
+  /** LeadTag slugs. What the batch is, as opposed to what the businesses in it are. */
+  tags: string[];
   leadImportId?: string | null;
   createdAt: string;
   _count?: { leads: number };
+}
+
+// --- Tags ------------------------------------------------------------------
+
+/** The palette. Lime is missing on purpose — it is the action colour. */
+export type TagColour = "blue" | "cyan" | "ink" | "amber" | "emerald" | "red";
+
+/**
+ * One tag in the registry.
+ *
+ * `slug` is the identity every lead and list holds and never changes; `label`
+ * is what a person reads and can be renamed freely. See
+ * server/src/services/leadTags.ts.
+ */
+export interface LeadTag {
+  id: string;
+  slug: string;
+  label: string;
+  colour: TagColour | null;
+  description: string | null;
+  /** True when a scrape, an import or a webhook coined it rather than the Owner. */
+  autoCreated: boolean;
+  lastUsedAt: string | null;
+  /** How many leads carry it. */
+  leads: number;
+  /** How many lead lists carry it. */
+  groups: number;
+}
+
+export interface LeadTagList {
+  tags: LeadTag[];
+  colours: TagColour[];
 }
 
 // --- Columns ---------------------------------------------------------------
@@ -445,6 +479,66 @@ export interface HostingerMailStatus {
 }
 
 /** Everything the Owner configures at runtime — see the Settings page. */
+// --- AI models -------------------------------------------------------------
+
+export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity";
+
+/** What is being asked for, in the app's own words rather than a vendor's. */
+export type ModelJob = "text" | "image" | "html" | "factcheck" | "humanise";
+
+export interface ModelProvider {
+  key: ProviderKey;
+  /** What the Owner calls it. "ChatGPT", not "OpenAI's API". */
+  name: string;
+  vendor: string;
+  purpose: string;
+  configured: boolean;
+  envManaged: boolean;
+  /** Masked. Never the key itself. */
+  keyPreview: string | null;
+  model: string;
+  defaultModel: string;
+  models: string[];
+  console: string;
+  keyHint: string;
+  /** The jobs this vendor can be routed to. */
+  jobs: ModelJob[];
+  /** The jobs currently routed here. */
+  serving: ModelJob[];
+}
+
+/**
+ * Who serves one job right now.
+ *
+ * `chosen` and `serving` differ when the vendor picked for a job has no key
+ * yet — every job falls back to Claude, and `note` is the sentence saying so.
+ */
+export interface ModelRoute {
+  job: ModelJob;
+  chosen: ProviderKey;
+  serving: ProviderKey;
+  model: string;
+  ready: boolean;
+  note: string | null;
+}
+
+export interface ModelJobInfo {
+  job: ModelJob;
+  /** A heading. Title case. */
+  name: string;
+  /** The same job inside a sentence — "Claude is covering **fact-checking**". */
+  phrase: string;
+  blurb: string;
+  defaultProvider: ProviderKey;
+  fallback: ProviderKey;
+}
+
+export interface ModelSettings {
+  providers: ModelProvider[];
+  routing: ModelRoute[];
+  jobs: ModelJobInfo[];
+}
+
 export interface AppSettings {
   apify: {
     connected: boolean;
@@ -466,6 +560,7 @@ export interface AppSettings {
     tasks: CaptureTaskInfo[];
   };
   analyst: { configured: boolean; envManaged: boolean; key: string | null; model: string };
+  models: ModelSettings;
   google: {
     configured: boolean;
     connected: boolean;
@@ -1076,6 +1171,8 @@ export interface Agent {
   avatar: string | null;
   /** True for an agent the Owner created rather than one the seed shipped. */
   custom: boolean;
+  /** Set when the Owner has rewritten a seeded agent's wording. Null means it is as shipped. */
+  promptEditedAt?: string | null;
   /** What it has on right now. Present on the roster. */
   work?: AgentWorkload;
   escalationPolicy: string | null;
@@ -1101,6 +1198,26 @@ export interface AgentDetail extends Agent {
   }>;
   work: { running: number; queued: number; waiting: number; done: number; failed: number };
   memories: number;
+  /** How many memories the whole company holds — every agent is shown these. */
+  sharedMemories: number;
+  /** The ten prompt layers in order, so the editor doesn't keep its own copy. */
+  promptLayers: string[];
+  /** True when there is shipped wording to reset to. */
+  resettable: boolean;
+  /** True when it is mid-task, so an edit lands after the one it is on. */
+  busy: boolean;
+}
+
+/** The shipped wording for a seeded agent, for comparing against an edit. */
+export interface ShippedPrompt {
+  layers: string[];
+  prompt: Record<string, string>;
+  name: string;
+  title: string;
+  mission: string;
+  skills: string[];
+  kpis: string[];
+  escalationPolicy: string;
 }
 
 export interface AgentList {
@@ -1195,22 +1312,39 @@ export interface AgentWork {
 
 export type AgentMemoryKind = "DECISION" | "OUTCOME" | "FACT" | "LESSON" | "PREFERENCE";
 
+/**
+ * `AGENT` is one agent's own and only it is shown them. `SHARED` belongs to the
+ * company and every agent is shown them.
+ */
+export type AgentMemoryScope = "AGENT" | "SHARED";
+
 export interface AgentMemory {
   id: string;
   kind: AgentMemoryKind;
-  /** `lead:abc`, `client:xyz`, or `self` for a standing lesson. */
+  scope: AgentMemoryScope;
+  /** Null on a shared memory — it belongs to the company, not to an agent. */
+  agentKey: string | null;
+  /** Who concluded it. `owner` when a person typed it. */
+  authorKey: string | null;
+  /** `lead:abc`, `client:xyz`, `self` for a standing lesson, `company` for a house rule. */
   subject: string;
   content: string;
   importance: number;
   sourceTaskId: string | null;
   useCount: number;
   lastUsedAt: string | null;
+  expiresAt?: string | null;
   createdAt: string;
 }
 
 export interface AgentMemoryList {
   memories: AgentMemory[];
   summary: { total: number; subjects: number; neverUsed: number };
+}
+
+export interface SharedMemoryList {
+  memories: AgentMemory[];
+  summary: { total: number; standing: number; subjects: number; neverUsed: number };
 }
 
 /** One agent's row on the "who may call this tool" screen. */

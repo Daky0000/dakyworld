@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { ModelJob } from "../../lib/models/registry.js";
 
 /**
  * What a tool is.
@@ -26,6 +27,14 @@ export type ToolScope = "read" | "write" | "send" | "charge";
 export type ToolRequirement =
   | "database"
   | "claude"
+  /**
+   * A model — any of the four vendors. Deliberately not one of them by name:
+   * every job falls back to Claude when the vendor chosen for it has no key,
+   * so a tool that names a vendor would refuse work it could still do. Which
+   * vendor actually answers is decided per call by lib/models/registry.ts, and
+   * the tool's own result says who it was.
+   */
+  | "models"
   | "apify"
   | "email"
   | "slack"
@@ -83,6 +92,12 @@ export interface ToolDefinition<I = unknown, O = unknown> {
    * prepare but never carry out.
    */
   outward: boolean;
+  /**
+   * Which model job this tool asks for, when it asks for one. Read by the
+   * Tools screen so "which of these does Gemini do" has an answer, and by
+   * nothing else — the tool's own handler names its job when it calls.
+   */
+  job?: ModelJob;
   input: z.ZodType<I>;
   run: (input: I, ctx: ToolContext) => Promise<O>;
   /**

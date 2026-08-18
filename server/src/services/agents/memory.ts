@@ -19,6 +19,20 @@ import { prisma } from "../../lib/prisma.js";
  * across every memory would occasionally surface something about a different
  * client in the context of this one, and the failure mode of that is a letter
  * to the wrong company mentioning the right facts.
+ *
+ * **There are two kinds, and only one of them is private.** An `AGENT` memory
+ * is what one agent worked out, and only that agent is ever shown it. A
+ * `SHARED` memory belongs to the company: every agent is shown it. That second
+ * kind exists because the first one had a hole in it — the Owner telling the
+ * workforce "we do not take on unregistered businesses" had to be typed
+ * nineteen times, once per agent, and the twentieth agent hired next month
+ * would never hear it at all. Now it is said once.
+ *
+ * **Sharing widens who sees a memory, never when it comes up.** A shared
+ * memory is still filed against a subject and still recalled by subject, so a
+ * shared fact about one client surfaces on tasks about that client and nowhere
+ * else. `company` is the subject for anything that applies to all work — it is
+ * to shared memory what `self` is to an agent's own.
  */
 
 /** The subject key for a record. One spelling, so writes and recalls agree. */
@@ -30,6 +44,12 @@ export const subjectOf = {
   invoice: (id: string) => `invoice:${id}`,
   /** Anything about the agent's own way of working, rather than about a record. */
   self: () => "self",
+  /**
+   * How Dakyworld works, rather than how one agent does. Shared memories filed
+   * here are recalled on every task by every agent — the standing instruction,
+   * the house rule, the thing the Owner should only have to say once.
+   */
+  company: () => "company",
 };
 
 /**
@@ -43,6 +63,7 @@ const RECALL_LIMIT = 24;
 const CONTENT_MAX = 600;
 
 export interface MemoryInput {
+  /** Who wrote it. `owner` when a person did. Kept even on a shared memory. */
   agentKey: string;
   kind: AgentMemoryKind;
   subject: string;
@@ -50,6 +71,13 @@ export interface MemoryInput {
   importance?: number;
   sourceTaskId?: string | null;
   expiresAt?: Date | null;
+  /**
+   * True to file this against the company rather than against the agent, so
+   * every agent is shown it. The row's `agentKey` is then null — a shared
+   * memory has to outlive the agent that happened to write it — and
+   * `authorKey` records who concluded it.
+   */
+  shared?: boolean;
 }
 
 /**
@@ -122,6 +150,11 @@ export class MemoryRefused extends Error {}
  * Refuses anything carrying a credential, and de-duplicates: an agent that
  * concludes the same thing twice about the same subject should have one
  * memory that matters more, not two that each matter a little.
+ *
+ * De-duplication is per scope, deliberately. The same sentence held privately
+ * by one agent and shared with all of them are two different facts about the
+ * company — one is somebody's opinion, the other is policy — and collapsing
+ * them would quietly promote the first into the second.
  */
 export async function remember(input: MemoryInput) {
   const content = input.content.trim().slice(0, CONTENT_MAX);
@@ -134,8 +167,11 @@ export async function remember(input: MemoryInput) {
     );
   }
 
+  const shared = input.shared ?? false;
+  const scope = shared ? "SHARED" : "AGENT";
+
   const existing = await prisma.agentMemory.findFirst({
-    where: { agentKey: input.agentKey, subject: input.subject, content },
+    where: { scope, agentKey: shared ? null : input.agentKey, subject: input.subject, content },
   });
   if (existing) {
     return prisma.agentMemory.update({
@@ -146,7 +182,9 @@ export async function remember(input: MemoryInput) {
 
   return prisma.agentMemory.create({
     data: {
-      agentKey: input.agentKey,
+      scope,
+      agentKey: shared ? null : input.agentKey,
+      authorKey: input.agentKey,
       kind: input.kind,
       subject: input.subject,
       content,
@@ -157,48 +195,132 @@ export async function remember(input: MemoryInput) {
   });
 }
 
+export interface Recalled {
+  /** What to put in the prompt. */
+  line: string;
+  shared: boolean;
+}
+
 /**
  * What this agent knows that bears on this task.
  *
- * Always its standing lessons about itself, plus everything it knows about the
- * specific subjects the task is about. Ranked by importance and then by
- * recency, because a strongly-held old conclusion should outrank a weakly-held
- * new one — and truncated, because a prompt has a budget.
+ * Three things, in one query: its own standing lessons (`self`), everything it
+ * has concluded about the specific subjects this task is about, and the
+ * company's shared memory for those same subjects plus `company`.
+ *
+ * Ranked by importance and then by recency, because a strongly-held old
+ * conclusion should outrank a weakly-held new one — and truncated, because a
+ * prompt has a budget. **Shared memories get a point of importance in the
+ * ranking, not in the record**: a house rule that survives the cut only when
+ * an agent happens to hold few opinions is not a house rule, and inflating the
+ * stored value instead would corrupt what the Owner actually typed.
  */
-export async function recall(agentKey: string, subjects: string[]): Promise<string[]> {
-  const wanted = [...new Set(["self", ...subjects.filter(Boolean)])];
+export async function recall(agentKey: string, subjects: string[]): Promise<Recalled[]> {
+  const own = [...new Set(["self", ...subjects.filter(Boolean)])];
+  // `self` is an agent's own; the company's equivalent is `company`. A shared
+  // memory filed against `self` would be one agent's habit imposed on all of
+  // them, so it is deliberately not recalled here.
+  const shared = [...new Set(["company", ...subjects.filter(Boolean)])];
+
   const memories = await prisma.agentMemory.findMany({
     where: {
-      agentKey,
-      subject: { in: wanted },
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      OR: [
+        { scope: "AGENT", agentKey, subject: { in: own } },
+        { scope: "SHARED", subject: { in: shared } },
+      ],
+      AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }],
     },
     orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
-    take: RECALL_LIMIT,
+    // Read wider than the budget, then rank and cut below — otherwise the
+    // database's ordering decides which half of a tie survives, and a shared
+    // house rule can lose to an agent's passing observation.
+    take: RECALL_LIMIT * 2,
   });
 
   if (memories.length === 0) return [];
 
+  const ranked = memories
+    .map((memory) => ({ memory, weight: memory.importance + (memory.scope === "SHARED" ? 1 : 0) }))
+    .sort((a, b) => b.weight - a.weight || b.memory.createdAt.getTime() - a.memory.createdAt.getTime())
+    .slice(0, RECALL_LIMIT);
+
   // Recall is usage: a memory nothing ever pulls up can be found and removed.
   await prisma.agentMemory.updateMany({
-    where: { id: { in: memories.map((memory) => memory.id) } },
+    where: { id: { in: ranked.map((entry) => entry.memory.id) } },
     data: { useCount: { increment: 1 }, lastUsedAt: new Date() },
   });
 
-  return memories.map((memory) => `[${memory.kind.toLowerCase()}] ${memory.content}`);
+  return ranked.map((entry) => ({
+    line: `[${entry.memory.kind.toLowerCase()}] ${entry.memory.content}`,
+    shared: entry.memory.scope === "SHARED",
+  }));
 }
 
-/** For the agent drawer: what it holds, newest first. */
+/**
+ * For the agent drawer: what it holds, newest first.
+ *
+ * Includes the shared memories it will be shown, because "what does this agent
+ * know" is a question about what reaches its prompt, not about which rows
+ * happen to carry its key. Each is marked, so the drawer can say which ones
+ * editing here would change for everybody.
+ */
 export async function listMemories(agentKey: string, subject?: string) {
   return prisma.agentMemory.findMany({
-    where: { agentKey, ...(subject ? { subject } : {}) },
+    where: {
+      OR: [{ scope: "AGENT", agentKey }, { scope: "SHARED" }],
+      ...(subject ? { subject } : {}),
+    },
     orderBy: [{ createdAt: "desc" }],
+    take: 200,
+  });
+}
+
+/** The company's own memory, on its own — what the shared panel shows. */
+export async function listSharedMemories(subject?: string) {
+  return prisma.agentMemory.findMany({
+    where: { scope: "SHARED", ...(subject ? { subject } : {}) },
+    orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
     take: 200,
   });
 }
 
 export async function forget(id: string) {
   await prisma.agentMemory.deleteMany({ where: { id } });
+}
+
+/**
+ * Changes what a memory says.
+ *
+ * A memory is an instruction that is re-read into a prompt every time its
+ * subject comes up, so being unable to correct one meant the only fix for a
+ * conclusion that had gone stale was deleting it and losing the fact that it
+ * had ever been held. The credential check runs again on the new wording, for
+ * the same reason it runs on the first: the danger is in what gets stored, not
+ * in how it got there.
+ */
+export async function editMemory(
+  id: string,
+  changes: { content?: string; importance?: number; subject?: string; expiresAt?: Date | null },
+) {
+  const data: Record<string, unknown> = {};
+
+  if (changes.content !== undefined) {
+    const content = changes.content.trim().slice(0, CONTENT_MAX);
+    if (content.length < 8) throw new MemoryRefused("That is too short to be worth remembering.");
+    const secret = findSecret(content);
+    if (secret) {
+      throw new MemoryRefused(
+        `That looks like it contains ${secret}. Memories are re-read into a prompt every time this subject comes up — write down what you concluded, never the credential.`,
+      );
+    }
+    data.content = content;
+  }
+
+  if (changes.importance !== undefined) data.importance = Math.min(5, Math.max(1, changes.importance));
+  if (changes.subject !== undefined) data.subject = changes.subject.slice(0, 80);
+  if (changes.expiresAt !== undefined) data.expiresAt = changes.expiresAt;
+
+  return prisma.agentMemory.update({ where: { id }, data });
 }
 
 /**
@@ -216,7 +338,12 @@ export async function pruneMemories(agentKey?: string): Promise<number> {
       ...(agentKey ? { agentKey } : {}),
       OR: [
         { expiresAt: { lt: new Date() } },
-        { useCount: 0, importance: { lte: 2 }, createdAt: { lt: stale } },
+        // Never the company's own. A shared memory is something a person
+        // decided the whole workforce should know, and "nothing has come up
+        // about it in six months" is not evidence that it stopped being true —
+        // a house rule about refunds is right to sit unused until there is a
+        // refund. Only the agent's own conclusions are swept.
+        { scope: "AGENT", useCount: 0, importance: { lte: 2 }, createdAt: { lt: stale } },
       ],
     },
   });

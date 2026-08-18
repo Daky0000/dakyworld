@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, StatTile, StatusDot, Toggle } from "../components/ui";
 import type { Agent, AgentDetail, AgentList } from "../lib/types";
 import { AgentMemories, AgentWork } from "../components/AgentWork";
+import { AgentPromptEditor } from "../components/AgentPrompt";
+import { SharedMemoryPanel } from "../components/SharedMemory";
 
 /** What each level actually permits, in the Owner's terms rather than the blueprint's. */
 const LEVELS = [
@@ -50,7 +53,20 @@ function toneFor(agent: Agent): "live" | "ok" | "warn" | "idle" | "bad" {
 }
 
 export function Agents() {
-  const [openKey, setOpenKey] = useState<string | null>(null);
+  // The open agent lives in the URL, the same way an open lead does — so a
+  // specific agent's drawer can be linked to, which is what you want when
+  // telling somebody which one to look at.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openKey = searchParams.get("agent");
+  const setOpenKey = (key: string | null) =>
+    setSearchParams(
+      (params) => {
+        if (key) params.set("agent", key);
+        else params.delete("agent");
+        return params;
+      },
+      { replace: true },
+    );
   const [hiring, setHiring] = useState(false);
 
   const { data, isLoading } = useQuery({
@@ -145,6 +161,11 @@ export function Agents() {
           </section>
         ))
       )}
+
+      {/* After the roster rather than before it: the roster is what somebody
+          came here for, and this is the thing they reach for once they notice
+          they are about to type the same instruction into four agents. */}
+      <SharedMemoryPanel />
 
       <AgentDrawer agentKey={openKey} onClose={() => setOpenKey(null)} />
       <HireDrawer open={hiring} onClose={() => setHiring(false)} agents={agents} onHired={(key) => setOpenKey(key)} />
@@ -333,7 +354,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
   });
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Pick<Agent, "autonomyLevel" | "dryRun" | "status" | "toolkit">>) =>
+    mutationFn: (patch: Partial<Pick<Agent, "autonomyLevel" | "dryRun" | "status" | "toolkit" | "skills" | "kpis">>) =>
       api.patch<Agent>(`/agents/${agentKey}`, patch),
     onSuccess: () => {
       setNotice(null);
@@ -342,9 +363,6 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
     },
     onError: (err: Error) => setNotice(err.message),
   });
-
-  const prompt = (agent?.prompt ?? {}) as Record<string, string>;
-  const layers = Object.entries(prompt).filter(([, v]) => typeof v === "string" && v);
 
   return (
     <Drawer
@@ -399,13 +417,6 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
             )}
           </section>
 
-          {agent.escalationPolicy && (
-            <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">When it must stop and ask</h3>
-              <p className="text-sm text-ink/70">{agent.escalationPolicy}</p>
-            </section>
-          )}
-
           {agent.skills.length > 0 && (
             <section className="space-y-2">
               <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it knows</h3>
@@ -442,19 +453,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
             </section>
           )}
 
-          {layers.length > 0 && (
-            <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Its instructions</h3>
-              <div className="space-y-3">
-                {layers.map(([name, body]) => (
-                  <div key={name}>
-                    <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">{name}</p>
-                    <p className="mt-0.5 text-sm text-ink/70">{body}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+          <AgentPromptEditor agent={agent} />
         </div>
       )}
     </Drawer>

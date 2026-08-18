@@ -19,6 +19,8 @@ import { writeProposal } from "../../lib/proposalWriter.js";
 import { resolveProposalContext } from "../proposalContext.js";
 import { toolStatuses } from "../toolRegistry.js";
 import { callClaude } from "../../lib/claude.js";
+import { callModel, generateImage } from "../../lib/models/call.js";
+import { PROVIDERS, routeFor } from "../../lib/models/registry.js";
 import { BRAND, VOICE, catalogueForPrompt } from "../dakyworld.js";
 import { allMcpTools, callOn, imageProvider, mcpTools } from "./mcpTools.js";
 import { companyProfile } from "../systemProfile.js";
@@ -46,6 +48,28 @@ import { companyProfile } from "../systemProfile.js";
 
 const idInput = z.object({ id: z.string().min(1).max(64) });
 const limit = z.number().int().min(1).max(100).default(20);
+
+/**
+ * An aspect ratio in the words an agent uses, as the size ChatGPT takes.
+ *
+ * Anything unrecognised comes back square rather than being passed through: an
+ * invalid size is a 400 from the vendor after the prompt was built, and a
+ * square picture is a picture.
+ */
+function sizeFor(aspectRatio?: string): string {
+  switch ((aspectRatio ?? "1:1").trim()) {
+    case "16:9":
+    case "3:2":
+    case "landscape":
+      return "1536x1024";
+    case "9:16":
+    case "2:3":
+    case "portrait":
+      return "1024x1536";
+    default:
+      return "1024x1024";
+  }
+}
 
 /** Trims a record down to what a model needs, so a tool result isn't a database dump. */
 const leadSummary = {
@@ -849,7 +873,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     group: "Documents",
     purpose: "Writes marketing or client-facing copy in Dakyworld's voice. A draft for a person to approve, never published.",
     scope: "write",
-    requires: "claude",
+    requires: "models",
+    job: "text",
     spends: true,
     outward: false,
     input: z.object({
@@ -858,8 +883,9 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       format: z.enum(["post", "email", "landing-page", "case-study", "one-pager"]).default("post"),
     }),
     run: async (input) => {
-      const { data } = await callClaude<{ title: string; body: string; callToAction: string; claimsToCheck: string[] }>({
+      const { data, provider } = await callModel<{ title: string; body: string; callToAction: string; claimsToCheck: string[] }>({
         purpose: "content.draft",
+        job: "text",
         system: `You write for Dakyworld.\n\n${BRAND}\n\n${VOICE}\n\n${catalogueForPrompt()}\n\nNever invent a client, a result or a statistic. Anything you cannot evidence goes in claimsToCheck instead of in the body.`,
         prompt: () =>
           `Format: ${input.format}. Audience: ${input.audience ?? "established businesses in Ghana"}.\n\nBrief:\n${input.brief}`,
@@ -881,13 +907,194 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         effort: "medium",
         maxTokens: 4000,
         messages: {
-          noKey: "No Anthropic API key is set, so content drafting is off.",
+          noKey: "No model is connected for writing. Add a key under Settings → AI models.",
           refusal: "That brief could not be written from.",
           empty: "Nothing came back. Try a more specific brief.",
           parse: "The draft came back in a shape this app could not read.",
         },
       });
-      return data;
+      // Named, because a draft's claims are worth weighing differently
+      // depending on who wrote them.
+      return { ...data, writtenBy: PROVIDERS[provider].name };
+    },
+  },
+  {
+    key: "content.factcheck",
+    name: "Check the facts",
+    group: "Documents",
+    purpose:
+      "Reads a draft against live sources and says which claims still hold, which have gone stale, and which cannot be evidenced at all.",
+    scope: "read",
+    requires: "models",
+    job: "factcheck",
+    // Perplexity bills per search as well as per token. Named, so the spend
+    // gate applies.
+    spends: true,
+    outward: false,
+    input: z.object({
+      text: z.string().min(20).max(12000).describe("The draft to check. Paste it whole — a claim is judged in its context."),
+      subject: z.string().max(200).optional().describe("What it is about, when the text alone doesn't say."),
+      recency: z
+        .enum(["day", "week", "month", "year", "any"])
+        .default("year")
+        .describe("How recent a source has to be to count. 'year' suits most business copy; 'week' suits anything about a live event."),
+    }),
+    run: async (input) => {
+      const route = await routeFor("factcheck");
+      const result = await callModel<{
+        verdict: string;
+        claims: { claim: string; status: string; finding: string; source: string }[];
+        stale: string[];
+        summary: string;
+      }>({
+        purpose: "content.factcheck",
+        job: "factcheck",
+        system: `You check business copy against what is true right now. Today is ${new Date().toISOString().slice(0, 10)}.
+
+Pull out every checkable claim — a statistic, a price, a date, a product name, a standard, a regulation, a company fact — and judge each one against sources you can actually cite.
+
+Four verdicts and no others:
+- CONFIRMED: a source says this, and the source is current.
+- OUTDATED: it was true and is not any more. Say what it is now.
+- UNSUPPORTED: no source says it either way. This is not the same as false, and you must not report it as false.
+- WRONG: a source contradicts it.
+
+Rules:
+- Never mark something CONFIRMED without a source you actually read. An unsourced confirmation is worse than no check at all, because somebody will publish on the strength of it.
+- Judge the claim as written, not a more defensible version of it.
+- Opinions, offers and statements about the writer's own business are not checkable facts. Leave them out rather than guessing.`,
+        prompt: () => [input.subject ? `What this is about: ${input.subject}` : "", "The draft:", input.text].filter(Boolean).join("\n\n"),
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["verdict", "claims", "stale", "summary"],
+          properties: {
+            verdict: {
+              type: "string",
+              enum: ["SAFE_TO_PUBLISH", "NEEDS_EDITS", "DO_NOT_PUBLISH"],
+              description: "DO_NOT_PUBLISH only when something is WRONG. An UNSUPPORTED claim is NEEDS_EDITS.",
+            },
+            claims: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["claim", "status", "finding", "source"],
+                properties: {
+                  claim: { type: "string", description: "The sentence as written." },
+                  status: { type: "string", enum: ["CONFIRMED", "OUTDATED", "UNSUPPORTED", "WRONG"] },
+                  finding: { type: "string", description: "What is actually the case, and what to write instead." },
+                  source: { type: "string", description: "The URL you read. Empty only for UNSUPPORTED." },
+                },
+              },
+            },
+            stale: {
+              type: "array",
+              items: { type: "string" },
+              description: "Anything that is true today and has a date on which it stops being — a price, a deadline, a version.",
+            },
+            summary: { type: "string", description: "Two or three sentences for whoever is about to publish this." },
+          },
+        },
+        ...(input.recency !== "any" ? { recency: input.recency } : {}),
+        maxTokens: 6000,
+        messages: {
+          noKey: "No model is connected for fact-checking. Add a Perplexity key under Settings → AI models.",
+          empty: "Nothing came back from the check. Try again.",
+        },
+      });
+
+      return {
+        ...result.data,
+        // The honest part. Checking a claim against a model's training data is
+        // a different and much weaker thing than checking it against the live
+        // web, and whoever reads this has to be able to tell which they got.
+        checkedBy: PROVIDERS[result.provider].name,
+        checkedAgainstLiveSources: result.provider === "perplexity",
+        sources: result.sources,
+        note:
+          result.provider === "perplexity"
+            ? null
+            : (route.note ??
+              `${PROVIDERS[result.provider].name} answered this from what it already knows rather than from live sources. Treat CONFIRMED as "probably" until a Perplexity key is connected.`),
+      };
+    },
+  },
+  {
+    key: "content.humanise",
+    name: "Rewrite in plain English",
+    group: "Documents",
+    purpose: "Rewrites a draft so it reads like a person wrote it and lands on one reading. Keeps every fact; changes only how it is said.",
+    scope: "read",
+    requires: "models",
+    job: "humanise",
+    spends: true,
+    outward: false,
+    input: z.object({
+      text: z.string().min(20).max(12000),
+      audience: z
+        .string()
+        .max(200)
+        .optional()
+        .describe("Who reads it — 'a clinic owner who is not technical', 'a finance director'. Changes what needs explaining."),
+      keepLength: z
+        .boolean()
+        .default(false)
+        .describe("True to hold roughly the same length. False lets it get shorter, which is usually the improvement."),
+    }),
+    run: async (input) => {
+      const result = await callModel<{ rewritten: string; changes: string[]; readingLevel: string; removed: string[] }>({
+        purpose: "content.humanise",
+        job: "humanise",
+        system: `You rewrite business writing so a busy person understands it on one reading.
+
+${VOICE}
+
+What you change:
+- Consultant vocabulary, and any sentence that could be said in half the words.
+- The passive voice, where the doer matters.
+- Jargon a reader outside the trade would stumble on — either explain it in the sentence or cut it.
+- Sentences carrying three ideas. One idea each.
+- Anything that reads as though a machine wrote it: throat-clearing openings, "it's not just X, it's Y", "in today's fast-paced world", a dash in every sentence, and closing paragraphs that restate the opening.
+
+What you never change:
+- A fact, a figure, a date, a name, a price or a promise. If a number is in the draft it is in your rewrite, unaltered.
+- The meaning. A shorter piece that says something different is a failure, not an edit.
+- A claim you think is wrong — that is somebody else's job. Say so in changes and leave the sentence alone.
+
+British spelling. No exclamation marks. Nothing you cut goes unmentioned: anything you dropped goes in removed so a person can put it back.`,
+        prompt: () =>
+          [
+            input.audience ? `Who reads this: ${input.audience}` : "",
+            input.keepLength ? "Hold roughly the same length." : "Shorter is better, as long as nothing is lost.",
+            "The draft:",
+            input.text,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["rewritten", "changes", "readingLevel", "removed"],
+          properties: {
+            rewritten: { type: "string", description: "The rewrite. Plain text or markdown, matching whatever came in." },
+            changes: { type: "array", items: { type: "string" }, description: "What you changed and why — one line each, not a diff." },
+            readingLevel: { type: "string", description: "Roughly who can now read this without re-reading a sentence." },
+            removed: {
+              type: "array",
+              items: { type: "string" },
+              description: "Anything you cut, verbatim, so a person can judge whether it mattered.",
+            },
+          },
+        },
+        maxTokens: 8000,
+        messages: {
+          noKey: "No model is connected for rewriting. Add a Perplexity key under Settings → AI models.",
+          empty: "Nothing came back from the rewrite. Try again.",
+        },
+      });
+
+      return { ...result.data, rewrittenBy: PROVIDERS[result.provider].name };
     },
   },
   {
@@ -1217,7 +1424,8 @@ Each concept is a genuinely different angle, not a rewording of the last one —
     group: "Studio",
     purpose: "Produces a complete, self-contained HTML page on the brand design system — the thing a developer opens and edits rather than starts from nothing.",
     scope: "read",
-    requires: "claude",
+    requires: "models",
+    job: "html",
     spends: false,
     outward: false,
     input: z.object({
@@ -1228,8 +1436,9 @@ Each concept is a genuinely different angle, not a rewording of the last one —
     }),
     run: async (input) => {
       const profile = await companyProfile();
-      const result = await callClaude<{ html: string; sections: string[]; notes: string[] }>({
+      const result = await callModel<{ html: string; sections: string[]; notes: string[] }>({
         purpose: "web.page",
+        job: "html",
         system: `You build web pages for ${profile.displayName}.
 
 ${BRAND}
@@ -1267,16 +1476,20 @@ Output one complete HTML document. Rules it must follow:
         effort: "high",
         maxTokens: 16000,
       });
-      return result.data;
+      return { ...result.data, builtBy: PROVIDERS[result.provider].name };
     },
   },
   {
     key: "image.generate",
     name: "Generate an image",
     group: "Studio",
-    purpose: "Makes a picture through whichever image service is connected. Which one is a connection under Settings, not a choice baked into an agent.",
+    purpose: "Makes a picture. Goes to ChatGPT when a key is set, and to a connected MCP image server otherwise.",
     scope: "send",
-    requires: "mcp",
+    // "models" rather than "mcp": there are two ways to draw a picture now and
+    // requiring the one that used to be the only way would refuse work the
+    // other can do.
+    requires: "models",
+    job: "image",
     // Every image service charges per picture. Named, so the spend gate applies
     // and the call is refused for an agent below autonomy 4.
     spends: true,
@@ -1287,16 +1500,42 @@ Output one complete HTML document. Rules it must follow:
       aspectRatio: z.string().max(16).optional(),
       count: z.number().int().min(1).max(4).default(1),
       style: z.string().max(300).optional(),
+      quality: z.enum(["low", "medium", "high", "auto"]).default("auto"),
     }),
     run: async (input) => {
+      const prompt = input.style ? `${input.prompt}. Style: ${input.style}` : input.prompt;
+
+      // ChatGPT first when it is connected and images are routed to it: it is
+      // the route the Owner configured, and it returns the bytes rather than a
+      // link that expires.
+      const route = await routeFor("image");
+      if (route.ready && route.serving === "openai") {
+        const result = await generateImage({
+          purpose: "image.generate",
+          prompt,
+          count: input.count,
+          size: sizeFor(input.aspectRatio),
+          quality: input.quality,
+        });
+        return {
+          provider: PROVIDERS.openai.name,
+          model: result.model,
+          images: result.images.map((url) => ({ type: "image", url })),
+          costUsd: result.costUsd,
+        };
+      }
+
+      // Otherwise whatever MCP server advertises an image tool — the path this
+      // tool had before ChatGPT was an option, kept because it still works.
       const provider = await imageProvider();
       if (!provider) {
         throw new Error(
-          "No connected server generates images. Add one under Settings → Connected tools — anything that speaks MCP and advertises an image tool will do.",
+          route.note ??
+            "Nothing here can draw a picture. Add a ChatGPT key under Settings → AI models, or connect an MCP server that advertises an image tool.",
         );
       }
       const result = await callOn(provider.server, provider.tool.name, {
-        prompt: input.style ? `${input.prompt}. Style: ${input.style}` : input.prompt,
+        prompt,
         ...(input.aspectRatio ? { aspect_ratio: input.aspectRatio, aspectRatio: input.aspectRatio } : {}),
         ...(input.count > 1 ? { n: input.count, count: input.count } : {}),
       });
@@ -1311,10 +1550,14 @@ Output one complete HTML document. Rules it must follow:
       };
     },
     preview: async (input) => {
+      const route = await routeFor("image");
+      if (route.ready && route.serving === "openai") {
+        return `Would ask ${PROVIDERS.openai.name} for ${input.count} image(s): "${input.prompt.slice(0, 160)}". Nothing was generated and nothing was charged.`;
+      }
       const provider = await imageProvider();
       return provider
         ? `Would ask ${provider.server.name} for ${input.count} image(s): "${input.prompt.slice(0, 160)}". Nothing was generated and nothing was charged.`
-        : `Would generate an image, but no image service is connected — so nothing would happen. Connect one under Settings → Connected tools.`;
+        : `Would generate an image, but nothing here can draw one — so nothing would happen. Add a ChatGPT key under Settings → AI models.`;
     },
   },
   {

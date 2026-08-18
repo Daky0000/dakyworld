@@ -14,6 +14,7 @@ import {
   slugifyKey,
 } from "../services/leadFields.js";
 import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
+import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLeads, tagSlug } from "../services/leadTags.js";
 
 export const leadsRouter = Router();
 
@@ -95,6 +96,12 @@ function buildWhere(query: Record<string, unknown>): Prisma.LeadWhereInput {
   if (has.includes("phone")) where.contactPhone = { not: null };
   if (has.includes("website")) where.website = { not: null };
   if (has.includes("noWebsite")) where.website = null;
+
+  // `tags=cold-outreach,ghana` — any of them by default, all of them with
+  // `tagMatch=all`. "Any" is the one people mean nine times in ten: a tag is a
+  // label, and asking for two labels usually means "either of these".
+  const tags = normaliseTags(str("tags")?.split(","));
+  if (tags.length > 0) where.tags = str("tagMatch") === "all" ? { hasEvery: tags } : { hasSome: tags };
 
   const q = str("q");
   if (q) {
@@ -191,6 +198,8 @@ leadsRouter.get("/stats", async (req, res, next) => {
 const groupInput = z.object({
   name: z.string().min(1),
   description: z.string().optional().nullable(),
+  /// What this batch is, as opposed to what the businesses in it are.
+  tags: z.array(z.string().max(60)).max(24).optional(),
 });
 
 function slugify(value: string) {
@@ -219,11 +228,14 @@ leadsRouter.get("/groups", async (_req, res, next) => {
 leadsRouter.post("/groups", async (req, res, next) => {
   try {
     const data = groupInput.parse(req.body);
+    // A tag typed here is one the Owner chose, so it is registered as theirs
+    // rather than as something a scrape coined.
+    const tags = await registerTags(data.tags, { autoCreated: false });
     // A hand-made group that collides with an auto one just reuses it.
     const group = await prisma.leadGroup.upsert({
       where: { slug: slugify(data.name) },
-      update: { name: data.name, description: data.description ?? undefined },
-      create: { ...data, slug: slugify(data.name) },
+      update: { name: data.name, description: data.description ?? undefined, ...(data.tags ? { tags } : {}) },
+      create: { name: data.name, description: data.description ?? null, tags, slug: slugify(data.name) },
     });
     res.status(201).json(group);
   } catch (err) {
@@ -234,7 +246,10 @@ leadsRouter.post("/groups", async (req, res, next) => {
 leadsRouter.patch("/groups/:id", async (req, res, next) => {
   try {
     const data = groupInput.partial().parse(req.body);
-    const group = await prisma.leadGroup.update({ where: { id: req.params.id }, data });
+    const group = await prisma.leadGroup.update({
+      where: { id: req.params.id },
+      data: { ...data, ...(data.tags ? { tags: await registerTags(data.tags, { autoCreated: false }) } : {}) },
+    });
     res.json(group);
   } catch (err) {
     next(err);
@@ -247,6 +262,86 @@ leadsRouter.delete("/groups/:id", async (req, res, next) => {
     await prisma.lead.updateMany({ where: { groupId: req.params.id }, data: { groupId: null } });
     await prisma.leadGroup.delete({ where: { id: req.params.id } });
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Tags ------------------------------------------------------------------
+
+/**
+ * The tag vocabulary — see services/leadTags.ts.
+ *
+ * Registered here rather than under `/api/tags` because a tag is a property of
+ * the pipeline, and the screen that manages one is the leads screen. Every
+ * route below is mounted above `/:id`, or `/api/leads/tags` would be read as a
+ * lead whose id is "tags".
+ */
+leadsRouter.get("/tags", async (_req, res, next) => {
+  try {
+    res.json({ tags: await listTags(), colours: TAG_COLOURS });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const tagInput = z.object({
+  label: z.string().min(1).max(60),
+  colour: z.enum(TAG_COLOURS).nullish(),
+  description: z.string().max(300).nullish(),
+});
+
+leadsRouter.post("/tags", async (req, res, next) => {
+  try {
+    const input = tagInput.parse(req.body);
+    const slug = tagSlug(input.label);
+    if (!slug) return res.status(400).json({ error: "That name has no letters or numbers in it." });
+
+    // Naming a tag that a scrape already coined is how an auto-created tag
+    // gets adopted: it keeps its slug and every lead that carries it, and
+    // stops being marked as something the system invented.
+    const tag = await prisma.leadTag.upsert({
+      where: { slug },
+      update: { label: input.label, colour: input.colour ?? null, description: input.description ?? null, autoCreated: false },
+      create: { slug, label: input.label, colour: input.colour ?? null, description: input.description ?? null, autoCreated: false },
+    });
+    res.status(201).json(tag);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Renames or recolours a tag.
+ *
+ * The slug is deliberately not editable. It is the identity every lead and
+ * every list holds, so changing it would orphan all of them — which is the
+ * whole reason the arrays store the slug and not the label.
+ */
+leadsRouter.patch("/tags/:id", async (req, res, next) => {
+  try {
+    const input = tagInput.partial().parse(req.body);
+    const tag = await prisma.leadTag.update({
+      where: { id: req.params.id },
+      data: {
+        ...(input.label !== undefined ? { label: input.label } : {}),
+        ...(input.colour !== undefined ? { colour: input.colour ?? null } : {}),
+        ...(input.description !== undefined ? { description: input.description ?? null } : {}),
+      },
+    });
+    res.json(tag);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Deletes the tag *and* takes it off every lead and list carrying it. */
+leadsRouter.delete("/tags/:id", async (req, res, next) => {
+  try {
+    const tag = await prisma.leadTag.findUnique({ where: { id: req.params.id } });
+    if (!tag) return res.status(404).json({ error: "No such tag." });
+    const removed = await deleteTag(tag.slug);
+    res.json({ deleted: tag.slug, ...removed });
   } catch (err) {
     next(err);
   }
@@ -396,12 +491,13 @@ leadsRouter.delete("/fields", async (req, res, next) => {
 // PATCH /api/leads/bulk — what you need after a scrape drops 200 rows at once.
 leadsRouter.patch("/bulk", async (req, res, next) => {
   try {
-    const { ids, status, groupId, addTags } = z
+    const { ids, status, groupId, addTags, removeTags } = z
       .object({
         ids: z.array(z.string().cuid()).min(1, "Select at least one lead"),
         status: z.enum(LEAD_STATUSES).optional(),
         groupId: z.string().cuid().nullable().optional(),
-        addTags: z.array(z.string()).optional(),
+        addTags: z.array(z.string().max(60)).max(24).optional(),
+        removeTags: z.array(z.string().max(60)).max(24).optional(),
       })
       .parse(req.body);
 
@@ -409,12 +505,19 @@ leadsRouter.patch("/bulk", async (req, res, next) => {
     const data: Prisma.LeadUncheckedUpdateManyInput = {};
     if (status) data.status = status;
     if (groupId !== undefined) data.groupId = groupId;
-    if (addTags?.length) data.tags = { push: addTags };
 
-    if (Object.keys(data).length === 0) return res.status(400).json({ error: "Nothing to change" });
+    // Tags are deliberately *not* done here with `push`. Prisma can push into
+    // an array column in one statement but cannot pull from one and cannot
+    // de-duplicate, so pushing a tag a lead already carries stores it twice.
+    // retagLeads reads, merges and writes back — see services/leadTags.ts.
+    const retagged = addTags?.length || removeTags?.length ? await retagLeads(ids, addTags ?? [], removeTags ?? []) : 0;
 
-    const result = await prisma.lead.updateMany({ where: { id: { in: ids } }, data });
-    res.json({ updated: result.count });
+    if (Object.keys(data).length === 0 && retagged === 0) {
+      return res.status(400).json({ error: "Nothing to change" });
+    }
+
+    const result = Object.keys(data).length ? await prisma.lead.updateMany({ where: { id: { in: ids } }, data }) : { count: 0 };
+    res.json({ updated: Math.max(result.count, retagged), retagged });
   } catch (err) {
     next(err);
   }
@@ -470,6 +573,7 @@ function toPrismaData<T extends { customFields?: Record<string, unknown> | null 
 leadsRouter.post("/", async (req, res, next) => {
   try {
     const data = leadInput.parse(req.body);
+    if (data.tags) data.tags = await registerTags(data.tags, { autoCreated: false });
     const lead = await prisma.lead.create({ data: toPrismaData(data) });
     res.status(201).json(lead);
   } catch (err) {
@@ -480,6 +584,7 @@ leadsRouter.post("/", async (req, res, next) => {
 leadsRouter.patch("/:id", async (req, res, next) => {
   try {
     const data = leadInput.partial().parse(req.body);
+    if (data.tags) data.tags = await registerTags(data.tags, { autoCreated: false });
     // A patch of one custom value shouldn't drop the others, so the incoming
     // object is merged over what the lead already holds.
     if (data.customFields) {

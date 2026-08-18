@@ -2,7 +2,17 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
-import type { ActorHealthReport, AppSettings, BrandSlot, CaptureConfig, CompanyProfile } from "../lib/types";
+import type {
+  ActorHealthReport,
+  AppSettings,
+  BrandSlot,
+  CaptureConfig,
+  CompanyProfile,
+  ModelJob,
+  ModelJobInfo,
+  ModelProvider,
+  ModelRoute,
+} from "../lib/types";
 import { Badge, Button, Field, PageHeader, StatusDot, Toggle } from "../components/ui";
 
 /**
@@ -21,6 +31,7 @@ type SectionId =
   | "system"
   | "email"
   | "analyst"
+  | "models"
   | "google"
   | "capture"
   | "payments"
@@ -33,7 +44,8 @@ type SectionId =
 const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
   { id: "system", label: "System", blurb: "Your name, address, phone and logo" },
   { id: "email", label: "Email", blurb: "The mailbox everything sends from" },
-  { id: "analyst", label: "AI analyst", blurb: "Reads sheets, drafts emails" },
+  { id: "analyst", label: "AI analyst", blurb: "Reads sheets, runs the agents" },
+  { id: "models", label: "AI models", blurb: "Who writes, draws and checks facts" },
   { id: "google", label: "Google", blurb: "Drive imports and the calendar" },
   { id: "capture", label: "Lead capture", blurb: "Apify scrapers and their schedule" },
   { id: "payments", label: "Payments", blurb: "Stripe checkout links on invoices" },
@@ -87,6 +99,15 @@ export function Settings() {
     switch (id) {
       case "analyst":
         return data.analyst.configured ? "ok" : "idle";
+      // Green only when every job is served by the vendor chosen for it.
+      // Amber while something is falling back — the work still happens, but not
+      // where the Owner asked for it.
+      case "models":
+        return data.models.routing.every((route) => route.ready)
+          ? "ok"
+          : data.models.providers.some((provider) => provider.key !== "anthropic" && provider.configured)
+            ? "warn"
+            : "idle";
       case "google":
         return data.google.connected ? "ok" : data.google.configured ? "warn" : "idle";
       case "capture":
@@ -149,6 +170,7 @@ export function Settings() {
               {section === "system" && <SystemPanel settings={data} />}
               {section === "email" && <EmailPanel settings={data} />}
               {section === "analyst" && <AnalystPanel settings={data} />}
+              {section === "models" && <ModelsPanel settings={data} />}
               {section === "google" && <GooglePanel settings={data} result={googleResult} params={searchParams} />}
               {section === "capture" && <CapturePanel settings={data} />}
               {section === "payments" && <PaymentsPanel settings={data} />}
@@ -1001,6 +1023,322 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
         )
       )}
       <ErrorNote error={connect.error ?? remove.error} />
+    </Panel>
+  );
+}
+
+// --- AI models -------------------------------------------------------------
+
+/**
+ * Four vendors, five jobs.
+ *
+ * The screen is built around the *job* rather than the vendor, because that is
+ * the decision: "who writes our proposals" is a question with consequences,
+ * and "is the OpenAI key set" is a detail. So the routing table comes first and
+ * the keys come second.
+ *
+ * **Nothing here has to be filled in for the system to work.** Every job falls
+ * back to Claude, which is already connected, and each key the Owner pastes
+ * moves one job onto the model chosen for it. The panel says which jobs are
+ * falling back rather than pretending they are configured.
+ */
+function ModelsPanel({ settings }: { settings: AppSettings }) {
+  const { providers, routing, jobs } = settings.models;
+  const byKey = new Map(providers.map((provider) => [provider.key, provider]));
+  const jobInfo = new Map(jobs.map((job) => [job.job, job]));
+  const fallingBack = routing.filter((route) => !route.ready);
+
+  return (
+    <div className="space-y-6">
+      <Panel
+        title="Who does what"
+        what={
+          <>
+            Each job goes to the model picked for it. Gemini writes, ChatGPT draws and builds pages, Perplexity checks facts against
+            live sources and rewrites drafts into plain English. Anything whose model isn't connected yet falls back to Claude, so
+            nothing waits on a key.
+          </>
+        }
+        state={
+          fallingBack.length === 0 ? (
+            <Connected>Every job is going to the model chosen for it.</Connected>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3 text-sm text-ink/60">
+              <Badge tone="muted">
+                {fallingBack.length} of {routing.length} falling back
+              </Badge>
+              <span>Claude is covering {fallingBack.map((route) => jobInfo.get(route.job)?.phrase).join(", ")}.</span>
+            </div>
+          )
+        }
+      >
+        <div className="mt-5 space-y-3">
+          {routing.map((route) => (
+            <RouteRow key={route.job} route={route} info={jobInfo.get(route.job)} providers={providers} />
+          ))}
+        </div>
+      </Panel>
+
+      {providers
+        .filter((provider) => provider.key !== "anthropic")
+        .map((provider) => (
+          <ProviderPanel key={provider.key} provider={provider} jobInfo={jobInfo} />
+        ))}
+
+      <Panel
+        title="Claude"
+        what={
+          <>
+            Reads imported spreadsheets, runs the agent workforce, and stands in for any job above whose own model isn't connected.
+            Its key lives under <span className="font-mono text-xs">AI analyst</span>.
+          </>
+        }
+        state={
+          byKey.get("anthropic")?.configured ? (
+            <Connected>
+              <span className="text-xs text-ink/40">{byKey.get("anthropic")?.model}</span>
+              <span className="text-xs text-ink/45">
+                Covering {routing.filter((route) => route.serving === "anthropic").length} of {routing.length} jobs.
+              </span>
+            </Connected>
+          ) : (
+            <NotConnected>
+              Nothing can fall back until this one is connected — add the key under AI analyst.
+            </NotConnected>
+          )
+        }
+      />
+    </div>
+  );
+}
+
+/** One job, and the dropdown that decides who does it. */
+function RouteRow({
+  route,
+  info,
+  providers,
+}: {
+  route: ModelRoute;
+  info?: ModelJobInfo;
+  providers: ModelProvider[];
+}) {
+  const save = useSaveSettings();
+  const eligible = providers.filter((provider) => provider.jobs.includes(route.job));
+
+  const choose = useMutation({
+    mutationFn: (provider: string) => api.put<AppSettings>(`/settings/models/routes/${route.job}`, { provider }),
+    onSuccess: save,
+  });
+
+  return (
+    <div className="rounded-xl border border-line px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <StatusDot tone={route.ready ? "ok" : "warn"} />
+            <span className="font-mono text-[11px] uppercase tracking-[.12em]">{info?.name ?? route.job}</span>
+          </div>
+          <p className="mt-1 text-sm text-ink/55">{info?.blurb}</p>
+        </div>
+
+        <div className="shrink-0">
+          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Handled by</label>
+          <select
+            value={route.chosen}
+            onChange={(event) => choose.mutate(event.target.value)}
+            disabled={choose.isPending}
+            className="input mt-1 w-48"
+          >
+            {eligible.map((provider) => (
+              <option key={provider.key} value={provider.key}>
+                {provider.name}
+                {provider.configured ? "" : " (no key yet)"}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {route.note && <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{route.note}</p>}
+      {route.ready && <p className="mt-2 font-mono text-[11px] text-ink/40">{route.model}</p>}
+      <ErrorNote error={choose.error} />
+    </div>
+  );
+}
+
+/** One vendor: the key, the model, and what it is currently doing. */
+function ProviderPanel({
+  provider,
+  jobInfo,
+}: {
+  provider: ModelProvider;
+  jobInfo: Map<ModelJob, ModelJobInfo>;
+}) {
+  const save = useSaveSettings();
+  const [key, setKey] = useState("");
+  const [model, setModel] = useState(provider.model);
+
+  // Reload when the snapshot changes underneath — saving a key returns a fresh
+  // one, and the model field must not revert to a stale copy.
+  const [loadedFor, setLoadedFor] = useState(provider.model);
+  useEffect(() => {
+    if (loadedFor === provider.model) return;
+    setLoadedFor(provider.model);
+    setModel(provider.model);
+  }, [provider.model, loadedFor]);
+
+  const connect = useMutation({
+    mutationFn: () => api.put<AppSettings>(`/settings/models/${provider.key}`, { key: key.trim() }),
+    onSuccess: (result) => {
+      setKey("");
+      save(result);
+    },
+  });
+  const setModelFor = useMutation({
+    mutationFn: () => api.put<AppSettings>(`/settings/models/${provider.key}`, { model: model.trim() || null }),
+    onSuccess: save,
+  });
+  const setImageModel = useMutation({
+    mutationFn: (next: string) => api.put<AppSettings>(`/settings/models/${provider.key}`, { imageModel: next.trim() || null }),
+    onSuccess: save,
+  });
+  const remove = useMutation({
+    mutationFn: () => api.delete<AppSettings>(`/settings/models/${provider.key}`),
+    onSuccess: save,
+  });
+
+  const doing = provider.serving.map((job) => jobInfo.get(job)?.phrase ?? job);
+
+  return (
+    <Panel
+      title={provider.name}
+      what={<>{provider.purpose}</>}
+      where={
+        !provider.configured && (
+          <>
+            Create a key at{" "}
+            <a className="text-blue hover:underline" href={provider.console} target="_blank" rel="noreferrer">
+              {new URL(provider.console).host}
+            </a>
+            . It is checked against {provider.vendor} before it is saved, so a typo is caught here rather than on the first draft.
+          </>
+        )
+      }
+      state={
+        provider.configured ? (
+          <Connected>
+            <span className="font-mono text-xs text-ink/50">{provider.keyPreview}</span>
+            <span className="text-xs text-ink/40">{provider.model}</span>
+            <span className="text-xs text-ink/45">{doing.length > 0 ? `Doing: ${doing.join(", ")}.` : "Nothing routed to it."}</span>
+            {!provider.envManaged && (
+              <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
+                Remove key
+              </Button>
+            )}
+          </Connected>
+        ) : (
+          <NotConnected>
+            {provider.jobs.length > 0
+              ? `${provider.jobs.map((job) => jobInfo.get(job)?.phrase ?? job).join(", ")} would come here.`
+              : "Nothing is routed here yet."}
+          </NotConnected>
+        )
+      }
+    >
+      {provider.envManaged ? (
+        <EnvNote variable={`${provider.key.toUpperCase()}_API_KEY`} />
+      ) : (
+        !provider.configured && (
+          <form
+            className="mt-4 flex flex-wrap items-end gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (key.trim()) connect.mutate();
+            }}
+          >
+            <div className="min-w-[22rem] flex-1">
+              <Field label={`${provider.vendor} API key`}>
+                <input
+                  type="password"
+                  value={key}
+                  onChange={(event) => setKey(event.target.value)}
+                  placeholder={provider.keyHint}
+                  autoComplete="off"
+                  className="input font-mono text-xs"
+                />
+              </Field>
+            </div>
+            <Button type="submit" disabled={connect.isPending || key.trim().length < 8}>
+              {connect.isPending ? "Checking…" : "Save key"}
+            </Button>
+          </form>
+        )
+      )}
+
+      {provider.configured && (
+        <form
+          className="mt-4 flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setModelFor.mutate();
+          }}
+        >
+          <div className="min-w-[18rem] flex-1">
+            <Field label="Model" hint={`Blank uses ${provider.defaultModel}.`}>
+              <input
+                list={`${provider.key}-models`}
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                placeholder={provider.defaultModel}
+                className="input font-mono text-xs"
+              />
+              <datalist id={`${provider.key}-models`}>
+                {provider.models.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            </Field>
+          </div>
+          <Button type="submit" variant="secondary" disabled={setModelFor.isPending || model === provider.model}>
+            {setModelFor.isPending ? "Saving…" : "Use this model"}
+          </Button>
+        </form>
+      )}
+
+      {/* ChatGPT draws with a different model from the one it writes with, so the
+          box that matters most for it is this one rather than the one above. */}
+      {provider.configured && provider.jobs.includes("image") && (
+        <form
+          className="mt-4 flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const value = new FormData(event.currentTarget).get("imageModel");
+            setImageModel.mutate(String(value ?? ""));
+          }}
+        >
+          <div className="min-w-[18rem] flex-1">
+            <Field label="Image model" hint="Blank uses gpt-image-1.5.">
+              <input
+                name="imageModel"
+                list={`${provider.key}-image-models`}
+                defaultValue=""
+                placeholder="gpt-image-1.5"
+                className="input font-mono text-xs"
+              />
+              <datalist id={`${provider.key}-image-models`}>
+                <option value="gpt-image-1.5" />
+                <option value="gpt-image-2" />
+                <option value="gpt-image-1-mini" />
+              </datalist>
+            </Field>
+          </div>
+          <Button type="submit" variant="secondary" disabled={setImageModel.isPending}>
+            {setImageModel.isPending ? "Saving…" : "Use this one"}
+          </Button>
+        </form>
+      )}
+
+      <ErrorNote error={connect.error ?? setModelFor.error ?? setImageModel.error ?? remove.error} />
     </Panel>
   );
 }

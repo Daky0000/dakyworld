@@ -1,5 +1,5 @@
 import type { EmailPurpose } from "@prisma/client";
-import { callClaude } from "./claude.js";
+import { callModel } from "./models/call.js";
 import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
@@ -149,21 +149,23 @@ function buildPrompt(request: DraftRequest): string {
 }
 
 export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
-  const { data, model, inputTokens, outputTokens } = await callClaude<{
+  const { data, model, inputTokens, outputTokens } = await callModel<{
     subject: string;
     body: string;
     rationale: string;
     confidence: number;
   }>({
     purpose: "email.draft",
+    // Prose. Routed with everything else the system writes — see lib/models.
+    job: "text",
     system: `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${contactBlock(await companyProfile())}\n\n${VOICE}\n\nNever invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`,
     prompt: () => buildPrompt(request),
     schema: SCHEMA as unknown as Record<string, unknown>,
     effort: "medium",
     messages: {
-      noKey: "No Anthropic API key is set. Add one under Settings → AI analyst to draft emails, or write this one by hand.",
-      auth: "Anthropic rejected the API key. Check it under Settings → AI analyst.",
-      rate: "Anthropic is rate-limiting this key. Try again in a minute.",
+      noKey: "No model is connected for writing. Add a key under Settings → AI models, or write this one by hand.",
+      auth: "The model provider rejected the API key. Check it under Settings → AI models.",
+      rate: "The model provider is rate-limiting this key. Try again in a minute.",
       refusal: "The drafter declined to write this one. Rephrase the brief, or write it by hand.",
       empty: "The drafter returned nothing. Try again.",
       truncated: "The drafter ran out of room before finishing. Try again, or shorten the brief.",

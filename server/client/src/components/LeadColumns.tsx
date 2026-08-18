@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { CaptureMethod, Lead, LeadFieldDef, LeadFieldSet, LeadFieldType } from "../lib/types";
 import { Badge, Button, Drawer, Money, RelativeTime, ScoreBar } from "./ui";
+import { TagChip, useTagLookup } from "./LeadTags";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
 const SOURCES = [
@@ -152,6 +153,13 @@ export function LeadCell({
     );
   }
 
+  // Tags render as tags: the array holds slugs, and the registry holds the
+  // label and the colour. Without this the column shows "dental-clinic" where
+  // every other surface shows "Dental clinic".
+  if (field.key === "tags") {
+    return <TagCell tags={Array.isArray(value) ? (value as string[]) : []} />;
+  }
+
   if (value === null || value === undefined || value === "") return <Empty />;
 
   if (Array.isArray(value)) {
@@ -250,6 +258,19 @@ export function editableText(lead: Lead, field: LeadFieldDef): string {
  * a typo can't put a lead into a status that doesn't exist; everything else
  * gets the input its type deserves.
  */
+/** Its own component so the registry lookup sits behind a hook rather than a prop drilled through the table. */
+function TagCell({ tags }: { tags: string[] }) {
+  const lookup = useTagLookup();
+  if (tags.length === 0) return <Empty />;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {tags.map((tag) => (
+        <TagChip key={tag} slug={tag} lookup={lookup} />
+      ))}
+    </span>
+  );
+}
+
 export function LeadCellEditor({
   field,
   value,

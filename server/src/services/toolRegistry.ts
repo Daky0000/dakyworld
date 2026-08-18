@@ -2,6 +2,7 @@ import { activeTransport } from "../lib/mailer.js";
 import { slackTransport } from "../lib/slack.js";
 import { calendarReady } from "../lib/calendar.js";
 import { defaultOwner } from "../lib/github.js";
+import { PROVIDERS, PROVIDER_KEYS, describeRouting, providerConfigured, type ProviderKey } from "../lib/models/registry.js";
 import { TOOLS } from "./tools/catalogue.js";
 import { toolReadiness } from "./tools/readiness.js";
 import type { ToolRequirement } from "./tools/types.js";
@@ -64,14 +65,78 @@ interface Integration {
   scopes: string[];
   spends: boolean;
   shortcut?: { label: string; to: string } | null;
+  /**
+   * Overrides both the readiness check and the derived tool list.
+   *
+   * One row per model vendor needs it, because those four rows all share the
+   * `models` requirement — every job falls back, so no tool can name a vendor —
+   * and deriving their tool lists from the requirement would give all four the
+   * same list. What a vendor is actually doing is what the *routing* says, and
+   * that changes when the Owner changes a dropdown rather than when code does.
+   */
+  override?: {
+    ready: boolean;
+    reason: string | null;
+    tools: string[];
+  };
+}
+
+/**
+ * One row per model vendor.
+ *
+ * Derived from the routing rather than from the catalogue, so a row says what
+ * that vendor is doing *right now* — move web pages from ChatGPT to Gemini in
+ * Settings and the two rows swap the tool between them without a deploy.
+ *
+ * Claude is excluded: it has its own row above, because it does two jobs
+ * nothing else here does (reading spreadsheets, running the agent loop) as well
+ * as standing in for whichever vendor is not connected yet.
+ */
+async function modelIntegrations(): Promise<Integration[]> {
+  const routing = await describeRouting();
+
+  return Promise.all(
+    PROVIDER_KEYS.filter((key): key is Exclude<ProviderKey, "anthropic"> => key !== "anthropic").map(async (key) => {
+      const definition = PROVIDERS[key];
+      const configured = await providerConfigured(key);
+      const jobs = routing.filter((route) => route.serving === key).map((route) => route.job);
+      // Every tool that names one of the jobs this vendor is currently serving.
+      const tools = TOOLS.filter((tool) => tool.job && jobs.includes(tool.job)).map((tool) => tool.key);
+      // What it was *chosen* for, which is what the Owner is owed a sentence
+      // about when it isn't connected — "you picked Gemini for writing and
+      // Claude is covering" is the useful thing to read.
+      const chosenFor = routing.filter((route) => route.chosen === key).map((route) => route.job);
+
+      return {
+        key: `model.${key}`,
+        requirement: "models" as ToolRequirement,
+        name: definition.name,
+        purpose: definition.purpose,
+        settingsTab: "models",
+        readyNote: jobs.length > 0 ? `Doing: ${jobs.join(", ")}.` : "Connected, but nothing is routed to it.",
+        scopes: ["read"],
+        spends: true,
+        override: {
+          ready: configured,
+          reason: configured
+            ? null
+            : chosenFor.length > 0
+              ? `Not connected, so ${chosenFor.join(" and ")} ${chosenFor.length > 1 ? "are" : "is"} falling back to Claude. Add a key under Settings \u2192 AI models.`
+              : `Not connected. Add a key under Settings \u2192 AI models.`,
+          tools,
+        },
+      } satisfies Integration;
+    }),
+  );
 }
 
 async function integrations(): Promise<Integration[]> {
-  const [transport, slack, calendar, ghOwner] = await Promise.all([
+  const [transport, slack, calendar, ghOwner, modelRows] = await Promise.all([
     activeTransport(),
     slackTransport(),
     calendarReady(),
     defaultOwner(),
+    modelIntegrations(),
   ]);
 
   return [
@@ -89,12 +154,13 @@ async function integrations(): Promise<Integration[]> {
       key: "claude",
       requirement: "claude",
       name: "Claude",
-      purpose: "Reasoning, drafting, classification and planning. Never the system of record.",
+      purpose: "Reads spreadsheets and runs the agents. Never the system of record.",
       settingsTab: "analyst",
       readyNote: null,
       scopes: ["read"],
       spends: true,
     },
+    ...modelRows,
     {
       // Named for the path that is actually live, because "email is connected"
       // is not the same claim as "email is connected through the MCP server",
@@ -203,8 +269,12 @@ export async function toolStatuses(): Promise<ToolStatus[]> {
 
   return Promise.all(
     list.map(async (integration) => {
-      const readiness = await toolReadiness(integration.requirement);
-      const tools = TOOLS.filter((tool) => tool.requires === integration.requirement);
+      const readiness = integration.override
+        ? { ready: integration.override.ready, reason: integration.override.reason }
+        : await toolReadiness(integration.requirement);
+      const tools = integration.override
+        ? TOOLS.filter((tool) => integration.override!.tools.includes(tool.key))
+        : TOOLS.filter((tool) => tool.requires === integration.requirement);
       return {
         key: integration.key,
         name: integration.name,

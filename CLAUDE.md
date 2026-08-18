@@ -93,6 +93,34 @@ money, and whether it reaches outside the company. Those come from the
 the autonomy gate. Descriptions are shown to the Owner and passed to the model
 as descriptions; nothing in one is ever executed.
 
+**Models are chosen by job, never by vendor** — `src/lib/models/`. A caller
+says `callModel({ job: "text" })` and the routing decides who serves it:
+Gemini writes, ChatGPT draws and builds pages, Perplexity checks facts against
+live sources and rewrites drafts into plain English. **Every job falls back to
+Claude when the vendor picked for it has no key**, so nothing waits on a
+credential and each key the Owner pastes moves one job onto its chosen model.
+`registry.ts` holds the vendors, the shipped routing, the published rates and
+the fallback; `call.ts` holds one adapter per vendor.
+
+Three things that will bite:
+
+- The three new vendors are spoken to over `fetch`, not SDKs. Anthropic keeps
+  its SDK because the agent loop needs tool use and thinking blocks.
+- **Gemini rejects `additionalProperties` outright** rather than ignoring it,
+  so `forGemini()` strips it on the way out. The schema the caller wrote is
+  untouched — it is a translation, not an edit.
+- **Perplexity bills per request as well as per token**, and the request fee is
+  larger than the tokens on a short call. `REQUEST_FEES` is added to every
+  priced Perplexity call; a cost worked out from tokens alone understates one
+  by an order of magnitude.
+
+A tool that routes declares `requires: "models"` and a `job`, never a vendor —
+naming one would make it refuse work the fallback could still do. What it must
+do instead is **say who answered**: `content.factcheck` returns `checkedBy` and
+`checkedAgainstLiveSources`, because checking a claim against a model's
+training data is a much weaker thing than checking it against the live web and
+whoever reads the result has to be able to tell which they got.
+
 **The agent runtime** — `src/services/agents/`. `runner.ts` is what turns a
 task into work: it claims an `AgentTask`, builds the prompt from the agent's
 ten prompt layers plus its recalled memories plus the resolved record, hands it
@@ -120,20 +148,53 @@ context of this one, and the failure mode of that is a letter to the wrong
 company. `findSecret()` refuses to store anything credential-shaped — a memory
 is re-read into a prompt every time its subject comes up.
 
+**There are two scopes and only one is private.** An `AGENT` memory is one
+agent's own. A `SHARED` one belongs to the company: `agentKey` is null so it
+outlives its author, `authorKey` records who concluded it (`owner` for one a
+person typed), and every agent is shown it. **Sharing widens who sees a
+memory, never when it comes up** — recall is still by subject, so a shared
+fact about one client surfaces only on tasks about that client. `company` is
+the shared equivalent of `self` and is recalled on every task. The two are put
+in the prompt under separate headings because they carry different authority:
+an agent's own conclusions lose to the record in front of it, a house rule
+does not. Shared memories get a point of importance in the recall ranking but
+not in the stored row, and `pruneMemories()` never sweeps them.
+
 **Agents come in two kinds.** The eighteen management agents recommend and
-decide; the nine `SUB_AGENT` specialists make things — Web Developer, Graphic
-Designer, Video Editor, Ad Designer and the rest, each with `skills` (a
-client's words, matched by a router) separate from `toolkit` (a permission).
-Seeded agents are wording-in-a-diff and the API refuses to rewrite them;
-`custom: true` agents are the Owner's and can be renamed, rewritten and
-deleted. Both kinds seed at autonomy 1 with dry run on, and the create route
-cannot say otherwise.
+decide; the eleven `SUB_AGENT` specialists make things — Web Developer,
+Graphic Designer, Video Editor, Ad Designer, Proposal Writer, Cold Lead Writer
+and the rest, each with `skills` (a client's words, matched by a router)
+separate from `toolkit` (a permission). Both kinds seed at autonomy 1 with dry
+run on, and the create route cannot say otherwise.
+
+**Every agent's wording is editable, including a seeded one.** That was not
+true until Aug 2026 — the API refused to rewrite a built-in agent on the
+grounds that shipped wording is a diff, which left the Owner editing
+TypeScript or hiring a duplicate agent to say the same job differently. A
+prompt is the instruction, so it is theirs. `ensureAgents()` only ever
+creates, so an edit survives every deploy; a rewritten seeded agent carries
+`promptEditedAt`, and `POST /agents/:key/prompt/reset` puts the seed's wording
+back. **Reset never touches the toolkit, the autonomy level or dry run** —
+what an agent is told to do and what it is allowed to reach are different
+decisions. An edit lands on the agent's next task, because `runner.ts` reads
+the row rather than a cache.
+
+**One agent takes one task at a time.** `MAX_CONCURRENT` is the process
+ceiling; the per-agent ceiling is one, enforced in the claim itself as a
+relation filter (`agent: { tasks: { none: { status: "RUNNING" } } }`) so two
+processes cannot both win. The reason is memory as much as legibility: an
+agent writes what it concluded as it goes and reads it back on the next task
+about the same subject, so two tasks about one lead running side by side
+interleave those writes and the agent contradicts itself with nothing in the
+timeline to show why. **This makes a stranded `RUNNING` row block its agent
+entirely**, which is why `reapAbandoned()` runs on every tick and requeues
+anything running for more than 45 minutes that no live process owns.
 
 **Client** — Vite + React + React Router + TanStack Query, in `server/client/`.
 The server serves the built client from `client/dist` when it exists, and falls
 back to an API-only status page when it doesn't.
 
-**Database** — Prisma, 39 models. `prisma/schema.prisma` is the source of truth.
+**Database** — Prisma, 40 models. `prisma/schema.prisma` is the source of truth.
 
 **Integration keys live encrypted in the database**, not in env vars — the
 `AppSetting` model, keyed by `APP_SECRET`. That is deliberate: adding or
@@ -156,6 +217,21 @@ PDFKit stamps the letterhead from a synchronous `pageAdded` handler, so nothing
 in the drawing code can await a database read. `letterheadIdentity()` gathers
 the profile and the artwork once, before the document is built, and is passed
 down. That is why `stampLetterhead` takes a second argument.
+
+**Tags are a registry, not a constraint** — `services/leadTags.ts`. Four things
+write tags on a lead (a scrape, a spreadsheet import, an inbound webhook, a
+person) and three of them invent the words as they go, so a foreign key would
+make those writes fail on a label nobody had registered. Instead every tag is
+upserted into `LeadTag` as it is used, and `Lead.tags` / `LeadGroup.tags` hold
+the **slug** — which is what makes renaming a tag cost one row instead of an
+update across every lead carrying it. Anything writing tags must go through
+`registerTags()`; anything reading a filter must go through `normaliseTags()`.
+
+`backfillTags()` runs at boot and does two jobs, because tags written before
+the registry existed hold *labels* rather than slugs: it registers what it
+finds and rewrites the arrays. Skipping the second half leaves a tag showing a
+count of zero while a lead visibly carries it, and filtering by it returning
+nothing. Both were true the first time it ran.
 
 **Lead capture prices itself from Apify at run time.** `lib/apify.getActorPricing`
 reads an actor's published rates (a public endpoint — it works before a token
@@ -268,10 +344,16 @@ substitute, so headings come out serif. The files are still correct — do not
   the global parser in `index.ts` (`UPLOAD_PATHS`) and each mounts its own
   larger one *inside* its router, after the role check. Adding a third upload
   route means touching both places or it fails at 100 kB.
-- **The agent loop can be exercised without a key** by pointing
-  `ANTHROPIC_BASE_URL` at a local stub that answers `/v1/messages` and
-  `/v1/models/:id`. That is how the dry-run, refusal, escalation and recall
-  paths were verified; a compile is not evidence that a loop turns.
+- **The whole model layer can be exercised without a single real key.** Point
+  `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `GEMINI_BASE_URL` and
+  `PERPLEXITY_BASE_URL` at one local stub answering `/v1/messages`,
+  `/v1/models/:id`, `/v1/chat/completions`, `/v1/images/generations`,
+  `:generateContent` and `/v1/sonar`. A stub that fills the caller's own JSON
+  schema keeps every adapter honest, and one that 400s on a leaked
+  `additionalProperties` proves the Gemini translation. That is how routing,
+  fallback, pricing, the dry-run and refusal paths, per-agent concurrency, the
+  reaper, shared-memory recall and prompt edits were all verified — a compile
+  is not evidence that a loop turns.
 - **Verifying an API response through `curl | python` on Windows mangles UTF-8**
   — Python decodes stdin as cp1252/gbk, so `·` comes back as a CJK ideograph and
   a correct render looks broken. Write the body to a file and read it with

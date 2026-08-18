@@ -17,6 +17,7 @@ import { estimateCost, suggestedCharge } from "./captureCost.js";
 import { enrolNewLeads } from "./emailSequences.js";
 import { captureTokens, proxyInput, readCaptureConfig, runOptions, type CaptureConfig } from "./captureConfig.js";
 import { reportRun } from "./captureNotify.js";
+import { registerTags } from "./leadTags.js";
 
 /**
  * Runs a configured Apify actor and turns its dataset into leads.
@@ -630,7 +631,7 @@ async function upsertLead(
     socialLinks: (mapped.socialLinks ?? undefined) as Prisma.InputJsonValue | undefined,
     externalId: mapped.externalId,
     discoveryNotes: mapped.discoveryNotes,
-    tags: mapped.tags,
+    tags: await registerTags(mapped.tags),
     enrichment: raw as Prisma.InputJsonValue,
     source: source.leadSource as LeadSource,
     captureMethod: "APIFY" as const,
@@ -681,7 +682,7 @@ async function upsertLead(
     reviewsCount: mapped.reviewsCount ?? existing.reviewsCount,
     socialLinks: (mapped.socialLinks ?? existing.socialLinks ?? undefined) as Prisma.InputJsonValue | undefined,
     enrichment: raw as Prisma.InputJsonValue,
-    tags: Array.from(new Set([...existing.tags, ...mapped.tags])),
+    tags: Array.from(new Set([...existing.tags, ...(await registerTags(mapped.tags))])),
     leadScore: Math.max(existing.leadScore, score),
     scraperSourceId: existing.scraperSourceId ?? source.id,
     groupId: existing.groupId ?? groupId,

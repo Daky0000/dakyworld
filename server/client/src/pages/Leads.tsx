@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { Lead, LeadFieldDef, LeadStats } from "../lib/types";
+import type { Lead, LeadFieldDef, LeadGroup, LeadStats } from "../lib/types";
 import { LeadDrawer } from "../components/LeadDrawer";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
 import {
@@ -19,6 +19,7 @@ import {
   visibleFields,
 } from "../components/LeadColumns";
 import { Button, Card, EmptyState, Field, Money, PageHeader, StatTile } from "../components/ui";
+import { TagChip, TagManager, TagPicker, useLeadTags, useTagLookup } from "../components/LeadTags";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
 const SOURCES = [
@@ -61,6 +62,10 @@ interface Filters {
   city: string;
   category: string;
   has: string[];
+  /** Tag slugs. */
+  tags: string[];
+  /** "any" (either tag) or "all" (both). Any is what people mean nine times in ten. */
+  tagMatch: "any" | "all";
   sort: string;
   /** Set by the "view what this run captured" links on the Lead capture page. */
   scraperSourceId: string;
@@ -76,6 +81,8 @@ const EMPTY_FILTERS: Filters = {
   city: "",
   category: "",
   has: [],
+  tags: [],
+  tagMatch: "any",
   sort: "newest",
   scraperSourceId: "",
   scraperRunId: "",
@@ -91,6 +98,11 @@ function toQuery(filters: Filters): string {
   if (filters.city) params.set("city", filters.city);
   if (filters.category) params.set("category", filters.category);
   if (filters.has.length) params.set("has", filters.has.join(","));
+  if (filters.tags.length) {
+    params.set("tags", filters.tags.join(","));
+    // Only sent when it changes the answer, so the query string stays readable.
+    if (filters.tagMatch === "all" && filters.tags.length > 1) params.set("tagMatch", "all");
+  }
   if (filters.sort) params.set("sort", filters.sort);
   if (filters.scraperSourceId) params.set("scraperSourceId", filters.scraperSourceId);
   if (filters.scraperRunId) params.set("scraperRunId", filters.scraperRunId);
@@ -116,6 +128,7 @@ export function Leads() {
   const [columnsFor, setColumnsFor] = useState<string | null | undefined>(undefined);
 
   const [emailing, setEmailing] = useState<ComposerTarget | null>(null);
+  const [managingTags, setManagingTags] = useState(false);
 
   // The open lead lives in the URL, so a lead can be linked to directly.
   const openLeadId = searchParams.get("lead");
@@ -164,9 +177,12 @@ export function Leads() {
   });
 
   const bulkUpdate = useMutation({
-    mutationFn: (body: { ids: string[]; status?: string; groupId?: string | null }) => api.patch("/leads/bulk", body),
+    mutationFn: (body: { ids: string[]; status?: string; groupId?: string | null; addTags?: string[]; removeTags?: string[] }) =>
+      api.patch("/leads/bulk", body),
     onSuccess: () => {
       invalidate();
+      // A bulk retag can coin a tag, so the vocabulary is stale too.
+      void qc.invalidateQueries({ queryKey: ["lead-tags"] });
       setSelected(new Set());
     },
   });
@@ -189,6 +205,7 @@ export function Leads() {
     (filters.q ? 1 : 0) +
     filters.status.length +
     filters.has.length +
+    filters.tags.length +
     (filters.source ? 1 : 0) +
     (filters.captureMethod ? 1 : 0) +
     (filters.groupId ? 1 : 0) +
@@ -226,6 +243,9 @@ export function Leads() {
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" onClick={() => setColumnsFor(filters.groupId || null)}>
               Columns
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setManagingTags(true)}>
+              Tags
             </Button>
             <ExportMenu query={query} count={data?.total ?? 0} />
             {/* Importing reaches into Google and spends Anthropic credits, so
@@ -279,6 +299,8 @@ export function Leads() {
         resultCount={data?.total ?? 0}
       />
 
+      {managingTags && <TagManager onClose={() => setManagingTags(false)} />}
+
       {selected.size > 0 && (
         <BulkBar
           count={selected.size}
@@ -287,6 +309,7 @@ export function Leads() {
           error={bulkDelete.error}
           onStatus={(status) => bulkUpdate.mutate({ ids: [...selected], status })}
           onGroup={(groupId) => bulkUpdate.mutate({ ids: [...selected], groupId })}
+          onTags={(addTags, removeTags) => bulkUpdate.mutate({ ids: [...selected], addTags, removeTags })}
           onDelete={() => {
             if (confirm(`Delete ${selected.size} lead(s)? This cannot be undone.`)) bulkDelete.mutate([...selected]);
           }}
@@ -330,6 +353,11 @@ export function Leads() {
               // Grouping by capture batch is the one view where each block can
               // legitimately have its own columns, so each block asks for them.
               groupId={effectiveGroupBy === "group" && group.key !== "none" ? group.key : null}
+              // The row itself, so the header can show and edit the list's own
+              // tags. Only present when the blocks *are* lists.
+              group={
+                effectiveGroupBy === "group" ? (stats?.groups.find((entry) => entry.id === group.key) ?? null) : null
+              }
               fallbackColumns={columns}
               selected={selected}
               onToggle={toggleSelected}
@@ -462,6 +490,7 @@ function LeadGroupBlock({
   label,
   leads,
   groupId,
+  group,
   fallbackColumns,
   selected,
   onToggle,
@@ -477,6 +506,8 @@ function LeadGroupBlock({
   leads: Lead[];
   /** Set only when this block is one capture batch, which may own its columns. */
   groupId: string | null;
+  /** The list itself, when this block is one. Carries its tags. */
+  group: LeadGroup | null;
   fallbackColumns: LeadFieldDef[];
   selected: Set<string>;
   onToggle: (id: string) => void;
@@ -528,6 +559,7 @@ function LeadGroupBlock({
           <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">
             {leads.length} · {withEmail} with email
           </span>
+          {group && <GroupTags group={group} />}
           <span className="h-px flex-1 bg-ink/10" />
           <button
             type="button"
@@ -651,6 +683,70 @@ function LeadGroupBlock({
 
 // --- Filters ---------------------------------------------------------------
 
+/**
+ * A list's own tags.
+ *
+ * Separate from the tags on the leads inside it, because they answer different
+ * questions: a lead is tagged with what the business is ("dental clinic"), and
+ * a list with what the batch is for ("cold outreach", "Q4 push", "do not
+ * contact until March"). Merging the two would mean tagging a batch put the
+ * label on two hundred businesses it is not true of.
+ */
+function GroupTags({ group }: { group: LeadGroup }) {
+  const qc = useQueryClient();
+  const lookup = useTagLookup();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string[]>(group.tags ?? []);
+
+  const save = useMutation({
+    mutationFn: (tags: string[]) => api.patch(`/leads/groups/${group.id}`, { tags }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["lead-stats"] });
+      void qc.invalidateQueries({ queryKey: ["lead-tags"] });
+      setEditing(false);
+    },
+  });
+
+  if (!editing) {
+    return (
+      <span className="flex flex-wrap items-center gap-1">
+        {(group.tags ?? []).map((tag) => (
+          <TagChip key={tag} slug={tag} lookup={lookup} />
+        ))}
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(group.tags ?? []);
+            setEditing(true);
+          }}
+          className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/30 transition hover:text-blue"
+          title="Tag this list"
+        >
+          {(group.tags ?? []).length > 0 ? "edit" : "+ tag list"}
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex min-w-[18rem] flex-wrap items-start gap-2 rounded-lg border border-blue/30 bg-blue/5 p-2">
+      <span className="min-w-[14rem] flex-1">
+        <TagPicker value={draft} onChange={setDraft} placeholder="Tag this list…" />
+      </span>
+      <Button size="sm" disabled={save.isPending} onClick={() => save.mutate(draft)}>
+        {save.isPending ? "Saving…" : "Save"}
+      </Button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45"
+      >
+        Cancel
+      </button>
+    </span>
+  );
+}
+
 function FilterBar({
   filters,
   stats,
@@ -744,6 +840,8 @@ function FilterBar({
         </select>
       </div>
 
+      <TagFilterRow filters={filters} onChange={onChange} />
+
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         {STATUSES.map((status) => (
           <FilterChip
@@ -795,6 +893,92 @@ function FilterBar({
   );
 }
 
+/**
+ * Filter by tag.
+ *
+ * Its own row rather than another dropdown, because a tag list is unbounded —
+ * a capture coins one per business category, so a select would be three hundred
+ * options long — and because the useful gesture is clicking two of them, not
+ * picking one. The most-used tags come first; the rest are behind "all".
+ *
+ * The any/all switch only appears once two tags are chosen, since with one
+ * selected it would change nothing.
+ */
+function TagFilterRow({ filters, onChange }: { filters: Filters; onChange: (filters: Filters) => void }) {
+  const { data } = useLeadTags();
+  const lookup = useTagLookup();
+  const [showAll, setShowAll] = useState(false);
+
+  const tags = data?.tags ?? [];
+  if (tags.length === 0) return null;
+
+  // Ranked by use: what somebody filters by is almost always what most of the
+  // pipeline carries.
+  const ranked = [...tags].sort((a, b) => b.leads - a.leads);
+  const shown = showAll ? ranked : ranked.slice(0, 10);
+  const toggle = (slug: string) =>
+    onChange({
+      ...filters,
+      tags: filters.tags.includes(slug) ? filters.tags.filter((entry) => entry !== slug) : [...filters.tags, slug],
+    });
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b border-ink/5 px-4 py-3">
+      <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">Tags</span>
+      {shown.map((tag) => (
+        <TagChip
+          key={tag.slug}
+          slug={tag.slug}
+          lookup={lookup}
+          active={filters.tags.includes(tag.slug)}
+          onClick={() => toggle(tag.slug)}
+        />
+      ))}
+      {ranked.length > shown.length && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40 transition hover:text-ink"
+        >
+          + {ranked.length - shown.length} more
+        </button>
+      )}
+      {showAll && ranked.length > 10 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(false)}
+          className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40 transition hover:text-ink"
+        >
+          Fewer
+        </button>
+      )}
+
+      {filters.tags.length > 1 && (
+        <label className="ml-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">
+          Match
+          <select
+            value={filters.tagMatch}
+            onChange={(event) => onChange({ ...filters, tagMatch: event.target.value as "any" | "all" })}
+            className="filter-select"
+          >
+            <option value="any">Any of them</option>
+            <option value="all">All of them</option>
+          </select>
+        </label>
+      )}
+      {filters.tags.length > 0 && (
+        <button
+          type="button"
+          onClick={() => onChange({ ...filters, tags: [] })}
+          className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40 transition hover:text-ink"
+        >
+          Clear tags
+        </button>
+      )}
+    </div>
+  );
+}
+
 function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
@@ -816,6 +1000,7 @@ function BulkBar({
   error,
   onStatus,
   onGroup,
+  onTags,
   onDelete,
   onClear,
 }: {
@@ -825,11 +1010,18 @@ function BulkBar({
   error: unknown;
   onStatus: (status: string) => void;
   onGroup: (groupId: string | null) => void;
+  /** Adds and removes in one call, so tagging a segment is one action. */
+  onTags: (add: string[], remove: string[]) => void;
   onDelete: () => void;
   onClear: () => void;
 }) {
+  const [tagging, setTagging] = useState(false);
+  const [add, setAdd] = useState<string[]>([]);
+  const [strip, setStrip] = useState<string[]>([]);
+
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
+    <div className="mb-4 border border-ink bg-ink px-4 py-3 text-cream">
+      <div className="flex flex-wrap items-center gap-3">
       <span className="font-mono text-[11px] uppercase tracking-[.14em]">{count} selected</span>
       <select
         defaultValue=""
@@ -860,6 +1052,14 @@ function BulkBar({
       </select>
       <button
         type="button"
+        onClick={() => setTagging((open) => !open)}
+        disabled={pending}
+        className={`font-mono text-[10px] uppercase tracking-[.14em] transition ${tagging ? "text-lime" : "text-cream/70 hover:text-cream"}`}
+      >
+        Tags…
+      </button>
+      <button
+        type="button"
         onClick={onDelete}
         disabled={pending}
         className="font-mono text-[10px] uppercase tracking-[.14em] text-red-300 transition hover:text-red-200"
@@ -871,6 +1071,43 @@ function BulkBar({
       <button type="button" onClick={onClear} className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60">
         Clear
       </button>
+      </div>
+
+      {/* Add and remove together, because retagging a segment is normally both:
+          the leads that stop being "to-call" are the ones that become "called". */}
+      {tagging && (
+        <div className="mt-3 grid gap-4 border-t border-cream/15 pt-3 sm:grid-cols-2">
+          <div className="rounded-lg bg-cream p-3 text-ink">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/45">Add to all {count}</p>
+            <TagPicker value={add} onChange={setAdd} placeholder="Type a tag, or pick one…" />
+          </div>
+          <div className="rounded-lg bg-cream p-3 text-ink">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/45">Take off all {count}</p>
+            <TagPicker value={strip} onChange={setStrip} placeholder="Tags to remove…" />
+          </div>
+          <div className="sm:col-span-2 flex items-center gap-3">
+            <Button
+              size="sm"
+              disabled={pending || (add.length === 0 && strip.length === 0)}
+              onClick={() => {
+                onTags(add, strip);
+                setAdd([]);
+                setStrip([]);
+                setTagging(false);
+              }}
+            >
+              {pending ? "Applying…" : "Apply"}
+            </Button>
+            <button
+              type="button"
+              onClick={() => setTagging(false)}
+              className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

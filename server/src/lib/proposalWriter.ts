@@ -1,4 +1,4 @@
-import { callClaude } from "./claude.js";
+import { callModel } from "./models/call.js";
 import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE, SERVICE_LINES, catalogueForPrompt } from "../services/dakyworld.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
@@ -249,8 +249,11 @@ function buildPrompt(context: ProposalContext, brief: string | null | undefined)
 }
 
 export async function writeProposal(context: ProposalContext, brief?: string | null): Promise<WriteResult> {
-  const { data, model, inputTokens, outputTokens } = await callClaude<ProposalDraft>({
+  const { data, model, inputTokens, outputTokens } = await callModel<ProposalDraft>({
     purpose: "proposal.write",
+    // Prose, so it goes wherever writing is routed — Gemini by default,
+    // falling back to Claude while no Gemini key is set. See lib/models.
+    job: "text",
     system: `${SYSTEM}\n\n${contactBlock(await companyProfile())}`,
     prompt: () => buildPrompt(context, brief),
     schema: SCHEMA as unknown as Record<string, unknown>,
@@ -259,9 +262,9 @@ export async function writeProposal(context: ProposalContext, brief?: string | n
     effort: "high",
     maxTokens: 12000,
     messages: {
-      noKey: "No Anthropic API key is set. Add one under Settings → AI analyst to draft proposals, or write this one by hand.",
-      auth: "Anthropic rejected the API key. Check it under Settings → AI analyst.",
-      rate: "Anthropic is rate-limiting this key. Try again in a minute.",
+      noKey: "No model is connected for writing. Add a key under Settings → AI models, or write this one by hand.",
+      auth: "The model provider rejected the API key. Check it under Settings → AI models.",
+      rate: "The model provider is rate-limiting this key. Try again in a minute.",
       refusal: "The writer declined this one. Rephrase the brief, or write the proposal by hand.",
       empty: "The writer returned nothing. Try again.",
       truncated: "The writer ran out of room before finishing the proposal. Try again, or narrow the brief.",

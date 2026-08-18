@@ -9,6 +9,20 @@ import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from 
 import { isValidTimezone } from "../services/scheduler.js";
 import { AnalystError, ANALYST_MODEL, verifyKey } from "../lib/anthropic.js";
 import {
+  JOBS,
+  MODEL_JOBS,
+  PROVIDERS,
+  PROVIDER_KEYS,
+  describeProviders,
+  describeRouting,
+  isModelJob,
+  isProviderKey,
+  readRoutes,
+  type ModelJob,
+  type ProviderKey,
+} from "../lib/models/registry.js";
+import { verifyProviderKey } from "../lib/models/call.js";
+import {
   GoogleError,
   buildAuthUrl,
   clearGoogleTokenCache,
@@ -169,6 +183,7 @@ async function describeAll(req: Request) {
       cloudName,
       apiKey: cloudKey ? maskSecret(cloudKey) : null,
     },
+    models: await describeModels(),
     email: await describeEmail(),
     alerts: await describeSlack(),
     developer: await describeGitHub(),
@@ -200,6 +215,35 @@ async function describeSystem() {
     /** Which slots have artwork uploaded. The bytes go out only on request. */
     brand: BRAND_SLOTS.map((entry) => ({ ...entry, uploaded: Boolean(images[entry.slot]) })),
     images,
+  };
+}
+
+/**
+ * The four model vendors and what each is doing.
+ *
+ * The routing is sent whole rather than as a diff against the defaults, for
+ * the same reason the company profile is: the screen has to show what is
+ * happening now, and "unset, meaning it falls back" is a distinction the UI
+ * makes with a note rather than with an empty field.
+ *
+ * Keys are masked here and nowhere unmasked — a settings snapshot is a
+ * response body, and a response body is a place a credential must never be.
+ */
+async function describeModels() {
+  const [providers, routing] = await Promise.all([describeProviders(), describeRouting()]);
+
+  const withKeys = await Promise.all(
+    providers.map(async (provider) => {
+      const value = await getSetting(PROVIDERS[provider.key].keySetting);
+      return { ...provider, keyPreview: value ? maskSecret(value) : null };
+    }),
+  );
+
+  return {
+    providers: withKeys,
+    routing,
+    /** What each job is, so the screen doesn't have to hold its own copy. */
+    jobs: MODEL_JOBS.map((job) => JOBS[job]),
   };
 }
 
@@ -508,6 +552,114 @@ settingsRouter.delete("/anthropic", async (req, res, next) => {
   try {
     if (guardEnv(SETTING.ANTHROPIC_KEY, "The Anthropic API key", res)) return;
     await deleteSetting(SETTING.ANTHROPIC_KEY);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- AI models -------------------------------------------------------------
+
+/**
+ * One key per vendor, and one dropdown per job.
+ *
+ * There is deliberately no route that takes all four keys at once: a key is
+ * verified against its vendor before it is stored, and a form that saves four
+ * would have to decide what to do when two of them work and two do not.
+ */
+settingsRouter.put("/models/:provider", async (req, res, next) => {
+  try {
+    const provider = req.params.provider;
+    if (!isProviderKey(provider)) return res.status(404).json({ error: "No such model provider." });
+
+    const definition = PROVIDERS[provider];
+    const input = z
+      .object({
+        key: z.string().min(8).optional(),
+        /** The model this vendor uses. Blank restores the shipped default. */
+        model: z.string().max(80).nullish(),
+        /** ChatGPT only: the image model, which is a different model. */
+        imageModel: z.string().max(80).nullish(),
+      })
+      .parse(req.body);
+
+    if (input.key !== undefined) {
+      if (guardEnv(definition.keySetting, `The ${definition.vendor} API key`, res)) return;
+      // Checked against the vendor before it is stored, the same way the Apify
+      // token and the Anthropic key are: a key that fails on first use is a
+      // support conversation, and one refused at the moment it is pasted is a
+      // typo fixed in ten seconds.
+      await verifyProviderKey(provider, input.key.trim());
+      await setSetting(definition.keySetting, input.key.trim(), { secret: true });
+    }
+
+    if (input.model !== undefined) {
+      if (guardEnv(definition.modelSetting, `The ${definition.vendor} model`, res)) return;
+      const model = input.model?.trim();
+      if (model) await setSetting(definition.modelSetting, model);
+      else await deleteSetting(definition.modelSetting);
+    }
+
+    if (input.imageModel !== undefined && provider === "openai") {
+      const model = input.imageModel?.trim();
+      if (model) await setSetting(SETTING.OPENAI_IMAGE_MODEL, model);
+      else await deleteSetting(SETTING.OPENAI_IMAGE_MODEL);
+    }
+
+    // A new key changes what every model tool can do, and readiness is cached.
+    clearReadinessCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+settingsRouter.delete("/models/:provider", async (req, res, next) => {
+  try {
+    const provider = req.params.provider;
+    if (!isProviderKey(provider)) return res.status(404).json({ error: "No such model provider." });
+    const definition = PROVIDERS[provider];
+    if (guardEnv(definition.keySetting, `The ${definition.vendor} API key`, res)) return;
+
+    await deleteSetting(definition.keySetting);
+    clearReadinessCache();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Which vendor does which job.
+ *
+ * Stored as only what differs from the shipped routing, so a default that
+ * changes in a later deploy is picked up rather than frozen by a saved copy of
+ * itself. A route to a vendor that cannot do the job is refused here rather
+ * than dropped silently on read — the Owner should find out at the moment they
+ * choose it, not by noticing months later that nothing changed.
+ */
+settingsRouter.put("/models/routes/:job", async (req, res, next) => {
+  try {
+    const job = req.params.job;
+    if (!isModelJob(job)) return res.status(404).json({ error: "No such job." });
+
+    const { provider } = z.object({ provider: z.string().max(40).nullable() }).parse(req.body);
+
+    const routes: Partial<Record<ModelJob, ProviderKey>> = { ...(await readRoutes()) };
+    if (provider === null) {
+      delete routes[job];
+    } else {
+      if (!isProviderKey(provider)) return res.status(400).json({ error: "No such model provider." });
+      if (!PROVIDERS[provider].jobs.includes(job)) {
+        return res.status(400).json({ error: `${PROVIDERS[provider].name} can't do that job, so it can't be routed there.` });
+      }
+      routes[job] = provider;
+    }
+
+    if (Object.keys(routes).length === 0) await deleteSetting(SETTING.MODEL_ROUTES);
+    else await setSetting(SETTING.MODEL_ROUTES, JSON.stringify(routes));
+
     res.json(await describeAll(req));
   } catch (err) {
     next(err);
