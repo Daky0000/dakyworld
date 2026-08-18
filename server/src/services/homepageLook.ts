@@ -37,6 +37,25 @@ export interface HomepageObservation {
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "GOOD";
 }
 
+/**
+ * What the page states about the business, read off the page itself.
+ *
+ * Separate from the judgement above because it is a different kind of claim: a
+ * trade printed on a homepage is evidence, not an opinion, and it is better
+ * evidence than anything a search infers. This is what lets a look fill in the
+ * blanks a scrape left — the em-dashes against Category and Location.
+ */
+export interface HomepageStates {
+  /** The trade in the page's own words — "Dental clinic", "Fabric wholesaler". */
+  trade: string | null;
+  /** The town or city named on the page. */
+  town: string | null;
+  /** What they say they offer. At most six, in their words. */
+  services: string[];
+  /** A phone number printed on the page, exactly as written. */
+  phone: string | null;
+}
+
 export interface HomepageLook {
   /** The five-second test: what a visitor can tell about this business. */
   firstImpression: string;
@@ -49,6 +68,8 @@ export interface HomepageLook {
   observations: HomepageObservation[];
   /** The one thing worth putting in an email, chosen by the model that looked. */
   theOneThing: string;
+  /** What the page states about the business, as opposed to how it looks. */
+  states: HomepageStates;
   /** Who did the looking, since the fallback may have. */
   lookedBy: string;
 }
@@ -64,7 +85,7 @@ export interface LookResult {
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["firstImpression", "offerClear", "contactClear", "looksDated", "observations", "theOneThing"],
+  required: ["firstImpression", "offerClear", "contactClear", "looksDated", "observations", "theOneThing", "states"],
   properties: {
     firstImpression: {
       type: "string",
@@ -105,12 +126,35 @@ const SCHEMA = {
       description:
         "If only one sentence of this could go into a cold email, which. Written as the sentence itself, in the second person, naming the specific thing on their page.",
     },
+    states: {
+      type: "object",
+      additionalProperties: false,
+      required: ["trade", "town", "services", "phone"],
+      description:
+        "What the page itself states about the business. Facts read off the page, not inferences. Empty string or empty list wherever the page does not say.",
+      properties: {
+        trade: {
+          type: "string",
+          description:
+            "What kind of business this is, in the page's own words — 'Dental clinic', 'Fabric wholesaler', 'Driving school'. Empty if the page does not say plainly.",
+        },
+        town: { type: "string", description: "The town or city named on the page. Empty if none is shown." },
+        services: {
+          type: "array",
+          items: { type: "string" },
+          description: "Up to six things the page says they offer, in their words. Empty if the page lists none.",
+        },
+        phone: { type: "string", description: "A phone number printed on the page, exactly as written. Empty if none is visible." },
+      },
+    },
   },
 } as const;
 
 const SYSTEM = `You are looking at a screenshot of one business's homepage, and reporting what is visibly true of it.
 
 You are doing this so that a letter to that business can name something specific rather than something generic. "A modern website builds trust" is worthless; "the first thing on your homepage is a stock photo of a handshake, and nothing on that screen says you are a dental clinic" is worth replying to.
+
+You are doing a second job at the same time: reading what the page *states* about the business — the trade, the town, what they offer, a phone number. Those go in the states object, and they are facts rather than judgements. The record this feeds is usually half empty, and a trade printed on a business's own homepage is better evidence than anything a search infers. If the page does not say, leave it empty; do not deduce a trade from a photograph or a town from a phone code.
 
 What you may say:
 - Anything visible in the picture. Layout, typography, image quality, colour, spacing, how the logo is rendered, what the navigation offers, what the first screen leads with, whether there is a call to action and what it says.
@@ -180,6 +224,12 @@ export async function lookAtHomepage(args: {
       look: {
         ...result.data,
         looksDated: result.data.looksDated?.trim() ? result.data.looksDated.trim() : null,
+        states: {
+          trade: result.data.states?.trade?.trim() || null,
+          town: result.data.states?.town?.trim() || null,
+          services: (result.data.states?.services ?? []).map((entry) => entry.trim()).filter(Boolean).slice(0, 6),
+          phone: result.data.states?.phone?.trim() || null,
+        },
         lookedBy: PROVIDERS[result.provider].name,
       },
       shot: captured.shot,
@@ -203,6 +253,9 @@ export function lookForPrompt(look: HomepageLook): string[] {
     lines.push(
       `Seen on their homepage (${observation.where}, ${observation.severity.toLowerCase()}): ${observation.observed} — ${observation.soWhat}`,
     );
+  }
+  if (look.states.services.length) {
+    lines.push(`Their homepage says they offer: ${look.states.services.join("; ")}. Those are their words, so they are safe to use back to them.`);
   }
   lines.push(`The sharpest single thing to say about their homepage: ${look.theOneThing}`);
   return lines;

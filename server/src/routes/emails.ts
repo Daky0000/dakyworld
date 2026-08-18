@@ -5,7 +5,7 @@ import { requireRole } from "../middleware/auth.js";
 import { mailerConfigured } from "../lib/mailer.js";
 import { draftEmail } from "../lib/emailDrafter.js";
 import { polishEmail } from "../lib/emailPolish.js";
-import { isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
+import { caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
 import { analystConfigured } from "../lib/anthropic.js";
 import { resolveContext } from "../services/emailContext.js";
 import { COLD_PURPOSES, composeMessage, isSuppressed, parseAttachments, sendMessage, type StoredAttachment } from "../services/emailSender.js";
@@ -237,6 +237,14 @@ emailsRouter.post("/draft", async (req, res, next) => {
     // record rather than the one that walked in.
     const context = await resolveContext(input);
 
+    // When the prep was read from store rather than re-run, the strength has
+    // to come back out of the stored JSON.
+    let storedStrength: ReturnType<typeof caseStrength> | null = prep?.strength ?? null;
+    if (!storedStrength && input.leadId) {
+      const stored = await storedPrep(input.leadId);
+      if (stored) storedStrength = caseStrength(stored.audit as never, stored.look as never);
+    }
+
     // --- 2. Draft ---------------------------------------------------------
     const draft = await draftEmail({
       purpose: input.purpose,
@@ -294,10 +302,17 @@ emailsRouter.post("/draft", async (req, res, next) => {
             look: prep.look,
             shot: prep.shot,
             notes: prep.notes,
+            strength: prep.strength,
             costUsd: prep.costUsd,
           }
         : null,
       prepError,
+      /**
+       * Whether there was anything here worth writing about, from this
+       * request's own look or from the stored one. Shown to the sender, who is
+       * the only one who can decide not to send.
+       */
+      strength: prep?.strength ?? storedStrength,
       preparedAt: context.preparedAt ?? null,
     });
   } catch (err) {

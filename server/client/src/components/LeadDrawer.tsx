@@ -550,6 +550,7 @@ function ResearchSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
         <ResearchDetail
           research={research}
           stale={Boolean(lead.researchStale)}
+          strength={lead.caseStrength ?? null}
           onLookAgain={() => look.mutate()}
           pending={look.isPending}
           error={error}
@@ -559,15 +560,25 @@ function ResearchSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
   );
 }
 
+/** What the strength of a case is called where a person reads it. */
+const CASE_LABEL: Record<NonNullable<Lead["caseStrength"]>, string> = {
+  STRONG: "Strong case",
+  MODERATE: "Some case",
+  WEAK: "Little to say",
+  NONE: "Nothing to say",
+};
+
 function ResearchDetail({
   research,
   stale,
+  strength,
   onLookAgain,
   pending,
   error,
 }: {
   research: LeadResearch;
   stale: boolean;
+  strength: Lead["caseStrength"];
   onLookAgain: () => void;
   pending: boolean;
   error: string | null;
@@ -589,6 +600,7 @@ function ResearchDetail({
           </Badge>
         )}
         {stale && <Badge tone="warn">Out of date</Badge>}
+        {strength && <Badge tone={strength === "STRONG" ? "positive" : strength === "MODERATE" ? "muted" : "warn"}>{CASE_LABEL[strength]}</Badge>}
         <span className="flex-1" />
         <Button size="sm" variant="secondary" onClick={onLookAgain} disabled={pending}>
           {pending ? "Looking…" : "Look again"}
@@ -658,7 +670,7 @@ function ResearchDetail({
 
       {filled.length > 0 && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Filled in from research</div>
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Filled in by the scan</div>
           <ul className="space-y-1 text-xs text-ink/70">
             {filled.map(([field, entry]) => (
               <li key={field} className="leading-relaxed">

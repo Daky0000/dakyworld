@@ -867,9 +867,23 @@ function DraftReport({
 }) {
   const prep = result.prep;
   const polish = result.polish;
+  const weak = result.strength === "WEAK" || result.strength === "NONE";
 
   return (
     <div className="mb-5 space-y-3">
+      {/* The one thing worth interrupting for: there may be no reason to send
+          this at all. A business that is doing fine, told by a stranger that it
+          is not, remembers that — so this is louder than the rest. */}
+      {weak && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-amber-900">Nothing serious was found</div>
+          <p className="text-xs leading-relaxed text-amber-900">
+            Their site and email set-up check out — the worst of it is minor housekeeping. There may be no real reason for this
+            business to reply, and a cold email about nothing costs the chance to write to them the year they do need somebody. Read
+            the draft below before sending it, or leave this one.
+          </p>
+        </div>
+      )}
       {/* What the look found, when this request went and looked. */}
       {prep && (
         <div className="rounded-2xl border border-line bg-white p-4">

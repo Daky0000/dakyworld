@@ -147,6 +147,31 @@ drafted:
    Apify's `apify/screenshot-url`, read by a vision model (`job: "vision"`).
    The half markup cannot answer: what a first-time visitor actually sees.
 
+**The scan writes back to the record.** It is not only evidence for a letter:
+the trade and town the homepage states fill Category and Location, the
+`mailto:`/`tel:`/profile links in the markup fill the contact fields and
+socials, the findings become **tags** (`auditTags` — the filterable ones only,
+not all of them), and `scoreLead` re-runs on what is now known (`Math.max`, so
+a re-run never demotes a lead somebody has worked on). Tags are added and never
+removed: a finding that has gone away is good news for the next look, not a
+silent untagging that makes an earlier campaign impossible to reconstruct.
+
+**The two contact rules are deliberately different.** An address a *search*
+associated with a company is held back for a person, because a search can
+attach the wrong company to a name. An address read out of the homepage we just
+fetched is written straight in when the field is empty — it cannot be somebody
+else's, and the worst case is that it is stale.
+
+**A weak case is an output, not a gap.** `caseStrength()` reads the worst
+non-GOOD severity across the audit and the look. When it is WEAK or NONE the
+drafter is told **THERE IS NO STRONG CASE HERE** in those words and instructed
+to write three honest sentences or to say the lead is not worth writing to; the
+polish fails an email built on minor housekeeping whatever else is right about
+it; and the composer says so above the draft. This exists because of a real
+sent-quality failure: a letter that opened on missing link-preview tags and
+closed on missing analytics, about a site that was fine. A system that always
+produces an output will produce that email every time.
+
 Then `emailDrafter.ts` picks the **angle** from the one fact that changes it —
 no website is a different letter from a bad website — and `emailPolish.ts`
 (`job: "humanise"` → Perplexity) reads it last, changing how it is said and
@@ -169,6 +194,11 @@ Four rules hold it honest, and each has a failure mode behind it:
 - **Every stage degrades to a note, never an error.** No Perplexity key, no
   Apify token, a site that blocks headless browsers — each is a sentence in
   `notes[]`, and what comes back is still something a person can send.
+- **The email opens where the evidence is strongest.** `headlineFinding()`
+  names it, and the fact list marks it THE STRONGEST THING TO OPEN ON, because
+  a drafter left to itself opens on whichever finding reads most neatly. Every
+  observation must be followed by what it costs them in customers or enquiries;
+  "unprofessional" and "looks unfinished" are opinions and read as sales.
 
 Results live on `LeadResearch` (one row per lead, `STALE_AFTER_DAYS = 30`), so
 the second draft to the same person costs nothing and the Owner can read what

@@ -15,7 +15,7 @@ import {
 } from "../services/leadFields.js";
 import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
 import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLeads, tagSlug } from "../services/leadTags.js";
-import { STALE_AFTER_DAYS, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
+import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
 
 export const leadsRouter = Router();
 
@@ -557,7 +557,13 @@ leadsRouter.get("/:id", async (req, res, next) => {
       },
     });
     if (!lead) return res.status(404).json({ error: "Lead not found" });
-    res.json({ ...lead, researchStale: isStale(lead.research?.ranAt) });
+    res.json({
+      ...lead,
+      researchStale: isStale(lead.research?.ranAt),
+      // Derived rather than stored: it is a reading of the findings, and a
+      // stored copy would drift the day the thresholds change.
+      caseStrength: lead.research ? caseStrength(lead.research.audit as never, lead.research.look as never) : null,
+    });
   } catch (err) {
     next(err);
   }

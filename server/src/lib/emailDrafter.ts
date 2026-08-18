@@ -32,10 +32,13 @@ const VOICE = `${BRAND_VOICE}
 
 For email specifically:
 
+- **Start with a greeting.** "Hi Kwame," on its own line, using their real first name. If no real person's name is known — only a company — use "Hello,". Never invent a name, and never open on a bare sentence with no greeting at all: it reads as a broadcast, because it is how one looks.
+- **The first sentence says why you are writing, and names the thing you saw.** Not what Dakyworld does, not who you are. Something about *them* that you could not have said about anybody else. That sentence is the whole difference between a letter and spam.
+- **Every observation is followed by what it costs them.** "Your site has no X" is half a sentence. What it costs is the other half, and it is measured in their currency: a customer who goes back to the search results, an enquiry that arrives at 9pm and is lost, a comparison against a competitor they lose before anyone reads a word. Never in ours — "unprofessional", "not best practice" and "makes it look unfinished" are opinions and they read as sales.
 - Short. A cold email is under 120 words. A client update is under 200. If it needs to be longer, it needs a call instead.
 - One ask, at the end, and make it small: a reply, a fifteen-minute call, a yes-or-no. Never two asks.
 - "I'm writing to introduce" is not a first line.
-- No corporate signature block — the app appends one.`;
+- **No sign-off name.** End on the ask. The app appends the signature — a "Dan" typed at the bottom of the body arrives directly above "Dan Kwame Ayipah, Founder", and the reader sees the machinery.`;
 
 const SCHEMA = {
   type: "object",
@@ -50,7 +53,7 @@ const SCHEMA = {
     body: {
       type: "string",
       description:
-        "The email body as plain text, with a blank line between paragraphs. No greeting line invented beyond the recipient's real name, no HTML, no signature block.",
+        "The email body as plain text, blank line between paragraphs. It opens with a greeting line — \"Hi <first name>,\" using their real name, or \"Hello,\" when only a company name is known; never an invented name. It ends on the ask, with no sign-off and no name: the app appends the signature. No HTML.",
     },
     rationale: {
       type: "string",
@@ -88,8 +91,16 @@ export interface DraftResult {
 
 /** What each purpose is actually trying to achieve. The model gets one of these, not all fourteen. */
 const PURPOSE_BRIEF: Record<EmailPurpose, string> = {
-  COLD_OUTREACH:
-    "A first approach to someone who has never heard of Dakyworld. Open with the specific thing you noticed about their business — that is the entire reason this email is not spam. Do not pitch the whole service list; name the one problem you can see and what it costs them. Ask for a short call, not a meeting about a partnership.",
+  COLD_OUTREACH: `A first approach to somebody who has never heard of Dakyworld. Four short paragraphs, in this order, and no others:
+
+1. The greeting. "Hi <first name>," on its own line.
+2. Why you are writing, in one sentence, naming the thing you actually saw and where you saw it. If the facts contain a line marked THE STRONGEST THING TO OPEN ON, that is the one — open on it. Never open on a low-severity finding while a critical or high one is sitting in the facts: leading with missing link-preview tags at a business whose site has been insecure for years tells them nobody really looked.
+3. What it costs them, in one or two sentences, in customers and enquiries rather than adjectives. Bring in one supporting fact from the record if there is a good one — a review count with nowhere to send anybody is the strongest support there is. Two observations at most in the whole email; one is usually better.
+4. The ask. Small, specific, easy to answer: fifteen minutes, or a yes-or-no. If the fix is genuinely small, say so — "it is a fix, not a rebuild" lowers the cost of replying more than any adjective.
+
+Never list the findings. Never pitch the service catalogue. Never explain what a technical thing is at length — if the owner would not know the term, say it in plain words the first time and move on.
+
+If the facts carry a line saying THERE IS NO STRONG CASE HERE, do not write the four paragraphs above. Write three sentences at most, say the true good thing about their setup, offer the one small improvement that was actually found, and set confidence low — then say in the rationale that this business is doing fine and may not be worth writing to. That is a more useful answer than a polished email about nothing, and the person reading it can still send it if they disagree.`,
   FOLLOW_UP:
     "A follow-up to an email that was not answered. Assume they are busy, not uninterested. Do not guilt them, do not say 'just circling back' or 'bumping this'. Add one new piece of value or a sharper version of the ask, and make it easy to say no.",
   MEETING_REQUEST:
@@ -136,6 +147,8 @@ Do not write about websites in general and do not list what a website contains. 
 
 If the facts show demand already exists — a rating, a review count, a busy social account — that is the strongest thing you have. The demand is real and there is nowhere for it to land. Say that.
 
+Make the cost concrete and theirs. "A customer who searches for a dentist in Osu finds the three clinics that have a site, and you are not one of them" is an argument. "A website builds credibility" is a brochure line and they have read it a hundred times.
+
 One concrete sentence about their situation beats three about ours.`;
   }
 
@@ -144,6 +157,8 @@ One concrete sentence about their situation beats three about ours.`;
 Open on the single most specific thing that was actually observed there, and say what it costs them. Not "your website could be improved" — the thing itself: what loads, what does not, what a visitor sees first, what is missing from the page.
 
 Do not list the findings. Take one, at most two, and make them concrete enough that they can check it themselves in ten seconds while still reading. Anything they can verify without leaving the email is worth more than anything they cannot.
+
+Say what it costs them, not what it looks like. A browser security warning costs them the patients who close the tab; a homepage that never says what they sell costs them the visitor who cannot tell in five seconds; a form that goes nowhere costs them the enquiry itself. If a fact in the list shows demand — a review count, a rating — use it: it turns "your site is dated" into "people are already looking for you and this is what they find".
 
 Never suggest a new website when the facts describe a site that mostly works. Fixing what was observed is the honest offer, and it is a smaller ask.`;
 }
@@ -157,6 +172,13 @@ function buildPrompt(request: DraftRequest): string {
     "Everything known about the recipient. These are the only facts you may use — you may leave any of them out, but you may not add to them:",
     context.facts.map((fact) => `- ${fact}`).join("\n"),
   ];
+
+  // Decided here rather than left to the model. `firstName` already knows that
+  // "Accra Dental Centre" in the contact field is a company and not a person,
+  // and "Hi Accra," is the sort of mistake that ends a cold email at the first
+  // line. The drafter should not have to re-derive it from the facts.
+  const greeting = context.variables.first_name && context.variables.first_name !== "there" ? `Hi ${context.variables.first_name},` : "Hello,";
+  parts.push("", `Open with this greeting exactly, on its own line: ${greeting}`);
 
   const chosen = angle(context);
   if (chosen) parts.push("", "The angle for this one:", chosen);

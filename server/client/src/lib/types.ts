@@ -142,6 +142,8 @@ export interface Lead {
   research?: LeadResearch | null;
   /** True when nobody has looked, or the last look is old enough to redo. */
   researchStale?: boolean;
+  /** Whether there is anything worth writing to them about. Null until looked at. */
+  caseStrength?: CaseStrength | null;
 
   groupId?: string | null;
   group?: LeadGroup | null;
@@ -1027,6 +1029,12 @@ export interface EmailContext {
   prepNotes?: string[];
 }
 
+/**
+ * Whether the scan found anything worth writing about. WEAK and NONE mean the
+ * business is doing fine — writing to them anyway is how a name gets burnt.
+ */
+export type CaseStrength = "STRONG" | "MODERATE" | "WEAK" | "NONE";
+
 /** One thing a model saw in a picture of a homepage. */
 export interface HomepageObservation {
   observed: string;
@@ -1042,6 +1050,8 @@ export interface HomepageLook {
   looksDated?: string | null;
   observations: HomepageObservation[];
   theOneThing: string;
+  /** What the page states about the business, as opposed to how it looks. */
+  states?: { trade: string | null; town: string | null; services: string[]; phone: string | null };
   lookedBy: string;
 }
 
@@ -1118,10 +1128,13 @@ export interface EmailDraft {
     look?: HomepageLook | null;
     shot?: Screenshot | null;
     notes: string[];
+    strength: CaseStrength;
     costUsd: number;
   } | null;
   prepError?: string | null;
   preparedAt?: string | null;
+  /** Whether there was anything here worth writing about at all. */
+  strength?: CaseStrength | null;
 }
 
 export interface EmailTemplate {

@@ -79,8 +79,11 @@ const SCHEMA = {
 
 /** What each purpose has to achieve for the polish to call it a working email. */
 const TEST: Partial<Record<EmailPurpose, string>> = {
-  COLD_OUTREACH:
-    "The first sentence names something specific about their business that could not be said about any other business. The ask is one small thing. It is under 120 words.",
+  COLD_OUTREACH: `It opens with a greeting on its own line. The first sentence after it names something specific about *their* business that could not be said about any other business. Every observation is followed by what it costs them in customers or enquiries — not by an adjective, and not by a word like "unprofessional" or "unfinished". There is one ask and it is small. It is under 120 words. It does not end with a typed name: the app appends the signature.
+
+If the whole email rests on minor housekeeping — missing preview tags, no analytics, a small style point — servesPurpose is false whatever else is right about it, and the concern to raise is that there is no real reason for this business to reply.
+
+Judge servesPurpose hard against that list. An email with no greeting, or one that opens on a minor technical detail while the facts carry a worse problem, or one that says something is missing without saying what it costs, has failed — say so and say which of those it is.`,
   FOLLOW_UP: "It adds something rather than repeating. It makes saying no easy. It does not say 'circling back' or 'just following up'.",
   MEETING_REQUEST: "It says what the call covers and how long it takes, and it works around them rather than listing our availability.",
   PROPOSAL_COVER: "Two or three sentences. What is attached, the decision it asks for, when we follow up. It does not re-argue the proposal.",
@@ -95,6 +98,9 @@ ${BRAND_VOICE}
 **The one rule that overrides every other rule: you may change how this email is said and you may not change what it says.** Every fact, figure, name, price, date, promise and observation in the draft appears in your version, unaltered. You add nothing. You have a live connection to the web and you must not use it here — a fact you find and insert is a claim about the recipient's own business that nobody gave you, and they will know it is wrong before they finish the sentence. If you add anything at all, it goes in \`added\`, verbatim.
 
 What you fix:
+- A missing greeting. If the draft opens straight into a sentence, add "Hi <first name>," using the recipient's real first name where the facts give one and "Hello," where they do not. This is the one addition you may make, because it is not a claim about them.
+- A sign-off. If the draft ends with a typed name, cut it — the app appends the signature and the reader would see it twice.
+- An observation with no consequence attached. You may not invent the consequence, but you may move one that is already in the facts next to the observation it belongs to, and you may cut an observation that has none.
 - Sentences a person would not say out loud. Read each one as though speaking it.
 - Machine tells: an opening that clears its throat, "I hope this email finds you well", "I wanted to reach out", "it's not just X, it's Y", a dash in every sentence, a closing paragraph that restates the opening, and any sentence with three ideas in it.
 - Consultant vocabulary. "Leverage", "solutions", "streamline", "in today's landscape", "seamless" — all out.

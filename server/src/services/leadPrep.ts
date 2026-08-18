@@ -1,6 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { auditCompany, sortFindings, type CompanyAudit } from "./companyAudit.js";
+import { auditCompany, auditTags, headlineFinding, sortFindings, type CompanyAudit } from "./companyAudit.js";
+import { registerTags } from "./leadTags.js";
+import { scoreLead, type NormalizedLead } from "./leadMapping.js";
 import { lookAtHomepage, lookForPrompt, type HomepageLook } from "./homepageLook.js";
 import { researchLead, type FillableField, type LeadResearchResult } from "./leadResearch.js";
 import { normaliseSiteUrl, type Screenshot } from "./siteShot.js";
@@ -42,13 +44,20 @@ export interface LeadPrep {
   shot: Screenshot | null;
   look: HomepageLook | null;
   /** What was written into the lead record, and where each value came from. */
-  filled: Partial<Record<FillableField | "discoveryNotes" | "socialLinks", { value: string; source: string }>>;
+  filled: Partial<
+    Record<
+      FillableField | "discoveryNotes" | "socialLinks" | "contactEmail" | "contactPhone" | "tags" | "leadScore",
+      { value: string; source: string }
+    >
+  >;
   /** Proposed contact details, held back for a person to accept. */
   proposedContact: LeadResearchResult["proposedContact"];
   /** The whole thing as plain lines — this is what the drafter reads. */
   facts: string[];
   /** What could not be checked, in plain words. Never a failure. */
   notes: string[];
+  /** Whether there is anything here worth writing to them about. */
+  strength: CaseStrength;
   costUsd: number;
 }
 
@@ -143,7 +152,13 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     notes.push(...looked.notes);
   }
 
-  const facts = buildFacts({ research, audit, look, filled });
+  // Everything above was a claim about them; everything the audit and the look
+  // produced was observed. The observed half writes last so it can see what
+  // research already filled and not fight it.
+  Object.assign(filled, await applyObserved(lead, audit, look, filled));
+
+  const strength = caseStrength(audit, look);
+  const facts = buildFacts({ research, audit, look, filled, strength });
   const ranAt = new Date();
 
   await prisma.leadResearch.upsert({
@@ -184,6 +199,7 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     proposedContact: research?.proposedContact ?? null,
     facts,
     notes,
+    strength,
     costUsd,
   };
 }
@@ -277,6 +293,167 @@ async function applyResearch(
 }
 
 /**
+ * What the *looking* found, written onto the record.
+ *
+ * `applyResearch` above writes what a search claimed. This writes what was
+ * observed: a trade printed on their own homepage, a town named on it, an
+ * address in their own footer, the profiles they link to themselves. That is
+ * a stronger class of evidence than a search result, and it is the half that
+ * closes the em-dashes against Category and Location on a scraped lead.
+ *
+ * The contact rule differs here for a reason worth stating. A researched
+ * address is held back because a search can attach the wrong company to a
+ * name. An address printed on the homepage of the site we just fetched cannot
+ * be somebody else's — the worst case is that it is a stale one for the right
+ * business. So a published address is written when the lead has none, and
+ * never over one that is already there.
+ */
+async function applyObserved(
+  lead: {
+    id: string;
+    category: string | null;
+    city: string | null;
+    contactEmail: string | null;
+    contactPhone: string | null;
+    socialLinks: unknown;
+    tags: string[];
+    leadScore: number;
+    contactName: string;
+    companyName: string | null;
+    website: string | null;
+    address: string | null;
+    region: string | null;
+    country: string | null;
+    rating: unknown;
+    reviewsCount: number | null;
+  },
+  audit: CompanyAudit | null,
+  look: HomepageLook | null,
+  alreadyFilled: LeadPrep["filled"],
+): Promise<LeadPrep["filled"]> {
+  const filled: LeadPrep["filled"] = {};
+  const data: Prisma.LeadUpdateInput = {};
+  const isEmpty = (value: unknown) => value === null || value === undefined || value === "";
+
+  const site = audit?.site?.finalUrl ?? audit?.site?.requested ?? "their homepage";
+
+  // --- What the page states about itself ---------------------------------
+  if (look?.states.trade && isEmpty(lead.category) && !alreadyFilled.category) {
+    data.category = look.states.trade;
+    filled.category = { value: look.states.trade, source: site };
+  }
+  if (look?.states.town && isEmpty(lead.city) && !alreadyFilled.city) {
+    data.city = look.states.town;
+    filled.city = { value: look.states.town, source: site };
+  }
+
+  // --- Contact details they published themselves --------------------------
+  const publishedEmail = audit?.published?.emails[0] ?? null;
+  if (publishedEmail && isEmpty(lead.contactEmail)) {
+    data.contactEmail = publishedEmail;
+    filled.contactEmail = { value: publishedEmail, source: site };
+  }
+  const publishedPhone = audit?.published?.phones[0] ?? look?.states.phone ?? null;
+  if (publishedPhone && isEmpty(lead.contactPhone)) {
+    data.contactPhone = publishedPhone;
+    filled.contactPhone = { value: publishedPhone, source: site };
+  }
+
+  // --- Profiles they link to themselves -----------------------------------
+  const published = audit?.published?.socials ?? {};
+  if (Object.keys(published).length) {
+    const existing = (lead.socialLinks ?? {}) as Record<string, string>;
+    const merged = { ...published, ...existing };
+    if (Object.keys(merged).length !== Object.keys(existing).length) {
+      data.socialLinks = merged;
+      filled.socialLinks = { value: Object.keys(merged).join(", "), source: site };
+    }
+  }
+
+  // --- Tags, which are how a list gets built later ------------------------
+  //
+  // A tag is added and never removed here. A finding that has gone away is
+  // good news and belongs in the next look's findings, not in a silent
+  // untagging that makes an earlier campaign impossible to reconstruct.
+  const observedTags = [
+    ...(audit ? auditTags(audit) : []),
+    ...(look && !look.offerClear ? ["Offer unclear"] : []),
+    ...(look && !look.contactClear ? ["No contact above the fold"] : []),
+    ...(look?.looksDated ? ["Dated design"] : []),
+  ];
+  if (observedTags.length) {
+    const slugs = await registerTags(observedTags, { autoCreated: true });
+    const merged = [...new Set([...lead.tags, ...slugs])];
+    if (merged.length !== lead.tags.length) {
+      data.tags = merged;
+      filled.tags = { value: merged.join(", "), source: site };
+    }
+  }
+
+  // --- The score, recomputed on what is now known -------------------------
+  //
+  // `Math.max` for the same reason the scraper uses it: a re-run must never
+  // demote a lead somebody has since worked on. Filling in an email and a
+  // phone number genuinely does make a lead more reachable, which is most of
+  // what this number means.
+  const rescored = scoreLead({
+    contactName: lead.contactName,
+    companyName: lead.companyName,
+    contactEmail: (data.contactEmail as string | undefined) ?? lead.contactEmail,
+    contactPhone: (data.contactPhone as string | undefined) ?? lead.contactPhone,
+    website: lead.website,
+    address: lead.address,
+    city: (data.city as string | undefined) ?? lead.city,
+    region: lead.region,
+    country: lead.country,
+    category: (data.category as string | undefined) ?? lead.category,
+    rating: lead.rating ? Number(lead.rating) : null,
+    reviewsCount: lead.reviewsCount,
+    socialLinks: ((data.socialLinks as Record<string, string> | undefined) ?? (lead.socialLinks as Record<string, string> | null)) ?? null,
+  } as NormalizedLead);
+  if (rescored > lead.leadScore) {
+    data.leadScore = rescored;
+    filled.leadScore = { value: `${lead.leadScore} → ${rescored}`, source: "recalculated from what is now known" };
+  }
+
+  if (Object.keys(data).length > 0) await prisma.lead.update({ where: { id: lead.id }, data });
+  return filled;
+}
+
+/**
+ * Is there a case here at all.
+ *
+ * This exists because of the email that prompted it: a letter that opened on
+ * missing link-preview tags and closed on missing analytics. Both were true.
+ * Neither mattered. The site it was about is a good site, and the pipeline
+ * produced a cold email anyway, because nothing in it was allowed to say "there
+ * is nothing worth writing about here".
+ *
+ * That is the failure mode of any system that always produces an output. So
+ * the strength of the case is worked out from the worst thing actually found,
+ * and a weak one is told to the drafter in those words and shown to the person
+ * before they send it. A business that is doing fine is allowed to be doing
+ * fine; writing to them about nothing is how a name gets burnt for the year
+ * they *do* need somebody.
+ */
+export type CaseStrength = "STRONG" | "MODERATE" | "WEAK" | "NONE";
+
+const RANK: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+
+export function caseStrength(audit: CompanyAudit | null, look: HomepageLook | null): CaseStrength {
+  const severities = [
+    ...(audit?.findings ?? []).map((finding) => finding.severity),
+    ...(look?.observations ?? []).map((observation) => observation.severity),
+  ].filter((severity) => severity !== "GOOD");
+
+  const worst = Math.max(0, ...severities.map((severity) => RANK[severity] ?? 0));
+  if (worst >= 3) return "STRONG";
+  if (worst === 2) return "MODERATE";
+  if (worst === 1) return "WEAK";
+  return "NONE";
+}
+
+/**
  * The prep as the drafter reads it.
  *
  * Plain lines, each one carrying its own evidence, because the drafter is told
@@ -288,6 +465,7 @@ function buildFacts(input: {
   audit: CompanyAudit | null;
   look: HomepageLook | null;
   filled: LeadPrep["filled"];
+  strength: CaseStrength;
 }): string[] {
   const facts: string[] = [];
 
@@ -298,6 +476,21 @@ function buildFacts(input: {
   }
 
   if (input.audit) {
+    // Named separately and first, because left to itself a drafter opens on
+    // whichever finding reads most neatly rather than the one that costs them
+    // most — which is how a letter ends up leading with missing link-preview
+    // tags at a business whose site has been insecure since 2019.
+    const headline = headlineFinding(input.audit);
+    if (headline && (input.strength === "STRONG" || input.strength === "MODERATE")) {
+      facts.push(
+        `THE STRONGEST THING TO OPEN ON (${headline.severity.toLowerCase()}): ${headline.observed} You can say this because: ${headline.evidence}`,
+      );
+    } else {
+      facts.push(
+        "THERE IS NO STRONG CASE HERE. Their site and their email set-up were checked and nothing serious is wrong with either — the worst of it is minor housekeeping. Do not inflate it into a problem: a business that is doing fine, told by a stranger that it is not, remembers that. Either write three honest sentences that say what is good and offer one small improvement, or say plainly in the rationale that this lead is not worth a cold email and let the sender decide.",
+      );
+    }
+
     const findings = sortFindings(input.audit.findings);
     for (const finding of findings) {
       facts.push(

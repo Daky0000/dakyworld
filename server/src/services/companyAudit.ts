@@ -67,6 +67,21 @@ export interface CompanyAudit {
     hasSpf: boolean;
     hasDmarc: boolean;
   } | null;
+  /**
+   * What the homepage publishes about the business itself.
+   *
+   * The page was fetched anyway to check it, and a business's own homepage is
+   * the best source there is for the things a scrape leaves blank — an address
+   * they printed themselves beats one a search inferred. Everything here was
+   * read off their own markup, which is why `leadPrep` is willing to write it
+   * onto the record.
+   */
+  published: {
+    emails: string[];
+    phones: string[];
+    /** `{ facebook: url }`, from links on their homepage. */
+    socials: Record<string, string>;
+  } | null;
   findings: AuditFinding[];
   /** What was examined. Lets the writer distinguish "fine" from "not looked at". */
   checked: string[];
@@ -284,6 +299,7 @@ export async function auditCompany(subject: AuditSubject): Promise<CompanyAudit>
     ranAt: new Date().toISOString(),
     site: null,
     domain: null,
+    published: null,
     findings,
     checked,
     notes,
@@ -487,6 +503,7 @@ export async function auditCompany(subject: AuditSubject): Promise<CompanyAudit>
       const hasMailto = /mailto:/i.test(page.html);
       const hasTel = /tel:\+?\d/i.test(page.html);
       const hasWhatsapp = /wa\.me\/|api\.whatsapp\.com/i.test(page.html);
+      audit.published = readPublishedContacts(page.html, finalUrl);
       if (!hasForm && !hasMailto && !hasTel && !hasWhatsapp) {
         add({
           id: "no-contact-route",
@@ -699,6 +716,151 @@ function mailProvider(exchanges: string[]): string | null {
   if (/hostinger|titan/.test(joined)) return "Hostinger / Titan";
   if (/cpanel|namecheap|privateemail/.test(joined)) return "Shared hosting mail";
   return exchanges[0] ?? null;
+}
+
+// --- What the page says about the business --------------------------------
+
+/**
+ * The contact details and profiles a business publishes on its own homepage.
+ *
+ * This is the strongest source in the whole pipeline for the fields a scrape
+ * leaves blank. An address a search engine associated with a company is a
+ * guess; an address on their own homepage is one they put there. That
+ * difference is why `leadPrep` writes these onto the record and holds the
+ * researched ones back for a person.
+ *
+ * Everything is read from markup rather than rendered text, so it finds the
+ * `mailto:` behind a "contact us" button as readily as an address printed in
+ * the footer.
+ */
+export function readPublishedContacts(html: string, finalUrl: string): CompanyAudit["published"] {
+  const emails = new Set<string>();
+  const phones = new Set<string>();
+  const socials: Record<string, string> = {};
+
+  for (const match of html.matchAll(/mailto:([^"'?\s>]+)/gi)) {
+    const address = decodeURIComponent(match[1]).trim().toLowerCase();
+    if (/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(address)) emails.add(address);
+  }
+  // Addresses printed as text rather than linked, which is the common case on
+  // a page somebody's cousin built.
+  for (const match of html.matchAll(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g)) {
+    const address = match[0].toLowerCase();
+    // Tracking pixels, Sentry DSNs and image sprites all look like addresses.
+    if (/\.(png|jpg|jpeg|gif|svg|webp|css|js)$/i.test(address)) continue;
+    if (/(sentry|wixpress|example|domain)\./i.test(address)) continue;
+    emails.add(address);
+  }
+
+  for (const match of html.matchAll(/tel:([+0-9()\-.\s]{7,25})/gi)) {
+    const number = match[1].replace(/[^\d+]/g, "");
+    if (number.replace(/\D/g, "").length >= 7) phones.add(number);
+  }
+  for (const match of html.matchAll(/(?:wa\.me|api\.whatsapp\.com\/send\?phone=)\/?(\d{7,15})/gi)) {
+    phones.add(`+${match[1]}`);
+  }
+
+  const networks: [string, RegExp][] = [
+    ["facebook", /https?:\/\/(?:www\.|web\.|m\.)?facebook\.com\/[^"'\s<>]+/gi],
+    ["instagram", /https?:\/\/(?:www\.)?instagram\.com\/[^"'\s<>]+/gi],
+    ["linkedin", /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/(?:company|in)\/[^"'\s<>]+/gi],
+    ["x", /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[^"'\s<>]+/gi],
+    ["tiktok", /https?:\/\/(?:www\.)?tiktok\.com\/@[^"'\s<>]+/gi],
+    ["youtube", /https?:\/\/(?:www\.)?youtube\.com\/[^"'\s<>]+/gi],
+  ];
+  for (const [network, pattern] of networks) {
+    // Every match, not the first: a share button points at the *sharer* rather
+    // than at the business's own profile, and it is almost always higher up
+    // the page than the profile link in the footer. Taking the first match and
+    // rejecting it loses the real one.
+    for (const match of html.matchAll(pattern)) {
+      const url = match[0].replace(/[)\]]+$/, "");
+      if (/sharer|share[?/]|intent\/|\/plugins\/|\/tr\?/i.test(url)) continue;
+      socials[network] = url;
+      break;
+    }
+  }
+
+  const site = (() => {
+    try {
+      return new URL(finalUrl).hostname.replace(/^www\./i, "").toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+
+  return {
+    // Their own domain first: on a page carrying both, that is the one to use.
+    emails: [...emails].sort((a, b) => Number(b.endsWith(`@${site}`)) - Number(a.endsWith(`@${site}`))).slice(0, 5),
+    phones: [...phones].slice(0, 5),
+    socials,
+  };
+}
+
+// --- What the audit says about a lead, rather than about a letter ----------
+
+/**
+ * The findings that are worth being able to filter a list by.
+ *
+ * Deliberately not every finding: a lead carrying ten tags is a lead nobody
+ * can scan, and most findings are an argument for one email rather than a
+ * property of the business. These are the ones the Owner would actually build
+ * a list from — "show me every business in Kumasi with no website", "everyone
+ * still on plain HTTP".
+ */
+const TAGGABLE: Record<string, string> = {
+  "no-website": "No website",
+  "site-unreachable": "Site down",
+  "site-error": "Site down",
+  "no-https": "Not secure",
+  "not-mobile": "Not mobile",
+  "outdated-cms": "Outdated CMS",
+  "page-builder": "Page builder site",
+  "stale-site": "Stale site",
+  "slow-site": "Slow site",
+  "no-contact-route": "No contact route",
+  "free-mail-on-site": "Free email",
+  "free-mail-contact": "Free email",
+  "no-business-email": "No business email",
+  "no-dmarc": "No DMARC",
+  "strong-reputation": "Strong reputation",
+  "weak-reputation": "Weak reputation",
+  "demand-without-destination": "Demand, no website",
+  "rented-presence": "Social only",
+};
+
+/** Platform is worth a tag of its own — it is how a rebuild list gets built. */
+function platformTag(platform: string | null): string | null {
+  if (!platform) return null;
+  const known = ["WordPress", "Wix", "Squarespace", "Shopify", "Weebly", "Webflow", "Blogger", "GoDaddy"];
+  const hit = known.find((name) => new RegExp(name, "i").test(platform));
+  if (hit) return hit;
+  return /business profile/i.test(platform) ? "Google page only" : null;
+}
+
+export function auditTags(audit: CompanyAudit): string[] {
+  const tags = new Set<string>();
+  for (const finding of audit.findings) {
+    const tag = TAGGABLE[finding.id];
+    if (tag) tags.add(tag);
+  }
+  const platform = platformTag(audit.site?.platform ?? null);
+  if (platform) tags.add(platform);
+  return [...tags];
+}
+
+/**
+ * The one finding an email should open on.
+ *
+ * Left to itself a drafter opens on whatever reads most neatly, which is how a
+ * letter ends up leading with missing link-preview tags while the site it is
+ * about has been served over plain HTTP since 2019. Severity decides, and
+ * within a severity the first one wins — `auditCompany` adds them in the order
+ * a person would notice them.
+ */
+export function headlineFinding(audit: CompanyAudit): AuditFinding | null {
+  const real = audit.findings.filter((finding) => finding.severity !== "GOOD");
+  return sortFindings(real)[0] ?? null;
 }
 
 // --- For the prompt --------------------------------------------------------
