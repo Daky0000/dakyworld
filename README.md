@@ -4,6 +4,10 @@ Internal operations platform — leads, proposals, projects, invoices, care
 plans, time tracking, and a live revenue dashboard. Built from the Phase 1
 MVP scope of the original system spec (`18_Dakyworld_Custom_Operating_System.pdf`).
 
+> **Security:** [SECURITY.md](SECURITY.md) is the runbook — what protects what,
+> how to run the checks (`npm run security`), and the four things still waiting
+> on somebody with a login rather than a commit.
+
 **Stack:** React + TypeScript + Tailwind (client) · Node + Express + TypeScript
 (server) · PostgreSQL via Prisma · built-in email/password auth · Stripe (payments) ·
 Cloudinary (file storage, PDF hosting).

@@ -2,10 +2,20 @@
   "name": "dakyworld-os",
   "version": "0.1.0",
   "private": true,
-  "description": "Convenience wrapper. The real build lives in server/, which also builds server/client — see the note in railway.json.",
+  "description": "Convenience wrapper. The real build lives in server/, which also builds server/client \u2014 see the note in railway.json.",
   "scripts": {
     "build": "npm --prefix server ci && npm --prefix server run build",
-    "start": "npm --prefix server run start"
+    "start": "npm --prefix server run start",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "scan:secrets:history": "node scripts/scan-secrets.mjs --history",
+    "audit": "npm --prefix server audit --omit=dev --audit-level=high && npm --prefix server/client audit --omit=dev --audit-level=high",
+    "security": "npm run scan:secrets && npm run audit",
+    "seo": "node scripts/build-seo.mjs",
+    "seo:check": "node scripts/build-seo.mjs --check",
+    "breadcrumbs": "node scripts/build-breadcrumbs.mjs",
+    "links": "node scripts/check-links.mjs",
+    "links:fix": "node scripts/check-links.mjs --fix",
+    "site": "npm run seo && npm run breadcrumbs && npm run links"
   },
   "engines": {
     "node": ">=20"

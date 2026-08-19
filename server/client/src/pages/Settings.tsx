@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import type {
   ActorHealthReport,
   AppSettings,
@@ -28,6 +28,7 @@ import { Badge, Button, Field, PageHeader, StatusDot, Toggle } from "../componen
  */
 
 type SectionId =
+  | "security"
   | "system"
   | "email"
   | "analyst"
@@ -42,6 +43,7 @@ type SectionId =
   | "general";
 
 const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
+  { id: "security", label: "Security", blurb: "Your password and two-factor" },
   { id: "system", label: "System", blurb: "Your name, address, phone and logo" },
   { id: "email", label: "Email", blurb: "The mailbox everything sends from" },
   { id: "analyst", label: "AI analyst", blurb: "Reads sheets, runs the agents" },
@@ -167,6 +169,7 @@ export function Settings() {
             <p className="text-sm text-ink/50">Loading…</p>
           ) : (
             <>
+              {section === "security" && <SecurityPanel />}
               {section === "system" && <SystemPanel settings={data} />}
               {section === "email" && <EmailPanel settings={data} />}
               {section === "analyst" && <AnalystPanel settings={data} />}
@@ -2865,6 +2868,242 @@ function GeneralPanel({ settings }: { settings: AppSettings }) {
         </Button>
       </div>
       <ErrorNote error={update.error} />
+    </Panel>
+  );
+}
+
+/**
+ * The account's own security, rather than an integration's.
+ *
+ * Enrolment is deliberately two steps, and it is the confirm step that turns it
+ * on: storing a secret as "enabled" before the app has proved it can read it is
+ * how somebody locks themselves out with a mistyped setup key.
+ *
+ * There is no QR code here on purpose — a QR generator is a dependency and a
+ * few hundred lines to save one paste, and every authenticator worth using
+ * (Google Authenticator, Authy, 1Password, Bitwarden) accepts a setup key
+ * entered by hand.
+ */
+type TwoFactorState = {
+  enabled: boolean;
+  pending: boolean;
+  enabledAt: string | null;
+  recoveryCodesRemaining: number;
+};
+
+function SecurityPanel() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["2fa"], queryFn: () => api.get<TwoFactorState>("/auth/2fa") });
+
+  const [setup, setSetup] = useState<{ secret: string; uri: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [password, setPassword] = useState("");
+  const [disableCode, setDisableCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = () => void qc.invalidateQueries({ queryKey: ["2fa"] });
+  const fail = (err: unknown) => setError(err instanceof ApiError ? err.message : "Something went wrong.");
+
+  const begin = useMutation({
+    mutationFn: () => api.post<{ secret: string; uri: string }>("/auth/2fa/setup", {}),
+    onSuccess: (result) => {
+      setError(null);
+      setSetup(result);
+    },
+    onError: fail,
+  });
+
+  const confirm = useMutation({
+    mutationFn: () => api.post<{ recoveryCodes: string[] }>("/auth/2fa/confirm", { code }),
+    onSuccess: (result) => {
+      setError(null);
+      setSetup(null);
+      setCode("");
+      setRecoveryCodes(result.recoveryCodes);
+      refresh();
+    },
+    onError: fail,
+  });
+
+  const disable = useMutation({
+    mutationFn: () => api.post("/auth/2fa/disable", { password, code: disableCode }),
+    onSuccess: () => {
+      setError(null);
+      setPassword("");
+      setDisableCode("");
+      setRecoveryCodes(null);
+      refresh();
+    },
+    onError: fail,
+  });
+
+  const regenerate = useMutation({
+    mutationFn: () => api.post<{ recoveryCodes: string[] }>("/auth/2fa/recovery-codes", { password }),
+    onSuccess: (result) => {
+      setError(null);
+      setPassword("");
+      setRecoveryCodes(result.recoveryCodes);
+      refresh();
+    },
+    onError: fail,
+  });
+
+  // Grouped in fours, because this gets typed into a phone by hand.
+  const grouped = setup?.secret.replace(/(.{4})/g, "$1 ").trim();
+
+  return (
+    <Panel
+      title="Security"
+      what={
+        <>
+          A password is one secret, and a password is the thing that leaks. With two-factor on, whoever has yours still cannot
+          reach the leads, the invoices or the mailbox without your phone.
+        </>
+      }
+      state={
+        <div className="flex items-center gap-2.5 text-sm">
+          <StatusDot tone={data?.enabled ? "ok" : "warn"} />
+          {data?.enabled ? (
+            <span>
+              Two-factor is on. <span className="text-ink/50">{data.recoveryCodesRemaining} recovery codes unused.</span>
+            </span>
+          ) : (
+            <span>Two-factor is off — your password is the only thing between an attacker and this system.</span>
+          )}
+        </div>
+      }
+    >
+      {error && (
+        <p role="alert" className="mt-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+
+      {recoveryCodes && (
+        <div className="mt-4 border border-amber-200 bg-amber-50 px-3 py-3">
+          <p className="text-sm font-bold text-amber-900">Recovery codes — copy them now. They are not shown again.</p>
+          <p className="mt-1 text-xs text-amber-900/80">
+            Each works once, in place of a code from your phone. Keep them somewhere that is not the phone.
+          </p>
+          <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-xs text-amber-900">
+            {recoveryCodes.map((entry) => (
+              <span key={entry}>{entry}</span>
+            ))}
+          </div>
+          <div className="mt-3">
+            <Button onClick={() => setRecoveryCodes(null)}>I have saved them</Button>
+          </div>
+        </div>
+      )}
+
+      {!data?.enabled && !setup && (
+        <div className="mt-4">
+          <Button onClick={() => begin.mutate()} disabled={begin.isPending}>
+            {begin.isPending ? "Starting…" : "Turn on two-factor"}
+          </Button>
+        </div>
+      )}
+
+      {setup && (
+        <form
+          className="mt-4 space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            confirm.mutate();
+          }}
+        >
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Setup key</p>
+            <p className="mt-1 text-sm text-ink/55">
+              In your authenticator app, add an account by entering a setup key, and paste this.
+            </p>
+            <code className="mt-2 block select-all break-all border border-line bg-cream px-3 py-2 font-mono text-sm">
+              {grouped}
+            </code>
+          </div>
+          <Field label="Then the six-digit code it shows">
+            <input
+              className="input font-mono tracking-[.2em]"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              required
+            />
+          </Field>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={confirm.isPending || code.trim().length < 6}>
+              {confirm.isPending ? "Checking…" : "Confirm"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setSetup(null);
+                setCode("");
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {data?.enabled && (
+        <div className="mt-6 space-y-6 border-t border-ink/10 pt-5">
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              regenerate.mutate();
+            }}
+          >
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">New recovery codes</p>
+            <p className="text-sm text-ink/55">
+              Issues a fresh set and voids the old sheet. Worth doing if you cannot account for where the last one ended up.
+            </p>
+            <Field label="Your password">
+              <input
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </Field>
+            <Button type="submit" disabled={regenerate.isPending || !password}>
+              {regenerate.isPending ? "Issuing…" : "Issue new codes"}
+            </Button>
+          </form>
+
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              disable.mutate();
+            }}
+          >
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Turn it off</p>
+            <p className="text-sm text-ink/55">
+              Both factors are required, so a stolen session cannot strip the protection it has just run into. Fill in the
+              password above as well.
+            </p>
+            <Field label="A current code, or a recovery code">
+              <input
+                className="input font-mono tracking-[.2em]"
+                value={disableCode}
+                onChange={(e) => setDisableCode(e.target.value)}
+                autoComplete="one-time-code"
+                required
+              />
+            </Field>
+            <Button type="submit" disabled={disable.isPending || !password || !disableCode}>
+              {disable.isPending ? "Turning off…" : "Turn off two-factor"}
+            </Button>
+          </form>
+        </div>
+      )}
     </Panel>
   );
 }

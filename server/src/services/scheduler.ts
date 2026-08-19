@@ -8,6 +8,7 @@ import { billDuePlans } from "./carePlanBilling.js";
 import { dispatchDueEmails } from "./emailSender.js";
 import { runDueSequences } from "./emailSequences.js";
 import { runDueTasks } from "./agents/runner.js";
+import { purgeExpiredSessions } from "../lib/session.js";
 
 /**
  * The app's clock. Three things run on it:
@@ -169,6 +170,13 @@ async function housekeepingTick(now: Date) {
   lastPruneDay = day;
   const { retentionDays } = await readCaptureConfig();
   await pruneRunHistory(retentionDays, now);
+
+  // Sessions that have expired or hit the absolute ceiling. resolveSession
+  // deletes one when it is presented, but a session nobody ever returns to is
+  // never presented — so without this the table keeps every token hash the
+  // system has ever issued.
+  const dropped = await purgeExpiredSessions();
+  if (dropped) console.log(`[scheduler] cleared ${dropped} expired session(s)`);
 }
 
 export function startScheduler() {

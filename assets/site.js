@@ -425,6 +425,12 @@
     }, ms || 4000);
   }
 
+  // Stamped on load so the server can tell how long the form was open. A
+  // submission three seconds after the page rendered was not typed by a person.
+  // See server/src/services/botCheck.ts.
+  var started = document.getElementById('_dw_started');
+  if (started) started.value = String(Date.now());
+
   var form = document.getElementById('contactForm');
   if (form) {
     form.addEventListener('submit', function (e) {

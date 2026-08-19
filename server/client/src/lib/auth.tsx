@@ -6,12 +6,28 @@ export type CurrentUser = {
   name: string;
   email: string;
   role: string;
+  twoFactorEnabled?: boolean;
 };
+
+/**
+ * A password that was right, on an account that also wants a code. The
+ * challenge is a short-lived signed ticket, not a session — nothing is
+ * authenticated until `completeLogin` comes back.
+ */
+export type MfaChallenge = { mfaRequired: true; challenge: string };
+
+type LoginResult = CurrentUser | MfaChallenge;
+
+export function isMfaChallenge(result: LoginResult): result is MfaChallenge {
+  return (result as MfaChallenge).mfaRequired === true;
+}
 
 type AuthState = {
   user: CurrentUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** Resolves to the signed-in user, or to the challenge that has to be answered first. */
+  login: (email: string, password: string) => Promise<LoginResult>;
+  completeLogin: (challenge: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -42,7 +58,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    setUser(await api.post<CurrentUser>("/auth/login", { email, password }));
+    const result = await api.post<LoginResult>("/auth/login", { email, password });
+    // Only a real user goes into state. Setting one from a challenge would
+    // render the whole app behind a login that has not finished.
+    if (!isMfaChallenge(result)) setUser(result);
+    return result;
+  }, []);
+
+  const completeLogin = useCallback(async (challenge: string, code: string) => {
+    setUser(await api.post<CurrentUser>("/auth/login/2fa", { challenge, code }));
   }, []);
 
   const logout = useCallback(async () => {
@@ -55,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, loading, login, completeLogin, logout }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthState {

@@ -1,0 +1,9 @@
+# https://dakyworld.com
+User-agent: *
+Allow: /
+
+# Superseded homepage explorations. Served so old links do not break, but they
+# are duplicate copy and must never compete with the real pages in an index.
+Disallow: /website-drafts/
+
+Sitemap: https://dakyworld.com/sitemap.xml
