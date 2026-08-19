@@ -1,0 +1,1605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dakyworld OS - Agent System & Platform Enhancement Plan</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: white;
+            padding: 40px;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        @page {
+            size: A4;
+            margin: 20mm;
+        }
+        
+        @media print {
+            body {
+                padding: 0;
+                background: white;
+            }
+            .page-break {
+                page-break-after: always;
+            }
+            h1 {
+                page-break-after: avoid;
+            }
+            h2, h3 {
+                page-break-after: avoid;
+            }
+            table {
+                page-break-inside: avoid;
+            }
+            .toc {
+                page-break-after: always;
+            }
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+            border-bottom: 3px solid #1e40af;
+            padding-bottom: 30px;
+        }
+        
+        .logo {
+            font-size: 32px;
+            font-weight: bold;
+            color: #1e40af;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            font-size: 14px;
+            color: #666;
+            margin-top: 20px;
+        }
+        
+        h1 {
+            font-size: 28px;
+            color: #1e40af;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #1e40af;
+            padding-bottom: 10px;
+        }
+        
+        h2 {
+            font-size: 22px;
+            color: #1e40af;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            border-left: 4px solid #1e40af;
+            padding-left: 15px;
+        }
+        
+        h3 {
+            font-size: 16px;
+            color: #0f2557;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        
+        h4 {
+            font-size: 14px;
+            color: #1e40af;
+            margin-top: 15px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        p {
+            margin-bottom: 12px;
+            text-align: justify;
+        }
+        
+        .highlight {
+            background-color: #e0e7ff;
+            padding: 20px;
+            border-left: 4px solid #1e40af;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        .highlight strong {
+            color: #1e40af;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 13px;
+        }
+        
+        table th {
+            background-color: #1e40af;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        table tr:nth-child(even) {
+            background-color: #f9fafb;
+        }
+        
+        table tr:hover {
+            background-color: #f0f4f8;
+        }
+        
+        ul, ol {
+            margin-left: 30px;
+            margin-bottom: 15px;
+        }
+        
+        li {
+            margin-bottom: 8px;
+        }
+        
+        li > strong {
+            color: #1e40af;
+        }
+        
+        .toc {
+            background-color: #f9fafb;
+            padding: 20px;
+            border-radius: 4px;
+            margin: 30px 0;
+        }
+        
+        .toc ol {
+            margin-top: 15px;
+        }
+        
+        .toc li {
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+        
+        .agent-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .agent-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 4px;
+            background-color: #fafbfc;
+        }
+        
+        .agent-card h4 {
+            color: #1e40af;
+            margin-top: 0;
+        }
+        
+        .agent-card p {
+            margin: 8px 0;
+            font-size: 13px;
+        }
+        
+        .timeline {
+            position: relative;
+            padding: 20px 0;
+        }
+        
+        .timeline-item {
+            padding-left: 30px;
+            margin-bottom: 20px;
+            border-left: 2px solid #1e40af;
+            position: relative;
+        }
+        
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -8px;
+            top: 5px;
+            width: 12px;
+            height: 12px;
+            background-color: #1e40af;
+            border-radius: 50%;
+        }
+        
+        .timeline-item h4 {
+            margin-top: 0;
+            color: #1e40af;
+        }
+        
+        .metric {
+            display: inline-block;
+            background-color: #1e40af;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .checkmark {
+            color: #10b981;
+            font-weight: bold;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 60px;
+            padding-top: 20px;
+            border-top: 2px solid #1e40af;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        code {
+            background-color: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #d63384;
+        }
+        
+        pre {
+            background-color: #f3f4f6;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 11px;
+            margin: 15px 0;
+            border-left: 4px solid #1e40af;
+        }
+        
+        .section-number {
+            color: #1e40af;
+            font-weight: bold;
+            font-size: 18px;
+            margin-right: 8px;
+        }
+        
+        .key-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .metric-box {
+            background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        
+        .metric-box .number {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .metric-box .label {
+            font-size: 12px;
+            text-transform: uppercase;
+            opacity: 0.9;
+        }
+        
+        .warning {
+            background-color: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        .success {
+            background-color: #dcfce7;
+            border-left: 4px solid #10b981;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        .print-only {
+            display: none;
+        }
+        
+        @media print {
+            .print-only {
+                display: block;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- COVER PAGE -->
+    <header>
+        <div class="logo">DAKYWORLD OS</div>
+        <h1 style="margin-top: 20px; border: none; padding: 0;">Agent System & Platform Enhancement Plan</h1>
+        <p class="subtitle">Comprehensive architecture for intelligent business automation, orchestration, and client engagement</p>
+        <p class="subtitle" style="margin-top: 30px; font-size: 12px;">
+            <strong>Document Date:</strong> August 15, 2026<br>
+            <strong>Version:</strong> 1.0<br>
+            <strong>Status:</strong> Planning Phase
+        </p>
+    </header>
+
+    <div class="page-break"></div>
+
+    <!-- EXECUTIVE SUMMARY -->
+    <h1>Executive Summary</h1>
+    <p>Dakyworld OS will be transformed from a static operations platform into an intelligent, agent-driven business automation system. This plan introduces:</p>
+    
+    <ul>
+        <li><strong>Agent Architecture</strong> — Multi-tier intelligent orchestration (Orchestrator → 8 Agent Classes → 25+ Sub-agents with customizable tools)</li>
+        <li><strong>Agent Management UI</strong> — Admin pages to configure, assign tools, monitor agent performance</li>
+        <li><strong>Six Platform Enhancements</strong> — Client Portal, Team Collaboration Hub, Integrations Marketplace, AI Analytics Engine, Notifications System, Enhanced Case Studies</li>
+        <li><strong>Scalability</strong> — Future-proof for both in-process scheduling (current) and distributed queue-based execution (Redis/Bull)</li>
+    </ul>
+
+    <div class="highlight">
+        <strong>Expected Outcomes:</strong>
+        <ul style="margin-top: 10px; margin-bottom: 0;">
+            <li>Automation at scale — repetitive workflows run autonomously</li>
+            <li>Team efficiency — 5-10x improvement through handoff tracking and capacity management</li>
+            <li>Revenue visibility — churn prediction, upsell detection, forecasting</li>
+            <li>Client retention — self-service portals reduce support burden by 30-40%</li>
+            <li>Business intelligence — real-time dashboards across all 7 service lines</li>
+        </ul>
+    </div>
+
+    <div class="key-metrics">
+        <div class="metric-box">
+            <div class="number">8</div>
+            <div class="label">Agent Classes</div>
+        </div>
+        <div class="metric-box">
+            <div class="number">25+</div>
+            <div class="label">Sub-Agents</div>
+        </div>
+        <div class="metric-box">
+            <div class="number">10</div>
+            <div class="label">Customizable Tools</div>
+        </div>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- TABLE OF CONTENTS -->
+    <div class="toc">
+        <h2 style="margin-top: 0;">Table of Contents</h2>
+        <ol>
+            <li>Agent System Architecture</li>
+            <li>Agent Classes & Responsibilities</li>
+            <li>Tool Abstraction & Customization</li>
+            <li>Orchestrator Architecture</li>
+            <li>Agent Management UI (/agents)</li>
+            <li>Database Schema Extensions</li>
+            <li>Implementation Roadmap (9 Phases)</li>
+            <li>Platform Enhancements Overview</li>
+            <li>Scalability & Future Phases</li>
+            <li>Architecture Decisions & Assumptions</li>
+            <li>Verification & Success Metrics</li>
+        </ol>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- PART 1: ARCHITECTURE -->
+    <h1>1. Agent System Architecture</h1>
+
+    <h2>1.1 Conceptual Model</h2>
+    <p>The agent system follows a hierarchical, event-driven architecture:</p>
+
+    <pre>
+┌─────────────────────────────────────────────────────────────┐
+│                     ORCHESTRATOR LAYER                      │
+│  Central decision-maker, routes work, manages task flow     │
+│  • Monitors events (new lead, proposal accepted, etc.)     │
+│  • Decides which agent should handle work                  │
+│  • Manages priorities, retries, error handling             │
+│  • Reports to analytics/dashboards                         │
+└─────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+┌───────▼──────┐  ┌──────────▼───────┐  ┌─────────▼────┐
+│ AGENT CLASS  │  │  AGENT CLASS     │  │ AGENT CLASS  │
+│   (Lead      │  │  (Proposal &     │  │  (Project    │
+│  Management) │  │  Invoicing)      │  │ Delivery)    │
+└───────┬──────┘  └──────────┬───────┘  └─────────┬────┘
+        │                     │                     │
+    ┌───▼──────┐          ┌───▼──────┐         ┌───▼──────┐
+    │ Sub-A1   │          │ Sub-B1   │         │ Sub-C1   │
+    │ (Score & │          │(Generate │         │(Create   │
+    │ Route)   │          │Proposal) │         │Milestone)│
+    └──────────┘          └──────────┘         └──────────┘
+        │                     │                     │
+    ┌───▼───────────────┬────▼────────────┬────────▼────┐
+    │    TOOLS LAYER    │                 │              │
+    └───────────────────┴─────────────────┴──────────────┘
+    • Claude AI (reasoning, drafting)
+    • Stripe (payments, invoicing)
+    • Email/SMTP (sending, sequencing)
+    • Apify (lead capture)
+    • Cloudinary (file storage)
+    • Database queries (Prisma)
+    • Slack/Notifications
+    • Analytics & reporting
+    • Time tracking
+    • Custom integrations
+    </pre>
+
+    <h2>1.2 Core Principles</h2>
+    <ul>
+        <li><strong>Event-Driven:</strong> Orchestrator listens to database changes and webhooks, triggers agents reactively</li>
+        <li><strong>Modular:</strong> Each agent is independent; can be enabled/disabled, updated, or replaced without affecting others</li>
+        <li><strong>Customizable:</strong> Tools can be assigned/revoked per sub-agent; custom prompts override defaults</li>
+        <li><strong>Reliable:</strong> Retry logic, dead-letter queues, dry-run mode for risky operations</li>
+        <li><strong>Transparent:</strong> Every action logged immutably; audit trail for compliance and debugging</li>
+        <li><strong>Cost-Aware:</strong> Every tool call tracked with cost; prevents runaway API spend</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <!-- PART 2: AGENT CLASSES -->
+    <h1>2. Agent Classes & Responsibilities</h1>
+
+    <p>Eight agent classes handle the complete business workflow from lead capture to revenue recognition:</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Agent Class</th>
+                <th>Purpose</th>
+                <th>Primary Sub-Agents</th>
+                <th>Triggered By</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Lead Orchestrator</strong></td>
+                <td>Lead lifecycle: capture, score, nurture</td>
+                <td>Lead Scorer, Nurture Sequencer, Import Handler</td>
+                <td>New lead, score change, import completion</td>
+            </tr>
+            <tr>
+                <td><strong>Proposal & Invoicing</strong></td>
+                <td>Generate proposals, track acceptance, create invoices</td>
+                <td>Proposal Generator, PDF Renderer, Email Sender, Payment Tracker</td>
+                <td>Lead ready, proposal accepted, invoice due</td>
+            </tr>
+            <tr>
+                <td><strong>Project Delivery</strong></td>
+                <td>Manage project execution, milestones, team assignments</td>
+                <td>Milestone Creator, Team Assigner, Time Tracker, Client Updater</td>
+                <td>Project created, milestone due, time logged</td>
+            </tr>
+            <tr>
+                <td><strong>Care Plan Manager</strong></td>
+                <td>Recurring revenue: billing, charging, renewals</td>
+                <td>Billing Invoice Generator, Stripe Charger, Client Notifier</td>
+                <td>Billing day, plan modified, renewal due</td>
+            </tr>
+            <tr>
+                <td><strong>Email Sequencer</strong></td>
+                <td>Automated follow-ups, cold outreach, nurture sequences</td>
+                <td>Sequence Enroller, Send Scheduler, Per-Person Drafter, Status Updater</td>
+                <td>Lead created, sequence triggered, send time reached</td>
+            </tr>
+            <tr>
+                <td><strong>Client Notifier</strong></td>
+                <td>Client-facing updates: reports, invoices, project updates</td>
+                <td>Report Formatter, Portal Publisher, Email Digest Builder</td>
+                <td>Monthly cycle, project update, invoice paid</td>
+            </tr>
+            <tr>
+                <td><strong>Analytics Engine</strong></td>
+                <td>Compute KPIs, detect churn, identify upsells, forecast</td>
+                <td>Metrics Computer, Churn Detector, Upsell Finder, Revenue Forecaster</td>
+                <td>Daily 00:00 UTC, on-demand dashboard load</td>
+            </tr>
+            <tr>
+                <td><strong>Integration Manager</strong></td>
+                <td>Third-party workflows: Slack alerts, webhooks, custom triggers</td>
+                <td>Slack Alerter, Webhook Dispatcher, Custom Trigger Handler</td>
+                <td>Any internal event, external webhook</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>2.1 Sub-Agent Patterns</h2>
+
+    <h3>Decision Makers (AI-Powered)</h3>
+    <p>Use Claude Opus 5 for reasoning, categorization, and content generation:</p>
+    <ul>
+        <li><strong>Lead Scorer:</strong> Analyzes lead data, assigns likelihood-to-convert score</li>
+        <li><strong>Email Drafter:</strong> Writes contextual follow-ups per recipient from their record</li>
+        <li><strong>Proposal Writer:</strong> Generates proposals from company audit findings</li>
+        <li><strong>Churn Risk Scorer:</strong> Evaluates care plan likelihood to cancel</li>
+        <li><strong>Upsell Detector:</strong> Identifies service gaps and upsell opportunities</li>
+    </ul>
+
+    <h3>Executors (Scripted, High-Reliability)</h3>
+    <p>Deterministic workflows with predefined rules:</p>
+    <ul>
+        <li><strong>Stripe Charger:</strong> Call payment API with validated input</li>
+        <li><strong>Calendar Block:</strong> Reserve team member time in project</li>
+        <li><strong>Invoice Generator:</strong> Render PDF, compute line items, record in database</li>
+        <li><strong>Email Sender:</strong> Dispatch via SMTP with logging</li>
+    </ul>
+
+    <h3>Monitors (Event-Driven)</h3>
+    <p>Watch for state changes, trigger next step:</p>
+    <ul>
+        <li><strong>Invoice Paid Detector:</strong> Stripe webhook → mark paid, update project status</li>
+        <li><strong>Sequence Completion Detector:</strong> All steps sent → mark complete, log results</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <!-- PART 3: TOOLS -->
+    <h1>3. Tool Abstraction & Customization</h1>
+
+    <h2>3.1 Tool Architecture</h2>
+    <p>Each tool is implemented as a plugin with a standard interface, enabling:</p>
+    <ul>
+        <li>Easy addition/removal of tools</li>
+        <li>Per-sub-agent tool assignment</li>
+        <li>Tool enable/disable without code changes</li>
+        <li>Cost tracking per tool</li>
+        <li>Rate limiting at tool level</li>
+        <li>Fallback strategies if a tool fails</li>
+    </ul>
+
+    <h2>3.2 The 10 Customizable Tools</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Tool</th>
+                <th>Category</th>
+                <th>Primary Use</th>
+                <th>Cost Model</th>
+                <th>Rate Limit</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>1. Claude Opus 5</strong></td>
+                <td>AI / Reasoning</td>
+                <td>Drafting, scoring, analysis</td>
+                <td>Per input/output tokens</td>
+                <td>60,000 tokens/min</td>
+            </tr>
+            <tr>
+                <td><strong>2. Prisma Database</strong></td>
+                <td>Data Access</td>
+                <td>Read/write business data</td>
+                <td>Per query (internal)</td>
+                <td>100 ops/sec</td>
+            </tr>
+            <tr>
+                <td><strong>3. Email/SMTP</strong></td>
+                <td>Communications</td>
+                <td>Send emails, manage templates</td>
+                <td>Per message sent</td>
+                <td>1,000 emails/day</td>
+            </tr>
+            <tr>
+                <td><strong>4. Stripe</strong></td>
+                <td>Payments</td>
+                <td>Charge cards, manage subscriptions</td>
+                <td>Transaction fee %</td>
+                <td>100 API calls/sec</td>
+            </tr>
+            <tr>
+                <td><strong>5. Apify</strong></td>
+                <td>Data Collection</td>
+                <td>Web scraping, lead capture</td>
+                <td>Per actor run</td>
+                <td>1 run/day</td>
+            </tr>
+            <tr>
+                <td><strong>6. Cloudinary</strong></td>
+                <td>File Storage</td>
+                <td>Upload, render, serve files/PDFs</td>
+                <td>Storage + bandwidth</td>
+                <td>100 uploads/day</td>
+            </tr>
+            <tr>
+                <td><strong>7. Slack</strong></td>
+                <td>Notifications</td>
+                <td>Send alerts, post messages</td>
+                <td>Free (webhook)</td>
+                <td>100 msgs/min</td>
+            </tr>
+            <tr>
+                <td><strong>8. Analytics</strong></td>
+                <td>Reporting</td>
+                <td>Compute KPIs, log events</td>
+                <td>Internal (storage)</td>
+                <td>10,000 events/min</td>
+            </tr>
+            <tr>
+                <td><strong>9. Google Workspace</strong></td>
+                <td>Integration</td>
+                <td>Read calendars, manage accounts</td>
+                <td>API quota</td>
+                <td>Per quota policy</td>
+            </tr>
+            <tr>
+                <td><strong>10. Webhooks</strong></td>
+                <td>Integration</td>
+                <td>Receive/send data to external systems</td>
+                <td>Free (internal)</td>
+                <td>1,000 reqs/min</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>3.3 Tool Assignment Example</h2>
+    <p>Each sub-agent has a <strong>Tool Kit</strong> — a list of APIs/services it can call:</p>
+    <pre>Sub-agent: Lead Scorer
+├─ Tools:
+│  ├─ Prisma (read Lead, Contact, Company data)
+│  ├─ Claude Opus 5 (AI scoring logic)
+│  ├─ Apify (fetch extra firmographics)
+│  └─ Slack (notify if high-value lead)
+├─ Permissions:
+│  ├─ Can read: Lead, Contact, Company
+│  ├─ Can write: Lead.score, Lead.status
+│  └─ Cannot: delete, modify invoices
+├─ Rate limits:
+│  ├─ Max 100 leads/min
+│  └─ Max API spend: $2/run
+└─ Fallback:
+   └─ If Claude fails, use pattern-match rules</pre>
+
+    <div class="page-break"></div>
+
+    <!-- PART 4: ORCHESTRATOR -->
+    <h1>4. Orchestrator Architecture</h1>
+
+    <h2>4.1 Responsibilities</h2>
+    <ul>
+        <li><strong>Route events</strong> to the right agent based on event type</li>
+        <li><strong>Manage task flow</strong> — create tasks, track status, handle completion</li>
+        <li><strong>Error handling</strong> — retry transient failures, escalate permanent errors</li>
+        <li><strong>Audit logging</strong> — every action recorded with input, output, cost, duration</li>
+        <li><strong>Rate limiting</strong> — global rate limits per tool, per agent</li>
+        <li><strong>Cost management</strong> — track API spend, alert if over budget</li>
+        <li><strong>Dry-run mode</strong> — preview agent actions before execution (for billing/email)</li>
+    </ul>
+
+    <h2>4.2 Event Types</h2>
+    <p>The orchestrator listens to these event triggers:</p>
+
+    <h3>Lead Events</h3>
+    <ul>
+        <li><code>lead.created</code> — new lead from scraper, import, or manual entry</li>
+        <li><code>lead.scored</code> — score changed, triggers re-routing</li>
+        <li><code>lead.statusChanged</code> — stage moved in pipeline</li>
+        <li><code>lead.sequenceEnrolled</code> — added to email sequence</li>
+    </ul>
+
+    <h3>Proposal & Invoicing Events</h3>
+    <ul>
+        <li><code>proposal.created</code> — new proposal drafted</li>
+        <li><code>proposal.sent</code> — emailed to lead</li>
+        <li><code>proposal.accepted</code> — lead said yes → auto-create project</li>
+        <li><code>invoice.created</code> — new invoice for project or care plan</li>
+        <li><code>invoice.sent</code> — emailed to client</li>
+        <li><code>invoice.dueToday</code> — 1 day before due date</li>
+        <li><code>invoice.paid</code> — Stripe webhook confirmed payment</li>
+    </ul>
+
+    <h3>Project & Delivery Events</h3>
+    <ul>
+        <li><code>project.created</code> — from accepted proposal</li>
+        <li><code>milestone.dueToday</code> — 1 day before milestone due</li>
+        <li><code>task.assigned</code> — assigned to team member</li>
+        <li><code>timeEntry.logged</code> — team member reports hours</li>
+    </ul>
+
+    <h3>Care Plan Events</h3>
+    <ul>
+        <li><code>carePlan.billingDay</code> — monthly billing trigger</li>
+        <li><code>carePlan.hoursOverage</code> — hours exceeded included allowance</li>
+    </ul>
+
+    <h3>System Events</h3>
+    <ul>
+        <li><code>scheduler.hourly</code> — runs every hour</li>
+        <li><code>scheduler.daily</code> — runs at 00:00 UTC every day</li>
+        <li><code>scheduler.weekly</code> — runs every Monday at 00:00 UTC</li>
+    </ul>
+
+    <h2>4.3 Task Flow</h2>
+    <pre>
+Event occurs
+    ↓
+Orchestrator detects event
+    ↓
+Lookup which agent class handles this event
+    ↓
+Create AgentTask record (pending)
+    ↓
+Queue task for execution
+    ↓
+[Agent starts] — Load sub-agents and their tools
+    ↓
+Execute sub-agent with available tools
+    ↓
+[On success] → Record output, mark completed, log cost
+    ↓
+[On failure] → Log error, check retry policy
+    ↓
+[If retryable] → Exponential backoff, re-queue
+    ↓
+[If permanent error] → Move to dead-letter queue, alert owner
+    </pre>
+
+    <div class="page-break"></div>
+
+    <!-- PART 5: AGENT MANAGEMENT UI -->
+    <h1>5. Agent Management UI (<code>/agents</code>)</h1>
+
+    <p>The Agent Management Dashboard is the control center for all agent operations. Four main sections:</p>
+
+    <h2>5.1 Agent Dashboard</h2>
+    <p>Live status overview of all agents and recent activity:</p>
+    <ul>
+        <li><strong>System Health:</strong> % success rate, avg latency, agents running</li>
+        <li><strong>Recent Tasks:</strong> Last 50 agent executions with status, duration, cost</li>
+        <li><strong>Event Queue:</strong> Tasks waiting to run (pending, retrying)</li>
+        <li><strong>Alerts:</strong> Agents over budget, high error rate, missed SLAs</li>
+        <li><strong>Filters:</strong> By agent, status, date range, cost threshold</li>
+    </ul>
+
+    <h2>5.2 Agent Configuration</h2>
+    <p>Customize how agents behave:</p>
+    <ul>
+        <li><strong>Enable/Disable:</strong> Toggle each agent class on/off</li>
+        <li><strong>Tool Assignments:</strong> Matrix showing which tools each sub-agent has access to</li>
+        <li><strong>AI Model:</strong> Choose between Claude Opus 5, Opus 4, or Haiku</li>
+        <li><strong>Custom Prompt:</strong> Override default system prompt for an agent</li>
+        <li><strong>Rate Limits:</strong> Max executions per minute</li>
+        <li><strong>Cost Caps:</strong> Daily and monthly spend limits</li>
+        <li><strong>Retry Policy:</strong> immediate, exponential backoff, or never</li>
+        <li><strong>Dry-Run Mode:</strong> Preview agent actions before execution</li>
+    </ul>
+
+    <h2>5.3 Tool Management</h2>
+    <p>Monitor and configure individual tools:</p>
+    <ul>
+        <li><strong>Tool Status:</strong> Available, configured, error, unconfigured</li>
+        <li><strong>Credentials:</strong> Check if API keys are set, test connectivity</li>
+        <li><strong>Usage Metrics:</strong> Calls/day, avg latency, error rate, cost</li>
+        <li><strong>Agents Using:</strong> Which agents have this tool assigned</li>
+        <li><strong>Rate Limit:</strong> Global cap per minute</li>
+        <li><strong>Last Activity:</strong> Last successful call, last error, timestamp</li>
+    </ul>
+
+    <h2>5.4 Logs & Audit Trail</h2>
+    <p>Searchable, detailed log of every agent execution:</p>
+    <ul>
+        <li><strong>Columns:</strong> Timestamp, Agent, Sub-Agent, Event Type, Status, Duration, Cost, Error</li>
+        <li><strong>Expand Row:</strong> View full input/output JSON, tool calls, error stack</li>
+        <li><strong>Filters:</strong> Agent class, sub-agent, event type, status, date range, cost threshold</li>
+        <li><strong>Export:</strong> CSV or JSON for external analysis</li>
+    </ul>
+
+    <h2>5.5 Runbooks (Pre-Built Workflows)</h2>
+    <p>Click to execute multi-agent workflows manually:</p>
+    <ul>
+        <li><strong>Manual Lead Nurture:</strong> Score all leads matching criteria, enroll in sequence, send first email</li>
+        <li><strong>Project Completion:</strong> Mark project done, generate final invoice, send completion email to client</li>
+        <li><strong>End of Month Reporting:</strong> Compute MRR, pipeline, invoices, send to owner</li>
+        <li><strong>Onboard New Care Plan:</strong> Create Client, first invoice, add to Slack channel, welcome email</li>
+    </ul>
+
+    <h2>5.6 Role-Based Access Control</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Role</th>
+                <th>Can View</th>
+                <th>Can Modify</th>
+                <th>Access Level</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>OWNER</strong></td>
+                <td>All agents, logs, tools, metrics, cost tracking</td>
+                <td>Agent config, tool assignments, custom prompts, rate limits, cost caps</td>
+                <td>Full admin</td>
+            </tr>
+            <tr>
+                <td><strong>PROJECT_MANAGER</strong></td>
+                <td>Project delivery agent logs, project-related events</td>
+                <td>Trigger project-related runbooks</td>
+                <td>Read-only + trigger</td>
+            </tr>
+            <tr>
+                <td><strong>DEVELOPER</strong></td>
+                <td>All logs, full error details</td>
+                <td>Run dry-runs for debugging</td>
+                <td>Read-only + debug</td>
+            </tr>
+            <tr>
+                <td><strong>OPERATIONS_FINANCE</strong></td>
+                <td>Financial metrics, API spend, cost per agent/tool</td>
+                <td>Trigger billing/invoice agents</td>
+                <td>Finance-only view</td>
+            </tr>
+            <tr>
+                <td><strong>CLIENT_VIEWER</strong></td>
+                <td>—</td>
+                <td>—</td>
+                <td>No access</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="page-break"></div>
+
+    <!-- PART 6: DATABASE SCHEMA -->
+    <h1>6. Database Schema Extensions</h1>
+
+    <h2>6.1 New Models (Prisma)</h2>
+
+    <h3>Agent System Models</h3>
+    <p>Core models for agent orchestration and execution:</p>
+    <ul>
+        <li><strong>Agent:</strong> Represents an agent class (Lead Orchestrator, Proposal & Invoicing, etc.)</li>
+        <li><strong>SubAgent:</strong> Individual sub-agent (Lead Scorer, Email Drafter, etc.)</li>
+        <li><strong>Tool:</strong> Available tools (Claude, Stripe, Email, etc.)</li>
+        <li><strong>ToolAssignment:</strong> Links sub-agents to tools with permission levels</li>
+        <li><strong>AgentTask:</strong> Records every agent execution (input, output, status, cost, error)</li>
+        <li><strong>ToolUsageLog:</strong> Tracks cost and usage of each tool call</li>
+    </ul>
+
+    <h3>Client Portal & Team Collaboration</h3>
+    <ul>
+        <li><strong>ClientPortalUser:</strong> Client-facing user accounts (separate from internal Users)</li>
+        <li><strong>Notification:</strong> Notifications for both internal users and clients</li>
+        <li><strong>Handoff:</strong> Tracks team handoffs (Designer → Developer, etc.)</li>
+        <li><strong>IntegrationMarketplaceItem:</strong> Public list of integrations Dakyworld supports</li>
+    </ul>
+
+    <h3>Analytics & Insights</h3>
+    <ul>
+        <li><strong>DailyMetrics:</strong> Daily snapshots of KPIs (leads, proposals, revenue, MRR, hours)</li>
+        <li><strong>ChurnRiskScore:</strong> Weekly churn prediction for care plans</li>
+        <li><strong>UpsellOpportunity:</strong> Detected service gaps and upsell recommendations</li>
+        <li><strong>CaseStudy:</strong> Public case studies with results and metrics</li>
+    </ul>
+
+    <h2>6.2 Schema Changes to Existing Models</h2>
+
+    <p>Add these fields to existing models:</p>
+    <ul>
+        <li><strong>Client:</strong> Add <code>clientPortalUsers</code>, <code>churnRisks</code>, <code>upsellOpportunities</code></li>
+        <li><strong>CarePlan:</strong> Add <code>churnRiskScore</code> relation</li>
+        <li><strong>Project:</strong> Add <code>handoffs</code> relation for team coordination</li>
+        <li><strong>User:</strong> Add <code>notifications</code> relation</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <!-- PART 7: IMPLEMENTATION ROADMAP -->
+    <h1>7. Implementation Roadmap (9 Phases)</h1>
+
+    <p>26-week phased rollout from MVP to production:</p>
+
+    <h2>7.1 Phase Breakdown</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Phase</th>
+                <th>Duration</th>
+                <th>Focus</th>
+                <th>Key Deliverable</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>1</strong></td>
+                <td>4 weeks</td>
+                <td>Agent Foundation</td>
+                <td>Core orchestrator, 8 agent classes, 10 tools, database schema</td>
+            </tr>
+            <tr>
+                <td><strong>2</strong></td>
+                <td>3 weeks</td>
+                <td>Agent Management UI</td>
+                <td>/agents dashboard, config pages, logs, tool management</td>
+            </tr>
+            <tr>
+                <td><strong>3</strong></td>
+                <td>4 weeks</td>
+                <td>Client Portal</td>
+                <td>Projects, invoices, care plans, reports (read-only for clients)</td>
+            </tr>
+            <tr>
+                <td><strong>4</strong></td>
+                <td>3 weeks</td>
+                <td>Team Collaboration Hub</td>
+                <td>Handoff tracking, capacity management, team assignments</td>
+            </tr>
+            <tr>
+                <td><strong>5</strong></td>
+                <td>2 weeks</td>
+                <td>Integrations Page</td>
+                <td>Public /integrations.html page, marketplace item management</td>
+            </tr>
+            <tr>
+                <td><strong>6</strong></td>
+                <td>4 weeks</td>
+                <td>AI Analytics Engine</td>
+                <td>Daily metrics, churn prediction, upsell detection, forecasting</td>
+            </tr>
+            <tr>
+                <td><strong>7</strong></td>
+                <td>2 weeks</td>
+                <td>Notifications System</td>
+                <td>Email, Slack, in-app notifications across all systems</td>
+            </tr>
+            <tr>
+                <td><strong>8</strong></td>
+                <td>2 weeks</td>
+                <td>Enhanced Case Studies</td>
+                <td>6-8 detailed case studies, landing page, filtering</td>
+            </tr>
+            <tr>
+                <td><strong>9</strong></td>
+                <td>2 weeks</td>
+                <td>Testing & Docs</td>
+                <td>E2E tests, performance optimization, documentation</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>7.2 Phase 1: Agent Foundation (Weeks 1-4)</h2>
+
+    <div class="timeline">
+        <div class="timeline-item">
+            <h4>Week 1: Database Setup (1-2 days)</h4>
+            <p>Create Prisma migrations for 13 new models (Agent, SubAgent, Tool, ToolAssignment, AgentTask, ToolUsageLog, ClientPortalUser, Notification, Handoff, IntegrationMarketplaceItem, DailyMetrics, ChurnRiskScore, UpsellOpportunity, CaseStudy). Seed 8 agent classes and 10 tools.</p>
+        </div>
+
+        <div class="timeline-item">
+            <h4>Week 1-2: Orchestrator Core (3-4 days)</h4>
+            <p>Extend <code>server/src/services/scheduler.ts</code> to be event-driven. Implement AgentTask creation, task executor loop, retry logic, and dead-letter queue. Handle all event types (lead.*, proposal.*, project.*, etc.).</p>
+        </div>
+
+        <div class="timeline-item">
+            <h4>Week 2: Tool Abstraction Layer (2-3 days)</h4>
+            <p>Create <code>server/src/lib/tools/</code> directory with Tool base class. Implement 10 concrete tools: Prisma, Claude, Email, Stripe, Apify, Cloudinary, Slack, Analytics, Google Workspace, Webhooks. Each tool has standard interface: <code>call()</code>, <code>validate()</code>, <code>costEstimate()</code>.</p>
+        </div>
+
+        <div class="timeline-item">
+            <h4>Week 2-3: Sub-Agent Framework (2-3 days)</h4>
+            <p>Create <code>server/src/lib/agents/</code> directory. Build SubAgent base class with tool assignment. Implement 2-3 reference sub-agents: Lead Scorer, Email Drafter, Proposal Writer.</p>
+        </div>
+
+        <div class="timeline-item">
+            <h4>Week 3-4: Agent Config API (2 days)</h4>
+            <p>Create <code>server/src/routes/agents.ts</code> with endpoints: GET /api/agents, GET /api/agents/:id/config, PATCH /api/agents/:id/config, GET /api/tools, PATCH /api/tools/:id/status. Auth: OWNER role only.</p>
+        </div>
+
+        <div class="timeline-item">
+            <h4>Week 4: Integration & Testing (2-3 days)</h4>
+            <p>Connect orchestrator to current scheduler. Seed test data. Verify agent execution end-to-end. Test retry logic, error handling, cost tracking.</p>
+        </div>
+    </div>
+
+    <div class="success">
+        <strong>Phase 1 Success Criteria:</strong>
+        <ul style="margin-top: 10px; margin-bottom: 0;">
+            <li><span class="checkmark">✓</span> All 8 agent classes created and executable</li>
+            <li><span class="checkmark">✓</span> 10 tools abstracted and working</li>
+            <li><span class="checkmark">✓</span> Every agent execution logged in AgentTask</li>
+            <li><span class="checkmark">✓</span> Retry logic functional; dead-letter queue populated</li>
+            <li><span class="checkmark">✓</span> No task loss or duplication</li>
+        </ul>
+    </div>
+
+    <h2>7.3 Phase 2: Agent Management UI (Weeks 5-7)</h2>
+
+    <p>Build <code>/agents</code> dashboard and configuration pages for OWNER to visualize and control agents:</p>
+
+    <ul>
+        <li><strong>Agent Dashboard</strong> (2-3 days) — Live status chart, recent tasks table, event queue graph</li>
+        <li><strong>Agent Config Page</strong> (2 days) — Enable/disable, assign tools, custom prompts</li>
+        <li><strong>Tool Management Page</strong> (1-2 days) — Tool status, usage metrics, cost tracking</li>
+        <li><strong>Logs & Audit Page</strong> (2 days) — Searchable AgentTask records, expand to see input/output</li>
+        <li><strong>Runbooks Page</strong> (1-2 days) — Trigger pre-built workflows manually</li>
+    </ul>
+
+    <div class="success">
+        <strong>Phase 2 Success Criteria:</strong>
+        <ul style="margin-top: 10px; margin-bottom: 0;">
+            <li><span class="checkmark">✓</span> OWNER can view all agents and their status</li>
+            <li><span class="checkmark">✓</span> OWNER can enable/disable agents</li>
+            <li><span class="checkmark">✓</span> OWNER can assign/revoke tools</li>
+            <li><span class="checkmark">✓</span> Logs searchable and expandable</li>
+            <li><span class="checkmark">✓</span> Runbooks execute successfully</li>
+        </ul>
+    </div>
+
+    <h2>7.4 Phase 3: Client Portal (Weeks 8-11)</h2>
+
+    <p>Build client-facing portal for project tracking, invoices, and care plans:</p>
+
+    <ul>
+        <li><strong>Client Auth</strong> (2 days) — ClientPortalUser signup/login, JWT tokens</li>
+        <li><strong>Portal Dashboard</strong> (2 days) — View projects, invoices, care plans, reports</li>
+        <li><strong>Portal API Routes</strong> (2-3 days) — Endpoints for client data, read-only access</li>
+        <li><strong>Notification Preferences</strong> (1-2 days) — Clients opt in/out by notification type</li>
+    </ul>
+
+    <div class="success">
+        <strong>Phase 3 Success Criteria:</strong>
+        <ul style="margin-top: 10px; margin-bottom: 0;">
+            <li><span class="checkmark">✓</span> Clients can log in</li>
+            <li><span class="checkmark">✓</span> Clients see their projects with status</li>
+            <li><span class="checkmark">✓</span> Clients see invoices and can pay via Stripe</li>
+            <li><span class="checkmark">✓</span> Clients see care plan usage and billing dates</li>
+            <li><span class="checkmark">✓</span> No internal data leakage to clients</li>
+        </ul>
+    </div>
+
+    <h2>7.5 Phase 4: Team Collaboration Hub (Weeks 12-14)</h2>
+
+    <p>Internal tool for tracking handoffs and team coordination:</p>
+
+    <ul>
+        <li><strong>Handoff Tracking</strong> (2-3 days) — Create handoff, Kanban board (Pending → Completed)</li>
+        <li><strong>Team Assignments</strong> (2-3 days) — Calendar view, capacity indicator, assign team</li>
+        <li><strong>Time Tracking UI</strong> (1-2 days) — Dashboard of who logged time, total hours</li>
+        <li><strong>Notifications</strong> (2 days) — Alert when assigned, handoff awaits acknowledgment</li>
+    </ul>
+
+    <h2>7.6 Phase 5: Integrations Marketplace Page (Weeks 15-16)</h2>
+
+    <p>Public-facing integrations page:</p>
+
+    <ul>
+        <li><strong>Marketing Page</strong> (2-3 days) — Static /integrations.html with grid of integration cards</li>
+        <li><strong>Admin UI</strong> (1-2 days) — Manage IntegrationMarketplaceItem records, reorder, feature</li>
+        <li><strong>API Route</strong> (1 day) — GET /api/integrations with filters</li>
+    </ul>
+
+    <h2>7.7 Phase 6: AI Analytics Engine (Weeks 17-20)</h2>
+
+    <p>Churn prediction and upsell detection:</p>
+
+    <ul>
+        <li><strong>Daily Metrics Collection</strong> (2-3 days) — Populate DailyMetrics at 00:00 UTC</li>
+        <li><strong>Churn Risk Scoring</strong> (3-4 days) — Sub-agent ChurnRiskScorer using Claude</li>
+        <li><strong>Upsell Detection</strong> (3-4 days) — Sub-agent UpsellDetector identifies opportunities</li>
+        <li><strong>Revenue Forecasting</strong> (2-3 days) — Quarterly/annual MRR projection</li>
+        <li><strong>Analytics Dashboard</strong> (2-3 days) — Charts, churn risk list, upsell opportunities</li>
+    </ul>
+
+    <h2>7.8 Phase 7: Notifications System (Weeks 21-22)</h2>
+
+    <p>Deliver alerts to team and clients:</p>
+
+    <ul>
+        <li><strong>Notification Service</strong> (2-3 days) — Queue notifications, mark read/unread</li>
+        <li><strong>Triggers</strong> (2-3 days) — Integrate with agents (invoice due → email, etc.)</li>
+        <li><strong>Slack Integration</strong> (1-2 days) — Send alerts to #dakyworld channel</li>
+        <li><strong>Notification UI</strong> (1 day) — Bell icon, notification center</li>
+    </ul>
+
+    <h2>7.9 Phase 8: Enhanced Case Studies (Weeks 23-24)</h2>
+
+    <p>Expand public case studies:</p>
+
+    <ul>
+        <li><strong>Case Study Database</strong> (1 day) — Admin form to add/edit CaseStudy records</li>
+        <li><strong>Public Page</strong> (2 days) — /case-studies.html with filters and detail views</li>
+        <li><strong>Testimonials</strong> (1-2 days) — Support images, videos, client quotes</li>
+    </ul>
+
+    <h2>7.10 Phase 9: Testing & Documentation (Weeks 25-26)</h2>
+
+    <p>Production readiness:</p>
+
+    <ul>
+        <li><strong>Agent Testing</strong> (2-3 days) — Mock events, verify agent logic, retry testing</li>
+        <li><strong>Portal Testing</strong> (2 days) — Multiple users, role-based access, payment flow</li>
+        <li><strong>Performance Optimization</strong> (2-3 days) — Query optimization, agent speed tuning</li>
+        <li><strong>Load Testing</strong> (1-2 days) — 100+ concurrent agents, event queue stability</li>
+        <li><strong>Documentation</strong> (2-3 days) — Agent setup guide, portal user guide, admin guide</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <!-- PART 8: PLATFORM ENHANCEMENTS -->
+    <h1>8. Six Platform Enhancements Overview</h1>
+
+    <h2>8.1 Enhancement 1: Client Portal</h2>
+    <p><strong>Problem:</strong> Clients have no self-service visibility into projects, invoices, or care plans. Each update requires manual communication.</p>
+    <p><strong>Solution:</strong> Dedicated portal with separate authentication. Clients log in to see:</p>
+    <ul>
+        <li>Active projects with milestones, deliverables, status</li>
+        <li>Invoices with payment links, due dates, payment history</li>
+        <li>Care plan details: monthly cost, hours included, hours used, renewal date</li>
+        <li>Monthly reports (auto-generated by agents)</li>
+    </ul>
+    <p><strong>Impact:</strong> 30-40% reduction in support requests; improves retention; justifies premium pricing.</p>
+
+    <h2>8.2 Enhancement 2: Team Collaboration Hub</h2>
+    <p><strong>Problem:</strong> Handoffs between designers, developers, and operations are informal and error-prone.</p>
+    <p><strong>Solution:</strong> Internal collaboration tool tracking:</p>
+    <ul>
+        <li>Handoff board (Pending → Acknowledged → In Progress → Completed)</li>
+        <li>Team capacity calendar (who is allocated to what, % hours booked)</li>
+        <li>Time tracking dashboard (who logged hours, on what, this week)</li>
+        <li>Automated alerts when assigned or handoff awaits acknowledgment</li>
+    </ul>
+    <p><strong>Impact:</strong> Fewer missed handoffs, better capacity visibility, improved project delivery time.</p>
+
+    <h2>8.3 Enhancement 3: Integrations Marketplace Page</h2>
+    <p><strong>Problem:</strong> Website mentions we work with many tools, but doesn't list them or explain capabilities.</p>
+    <p><strong>Solution:</strong> Public /integrations.html page showing:</p>
+    <ul>
+        <li>Grid of integration cards (Stripe, Google Workspace, WhatsApp, CRM, etc.)</li>
+        <li>Filters by category (email, payment, analytics, communication, design)</li>
+        <li>"Works with Dakyworld" badge system</li>
+        <li>Setup guides and documentation links</li>
+    </ul>
+    <p><strong>Impact:</strong> SEO benefits; builds trust; qualifies leads upfront ("we work with Shopify").
+    </p>
+
+    <h2>8.4 Enhancement 4: AI Analytics Engine</h2>
+    <p><strong>Problem:</strong> Owner has no visibility into churn risks or upsell opportunities until it's too late.</p>
+    <p><strong>Solution:</strong> Daily analytics collection + weekly AI analysis:</p>
+    <ul>
+        <li>Daily KPI snapshots: leads created/converted, proposals/invoices, MRR, hours, team capacity</li>
+        <li>Churn risk scores for care plans (0-100 scale with reasons)</li>
+        <li>Upsell opportunities (clients on low tier with high hours, service lines not yet purchased)</li>
+        <li>Revenue forecasting (quarterly/annual MRR projection)</li>
+    </ul>
+    <p><strong>Impact:</strong> Data-driven growth; catch retention issues 4 weeks early; identify $10k+ upsells.</p>
+
+    <h2>8.5 Enhancement 5: Notifications System</h2>
+    <p><strong>Problem:</strong> Important events (invoice due, care plan renewal, milestone delay) happen silently.</p>
+    <p><strong>Solution:</strong> Multi-channel notification delivery:</p>
+    <ul>
+        <li>In-app notifications (bell icon, notification center)</li>
+        <li>Email digests (daily or event-triggered)</li>
+        <li>Slack alerts (#dakyworld channel)</li>
+        <li>User/client controls to opt in/out</li>
+    </ul>
+    <p><strong>Impact:</strong> Team stays informed; response time improves; clients feel supported.</p>
+
+    <h2>8.6 Enhancement 6: Enhanced Case Studies</h2>
+    <p><strong>Problem:</strong> Only 3 case studies on website; not enough to build credibility with different verticals.</p>
+    <p><strong>Solution:</strong> Expand to 6-8 detailed case studies with:</p>
+    <ul>
+        <li>Industry and service line filters</li>
+        <li>Before/after metrics (time saved, revenue gained, security improved)</li>
+        <li>Client testimonials with video if possible</li>
+        <li>Dedicated landing page (/case-studies) for SEO</li>
+    </ul>
+    <p><strong>Impact:</strong> Higher conversion; better SEO; social proof for different buyer personas.</p>
+
+    <div class="page-break"></div>
+
+    <!-- PART 9: SCALABILITY -->
+    <h1>9. Scalability & Future Phases</h1>
+
+    <h2>9.1 Current Architecture (Phase 1)</h2>
+    <p><strong>Deployment:</strong> In-process scheduler in Node.js (current)</p>
+    <p><strong>Strengths:</strong></p>
+    <ul>
+        <li>Simple, no external dependencies</li>
+        <li>Proven for current workload (4 scheduled jobs, ~100 leads/day)</li>
+        <li>Fast iteration during MVP</li>
+    </ul>
+    <p><strong>Limitations:</strong></p>
+    <ul>
+        <li>Agents block each other (sequential execution)</li>
+        <li>No job persistence across restarts</li>
+        <li>Can't scale beyond single instance</li>
+    </ul>
+
+    <h2>9.2 Phase 1.5: Distributed Agent Execution (Optional)</h2>
+    <p><strong>When:</strong> After Phase 4 (when agent load exceeds current capacity)</p>
+    <p><strong>Upgrade:</strong> Replace in-process scheduler with Redis Bull queue</p>
+    <p><strong>Benefits:</strong></p>
+    <ul>
+        <li>Multiple workers run in parallel (5 Email workers, 1 Analytics worker, etc.)</li>
+        <li>Jobs persist in Redis; surviving server crashes</li>
+        <li>Priority queues (invoice > lead scoring)</li>
+        <li>Job retries and exponential backoff built-in</li>
+        <li>Better observability (Bull Dashboard)</li>
+    </ul>
+    <p><strong>Files to add:</strong></p>
+    <ul>
+        <li><code>server/src/queues/agentQueue.ts</code> — Redis queue setup</li>
+        <li><code>server/src/workers/agentWorker.ts</code> — Worker process</li>
+        <li>Update orchestrator to enqueue instead of execute</li>
+    </ul>
+
+    <h2>9.3 Future Phases (Post-Launch)</h2>
+
+    <h3>Phase 10: Custom Agent Builder UI</h3>
+    <p>Drag-and-drop workflow builder for creating agents without code.</p>
+
+    <h3>Phase 11: Agent Marketplace</h3>
+    <p>Community-contributed agents; buy or share pre-built workflows.</p>
+
+    <h3>Phase 12: API Webhooks for Clients</h3>
+    <p>Clients can trigger custom workflows or receive updates to their own systems.</p>
+
+    <h3>Phase 13: Mobile App</h3>
+    <p>Native iOS/Android for team notifications, time tracking, project updates.</p>
+
+    <h3>Phase 14: Multi-Tenant Support</h3>
+    <p>Manage multiple business clients' operations from one Dakyworld OS instance.</p>
+
+    <h3>Phase 15: Audit Trail UI</h3>
+    <p>Compliance-grade access logs; who changed what, when, and why.</p>
+
+    <div class="page-break"></div>
+
+    <!-- PART 10: DECISIONS & ASSUMPTIONS -->
+    <h1>10. Architecture Decisions & Assumptions</h1>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Decision</th>
+                <th>Chosen Approach</th>
+                <th>Rationale</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Agent Hierarchy</strong></td>
+                <td>Orchestrator → Agent Classes → Sub-agents</td>
+                <td>Clear separation of concerns, enables reusability and testing</td>
+            </tr>
+            <tr>
+                <td><strong>Tool Abstraction</strong></td>
+                <td>Plugin architecture with standard interface</td>
+                <td>Easy to add/remove tools, test independently, track costs</td>
+            </tr>
+            <tr>
+                <td><strong>AI Strategy</strong></td>
+                <td>Hybrid: scripted + AI-powered agents</td>
+                <td>Reliability for critical ops (billing), flexibility for reasoning tasks</td>
+            </tr>
+            <tr>
+                <td><strong>Deployment Model</strong></td>
+                <td>In-process first, upgradeable to Redis Bull</td>
+                <td>Faster MVP, proven at current scale, migration path clear</td>
+            </tr>
+            <tr>
+                <td><strong>Event Model</strong></td>
+                <td>Database changes + webhooks (polling initially)</td>
+                <td>No external event bus needed; can upgrade to Kafka later</td>
+            </tr>
+            <tr>
+                <td><strong>Client Auth</strong></td>
+                <td>Separate email/password from internal User auth</td>
+                <td>Clean separation; can add SSO/OAuth later</td>
+            </tr>
+            <tr>
+                <td><strong>Default AI Model</strong></td>
+                <td>Claude Opus 5 for all agents initially</td>
+                <td>Best reasoning; can downgrade to Haiku for cost later</td>
+            </tr>
+            <tr>
+                <td><strong>High-Risk Agent Safety</strong></td>
+                <td>Dry-run mode enabled by default for billing/email</td>
+                <td>Prevents accidental charges or spam before ops can review</td>
+            </tr>
+            <tr>
+                <td><strong>Cost Tracking</strong></td>
+                <td>Log costs, no enforcement initially</td>
+                <td>Visibility without blocking; owner sets caps after seeing usage</td>
+            </tr>
+            <tr>
+                <td><strong>Config Storage</strong></td>
+                <td>Database, not environment variables</td>
+                <td>Allows owner to modify without code redeploy</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="page-break"></div>
+
+    <!-- PART 11: SUCCESS METRICS -->
+    <h1>11. Verification & Success Metrics</h1>
+
+    <h2>11.1 Phase-by-Phase Success Criteria</h2>
+
+    <h3>Phase 1: Agent Foundation</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> All 8 agent classes created and can execute tasks</li>
+            <li><span class="checkmark">✓</span> 10 tools properly abstracted and callable</li>
+            <li><span class="checkmark">✓</span> AgentTask records logged for every execution</li>
+            <li><span class="checkmark">✓</span> Retry logic working; dead-letter queue populated</li>
+            <li><span class="checkmark">✓</span> No task loss or duplication over 1 week of operation</li>
+        </ul>
+    </div>
+
+    <h3>Phase 2: Agent Management UI</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> OWNER can view all agents and their status</li>
+            <li><span class="checkmark">✓</span> OWNER can enable/disable agents</li>
+            <li><span class="checkmark">✓</span> OWNER can assign/revoke tools to sub-agents</li>
+            <li><span class="checkmark">✓</span> Logs are searchable and expandable</li>
+            <li><span class="checkmark">✓</span> Runbooks trigger and complete successfully</li>
+        </ul>
+    </div>
+
+    <h3>Phase 3: Client Portal</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> Client can log in with email/password</li>
+            <li><span class="checkmark">✓</span> Client can view their projects and milestones</li>
+            <li><span class="checkmark">✓</span> Client can view invoices and pay via Stripe</li>
+            <li><span class="checkmark">✓</span> Client can see care plan hours and renewal dates</li>
+            <li><span class="checkmark">✓</span> No internal data leakage (tested across roles)</li>
+        </ul>
+    </div>
+
+    <h3>Phase 4: Team Collaboration</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> Handoffs trackable from Pending → Completed</li>
+            <li><span class="checkmark">✓</span> Team capacity visible; alerts if over-allocated</li>
+            <li><span class="checkmark">✓</span> Time entries update project progress</li>
+            <li><span class="checkmark">✓</span> Notifications sent when assigned to task</li>
+        </ul>
+    </div>
+
+    <h3>Phase 5: Integrations Page</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> /integrations.html live and indexed by search engines</li>
+            <li><span class="checkmark">✓</span> Integrations categorized and filterable</li>
+            <li><span class="checkmark">✓</span> OWNER can add/remove/reorder integrations</li>
+        </ul>
+    </div>
+
+    <h3>Phase 6: Analytics Engine</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> Daily metrics collected at 00:00 UTC</li>
+            <li><span class="checkmark">✓</span> Churn risk scores computed weekly</li>
+            <li><span class="checkmark">✓</span> Upsell opportunities detected and prioritized</li>
+            <li><span class="checkmark">✓</span> OWNER can act on insights (contact client, adjust pricing)</li>
+        </ul>
+    </div>
+
+    <h3>Phase 7: Notifications</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> Notifications delivered via all channels (in-app, email, Slack)</li>
+            <li><span class="checkmark">✓</span> Users can opt in/out per notification type</li>
+            <li><span class="checkmark">✓</span> No spam or duplicate notifications</li>
+        </ul>
+    </div>
+
+    <h3>Phase 8: Case Studies</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> 6-8 case studies published</li>
+            <li><span class="checkmark">✓</span> Filterable by industry and service</li>
+            <li><span class="checkmark">✓</span> Landing page optimized for SEO</li>
+        </ul>
+    </div>
+
+    <h3>Phase 9: Testing & Docs</h3>
+    <div class="success">
+        <ul style="margin: 0;">
+            <li><span class="checkmark">✓</span> Test suite covers 80%+ of agent logic</li>
+            <li><span class="checkmark">✓</span> Portal tested across browsers and roles</li>
+            <li><span class="checkmark">✓</span> System stable under simulated load (100+ concurrent agents)</li>
+            <li><span class="checkmark">✓</span> Comprehensive documentation (setup, admin, user guides)</li>
+        </ul>
+    </div>
+
+    <h2>11.2 Business Impact Metrics (Post-Launch)</h2>
+
+    <ul>
+        <li><strong>Lead Follow-up Time:</strong> Reduce from manual 4 hours/week to 0 (agents handle)</li>
+        <li><strong>Support Requests:</strong> Decrease 30-40% (client portal self-service)</li>
+        <li><strong>Invoice Collection Time:</strong> Reduce from 45 days to 25 days (automated dunning)</li>
+        <li><strong>Team Efficiency:</strong> 5-10x improvement through automation</li>
+        <li><strong>Care Plan Churn:</strong> Detect and address risks 4 weeks earlier</li>
+        <li><strong>Upsell Success Rate:</strong> Increase from 10% to 30% (AI-powered detection)</li>
+        <li><strong>API Cost:</strong> Keep under $500/month (monitored, capped)</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <!-- EXCLUDED SCOPE -->
+    <h1>12. Excluded Scope (Phase 2+)</h1>
+
+    <p>These valuable features are intentionally deferred to post-launch phases:</p>
+
+    <ul>
+        <li><strong>Custom Agent Builder UI</strong> — No-code workflow creation for business users</li>
+        <li><strong>Multi-Tenant Support</strong> — Manage multiple Dakyworld clients from one OS</li>
+        <li><strong>API Webhooks</strong> — Expose agent system to clients for custom integration</li>
+        <li><strong>Mobile App</strong> — Native iOS/Android for team notifications and time tracking</li>
+        <li><strong>Audit Trail UI</strong> — Compliance-grade access logs for regulatory requirements</li>
+        <li><strong>Agent Marketplace</strong> — Community-contributed agents available for purchase</li>
+        <li><strong>Advanced Scheduling</strong> — Cron expressions, timezone support</li>
+        <li><strong>Cost Optimization</strong> — Auto-downgrade to Haiku for cheap tasks to save money</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <!-- SUMMARY TABLE -->
+    <h1>13. Roadmap Summary</h1>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Phase</th>
+                <th>Duration</th>
+                <th>Key Output</th>
+                <th>Team Impact</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>1</strong></td>
+                <td>4 weeks</td>
+                <td>Core orchestrator, 8 agents, 10 tools</td>
+                <td>Enables all future phases</td>
+            </tr>
+            <tr>
+                <td><strong>2</strong></td>
+                <td>3 weeks</td>
+                <td>/agents UI, full visibility & control</td>
+                <td>OWNER can configure system</td>
+            </tr>
+            <tr>
+                <td><strong>3</strong></td>
+                <td>4 weeks</td>
+                <td>Client portal live</td>
+                <td>30-40% reduction in support load</td>
+            </tr>
+            <tr>
+                <td><strong>4</strong></td>
+                <td>3 weeks</td>
+                <td>Team collaboration hub</td>
+                <td>Handoffs tracked, capacity visible</td>
+            </tr>
+            <tr>
+                <td><strong>5</strong></td>
+                <td>2 weeks</td>
+                <td>Integrations marketplace page</td>
+                <td>Marketing asset, builds trust</td>
+            </tr>
+            <tr>
+                <td><strong>6</strong></td>
+                <td>4 weeks</td>
+                <td>Churn prediction, upsell detection</td>
+                <td>Data-driven growth decisions</td>
+            </tr>
+            <tr>
+                <td><strong>7</strong></td>
+                <td>2 weeks</td>
+                <td>Notification system (email, Slack, in-app)</td>
+                <td>Team stays informed</td>
+            </tr>
+            <tr>
+                <td><strong>8</strong></td>
+                <td>2 weeks</td>
+                <td>Expanded case studies page</td>
+                <td>Better conversion on website</td>
+            </tr>
+            <tr>
+                <td><strong>9</strong></td>
+                <td>2 weeks</td>
+                <td>Testing, docs, optimization</td>
+                <td>Production-ready</td>
+            </tr>
+            <tr style="background-color: #e0e7ff; font-weight: bold;">
+                <td><strong>TOTAL</strong></td>
+                <td><strong>26 weeks</strong></td>
+                <td><strong>Fully autonomous AI-driven business platform</strong></td>
+                <td><strong>5-10x team efficiency</strong></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="page-break"></div>
+
+    <!-- FINAL NOTES -->
+    <h1>14. Next Steps & Implementation</h1>
+
+    <div class="highlight">
+        <strong>Ready to begin?</strong><br><br>
+        This plan provides the roadmap for transforming Dakyworld OS into an intelligent, agent-driven platform. The phased approach ensures:
+        <ul style="margin-top: 15px; margin-bottom: 0;">
+            <li>✓ Early value delivery (agents running by Week 4)</li>
+            <li>✓ Risk mitigation (testing each phase before moving forward)</li>
+            <li>✓ Team alignment (clear milestones and success criteria)</li>
+            <li>✓ Scalability (architecture supports 100x growth)</li>
+        </ul>
+    </div>
+
+    <h2>Recommended Workflow</h2>
+    <ol>
+        <li><strong>Review & Alignment:</strong> Team reviews plan, asks questions, adjusts scope if needed</li>
+        <li><strong>Phase 1 Kickoff:</strong> Begin database setup, orchestrator core, tool abstraction</li>
+        <li><strong>Weekly Status:</strong> Track progress, unblock impediments, adjust timeline</li>
+        <li><strong>Iterative Delivery:</strong> Phases can overlap; sub-tasks run in parallel where possible</li>
+        <li><strong>Internal Launch:</strong> Use agents internally before marketing to clients</li>
+        <li><strong>Refinement:</strong> Adjust based on real-world usage and feedback</li>
+    </ol>
+
+    <h2>Key Files to Create</h2>
+    <p>30+ new files across backend, frontend, and database migrations:</p>
+    <ul>
+        <li><strong>Backend:</strong> Tools, agents, orchestrator, 6 new route files, services (30+ files)</li>
+        <li><strong>Frontend:</strong> 13 new pages (agent dashboard, config, portal, collaboration, analytics)</li>
+        <li><strong>Database:</strong> Prisma migrations adding 13 new models</li>
+        <li><strong>Public Site:</strong> /integrations.html, case studies page, documentation</li>
+    </ul>
+
+    <h2>Timeline Visualization</h2>
+    <pre>
+Week 1-4:   [████████████████████] Phase 1: Agent Foundation
+Week 5-7:   [██████████████] Phase 2: Agent UI
+Week 8-11:  [████████████████████] Phase 3: Client Portal
+Week 12-14: [██████████████] Phase 4: Team Hub
+Week 15-16: [██████████] Phase 5: Integrations Page
+Week 17-20: [████████████████████] Phase 6: Analytics
+Week 21-22: [██████████] Phase 7: Notifications
+Week 23-24: [██████████] Phase 8: Case Studies
+Week 25-26: [██████████] Phase 9: Testing & Docs
+
+Total: 26 weeks (6 months)
+    </pre>
+
+    <div class="footer">
+        <p><strong>Dakyworld OS Agent System & Platform Enhancement Plan</strong></p>
+        <p>Document prepared: August 15, 2026 | Version 1.0</p>
+        <p>This plan is a comprehensive guide for implementing intelligent agent-driven automation in Dakyworld OS.</p>
+        <p>All phases, components, and timelines are subject to refinement based on team feedback and real-world development.</p>
+    </div>
+</body>
+</html>

@@ -1083,3 +1083,44 @@ a.v:hover{color:var(--blue)}
   }
   .cursor-glow,.page-progress{display:none}
 }
+
+/* ── Breadcrumb ──────────────────────────────────────────────────────────────
+   Sits on the cream, between the dark hero and the first content section, on
+   every page except the homepage. It is a real navigation aid on the nested
+   pricing pages, and everywhere else it is what makes the BreadcrumbList in the
+   page's JSON-LD an honest description of the page rather than a claim only a
+   crawler can see. Blue, not lime: this is structure, not an action. */
+.breadcrumb{
+  padding:22px 0 4px;
+  font-size:13px;line-height:1.6;color:var(--muted);
+}
+.breadcrumb ol{
+  display:flex;flex-wrap:wrap;align-items:center;gap:0 8px;
+  margin:0;padding:0;list-style:none;
+}
+.breadcrumb li{display:flex;align-items:center;gap:8px}
+.breadcrumb li+li:before{
+  content:"/";color:var(--line);
+}
+.breadcrumb a{
+  color:var(--muted);
+  border-bottom:1px solid transparent;
+  transition:color .2s var(--ease),border-color .2s var(--ease);
+}
+.breadcrumb a:hover{color:var(--blue);border-bottom-color:var(--blue)}
+.breadcrumb [aria-current="page"]{color:var(--ink);font-weight:500}
+
+@media(max-width:640px){
+  .breadcrumb{padding:16px 0 2px;font-size:12px}
+}
+
+/* ── Honeypot ────────────────────────────────────────────────────────────────
+   Off-screen rather than display:none or hidden. A bot worth anything skips a
+   field the CSS has switched off, so a honeypot that announces itself catches
+   nothing; one that is simply somewhere the eye never goes is still a real,
+   focusable, fillable input as far as a script is concerned. */
+.hp-field{
+  position:absolute!important;
+  left:-9999px;top:auto;
+  width:1px;height:1px;overflow:hidden;
+}
