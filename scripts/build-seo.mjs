@@ -388,12 +388,50 @@ function schemaFor(page, title, description) {
 
 // --- the block that goes into each head ---------------------------------------
 
+/**
+ * The site's Content-Security-Policy, as a meta tag.
+ *
+ * GitHub Pages serves static files and cannot set a response header, so a meta
+ * tag is the only mechanism available here. It is not the same thing:
+ * `frame-ancestors` and `X-Frame-Options` are **ignored** in a meta tag, so
+ * there is no clickjacking protection on this site and cannot be until it sits
+ * behind something that sets headers. SECURITY.md records that.
+ *
+ * What it does buy: an injected script from any origin other than the three
+ * named below will not run, a form cannot be repointed at somebody else's
+ * server, `<base>` cannot be rewritten to redirect every relative link, and no
+ * plugin content can be embedded at all.
+ *
+ * The permissiveness is inherited, not chosen:
+ * - `'unsafe-inline'` on scripts, because contact.html carries an inline block.
+ * - `'unsafe-eval'`, because the Tailwind Play CDN compiles classes at runtime.
+ * - cdn.tailwindcss.com and unpkg.com, because the site loads both.
+ *
+ * Those three CDN entries are the weakest part of this policy and the honest
+ * thing to say about it is that a CSP naming a host does not protect against
+ * that host. See the note in SECURITY.md.
+ */
+const CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "form-action 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://www.googletagmanager.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: https://www.googletagmanager.com https://www.google-analytics.com",
+  "connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com",
+  "frame-src 'none'",
+  "upgrade-insecure-requests",
+].join("; ");
+
 function headBlock(page, title, description) {
   const url = `${ORIGIN}${page.path}`;
   const json = JSON.stringify(schemaFor(page, title, description), null, 2);
 
   return [
     BEGIN,
+    `<meta http-equiv="Content-Security-Policy" content="${attr(CSP)}">`,
     `<link rel="canonical" href="${url}">`,
     `<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">`,
     `<meta name="keywords" content="${attr(page.keywords)}">`,

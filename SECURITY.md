@@ -207,6 +207,50 @@ and JSON-LD. The homepage carries `Organization` + `WebSite` +
 [`404.html`](404.html) is the one page that says `noindex`, which is why it is
 not in that table.
 
+### Headers on a static site
+
+Every page carries a Content-Security-Policy as a `<meta>` tag, because GitHub
+Pages serves files and cannot set a response header. **That is not the same
+thing, and the difference matters in two places:**
+
+- **`frame-ancestors` and `X-Frame-Options` are ignored in a meta tag.** There is
+  no clickjacking protection on dakyworld.com and there cannot be until the site
+  sits behind something that sets headers — Cloudflare in front of Pages is the
+  cheap version; serving it from the Railway service that already sets them
+  properly is the thorough one. Nothing on the site takes input yet, so the
+  exposure today is somebody framing the pages to misrepresent them, not to
+  harvest anything.
+- **HSTS cannot be set either.** GitHub Pages does redirect http→https for a
+  custom domain with "Enforce HTTPS" on, which is the important half; check that
+  setting is on.
+
+What the meta CSP does buy is real: an injected script from an origin other than
+the three named cannot run, a form cannot be repointed at somebody else's
+server, `<base>` cannot be rewritten to redirect every relative link, and no
+plugin content can be embedded at all.
+
+### The two CDN scripts — the largest remaining exposure on the website
+
+Every page loads `https://cdn.tailwindcss.com` and
+`https://unpkg.com/lucide@latest`. Both run with full privileges on
+dakyworld.com, and **a CSP naming a host does not protect against that host**.
+`lucide@latest` is worse than Tailwind: the version is unpinned, so the file
+served can change at any time without anything in this repo changing, and an
+unpinned URL cannot carry an SRI hash either.
+
+This was left alone rather than fixed quietly, because both fixes are real
+changes to a live site and the choice belongs to whoever owns it:
+
+- **lucide** — pin a version and vendor it into `assets/vendor/`, or inline the
+  handful of icons actually used as SVG and drop the dependency. Small, contained,
+  removes an unpinned remote script entirely.
+- **Tailwind** — `cdn.tailwindcss.com` is the Play CDN, which Tailwind's own docs
+  say is not for production: it ships a compiler to every visitor, is the reason
+  the CSP needs `'unsafe-eval'`, and costs a render-blocking download on every
+  page. The fix is a build step producing one small CSS file. That is a project,
+  not a patch — roughly 116 places on the site use a Tailwind class, and the rest
+  is already served by `assets/site.css`.
+
 Analytics is [`assets/analytics.js`](assets/analytics.js), loaded by every page
 and doing **nothing at all** until a Measurement ID is filled in at the top of
 the file — no third-party script fetched, no cookie set. It honours Do Not Track
