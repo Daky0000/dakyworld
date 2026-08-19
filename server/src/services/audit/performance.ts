@@ -18,17 +18,56 @@ import { DISCIPLINE_AGENTS, scoreFindings, sortBySeverity, trimFindings, type Au
  * connected, the section still stands — the findings are all still there, and
  * the summary is assembled from them instead.
  *
- * **What is deliberately absent:** a Lighthouse score, Core Web Vitals, a
- * "performance grade out of 100" borrowed from somewhere. Those need a real
- * browser rendering the page, and this is a small Node process. Reporting a
- * number we did not measure would be the same failure as an invented finding,
- * dressed up as precision.
+ * **Half of it is measured in a real browser** (`services/seoAudit.ts`, from
+ * 19 Aug 2026). Everything a fetch can answer is still answered here for
+ * nothing; first paint, layout shift, blocked interaction, image weight and
+ * links that no longer resolve are rented, because they need a browser that
+ * actually runs the page and this is a small Node process. When the two
+ * overlap, **the measurement wins and the inference is dropped** — a page whose
+ * blocking scripts were counted but whose browser measured no delay is not told
+ * it keeps visitors waiting.
+ *
+ * **What is still deliberately absent** is anybody else's *verdict*: the actor
+ * returns its own 0-100 score and its own issue list, and neither appears
+ * anywhere in this report. Two scoring systems in one document is one too many,
+ * and a score this app cannot re-derive is a number it cannot defend.
  */
 
 /** Above this, a visitor on a phone has already decided the site is slow. */
 const SLOW_MS = 2500;
 const SLUGGISH_MS = 1200;
 const BRISK_MS = 600;
+
+/**
+ * The thresholds a rented browser's numbers are read against.
+ *
+ * These are the published Core Web Vitals bands rather than house opinion, and
+ * that is the point: the owner can look up every one of them, and so can
+ * whoever built their site. `_POOR` is the top of the "needs improvement"
+ * band — above it the measurement is in the red.
+ */
+const FCP_GOOD = 1800;
+const FCP_POOR = 3000;
+const SPEED_INDEX_GOOD = 3400;
+const SPEED_INDEX_POOR = 5800;
+const TBT_GOOD = 200;
+const TBT_POOR = 600;
+const CLS_GOOD = 0.1;
+const CLS_POOR = 0.25;
+
+/** Where a homepage's pictures stop being heavy and start being the problem. */
+const IMAGE_WEIGHT_HEAVY_KB = 2500;
+const IMAGE_WEIGHT_SEVERE_KB = 6000;
+
+/**
+ * The sentence every finding built on a rented browser carries.
+ *
+ * One machine, one connection, once. That is a strong indication of the shape
+ * of a problem and it is not what their customers experienced — which matters
+ * when the person reading has just put the same page through a different tool
+ * and got a different number.
+ */
+const LAB = "Measured by loading the page in a real browser once, from one location, so it shows the shape of the problem rather than what every visitor gets.";
 
 export async function reviewSpeedAndSeo(evidence: AuditEvidence, business: { name: string; trade: string | null; town: string | null }): Promise<DisciplineReport> {
   const findings: AuditFindingDetail[] = [];
@@ -39,6 +78,7 @@ export async function reviewSpeedAndSeo(evidence: AuditEvidence, business: { nam
 
   const page = evidence.page;
   const seo = evidence.seo;
+  const rendered = evidence.rendered;
 
   if (!page || !seo) {
     notes.push(
@@ -115,7 +155,13 @@ export async function reviewSpeedAndSeo(evidence: AuditEvidence, business: { nam
 
   checked.push("How many files the browser must fetch and run before it can show anything");
   const blocking = [...page.scripts.filter((script) => script.blocking), ...page.stylesheets.filter((sheet) => sheet.blocking)];
-  if (blocking.length >= 6) {
+  // Counting the files in the head is a *proxy* for the browser being stuck.
+  // When a real browser has since measured how long it was actually stuck, the
+  // measurement wins: telling somebody their page keeps visitors waiting, when
+  // a browser timed it and it does not, is a false statement about their
+  // business dressed up as arithmetic.
+  const measuredResponsive = rendered?.totalBlockingTimeMs != null && rendered.totalBlockingTimeMs <= TBT_GOOD;
+  if (blocking.length >= 6 && !measuredResponsive) {
     add({
       id: "perf-render-blocking",
       severity: blocking.length >= 12 ? "HIGH" : "MEDIUM",
@@ -164,7 +210,12 @@ export async function reviewSpeedAndSeo(evidence: AuditEvidence, business: { nam
     }
   }
   const unsized = images.filter((image) => !image.hasDimensions).length;
-  if (images.length >= 5 && unsized / images.length > 0.6) {
+  // Unsized images are the usual *cause* of a page that jumps. Cumulative
+  // layout shift is the jumping itself, measured. A page can carry a hundred
+  // unsized images inside fixed containers and never move a pixel, so a page a
+  // browser measured as still is not told that it jumps about.
+  const measuredStill = rendered?.cumulativeLayoutShift != null && rendered.cumulativeLayoutShift <= CLS_GOOD;
+  if (images.length >= 5 && unsized / images.length > 0.6 && !measuredStill) {
     add({
       id: "perf-unsized-images",
       severity: "LOW",
@@ -175,6 +226,134 @@ export async function reviewSpeedAndSeo(evidence: AuditEvidence, business: { nam
       plainly: "The page jumps around while it loads because the pictures have no size set, which is why people tap the wrong thing.",
       recommendation: "Set width and height on every image, or a CSS aspect-ratio.",
     });
+  }
+
+  // --- What only a real browser can answer ---------------------------------
+  //
+  // Everything above is read out of one response: true, checkable, and blind to
+  // what the page does once it starts running. These are the numbers a rented
+  // browser measured. What is deliberately *not* taken from it — its own score,
+  // its own opinion of the title tag — is in services/seoAudit.ts.
+  if (rendered) {
+    checked.push("What a real browser measured: how soon anything appears, whether the page moves, and how long it ignores a tap");
+
+    if (rendered.firstContentfulPaintMs != null && rendered.firstContentfulPaintMs > FCP_GOOD) {
+      const seconds = (rendered.firstContentfulPaintMs / 1000).toFixed(1);
+      const poor = rendered.firstContentfulPaintMs > FCP_POOR;
+      add({
+        id: "perf-first-paint",
+        severity: poor ? "HIGH" : "MEDIUM",
+        title: poor ? "The screen stays blank for too long" : "The first thing appears later than it should",
+        observed: `Nothing appeared on screen for ${seconds} seconds after the page was asked for. Under 1.8 seconds is the mark to beat${poor ? ", and past 3 is the band Google calls poor" : ""}.`,
+        evidence: `First contentful paint: ${Math.round(rendered.firstContentfulPaintMs)}ms${rendered.speedIndexMs != null ? `, speed index ${Math.round(rendered.speedIndexMs)}ms` : ""}. ${LAB}`,
+        impact:
+          "This is the wait a visitor actually feels — not how fast the server answered, but how long they looked at nothing. It is where somebody decides the business is small or the site is broken, and goes back to the search results.",
+        plainly: `Somebody opening their site looks at a blank screen for about ${seconds} seconds before anything at all appears.`,
+        recommendation: "Cut what has to load before the first screen can draw: the web fonts, the slider, and any script in the head that is not needed to show it.",
+      });
+    }
+
+    // Only when the page painted something early and then kept fiddling. A page
+    // that was already reported as slow to its first paint is not told a second
+    // time in a different unit — one fault, one finding, or the owner reads
+    // three problems where they have one.
+    const paintedPromptly = rendered.firstContentfulPaintMs == null || rendered.firstContentfulPaintMs <= FCP_GOOD;
+    if (rendered.speedIndexMs != null && rendered.speedIndexMs > SPEED_INDEX_POOR && paintedPromptly) {
+      add({
+        id: "perf-speed-index",
+        severity: "MEDIUM",
+        title: "The page takes a long time to finish drawing itself",
+        observed: `The page was still filling in after ${(rendered.speedIndexMs / 1000).toFixed(1)} seconds. Under 3.4 seconds is the mark to beat.`,
+        evidence: `Speed index: ${Math.round(rendered.speedIndexMs)}ms. ${LAB}`,
+        impact: "Something is on screen early, but the page keeps rearranging itself for seconds afterwards, which reads as a site that is struggling.",
+        plainly: "The page arrives in pieces over several seconds rather than all at once.",
+        recommendation: "Serve the images at the size they are displayed and in a modern format, and load the ones below the first screen only when somebody scrolls to them.",
+      });
+    }
+
+    if (rendered.totalBlockingTimeMs != null && rendered.totalBlockingTimeMs > TBT_GOOD) {
+      const poor = rendered.totalBlockingTimeMs > TBT_POOR;
+      add({
+        id: "perf-blocking-time",
+        severity: poor ? "HIGH" : "MEDIUM",
+        title: "Taps and scrolls are ignored while the page loads",
+        observed: `The browser was locked up running scripts for ${Math.round(rendered.totalBlockingTimeMs)}ms, and during that time it cannot respond to anything the visitor does. Under 200ms is the mark to beat.`,
+        evidence: `Total blocking time: ${Math.round(rendered.totalBlockingTimeMs)}ms, with ${blocking.length} render-blocking file${blocking.length === 1 ? "" : "s"} on the page. ${LAB}`,
+        impact:
+          "Somebody taps the menu or the phone number, nothing happens, and they tap again. It is the most common reason a visitor decides a site is broken when it is merely busy.",
+        plainly: "For a moment while the page loads, tapping anything does nothing — so people tap twice and end up somewhere they did not mean to go.",
+        recommendation: "Defer the scripts that do not need to run before the page is usable, and drop the tags nobody reads the data from.",
+      });
+    }
+
+    if (rendered.cumulativeLayoutShift != null && rendered.cumulativeLayoutShift > CLS_GOOD) {
+      const poor = rendered.cumulativeLayoutShift > CLS_POOR;
+      add({
+        id: "perf-layout-shift",
+        severity: poor ? "HIGH" : "MEDIUM",
+        title: "The page moves under the reader while it loads",
+        observed: `The content shifted position as the page loaded, scoring ${rendered.cumulativeLayoutShift.toFixed(2)} where anything above 0.1 is movement a person notices${poor ? " and above 0.25 is the band Google calls poor" : ""}.`,
+        evidence: `Cumulative layout shift: ${rendered.cumulativeLayoutShift.toFixed(3)}${unsized ? `, with ${unsized} of ${images.length} images carrying no width and height` : ""}. ${LAB}`,
+        impact:
+          "The reader goes to tap something and it moves out from under their thumb, so they hit the wrong thing. Google measures this one directly, and it is among the numbers that decide where the site ranks.",
+        plainly: "The page jumps around while it is loading, so people tap the wrong thing — usually because the pictures have no size set.",
+        recommendation: "Set width and height on every image, and reserve the space for anything that arrives late: a banner, an advert, a cookie bar.",
+      });
+    }
+
+    // One GOOD rather than four. A section that lists every passing
+    // measurement separately reads as padding, and pushes the real findings
+    // off the first page.
+    if (
+      rendered.firstContentfulPaintMs != null &&
+      rendered.firstContentfulPaintMs <= FCP_GOOD &&
+      (rendered.cumulativeLayoutShift == null || rendered.cumulativeLayoutShift <= CLS_GOOD) &&
+      (rendered.totalBlockingTimeMs == null || rendered.totalBlockingTimeMs <= TBT_GOOD) &&
+      (rendered.speedIndexMs == null || rendered.speedIndexMs <= SPEED_INDEX_GOOD)
+    ) {
+      add({
+        id: "perf-vitals-good",
+        severity: "GOOD",
+        title: "The page loads and settles the way it should",
+        observed: `First paint at ${Math.round(rendered.firstContentfulPaintMs)}ms${rendered.cumulativeLayoutShift != null ? `, layout shift ${rendered.cumulativeLayoutShift.toFixed(2)}` : ""}${rendered.totalBlockingTimeMs != null ? `, ${Math.round(rendered.totalBlockingTimeMs)}ms of blocked interaction` : ""} — every one of them inside the published threshold.`,
+        evidence: `Core Web Vitals measured in a browser. ${LAB}`,
+        impact: "The numbers Google measures for ranking are in the green here. Nothing to spend money on.",
+        plainly: "Their page appears quickly, does not jump about, and responds when you tap it. That is the part most sites get wrong.",
+        recommendation: null,
+      });
+    }
+
+    if (rendered.brokenLinks && rendered.brokenLinks.count > 0) {
+      checked.push("Whether the links on the homepage still go anywhere");
+      add({
+        id: "seo-broken-links",
+        severity: rendered.brokenLinks.count >= 3 ? "HIGH" : "MEDIUM",
+        title: `${rendered.brokenLinks.count} link${rendered.brokenLinks.count === 1 ? " on the homepage goes" : "s on the homepage go"} nowhere`,
+        observed: `${rendered.brokenLinks.count} link${rendered.brokenLinks.count === 1 ? " was" : "s were"} followed from the homepage and did not resolve.`,
+        evidence: rendered.brokenLinks.urls.length
+          ? `Requested and did not answer: ${rendered.brokenLinks.urls.join(", ")}.`
+          : "Every link on the page was requested; these did not answer.",
+        impact:
+          "Anybody who clicks one lands on an error page carrying the business's name, which is the fastest way to look unmaintained. Search engines follow the same links and reach the same page.",
+        plainly: "Some links on their front page are dead — anyone clicking one gets an error page with their name on it.",
+        recommendation: "Point each one at the page it was meant for, or take it off.",
+      });
+    }
+
+    if (rendered.images?.totalKB != null && rendered.images.totalKB > IMAGE_WEIGHT_HEAVY_KB) {
+      const mb = (rendered.images.totalKB / 1024).toFixed(1);
+      add({
+        id: "perf-image-weight",
+        severity: rendered.images.totalKB > IMAGE_WEIGHT_SEVERE_KB ? "HIGH" : "MEDIUM",
+        title: "The pictures on the homepage are far heavier than they need to be",
+        observed: `The homepage's images come to ${mb}MB${rendered.images.oversized ? `, ${rendered.images.oversized} of them larger than the space they are shown in` : ""}${rendered.images.largest ? `. The heaviest single one is ${Math.round(rendered.images.largest.sizeKB)}KB` : ""}.`,
+        evidence: `${rendered.images.total} images measured at ${rendered.images.totalKB}KB in total${rendered.images.largest?.url ? `; heaviest: ${rendered.images.largest.url}` : ""}. ${LAB}`,
+        impact:
+          "Away from wifi that is most of the wait, and it is data the visitor pays for. It is also the cheapest thing on this list to fix: the pictures do not change, only their file size does.",
+        plainly: `Their homepage downloads about ${mb}MB of pictures. On a phone that is slow, and it uses up somebody's data allowance to look at one page.`,
+        recommendation: "Export the images at the size they are actually displayed and save them as WebP. That usually removes three quarters of the weight with no visible difference.",
+      });
+    }
   }
 
   // --- Findability ---------------------------------------------------------
@@ -484,6 +663,25 @@ async function writeSummary(
     `Structured data: ${evidence.seo!.structuredData.join(", ") || "none"}`,
     `Words of visible text: ${evidence.page!.wordCount}`,
   ];
+
+  // What the browser measured, when one was rented. Kept separate and labelled
+  // so the model cannot present a lab number as something every visitor gets.
+  const rendered = evidence.rendered;
+  if (rendered) {
+    const lab: string[] = [];
+    if (rendered.firstContentfulPaintMs != null) lab.push(`First contentful paint: ${Math.round(rendered.firstContentfulPaintMs)}ms (good is under 1800)`);
+    if (rendered.speedIndexMs != null) lab.push(`Speed index: ${Math.round(rendered.speedIndexMs)}ms (good is under 3400)`);
+    if (rendered.totalBlockingTimeMs != null) lab.push(`Total blocking time: ${Math.round(rendered.totalBlockingTimeMs)}ms (good is under 200)`);
+    if (rendered.cumulativeLayoutShift != null) lab.push(`Cumulative layout shift: ${rendered.cumulativeLayoutShift.toFixed(3)} (good is under 0.1)`);
+    if (rendered.brokenLinks) lab.push(`Links followed from the homepage that did not resolve: ${rendered.brokenLinks.count}`);
+    if (rendered.images?.totalKB != null) lab.push(`Weight of the homepage images: ${rendered.images.totalKB}KB across ${rendered.images.total} of them`);
+    if (lab.length) {
+      measurements.push(
+        "— the following were measured by loading the page in a real browser once, from one location; they are an indication, not what every visitor got —",
+        ...lab,
+      );
+    }
+  }
 
   const fallback = () => {
     const worst = findings.find((finding) => finding.severity === "CRITICAL") ?? findings.find((finding) => finding.severity === "HIGH");

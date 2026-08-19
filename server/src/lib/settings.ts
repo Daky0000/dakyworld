@@ -38,12 +38,22 @@ export const SETTING = {
   CAPTURE_ACTORS: "capture.actors",
   /**
    * Which Apify actor takes the homepage screenshots. Blank uses the shipped
-   * default (`apify/screenshot-url`). A setting rather than a constant because
-   * every screenshot actor does the same job at a different price, and
+   * default (`i-scraper/website-screenshot`). A setting rather than a constant
+   * because every screenshot actor does the same job at a different price, and
    * switching to a cheaper one should be a dropdown rather than a deploy —
    * see services/screenshotActors.ts.
    */
   SCREENSHOT_ACTOR: "capture.screenshotActor",
+
+  /**
+   * Which Apify actor opens the page in a real browser for the speed and SEO
+   * review. Blank uses the shipped default
+   * (`smart-digital/complete-seo-audit-tool`). Same reasoning as the
+   * screenshot actor, and the same trap: it is billed per page analysed, so a
+   * replacement has to be re-priced rather than assumed — see
+   * services/seoAudit.ts.
+   */
+  SEO_AUDIT_ACTOR: "capture.seoAuditActor",
 
   /** Powers the spreadsheet analyst — see lib/anthropic.ts. */
   ANTHROPIC_KEY: "anthropic.apiKey",

@@ -1,5 +1,8 @@
 import { fetchSite, type SiteFetch } from "../companyAudit.js";
+import { runSeoAudit, type RenderedMeasurements } from "../seoAudit.js";
 import { PHONE_VIEWPORT_WIDTH, captureHomepage, normaliseSiteUrl, type ShotResult } from "../siteShot.js";
+
+export type { RenderedMeasurements };
 
 /**
  * Everything the audit team argues from, gathered once.
@@ -151,6 +154,11 @@ export interface AuditEvidence {
   robots: RobotsEvidence;
   /** Desktop first, then phone. Either may be absent. */
   shots: { view: "desktop" | "mobile"; result: ShotResult }[];
+  /**
+   * What a real browser measured — first paint, layout shift, broken links.
+   * Null when it could not be run, which is a note rather than a fault.
+   */
+  rendered: RenderedMeasurements | null;
   /** What could not be gathered, in plain words. Never a failure. */
   notes: string[];
   /** Apify, for the pictures. */
@@ -642,6 +650,11 @@ async function checkHttpUpgrade(finalUrl: string): Promise<{ redirects: boolean 
 export interface GatherOptions {
   /** Skip the pictures — for a re-run where the site has not changed. */
   skipScreenshots?: boolean;
+  /**
+   * Skip renting a browser. It is the one paid step here billed per page
+   * rather than per picture, so a dry run or a re-render should not repeat it.
+   */
+  skipRendered?: boolean;
   /** A desktop picture already taken for this address, from a batched run. */
   desktopShot?: ShotResult | null;
 }
@@ -663,6 +676,7 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
       security: null,
       robots: { robotsTxt: null, sitemap: null },
       shots: [],
+      rendered: null,
       notes: [`"${website}" is not a web address this could open, so nothing was checked.`],
       costUsd: 0,
     };
@@ -688,6 +702,7 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
       security: null,
       robots: { robotsTxt: null, sitemap: null },
       shots: [],
+      rendered: null,
       notes,
       costUsd: 0,
     };
@@ -711,6 +726,12 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
   security.redirectsToHttps = upgrade.redirects;
   security.httpNote = upgrade.note;
   if (upgrade.note) notes.push(upgrade.note);
+
+  // A real browser, for the things a fetch cannot see: how long until
+  // something appears, how much the page moves while it settles, and whether
+  // the links on it actually go anywhere. Started before the pictures and
+  // waited for after them, so the two paid steps overlap rather than queue.
+  const renderedRun = options.skipRendered ? null : runSeoAudit(page.finalUrl);
 
   // The pictures. Two viewports, because a site that lays out correctly at
   // 1280 and spills off the screen at 390 passes every check except the one
@@ -743,6 +764,14 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
     );
   }
 
+  let rendered: RenderedMeasurements | null = null;
+  if (renderedRun) {
+    const result = await renderedRun.catch((err: unknown) => ({ measured: null, costUsd: null, note: `The page could not be opened in a real browser: ${(err as Error).message}`, actorId: "" }));
+    rendered = result.measured;
+    if (result.note) notes.push(result.note);
+    costUsd += result.costUsd ?? 0;
+  }
+
   return {
     requested: website,
     finalUrl: page.finalUrl,
@@ -754,6 +783,7 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
     security,
     robots,
     shots,
+    rendered,
     notes,
     costUsd,
   };

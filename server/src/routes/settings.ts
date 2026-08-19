@@ -5,6 +5,7 @@ import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "..
 import { maskSecret } from "../lib/secrets.js";
 import { ApifyError, clearApifyCaches, getAccount, getActorPricing, getActorSchema, getMonthlyUsage } from "../lib/apify.js";
 import { DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS, screenshotActorId } from "../services/screenshotActors.js";
+import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
 import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
 import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from "../services/captureActors.js";
 import { isValidTimezone } from "../services/scheduler.js";
@@ -534,30 +535,60 @@ settingsRouter.put("/capture/actors/:kind", async (req, res, next) => {
  * actors report no per-event price at all, which is itself the answer — those
  * cost platform compute, and batching is what makes them cheap.
  */
+async function describeActorChoice(current: string, shipped: string, known: string[]) {
+  const candidates = await Promise.all(
+    [...new Set([current, ...known])].map(async (actorId) => {
+      const [pricing, schema] = await Promise.all([
+        getActorPricing(actorId).catch(() => null),
+        getActorSchema(actorId).catch(() => null),
+      ]);
+      return {
+        actorId,
+        current: actorId === current,
+        shipped: actorId === shipped,
+        title: schema?.title ?? null,
+        pricingModel: pricing?.model ?? schema?.pricingModel ?? null,
+        /** Per-event prices, when it charges per event rather than for compute. */
+        events: pricing?.events ?? [],
+        perResultUsd: pricing?.perResultUsd ?? null,
+        memoryMbytes: schema?.defaultRunOptions?.memoryMbytes ?? null,
+        readable: Boolean(schema),
+      };
+    }),
+  );
+  return { current, shipped, candidates };
+}
+
 settingsRouter.get("/capture/screenshot-actor", async (_req, res, next) => {
   try {
-    const current = await screenshotActorId();
-    const candidates = await Promise.all(
-      [...new Set([current, ...KNOWN_SCREENSHOT_ACTORS])].map(async (actorId) => {
-        const [pricing, schema] = await Promise.all([
-          getActorPricing(actorId).catch(() => null),
-          getActorSchema(actorId).catch(() => null),
-        ]);
-        return {
-          actorId,
-          current: actorId === current,
-          shipped: actorId === DEFAULT_SCREENSHOT_ACTOR,
-          title: schema?.title ?? null,
-          pricingModel: pricing?.model ?? schema?.pricingModel ?? null,
-          /** Per-event prices, when it charges per event rather than for compute. */
-          events: pricing?.events ?? [],
-          perResultUsd: pricing?.perResultUsd ?? null,
-          memoryMbytes: schema?.defaultRunOptions?.memoryMbytes ?? null,
-          readable: Boolean(schema),
-        };
-      }),
-    );
-    res.json({ current, shipped: DEFAULT_SCREENSHOT_ACTOR, candidates });
+    res.json(await describeActorChoice(await screenshotActorId(), DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Which actor opens the page in a real browser for the speed and SEO review.
+ *
+ * Priced per page analysed rather than per picture, so the number that matters
+ * here is what one audit costs — the audit team asks for exactly one page.
+ */
+settingsRouter.get("/capture/seo-actor", async (_req, res, next) => {
+  try {
+    res.json(await describeActorChoice(await seoActorId(), DEFAULT_SEO_ACTOR, [DEFAULT_SEO_ACTOR]));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Points the speed and SEO measurements at a different actor, or back at the shipped one. */
+settingsRouter.put("/capture/seo-actor", async (req, res, next) => {
+  try {
+    const { actorId } = z.object({ actorId: z.string().max(120).nullish() }).parse(req.body);
+    const wanted = actorId?.trim();
+    if (wanted) await setSetting(SETTING.SEO_AUDIT_ACTOR, wanted);
+    else await deleteSetting(SETTING.SEO_AUDIT_ACTOR);
+    res.json({ current: await seoActorId() });
   } catch (err) {
     next(err);
   }

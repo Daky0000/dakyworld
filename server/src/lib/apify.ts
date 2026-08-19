@@ -386,6 +386,16 @@ export interface ApifyActorSchema {
   title: string | null;
   pricingModel: string | null;
   defaultRunOptions: { build?: string; timeoutSecs?: number; memoryMbytes?: number } | null;
+  /**
+   * The memory band the actor's own build declares.
+   *
+   * Asking for more than `maxMemoryMbytes` is rejected by Apify — a hard
+   * failure, not a silent one — and asking for less than `minMemoryMbytes` is
+   * a run that dies part-way through. Both are outside anything this app can
+   * guess from the job.
+   */
+  minMemoryMbytes: number | null;
+  maxMemoryMbytes: number | null;
   /** Declared input keys; empty when the actor publishes no schema. */
   properties: string[];
   required: string[];
@@ -424,6 +434,8 @@ export async function getActorSchema(actorId: string, force = false): Promise<Ap
       defaultRunOptions: actor.defaultRunOptions ?? null,
       properties: Object.keys(properties),
       required,
+      minMemoryMbytes: typeof build?.actorDefinition?.minMemoryMbytes === "number" ? build.actorDefinition.minMemoryMbytes : null,
+      maxMemoryMbytes: typeof build?.actorDefinition?.maxMemoryMbytes === "number" ? build.actorDefinition.maxMemoryMbytes : null,
       proxyField: proxyEntry?.[0] ?? null,
       proxyRequired: proxyEntry ? required.includes(proxyEntry[0]) : false,
       proxyDefault: (proxyEntry?.[1] as any)?.default ?? null,

@@ -24,21 +24,29 @@ import { getActorSchema, normalizeActorId, displayActorId } from "../lib/apify.j
  *    spending guard fails silently.
  */
 
-/** Apify's own. FREE pricing model, so a run costs platform compute and nothing else. */
-export const DEFAULT_SCREENSHOT_ACTOR = "apify/screenshot-url";
+/**
+ * $0.006 a screenshot, flat, and nothing for the compute underneath it.
+ *
+ * Chosen over `apify/screenshot-url` (Apify's own, free beyond compute) on
+ * 19 Aug 2026. The two are close and which one wins depends on the batch: this
+ * app usually takes **two** pictures of one homepage — desktop and phone, in
+ * two separate runs — and a boot at 2GB dwarfs a pair of flat fees. It loses on
+ * a batch of twenty, where one boot is spread across forty pictures. If lead
+ * capture ever runs big batches through here, re-price before assuming.
+ */
+export const DEFAULT_SCREENSHOT_ACTOR = "i-scraper/website-screenshot";
 
 /**
  * What each key is called on the actors worth using, measured 19 Aug 2026.
  *
- * `apify/screenshot-url` is the shipped default: two million runs, Apify's own,
- * and free beyond compute — which batching makes very cheap, because one boot
- * covers every URL in the run.
+ * `i-scraper/website-screenshot` is the shipped default: $0.006 a picture,
+ * 256MB, media blocked by default. It is the only one here that takes a
+ * viewport *height*, which is why `ScreenshotOptions` carries one — see the
+ * note on `fullPage` below.
  *
- * `i-scraper/website-screenshot` is the one to try if compute ever looks
- * expensive: $0.006 a screenshot flat, but it asks for **256MB** rather than
- * 2GB and blocks media by default, so a batch of twenty is both cheaper and
- * faster. It is the obvious swap, which is why its mapping is here rather than
- * being worked out under pressure later.
+ * `apify/screenshot-url` is Apify's own and the previous default: two million
+ * runs, free beyond compute, and always full-page. It has no `fullPage` and no
+ * viewport height at all, so those keys are simply never sent to it.
  */
 interface ActorProfile {
   /** The key holding the list of pages. */
@@ -129,6 +137,17 @@ export async function screenshotActorId(): Promise<string> {
 
 export interface ScreenshotOptions {
   viewportWidth: number;
+  /**
+   * The browser window height, for the actors that take one.
+   *
+   * It is not a crop — `fullPage` is on and `cropPngTop` does the cutting — but
+   * it decides what the page thinks it is being viewed on, which changes what
+   * lazy-loading brings in and where a sticky header sits. It must be a real
+   * device height: deriving it from the width (the first version used three
+   * quarters) gives a phone a 293px-tall window, which is not a shape any site
+   * has been designed against.
+   */
+  viewportHeight: number;
   /** Milliseconds to wait after load, for fonts and a hero image to arrive. */
   delayMs: number;
 }
@@ -171,22 +190,35 @@ export async function buildScreenshotInput(urls: string[], options: ScreenshotOp
   input[profile.urlsKey] = profile.urlsAsObjects ? urls.map((url) => ({ url })) : urls;
 
   put(profile.viewportWidthKey, options.viewportWidth, "viewport width");
-  put(profile.viewportHeightKey, Math.round(options.viewportWidth * 0.75), "viewport height");
+  put(profile.viewportHeightKey, options.viewportHeight, "viewport height");
   put(profile.formatKey, profile.png ?? "png", "PNG output");
   // "load" rather than networkidle: a page with a chat widget or an ad script
   // never goes idle, and waiting for it burns the whole timeout to produce the
   // same picture.
   put(profile.waitUntilKey, "load", "wait-until");
   put(profile.delayKey, options.delayMs, "delay");
-  // The fold, not the whole page. A full-page shot of a long homepage is taller
-  // than any vision model accepts and it is not what a first impression is.
-  put(profile.fullPageKey, false, "above-the-fold only");
+  // The whole page, then cut down here rather than at the browser.
+  //
+  // `cropPngTop` keeps 2400 rows — the fold plus what the first scroll reveals,
+  // which is what a first impression is made of, and more than one viewport.
+  // Asking the actor for a single viewport instead would silently shorten every
+  // picture to the window height: on a phone that is one screen where the
+  // reviewer expects two and a half. `apify/screenshot-url`, the previous
+  // default, has no such key and is always full-page — this keeps the same
+  // image arriving whichever actor is configured.
+  put(profile.fullPageKey, true, "full-page capture");
 
   for (const [key, value] of Object.entries(profile.extras ?? {})) put(key, value, key);
 
-  // Whichever of the three spellings this one uses, from its own schema.
+  // Whichever of the three spellings this one uses, from its own schema — and
+  // the proxy is turned on whatever the actor's own default says. A datacentre
+  // IP with no proxy in front of it is refused by a good share of small
+  // business sites behind Cloudflare, and "their site blocks automated
+  // browsers" is indistinguishable from "their site is down" in the report
+  // that comes out. Anything else in the actor's default (proxy groups, a
+  // country) is kept.
   if (schema?.proxyField) {
-    input[schema.proxyField] = schema.proxyDefault ?? { useApifyProxy: true };
+    input[schema.proxyField] = { ...(schema.proxyDefault ?? {}), useApifyProxy: true };
   } else if (!schema) {
     input.proxy = { useApifyProxy: true };
   }
@@ -195,16 +227,28 @@ export async function buildScreenshotInput(urls: string[], options: ScreenshotOp
 }
 
 /**
- * How much memory and how long to allow.
+ * How much memory and how long to allow, inside what the actor will accept.
  *
- * Both are cost: a FREE-pricing actor is billed in compute units, which are
- * gigabyte-hours, so 2GB for a minute costs twice what 1GB for a minute does.
- * One page at a time does not need two gigabytes; a batch of twenty does,
- * because the actor keeps several browser contexts open at once.
+ * Memory is cost on a FREE-pricing actor — billed in gigabyte-hours, so 2GB for
+ * a minute costs twice what 1GB does — and on a pay-per-picture actor it is
+ * not cost at all, just a slice of the account's concurrent budget. Either way
+ * the number this app *wants* is a guess from the batch size, and the actor's
+ * own build is the only thing that knows what it can run in.
+ *
+ * So the guess is clamped to the declared band. `i-scraper/website-screenshot`
+ * declares 512–2048MB while its own default run option says 256MB, which is
+ * below its floor: over the ceiling Apify rejects the run outright, and under
+ * the floor it dies part-way through. Neither is a failure worth having when
+ * the actor published both numbers.
  */
-export function runOptionsFor(count: number): { memoryMbytes: number; timeoutSecs: number } {
+export async function runOptionsFor(count: number, actorId?: string): Promise<{ memoryMbytes: number; timeoutSecs: number }> {
+  const wanted = count > 4 ? 2048 : 1024;
+  const schema = await getActorSchema(actorId ?? (await screenshotActorId())).catch(() => null);
+  const floor = schema?.minMemoryMbytes ?? 256;
+  const ceiling = schema?.maxMemoryMbytes ?? 4096;
+
   return {
-    memoryMbytes: count > 4 ? 2048 : 1024,
+    memoryMbytes: Math.min(Math.max(wanted, floor), Math.max(floor, ceiling)),
     // Enough for the boot plus a page each, with headroom, and capped so one
     // stuck site cannot hold a run open for an hour.
     timeoutSecs: Math.min(600, 90 + count * 20),

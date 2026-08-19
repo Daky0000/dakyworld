@@ -242,9 +242,30 @@ different input schema — `urls` vs `link_urls`, `viewportWidth` vs
 `buildScreenshotInput()` maps them and **only ever sends a key the actor's own
 schema declares**. Apify ignores an unknown key silently, so the failure mode of
 guessing is a perfectly successful run at the wrong size with nothing to show
-for it. Shipped default `apify/screenshot-url` (free beyond compute, which
-batching makes cheap); `i-scraper/website-screenshot` is the mapped alternative
-if compute ever looks dear — $0.006 flat, 256MB, blocks media.
+for it.
+
+Shipped default **`i-scraper/website-screenshot`** since 19 Aug 2026: $0.006 a
+picture, flat, nothing for the compute. It beats `apify/screenshot-url` (free
+beyond compute) on the shape this app actually runs — two pictures of one
+homepage in two runs, where a 2GB boot dwarfs a pair of flat fees — and loses on
+a batch of twenty, where one boot is spread across forty pictures.
+
+Declaring a key is not the same as taking the value you meant, and swapping
+actors is where that bites:
+
+- **`fullPage` is sent `true`.** `apify/screenshot-url` has no such key and is
+  always full-page; `cropPngTop` keeps 2400 rows afterwards. Sending `false`
+  silently shortens every picture to the window height.
+- **`viewportHeight` is a real device height** (800 desktop, 844 phone), not a
+  fraction of the width. Three quarters of 390 is a 293px window, which is not
+  a shape any site was designed against.
+- **The proxy is forced on** whatever the actor's own default says, keeping any
+  groups it names. i-scraper defaults it off, and a datacentre IP with no proxy
+  is refused by a good share of small-business sites behind Cloudflare — which
+  arrives in the report as "their site could not be retrieved".
+- **`runOptionsFor` clamps to the band the actor's build declares.** i-scraper
+  declares 512–2048MB while its own default run option says 256MB, below its
+  own floor. Over the ceiling Apify rejects the run outright.
 
 `fetchSite` checks *both* spellings of the host even when the first works, so
 "only www resolves" is found whichever form the scrape happened to record. When
@@ -320,7 +341,8 @@ tool. The result is a `WebsiteAudit` row plus two artefacts: a branded PDF for
 a person to read, and Markdown the cold lead writer argues from.
 
 ```
-evidence.ts   fetch once, measure once, photograph twice (1280 and 390)
+evidence.ts   fetch once, measure once, photograph twice (1280 and 390),
+              and rent a browser once (services/seoAudit.ts)
   ├ ux.ts          job: "vision"  — what a visitor sees, with a box per finding
   ├ performance.ts measured, then job: "text" for the summary only
   ├ content.ts     job: "text"    — the visible words, markup stripped
@@ -337,10 +359,28 @@ annotate.ts   draws the boxes; markdown.ts and pdf.ts render
   exist — in a document that goes out under Dakyworld's name to somebody who
   knows the truth. The speed section's model call writes the summary and cannot
   add a finding.
+- **The speed half is measured in a browser, the verdict is not**
+  (`services/seoAudit.ts`, `smart-digital/complete-seo-audit-tool`, **billed per
+  page analysed** — so `crawlPages` is off and `maxPages` is 1). First paint,
+  speed index, blocked interaction, layout shift, image weight in real KB and
+  links verified by an actual request are things a fetch cannot answer at any
+  price. The actor's own 0-100 score and its own issue list are **deliberately
+  thrown away**: two scoring systems in one document is one too many, and it
+  would report the same missing title tag twice in different words.
+- **Where a measurement and an inference overlap, the measurement wins and the
+  inference is dropped.** Counting render-blocking files is a proxy for the
+  browser being stuck; unsized images are the usual cause of a page that jumps.
+  When a browser has since measured no delay and no movement, neither finding is
+  printed — telling somebody their page keeps visitors waiting, when a browser
+  timed it and it does not, is a false statement dressed up as arithmetic.
 - **A section that could not run is unscored, never zero and never a hundred.**
   `DisciplineReport.scored` exists because the first render read "Content
   100/100 — nobody read the writing on the page": no findings scores a hundred.
-  `overallScore` averages only the sections that ran.
+  `overallScore` averages only the sections that ran — and refuses to publish a
+  number at all below `MIN_SCORED_WEIGHT` (half the weight), because rescaling
+  to the sections that ran is also what let one section at 0.22 weight become
+  the whole site's score. That shipped as "92/100 — Strong" for a site whose
+  certificate had expired and which nobody could open.
 - **Regions are fractions of the image, never pixels.** The picture is cropped,
   shrunk for the model and resized again for the PDF. `clampRegion` also
   rescales an answer given in percentages or in 1024-pixel coordinates, which
@@ -642,6 +682,13 @@ substitute, so headings come out serif. The files are still correct — do not
   the global parser in `index.ts` (`UPLOAD_PATHS`) and each mounts its own
   larger one *inside* its router, after the role check. Adding a third upload
   route means touching both places or it fails at 100 kB.
+- **Both audit actors can be checked without a token.** `tmp/actorWiring.ts`
+  builds each run body against the actor's live published schema and asserts
+  every key sent is one it declares, then reads the actor's own documented
+  example output back through the parser. That is the trap: an undeclared key is
+  ignored in silence, so a misspelt `crawlPages` is not an error — it is a
+  five-page crawl at five times the price. `tmp/renderedFindings.ts` covers what
+  the speed section does with the measurements, including both suppressions.
 - **The audit team can be exercised without a key, a token or a real site.**
   `server/tmp/` is gitignored and is where the throwaway harnesses go: a stub
   screenshot built with `encodePng`, handed in as `desktopShot`, is what

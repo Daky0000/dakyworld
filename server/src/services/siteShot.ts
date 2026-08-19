@@ -32,6 +32,18 @@ import { buildScreenshotInput, runOptionsFor, screenshotActorId } from "./screen
 const VIEWPORT_WIDTH = 1280;
 
 /**
+ * The window heights that go with the two widths.
+ *
+ * A real laptop and a real iPhone 14. The picture is taken full-page and cut to
+ * `keepRows` afterwards, so this is not what decides how much page comes back —
+ * it is what the page is told it is being viewed on, which decides where a
+ * sticky header sits and how much a lazy-loading gallery brings in before the
+ * shutter. Only some actors take it; the rest use their own.
+ */
+const VIEWPORT_HEIGHT = 800;
+const PHONE_VIEWPORT_HEIGHT = 844;
+
+/**
  * A phone viewport, for the second picture the audit team asks for.
  *
  * 390 is an iPhone 14's CSS width and the number the whole trade designs
@@ -45,6 +57,8 @@ export const PHONE_VIEWPORT_WIDTH = 390;
 export interface ShotOptions {
   /** The browser width to render at. Defaults to the desktop viewport. */
   viewportWidth?: number;
+  /** The window height to render at. Defaults to the height that goes with the width. */
+  viewportHeight?: number;
   /**
    * How many rows of the captured page to keep. A phone screenshot is three
    * times as tall for the same content, so keeping the desktop number would
@@ -147,6 +161,7 @@ export function normaliseSiteUrl(website: string): string | null {
 export async function captureHomepages(websites: string[], options: ShotOptions = {}): Promise<Map<string, ShotResult>> {
   const results = new Map<string, ShotResult>();
   const viewportWidth = options.viewportWidth ?? VIEWPORT_WIDTH;
+  const viewportHeight = options.viewportHeight ?? (viewportWidth <= 500 ? PHONE_VIEWPORT_HEIGHT : VIEWPORT_HEIGHT);
   const keepRows = options.keepRows ?? KEEP_ROWS;
 
   // Normalise first, so an unusable address costs nothing and says so.
@@ -174,12 +189,12 @@ export async function captureHomepages(websites: string[], options: ShotOptions 
 
   const built = await buildScreenshotInput(
     wanted.map((entry) => entry.url),
-    { viewportWidth, delayMs: 3000 },
+    { viewportWidth, viewportHeight, delayMs: 3000 },
   );
 
   let run;
   try {
-    run = await startRun(built.actorId, built.input, runOptionsFor(wanted.length));
+    run = await startRun(built.actorId, built.input, await runOptionsFor(wanted.length, built.actorId));
   } catch (err) {
     if (err instanceof ApifyNotConfiguredError) return failAll(err.message);
     return failAll(`No screenshot was taken — Apify would not start the run: ${(err as Error).message}`);
@@ -224,7 +239,11 @@ export async function captureHomepages(websites: string[], options: ShotOptions 
     const item = matchItem(items, entry.url, index, wanted.length);
     const imageUrl = item?.screenshotUrl as string | undefined;
     if (!imageUrl) {
-      results.set(entry.requested, none(`No screenshot came back for ${entry.url} — the run finished without producing an image for it.`));
+      // Some actors say why in the row itself rather than failing the run.
+      // Carrying that sentence through is the difference between "no picture"
+      // and "their site timed out after 30 seconds".
+      const said = typeof item?.error === "string" && item.error.trim() ? ` ${item.error.trim()}` : "";
+      results.set(entry.requested, none(`No screenshot came back for ${entry.url} — the run finished without producing an image for it.${said}`));
       continue;
     }
     results.set(entry.requested, await readShot(entry, item!, imageUrl, finished.finishedAt ?? null, perShot, built, viewportWidth, keepRows));

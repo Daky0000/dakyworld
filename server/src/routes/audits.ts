@@ -84,14 +84,21 @@ const runInput = z
     town: z.string().max(120).optional(),
     /** Skip the pictures, and with them the whole UI/UX section. */
     skipScreenshots: z.boolean().default(false),
+    /**
+     * Skip renting a browser, and with it first paint, layout shift, blocked
+     * interaction, image weight and the broken-link check. The speed section
+     * still runs on what the fetch measured. Charged per page analysed, so
+     * this is the switch for a re-run that only needs the document rebuilt.
+     */
+    skipRendered: z.boolean().default(false),
   })
   .refine((input) => input.leadId || input.website, { message: "Give a leadId or a website." });
 
 /**
  * Runs the four reviews and files the report.
  *
- * Slow — two screenshots, three model calls and a compile — and it says so
- * rather than pretending otherwise. It is a separate call from preparing a
+ * Slow — two screenshots, a rented browser, three model calls and a compile —
+ * and it says so rather than pretending otherwise. It is a separate call from preparing a
  * lead so that whoever is watching can see which part is taking the time.
  */
 auditsRouter.post("/run", requireRole("OWNER"), async (req, res, next) => {
@@ -134,7 +141,7 @@ auditsRouter.post("/run", requireRole("OWNER"), async (req, res, next) => {
       };
     }
 
-    const run = await runWebsiteAudit(subject, { skipScreenshots: input.skipScreenshots });
+    const run = await runWebsiteAudit(subject, { skipScreenshots: input.skipScreenshots, skipRendered: input.skipRendered });
     res.status(201).json({
       auditId: run.auditId,
       report: run.report,
