@@ -1,4 +1,4 @@
-import { fetchSite, type SiteFetch } from "../companyAudit.js";
+import { fetchSite, type CertificateState, type SiteFetch } from "../companyAudit.js";
 import { runSeoAudit, type RenderedMeasurements } from "../seoAudit.js";
 import { PHONE_VIEWPORT_WIDTH, captureHomepage, normaliseSiteUrl, type ShotResult } from "../siteShot.js";
 
@@ -110,6 +110,14 @@ export interface PageMeasurements {
 export interface SecurityEvidence {
   /** The final address. Tells us whether http was upgraded. */
   https: boolean;
+  /**
+   * Set when the page was only readable by going past a certificate warning.
+   *
+   * `https: true` and this both being set is not a contradiction — it is the
+   * exact state of a site with an expired certificate, which is encrypted and
+   * untrusted at the same time, and the report has to say both.
+   */
+  certificate: CertificateState | null;
   /** True when a plain http request ended up on https. */
   redirectsToHttps: boolean | null;
   /** Set when http could not be checked at all, with the reason. */
@@ -496,7 +504,7 @@ function readSeo(html: string, finalUrl: string): SeoTags {
   };
 }
 
-function readSecurity(html: string, headers: Headers, finalUrl: string): SecurityEvidence {
+function readSecurity(html: string, headers: Headers, finalUrl: string, certificate: CertificateState | null): SecurityEvidence {
   const https = finalUrl.startsWith("https://");
 
   const cookies: SecurityEvidence["cookies"] = [];
@@ -533,6 +541,7 @@ function readSecurity(html: string, headers: Headers, finalUrl: string): Securit
 
   return {
     https,
+    certificate,
     redirectsToHttps: null,
     httpNote: null,
     headers: {
@@ -670,7 +679,7 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
       finalUrl: null,
       status: null,
       reachable: false,
-      fetch: { page: null, usedUrl: null, attempts: [], domainDoesNotResolve: false, inconclusive: true, otherHost: null },
+      fetch: { page: null, usedUrl: null, attempts: [], domainDoesNotResolve: false, inconclusive: true, certificate: null, otherHost: null },
       page: null,
       seo: null,
       security: null,
@@ -684,6 +693,14 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
 
   const site = await fetchSite(normalised);
   const page = site.page;
+
+  // Said once, here, so it reaches every section rather than only the security
+  // one. The page was readable; what was not verifiable is who served it.
+  if (site.certificate) {
+    notes.push(
+      `${site.certificate.summary} The page was still read — the same way a visitor gets in, by clicking past the browser's warning — so everything below is what is actually on it. Nothing verified who served it.`,
+    );
+  }
 
   if (!page) {
     notes.push(
@@ -715,7 +732,7 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
 
   const measurements = measurePage(page.html, page.headers, page.finalUrl, page.responseMs, truncated);
   const seo = readSeo(page.html, page.finalUrl);
-  const security = readSecurity(page.html, page.headers, page.finalUrl);
+  const security = readSecurity(page.html, page.headers, page.finalUrl, site.certificate);
 
   // The three small extra questions, together, because they are independent
   // and each one is a round trip.

@@ -1,5 +1,8 @@
 import dns from "node:dns/promises";
 import net from "node:net";
+import http from "node:http";
+import https from "node:https";
+import type { TLSSocket } from "node:tls";
 
 /**
  * What is actually wrong with a company's setup, observed rather than assumed.
@@ -92,6 +95,8 @@ export interface CompanyAudit {
 // --- Fetching, carefully ---------------------------------------------------
 
 const FETCH_TIMEOUT_MS = 12_000;
+/** Hops followed by hand when going past a certificate warning. A browser stops too. */
+const MAX_REDIRECTS = 5;
 /** Enough of the page to read head and footer; not enough to be a memory problem. */
 const MAX_BYTES = 600_000;
 
@@ -123,6 +128,32 @@ interface Fetched {
   headers: Headers;
   html: string;
   responseMs: number;
+}
+
+/**
+ * What certificate the site actually presented, read off the connection.
+ *
+ * Set only when the chain failed to verify and the page was retrieved by going
+ * past the warning anyway. It is the difference between "we could not open it"
+ * and "it is served under a certificate that expired on 3 March — and here is
+ * the rest of the review".
+ */
+export interface CertificateState {
+  /** Node's own reason: CERT_HAS_EXPIRED, ERR_TLS_CERT_ALTNAME_INVALID, … */
+  reason: string;
+  /** Who it was issued to and by, as a browser would show them. */
+  subject: string | null;
+  issuer: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  /** Whole days since it expired. Null when expiry is not what is wrong. */
+  expiredDaysAgo: number | null;
+  /** Valid, but not for this hostname. */
+  hostMismatch: boolean;
+  /** Nobody countersigned it. */
+  selfSigned: boolean;
+  /** One sentence a business owner can act on. */
+  summary: string;
 }
 
 /**
@@ -259,6 +290,233 @@ async function attempt(url: string, userAgent: string): Promise<{ page: Fetched 
   }
 }
 
+/**
+ * Fetches the page the way a person does after clicking **Advanced → Continue**.
+ *
+ * An expired certificate stops `fetch` dead, and until now that ended the whole
+ * review: no look at the page, no speed, no words, no search — a report whose
+ * entire content was "we could not open it", about a site every visitor *can*
+ * open by clicking through the same warning. That is the wrong answer twice
+ * over. The certificate is a real and serious fault and it is **one finding**;
+ * everything behind it is still there to be reviewed, and the business needs to
+ * hear about both.
+ *
+ * So a TLS failure gets one more attempt with verification switched off. Four
+ * things are true about that attempt, and they are what make it defensible
+ * rather than reckless:
+ *
+ *  - **It is scoped to this one request.** `node:https` with
+ *    `rejectUnauthorized: false` on this call only — never
+ *    `NODE_TLS_REJECT_UNAUTHORIZED`, which would disable verification for every
+ *    outbound call the process makes, including the ones carrying API keys.
+ *  - **Nothing of ours is sent.** A GET for a public homepage, with no
+ *    credential, no cookie, no token. The risk of an unverified connection is
+ *    that somebody could tamper with what comes back; the risk of sending
+ *    something to an impostor does not arise, because nothing is sent.
+ *  - **It is never silent.** The page is marked as having been read over an
+ *    unverified connection, and that travels with it into the report.
+ *  - **The certificate is read rather than ignored.** The socket knows exactly
+ *    what it was shown, so the finding can say *expired on this date, issued by
+ *    this authority* instead of "there was a problem".
+ *
+ * Redirects are followed by hand because `https.request` does not, and **every
+ * hop is re-checked against `routability`** — a redirect is an address somebody
+ * else chose, and a loop written to follow them is the easiest place in a
+ * codebase to lose an SSRF guard.
+ */
+async function attemptPastCertificate(
+  url: string,
+  userAgent: string,
+): Promise<{ page: Fetched | null; certificate: CertificateState | null; attempt: FetchAttempt }> {
+  const startedAt = Date.now();
+  let certificate: CertificateState | null = null;
+  let current = url;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    let parsed: URL;
+    try {
+      parsed = new URL(current);
+    } catch {
+      return { page: null, certificate, attempt: { url, ok: false, status: null, failure: "unknown", detail: "not a URL" } };
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { page: null, certificate, attempt: { url, ok: false, status: null, failure: "unknown", detail: "not http" } };
+    }
+
+    const routable = await routability(parsed.hostname);
+    if (routable !== "public") {
+      return {
+        page: null,
+        certificate,
+        attempt: {
+          url: current,
+          ok: false,
+          status: null,
+          failure: routable === "no-such-host" ? "no-such-host" : "not-public",
+          detail: routable,
+        },
+      };
+    }
+
+    let hopResult: InsecureHop;
+    try {
+      hopResult = await oneUnverifiedHop(parsed, userAgent);
+    } catch (err) {
+      const { failure, detail } = classify(err);
+      return { page: null, certificate, attempt: { url: current, ok: false, status: null, failure, detail } };
+    }
+
+    // The first certificate seen is the one the visitor is warned about.
+    certificate = certificate ?? hopResult.certificate;
+
+    if (hopResult.status >= 300 && hopResult.status < 400 && hopResult.location) {
+      current = new URL(hopResult.location, parsed).toString();
+      continue;
+    }
+
+    if (hopResult.status === 403 || hopResult.status === 429) {
+      return {
+        page: null,
+        certificate,
+        attempt: { url: current, ok: false, status: hopResult.status, failure: "blocked", detail: `HTTP ${hopResult.status}` },
+      };
+    }
+
+    return {
+      page: {
+        finalUrl: current,
+        status: hopResult.status,
+        headers: hopResult.headers,
+        html: hopResult.html,
+        responseMs: Date.now() - startedAt,
+      },
+      certificate,
+      attempt: { url: current, ok: true, status: hopResult.status, failure: null, detail: "past the certificate warning" },
+    };
+  }
+
+  return {
+    page: null,
+    certificate,
+    attempt: { url, ok: false, status: null, failure: "unknown", detail: `more than ${MAX_REDIRECTS} redirects` },
+  };
+}
+
+interface InsecureHop {
+  status: number;
+  location: string | null;
+  headers: Headers;
+  html: string;
+  certificate: CertificateState | null;
+}
+
+/** One request with verification off, and whatever certificate it was shown. */
+function oneUnverifiedHop(parsed: URL, userAgent: string): Promise<InsecureHop> {
+  return new Promise((resolve, reject) => {
+    const transport = parsed.protocol === "https:" ? https : http;
+    const request = transport.request(
+      parsed,
+      {
+        method: "GET",
+        // The whole point of this function, and deliberately the only place in
+        // the codebase where this is set.
+        rejectUnauthorized: false,
+        headers: { "User-Agent": userAgent, Accept: "text/html,application/xhtml+xml" },
+        timeout: FETCH_TIMEOUT_MS,
+      },
+      (response) => {
+        const socket = response.socket as TLSSocket;
+        const certificate =
+          parsed.protocol === "https:" && typeof socket?.getPeerCertificate === "function"
+            ? readCertificate(socket, parsed.hostname)
+            : null;
+
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(response.headers)) {
+          if (value == null) continue;
+          try {
+            headers.set(name, Array.isArray(value) ? value.join(", ") : String(value));
+          } catch {
+            /* a header name Headers refuses is one no reviewer needs */
+          }
+        }
+
+        let html = "";
+        let received = 0;
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          resolve({
+            status: response.statusCode ?? 0,
+            location: typeof response.headers.location === "string" ? response.headers.location : null,
+            headers,
+            html,
+            certificate,
+          });
+        };
+
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          received += Buffer.byteLength(chunk);
+          if (received <= MAX_BYTES) html += chunk;
+          else response.destroy();
+        });
+        response.on("end", done);
+        // Destroyed by the size cap above: what arrived is what was wanted.
+        response.on("close", done);
+        response.on("error", (err) => (settled ? undefined : reject(err)));
+      },
+    );
+    request.on("timeout", () => request.destroy(Object.assign(new Error("timeout"), { name: "AbortError" })));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+/** Turns the socket's certificate into the sentence a business owner needs. */
+function readCertificate(socket: TLSSocket, hostname: string): CertificateState | null {
+  const peer = socket.getPeerCertificate();
+  if (!peer || Object.keys(peer).length === 0) return null;
+
+  const reason = socket.authorizationError ? String(socket.authorizationError) : "UNKNOWN";
+  const parsedTo = peer.valid_to ? new Date(peer.valid_to) : null;
+  const parsedFrom = peer.valid_from ? new Date(peer.valid_from) : null;
+  const validTo = parsedTo && !Number.isNaN(parsedTo.getTime()) ? parsedTo : null;
+  const validFrom = parsedFrom && !Number.isNaN(parsedFrom.getTime()) ? parsedFrom : null;
+  const expiredDaysAgo = validTo && validTo.getTime() < Date.now() ? Math.floor((Date.now() - validTo.getTime()) / 86_400_000) : null;
+
+  // A certificate may carry several common names; the first is the one a
+  // browser puts in the padlock.
+  const one = (value: string | string[] | undefined): string | null =>
+    Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
+  const subject = one(peer.subject?.CN);
+  const issuer = one(peer.issuer?.CN) ?? one(peer.issuer?.O);
+  const selfSigned = /SELF_SIGNED/i.test(reason) || (Boolean(subject) && subject === issuer);
+  const hostMismatch = /ALTNAME|HOSTNAME/i.test(reason);
+
+  const summary =
+    expiredDaysAgo != null
+      ? `The certificate expired ${expiredDaysAgo === 0 ? "today" : `${expiredDaysAgo} day${expiredDaysAgo === 1 ? "" : "s"} ago`}, on ${validTo!.toISOString().slice(0, 10)}.`
+      : hostMismatch
+        ? `The certificate is valid but was not issued for ${hostname}.`
+        : selfSigned
+          ? "The certificate signs itself — no authority any browser trusts issued it."
+          : `The certificate could not be verified (${reason}).`;
+
+  return {
+    reason,
+    subject,
+    issuer,
+    validFrom: validFrom ? validFrom.toISOString() : null,
+    validTo: validTo ? validTo.toISOString() : null,
+    expiredDaysAgo,
+    hostMismatch,
+    selfSigned,
+    summary,
+  };
+}
+
 /** `public`, or the reason it is not worth fetching. */
 async function routability(hostname: string): Promise<"public" | "no-such-host" | "private"> {
   const literal = net.isIP(hostname) ? hostname : null;
@@ -293,6 +551,14 @@ export interface SiteFetch {
   domainDoesNotResolve: boolean;
   /** True when we could not tell — a timeout, a TLS error, a WAF, a refusal. */
   inconclusive: boolean;
+  /**
+   * Set when the page could only be read by going past a certificate warning.
+   *
+   * Two things depend on it and both matter: the security section turns it into
+   * a finding with real dates, and every other section is marked as having been
+   * read over a connection nothing verified.
+   */
+  certificate: CertificateState | null;
   /**
    * The other spelling of their host — www against bare, or the reverse — and
    * whether DNS knows it.
@@ -343,6 +609,16 @@ export async function fetchSite(requested: string): Promise<SiteFetch> {
       attempts.push({ ...retry.attempt, detail: `${retry.attempt.detail} (retried as a browser)` });
       if (retry.page) return finish(retry.page, candidate, attempts, candidates);
     }
+
+    // The certificate did not verify. A person facing this screen clicks
+    // Advanced and then Continue, and so does this — because everything the
+    // review is for is on the other side of it, and the certificate itself
+    // becomes the first finding rather than the end of the report.
+    if (first.attempt.failure === "tls") {
+      const past = await attemptPastCertificate(candidate, BROWSER_UA);
+      attempts.push({ ...past.attempt, detail: `${past.attempt.detail || first.attempt.detail} (retried past the certificate warning)` });
+      if (past.page) return finish(past.page, candidate, attempts, candidates, past.certificate);
+    }
   }
 
   const real = attempts.filter((entry) => entry.failure !== "not-public");
@@ -353,11 +629,18 @@ export async function fetchSite(requested: string): Promise<SiteFetch> {
     // Every hostname we know about is unknown to DNS. That is about them.
     domainDoesNotResolve: real.length > 0 && real.every((entry) => entry.failure === "no-such-host"),
     inconclusive: real.some((entry) => entry.failure !== "no-such-host"),
+    certificate: null,
     otherHost: null,
   };
 }
 
-async function finish(page: Fetched, usedUrl: string, attempts: FetchAttempt[], candidates: string[]): Promise<SiteFetch> {
+async function finish(
+  page: Fetched,
+  usedUrl: string,
+  attempts: FetchAttempt[],
+  candidates: string[],
+  certificate: CertificateState | null = null,
+): Promise<SiteFetch> {
   // One DNS lookup, to answer a question the successful fetch cannot: does the
   // *other* spelling of their address work too. Cheap, and it is the difference
   // between finding this fault only when the broken form happens to be the one
@@ -373,7 +656,7 @@ async function finish(page: Fetched, usedUrl: string, attempts: FetchAttempt[], 
     }
   }
 
-  return { page, usedUrl, attempts, domainDoesNotResolve: false, inconclusive: false, otherHost };
+  return { page, usedUrl, attempts, domainDoesNotResolve: false, inconclusive: false, certificate, otherHost };
 }
 
 // --- Reading the markup ----------------------------------------------------
@@ -632,6 +915,23 @@ export async function auditCompany(subject: AuditSubject): Promise<CompanyAudit>
           observed:
             "The site is served over plain HTTP, so Chrome and Safari label it “Not secure” in the address bar. That warning is the first thing a visitor reads about them.",
           evidence: `${finalUrl} — no TLS, and http:// does not redirect to https://.`,
+          service: "website-rescue",
+        });
+      } else if (fetched.certificate) {
+        // Encrypted and untrusted at once. Worse for a visitor than plain http,
+        // which at least loads: this is a full red page they have to dismiss
+        // before the business appears, and it names the business while doing
+        // it. It has to be a finding here and not only in the audit team's
+        // report, because this is the list a cold email argues from — without
+        // it the letter would open on something trivial while the site was
+        // unreachable to every ordinary visitor.
+        const cert = fetched.certificate;
+        add({
+          id: "cert-untrusted",
+          area: "SECURITY",
+          severity: "CRITICAL",
+          observed: `${cert.summary} Anyone opening the site gets a full-page browser warning — “Your connection is not private” — instead of the business. Reaching the site at all means clicking Advanced and choosing to continue anyway, which almost nobody does.`,
+          evidence: `${finalUrl} — ${cert.reason}${cert.validTo ? `, valid until ${cert.validTo.slice(0, 10)}` : ""}${cert.issuer ? `, issued by ${cert.issuer}` : ""}.`,
           service: "website-rescue",
         });
       } else {
@@ -1043,6 +1343,9 @@ const TAGGABLE: Record<string, string> = {
   "one-host-only": "Only one host resolves",
   "site-error": "Site down",
   "no-https": "Not secure",
+  // Worth a list of its own: it is the most urgent thing on this map, and the
+  // easiest sale in it — the fix is free and takes an afternoon.
+  "cert-untrusted": "Certificate warning",
   "not-mobile": "Not mobile",
   "outdated-cms": "Outdated CMS",
   "page-builder": "Page builder site",

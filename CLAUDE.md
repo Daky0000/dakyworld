@@ -314,11 +314,28 @@ to a company whose site loads in a second: the address on file was the apex,
 which has no DNS record, while `www.` answers 200. So the fetch now tries the
 www/apex pair, retries a 403 with a browser user agent, classifies the failure,
 and **only DNS saying "no such host" on every candidate becomes a finding**.
-Everything else — a timeout, a TLS chain Node rejects and a browser repairs, a
-WAF — is a `note`, and notes never reach the drafter. This is the same rule
+Everything else — a timeout, a WAF, a chain Node rejects and a browser repairs —
+is a `note`, and notes never reach the drafter. This is the same rule
 `probeDns` already followed for DNS records, applied where it was missing. The
 drafter and the polish carry it too: a negative claim that is not in the facts
 is a false statement about somebody, made to the one person who can check it.
+
+**A certificate warning is clicked past, not reported as a dead end.** The third
+rung of that ladder retries a TLS failure with verification off — what a person
+does at *Advanced → Continue to site*. It exists because of a real report whose
+entire content was "we could not open it, and here is one thing about your mail
+domain", about a site every visitor reaches by clicking the same button, with the
+expired certificate never named. Now the page is read, every section is marked as
+having come over an unverified connection, and the certificate is the loudest
+finding in the document with the issuer and expiry date read off the socket
+(`cert-untrusted`, CRITICAL; `sec-cert-untrusted` in the audit team; the
+`Certificate warning` tag). **[SECURITY.md](SECURITY.md) is where the scope of
+that relaxation is written down** — one call, no credential sent, never
+`NODE_TLS_REJECT_UNAUTHORIZED`, and `routability()` re-checked on every redirect
+hop. The screenshot half cannot follow: none of the three screenshot actors
+declares an ignore-certificate input, and inventing one would be a key Apify
+silently drops, so `ux.ts` says that in those words rather than blaming a missing
+token.
 
 **Demos** — `src/services/demoBuilder.ts`, `designReferences.ts`,
 `routes/demos.ts`. For a lead with no website or a bad one, the cold email's
@@ -779,6 +796,13 @@ substitute, so headings come out serif. The files are still correct — do not
   fallback, pricing, the dry-run and refusal paths, per-agent concurrency, the
   reaper, shared-memory recall and prompt edits were all verified — a compile
   is not evidence that a loop turns.
+- **The certificate bypass is verified against live broken hosts.**
+  `tmp/certBypass.ts` uses badssl.com — expired, self-signed and wrong-hostname —
+  because a mocked error code proves nothing about what Node does with a real
+  socket. Two of its five cases are negatives and matter more than the
+  positives: a *good* certificate must still be verified, and a domain that does
+  not resolve must still report as not resolving. `tmp/certFinding.ts` runs the
+  whole `auditCompany` path and checks the finding a cold email would argue from.
 - **The agent loop's interrupt and resume are verified against a real
   database.** `tmp/checkpointResume.ts` runs the whole runner against a local
   Anthropic stub using `remember` as the tool — every call leaves a row, so

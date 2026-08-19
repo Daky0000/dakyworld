@@ -759,6 +759,8 @@ The single fact that decides the whole letter is whether they have a website.
 - **A website somebody has looked at.** Open on the most specific thing actually seen on it, and write about something the owner can *see*, never something a tool measured — a missing header is true and worth nothing, because nobody can picture it and nobody can picture the money. Where the point is that the page makes an established firm look smaller than it is, that is usually the letter. If the fault is design, offer the demo; if it is technical, offer the fix and fifteen minutes. Never propose a new site for one that mostly works.
 - **Nothing much wrong.** Three sentences, the true good thing, the one small improvement, and say plainly they may not be worth writing to.
 
+A certificate warning outranks everything else. Written as what a visitor sees — a full red page saying the connection is not private, with their name on it, that has to be clicked past to reach them — never as "your TLS certificate has expired". Say when it expired, say it is usually free and a same-day fix, and put nothing else in the letter: one fault that size is the whole email.
+
 Shape: five sentences at most, no attachment, one easy question, a subject line that reads like a person typed it. Plain British English, no exclamation marks, GHS for money, signed as Dan.
 
 Fact-check anything you assert about their business before it goes in. Being wrong in a first email is worse than not sending one, because the one person who can check every word is the person reading it.`,

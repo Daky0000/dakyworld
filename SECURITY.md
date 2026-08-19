@@ -369,6 +369,45 @@ nothing depends on the builder injecting it.
    on a system holding every client relationship the business has, and it is
    currently off.
 
+## One control deliberately relaxed, in one place
+
+**The audit's site fetch will go past a certificate warning, on purpose.**
+[`fetchSite`](server/src/services/companyAudit.ts) retries a TLS failure once
+with `rejectUnauthorized: false` — the code equivalent of clicking *Advanced →
+Continue to site*. It exists because the alternative was worse: a prospect whose
+certificate had expired got a review whose entire content was "we could not open
+it", about a site every visitor can reach by clicking the same button, and the
+expired certificate — the most urgent thing wrong with the business, and a free
+same-day fix — never appeared in the report at all.
+
+Why this is acceptable here and would not be elsewhere:
+
+- **It is one call, not a mode.** `node:https` with the flag on that request
+  only. It is never `NODE_TLS_REJECT_UNAUTHORIZED`, which would disable
+  verification for every outbound call the process makes, including the ones
+  carrying Anthropic, Stripe and Apify keys. That variable must never be set on
+  this service.
+- **Nothing of ours is sent.** A GET for a public homepage: no credential, no
+  cookie, no token, no body. The exposure from an unverified connection is that
+  what comes *back* may not be genuine; there is nothing going out to intercept.
+- **What comes back is treated as untrusted and labelled as such.** The
+  retrieved HTML is parsed for evidence and shown in a report, never executed,
+  and every section of that report carries a line saying the connection was not
+  verified.
+- **It only fires on a TLS failure.** A good certificate is verified normally, a
+  domain that does not resolve is still reported as not resolving, and the
+  bypass never runs on either. `server/tmp/certBypass.ts` asserts both of those
+  negatives against live hosts on badssl.com alongside the positive cases.
+- **The certificate becomes the loudest finding in the document**
+  (`cert-untrusted`, CRITICAL, with the issuer and the expiry date read off the
+  socket), and the `Certificate warning` tag makes it a filterable list.
+
+The redirect loop that goes with it re-checks `routability()` on **every hop**,
+not only the first. A redirect is an address somebody else chose, and a loop
+written to follow them is the easiest place in a codebase to lose an SSRF guard.
+
+---
+
 ## Two things known and accepted
 
 - **`exceljs` depends on a vulnerable `uuid`** (GHSA-w5hq-g745-h8pq, moderate).

@@ -145,10 +145,17 @@ export async function reviewUx(
 
   const shots = evidence.shots;
   if (!shots.length) {
+    // Three different reasons, and saying the wrong one is how a report gets
+    // argued with. The certificate case is its own sentence because the
+    // screenshot services cannot be told to click past a warning — none of the
+    // actors declares such a key — so this is a real limit rather than a
+    // missing token, and it should read as one.
     notes.push(
-      evidence.reachable
-        ? "No screenshot could be taken, so nobody has seen how the site actually looks — only what it is made of. This is the half a business owner cares about, and none of it was checked. It usually means no Apify token is connected."
-        : "Their site could not be retrieved, so there was nothing to photograph.",
+      evidence.security?.certificate
+        ? "The page itself was read by going past the certificate warning, but no picture of it could be taken: the screenshot service opens a real browser and that browser stops at the same warning, with no way to tell it to continue. So the words, the speed and the search side below are all genuine, and how the page *looks* is the one thing nobody has seen. Fix the certificate and the picture comes back on the next run."
+        : evidence.reachable
+          ? "No screenshot could be taken, so nobody has seen how the site actually looks — only what it is made of. This is the half a business owner cares about, and none of it was checked. It usually means no Apify token is connected."
+          : "Their site could not be retrieved, so there was nothing to photograph.",
     );
     return {
       discipline: "UX",

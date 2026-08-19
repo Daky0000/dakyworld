@@ -175,7 +175,9 @@ Never suggest a new website when the facts describe a site that mostly works. Fi
 
 **If the facts say the design itself is the problem — dated, unclear, nothing above the fold that says what they sell — the ask is the demo.** Offer to redesign their homepage as a working page they can open and compare against their own, free, nothing owed either way, and ask whether they want to see it. Show, do not argue: they have been told their site is dated before and it changed nothing. One line, at the end, plainly.
 
-If the facts describe a technical fault rather than a design one — no HTTPS, a dead site, no way to make contact — do not offer a redesign. Offer the fix and ask for fifteen minutes. Offering to rebuild a site whose real problem is a certificate reads as somebody who wants a bigger job.`;
+If the facts describe a technical fault rather than a design one — an expired or untrusted certificate, no HTTPS, a dead site, no way to make contact — do not offer a redesign. Offer the fix and ask for fifteen minutes. Offering to rebuild a site whose real problem is a certificate reads as somebody who wants a bigger job.
+
+**A certificate warning outranks everything else in the facts, and it is written as what the visitor sees.** Not "your TLS certificate has expired" — that is a sentence for a developer. It is: anyone opening their site right now gets a full red page saying the connection is not private, with their business name on it, and has to click past a warning to reach them. Say when it expired if the facts give a date, say it is usually a same-day fix and free, and do not pile anything else on top. One fault this size is the whole email.`;
 }
 
 function buildPrompt(request: DraftRequest): string {

@@ -54,6 +54,37 @@ export function reviewSecurity(evidence: AuditEvidence, audit: CompanyAudit | nu
         plainly: "Their website shows a “Not secure” warning in the browser. Most people leave when they see it, and it is a half-day fix.",
         recommendation: "Install a certificate (free through Let's Encrypt on almost all hosting) and redirect every http address to https.",
       });
+    } else if (security.certificate) {
+      // Encrypted and untrusted at the same time. This is the single worst
+      // thing that can be wrong with a small business site, because it does not
+      // degrade the experience — it replaces it. Nobody reaches the page
+      // without first being told, by their own browser, not to.
+      const cert = security.certificate;
+      const expired = cert.expiredDaysAgo != null;
+      checked.push("Whether the certificate is valid and trusted");
+      add({
+        id: "sec-cert-untrusted",
+        severity: "CRITICAL",
+        title: expired ? "The security certificate has expired" : "The security certificate is not trusted",
+        observed: `${cert.summary} Every visitor gets a full-page red warning — "Your connection is not private" — instead of the site. Reaching the page at all means clicking Advanced and then choosing to continue anyway.`,
+        evidence: [
+          `${evidence.finalUrl}`,
+          cert.subject ? `issued to ${cert.subject}` : null,
+          cert.issuer ? `issued by ${cert.issuer}` : null,
+          cert.validTo ? `valid until ${cert.validTo.slice(0, 10)}` : null,
+          cert.reason,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        impact:
+          "This is not a warning beside the address — it is a page that has to be dismissed before the site appears, and it names the business while doing it. Effectively every first-time visitor leaves, search engines drop the pages, and any form on the site is untrustworthy while it lasts. It also breaks anything else pointed at the domain, including links in email.",
+        plainly: expired
+          ? "Their website's security certificate ran out, so anyone opening the site gets a full red warning page telling them it is not safe. Almost nobody clicks past that. It is usually a same-day fix and it is free."
+          : "Their website's security certificate is not one browsers accept, so visitors get a full red warning page instead of the site. Almost nobody clicks past that.",
+        recommendation: expired
+          ? "Renew the certificate today and turn on automatic renewal — Let's Encrypt is free and renews itself on almost all hosting. An expiry that happened once with nobody watching will happen again in ninety days."
+          : "Install a certificate from an authority browsers trust, covering both the bare domain and the www form, and turn on automatic renewal.",
+      });
     } else {
       add({
         id: "sec-https-good",
