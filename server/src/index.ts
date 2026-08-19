@@ -30,7 +30,7 @@ import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
-import { ensureAgents, narrowSeededAgents } from "./services/agentRegistry.js";
+import { applyColdEmailPlaybook, ensureAgents, narrowSeededAgents } from "./services/agentRegistry.js";
 import { drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { AnalystError } from "./lib/claude.js";
@@ -255,6 +255,16 @@ bootstrapOwner()
           if (added) console.log(`  → Seeded ${added} agent(s) into the workforce`);
           // The other half of the one-job split: the new agents arrive above,
           // and this narrows the ones they were carved out of. Runs once ever.
+          // The Cold Email Playbook v3 wording, onto the two agents that
+          // write outreach. Runs once; skips a prompt the Owner has rewritten.
+          const playbook = await applyColdEmailPlaybook();
+          if (playbook?.updated.length) {
+            console.log(`  → Cold Email Playbook v3 applied to ${playbook.updated.join(", ")}`);
+          }
+          if (playbook?.keptAsEdited.length) {
+            console.log(`  → Playbook not applied to ${playbook.keptAsEdited.join(", ")} — you have rewritten those prompts.`);
+          }
+
           const narrowed = await narrowSeededAgents();
           if (!narrowed) return;
           if (narrowed.updated.length) {

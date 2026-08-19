@@ -2,6 +2,7 @@ import type { EmailPurpose } from "@prisma/client";
 import { callModel } from "./models/call.js";
 import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
+import { chooseScenario, scenarioForPrompt } from "../services/coldEmailScenarios.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import type { RecipientContext } from "../services/emailContext.js";
 
@@ -33,10 +34,10 @@ const VOICE = `${BRAND_VOICE}
 For email specifically:
 
 - **Start with a greeting.** "Hi Kwame," on its own line, using their real first name. If no real person's name is known — only a company — use "Hello,". Never invent a name, and never open on a bare sentence with no greeting at all: it reads as a broadcast, because it is how one looks.
-- **The first sentence says why you are writing, and names the thing you saw.** Not what Dakyworld does, not who you are. Something about *them* that you could not have said about anybody else. That sentence is the whole difference between a letter and spam.
-- **Every observation is followed by what it costs them.** "Your site has no X" is half a sentence. What it costs is the other half, and it is measured in their currency: a customer who goes back to the search results, an enquiry that arrives at 9pm and is lost, a comparison against a competitor they lose before anyone reads a word. Never in ours — "unprofessional", "not best practice" and "makes it look unfinished" are opinions and they read as sales.
-- Short. A cold email is under 120 words. A client update is under 200. If it needs to be longer, it needs a call instead.
-- One ask, at the end, and make it small: a reply, a fifteen-minute call, a yes-or-no. Never two asks.
+- **The opening says who is writing and what was seen, in that order.** On a cold email that is one clause of identification — "Daky here from Dakyworld" — and then, immediately, something about *them* you could not have said about anybody else. Not what Dakyworld does; not a company introduction. A stranger who cannot tell in one line who is writing has already stopped reading, and an email that identifies itself and then says nothing specific is the same broadcast with a name on it.
+- **Every observation is followed by what it makes harder for them.** "Your site has no X" is half a sentence. The other half is what the reader may notice or what it makes more difficult — a phone visitor having to type the number out by hand, a searcher with less to go on before deciding to click. Not in our vocabulary — "unprofessional", "not best practice" and "makes it look unfinished" are opinions and read as sales. **And not as a prediction:** "customers are leaving your website" states an outcome nobody has measured, and the one person who can check it is the one reading. Say what is harder, not what it has already cost.
+- Short. A cold email is 70–120 words: enough to say who is writing, what was noticed, why it may matter and what happens next, and not a word past that. A client update is under 200. If it needs to be longer, it needs a call instead.
+- One ask, at the end, and make it small. On a **first** email to a stranger the ask offers something rather than requesting something — the screenshot, the exact setting, the short checklist — and never asks for a meeting: time is the biggest thing you can ask of somebody who has not agreed there is a problem yet. A call is what the *second* conversation is for. Never two asks.
 - "I'm writing to introduce" is not a first line.
 - **No sign-off name.** End on the ask. The app appends the signature — a "Dan" typed at the bottom of the body arrives directly above "Dan Kwame Ayipah, Founder", and the reader sees the machinery.`;
 
@@ -69,6 +70,12 @@ const SCHEMA = {
 
 export interface DraftRequest {
   purpose: EmailPurpose;
+  /**
+   * Force a particular playbook scenario rather than letting the findings
+   * choose. This is how the nine that no fetch can establish — a new branch, a
+   * registrar account, a sector incident — get written at all.
+   */
+  scenarioKey?: string | null;
   context: RecipientContext;
   /** What this particular email is for, in the sender's words. */
   brief?: string | null;
@@ -91,18 +98,32 @@ export interface DraftResult {
 
 /** What each purpose is actually trying to achieve. The model gets one of these, not all fourteen. */
 const PURPOSE_BRIEF: Record<EmailPurpose, string> = {
-  COLD_OUTREACH: `A first approach to somebody who has never heard of Dakyworld. Four short paragraphs, in this order, and no others:
+  COLD_OUTREACH: `A first approach to somebody who has never heard of Dakyworld. About 70–120 words. Four short paragraphs, in this order, and no others:
 
 1. The greeting. "Hi <first name>," on its own line.
-2. Why you are writing, in one sentence, naming the thing you actually saw and where you saw it. If the facts contain a line marked THE STRONGEST THING TO OPEN ON, that is the one — open on it. Never open on a low-severity finding while a critical or high one is sitting in the facts: leading with missing link-preview tags at a business whose site has been insecure for years tells them nobody really looked.
-3. What it costs them, in one or two sentences, in customers and enquiries rather than adjectives. Bring in one supporting fact from the record if there is a good one — a review count with nowhere to send anybody is the strongest support there is. Two observations at most in the whole email; one is usually better.
-4. The ask. Small, specific, easy to answer: fifteen minutes, or a yes-or-no. If the fix is genuinely small, say so — "it is a fix, not a rebuild" lowers the cost of replying more than any adjective.
+2. **Who you are and why you are writing, in the first two lines.** "Daky here from Dakyworld. I was looking at <their address> before writing and noticed..." — the sender is named *before* the observation, not after it and not never. A stranger who cannot tell in one line who is writing and why has already decided. No company introduction beyond that clause: one sentence of identification, then straight to what was seen.
+3. The observation and what it makes harder. **State the confirmed fact plainly, then what the reader may notice or what it makes harder — never what it has already cost them.** "People using a phone may find it harder to read the page or contact you" is the shape. "Customers are leaving your website" is a prediction nobody has evidence for, and it is the sentence that gets a reply saying so. One issue only.
+4. The ask. **One question, answerable in one line, and it offers something rather than requesting something**: the screenshot, the exact setting, the short checklist. Not a meeting — a first email does not ask for time. "Would you like me to send the screenshot?" is the shape.
 
-Never list the findings. Never pitch the service catalogue. Never explain what a technical thing is at length — if the owner would not know the term, say it in plain words the first time and move on.
+Never list the findings. Never pitch the service catalogue. **No price, ever, in a first email** — a number belongs in a proposal, after they understand the issue and want help, and quoting one now asks them to judge a cost before they have agreed there is a problem.
+
+**Write it for a busy owner, not a developer.** Do not use SPF, DMARC, DKIM, DNS, robots.txt, Open Graph, LCP, TTFB, metadata, structured data, schema, viewport, canonical, TLS or page source. Explain the issue in plain words; in most first emails the term can be left out completely, and where one genuinely helps it comes *after* the plain explanation, never instead of it.
+
+**Never name a private individual** — not the person on the domain account, not a former supplier, not an employee, not whoever owns the mailbox on the contact page. State the business question without identifying anybody.
+
+**Separate what was confirmed from what might follow.** A check that failed, timed out or did not complete is not a finding: "not checked" is not "broken". Do not claim anything caused lost sales, fraud or complaints unless the evidence in front of you proves it did.
 
 If the facts carry a line saying THERE IS NO STRONG CASE HERE, do not write the four paragraphs above. Write three sentences at most, say the true good thing about their setup, offer the one small improvement that was actually found, and set confidence low — then say in the rationale that this business is doing fine and may not be worth writing to. That is a more useful answer than a polished email about nothing, and the person reading it can still send it if they disagree.`,
-  FOLLOW_UP:
-    "A follow-up to an email that was not answered. Assume they are busy, not uninterested. Do not guilt them, do not say 'just circling back' or 'bumping this'. Add one new piece of value or a sharper version of the ask, and make it easy to say no.",
+  FOLLOW_UP: `A follow-up to an email that was not answered. Assume they are busy, not uninterested. Do not guilt them, and never write "just checking in", "circling back" or "bumping this" — each of those is an admission that there was nothing new to say.
+
+**Every follow-up carries something the last one did not.** The sequence runs day 0, 3, 8, 14 and 21, and each touch has its own job:
+
+- **Day 3** delivers the evidence the first email offered — the screenshot, the setting, the list. No second sales question with it: "Nothing needed from you, I said I would send it" is the whole message.
+- **Day 8** is a comparable example, and only when the business, the problem and the result really are comparable. If there is no honest comparison, skip this one rather than inventing a reason to write.
+- **Day 14** explains how ongoing support prevents this class of problem — but only if they have engaged. If they have not, skipping is better than a forced sales message.
+- **Day 21** closes it. Say plainly that you will not keep writing, hand over the finding so they can give it to whoever already looks after their site, and make clear no reply is needed. Do not sell in the last message: it is the one people remember.
+
+Keep the same one issue throughout. A follow-up that raises a second problem is a new cold email wearing a thread.`,
   MEETING_REQUEST:
     "Asking for a specific conversation. Say what the call would cover, say how long it takes (thirty minutes), and offer to work around them rather than listing your own availability.",
   PROPOSAL_COVER:
@@ -156,7 +177,7 @@ Make the cost concrete and theirs. "A customer who searches for a dentist in Osu
 
 One concrete sentence about their situation beats three about ours.
 
-**The ask is the demo.** Offer to build them a page — their name, their trade, their services on it — free, with nothing owed either way, and ask whether they want to see it. That is a far smaller thing to say yes to than a call about a project, and it is the whole point of writing to a business with no website. One line, at the end, plainly: no "no-obligation", no "absolutely free", no exclamation mark.`;
+**The ask offers them something small.** Playbook v3's default here is to offer the outline — "would you like me to outline what that website would need to do?" — which is one line to answer and commits nobody to anything. **Offering to build a free demo page is also allowed** and is the stronger version where the record shows real demand with nowhere to land, because it is the argument itself rather than a claim about it; if you use it, say it in one plain line with no "no-obligation", no "absolutely free" and no exclamation mark. Either way it is an offer, never a request: do not ask for a call or a meeting in a first email.`;
   }
 
   return `They have a website and somebody has looked at it. The facts include what was checked on it and what it looks like.
@@ -173,11 +194,13 @@ Say what it costs them, not what it looks like, and say it in people: the builde
 
 Never suggest a new website when the facts describe a site that mostly works. Fixing what was observed is the honest offer, and it is a smaller ask.
 
-**If the facts say the design itself is the problem — dated, unclear, nothing above the fold that says what they sell — the ask is the demo.** Offer to redesign their homepage as a working page they can open and compare against their own, free, nothing owed either way, and ask whether they want to see it. Show, do not argue: they have been told their site is dated before and it changed nothing. One line, at the end, plainly.
+**If the facts say the design itself is the problem — dated, unclear, nothing above the fold that says what they sell — offering to redesign the homepage as a page they can open and compare against their own is the strongest ask available.** Free, nothing owed either way, one plain line at the end. Show, do not argue: they have been told their site is dated before and it changed nothing. Where a scenario names a smaller ask, take the smaller one — the rule this serves is that a first email offers something rather than requesting something, and the smallest honest offer is the easiest yes.
 
 If the facts describe a technical fault rather than a design one — an expired or untrusted certificate, no HTTPS, a dead site, no way to make contact — do not offer a redesign. Offer the fix and ask for fifteen minutes. Offering to rebuild a site whose real problem is a certificate reads as somebody who wants a bigger job.
 
-**A certificate warning outranks everything else in the facts, and it is written as what the visitor sees.** Not "your TLS certificate has expired" — that is a sentence for a developer. It is: anyone opening their site right now gets a full red page saying the connection is not private, with their business name on it, and has to click past a warning to reach them. Say when it expired if the facts give a date, say it is usually a same-day fix and free, and do not pile anything else on top. One fault this size is the whole email.`;
+**A certificate warning outranks everything else in the facts, and it is written as what the visitor sees.** Not "your TLS certificate has expired" — that is a sentence for a developer. It is: a browser may show a warning before somebody can open the site, so visitors may stop at that screen. Say when it expired if the facts carry a date.
+
+**Do not say it can be fixed the same day, and do not say it is free.** Neither has been established from outside: the cause may be the hosting, a renewal setting or something else, and none of that is visible from here. Say the cause still needs checking and offer to check it. Promising a same-day fix to somebody whose problem turns out to be a lapsed hosting account is the kind of confident sentence that loses the second email.`;
 }
 
 function buildPrompt(request: DraftRequest): string {
@@ -199,6 +222,15 @@ function buildPrompt(request: DraftRequest): string {
 
   const chosen = angle(context);
   if (chosen) parts.push("", "The angle for this one:", chosen);
+
+  // The scenario, when the audit found one. It is chosen in code from the
+  // finding ids rather than left to the model, because "which of the eighteen
+  // letters is this" is a decision with evidence behind it, and a drafter asked
+  // to pick for itself picks whichever reads most neatly.
+  if (request.purpose === "COLD_OUTREACH" && context.findingIds?.length) {
+    const scenario = chooseScenario(context.findingIds, request.scenarioKey ?? null);
+    if (scenario) parts.push("", scenarioForPrompt(scenario));
+  }
 
   if (request.extraFacts?.length) {
     parts.push("", "The sender has added these facts for this email specifically:", request.extraFacts.map((fact) => `- ${fact}`).join("\n"));

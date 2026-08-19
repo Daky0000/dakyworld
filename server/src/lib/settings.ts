@@ -171,6 +171,13 @@ export const SETTING = {
    */
   AGENT_ONE_JOB_PASS: "agents.oneJobPass",
   /**
+   * The date the Cold Email Playbook v3 wording was pushed to the two outreach
+   * agents, or blank if it has not been. Same mechanism and same reason as the
+   * one-job pass above: `ensureAgents()` only ever creates, so re-wording a
+   * seed changes nothing on a database that already holds the old text.
+   */
+  AGENT_COLD_EMAIL_V3: "agents.coldEmailPlaybookV3",
+  /**
    * Hard ceiling on what one tool call may spend, in USD. The tool layer
    * refuses anything above it rather than trusting an agent's arithmetic.
    */

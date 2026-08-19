@@ -337,10 +337,59 @@ declares an ignore-certificate input, and inventing one would be a key Apify
 silently drops, so `ux.ts` says that in those words rather than blaming a missing
 token.
 
+**The cold email playbook is the authority, and it is v3** —
+[`server/docs/cold-email-playbook.md`](server/docs/cold-email-playbook.md). It
+is the owner's doctrine, and the code implements it rather than the other way
+round; where the two disagree the playbook is right and the code is the bug.
+Four things in it overturn what the drafter used to do, so check before
+"restoring" any of them:
+
+- **The sender identifies himself in the first two lines**, before the
+  observation. The drafter used to be told the opposite — "not who you are" —
+  on the theory that a stranger only cares about themselves. A stranger who
+  cannot tell in one line who is writing has already stopped reading.
+- **Say what it makes harder, never what it has cost.** "People on a phone may
+  find it harder to contact you", not "customers are leaving your website". The
+  second states an outcome nobody measured to the one person who can check it.
+- **No price in a first email**, and **no meeting as the ask.** The ask offers
+  something — the screenshot, the setting, the checklist. Time is the largest
+  thing you can request from somebody who has not yet agreed there is a problem.
+- **No same-day or free promise on a certificate.** The cause is not visible
+  from outside; it may be hosting or a renewal setting. This one is a
+  correction: the sentence was added on 19 Aug and the playbook removed it.
+
+`coldEmailScenarios.ts` holds the **eighteen scenarios as data** — signals,
+subject, guidance, the one question, and the guard that belongs to that letter
+and no other. Eleven are chosen in code from the finding ids the audit produced,
+worst first; seven need a person to supply the evidence (a new branch, a
+registrar account, a sector incident) and are never chosen automatically.
+`chooseScenario()` returning null is a real answer and means there is no email.
+
+`coldEmailChecks.ts` runs the **nine of the fifteen checklist items that are
+arithmetic on the rendered text** — unresolved merge fields, the opt-out,
+identification, one question, unsupported "most people" claims, marketing
+filler, jargon, the subject, the length, the price — against the *polished*
+text, because that is what would actually be sent. Blocking failures surface at
+the top of the composer in red. The other six are judgement and are listed for
+the reviewer, never ticked by code. The reply-based opt-out is appended by
+`emailRender` rather than asked of the model: a rule that must hold on every
+message cannot depend on a model remembering it.
+
+The same doctrine lives in three places that must agree — the playbook, the
+drafter, and the `outreach.writer` / `outreach.followup` prompts — plus the
+`dakyworld-cold-email` skill for writing outside the app.
+`applyColdEmailPlaybook()` is the one-off pass that puts the v3 wording onto
+agents that already exist, marked by `agents.coldEmailPlaybookV3` and skipping
+any prompt the Owner has rewritten.
+
 **Demos** — `src/services/demoBuilder.ts`, `designReferences.ts`,
-`routes/demos.ts`. For a lead with no website or a bad one, the cold email's
-ask is a free demo rather than a call: far easier to say yes to, and it is the
-argument itself rather than a claim about the argument. When they agree,
+`routes/demos.ts`. For a lead with no website or a bad one, the demo is the
+strongest thing to offer instead of a call: far easier to say yes to, and it is
+the argument itself rather than a claim about the argument. **Playbook v3
+narrowed where it appears** — a first email's default ask is the smaller
+artefact (the outline, the screenshot, the checklist), and the demo is the
+stronger option where the design or the absence of a site is the whole story.
+Either way it is an offer, never a request for time. When they agree,
 `buildDemo` runs — design direction first (`job: "research"` → Perplexity, with
 `search_domain_filter` pinned to variant.com, themeforest.net, motionsites.ai
 and aura.build, so the style comes from published work rather than a model's
@@ -796,6 +845,12 @@ substitute, so headings come out serif. The files are still correct — do not
   fallback, pricing, the dry-run and refusal paths, per-agent concurrency, the
   reaper, shared-memory recall and prompt edits were all verified — a compile
   is not evidence that a loop turns.
+- **The playbook engine is checked without a key or a database.**
+  `tmp/coldEmailPlaybook.ts` asserts the scenario chooser picks the certificate
+  over four other findings, that a manual scenario can be asked for by name but
+  never fires on its own, that no findings yields no scenario rather than an
+  invented one — and runs the checklist over a deliberately terrible draft to
+  prove each of the nine items catches what it claims to.
 - **The certificate bypass is verified against live broken hosts.**
   `tmp/certBypass.ts` uses badssl.com — expired, self-signed and wrong-hostname —
   because a mocked error code proves nothing about what Node does with a real

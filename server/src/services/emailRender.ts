@@ -142,7 +142,21 @@ export async function renderEmail(args: {
   forPreview?: boolean;
 }): Promise<RenderedEmail> {
   const subject = fillPlaceholders(args.subject, args.variables).trim();
-  const body = fillPlaceholders(args.body, args.variables).trim();
+  const filled = fillPlaceholders(args.body, args.variables).trim();
+
+  // The reply-based opt-out, on every cold email, added here rather than asked
+  // of the drafter.
+  //
+  // There is already an unsubscribe link in the footer, and it is not the same
+  // thing. A link is a mechanism; this is a sentence in the sender's own voice
+  // that costs the reader one word to use, and on a personal note from one
+  // person it is the form that actually gets used — which is the point, because
+  // an easy "stop" is worth more to a sending reputation than a complaint. It
+  // is appended rather than prompted for because a rule that must hold on every
+  // single message cannot depend on a model remembering it.
+  const body = args.includeUnsubscribe && !carriesOptOut(filled) ? `${filled}
+
+${OPT_OUT_SENTENCE}` : filled;
   const [sign, profile, shell] = await Promise.all([signature(), companyProfile(), logoSources(args.forPreview ?? false)]);
   const optOut = args.includeUnsubscribe ? await unsubscribeUrl(args.toEmail, args.appUrl) : null;
 
@@ -152,6 +166,15 @@ export async function renderEmail(args: {
     html: toHtml(body, sign, optOut, { profile, ...shell }),
     text: toText(body, sign, optOut, profile),
   };
+}
+
+/** The wording the playbook requires, in Dan's own voice. */
+export const OPT_OUT_SENTENCE = `If you'd rather I didn't write again, reply "stop" and I'll close this off.`;
+
+/** Already there, however the drafter happened to word it. */
+function carriesOptOut(body: string): boolean {
+  const lower = body.toLowerCase();
+  return /reply\s+["“']?stop/.test(lower) || /rather i didn.?t write again/.test(lower);
 }
 
 /**

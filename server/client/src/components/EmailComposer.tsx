@@ -873,8 +873,58 @@ function DraftReport({
   // technical checks alone, and those produce letters about DNS records.
   const unseen = Boolean(prep && !prep.shot && prep.notes.some((note) => note.toLowerCase().includes("screenshot")));
 
+  const checks = result.checks;
+  const scenario = result.scenario;
+
   return (
     <div className="mb-5 space-y-3">
+      {/* The playbook's checklist, above everything else it says. A blocking
+          failure is not advice — it is an email that must not go out as it is,
+          and burying it under the research would mean nobody read it until the
+          prospect did. */}
+      {checks && checks.blocking.length > 0 && (
+        <div className="rounded-2xl border border-red-300 bg-red-50 p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-red-900">
+            Do not send this yet — {checks.blocking.length} check{checks.blocking.length === 1 ? "" : "s"} failed
+          </div>
+          <ul className="space-y-1 text-xs leading-relaxed text-red-900">
+            {checks.blocking.map((check) => (
+              <li key={check.id}>
+                <span className="font-medium">{check.label}.</span> {check.detail}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {checks && checks.warnings.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-amber-900">Worth a second look</div>
+          <ul className="space-y-1 text-xs leading-relaxed text-amber-900">
+            {checks.warnings.map((check) => (
+              <li key={check.id}>
+                <span className="font-medium">{check.label}.</span> {check.detail}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* Which of the eighteen letters this is, and what it deliberately left
+          out — so "why is this not about the slow homepage" has an answer. */}
+      {scenario && (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">
+            Playbook scenario {scenario.number}
+          </div>
+          <p className="text-sm font-medium text-ink">{scenario.name}</p>
+          <p className="mt-1 text-xs text-ink/60">Should reach: {scenario.contact}</p>
+          {scenario.guard && <p className="mt-2 text-xs leading-relaxed text-ink/70">Must not: {scenario.guard}</p>}
+          {scenario.alsoAvailable.length > 0 && (
+            <p className="mt-2 text-xs text-ink/50">
+              Also found and left for another time: {scenario.alsoAvailable.map((other) => other.name).join("; ")}
+            </p>
+          )}
+        </div>
+      )}
       {/* The one thing worth interrupting for: there may be no reason to send
           this at all. A business that is doing fine, told by a stranger that it
           is not, remembers that — so this is louder than the rest. */}

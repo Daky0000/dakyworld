@@ -1231,11 +1231,41 @@ export interface LeadResearch {
 }
 
 /** What the composer gets back from POST /emails/draft. */
+/** One item of the playbook's pre-send checklist, as the server ran it. */
+export interface PreSendCheck {
+  id: string;
+  label: string;
+  severity: "BLOCK" | "WARN";
+  passed: boolean;
+  detail: string;
+}
+
 export interface EmailDraft {
   subject: string;
   body: string;
   rationale: string;
   confidence: number;
+  /** Which of the playbook's eighteen scenarios this is, when the findings chose one. */
+  scenario?: {
+    key: string;
+    number: number;
+    name: string;
+    contact: string;
+    ask: string;
+    guard: string | null;
+    matched: string[];
+    alsoAvailable: { key: string; name: string; matched: string[] }[];
+  } | null;
+  /** The scenarios a person can pick, which need evidence no check can supply. */
+  pickableScenarios?: { key: string; number: number; name: string }[];
+  /** The pre-send checklist. `sendable` is false when something blocking failed. */
+  checks?: {
+    checks: PreSendCheck[];
+    sendable: boolean;
+    blocking: PreSendCheck[];
+    warnings: PreSendCheck[];
+    humanMustConfirm: string[];
+  } | null;
   model: string;
   variables: Record<string, string>;
   facts: string[];

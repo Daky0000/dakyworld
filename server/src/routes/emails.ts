@@ -4,6 +4,8 @@ import { prisma } from "../lib/prisma.js";
 import { requireRole } from "../middleware/auth.js";
 import { mailerConfigured } from "../lib/mailer.js";
 import { draftEmail } from "../lib/emailDrafter.js";
+import { preSendCheck } from "../services/coldEmailChecks.js";
+import { chooseScenario, manualScenarios } from "../services/coldEmailScenarios.js";
 import { polishEmail } from "../lib/emailPolish.js";
 import { caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
 import { analystConfigured } from "../lib/anthropic.js";
@@ -187,6 +189,13 @@ const draftInput = z.object({
   existingBody: z.string().nullish(),
   extraFacts: z.array(z.string().max(500)).max(20).optional(),
   /**
+   * Force one of the playbook's eighteen scenarios instead of letting the
+   * findings choose. Required for the nine no automated check can establish —
+   * a new branch, a registrar account, an incident in their sector — where the
+   * person writing is the one supplying the evidence.
+   */
+  scenarioKey: z.string().max(40).nullish(),
+  /**
    * Whether to go and look at the business before writing to it.
    * "auto" looks when nobody has, or when the last look has gone stale.
    */
@@ -249,6 +258,7 @@ emailsRouter.post("/draft", async (req, res, next) => {
     // --- 2. Draft ---------------------------------------------------------
     const draft = await draftEmail({
       purpose: input.purpose,
+      scenarioKey: input.scenarioKey,
       context,
       brief: input.brief,
       existingSubject: input.existingSubject,
@@ -273,11 +283,44 @@ emailsRouter.post("/draft", async (req, res, next) => {
       }
     }
 
+    // --- 4. The playbook's pre-send checklist ------------------------------
+    //
+    // Run on what would actually be sent — the polished version when there is
+    // one — because the polish rewrites sentences and a check against the
+    // pre-polish draft is a check against a draft nobody is sending.
+    const finalSubject = polished?.subject ?? draft.subject;
+    const finalBody = polished?.body ?? draft.body;
+    const scenario = input.purpose === "COLD_OUTREACH" ? chooseScenario(context.findingIds ?? [], input.scenarioKey ?? null) : null;
+    const checks = preSendCheck({
+      subject: finalSubject,
+      body: finalBody,
+      firstEmail: input.purpose === "COLD_OUTREACH",
+      // The renderer appends it to every cold email, so the drafter is not
+      // asked to remember it and the check does not fail on its absence here.
+      optOutAppended: input.purpose === "COLD_OUTREACH",
+    });
+
     res.json({
       ...draft,
       // What goes in the box: the polished version when there is one.
-      subject: polished?.subject ?? draft.subject,
-      body: polished?.body ?? draft.body,
+      subject: finalSubject,
+      body: finalBody,
+      /** Which of the eighteen this is, what else fired, and what a person could pick instead. */
+      scenario: scenario
+        ? {
+            key: scenario.scenario.key,
+            number: scenario.scenario.number,
+            name: scenario.scenario.name,
+            contact: scenario.scenario.contact,
+            ask: scenario.scenario.ask,
+            guard: scenario.scenario.guard,
+            matched: scenario.matched,
+            alsoAvailable: scenario.alsoAvailable,
+          }
+        : null,
+      /** The nine a person supplies the evidence for. */
+      pickableScenarios: input.purpose === "COLD_OUTREACH" ? manualScenarios().map((one) => ({ key: one.key, number: one.number, name: one.name })) : [],
+      checks,
       variables: context.variables,
       facts: context.facts,
       /** The draft as written, so a person can flip back to it. */

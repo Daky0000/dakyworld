@@ -13,6 +13,22 @@ import { appUrl } from "./emailSender.js";
  * keeps a "tailored" email from being a confidently invented one.
  */
 
+/**
+ * The finding ids behind the stored audit, for the scenario chooser.
+ *
+ * Read back out of the stored JSON rather than kept in a column of their own:
+ * the audit is already there in full, and a second copy of the same list is a
+ * second thing that can disagree with the first. GOOD findings are dropped —
+ * "their certificate is fine" is not a reason to write to anybody.
+ */
+function findingIdsFrom(audit: unknown): string[] {
+  const findings = (audit as { findings?: { id?: unknown; severity?: unknown }[] } | null)?.findings;
+  if (!Array.isArray(findings)) return [];
+  return findings
+    .filter((finding) => typeof finding?.id === "string" && finding.severity !== "GOOD")
+    .map((finding) => finding.id as string);
+}
+
 export interface RecipientContext {
   kind: "lead" | "client" | "address";
   /** Who the email actually goes to. */
@@ -29,6 +45,12 @@ export interface RecipientContext {
   preparedAt?: string | null;
   /** What the looking could not establish, in plain words. */
   prepNotes?: string[];
+  /**
+   * The audit finding ids behind `facts`, so the playbook scenario can be
+   * chosen in code rather than inferred from prose. See
+   * services/coldEmailScenarios.ts.
+   */
+  findingIds?: string[];
   /** Values available to `{{placeholders}}` in a template. */
   variables: Record<string, string>;
   leadId?: string;
@@ -142,6 +164,7 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
     email: lead.contactEmail,
     name: lead.contactName,
     facts,
+    findingIds: findingIdsFrom(lead.research?.audit),
     variables: {
       first_name: firstName(lead.contactName),
       contact_name: lead.contactName,

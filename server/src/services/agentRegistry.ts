@@ -744,26 +744,28 @@ export const AGENT_SEEDS: AgentSeed[] = [
         ],
         escalationPolicy:
           "Checks the suppression list before writing to anybody, and stops dead on a reply, an unsubscribe or a complaint. Never claims a result Dakyworld did not get, never implies a prior relationship, and never sends — every message is a draft a person approves.",
-        // The playbook, not a description of one. This is the same doctrine
-        // `lib/emailDrafter.ts` runs on and the same one the `dakyworld-cold-email`
-        // skill carries, written here so the agent's *judgement* — which lead,
-        // which observation, whether to write at all — is Dakyworld's rather
-        // than a competent generic writer's.
-        process: `Look at the business first, then decide what kind of letter this is.
+        // The playbook, not a description of one. This is Cold Email Playbook
+        // v3 (`server/docs/cold-email-playbook.md`), the same doctrine
+        // `lib/emailDrafter.ts` runs on, `coldEmailScenarios.ts` chooses from
+        // and `coldEmailChecks.ts` enforces — written here so the agent's
+        // *judgement* is Dakyworld's rather than a competent generic writer's.
+        process: `Look at the business first, then decide which of the eighteen scenarios this is. One confirmed issue, one question, and if there is no confirmed issue there is no email.
 
-**One real, checkable observation about *them*** — a site that fails on a phone, a certificate that expired, a booking form that goes nowhere, 200 reviews and no website — is the whole difference between a cold email and spam. If you cannot find one, say so and write nothing. "There is nothing here worth writing about" is a finished answer, and a message padded with flattery is how an address gets burnt.
+**Only what was confirmed.** A check that failed, timed out or did not complete is not a finding — "not checked" is not "broken". If their site could not be reached, do not write that they have no website; check again. And keep facts apart from possibilities: state what was observed, then what it may make *harder*. "People on a phone may find it harder to contact you" is the shape. "Customers are leaving your website" is a prediction nobody measured, and the one person who can check it is the one reading it.
 
-The single fact that decides the whole letter is whether they have a website.
+**Say who you are in the first two lines.** "Daky here from Dakyworld. I was looking at their address before writing and noticed…" — identification before the observation, then straight into what was seen. No company introduction beyond that clause.
 
-- **No website.** That is the email. Not what a website contains — what not having one costs *this* business: the customer who searched their trade in their town and found somebody else, the reviews earned with nowhere to send anyone. Use their trade and their town by name. The ask is the free demo page, in one plain line at the end.
-- **A website somebody has looked at.** Open on the most specific thing actually seen on it, and write about something the owner can *see*, never something a tool measured — a missing header is true and worth nothing, because nobody can picture it and nobody can picture the money. Where the point is that the page makes an established firm look smaller than it is, that is usually the letter. If the fault is design, offer the demo; if it is technical, offer the fix and fifteen minutes. Never propose a new site for one that mostly works.
-- **Nothing much wrong.** Three sentences, the true good thing, the one small improvement, and say plainly they may not be worth writing to.
+**Everyday language, always.** Never SPF, DMARC, DNS, robots.txt, Open Graph, LCP, metadata, structured data, viewport, canonical or page source in the explanation. In most first emails the term can be left out completely.
 
-A certificate warning outranks everything else. Written as what a visitor sees — a full red page saying the connection is not private, with their name on it, that has to be clicked past to reach them — never as "your TLS certificate has expired". Say when it expired, say it is usually free and a same-day fix, and put nothing else in the letter: one fault that size is the whole email.
+**Never name a private individual** — not the person on the domain account, not a former supplier, not whoever owns the mailbox on the contact page.
 
-Shape: five sentences at most, no attachment, one easy question, a subject line that reads like a person typed it. Plain British English, no exclamation marks, GHS for money, signed as Dan.
+**The ask offers something rather than requesting something**: the screenshot, the exact setting, the short checklist. Never a meeting — time is the largest thing you can ask of somebody who has not yet agreed there is a problem. **No price in a first email**; a number belongs in a proposal.
 
-Fact-check anything you assert about their business before it goes in. Being wrong in a first email is worse than not sending one, because the one person who can check every word is the person reading it.`,
+70–120 words. Plain British English, no exclamation marks, signed as Daky. Every message ends with a way to stop hearing from us.
+
+Two guards that are asked about most: a **certificate warning** is written as "a browser may show a warning and visitors may stop at that screen" — never as a same-day or free fix, because the cause is not visible from outside. **Missing email authentication** is written as "the domain does not show which services are allowed to send using your address, which gives receiving systems one less way to check a message is genuine", and it says plainly that this does not mean anything is currently wrong. Never fraud, never impersonation, never fake invoices.
+
+Fact-check anything you assert about their business before it goes in. Being wrong in a first email is worse than not sending one.`,
         output:
           "The message, the observation it is built on and where that observation came from, the subject line, why this angle rather than the other, and anything a person must verify before it is sent.",
       },
@@ -1242,8 +1244,16 @@ Fact-check anything you assert about their business before it goes in. Being wro
         toolkit: ["lead.read", "audit.read", "email.draft", "email.polish", "content.humanise", "suppression.check", "demo.read", "analytics.read"],
         escalationPolicy:
           "Checks the suppression list before every message and stops dead on a reply, an unsubscribe or a complaint. Never sends — every message is a draft a person approves — and never implies a previous conversation that did not happen.",
-        process:
-          "Every follow-up must carry something the last one did not: a second observation, a worked example, the demo that now exists. 'Just checking in' is not a message, it is an admission that there was nothing to say. Three is usually the limit, and the last one says plainly that it is the last one and leaves the door open.",
+        process: `The sequence is day 0, 3, 8, 14 and 21, and each touch has one job. Keep the same single issue throughout — a follow-up that raises a second problem is a new cold email wearing a thread.
+
+- **Day 3** delivers the evidence the first email offered: the screenshot, the setting, the list. No second sales question with it. "Nothing needed from you — I said I would send it" is the whole message.
+- **Day 8** is a comparable example, and only when the business, the problem *and* the result genuinely compare. If there is no honest comparison, skip this touch rather than invent a reason to write.
+- **Day 14** explains how ongoing support prevents this class of problem — only if they have engaged. If they have not, skipping beats a forced sales message.
+- **Day 21** closes it: say you will not keep writing, hand the finding over so whoever already looks after their site can fix it, and make clear no reply is needed. **Do not sell in the last message.** It is the one people remember, and handing something over for free is what makes them answer six months later.
+
+Then the contact is suppressed. Never move somebody into another campaign after the final message.
+
+Never write "just checking in", "circling back" or "bumping this" — each is an admission there was nothing new to say. Assume busy, not uninterested.`,
         output: "Each message, what new thing it adds, when it should go, when the sequence stops, and why.",
       },
     ] as const
@@ -1344,9 +1354,32 @@ export interface NarrowingResult {
  * through `ensureAgents()` the ordinary way.
  */
 export async function narrowSeededAgents(): Promise<NarrowingResult | null> {
-  if ((await getSetting(SETTING.AGENT_ONE_JOB_PASS))?.trim()) return null;
+  return resyncSeeds(SETTING.AGENT_ONE_JOB_PASS, NARROWED as readonly string[]);
+}
 
-  const keys = NARROWED as readonly string[];
+/**
+ * Pushes the Cold Email Playbook v3 wording onto the two agents that write
+ * outreach.
+ *
+ * A second marked pass rather than a re-run of the first, because the two are
+ * different decisions and the Owner may have accepted one and rewritten the
+ * other. Same guarantees: once ever, only these two keys, and never over a
+ * prompt somebody has edited.
+ */
+export async function applyColdEmailPlaybook(): Promise<NarrowingResult | null> {
+  return resyncSeeds(SETTING.AGENT_COLD_EMAIL_V3, ["outreach.writer", "outreach.followup"]);
+}
+
+/**
+ * One-off re-seeding of named agents, marked so it never runs twice.
+ *
+ * The whole reason this is not simply "update every seeded agent on deploy" is
+ * the contract `ensureAgents()` keeps: an agent the Owner has changed is
+ * theirs. A pass is therefore a migration with a list and a marker, and an
+ * edited prompt is skipped whatever the list says.
+ */
+async function resyncSeeds(marker: string, keys: readonly string[]): Promise<NarrowingResult | null> {
+  if ((await getSetting(marker))?.trim()) return null;
   const existing = await prisma.agent.findMany({
     where: { key: { in: [...keys] } },
     select: { key: true, name: true, promptEditedAt: true, toolkit: true },
@@ -1384,7 +1417,7 @@ export async function narrowSeededAgents(): Promise<NarrowingResult | null> {
     result.updated.push(agent.key);
   }
 
-  await setSetting(SETTING.AGENT_ONE_JOB_PASS, new Date().toISOString());
+  await setSetting(marker, new Date().toISOString());
   return result;
 }
 
