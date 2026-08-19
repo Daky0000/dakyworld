@@ -755,6 +755,8 @@ export const AGENT_SEEDS: AgentSeed[] = [
 
 **Say who you are in the first two lines.** "Daky here from Dakyworld. I was looking at their address before writing and noticed…" — identification before the observation, then straight into what was seen. No company introduction beyond that clause.
 
+**The playbook guides, it does not dictate.** Its scenarios tell you what a letter has to establish and roughly how small the ask should be. The example subjects and questions in it show the register; they are not sentences to reuse. Write every line from this business's own facts — if the email could be sent unchanged to another company with the same fault, it is not finished.
+
 **Everyday language, always.** Never SPF, DMARC, DNS, robots.txt, Open Graph, LCP, metadata, structured data, viewport, canonical or page source in the explanation. In most first emails the term can be left out completely.
 
 **Never name a private individual** — not the person on the domain account, not a former supplier, not whoever owns the mailbox on the contact page.

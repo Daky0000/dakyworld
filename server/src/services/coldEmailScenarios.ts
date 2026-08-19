@@ -27,6 +27,26 @@
  *    can be fixed the same day if the cause has been confirmed" belongs to
  *    Scenario 2 and would be wrong advice attached to any other.
  *
+ * ## A guide, not a script — and the difference is load-bearing
+ *
+ * Everything here divides in two, and confusing the halves ruins the feature.
+ *
+ * **The guards are rules.** "Never mention fraud", "do not promise a same-day
+ * fix", "never name the person on the account" — those bind absolutely, every
+ * time. They are the reason a scenario is safe to run at volume at all.
+ *
+ * **Everything else is calibration.** `guidance` says what the letter has to
+ * establish; `subjectExamples` and `exampleAsk` show the register and how small
+ * the ask should be. **None of it is text to reuse.** Twenty businesses in one
+ * scenario must receive twenty different emails written from twenty different
+ * sets of facts — if the subject line and the closing question are the same
+ * across all of them this has become a mail merge with eighteen variants, which
+ * is exactly what the playbook exists to prevent. So the example wording is
+ * named `example*` in the type, framed as calibration in the prompt, and
+ * **checked for verbatim reuse before a send** (`coldEmailChecks.ts`). A
+ * prospect receiving the same sentence a competitor down the road received is
+ * not a hypothetical failure: it is what every outreach tool on the market does.
+ *
  * Source: Dakyworld Cold Email Playbook v3 (`server/docs/cold-email-playbook.md`).
  * Where the two disagree, the playbook is the authority and this is the bug.
  */
@@ -55,12 +75,24 @@ export interface ColdEmailScenario {
   priority: number;
   /** Who inside the business this should reach. */
   contact: string;
-  /** Subject lines that fit. The first is the default. */
-  subjects: string[];
-  /** How to write this one, in the playbook's words. */
+  /**
+   * Subjects that show the right register — short, specific, honest. Examples,
+   * not a list to choose from: twenty businesses in one scenario must not
+   * receive twenty identical subject lines.
+   */
+  subjectExamples: string[];
+  /**
+   * What this email has to establish, and in what order. Substance, not
+   * phrasing — the sentences come from this business's own facts.
+   */
   guidance: string;
-  /** The single question the email ends on. */
-  ask: string;
+  /**
+   * An example of the *kind* of question this scenario ends on — never the
+   * question itself. It is here to calibrate how small the ask should be, and
+   * copying it into a letter is the failure this whole field is worded to
+   * prevent.
+   */
+  exampleAsk: string;
   /** What must not be said. Null when there is nothing beyond the general rules. */
   guard: string | null;
   /** What each follow-up adds, when the playbook specifies. */
@@ -78,10 +110,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     // the business at all.
     priority: 100,
     contact: "Founder, or whoever is responsible for the website",
-    subjects: ["Security warning on {{domain}}", "A quick note about {{domain}}"],
+    subjectExamples: ["Security warning on {{domain}}", "A quick note about {{domain}}"],
     guidance:
       "Say what was found and what a visitor meets: a browser may show a warning before they can open the site, so people may stop at that screen. State the cause as still needing to be checked — it may be the hosting or a renewal setting — rather than diagnosing it from outside. One issue, nothing else stacked on top.",
-    ask: "Would you like me to check what needs attention?",
+    exampleAsk: "Would you like me to check what needs attention?",
     guard:
       "Do NOT say this can be fixed the same day, or that it is free, unless access, the cause and the required change have all been confirmed. From outside, none of them has been. Do not predict lost sales or name a proportion of visitors who leave.",
     followUps: [
@@ -99,10 +131,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 95,
     contact: "Founder or MD",
-    subjects: ["Your website address is inactive"],
+    subjectExamples: ["Your website address is inactive"],
     guidance:
       "Say what was found at the address and pair it with the evidence that the business is active — recent posts on a named profile, for example. The first thing to check is who controls the account used to manage the address, because that decides what can be changed next.",
-    ask: "Would you like me to help you identify what needs checking?",
+    exampleAsk: "Would you like me to help you identify what needs checking?",
     guard:
       "Only send this when recent public activity confirms the business is trading. A holding page at a business that has actually closed is a letter nobody should receive. Never name whoever holds the account.",
   },
@@ -114,10 +146,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 90,
     contact: "Founder, or whoever handles enquiries",
-    subjects: ["Contact details on your site", "One thing I noticed"],
+    subjectExamples: ["Contact details on your site", "One thing I noticed"],
     guidance:
       "Describe exactly what a person on a phone has to do instead: remember the number, leave the page, type it in by hand. Say that making it tappable is a small page change rather than a project.",
-    ask: "Would you like me to point out the exact place to fix?",
+    exampleAsk: "Would you like me to point out the exact place to fix?",
     guard: "Do not claim enquiries have been lost. What is known is that the route is harder, not what it has cost.",
   },
   {
@@ -128,10 +160,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 85,
     contact: "Founder, Marketing lead, or Sales lead",
-    subjects: ["Mobile issue on your website", "One thing I noticed"],
+    subjectExamples: ["Mobile issue on your website", "One thing I noticed"],
     guidance:
       "Name what is actually wrong on the phone — text running past the edge, a menu that is hard to open — and add the reason they may not have seen it: the site looks fine on a computer, which is where it usually gets reviewed. Offer the screenshot as the whole ask.",
-    ask: "I took a screenshot showing what I mean. Would you like me to send it?",
+    exampleAsk: "I took a screenshot showing what I mean. Would you like me to send it?",
     guard: "Only send this when a phone-width screenshot or test actually shows it. A missing viewport tag alone is not a broken layout.",
     followUps: [
       "Day 3: send the screenshot, no sales question with it.",
@@ -148,10 +180,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 80,
     contact: "Founder or MD",
-    subjects: ["Your Google listing", "One thing I noticed"],
+    subjectExamples: ["Your Google listing", "One thing I noticed"],
     guidance:
       "Lead with what was actually found on the profile — the review count and the rating, exactly as they appear — and then the gap: there is limited space beyond the reviews for somebody to learn what is offered and decide how to get in touch. Keep it about what a website would give the profile, not about websites in general.",
-    ask: "Would you like me to outline what that website would need to do?",
+    exampleAsk: "Would you like me to outline what that website would need to do?",
     guard:
       "Check the whole profile before writing. A website link sitting in a field nobody looked at makes this letter wrong in its first line. Do not quote a rating or a review count that is not in this run's research.",
   },
@@ -163,10 +195,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 75,
     contact: "Founder or Marketing lead",
-    subjects: ["How {{domain}} appears in Google"],
+    subjectExamples: ["How {{domain}} appears in Google"],
     guidance:
       "Two versions. **Site-wide** when a setting tells search engines not to list the site: say the site itself may work normally, that this setting can keep it out of results, and that it is sometimes left behind after a build or a move — with the cause to be confirmed rather than assumed. **Page-level** when the result has no useful description or the title does not say what the business does: those are the first details a searcher sees, and it is a page edit rather than a rebuild.",
-    ask: "Would you like me to show you the setting and check what Google currently lists?",
+    exampleAsk: "Would you like me to show you the setting and check what Google currently lists?",
     guard: "Do not promise a ranking, a position or a timescale. Do not state how much traffic this has cost.",
   },
   {
@@ -177,10 +209,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 70,
     contact: "Founder or Marketing lead",
-    subjects: ["Loading time on {{domain}}"],
+    subjectExamples: ["Loading time on {{domain}}"],
     guidance:
       "Use the measured figure and only the measured figure — how many MB of images arrive before the main content shows. Explain it as the images being much larger than the space they occupy, so a phone downloads more than it needs. Say it can make a first visit feel slow, especially on a weaker connection.",
-    ask: "Would you like the list of images to review?",
+    exampleAsk: "Would you like the list of images to review?",
     guard:
       "Block the draft if the measurement is missing or the test did not complete. A number nobody measured is the fastest way to be corrected by the person reading.",
   },
@@ -192,10 +224,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 65,
     contact: "Founder, MD, Finance lead, or whoever is responsible for company email",
-    subjects: ["A quick note about {{domain}}"],
+    subjectExamples: ["A quick note about {{domain}}"],
     guidance:
       "Say it in plain words: the domain does not show which email services are allowed to send using the business address, so receiving mail systems have one less way to check that a message claiming to be from them is genuine. Say explicitly that this does not mean anything is currently wrong. It is a small setting with the domain provider, not a project.",
-    ask: "Would you like me to send you the exact change?",
+    exampleAsk: "Would you like me to send you the exact change?",
     guard:
       "Never say they are being impersonated, that invoices are being faked, or that fraud has happened. None of that has been established and all of it is alarming. Do not use the words SPF, DMARC or DNS in the explanation.",
     followUps: [
@@ -213,12 +245,12 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 60,
     contact: "Founder or MD",
-    subjects: ["Your business contact email"],
+    subjectExamples: ["Your business contact email"],
     guidance:
       "Note that the address on the site is a personal mailbox rather than one on their own domain, and put the point in terms of ownership, recovery access and handover as the team changes.",
     guard:
       "Do not claim that customer history will definitely be lost or that shared access is impossible. Do not name the person whose mailbox it is.",
-    ask: "Would you like me to outline the options?",
+    exampleAsk: "Would you like me to outline the options?",
   },
   {
     number: 8,
@@ -228,10 +260,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: false,
     priority: 45,
     contact: "Marketing lead or Founder",
-    subjects: ["How your link appears when shared"],
+    subjectExamples: ["How your link appears when shared"],
     guidance:
       "Say what was seen when the address was pasted into a sharing app: a bare web address with no image, title or description, which gives people less to go on before deciding whether to open it.",
-    ask: "Would you like me to send you the small change that creates the preview?",
+    exampleAsk: "Would you like me to send you the small change that creates the preview?",
     guard: "Only name WhatsApp or LinkedIn if that exact platform was the one tested.",
   },
   {
@@ -245,10 +277,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     // explained, so it should only ever be reached when nothing else fired.
     priority: 20,
     contact: "Founder, or whoever maintains the website",
-    subjects: ["One thing I noticed on {{domain}}"],
+    subjectExamples: ["One thing I noticed on {{domain}}"],
     guidance:
       "State it flatly and say plainly that neither point proves anything is wrong — they are details that can usually be kept out of public view. The value of the email is the offer to explain whether it is worth changing at all.",
-    ask: "Would you like me to show you what is visible and explain whether it is worth changing?",
+    exampleAsk: "Would you like me to show you what is visible and explain whether it is worth changing?",
     guard:
       "Do not combine two unrelated findings. If the observations have different owners or different importance, use only the stronger one. Never imply the site has been or is about to be broken into.",
   },
@@ -262,10 +294,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: true,
     priority: 40,
     contact: "Founder, MD or Finance lead",
-    subjects: ["Who controls your website address?"],
+    subjectExamples: ["Who controls your website address?"],
     guidance:
       "Put it as one administrative detail worth confirming: does the company control the account used to renew the address, change its settings and recover access. Say in the email itself that this is not an accusation about anyone.",
-    ask: "Would you like me to send you a short checklist of what to confirm?",
+    exampleAsk: "Would you like me to send you a short checklist of what to confirm?",
     guard: "Never name or hint at the individual whose name is on the account. State the business question, never the person.",
   },
   {
@@ -276,10 +308,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: true,
     priority: 78,
     contact: "Founder or Marketing lead",
-    subjects: ["Your new {{city}} location"],
+    subjectExamples: ["Your new {{city}} location"],
     guidance:
       "Two things have to be true together: a recent, sourced business change, and a separate confirmed website issue it creates — a new branch missing from the site, a new service announced but not described, a new person listed publicly with an outdated contact route. Congratulate briefly, then name what is not yet updated and who that affects.",
-    ask: "Would you like me to show you exactly what needs updating?",
+    exampleAsk: "Would you like me to show you exactly what needs updating?",
     guard: "A growth announcement on its own is not a reason to write. Without the second half — a confirmed gap — do not send this.",
   },
   {
@@ -290,10 +322,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: true,
     priority: 35,
     contact: "Founder or MD",
-    subjects: ["Who coordinates your online systems?"],
+    subjectExamples: ["Who coordinates your online systems?"],
     guidance:
       "Say it looks from the outside as though different providers handle the website, hosting, email and design, and that this can work perfectly well. The useful question is what happens when an issue sits between two of them: is there one person on their side who coordinates it, or does it land on them.",
-    ask: "How is it handled at the moment?",
+    exampleAsk: "How is it handled at the moment?",
     guard: "Only use this when the research genuinely supports the observation. Do not criticise any named provider.",
   },
   {
@@ -304,10 +336,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: true,
     priority: 55,
     contact: "Founder or Marketing lead",
-    subjects: ["Unfinished pages on {{domain}}"],
+    subjectExamples: ["Unfinished pages on {{domain}}"],
     guidance:
       "Say some pages look like a newer site while others still point at the old one. Allow plainly that projects pause for ordinary reasons; the practical issue is that visitors get different information depending which page they land on.",
-    ask: "Would you like me to map what is live and what still needs attention?",
+    exampleAsk: "Would you like me to map what is live and what still needs attention?",
     guard: "Do not speculate about why it stopped, and never about the previous supplier.",
   },
   {
@@ -318,10 +350,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: true,
     priority: 30,
     contact: "Founder or Operations lead",
-    subjects: ["How enquiries reach you"],
+    subjectExamples: ["How enquiries reach you"],
     guidance:
       "Note where the site sends enquiries and allow that it may be exactly the right channel for their customers. Say plainly that what happens after the message arrives is not visible from outside, and put the improvement as a question rather than a diagnosis.",
-    ask: "How are you handling them at the moment?",
+    exampleAsk: "How are you handling them at the moment?",
     guard: "Do not assume what happens after the message arrives, and do not describe their process back to them as inefficient.",
   },
   {
@@ -332,10 +364,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: true,
     priority: 25,
     contact: "Founder, MD, or whoever manages the website and files",
-    subjects: ["One question about your backups"],
+    subjectExamples: ["One question about your backups"],
     guidance:
       "Name the incident and its source, then ask the one practical question: when was the last backup restored successfully. Say in the email that having a backup and successfully using one are different things, and say explicitly that you are not suggesting anything is wrong with their business.",
-    ask: "Would you like the short checklist I would use?",
+    exampleAsk: "Would you like the short checklist I would use?",
     guard:
       "The incident must be recent, genuinely relevant to their sector, and linked in the internal record. Never imply they were affected. This is not a fear campaign and must not be run as one.",
   },
@@ -347,10 +379,10 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     manual: true,
     priority: 50,
     contact: "Whoever the earlier conversation was with",
-    subjects: ["One update since we last spoke"],
+    subjectExamples: ["One update since we last spoke"],
     guidance:
       "Only when the lead has been quiet for at least six months and there is one genuine new fact about them. Name what was discussed and when, the new fact, and the one issue from that conversation that still appears to be there. Make no reply the acceptable answer.",
-    ask: "If useful, I can send the detail; otherwise, no reply is needed.",
+    exampleAsk: "If useful, I can send the detail; otherwise, no reply is needed.",
     guard: "Requires a real earlier conversation and a real new fact. Without both it is not a reconnection, it is another cold email.",
   },
 ];
@@ -411,23 +443,45 @@ export function chooseScenario(findingIds: string[], preferKey?: string | null):
   };
 }
 
-/** The scenario as the drafter is told it, in the playbook's own words. */
+/**
+ * The scenario as the drafter is told it.
+ *
+ * Worded with some care. The first version of this said `Subject: use "X"` and
+ * `The one question to end on: "Y"` — and a model handed that does exactly what
+ * it was told, which would have sent every business in a scenario the same
+ * subject line and the same closing sentence. The examples are still here,
+ * because showing the register is the only cheap way to convey it, but they are
+ * labelled as calibration and the instruction around them says to write fresh.
+ */
 export function scenarioForPrompt(choice: ScenarioChoice): string {
   const { scenario, matched, alsoAvailable } = choice;
   return [
     `THE SCENARIO THIS EMAIL IS (playbook scenario ${scenario.number} — "${scenario.name}"). Write this one and no other.`,
     matched.length ? `What put it on the list: ${matched.join(", ")}.` : null,
     `Who it should reach: ${scenario.contact}.`,
-    `Subject: use "${scenario.subjects[0]}" or something equally plain. Never a question the body repeats.`,
-    `How to write it: ${scenario.guidance}`,
-    `The one question to end on: "${scenario.ask}"`,
-    scenario.guard ? `MUST NOT: ${scenario.guard}` : null,
+    `What this email has to establish: ${scenario.guidance}`,
+    "",
+    "**The two lines below are calibration, not copy.** They show the register and how small the ask should be. Write your own sentences out of this business's own facts. If this email could be sent unchanged to another company in the same situation, it is not finished — and reusing the example wording word for word is flagged before it can go out.",
+    `  · a subject in this register: "${scenario.subjectExamples[0]}" — yours should be as short and as plain, and about this business.`,
+    `  · an ask this small: "${scenario.exampleAsk}" — yours should cost the reader one word to answer.`,
+    scenario.guard ? `\nMUST NOT — a rule, not a suggestion: ${scenario.guard}` : null,
     alsoAvailable.length
-      ? `Also found, and deliberately NOT this email: ${alsoAvailable
+      ? `\nAlso found, and deliberately NOT this email: ${alsoAvailable
           .map((other) => other.name)
           .join("; ")}. One issue and one question — leave the rest for another time.`
       : null,
   ]
-    .filter(Boolean)
+    .filter((line) => line !== null)
     .join("\n");
+}
+
+/**
+ * The example wording, for the verbatim-reuse check.
+ *
+ * Deliberately not `guidance`: guidance describes what the letter must
+ * establish and a draft is *supposed* to follow it. Only the sentences a writer
+ * could lift are checked.
+ */
+export function exampleWording(scenario: ColdEmailScenario): string[] {
+  return [...scenario.subjectExamples, scenario.exampleAsk];
 }

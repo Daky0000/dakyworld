@@ -358,9 +358,20 @@ Four things in it overturn what the drafter used to do, so check before
   from outside; it may be hosting or a renewal setting. This one is a
   correction: the sentence was added on 19 Aug and the playbook removed it.
 
+**The playbook guides; it does not dictate.** The scenarios say what a letter
+must establish and how small the ask should be. `subjectExamples` and
+`exampleAsk` are named that way on purpose — they calibrate register and are
+never text to reuse, because twenty businesses in one scenario receiving the
+same subject line and the same closing question is a mail merge with eighteen
+variants, which is the thing the playbook exists to prevent. The first version
+of `scenarioForPrompt()` said `Subject: use "X"` and a model does what it is
+told; it now frames both as calibration, and `coldEmailChecks.ts` warns when a
+draft reuses one verbatim. **Guards are the exception and are rules** — "never
+mention fraud", "no same-day promise" — and are stated as such in the prompt.
+
 `coldEmailScenarios.ts` holds the **eighteen scenarios as data** — signals,
-subject, guidance, the one question, and the guard that belongs to that letter
-and no other. Eleven are chosen in code from the finding ids the audit produced,
+guidance, register examples, and the guard that belongs to that letter and no
+other. Eleven are chosen in code from the finding ids the audit produced,
 worst first; seven need a person to supply the evidence (a new branch, a
 registrar account, a sector incident) and are never chosen automatically.
 `chooseScenario()` returning null is a real answer and means there is no email.

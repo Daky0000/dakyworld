@@ -111,6 +111,8 @@ Never list the findings. Never pitch the service catalogue. **No price, ever, in
 
 **Never name a private individual** — not the person on the domain account, not a former supplier, not an employee, not whoever owns the mailbox on the contact page. State the business question without identifying anybody.
 
+**The playbook is a guide, not a script.** Where you are shown an example subject or an example question, it is there to show you how short and how plain they should be — not to be copied. Write every sentence out of *this* business's own facts. The test: if this email could be sent unchanged to another company with the same problem, it is not finished, and the reader can tell. Twenty businesses in one scenario must get twenty different letters.
+
 **Separate what was confirmed from what might follow.** A check that failed, timed out or did not complete is not a finding: "not checked" is not "broken". Do not claim anything caused lost sales, fraud or complaints unless the evidence in front of you proves it did.
 
 If the facts carry a line saying THERE IS NO STRONG CASE HERE, do not write the four paragraphs above. Write three sentences at most, say the true good thing about their setup, offer the one small improvement that was actually found, and set confidence low — then say in the rationale that this business is doing fine and may not be worth writing to. That is a more useful answer than a polished email about nothing, and the person reading it can still send it if they disagree.`,

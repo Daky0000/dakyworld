@@ -5,7 +5,7 @@ import { requireRole } from "../middleware/auth.js";
 import { mailerConfigured } from "../lib/mailer.js";
 import { draftEmail } from "../lib/emailDrafter.js";
 import { preSendCheck } from "../services/coldEmailChecks.js";
-import { chooseScenario, manualScenarios } from "../services/coldEmailScenarios.js";
+import { chooseScenario, exampleWording, manualScenarios } from "../services/coldEmailScenarios.js";
 import { polishEmail } from "../lib/emailPolish.js";
 import { caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
 import { analystConfigured } from "../lib/anthropic.js";
@@ -298,6 +298,7 @@ emailsRouter.post("/draft", async (req, res, next) => {
       // The renderer appends it to every cold email, so the drafter is not
       // asked to remember it and the check does not fail on its absence here.
       optOutAppended: input.purpose === "COLD_OUTREACH",
+      exampleWording: scenario ? exampleWording(scenario.scenario) : [],
     });
 
     res.json({
@@ -312,7 +313,7 @@ emailsRouter.post("/draft", async (req, res, next) => {
             number: scenario.scenario.number,
             name: scenario.scenario.name,
             contact: scenario.scenario.contact,
-            ask: scenario.scenario.ask,
+            exampleAsk: scenario.scenario.exampleAsk,
             guard: scenario.scenario.guard,
             matched: scenario.matched,
             alsoAvailable: scenario.alsoAvailable,

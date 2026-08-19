@@ -71,7 +71,7 @@ relevant, fairly worded and going to the right contact.
 | Length | 70–120 words. Clarity over the exact count. |
 | Subject | Short, specific, honest. Never disguised as a reply or a system alert. No exclamation marks. |
 | Tone | Plain, conversational. One person who looked carefully. No "touching base", "circle back", "unlock growth", "reach out". |
-| Ask | One question, answerable in one line. "Would you like me to send the screenshot?" |
+| Ask | One question, answerable in one line, offering something rather than requesting it. "Would you like me to send the screenshot?" shows the *size*, not the wording. |
 | Delivery | Plain text, no short links, at most one normal link. |
 | WhatsApp | In the signature, not the body: +233 545 950 611. |
 | Timing | Tuesday–Thursday, Accra business hours. A test position, not a proven fact. |
@@ -84,7 +84,18 @@ into another campaign.
 
 ## 2. The eighteen scenarios
 
-The wording, the subject, the ask and the guard for each one live in
+**A guide, not a script.** Each scenario says what the letter has to establish
+and how small the ask should be. The worked emails in the owner's document show
+the register — they are examples, not templates, and their sentences are not to
+be reused. If an email could be sent unchanged to the next business with the
+same fault, it is not finished; twenty businesses in one scenario should receive
+twenty different letters. `coldEmailChecks.ts` flags a draft that reuses the
+example wording word for word.
+
+The exception is a **guard**. Those are rules, they bind every time, and they
+are the reason a scenario is safe to run at volume.
+
+The substance, the register examples and the guard for each one live in
 [`server/src/services/coldEmailScenarios.ts`](../src/services/coldEmailScenarios.ts)
 so the choice is made from evidence rather than by a model picking whichever
 reads most neatly. Eleven are chosen automatically from audit findings; seven

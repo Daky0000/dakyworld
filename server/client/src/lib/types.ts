@@ -1251,7 +1251,8 @@ export interface EmailDraft {
     number: number;
     name: string;
     contact: string;
-    ask: string;
+    /** Shows how small the ask should be. Not the question to write. */
+    exampleAsk: string;
     guard: string | null;
     matched: string[];
     alsoAvailable: { key: string; name: string; matched: string[] }[];

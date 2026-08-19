@@ -136,6 +136,20 @@ function words(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/**
+ * Normalised for comparison: case, punctuation and spacing removed, so
+ * "Would you like me to check what needs attention?" and
+ * "would you like me to check what needs attention" are the same sentence.
+ */
+function normalise(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\{\{[^}]*\}\}/g, " ")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export interface PreSendInput {
   subject: string;
   /** The body as it will actually be sent, signature and footer included. */
@@ -147,6 +161,11 @@ export interface PreSendInput {
    * the body. The check then runs against the composed message instead.
    */
   optOutAppended?: boolean;
+  /**
+   * The scenario's example subject and ask, so a draft that lifted one can be
+   * caught. Empty when no scenario applies.
+   */
+  exampleWording?: string[];
 }
 
 /**
@@ -274,6 +293,26 @@ export function preSendCheck(input: PreSendInput): PreSendReport {
     "BLOCK",
     !priced,
     priced ? "A price belongs in a proposal, after they understand the issue and want help." : "",
+  );
+
+  // The scenario's examples exist to show the register, not to be pasted in.
+  // A drafter that reuses one is not making a mistake so much as producing a
+  // mail merge: every business in that scenario gets the same closing sentence,
+  // and the whole point of writing from a real observation is lost. A warning
+  // rather than a block, because occasionally the plainest phrasing genuinely
+  // is the obvious one, and a person looking at the draft can tell.
+  const borrowed = (input.exampleWording ?? []).filter((example) => {
+    const needle = normalise(example);
+    return needle.length > 20 && normalise(haystack).includes(needle);
+  });
+  add(
+    "borrowed-wording",
+    "Written for this business, not copied from the example",
+    "WARN",
+    borrowed.length === 0,
+    borrowed.length
+      ? `Reused word for word from the scenario's example: "${borrowed[0]}". Say the same thing in your own words, or every business in this scenario receives an identical sentence.`
+      : "",
   );
 
   const blocking = checks.filter((check) => !check.passed && check.severity === "BLOCK");
