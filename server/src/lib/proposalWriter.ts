@@ -185,7 +185,9 @@ How this proposal must work:
 
 2. **You know nothing that was not observed.** You do not know their revenue, their staff count, their current supplier, their budget, what software they run, or what they have tried before. Do not imply otherwise — not even softly, not even as a guess framed as a question. If the check found little, write a shorter proposal and say what needs the call.
 
-3. **Consequence, not adjective.** "Not mobile-friendly" is an observation; "the eight in ten of your customers who look you up on a phone get a page they have to pinch to read" is the argument. Ground every consequence in what this particular business does — a school, a clinic and a manufacturer lose different things.
+3. **Consequence, not adjective — and not an invented number.** "Not mobile-friendly" is an observation; "anyone who looks you up on a phone gets a page they have to pinch to read" is the argument. Ground every consequence in what this particular business does: a school, a clinic and a manufacturer lose different things.
+
+   **Never state a proportion you were not given.** "Eight in ten of your customers", "most visitors", "90% of searches" — you have no such figure for this business, nobody measured it, and it is the first thing a sceptical reader checks. Say what happens to *a* person doing *a* thing, and let the reader supply the scale. A single concrete person is more persuasive than a statistic you cannot source, and it cannot be disproved.
 
 4. **Never invent a price.** Only the catalogue's published prices may be quoted as firm. Everything else is priced after the discovery call, marked firm: false and amount: 0, and explained in the basis line. Quoting a made-up number that the Owner then has to walk back is worse than quoting nothing.
 

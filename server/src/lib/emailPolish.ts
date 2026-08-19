@@ -79,11 +79,20 @@ const SCHEMA = {
 
 /** What each purpose has to achieve for the polish to call it a working email. */
 const TEST: Partial<Record<EmailPurpose, string>> = {
-  COLD_OUTREACH: `It opens with a greeting on its own line. The first sentence after it names something specific about *their* business that could not be said about any other business. Every observation is followed by what it costs them in customers or enquiries — not by an adjective, and not by a word like "unprofessional" or "unfinished". There is one ask and it is small. It is under 120 words. It does not end with a typed name: the app appends the signature.
+  COLD_OUTREACH: `Cold Email Playbook v3. It works if all of this is true:
+
+- It opens with a greeting on its own line.
+- **The sender is named in the first two lines** — "Daky here from Dakyworld…" or equivalent — *before* the observation. This is required. Do not cut it as throat-clearing: a stranger who cannot tell in one line who is writing has already stopped reading.
+- The observation is something specific about *their* business that could not be said about any other, and it is followed by **what it makes harder for them**, not by what it has already cost them. "People on a phone may find it harder to contact you" passes. "Customers are leaving your website" fails — it states an outcome nobody measured, to the one person who can check it.
+- One issue only. One ask, and it **offers** something — a screenshot, the exact setting, a short checklist — rather than requesting a meeting or a call.
+- **No price anywhere.** A number belongs in a proposal.
+- No technical vocabulary in the explanation: SPF, DMARC, DNS, robots.txt, metadata, structured data, viewport, TLS and the rest are all out.
+- No private individual is named.
+- 70–120 words. It does not end with a typed name: the app appends the signature.
 
 If the whole email rests on minor housekeeping — missing preview tags, no analytics, a small style point — servesPurpose is false whatever else is right about it, and the concern to raise is that there is no real reason for this business to reply.
 
-Judge servesPurpose hard against that list. An email with no greeting, or one that opens on a minor technical detail while the facts carry a worse problem, or one that says something is missing without saying what it costs, has failed — say so and say which of those it is.`,
+Judge servesPurpose hard against that list, and name which item failed. The three that fail most often: no identification in the opening, a consequence stated as a prediction rather than as something made harder, and an ask for a call.`,
   FOLLOW_UP: "It adds something rather than repeating. It makes saying no easy. It does not say 'circling back' or 'just following up'.",
   MEETING_REQUEST: "It says what the call covers and how long it takes, and it works around them rather than listing our availability.",
   PROPOSAL_COVER: "Two or three sentences. What is attached, the decision it asks for, when we follow up. It does not re-argue the proposal.",
@@ -102,7 +111,8 @@ What you fix:
 - A sign-off. If the draft ends with a typed name, cut it — the app appends the signature and the reader would see it twice.
 - An observation with no consequence attached. You may not invent the consequence, but you may move one that is already in the facts next to the observation it belongs to, and you may cut an observation that has none.
 - Sentences a person would not say out loud. Read each one as though speaking it.
-- Machine tells: an opening that clears its throat, "I hope this email finds you well", "I wanted to reach out", "it's not just X, it's Y", a dash in every sentence, a closing paragraph that restates the opening, and any sentence with three ideas in it.
+- Machine tells: "I hope this email finds you well", "I wanted to reach out", "it's not just X, it's Y", a dash in every sentence, a closing paragraph that restates the opening, and any sentence with three ideas in it.
+- **An opening that clears its throat — but one clause naming the sender is not that.** On a cold email "Daky here from Dakyworld" is required and stays. What goes is a *second* sentence about what Dakyworld does, or any introduction that delays the observation past the first two lines. Cutting the identification is the single most damaging edit you can make here, and an earlier version of these instructions caused it.
 - Consultant vocabulary. "Leverage", "solutions", "streamline", "in today's landscape", "seamless" — all out.
 - Length. If a sentence can go without losing a fact, it goes.
 - Two asks where there should be one, or an ask that is bigger than it needs to be.

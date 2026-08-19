@@ -156,14 +156,29 @@ Say plainly that it is a working page they can open on their phone, and that not
 };
 
 /**
- * Which argument this email makes, decided by the one fact that changes it.
+ * Which argument this email makes, when no scenario has been chosen.
  *
- * A business with no website and a business with a bad one are not two degrees
- * of the same conversation. The first has never had the thing and needs to be
- * told what it would do for *them* — this trade, this town, these customers.
- * The second has it, has probably stopped looking at it, and needs to be told
- * what is on it right now. Getting this wrong produces the email everybody
- * deletes: a pitch for a website, sent to somebody who has one.
+ * This used to carry the whole doctrine and it is now the fallback for a lead
+ * with no audit behind it. **It shrank on purpose**, and the reason is the most
+ * useful thing in this file:
+ *
+ * For a while it ran *alongside* the playbook rules and the scenario, and the
+ * three of them disagreed. The purpose brief said "say what it makes harder,
+ * never what it has already cost them"; this block said "say what it costs
+ * them" three times. The brief said the ask is never a meeting; this block said
+ * "ask for fifteen minutes". The brief said no price ever; this block offered
+ * something free. A model handed contradictory instructions does not pick one —
+ * it retreats to the most familiar pattern it knows, which is the generic cold
+ * email both sets of rules existed to prevent. The founder's report was that
+ * the drafts "say the same thing, no improvement", and this was why: every rule
+ * was in the prompt and half of them were being cancelled out on the next line.
+ *
+ * So: **when a scenario is chosen, this is not emitted at all** — the scenario
+ * is a better version of the same thing, chosen from evidence rather than from
+ * one branch on `website`. What remains here is the one distinction a scenario
+ * cannot make, because it is about the *absence* of findings rather than their
+ * presence: a business with no website is a different letter from a business
+ * with a website somebody has looked at.
  */
 function angle(context: RecipientContext): string | null {
   if (context.kind !== "lead") return null;
@@ -171,39 +186,28 @@ function angle(context: RecipientContext): string | null {
   if (!context.variables.website?.trim()) {
     return `They have no website. That is the email.
 
-Do not write about websites in general and do not list what a website contains. Write about what not having one costs *this* business: the customer who searched their trade in their town and found somebody else, the reviews they have earned with nowhere to send anyone, the enquiry that went to whoever appeared instead. Use their trade and their town by name — those two words are what make it about them rather than about anybody.
+Do not write about websites in general and do not list what a website contains. Write about what not having one means for *this* business: somebody searching their trade in their town finds the competitors who have one, and the reviews they have earned have nowhere to send anybody.
 
-If the facts show demand already exists — a rating, a review count, a busy social account — that is the strongest thing you have. The demand is real and there is nowhere for it to land. Say that.
+Use their trade and their town by name. Those two words are what make it about them rather than about anybody.
 
-Make the cost concrete and theirs. "A customer who searches for a dentist in Osu finds the three clinics that have a site, and you are not one of them" is an argument. "A website builds credibility" is a brochure line and they have read it a hundred times.
+If the facts show demand already exists — a rating, a review count, a busy social account — that is the strongest thing you have, because the interest is real and there is nowhere for it to land. Say that.
 
-One concrete sentence about their situation beats three about ours.
-
-**The ask offers them something small.** Playbook v3's default here is to offer the outline — "would you like me to outline what that website would need to do?" — which is one line to answer and commits nobody to anything. **Offering to build a free demo page is also allowed** and is the stronger version where the record shows real demand with nowhere to land, because it is the argument itself rather than a claim about it; if you use it, say it in one plain line with no "no-obligation", no "absolutely free" and no exclamation mark. Either way it is an offer, never a request: do not ask for a call or a meeting in a first email.`;
+The ask still offers something small: an outline of what a page would need to do, or a page built for them to look at. Not a call.`;
   }
 
   return `They have a website and somebody has looked at it. The facts include what was checked on it and what it looks like.
 
-Open on the single most specific thing that was actually observed there, and say what it costs them. Not "your website could be improved" — the thing itself: what loads, what does not, what a visitor sees first, what is missing from the page.
+Open on the single most specific thing that was actually observed there. One point, two at the very most, and never a list.
 
-Do not list the findings. Take one, at most two, and make them concrete enough that they can check it themselves in ten seconds while still reading. Anything they can verify without leaving the email is worth more than anything they cannot.
+**Write about something the owner can see, not something a tool measured.** A missing DNS record, a header, a certificate, a tag — all true, and all worth nothing to the person reading, because they cannot picture any of them. What they can picture is somebody opening their page and not finding what they came for. If the facts carry an observation with a "say it to them like this" wording, use that wording: it has already been put into words a business owner would use.
 
-**Write about something the owner can see, not something a tool measured.** They are not technical and they never will be. A missing DNS record, a header, a certificate, a tag — these are true and they are worth nothing to the person reading, because they cannot picture them and cannot picture the money. What they can picture is a customer opening their page and leaving. If the facts contain a line marked WORTH PAYING TO FIX, or an observation with a "say it to them like this" wording, use that wording — it exists because it has already been put into words a business owner would use.
+If a fact shows demand — a review count, a rating — use it. It turns "your site is dated" into "people are already looking for you, and this is what they find".
 
-Say what it costs them, not what it looks like, and say it in people: the builder who opens the page and cannot tell within five seconds whether they sell what he needs; the distributor comparing three suppliers with two other tabs open; the patient who goes back to the search results. If a fact in the list shows demand — a review count, a rating — use it: it turns "your site is dated" into "people are already looking for you and this is what they find".
+**The point that lands hardest with an established business is the gap between what they are and what their page makes them look like.** An eighteen-year-old company with a page from 2013 is being compared against smaller competitors who look bigger. If that is in the facts, it is usually the letter.
 
-**The hardest-landing point with an established business is the gap between what they are and what their site makes them look like.** A twenty-year-old company with a page that looks like a template from 2013 is losing work to smaller competitors who look bigger. If that is in the facts, it is usually the letter.
-
-Never suggest a new website when the facts describe a site that mostly works. Fixing what was observed is the honest offer, and it is a smaller ask.
-
-**If the facts say the design itself is the problem — dated, unclear, nothing above the fold that says what they sell — offering to redesign the homepage as a page they can open and compare against their own is the strongest ask available.** Free, nothing owed either way, one plain line at the end. Show, do not argue: they have been told their site is dated before and it changed nothing. Where a scenario names a smaller ask, take the smaller one — the rule this serves is that a first email offers something rather than requesting something, and the smallest honest offer is the easiest yes.
-
-If the facts describe a technical fault rather than a design one — an expired or untrusted certificate, no HTTPS, a dead site, no way to make contact — do not offer a redesign. Offer the fix and ask for fifteen minutes. Offering to rebuild a site whose real problem is a certificate reads as somebody who wants a bigger job.
-
-**A certificate warning outranks everything else in the facts, and it is written as what the visitor sees.** Not "your TLS certificate has expired" — that is a sentence for a developer. It is: a browser may show a warning before somebody can open the site, so visitors may stop at that screen. Say when it expired if the facts carry a date.
-
-**Do not say it can be fixed the same day, and do not say it is free.** Neither has been established from outside: the cause may be the hosting, a renewal setting or something else, and none of that is visible from here. Say the cause still needs checking and offer to check it. Promising a same-day fix to somebody whose problem turns out to be a lapsed hosting account is the kind of confident sentence that loses the second email.`;
+Never propose a new website for a site that mostly works. Fixing what was actually observed is the honest offer and the smaller ask.`;
 }
+
 
 function buildPrompt(request: DraftRequest): string {
   const { context } = request;
@@ -222,16 +226,27 @@ function buildPrompt(request: DraftRequest): string {
   const greeting = context.variables.first_name && context.variables.first_name !== "there" ? `Hi ${context.variables.first_name},` : "Hello,";
   parts.push("", `Open with this greeting exactly, on its own line: ${greeting}`);
 
-  const chosen = angle(context);
-  if (chosen) parts.push("", "The angle for this one:", chosen);
+  // The scenario, when the audit found one. Chosen in code from the finding ids
+  // rather than left to the model, because "which of the eighteen letters is
+  // this" is a decision with evidence behind it, and a drafter asked to pick
+  // for itself picks whichever reads most neatly.
+  //
+  // **One or the other, never both.** The scenario and the angle are two
+  // answers to the same question, and when both were emitted they disagreed —
+  // the angle told the drafter to say what a fault costs and to ask for fifteen
+  // minutes, while the rules above forbade both. Contradictory instructions do
+  // not average out; the model falls back to the generic email it already knew,
+  // which is precisely the complaint that led here.
+  const scenario =
+    request.purpose === "COLD_OUTREACH" && context.findingIds?.length
+      ? chooseScenario(context.findingIds, request.scenarioKey ?? null)
+      : null;
 
-  // The scenario, when the audit found one. It is chosen in code from the
-  // finding ids rather than left to the model, because "which of the eighteen
-  // letters is this" is a decision with evidence behind it, and a drafter asked
-  // to pick for itself picks whichever reads most neatly.
-  if (request.purpose === "COLD_OUTREACH" && context.findingIds?.length) {
-    const scenario = chooseScenario(context.findingIds, request.scenarioKey ?? null);
-    if (scenario) parts.push("", scenarioForPrompt(scenario));
+  if (scenario) {
+    parts.push("", scenarioForPrompt(scenario));
+  } else {
+    const chosen = angle(context);
+    if (chosen) parts.push("", "The angle for this one:", chosen);
   }
 
   if (request.extraFacts?.length) {
@@ -256,7 +271,30 @@ function buildPrompt(request: DraftRequest): string {
   return parts.join("\n");
 }
 
+/**
+ * The whole instruction, composed.
+ *
+ * Exported because "the drafts still read the same" is a question about what
+ * the model was actually told, and the only honest way to answer it is to look
+ * at what the model was actually told rather than at the file you last edited.
+ * `tmp/writerAudit.ts` prints this and asserts every rule is really in it —
+ * which is how the polish stage was caught quietly enforcing the previous
+ * doctrine over the top of this one.
+ */
+export async function buildColdEmailPrompt(request: DraftRequest): Promise<{ system: string; user: string }> {
+  return { system: await draftSystem(), user: buildPrompt(request) };
+}
+
+async function draftSystem(): Promise<string> {
+  return `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${contactBlock(await companyProfile())}\n\n${VOICE}\n\n**Never state a fault you were not given.** Every negative thing this email says about their business must trace to one of the facts above, and those facts carry their own evidence in brackets — a URL, a header, a DNS record. If a fault is not in the list, it was not found, and "not found" is not the same as "not there": you have no idea, and a confident wrong claim about somebody's own business is read as a lie by the one person who knows the truth. A letter saying "your website did not load" to a company whose website loads is not a bad email, it is a false statement about them, and it ends the relationship at the first line.
+
+The list is also the complete account of what was checked. Anything absent from it was not looked at.
+
+Never invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`;
+}
+
 export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
+  const system = await draftSystem();
   const { data, model, inputTokens, outputTokens } = await callModel<{
     subject: string;
     body: string;
@@ -266,11 +304,7 @@ export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
     purpose: "email.draft",
     // Prose. Routed with everything else the system writes — see lib/models.
     job: "text",
-    system: `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${contactBlock(await companyProfile())}\n\n${VOICE}\n\n**Never state a fault you were not given.** Every negative thing this email says about their business must trace to one of the facts above, and those facts carry their own evidence in brackets — a URL, a header, a DNS record. If a fault is not in the list, it was not found, and "not found" is not the same as "not there": you have no idea, and a confident wrong claim about somebody's own business is read as a lie by the one person who knows the truth. A letter saying "your website did not load" to a company whose website loads is not a bad email, it is a false statement about them, and it ends the relationship at the first line.
-
-The list is also the complete account of what was checked. Anything absent from it was not looked at.
-
-Never invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`,
+    system,
     prompt: () => buildPrompt(request),
     schema: SCHEMA as unknown as Record<string, unknown>,
     effort: "medium",

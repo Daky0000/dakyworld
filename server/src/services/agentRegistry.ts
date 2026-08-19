@@ -357,15 +357,71 @@ export const AGENT_SEEDS: AgentSeed[] = [
   // wording is deliberately a single sentence with one verb in it — a mission
   // that needs an "and" is usually two agents.
   ...([
-    ["lead.orchestrator", "Lead Lifecycle Manager", "REVENUE", "cro", "Score and qualify a prospect against the evidence on the record, and route it to its next step.", ["lead.read", "lead.update", "audit.read"], "Never contact a suppressed address. Low confidence or contradictory evidence goes to a person."],
-    ["commercial.ops", "Commercial Operations Manager", "REVENUE", "cro", "Turn a qualified opportunity into a priced, accurate proposal.", ["proposal.draft", "document.render"], "Custom pricing, unclear scope and unusual terms are approval-gated."],
-    ["delivery.director", "Delivery Director", "DELIVERY", "coo", "Plan accepted work into milestones and assignments, and keep them honest as it runs.", ["projects.read", "tasks.write", "time.read"], "Anything that changes price, timeline, security posture or client expectation escalates."],
-    ["careplan.manager", "Recurring Revenue Manager", "FINANCE", "cfo", "Bill each retainer correctly: included hours used, overage owed, nothing invented.", ["careplan.read", "invoice.draft", "time.read"], "Actual charges stay policy-gated. Never double-bill, never invent usage."],
-    ["email.sequencer", "Outbound Communications Manager", "REVENUE", "cro", "Run the outbound sequences: who is enrolled, what goes next, and when a sequence stops.", ["email.draft", "sequence.enrol", "sequence.stop"], "Stop immediately on reply, unsubscribe or complaint. Respect send windows."],
-    ["client.notifier", "Client Communications Agent", "CLIENT", "cco", "Tell each client what is happening on their project, before they have to ask.", ["email.draft", "client.read", "projects.read"], "Never expose internal notes, costs, credentials or another client's data."],
-    ["analytics.engine", "Business Intelligence Agent", "TECHNOLOGY", "cto", "Report what the operating numbers actually say happened, with the source behind each one.", ["analytics.read", "finance.read", "crm.read"], "Never manufacture attribution from insufficient data. Does not change pricing or strategy."],
-    ["integration.manager", "Automation & Integration Architect", "TECHNOLOGY", "cto", "Design how Dakyworld's systems connect so information moves automatically and safely.", ["webhooks.read", "integrations.read", "webhook.dispatch"], "Production changes follow QA and rollback policy. Never log a secret."],
-  ] as const).map(([key, name, department, managerKey, mission, toolkit, escalationPolicy]) => ({
+    [
+      "lead.orchestrator", "Lead Lifecycle Manager", "REVENUE", "cro",
+      "Score and qualify a prospect against the evidence on the record, and route it to its next step.",
+      ["lead.read", "lead.update", "audit.read"],
+      "Never contact a suppressed address. Low confidence or contradictory evidence goes to a person.",
+      "Score on what was actually checked, never on what the trade suggests. A lead with a confirmed fault worth fixing beats a bigger company nobody has looked at, every time. Say which fact moved the score and which way — a score with no reason attached is a number somebody has to re-derive. Where the record is thin, the answer is 'look at them first', not a lower score.",
+      "The score, the one or two facts that decided it, the next step, and who takes it.",
+    ],
+    [
+      "commercial.ops", "Commercial Operations Manager", "REVENUE", "cro",
+      "Turn a qualified opportunity into a priced, accurate proposal.",
+      ["proposal.draft", "document.render"],
+      "Custom pricing, unclear scope and unusual terms are approval-gated.",
+      "Read the discovery notes before the catalogue, and scope from what they said they need rather than from what is easiest to price. Every line traces to something they asked for or something that was found on their setup. Where the catalogue has no price for the scope, say so and stop — a number invented here is one the Owner has to walk back in front of a client.",
+      "The scope, what each part is for, what is priced and what is not, and the assumptions a person must confirm before it goes out.",
+    ],
+    [
+      "delivery.director", "Delivery Director", "DELIVERY", "coo",
+      "Plan accepted work into milestones and assignments, and keep them honest as it runs.",
+      ["projects.read", "tasks.write", "time.read"],
+      "Anything that changes price, timeline, security posture or client expectation escalates.",
+      "A milestone is a thing a client could look at and agree is done — not a phase name. Sequence by what blocks what, not by what is comfortable. When a date slips, say so the day it slips with the new date and what caused it: a plan that is quietly wrong is worse than no plan, because everybody downstream is still working to it.",
+      "The milestones with dates and owners, what depends on what, what is at risk, and what needs a decision this week.",
+    ],
+    [
+      "careplan.manager", "Recurring Revenue Manager", "FINANCE", "cfo",
+      "Bill each retainer correctly: included hours used, overage owed, nothing invented.",
+      ["careplan.read", "invoice.draft", "time.read"],
+      "Actual charges stay policy-gated. Never double-bill, never invent usage.",
+      "Reconcile before you bill: hours logged against hours included, this cycle against the last. An overage is only real when the work behind it is on the record and inside this cycle. Where the log is ambiguous, bill the lower figure and flag it — a client who finds one overcharge audits every invoice you have ever sent them.",
+      "What is billable this cycle, what it reconciles against, what was left off and why, and anything a person must approve.",
+    ],
+    [
+      "email.sequencer", "Outbound Communications Manager", "REVENUE", "cro",
+      "Run the outbound sequences: who is enrolled, what goes next, and when a sequence stops.",
+      ["email.draft", "sequence.enrol", "sequence.stop"],
+      "Stop immediately on reply, unsubscribe or complaint. Respect send windows.",
+      "Check suppression before every enrolment, not once at the top of a batch. A reply stops the sequence the moment it arrives — a follow-up sent after somebody answered is the single most damaging thing this workflow can do, because it proves nobody was reading. Respect the send window in the recipient's timezone, not ours. When a touch has nothing new to add, skip it rather than send it.",
+      "Who was enrolled and who was not, what goes out next and when, what was stopped and why.",
+    ],
+    [
+      "client.notifier", "Client Communications Agent", "CLIENT", "cco",
+      "Tell each client what is happening on their project, before they have to ask.",
+      ["email.draft", "client.read", "projects.read"],
+      "Never expose internal notes, costs, credentials or another client's data.",
+      "Write what changed for them, not what we did. A week with no visible progress is still worth a sentence saying so — silence is what a client reads as trouble, and an honest quiet week costs far less than being chased. Never promise a date the project record does not support, and never let a client learn about a slip from anybody but us.",
+      "What moved, what is next, anything that needs them, and by when.",
+    ],
+    [
+      "analytics.engine", "Business Intelligence Agent", "TECHNOLOGY", "cto",
+      "Report what the operating numbers actually say happened, with the source behind each one.",
+      ["analytics.read", "finance.read", "crm.read"],
+      "Never manufacture attribution from insufficient data. Does not change pricing or strategy.",
+      "Every number carries where it came from and over what period. Report the change and the base — '3 to 5' is information, '+67%' on its own is a way of hiding that the base was three. Where the data cannot support a conclusion, say what it would take to answer the question instead of answering it anyway. A trend needs enough points to be a trend.",
+      "The numbers with their sources and periods, what genuinely changed, what is noise, and what cannot be answered from this data.",
+    ],
+    [
+      "integration.manager", "Automation & Integration Architect", "TECHNOLOGY", "cto",
+      "Design how Dakyworld's systems connect so information moves automatically and safely.",
+      ["webhooks.read", "integrations.read", "webhook.dispatch"],
+      "Production changes follow QA and rollback policy. Never log a secret.",
+      "Design for the failure first: every connection names what happens when the far end is down, slow, or answers twice. Anything that can fire twice must be safe to fire twice. Say where each secret lives and confirm it is not in a log, a URL or a payload. A design with no failure path is not finished, it is a demo.",
+      "The flow end to end, what happens at each failure, what is idempotent, where the secrets live, and how it is rolled back.",
+    ],
+  ] as const).map(([key, name, department, managerKey, mission, toolkit, escalationPolicy, process, output]) => ({
     key,
     name,
     title: name,
@@ -383,9 +439,15 @@ export const AGENT_SEEDS: AgentSeed[] = [
       mission,
       scope: "The workflow named above, and nothing beyond it.",
       policy: escalationPolicy,
-      process: "Work from the record in front of you. Choose the smallest action that moves the business forward, and say what you chose and why.",
+      // Its own, not the shared sentence. Eight managers with one identical
+      // `process` produced eight agents that reasoned identically and wrote
+      // interchangeable answers — which is the same defect the roster split
+      // fixed at the level of *what* an agent does, appearing again at the
+      // level of *how* it does it. A manager's judgement is the whole product;
+      // describing it generically is describing nothing.
+      process,
       escalateWhen: "Confidence is low, evidence contradicts itself, or the action would change money, scope, security or a public claim.",
-      output: "The decision, the evidence behind it, the next action, its owner, and whether a person needs to approve it.",
+      output,
     }),
   })),
 
@@ -1357,6 +1419,77 @@ export interface NarrowingResult {
  */
 export async function narrowSeededAgents(): Promise<NarrowingResult | null> {
   return resyncSeeds(SETTING.AGENT_ONE_JOB_PASS, NARROWED as readonly string[]);
+}
+
+/**
+ * Keeps every agent the Owner has *not* rewritten in step with its seed.
+ *
+ * This replaces a growing pile of one-off marked passes. The first was the
+ * one-job split, the second was the cold-email playbook, and the third would
+ * have been "the operational managers now have their own reasoning instead of
+ * one shared sentence" — at which point the pattern is obviously wrong. A
+ * marker per improvement means an improvement only lands if somebody remembers
+ * to add a marker for it, and the ones that get forgotten are invisible: the
+ * prompt in the repo says one thing, the agent doing the work says another,
+ * and the founder's report is that nothing improved. That is exactly what
+ * happened.
+ *
+ * **The protection is unchanged and it is the only one that matters.**
+ * `promptEditedAt` is set the moment somebody rewrites an agent through the
+ * API, and an agent carrying it is never touched here. What the original rule
+ * protected was *the Owner's words*, not the staleness of ours — so an agent
+ * whose prompt is still exactly what shipped is one nobody has expressed an
+ * opinion about, and giving it the better version of the same job is a
+ * correction rather than an overwrite. `POST /agents/:key/prompt/reset` still
+ * exists for going back deliberately.
+ *
+ * Only the wording moves. Toolkit, autonomy level and dry run are decisions,
+ * they are the Owner's, and nothing here reads them.
+ */
+export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[]; keptAsEdited: string[] }> {
+  const existing = await prisma.agent.findMany({
+    select: { key: true, promptEditedAt: true, prompt: true, mission: true, escalationPolicy: true },
+  });
+  const seeds = new Map(AGENT_SEEDS.map((seed) => [seed.key, seed]));
+
+  const updated: string[] = [];
+  const keptAsEdited: string[] = [];
+
+  for (const agent of existing) {
+    const seed = seeds.get(agent.key);
+    if (!seed) continue;
+    if (agent.promptEditedAt) {
+      keptAsEdited.push(agent.key);
+      continue;
+    }
+    // Compared rather than written unconditionally: a no-op UPDATE on every
+    // boot is a write nobody asked for and a row whose updatedAt lies.
+    //
+    // **Layer by layer, never by stringifying.** Postgres normalises `jsonb`
+    // key order, so the object that comes back is rarely in the order it went
+    // in, and comparing two serialisations of the same prompt reports a
+    // difference every time. That version of this function rewrote all
+    // forty-nine agents on every boot and reported it as work.
+    const stored = (agent.prompt ?? {}) as Record<string, unknown>;
+    const wanted = seed.prompt as unknown as Record<string, unknown>;
+    const promptSame = PROMPT_LAYERS.every((layer) => (stored[layer] ?? "") === (wanted[layer] ?? ""));
+    if (promptSame && agent.mission === seed.mission && agent.escalationPolicy === seed.escalationPolicy) continue;
+
+    await prisma.agent.update({
+      where: { key: agent.key },
+      data: {
+        mission: seed.mission,
+        responsibilities: seed.responsibilities,
+        kpis: seed.kpis,
+        skills: seed.skills ?? [],
+        escalationPolicy: seed.escalationPolicy,
+        prompt: seed.prompt as unknown as object,
+      },
+    });
+    updated.push(agent.key);
+  }
+
+  return { updated, keptAsEdited };
 }
 
 /**

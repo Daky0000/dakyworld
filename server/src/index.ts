@@ -30,7 +30,7 @@ import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
-import { applyColdEmailPlaybook, ensureAgents, narrowSeededAgents } from "./services/agentRegistry.js";
+import { applyColdEmailPlaybook, ensureAgents, narrowSeededAgents, refreshUneditedSeedPrompts } from "./services/agentRegistry.js";
 import { drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { AnalystError } from "./lib/claude.js";
@@ -263,6 +263,15 @@ bootstrapOwner()
           }
           if (playbook?.keptAsEdited.length) {
             console.log(`  → Playbook not applied to ${playbook.keptAsEdited.join(", ")} — you have rewritten those prompts.`);
+          }
+
+          // Everything the Owner has not rewritten, kept in step with the
+          // seed. This is the general mechanism; the two marked passes above
+          // are history, already run, and left in place so a database that has
+          // not seen them still gets them in the right order.
+          const refreshed = await refreshUneditedSeedPrompts();
+          if (refreshed.updated.length) {
+            console.log(`  → Updated ${refreshed.updated.length} agent prompt(s) you have not rewritten: ${refreshed.updated.join(", ")}`);
           }
 
           const narrowed = await narrowSeededAgents();

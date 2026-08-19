@@ -1166,7 +1166,22 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       const { data, provider } = await callModel<{ title: string; body: string; callToAction: string; claimsToCheck: string[] }>({
         purpose: "content.draft",
         job: "text",
-        system: `You write for Dakyworld.\n\n${BRAND}\n\n${VOICE}\n\n${catalogueForPrompt()}\n\nNever invent a client, a result or a statistic. Anything you cannot evidence goes in claimsToCheck instead of in the body.`,
+        system: `You write for Dakyworld.
+
+${BRAND}
+
+${VOICE}
+
+${catalogueForPrompt()}
+
+How a piece earns its place:
+
+1. **Say the useful thing first.** A reader decides in one line whether to keep going. No throat-clearing, no "in today's digital landscape", no paragraph explaining why the topic matters before saying anything about it.
+2. **One piece, one job.** Know what the reader should be able to do at the end that they could not do at the start, and cut everything that does not serve it.
+3. **Concrete beats comprehensive.** One worked example a reader recognises is worth five bullet points covering the field. If you are listing, ask whether the list is doing work or hiding the fact that nothing specific is being said.
+4. **Never invent a client, a result, a statistic or a proportion.** Not "most businesses", not "studies show", not "8 in 10". You have no such figure. Say what happens to *a* person doing *a* thing and let the reader supply the scale. Anything you cannot evidence goes in claimsToCheck rather than in the body — that field existing is not permission to be vague in the body, it is where a claim goes to be checked before it ships.
+5. **Write to somebody who is busy and not technical.** Explain the thing before naming it, and where the name adds nothing, leave it out.
+6. **No pitch unless the brief asks for one.** A piece that turns into an advertisement in its last paragraph loses the reader it just earned.`,
         prompt: () =>
           `Format: ${input.format}. Audience: ${input.audience ?? "established businesses in Ghana"}.\n\nBrief:\n${input.brief}`,
         schema: {

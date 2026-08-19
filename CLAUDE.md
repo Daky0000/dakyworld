@@ -358,6 +358,28 @@ Four things in it overturn what the drafter used to do, so check before
   from outside; it may be hosting or a renewal setting. This one is a
   correction: the sentence was added on 19 Aug and the playbook removed it.
 
+**A prompt improvement that never reaches the model is not an improvement, and
+the symptom is "nothing changed".** Two ways that happened here, both worth
+checking before writing another word of prompt:
+
+1. **A later stage was enforcing the earlier doctrine.** `emailPolish` runs
+   *after* the drafter and rewrites the text. Its `TEST.COLD_OUTREACH` still
+   required "what it costs them" and treated a self-introduction as
+   throat-clearing, so it edited v3 back out of every draft. The last writer in
+   a chain sets the house style whatever the first one was told.
+2. **The prompt contradicted itself.** The purpose brief said "never what it has
+   already cost them" and "the ask is never a meeting"; the legacy `angle()`
+   block, emitted immediately after, said "say what it costs them" three times
+   and "ask for fifteen minutes". A model given both does not average them — it
+   falls back to the generic email it already knew. `angle()` and the scenario
+   are two answers to one question, so **only one is emitted**: the scenario
+   when the findings chose one, the angle only when they did not.
+
+`tmp/writerAudit.ts` is the tool for this. It prints the composed prompt, asserts
+each rule is present *and* that its opposite is not, and reports what fraction of
+the prompt is actually facts about the business. Run it before adding
+instructions, not after.
+
 **The playbook guides; it does not dictate.** The scenarios say what a letter
 must establish and how small the ask should be. `subjectExamples` and
 `exampleAsk` are named that way on purpose — they calibrate register and are
@@ -856,6 +878,22 @@ substitute, so headings come out serif. The files are still correct — do not
   fallback, pricing, the dry-run and refusal paths, per-agent concurrency, the
   reaper, shared-memory recall and prompt edits were all verified — a compile
   is not evidence that a loop turns.
+- **Every job can be proved to work on its assigned vendor.**
+  `tmp/modelJobs.ts` sends one real tiny request per job and reports what came
+  back — a key that is present is not a key that works. Against `tmp/vendorStub.ts`
+  all six answer; against a laptop with no keys all six say "waiting on a key",
+  which is not a fault. The stub gained a `/v1/sonar` route because without it
+  Perplexity's three jobs — factcheck, research, and the plain-English pass over
+  every outbound email — could not be exercised at all without a prepaid key,
+  which is how a defect in that pass went unnoticed.
+- **Agent prompts are refreshed, not migrated one marker at a time.**
+  `refreshUneditedSeedPrompts()` runs on every boot and updates any agent whose
+  prompt is still exactly what shipped; `promptEditedAt` is what protects the
+  Owner's own wording. It replaced a growing pile of one-off marked passes, each
+  of which only landed if somebody remembered to add a marker. **Compare layer
+  by layer, never by stringifying the prompt** — Postgres normalises `jsonb` key
+  order, so serialising both sides reports a difference every time, and the
+  first version rewrote all forty-nine agents on every boot and called it work.
 - **The playbook engine is checked without a key or a database.**
   `tmp/coldEmailPlaybook.ts` asserts the scenario chooser picks the certificate
   over four other findings, that a manual scenario can be asked for by name but
