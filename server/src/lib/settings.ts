@@ -36,6 +36,14 @@ export const SETTING = {
    * See services/captureActors.ts.
    */
   CAPTURE_ACTORS: "capture.actors",
+  /**
+   * Which Apify actor takes the homepage screenshots. Blank uses the shipped
+   * default (`apify/screenshot-url`). A setting rather than a constant because
+   * every screenshot actor does the same job at a different price, and
+   * switching to a cheaper one should be a dropdown rather than a deploy —
+   * see services/screenshotActors.ts.
+   */
+  SCREENSHOT_ACTOR: "capture.screenshotActor",
 
   /** Powers the spreadsheet analyst — see lib/anthropic.ts. */
   ANTHROPIC_KEY: "anthropic.apiKey",

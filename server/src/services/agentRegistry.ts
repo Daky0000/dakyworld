@@ -640,6 +640,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
         toolkit: [
           "lead.read",
           "lead.prepare",
+          "lead.prepareMany",
           "company.audit",
           "site.look",
           "security.scan",

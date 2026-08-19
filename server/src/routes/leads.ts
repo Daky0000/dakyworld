@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { requireRole } from "../middleware/auth.js";
 import {
   BUILTIN_FIELDS,
   LEAD_CAPTURE_METHODS,
@@ -15,7 +16,7 @@ import {
 } from "../services/leadFields.js";
 import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
 import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLeads, tagSlug } from "../services/leadTags.js";
-import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
+import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, prepareLeads, storedPrep } from "../services/leadPrep.js";
 import { demoUrl } from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
 
@@ -659,6 +660,54 @@ const prepareInput = z.object({
  * address found by searching — is returned for a person to accept rather than
  * applied. See services/leadPrep.ts.
  */
+const prepareManyInput = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(200),
+  skipResearch: z.boolean().default(false),
+  skipLook: z.boolean().default(false),
+  /** Leave alone anything already looked at recently. On by default. */
+  skipFresh: z.boolean().default(true),
+});
+
+/**
+ * Looks at a list of businesses, with the screenshots batched into as few
+ * Apify runs as possible.
+ *
+ * Mounted above `/:id/prepare` because "/prepare-many" would otherwise be read
+ * as a lead id. Slow by nature — this is one browser opening two hundred pages
+ * — so it answers with what it managed rather than holding a connection open
+ * on all-or-nothing terms.
+ */
+leadsRouter.post("/prepare-many", requireRole("OWNER"), async (req, res, next) => {
+  try {
+    const input = prepareManyInput.parse(req.body);
+
+    let ids = input.ids;
+    if (input.skipFresh) {
+      const fresh = await prisma.leadResearch.findMany({
+        where: { leadId: { in: ids }, ranAt: { gt: new Date(Date.now() - STALE_AFTER_DAYS * 86_400_000) } },
+        select: { leadId: true },
+      });
+      const skip = new Set(fresh.map((row) => row.leadId));
+      ids = ids.filter((id) => !skip.has(id));
+    }
+    if (ids.length === 0) {
+      return res.json({ prepared: [], failed: [], skipped: input.ids.length, screenshotRuns: 0, screenshotsTaken: 0, costUsd: 0 });
+    }
+
+    const result = await prepareLeads(ids, { skipResearch: input.skipResearch, skipLook: input.skipLook });
+    res.json({
+      prepared: result.prepared.map((prep) => ({ leadId: prep.leadId, strength: prep.strength, filled: Object.keys(prep.filled) })),
+      failed: result.failed,
+      skipped: input.ids.length - ids.length,
+      screenshotRuns: result.screenshotRuns,
+      screenshotsTaken: result.screenshotsTaken,
+      costUsd: result.costUsd,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 leadsRouter.post("/:id/prepare", async (req, res, next) => {
   try {
     const options = prepareInput.parse(req.body ?? {});

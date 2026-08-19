@@ -217,10 +217,39 @@ the second draft to the same person costs nothing and the Owner can read what
 the email was argued from after it has gone.
 
 `services/png.ts` gained a decoder for this: a full-page screenshot arrives
-taller than any vision model accepts, so `cropPngTop` keeps the first 2400px.
-It is sixty lines of `zlib.inflateSync` and an unfilter loop rather than an
-image library, and it refuses anything that is not 8-bit non-interlaced — which
-is everything a headless Chrome emits.
+taller than any vision model accepts, so `cropPngTop` keeps the first 2400px and
+`downscalePng` then halves it to 1024 wide. It is sixty lines of
+`zlib.inflateSync` and an unfilter loop rather than an image library, and it
+refuses anything that is not 8-bit non-interlaced — which is everything a
+headless Chrome emits.
+
+**Screenshot cost is the actor booting, not the picture** — `siteShot.ts`,
+`screenshotActors.ts`. An Apify run starts a container and a browser before it
+does anything useful, and that boot is identical for one page or twenty. So
+`captureHomepages()` is the real function and `captureHomepage()` wraps it;
+`prepareLeads()` batches a whole selection into `ceil(n / MAX_BATCH)` runs
+instead of n. Sixty leads is three runs, not sixty. The other levers, in order
+of size: not re-shooting what is still fresh (`skipFresh`), `runOptionsFor()`
+sizing memory and timeout to the batch (compute is billed in gigabyte-hours),
+and `downscalePng` to 1024 — vision is billed in 512px tiles, so 1280×2400 is
+15 tiles and 1024×1920 is 8.
+
+**The actor is a setting, not a constant** (`capture.screenshotActor`,
+`GET`/`PUT /api/settings/capture/screenshot-actor`, which reports each
+candidate's *live* price). Every screenshot actor does the same job under a
+different input schema — `urls` vs `link_urls`, `viewportWidth` vs
+`window_Width` vs `width`, `proxy` vs `proxyConfig` vs `proxyConfiguration` — so
+`buildScreenshotInput()` maps them and **only ever sends a key the actor's own
+schema declares**. Apify ignores an unknown key silently, so the failure mode of
+guessing is a perfectly successful run at the wrong size with nothing to show
+for it. Shipped default `apify/screenshot-url` (free beyond compute, which
+batching makes cheap); `i-scraper/website-screenshot` is the mapped alternative
+if compute ever looks dear — $0.006 flat, 256MB, blocks media.
+
+Matching a dataset row back to the business that asked for it goes by
+`startUrl`, then final `url`, and only falls back to position when no row
+carries an address *and* the counts line up exactly. A picture attached to the
+wrong business is a page carrying somebody's name that is not theirs.
 
 **A failed question is not an answer** — `companyAudit.fetchSite()`. The audit
 used to collapse every fetch failure into `catch { return null }` and raise a

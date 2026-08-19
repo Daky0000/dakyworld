@@ -2,7 +2,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
 import type { ToolDefinition } from "./types.js";
 import { auditCompany } from "../companyAudit.js";
-import { isStale, prepareLead, storedPrep } from "../leadPrep.js";
+import { isStale, prepareLead, prepareLeads, storedPrep } from "../leadPrep.js";
 import { lookAtHomepage } from "../homepageLook.js";
 import { polishEmail } from "../../lib/emailPolish.js";
 import { buildDemo, demoUrl, subjectFromLead } from "../demoBuilder.js";
@@ -210,6 +210,53 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         facts: prep.facts,
         notes: prep.notes,
         costUsd: prep.costUsd,
+      };
+    },
+  },
+  {
+    key: "lead.prepareMany",
+    name: "Look at a list of businesses",
+    group: "Pipeline",
+    purpose:
+      "The same as looking at one business, for many at once — and the only efficient way to do it, because the screenshots go into as few Apify runs as possible.",
+    scope: "write",
+    requires: "models",
+    job: "research",
+    spends: true,
+    outward: false,
+    input: z.object({
+      leadIds: z.array(z.string().min(1)).min(1).max(50),
+      skipLook: z.boolean().default(false).describe("Skip the screenshots and the model that reads them."),
+      skipFresh: z.boolean().default(true).describe("Leave alone anything already looked at recently."),
+    }),
+    preview: async (input) => {
+      const leads = await prisma.lead.findMany({ where: { id: { in: input.leadIds } }, select: { website: true } });
+      const sites = leads.filter((lead) => lead.website).length;
+      const runs = input.skipLook ? 0 : Math.ceil(sites / 20);
+      return `Research ${leads.length} business(es) against live sources, check their sites, and photograph ${sites} homepage(s) in ${runs} Apify run(s) rather than ${sites}. Nothing on any record would be overwritten.`;
+    },
+    run: async (input) => {
+      let ids: string[] = input.leadIds;
+      if (input.skipFresh) {
+        const fresh = await prisma.leadResearch.findMany({
+          where: { leadId: { in: ids }, ranAt: { gt: new Date(Date.now() - 30 * 86_400_000) } },
+          select: { leadId: true },
+        });
+        const skip = new Set(fresh.map((row) => row.leadId));
+        ids = ids.filter((id) => !skip.has(id));
+      }
+      if (ids.length === 0) return { prepared: 0, skipped: input.leadIds.length, note: "Every one of these was looked at recently." };
+
+      const result = await prepareLeads(ids, { skipLook: input.skipLook });
+      return {
+        prepared: result.prepared.length,
+        skipped: input.leadIds.length - ids.length,
+        failed: result.failed,
+        screenshotRuns: result.screenshotRuns,
+        screenshotsTaken: result.screenshotsTaken,
+        costUsd: result.costUsd,
+        // The saving, stated, so an agent reporting back can say it.
+        note: `${result.screenshotsTaken} screenshot(s) in ${result.screenshotRuns} run(s).`,
       };
     },
   },

@@ -1,5 +1,6 @@
 import { ApifyNotConfiguredError, apifyConfigured, getDatasetItems, getRun, runCost, startRun } from "../lib/apify.js";
-import { cropPngTop, pngSize } from "./png.js";
+import { cropPngTop, downscalePng, pngSize } from "./png.js";
+import { buildScreenshotInput, runOptionsFor, screenshotActorId } from "./screenshotActors.js";
 
 /**
  * A picture of a prospect's homepage.
@@ -27,11 +28,22 @@ import { cropPngTop, pngSize } from "./png.js";
  *    structural audit, which needs nothing but a fetch.
  */
 
-/** Apify's own actor: two million runs, free beyond platform compute. */
-export const SCREENSHOT_ACTOR = "apify/screenshot-url";
-
 /** A desktop viewport. Wide enough that a responsive site shows its real layout. */
 const VIEWPORT_WIDTH = 1280;
+
+/**
+ * What the vision model is actually sent, after cropping.
+ *
+ * Vision is billed in 512px tiles, so 1280 wide costs three tiles across and
+ * 1024 costs two — a third off every look, for a picture that answers the same
+ * questions just as well. The shot is taken at 1280 because that is the width
+ * at which a responsive site lays itself out like a desktop site; it is only
+ * shrunk on the way to the model.
+ */
+const MODEL_WIDTH = 1024;
+
+/** How many pages one run may cover. Beyond this the run gets slow and fragile. */
+export const MAX_BATCH = 20;
 
 /**
  * How much of the page is kept. About two and a half screens: the fold, plus
@@ -45,9 +57,7 @@ const MAX_IMAGE_BYTES = 4_500_000;
 /** Claude's ceiling, and the lowest of the three. */
 const MAX_IMAGE_EDGE = 8000;
 
-const START_TIMEOUT_SECS = 120;
 const POLL_EVERY_MS = 2500;
-const GIVE_UP_AFTER_MS = 150_000;
 
 export interface Screenshot {
   /** What we asked for. */
@@ -60,7 +70,11 @@ export interface Screenshot {
   height: number;
   /** True when the page was longer than `KEEP_ROWS` and the rest was cut. */
   cropped: boolean;
-  /** The signed Apify link, which expires. Kept so a person can open the original. */
+  /**
+   * The signed Apify link to the **original** full-size picture, which expires.
+   * Kept so a person can open what was actually captured — `width` and
+   * `height` above describe the cropped, shrunk copy the model was shown.
+   */
   imageUrl: string;
   mediaType: string;
   bytes: number;
@@ -94,115 +108,207 @@ export function normaliseSiteUrl(website: string): string | null {
   }
 }
 
-export async function captureHomepage(website: string): Promise<ShotResult> {
-  const url = normaliseSiteUrl(website);
-  if (!url) return none(`"${website}" is not a web address this could open, so no screenshot was taken.`);
-  if (!(await apifyConfigured())) {
-    return none("No screenshot was taken — Apify is not connected. Add a token under Lead Sources → Connection.");
+/**
+ * Screenshots for many businesses in one run.
+ *
+ * This is where nearly all the cost of the feature lives, and almost none of
+ * it is the picture. An Apify run boots a container and a browser before it
+ * does anything useful, and that boot is the same whether the run shoots one
+ * page or twenty. Preparing sixty freshly captured leads one at a time is
+ * sixty boots — half an hour of waiting and sixty times the compute, for the
+ * same sixty pictures a handful of runs would have produced.
+ *
+ * So the batch is the real function and `captureHomepage` is a wrapper on it.
+ * A single lead in the drawer still gets its own run, because a person is
+ * watching; bulk work goes through here in groups of `MAX_BATCH`.
+ */
+export async function captureHomepages(websites: string[]): Promise<Map<string, ShotResult>> {
+  const results = new Map<string, ShotResult>();
+
+  // Normalise first, so an unusable address costs nothing and says so.
+  const wanted: { requested: string; url: string }[] = [];
+  for (const website of websites) {
+    const url = normaliseSiteUrl(website);
+    if (!url) {
+      results.set(website, none(`"${website}" is not a web address this could open, so no screenshot was taken.`));
+      continue;
+    }
+    wanted.push({ requested: website, url });
   }
+  if (wanted.length === 0) return results;
+
+  if (!(await apifyConfigured())) {
+    const note = "No screenshot was taken — Apify is not connected. Add a token under Lead Sources → Connection.";
+    for (const entry of wanted) results.set(entry.requested, none(note));
+    return results;
+  }
+
+  const failAll = (note: string) => {
+    for (const entry of wanted) if (!results.has(entry.requested)) results.set(entry.requested, none(note));
+    return results;
+  };
+
+  const built = await buildScreenshotInput(
+    wanted.map((entry) => entry.url),
+    { viewportWidth: VIEWPORT_WIDTH, delayMs: 3000 },
+  );
 
   let run;
   try {
-    run = await startRun(
-      SCREENSHOT_ACTOR,
-      {
-        urls: [{ url }],
-        format: "png",
-        // Declared required by the actor's own input schema, alongside
-        // `waitUntil` and `delay` — omitting it is an input validation
-        // failure, not a default.
-        viewportWidth: VIEWPORT_WIDTH,
-        // "load" rather than networkidle: a site with a chat widget or an ad
-        // script never goes idle, and waiting for it burns the whole timeout
-        // to produce the same picture.
-        waitUntil: "load",
-        // Long enough for web fonts and a hero image to arrive, so the shot is
-        // of their site rather than of their site loading.
-        delay: 3000,
-        scrollToBottom: false,
-        proxy: { useApifyProxy: true },
-      },
-      { timeoutSecs: START_TIMEOUT_SECS, memoryMbytes: 2048 },
-    );
+    run = await startRun(built.actorId, built.input, runOptionsFor(wanted.length));
   } catch (err) {
-    if (err instanceof ApifyNotConfiguredError) return none(err.message);
-    return none(`No screenshot was taken — Apify would not start the run: ${(err as Error).message}`);
+    if (err instanceof ApifyNotConfiguredError) return failAll(err.message);
+    return failAll(`No screenshot was taken — Apify would not start the run: ${(err as Error).message}`);
   }
 
-  const giveUpAt = Date.now() + GIVE_UP_AFTER_MS;
+  // The clock scales with the batch: twenty pages genuinely take longer than
+  // one, and giving up early would throw away a run that has been paid for.
+  const giveUpAfterMs = Math.min(600_000, 60_000 + wanted.length * 20_000);
+  const giveUpAt = Date.now() + giveUpAfterMs;
   let finished = run;
   while (finished.status === "READY" || finished.status === "RUNNING") {
     if (Date.now() > giveUpAt) {
-      return none(`No screenshot was taken — ${url} was still loading after ${Math.round(GIVE_UP_AFTER_MS / 1000)} seconds.`);
+      return failAll(`No screenshot was taken — the run was still going after ${Math.round(giveUpAfterMs / 1000)} seconds.`);
     }
     await wait(POLL_EVERY_MS);
     try {
       finished = await getRun(run.id);
     } catch (err) {
-      return none(`No screenshot was taken — Apify stopped answering: ${(err as Error).message}`);
+      return failAll(`No screenshot was taken — Apify stopped answering: ${(err as Error).message}`);
     }
   }
 
   if (finished.status !== "SUCCEEDED") {
-    return none(`No screenshot was taken — the run ${finished.status.toLowerCase()}. Their site may block automated browsers.`);
+    return failAll(`No screenshot was taken — the run ${finished.status.toLowerCase()}. Their site may block automated browsers.`);
   }
 
   let items: Record<string, unknown>[];
   try {
-    items = await getDatasetItems(finished.defaultDatasetId, 5);
+    items = await getDatasetItems(finished.defaultDatasetId, Math.max(10, wanted.length * 2));
   } catch (err) {
-    return none(`The screenshot was taken but could not be read back: ${(err as Error).message}`);
+    return failAll(`The screenshots were taken but could not be read back: ${(err as Error).message}`);
   }
 
-  const item = items.find((row) => typeof row.screenshotUrl === "string");
-  const imageUrl = item?.screenshotUrl as string | undefined;
-  if (!imageUrl) return none(`No screenshot was taken — the run finished without producing an image for ${url}.`);
+  // What one page cost, which is the number worth knowing when choosing an
+  // actor. Apify reports per run, so it is shared out across the pictures that
+  // actually came back.
+  const cost = await runCost(finished, built.actorId).catch(() => ({ totalUsd: null, events: null }));
+  const withImages = items.filter((row) => typeof row.screenshotUrl === "string").length;
+  const perShot = cost.totalUsd != null && withImages > 0 ? cost.totalUsd / withImages : null;
 
+  for (const [index, entry] of wanted.entries()) {
+    const item = matchItem(items, entry.url, index, wanted.length);
+    const imageUrl = item?.screenshotUrl as string | undefined;
+    if (!imageUrl) {
+      results.set(entry.requested, none(`No screenshot came back for ${entry.url} — the run finished without producing an image for it.`));
+      continue;
+    }
+    results.set(entry.requested, await readShot(entry, item!, imageUrl, finished.finishedAt ?? null, perShot, built));
+  }
+
+  return results;
+}
+
+/**
+ * Which dataset row belongs to which request.
+ *
+ * By `startUrl` first, because that is the address we asked for and it survives
+ * a redirect. Then by final URL. Position is the last resort: actors generally
+ * preserve input order, but a run where one page failed shifts everything after
+ * it, so matching on position alone would quietly attach the wrong picture to
+ * the wrong business — which on a page carrying somebody's name is not a
+ * cosmetic mistake.
+ */
+function matchItem(
+  items: Record<string, unknown>[],
+  url: string,
+  index: number,
+  wantedCount: number,
+): Record<string, unknown> | null {
+  const same = (value: unknown) => typeof value === "string" && (value === url || value.replace(/\/$/, "") === url.replace(/\/$/, ""));
+
+  const byStart = items.find((row) => same(row.startUrl));
+  if (byStart) return byStart;
+  const byFinal = items.find((row) => same(row.url));
+  if (byFinal) return byFinal;
+
+  // Some actors return the picture and nothing else — no startUrl, no url. For
+  // those, position is all there is, and it is only safe when every page came
+  // back: one failure part-way through a batch shifts the rest, and a picture
+  // attached to the wrong business is a page carrying somebody's name that is
+  // not theirs. So this insists the counts line up exactly.
+  const anyAddress = items.some((row) => typeof row.startUrl === "string" || typeof row.url === "string");
+  if (!anyAddress && items.length === wantedCount) return items[index] ?? null;
+
+  return null;
+}
+
+async function readShot(
+  entry: { requested: string; url: string },
+  item: Record<string, unknown>,
+  imageUrl: string,
+  finishedAt: string | null,
+  costUsd: number | null,
+  built: { actorId: string; ignored: string[]; guessed: boolean },
+): Promise<ShotResult> {
   let raw: Buffer;
   try {
     const response = await fetch(imageUrl);
-    if (!response.ok) return none(`The screenshot could not be downloaded (HTTP ${response.status}).`);
+    if (!response.ok) return none(`The screenshot of ${entry.url} could not be downloaded (HTTP ${response.status}).`);
     raw = Buffer.from(await response.arrayBuffer());
   } catch (err) {
-    return none(`The screenshot could not be downloaded: ${(err as Error).message}`);
+    return none(`The screenshot of ${entry.url} could not be downloaded: ${(err as Error).message}`);
   }
 
   const original = pngSize(raw);
-  const trimmed = cropPngTop(raw, KEEP_ROWS) ?? raw;
-  const size = pngSize(trimmed);
-  const cropped = Boolean(original && size && original.height > size.height);
+  // Crop first, then shrink: cropping is what removes the footer nobody is
+  // judging, and shrinking a 12,000px page before cutting it would waste the
+  // work on rows about to be thrown away.
+  const cropped = cropPngTop(raw, KEEP_ROWS) ?? raw;
+  const sent = downscalePng(cropped, MODEL_WIDTH) ?? cropped;
+  const size = pngSize(sent);
+  const wasCropped = Boolean(original && size && original.height > KEEP_ROWS);
 
   if (!size || size.width > MAX_IMAGE_EDGE || size.height > MAX_IMAGE_EDGE) {
-    return none("The screenshot came back in a shape no model will read, so the look at their homepage was skipped.");
+    return none(`The screenshot of ${entry.url} came back in a shape no model will read, so the look at their homepage was skipped.`);
   }
-  if (trimmed.byteLength > MAX_IMAGE_BYTES) {
-    return none(
-      `The screenshot of ${url} is ${(trimmed.byteLength / 1_000_000).toFixed(1)}MB, past what a model will accept, so it was skipped.`,
-    );
+  if (sent.byteLength > MAX_IMAGE_BYTES) {
+    return none(`The screenshot of ${entry.url} is ${(sent.byteLength / 1_000_000).toFixed(1)}MB, past what a model will accept, so it was skipped.`);
   }
 
-  const cost = await runCost(finished, SCREENSHOT_ACTOR).catch(() => ({ totalUsd: null, events: null }));
+  const notes = [
+    wasCropped ? `Their homepage is longer than this; the picture is the top of the page, which is what a visitor sees first.` : null,
+    built.guessed ? `The screenshot actor (${built.actorId}) publishes no input schema, so its settings were guessed.` : null,
+    built.ignored.length ? `${built.actorId} ignored: ${built.ignored.join("; ")}.` : null,
+  ].filter(Boolean);
 
   return {
     shot: {
-      requested: url,
-      finalUrl: typeof item?.url === "string" ? item.url : null,
-      takenAt: finished.finishedAt ?? new Date().toISOString(),
+      requested: entry.url,
+      finalUrl: typeof item.url === "string" ? item.url : null,
+      takenAt: finishedAt ?? new Date().toISOString(),
       viewportWidth: VIEWPORT_WIDTH,
       width: size.width,
       height: size.height,
-      cropped,
+      cropped: wasCropped,
       imageUrl,
       mediaType: "image/png",
-      bytes: trimmed.byteLength,
-      costUsd: cost.totalUsd,
+      bytes: sent.byteLength,
+      costUsd,
     },
-    base64: trimmed.toString("base64"),
-    note: cropped
-      ? `Their homepage is longer than this; the picture is the top ${size.height}px, which is what a visitor sees first.`
-      : null,
+    base64: sent.toString("base64"),
+    note: notes.length ? notes.join(" ") : null,
   };
 }
+
+/** One business. A person is waiting, so it gets a run of its own. */
+export async function captureHomepage(website: string): Promise<ShotResult> {
+  const results = await captureHomepages([website]);
+  return results.get(website) ?? none(`No screenshot was taken for ${website}.`);
+}
+
+/** Which actor is doing this, for anything that needs to say so. */
+export { screenshotActorId };
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

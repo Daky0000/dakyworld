@@ -5,7 +5,7 @@ import { registerTags } from "./leadTags.js";
 import { scoreLead, type NormalizedLead } from "./leadMapping.js";
 import { lookAtHomepage, lookForPrompt, type HomepageLook } from "./homepageLook.js";
 import { researchLead, type FillableField, type LeadResearchResult } from "./leadResearch.js";
-import { normaliseSiteUrl, type Screenshot } from "./siteShot.js";
+import { MAX_BATCH, captureHomepages, normaliseSiteUrl, type Screenshot, type ShotResult } from "./siteShot.js";
 
 /**
  * Look before you write.
@@ -68,6 +68,12 @@ export interface PrepOptions {
   skipLook?: boolean;
   /** Write the discovery note even though the lead already has one. */
   replaceDiscoveryNotes?: boolean;
+  /**
+   * A screenshot already taken for this website, from a batched run. Used only
+   * when the address still matches — research can fill in a website that was
+   * blank, and a picture of the old one would then be a picture of nothing.
+   */
+  captured?: { website: string; result: ShotResult } | null;
 }
 
 /** True when this lead has never been looked at, or was looked at too long ago. */
@@ -145,7 +151,9 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
   let look: HomepageLook | null = null;
   let shot: Screenshot | null = null;
   if (subject.website && !options.skipLook) {
+    const alreadyTaken = options.captured && options.captured.website === subject.website ? options.captured.result : null;
     const looked = await lookAtHomepage({
+      captured: alreadyTaken,
       website: subject.website,
       companyName: subject.companyName,
       trade: subject.category,
@@ -215,6 +223,76 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     strength,
     costUsd,
   };
+}
+
+/**
+ * Preparing a list of leads, with the screenshots batched.
+ *
+ * Almost the entire cost of looking at a business is the Apify run booting a
+ * container and a browser, and that boot is identical whether the run shoots
+ * one page or twenty. Sixty freshly captured leads prepared one at a time is
+ * sixty boots: half an hour of waiting and sixty times the compute, for the
+ * same sixty pictures three runs would have taken.
+ *
+ * So the pictures are taken first, in groups, and handed to each lead's own
+ * preparation. Leads whose website only turns up *during* research fall back
+ * to a run of their own — rarer, and correctness beats the saving.
+ */
+export interface BatchPrepResult {
+  prepared: LeadPrep[];
+  failed: { leadId: string; error: string }[];
+  /** How many Apify runs it took, against how many pages were shot. */
+  screenshotRuns: number;
+  screenshotsTaken: number;
+  costUsd: number;
+}
+
+export async function prepareLeads(leadIds: string[], options: PrepOptions = {}): Promise<BatchPrepResult> {
+  const unique = [...new Set(leadIds)];
+  const leads = await prisma.lead.findMany({ where: { id: { in: unique } }, select: { id: true, website: true } });
+  const byId = new Map(leads.map((lead) => [lead.id, lead]));
+
+  // 1. Every picture we can predict the need for, in as few runs as possible.
+  const shots = new Map<string, { website: string; result: ShotResult }>();
+  let screenshotRuns = 0;
+  let screenshotsTaken = 0;
+
+  if (!options.skipLook) {
+    const withSites = leads.filter((lead): lead is { id: string; website: string } => Boolean(lead.website));
+    for (let at = 0; at < withSites.length; at += MAX_BATCH) {
+      const chunk = withSites.slice(at, at + MAX_BATCH);
+      const captured = await captureHomepages(chunk.map((lead) => lead.website));
+      screenshotRuns += 1;
+      for (const lead of chunk) {
+        const result = captured.get(lead.website);
+        if (!result) continue;
+        if (result.shot) screenshotsTaken += 1;
+        shots.set(lead.id, { website: lead.website, result });
+      }
+    }
+  }
+
+  // 2. Then each lead's own work, which is per-lead however it is scheduled.
+  const prepared: LeadPrep[] = [];
+  const failed: { leadId: string; error: string }[] = [];
+  let costUsd = 0;
+
+  for (const leadId of unique) {
+    if (!byId.has(leadId)) {
+      failed.push({ leadId, error: "Lead not found" });
+      continue;
+    }
+    try {
+      const prep = await prepareLead(leadId, { ...options, captured: shots.get(leadId) ?? null });
+      prepared.push(prep);
+      costUsd += prep.costUsd;
+    } catch (err) {
+      // One bad lead must not lose the run everybody else has already paid for.
+      failed.push({ leadId, error: (err as Error).message });
+    }
+  }
+
+  return { prepared, failed, screenshotRuns, screenshotsTaken, costUsd };
 }
 
 /**

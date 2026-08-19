@@ -3,7 +3,8 @@ import { z } from "zod";
 import { requireRole } from "../middleware/auth.js";
 import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
 import { maskSecret } from "../lib/secrets.js";
-import { ApifyError, clearApifyCaches, getAccount, getMonthlyUsage } from "../lib/apify.js";
+import { ApifyError, clearApifyCaches, getAccount, getActorPricing, getActorSchema, getMonthlyUsage } from "../lib/apify.js";
+import { DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS, screenshotActorId } from "../services/screenshotActors.js";
 import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
 import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from "../services/captureActors.js";
 import { isValidTimezone } from "../services/scheduler.js";
@@ -517,6 +518,61 @@ settingsRouter.put("/capture/actors/:kind", async (req, res, next) => {
 
     await writeActorOverride(kind, { actorId, input });
     res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Which actor takes the homepage screenshots, and what each candidate costs
+ * right now.
+ *
+ * The prices come from Apify at read time rather than from a constant, for the
+ * reason the capture actors already follow: they change, and a stale number is
+ * the wrong basis for a decision that is meant to save money. Compute-priced
+ * actors report no per-event price at all, which is itself the answer — those
+ * cost platform compute, and batching is what makes them cheap.
+ */
+settingsRouter.get("/capture/screenshot-actor", async (_req, res, next) => {
+  try {
+    const current = await screenshotActorId();
+    const candidates = await Promise.all(
+      [...new Set([current, ...KNOWN_SCREENSHOT_ACTORS])].map(async (actorId) => {
+        const [pricing, schema] = await Promise.all([
+          getActorPricing(actorId).catch(() => null),
+          getActorSchema(actorId).catch(() => null),
+        ]);
+        return {
+          actorId,
+          current: actorId === current,
+          shipped: actorId === DEFAULT_SCREENSHOT_ACTOR,
+          title: schema?.title ?? null,
+          pricingModel: pricing?.model ?? schema?.pricingModel ?? null,
+          /** Per-event prices, when it charges per event rather than for compute. */
+          events: pricing?.events ?? [],
+          perResultUsd: pricing?.perResultUsd ?? null,
+          memoryMbytes: schema?.defaultRunOptions?.memoryMbytes ?? null,
+          readable: Boolean(schema),
+        };
+      }),
+    );
+    res.json({ current, shipped: DEFAULT_SCREENSHOT_ACTOR, candidates });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Points the screenshots at a different actor, or back at the shipped one. */
+settingsRouter.put("/capture/screenshot-actor", async (req, res, next) => {
+  try {
+    const { actorId } = z.object({ actorId: z.string().max(120).nullish() }).parse(req.body);
+    const wanted = actorId?.trim();
+    // Clearing it is how you go back to the shipped default, so an empty value
+    // deletes the row rather than storing an empty string that reads as a
+    // deliberate choice of nothing.
+    if (wanted) await setSetting(SETTING.SCREENSHOT_ACTOR, wanted);
+    else await deleteSetting(SETTING.SCREENSHOT_ACTOR);
+    res.json({ current: await screenshotActorId() });
   } catch (err) {
     next(err);
   }

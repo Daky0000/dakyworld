@@ -195,6 +195,35 @@ export function Leads() {
     },
   });
 
+  /**
+   * Look at a whole selection at once.
+   *
+   * Worth its own action rather than looping the single one: the screenshots
+   * are batched into as few Apify runs as possible, and the run boot is nearly
+   * all of the cost. Sixty leads one at a time is sixty browsers starting up.
+   */
+  const [lookedResult, setLookedResult] = useState<string | null>(null);
+  const bulkLook = useMutation({
+    mutationFn: (ids: string[]) =>
+      api.post<{ prepared: unknown[]; failed: unknown[]; skipped: number; screenshotRuns: number; screenshotsTaken: number; costUsd: number }>(
+        "/leads/prepare-many",
+        { ids },
+      ),
+    onMutate: () => setLookedResult(null),
+    onSuccess: (result) => {
+      invalidate();
+      setSelected(new Set());
+      setLookedResult(
+        `Looked at ${result.prepared.length}${result.skipped ? `, skipped ${result.skipped} already fresh` : ""}${
+          result.failed.length ? `, ${result.failed.length} failed` : ""
+        } — ${result.screenshotsTaken} screenshot${result.screenshotsTaken === 1 ? "" : "s"} in ${result.screenshotRuns} run${
+          result.screenshotRuns === 1 ? "" : "s"
+        }, $${result.costUsd.toFixed(3)}.`,
+      );
+    },
+    onError: (err: Error) => setLookedResult(err.message),
+  });
+
   const leads = data?.items ?? [];
   // Searching is a question about every lead you have, not about one list, so
   // the answer comes back as one ranked set rather than re-bucketed by list.
@@ -313,8 +342,27 @@ export function Leads() {
           onDelete={() => {
             if (confirm(`Delete ${selected.size} lead(s)? This cannot be undone.`)) bulkDelete.mutate([...selected]);
           }}
+          onLook={() => {
+            if (
+              confirm(
+                `Research ${selected.size} business(es), check their sites and photograph their homepages? The screenshots go into as few Apify runs as possible, but this costs real money and takes a few minutes.`,
+              )
+            ) {
+              bulkLook.mutate([...selected]);
+            }
+          }}
+          looking={bulkLook.isPending}
           onClear={() => setSelected(new Set())}
         />
+      )}
+
+      {lookedResult && (
+        <p className="mb-4 rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink/70">
+          {lookedResult}{" "}
+          <button type="button" onClick={() => setLookedResult(null)} className="text-blue hover:underline">
+            dismiss
+          </button>
+        </p>
       )}
 
       {/* The columns arrive on their own request, so wait for them too rather
@@ -1002,6 +1050,8 @@ function BulkBar({
   onGroup,
   onTags,
   onDelete,
+  onLook,
+  looking,
   onClear,
 }: {
   count: number;
@@ -1013,6 +1063,9 @@ function BulkBar({
   /** Adds and removes in one call, so tagging a segment is one action. */
   onTags: (add: string[], remove: string[]) => void;
   onDelete: () => void;
+  /** Research, audit and photograph the whole selection, screenshots batched. */
+  onLook: () => void;
+  looking: boolean;
   onClear: () => void;
 }) {
   const [tagging, setTagging] = useState(false);
@@ -1057,6 +1110,14 @@ function BulkBar({
         className={`font-mono text-[10px] uppercase tracking-[.14em] transition ${tagging ? "text-lime" : "text-cream/70 hover:text-cream"}`}
       >
         Tags…
+      </button>
+      <button
+        type="button"
+        onClick={onLook}
+        disabled={pending || looking}
+        className="font-mono text-[10px] uppercase tracking-[.14em] text-lime transition hover:text-lime/80 disabled:text-cream/40"
+      >
+        {looking ? "Looking…" : "Look at them"}
       </button>
       <button
         type="button"

@@ -1,6 +1,6 @@
 import { callModel } from "../lib/models/call.js";
 import { PROVIDERS } from "../lib/models/registry.js";
-import { captureHomepage, type Screenshot } from "./siteShot.js";
+import { captureHomepage, type Screenshot, type ShotResult } from "./siteShot.js";
 import type { CompanyAudit } from "./companyAudit.js";
 
 /**
@@ -287,9 +287,15 @@ export async function lookAtHomepage(args: {
   reviewsCount?: number | null;
   /** What the structural checks already found, so the model does not repeat them. */
   audit?: CompanyAudit | null;
+  /**
+   * A picture already taken, from a batched run. Handed in rather than fetched
+   * because an Apify run boots a browser before it does anything useful, and
+   * that boot is the same for one page as for twenty — see siteShot.
+   */
+  captured?: ShotResult | null;
 }): Promise<LookResult> {
   const notes: string[] = [];
-  const captured = await captureHomepage(args.website);
+  const captured = args.captured ?? (await captureHomepage(args.website));
   if (captured.note) notes.push(captured.note);
   if (!captured.shot || !captured.base64) return { look: null, shot: null, notes, costUsd: 0 };
 
