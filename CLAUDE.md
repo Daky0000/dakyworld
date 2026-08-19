@@ -246,10 +246,33 @@ for it. Shipped default `apify/screenshot-url` (free beyond compute, which
 batching makes cheap); `i-scraper/website-screenshot` is the mapped alternative
 if compute ever looks dear — $0.006 flat, 256MB, blocks media.
 
+`fetchSite` checks *both* spellings of the host even when the first works, so
+"only www resolves" is found whichever form the scrape happened to record. When
+the stored address does not resolve and another form does, `leadPrep` corrects
+the record — swapping only the hostname, not adopting the redirect's landing
+path — which is the one case where overwriting stored data is a correction
+rather than a loss. The fault itself survives as a finding and a tag.
+
 Matching a dataset row back to the business that asked for it goes by
 `startUrl`, then final `url`, and only falls back to position when no row
 carries an address *and* the counts line up exactly. A picture attached to the
 wrong business is a page carrying somebody's name that is not theirs.
+
+**When a check fails, try the obvious alternative before reporting failure.**
+This is the habit, not a one-off: `fetchSite` swaps www for the bare host and
+retries a 403 as a browser; `leadPrep` photographs the address that *answered*
+rather than the one on file; `post()` in the model layer waits out a 429 and
+tries again. Each of those was a real failure that reached a person as a
+sentence when the system could have solved it — "your website did not load",
+"the model provider is rate-limiting this key", and a lead whose screenshot was
+taken of a hostname with no DNS record so the look never ran at all.
+
+**Rate limits are a queue, not a failure.** `post()` retries 429 and 5xx up to
+four attempts, honouring `Retry-After` and capped at 90s of total waiting. It
+matters most for the biggest requests, which are both the likeliest to be
+limited and the most expensive to throw away — a demo build loses its design
+lookup too. Relatedly: `max_completion_tokens` counts against a per-minute
+budget whether or not it is used, so the demo asks for 16k rather than 32k.
 
 **A failed question is not an answer** — `companyAudit.fetchSite()`. The audit
 used to collapse every fetch failure into `catch { return null }` and raise a

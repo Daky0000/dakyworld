@@ -166,6 +166,8 @@ interface HttpFailure {
   status: number;
   kind: FailureKind;
   detail: string;
+  /** What the vendor's own `Retry-After` asked for, when it sent one. */
+  retryAfterMs?: number | null;
 }
 
 class ProviderError extends Error {
@@ -177,13 +179,75 @@ class ProviderError extends Error {
 }
 
 /**
- * One POST, with the four failures a caller cares about separated out.
+ * How many times a request is worth repeating, and how long to wait.
+ *
+ * A rate limit is not a failure, it is a queue — and until this existed, one
+ * 429 threw away a whole demo build: the design lookup that had already been
+ * paid for, the page, the lot, with "try again in a minute" put in front of
+ * somebody who then had to. The large requests are exactly the ones most
+ * likely to be limited and most expensive to lose.
+ */
+const MAX_ATTEMPTS = 4;
+/** Never hold a caller longer than this in total waiting for a queue to clear. */
+const MAX_BACKOFF_TOTAL_MS = 90_000;
+const BACKOFF_MS = [2000, 6000, 15_000];
+
+/** A 429 or a 5xx is worth repeating. A 400 or a 401 will say the same thing again. */
+function worthRetrying(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+/**
+ * How long the vendor asked us to wait, when it says.
+ *
+ * `Retry-After` is either a number of seconds or an HTTP date, and honouring it
+ * matters more than any backoff we invent: it is the only number that knows
+ * when the window actually resets.
+ */
+function retryAfterMs(response: Response): number | null {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(header);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * One POST, with the four failures a caller cares about separated out, and a
+ * queue waited out rather than reported.
  *
  * A 401 and a 429 mean completely different things to whoever is reading the
  * message — one is "check the key you pasted", the other is "wait a minute" —
- * so they are told apart here rather than in each adapter.
+ * so they are told apart here rather than in each adapter. The difference now
+ * is that nobody has to read the second one unless waiting did not help.
  */
 async function post(url: string, headers: Record<string, string>, body: unknown, vendor: string): Promise<Record<string, unknown>> {
+  let waited = 0;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postOnce(url, headers, body, vendor);
+    } catch (err) {
+      const last = attempt >= MAX_ATTEMPTS - 1;
+      if (last || !(err instanceof ProviderError) || !worthRetrying(err.failure.status)) throw err;
+
+      const asked = err.failure.retryAfterMs;
+      const delay = asked ?? BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
+      if (waited + delay > MAX_BACKOFF_TOTAL_MS) throw err;
+
+      waited += delay;
+      console.warn(`[models] ${vendor} answered ${err.failure.status}; waiting ${Math.round(delay / 1000)}s and trying again.`);
+      await pause(delay);
+    }
+  }
+}
+
+async function postOnce(url: string, headers: Record<string, string>, body: unknown, vendor: string): Promise<Record<string, unknown>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -215,6 +279,7 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
       status: response.status,
       kind: response.status === 401 || response.status === 403 ? "auth" : response.status === 429 ? "rate" : "empty",
       detail: `${vendor} returned ${response.status}: ${detail}`,
+      retryAfterMs: retryAfterMs(response),
     });
   }
 

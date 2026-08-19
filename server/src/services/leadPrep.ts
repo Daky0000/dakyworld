@@ -148,13 +148,27 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
   }
 
   // --- 4. What it looks like ----------------------------------------------
+  //
+  // Photographed at the address that *answered*, not the one on the record.
+  // Those differ more often than they should: a lead holding `ghacem.com`
+  // whose DNS only knows `www.ghacem.com` had its screenshot taken of the dead
+  // hostname, so the look never ran, so the only material left was the
+  // technical check — and the letter that went out was about a DNS record. The
+  // audit had already found the working address one step earlier; nothing used
+  // it.
+  const liveUrl = audit?.site?.reachable ? (audit.site.finalUrl ?? subject.website) : subject.website;
+
   let look: HomepageLook | null = null;
   let shot: Screenshot | null = null;
-  if (subject.website && !options.skipLook) {
-    const alreadyTaken = options.captured && options.captured.website === subject.website ? options.captured.result : null;
+  if (liveUrl && !options.skipLook) {
+    // A batched picture is reused only when it was taken of this same address
+    // *and* it worked. A failed shot of the address on file tells us nothing
+    // about the one that answers.
+    const alreadyTaken =
+      options.captured && options.captured.website === liveUrl && options.captured.result.shot ? options.captured.result : null;
     const looked = await lookAtHomepage({
       captured: alreadyTaken,
-      website: subject.website,
+      website: liveUrl,
       companyName: subject.companyName,
       trade: subject.category,
       town: subject.city,
@@ -166,12 +180,26 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     shot = looked.shot;
     costUsd += looked.costUsd;
     notes.push(...looked.notes);
+    if (liveUrl !== subject.website) {
+      notes.push(`The address on the record (${subject.website}) does not answer, so the page was read at ${liveUrl} instead.`);
+    }
   }
 
   // Everything above was a claim about them; everything the audit and the look
   // produced was observed. The observed half writes last so it can see what
   // research already filled and not fight it.
   Object.assign(filled, await applyObserved(lead, audit, look, filled));
+
+  // The one case where overwriting a stored value is a correction rather than
+  // a loss: the address on file provably does not resolve and another form of
+  // it provably does. Leaving the dead one there means every future scan, demo
+  // and click starts from an address that goes nowhere. The fault itself is
+  // not lost — it is a finding, a tag, and a line in the audit.
+  const corrected = correctedHost(subject.website, audit?.site?.finalUrl ?? null);
+  if (corrected) {
+    await prisma.lead.update({ where: { id: leadId }, data: { website: corrected } });
+    filled.website = { value: corrected, source: `${subject.website} does not resolve; this host answers` };
+  }
 
   const strength = caseStrength(audit, look);
   if (subject.website && !look) {
@@ -293,6 +321,29 @@ export async function prepareLeads(leadIds: string[], options: PrepOptions = {})
   }
 
   return { prepared, failed, screenshotRuns, screenshotsTaken, costUsd };
+}
+
+/**
+ * The address on file with only its hostname corrected.
+ *
+ * Not the URL the browser finally landed on: `ghacem.com` answers at
+ * `www.ghacem.com`, which redirects again to `/en`, and storing that would put
+ * a language-specific landing page in the field where the site belongs. The
+ * broken part was the host, so the host is the only part replaced.
+ *
+ * Null when nothing needs correcting, which is the normal case.
+ */
+function correctedHost(stored: string | null, answered: string | null): string | null {
+  if (!stored || !answered) return null;
+  try {
+    const was = new URL(stored);
+    const now = new URL(answered);
+    if (was.hostname === now.hostname) return null;
+    was.hostname = now.hostname;
+    return was.toString();
+  } catch {
+    return null;
+  }
 }
 
 /**

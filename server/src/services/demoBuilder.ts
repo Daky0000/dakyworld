@@ -360,9 +360,15 @@ export async function buildDemo(subject: DemoSubject, options: { rebuild?: boole
     prompt: () => buildPrompt(subject),
     schema: SCHEMA as unknown as Record<string, unknown>,
     effort: "high",
-    // A whole page of HTML and CSS. This is the largest single thing the app
-    // ever asks a model for.
-    maxTokens: 32_000,
+    /*
+     * A whole page of HTML and CSS — the largest single thing this app asks a
+     * model for, but not 32,000 tokens' worth. A generous landing page is
+     * 30-40KB, which is around 12,000. The reservation was the problem rather
+     * than the page: providers count `max_completion_tokens` against the
+     * per-minute budget whether or not it is used, so asking for the moon is a
+     * good way to be rate-limited for a page that would have fitted anyway.
+     */
+    maxTokens: 16_000,
     messages: {
       noKey: "No model is connected for building pages. Add a ChatGPT key under Settings → AI models.",
       truncated: "The page ran out of room before it finished. Try again — if it keeps happening, the brief is too large.",

@@ -293,6 +293,16 @@ export interface SiteFetch {
   domainDoesNotResolve: boolean;
   /** True when we could not tell — a timeout, a TLS error, a WAF, a refusal. */
   inconclusive: boolean;
+  /**
+   * The other spelling of their host — www against bare, or the reverse — and
+   * whether DNS knows it.
+   *
+   * Checked even when the first address worked, because which form a scrape
+   * recorded is an accident: a business whose bare name has no record is
+   * losing everybody who types it, and that stays true whether or not the
+   * record we happen to hold is the working one.
+   */
+  otherHost: { url: string; resolves: boolean } | null;
 }
 
 /**
@@ -324,14 +334,14 @@ export async function fetchSite(requested: string): Promise<SiteFetch> {
   for (const candidate of candidates) {
     const first = await attempt(candidate, CRAWLER_UA);
     attempts.push(first.attempt);
-    if (first.page) return finish(first.page, candidate, attempts);
+    if (first.page) return finish(first.page, candidate, attempts, candidates);
 
     // Blocked on our own user agent: ask again the way a browser would before
     // saying anything about their site.
     if (first.attempt.failure === "blocked") {
       const retry = await attempt(candidate, BROWSER_UA);
       attempts.push({ ...retry.attempt, detail: `${retry.attempt.detail} (retried as a browser)` });
-      if (retry.page) return finish(retry.page, candidate, attempts);
+      if (retry.page) return finish(retry.page, candidate, attempts, candidates);
     }
   }
 
@@ -343,11 +353,27 @@ export async function fetchSite(requested: string): Promise<SiteFetch> {
     // Every hostname we know about is unknown to DNS. That is about them.
     domainDoesNotResolve: real.length > 0 && real.every((entry) => entry.failure === "no-such-host"),
     inconclusive: real.some((entry) => entry.failure !== "no-such-host"),
+    otherHost: null,
   };
 }
 
-function finish(page: Fetched, usedUrl: string, attempts: FetchAttempt[]): SiteFetch {
-  return { page, usedUrl, attempts, domainDoesNotResolve: false, inconclusive: false };
+async function finish(page: Fetched, usedUrl: string, attempts: FetchAttempt[], candidates: string[]): Promise<SiteFetch> {
+  // One DNS lookup, to answer a question the successful fetch cannot: does the
+  // *other* spelling of their address work too. Cheap, and it is the difference
+  // between finding this fault only when the broken form happens to be the one
+  // on file and finding it every time.
+  const other = candidates.find((candidate) => candidate !== usedUrl) ?? null;
+  let otherHost: SiteFetch["otherHost"] = null;
+  if (other) {
+    try {
+      const hostname = new URL(other).hostname;
+      otherHost = { url: other, resolves: (await routability(hostname)) !== "no-such-host" };
+    } catch {
+      otherHost = null;
+    }
+  }
+
+  return { page, usedUrl, attempts, domainDoesNotResolve: false, inconclusive: false, otherHost };
 }
 
 // --- Reading the markup ----------------------------------------------------
@@ -567,18 +593,20 @@ export async function auditCompany(subject: AuditSubject): Promise<CompanyAudit>
         server: page.headers.get("server"),
       };
 
-      // The address on file is not the one that answered. This is a real
-      // finding in its own right — a domain with a record for www and none for
-      // the bare name loses everybody who types it without — and it is the
-      // thing that was previously mistaken for a dead website.
-      const original = fetched.attempts[0];
-      if (fetched.usedUrl && fetched.usedUrl !== subject.website && original?.failure === "no-such-host") {
+      // Only one spelling of their address works. A real finding in its own
+      // right — a domain with a record for www and none for the bare name
+      // loses everybody who types it short — and it is found whichever of the
+      // two happens to be the one on the record, because which one a scrape
+      // caught is an accident.
+      checked.push("Whether both the short and the www form of their address work");
+      const dead = fetched.otherHost && !fetched.otherHost.resolves ? fetched.otherHost.url : null;
+      if (dead && fetched.usedUrl) {
         add({
           id: "one-host-only",
           area: "WEBSITE",
           severity: "MEDIUM",
-          observed: `Their site answers at ${hostOf(fetched.usedUrl)} but not at ${hostOf(subject.website)} — the second one has no DNS record at all. Anyone who types the address the short way, or follows it from a listing that stored it that way, gets nothing.`,
-          evidence: `${original.url} does not resolve; ${fetched.usedUrl} answered ${page.status}.`,
+          observed: `Their site answers at ${hostOf(fetched.usedUrl)} but not at ${hostOf(dead)} — the second has no DNS record at all. Anyone who types the address that way, or follows it from a listing that stored it that way, gets nothing.`,
+          evidence: `${dead} does not resolve; ${fetched.usedUrl} answered ${page.status}.`,
           service: "website-rescue",
         });
       }
