@@ -312,6 +312,57 @@ served at **`/demos/<slug>`**.
 - `EmailPurpose.DEMO_READY` carries the link, and `emailContext` puts the URL
   and whether it has been opened into the facts.
 
+**The website audit team** — `src/services/audit/`, `routes/audits.ts`. Four
+reviewers over one site, compiled into one document. It runs on its own at the
+end of `prepareLead` (the "Look at them" button sends `withAuditTeam: true`)
+and can be run on its own from `POST /api/audits/run` or the `audit.website`
+tool. The result is a `WebsiteAudit` row plus two artefacts: a branded PDF for
+a person to read, and Markdown the cold lead writer argues from.
+
+```
+evidence.ts   fetch once, measure once, photograph twice (1280 and 390)
+  ├ ux.ts          job: "vision"  — what a visitor sees, with a box per finding
+  ├ performance.ts measured, then job: "text" for the summary only
+  ├ content.ts     job: "text"    — the visible words, markup stripped
+  └ security.ts    no model at all
+synthesis.ts  callClaude, named rather than routed
+annotate.ts   draws the boxes; markdown.ts and pdf.ts render
+```
+
+- **Two reviewers have no judgement in them and that is the point.** Every
+  speed, SEO and security finding is arithmetic on a header, a tag, a DNS
+  record or a measured millisecond, and each one is checkable by the person
+  reading. A model asked to review a stranger's site for security will find
+  *something*, and what it finds is a plausible vulnerability that may not
+  exist — in a document that goes out under Dakyworld's name to somebody who
+  knows the truth. The speed section's model call writes the summary and cannot
+  add a finding.
+- **A section that could not run is unscored, never zero and never a hundred.**
+  `DisciplineReport.scored` exists because the first render read "Content
+  100/100 — nobody read the writing on the page": no findings scores a hundred.
+  `overallScore` averages only the sections that ran.
+- **Regions are fractions of the image, never pixels.** The picture is cropped,
+  shrunk for the model and resized again for the PDF. `clampRegion` also
+  rescales an answer given in percentages or in 1024-pixel coordinates, which
+  is what a model actually returns about a third of the time.
+- **The synthesis cannot introduce a fault.** Every `priority` entry must name a
+  finding id that a reviewer produced; anything else is dropped and counted in
+  the notes.
+- **The Markdown is assembled in code and only its prose comes from a model.**
+  The next thing that reads it is another model, and a drafter that has learned
+  where the evidence lives must not have to re-learn it per company. Its last
+  section is the internal email brief and it is labelled as such — that is the
+  one part never pasted to the business.
+- **PDF text goes through `pdfText()`.** PDFKit's standard Helvetica is
+  WinAnsi, which has no arrow, so every "Settings → AI models" note in the app
+  rendered as `Settings !' AI models` until it did.
+- Deleting a review deletes its files explicitly. The file FKs are ON DELETE
+  SET NULL so losing a PDF never costs a report its findings, which means
+  nothing else would ever clean them up; `orphanedFiles` covers the cascade
+  from a deleted lead.
+- `annotate.ts` writes pixels into `png.ts`'s decoder output and carries its own
+  5x7 bitmap digits. No canvas dependency and no native build.
+
 **The agent runtime** — `src/services/agents/`. `runner.ts` is what turns a
 task into work: it claims an `AgentTask`, builds the prompt from the agent's
 ten prompt layers plus its recalled memories plus the resolved record, hands it
@@ -357,6 +408,14 @@ Graphic Designer, Video Editor, Ad Designer, Proposal Writer, Cold Lead Writer
 and the rest, each with `skills` (a client's words, matched by a router)
 separate from `toolkit` (a permission). Both kinds seed at autonomy 1 with dry
 run on, and the create route cannot say otherwise.
+
+**`ensureAgents()` only ever creates, which cuts both ways.** A new seeded
+agent — `design.ux` and `sec.analyst` arrived with the audit team — appears on
+the next deploy. A new *tool* added to an existing agent's `toolkit` does not:
+the row is already there, so `audit.website` and `audit.read` have to be ticked
+by hand on the Agents screen for the SEO Specialist, the Copywriter, the Web
+Developer and the Cold Lead Writer. Check that before concluding an agent
+cannot do something.
 
 **Every agent's wording is editable, including a seeded one.** That was not
 true until Aug 2026 — the API refused to rewrite a built-in agent on the
@@ -465,6 +524,16 @@ or the webhook intake. Four rules from it that are easy to undo by accident:
   is the one an attacker uses.
 - **Uploads are judged on their bytes** (`lib/fileType.ts`), never on the
   filename or the `data:` prefix, both of which the caller writes.
+- **A 500 is deliberately uninformative, and two error classes are exempt.**
+  `AnalystError` and `ApifyError` are raised on purpose, at a known point, with
+  a sentence somebody wrote for the person reading — "Add a ChatGPT key under
+  Settings → AI models" is the answer, not a leak — so the handler in
+  `index.ts` passes their status and message through. Everything else that
+  reaches there is an accident, and an accident's message is a map of the
+  system. This mattered: building a demo with no model connected threw a 503
+  saying exactly what to do about it, and the Owner was shown "Something went
+  wrong." The client now appends the log reference to that sentence so the
+  useless version is at least traceable.
 
 ## The website's metadata is generated
 
@@ -573,6 +642,15 @@ substitute, so headings come out serif. The files are still correct — do not
   the global parser in `index.ts` (`UPLOAD_PATHS`) and each mounts its own
   larger one *inside* its router, after the role check. Adding a third upload
   route means touching both places or it fails at 100 kB.
+- **The audit team can be exercised without a key, a token or a real site.**
+  `server/tmp/` is gitignored and is where the throwaway harnesses go: a stub
+  screenshot built with `encodePng`, handed in as `desktopShot`, is what
+  exercises the annotation and the PDF's image path; pointing the base URLs at
+  a local vendor stub is what exercises the four reviewers, the region clamp
+  and the synthesis's invented-id filter. Then rasterise the PDF and look at
+  it — four defects in the first render survived a clean typecheck, including a
+  section scored 100/100 under the headline "nobody read the writing on the
+  page".
 - **The whole model layer can be exercised without a single real key.** Point
   `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `GEMINI_BASE_URL` and
   `PERPLEXITY_BASE_URL` at one local stub answering `/v1/messages`,

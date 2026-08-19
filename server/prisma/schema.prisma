@@ -247,6 +247,7 @@ model Lead {
   /// What was learnt by going and looking, as opposed to what a scrape handed over.
   research       LeadResearch?
   demos          Demo[]
+  websiteAudits  WebsiteAudit[]
 
   agentTasks   AgentTask[]
 
@@ -370,6 +371,65 @@ model Demo {
 
   @@index([status])
   @@index([leadId])
+}
+
+/// One run of the website audit team over one site.
+///
+/// Four reviewers — UI/UX, speed and findability, content, security — look at
+/// the same evidence from four directions, and Claude compiles what they found
+/// into one document. Two artefacts come out and both are kept: a branded PDF
+/// for a person to read, and Markdown for the cold lead writer to argue from.
+///
+/// **The pictures, the PDF and the Markdown are `StoredFile` rows, not columns
+/// here.** A report with four screenshots inlined as base64 is a megabyte of
+/// JSON that every list query reads past, and the same picture is wanted by
+/// three renderers. `report` keeps the screenshots' dimensions and provenance
+/// with the bytes stripped out, so the row still describes what was taken even
+/// if a file is later deleted.
+///
+/// Audits accumulate rather than replace: a site reviewed again in three
+/// months is a second row, and the pair is the evidence that the work Dakyworld
+/// did actually changed something.
+model WebsiteAudit {
+  id     String  @id @default(cuid())
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId String?
+
+  /// Denormalised so a review survives the lead being renamed or deleted.
+  businessName String
+  /// The address that actually answered, which may not be the one on file.
+  website      String?
+
+  ranAt DateTime @default(now())
+
+  /// 0-100, weighted across the four sections. Arithmetic on the findings.
+  overallScore Int
+  /// "Serious problems" through "Strong" — derived from the score.
+  verdict      String
+
+  /// services/audit/types.ts `WebsiteAuditReport`, with the image bytes removed.
+  report   Json
+  /// The Markdown, denormalised deliberately: it is what the email drafter
+  /// reads, and the letter that goes out has to be reproducible from the row
+  /// rather than from re-rendering a JSON blob a schema change later.
+  markdown String
+
+  pdfFile        StoredFile? @relation("AuditPdf", fields: [pdfFileId], references: [id], onDelete: SetNull)
+  pdfFileId      String?
+  markdownFile   StoredFile? @relation("AuditMarkdown", fields: [markdownFileId], references: [id], onDelete: SetNull)
+  markdownFileId String?
+
+  /// `[{ view, annotated, fileId }]` — the plain and marked-up pictures.
+  screenshots Json?
+
+  /// Models and Apify together, for this run.
+  costUsd Decimal @default(0) @db.Decimal(10, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([leadId, ranAt])
+  @@index([ranAt])
 }
 
 /// A named bucket of leads — normally one scrape batch ("Accra dentists,
@@ -1525,6 +1585,12 @@ model StoredFile {
 
   uploadedBy   User?   @relation(fields: [uploadedById], references: [id])
   uploadedById String?
+
+  /// Back-references from the records that own a file rather than attach it.
+  /// Without these, `orphanedFiles` has no way to tell a stray upload from a
+  /// website review's own PDF.
+  auditPdfFor      WebsiteAudit[] @relation("AuditPdf")
+  auditMarkdownFor WebsiteAudit[] @relation("AuditMarkdown")
 
   createdAt DateTime @default(now())
 

@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import type { Lead, LeadFieldDef, LeadGroup, LeadResearch } from "../lib/types";
 import { CaptureTag, captureMethodLabel, useLeadFields } from "./LeadColumns";
 import { TagChip, TagPicker, useTagLookup } from "./LeadTags";
+import { LeadAuditSection } from "./LeadAudit";
 import { ProposalWriter } from "./ProposalWriter";
 import { Badge, Button, Drawer, Field, Money, RelativeTime, ScoreBar } from "./ui";
 
@@ -262,6 +263,8 @@ export function LeadDrawer({
           </Section>
 
           <ResearchSection lead={lead} onDone={invalidate} />
+
+          <LeadAuditSection lead={lead} onDone={invalidate} />
 
           <DemoSection lead={lead} onDone={invalidate} />
 
@@ -536,10 +539,13 @@ function ResearchSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
         <div className="rounded-2xl border border-line bg-white p-4">
           <p className="text-sm text-ink/60">
             Nobody has looked at this business yet. Researching them fills the blanks above from live sources, checks their site and
-            mail domain, and — if they have a website — photographs the homepage so a model can say what it looks like.
+            mail domain, and — if they have a website — photographs the homepage so a model can say what it looks like. The audit team
+            then goes over the site properly: UI/UX, speed and findability, content and security, compiled into a PDF and a Markdown
+            report below.
           </p>
           <p className="mt-2 text-[11px] text-ink/45">
-            Nothing already on the record is overwritten. A contact address found by searching is offered, never applied.
+            Nothing already on the record is overwritten. A contact address found by searching is offered, never applied. Give it a
+            couple of minutes — most of that is browsers somewhere else opening their page.
           </p>
           <div className="mt-3">
             <Button size="sm" onClick={() => look.mutate()} disabled={look.isPending}>

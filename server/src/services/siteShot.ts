@@ -32,6 +32,28 @@ import { buildScreenshotInput, runOptionsFor, screenshotActorId } from "./screen
 const VIEWPORT_WIDTH = 1280;
 
 /**
+ * A phone viewport, for the second picture the audit team asks for.
+ *
+ * 390 is an iPhone 14's CSS width and the number the whole trade designs
+ * against. It matters more than the desktop shot for most of the businesses
+ * this app writes to: their customers are on a phone, and a site that lays out
+ * correctly at 1280 and spills off the screen at 390 looks fine in every check
+ * that is not this one.
+ */
+export const PHONE_VIEWPORT_WIDTH = 390;
+
+export interface ShotOptions {
+  /** The browser width to render at. Defaults to the desktop viewport. */
+  viewportWidth?: number;
+  /**
+   * How many rows of the captured page to keep. A phone screenshot is three
+   * times as tall for the same content, so keeping the desktop number would
+   * cut it off part-way down the first screen.
+   */
+  keepRows?: number;
+}
+
+/**
  * What the vision model is actually sent, after cropping.
  *
  * Vision is billed in 512px tiles, so 1280 wide costs three tiles across and
@@ -122,8 +144,10 @@ export function normaliseSiteUrl(website: string): string | null {
  * A single lead in the drawer still gets its own run, because a person is
  * watching; bulk work goes through here in groups of `MAX_BATCH`.
  */
-export async function captureHomepages(websites: string[]): Promise<Map<string, ShotResult>> {
+export async function captureHomepages(websites: string[], options: ShotOptions = {}): Promise<Map<string, ShotResult>> {
   const results = new Map<string, ShotResult>();
+  const viewportWidth = options.viewportWidth ?? VIEWPORT_WIDTH;
+  const keepRows = options.keepRows ?? KEEP_ROWS;
 
   // Normalise first, so an unusable address costs nothing and says so.
   const wanted: { requested: string; url: string }[] = [];
@@ -150,7 +174,7 @@ export async function captureHomepages(websites: string[]): Promise<Map<string, 
 
   const built = await buildScreenshotInput(
     wanted.map((entry) => entry.url),
-    { viewportWidth: VIEWPORT_WIDTH, delayMs: 3000 },
+    { viewportWidth, delayMs: 3000 },
   );
 
   let run;
@@ -203,7 +227,7 @@ export async function captureHomepages(websites: string[]): Promise<Map<string, 
       results.set(entry.requested, none(`No screenshot came back for ${entry.url} — the run finished without producing an image for it.`));
       continue;
     }
-    results.set(entry.requested, await readShot(entry, item!, imageUrl, finished.finishedAt ?? null, perShot, built));
+    results.set(entry.requested, await readShot(entry, item!, imageUrl, finished.finishedAt ?? null, perShot, built, viewportWidth, keepRows));
   }
 
   return results;
@@ -250,6 +274,8 @@ async function readShot(
   finishedAt: string | null,
   costUsd: number | null,
   built: { actorId: string; ignored: string[]; guessed: boolean },
+  viewportWidth: number,
+  keepRows: number,
 ): Promise<ShotResult> {
   let raw: Buffer;
   try {
@@ -264,10 +290,12 @@ async function readShot(
   // Crop first, then shrink: cropping is what removes the footer nobody is
   // judging, and shrinking a 12,000px page before cutting it would waste the
   // work on rows about to be thrown away.
-  const cropped = cropPngTop(raw, KEEP_ROWS) ?? raw;
-  const sent = downscalePng(cropped, MODEL_WIDTH) ?? cropped;
+  const cropped = cropPngTop(raw, keepRows) ?? raw;
+  // Never *up*-scale: a 390px-wide phone shot blown up to 1024 is the same
+  // picture with softer edges and three times the tiles to pay for.
+  const sent = (original && original.width > MODEL_WIDTH ? downscalePng(cropped, MODEL_WIDTH) : null) ?? cropped;
   const size = pngSize(sent);
-  const wasCropped = Boolean(original && size && original.height > KEEP_ROWS);
+  const wasCropped = Boolean(original && size && original.height > keepRows);
 
   if (!size || size.width > MAX_IMAGE_EDGE || size.height > MAX_IMAGE_EDGE) {
     return none(`The screenshot of ${entry.url} came back in a shape no model will read, so the look at their homepage was skipped.`);
@@ -287,7 +315,7 @@ async function readShot(
       requested: entry.url,
       finalUrl: typeof item.url === "string" ? item.url : null,
       takenAt: finishedAt ?? new Date().toISOString(),
-      viewportWidth: VIEWPORT_WIDTH,
+      viewportWidth,
       width: size.width,
       height: size.height,
       cropped: wasCropped,
@@ -302,8 +330,8 @@ async function readShot(
 }
 
 /** One business. A person is waiting, so it gets a run of its own. */
-export async function captureHomepage(website: string): Promise<ShotResult> {
-  const results = await captureHomepages([website]);
+export async function captureHomepage(website: string, options: ShotOptions = {}): Promise<ShotResult> {
+  const results = await captureHomepages([website], options);
   return results.get(website) ?? none(`No screenshot was taken for ${website}.`);
 }
 

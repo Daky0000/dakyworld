@@ -6,6 +6,7 @@ import { scoreLead, type NormalizedLead } from "./leadMapping.js";
 import { lookAtHomepage, lookForPrompt, type HomepageLook } from "./homepageLook.js";
 import { researchLead, type FillableField, type LeadResearchResult } from "./leadResearch.js";
 import { MAX_BATCH, captureHomepages, normaliseSiteUrl, type Screenshot, type ShotResult } from "./siteShot.js";
+import { runWebsiteAudit } from "./audit/team.js";
 
 /**
  * Look before you write.
@@ -58,6 +59,14 @@ export interface LeadPrep {
   notes: string[];
   /** Whether there is anything here worth writing to them about. */
   strength: CaseStrength;
+  /**
+   * The website audit team's run, when one was asked for.
+   *
+   * Deliberately a summary rather than the report: the report is a row of its
+   * own with its own PDF and Markdown, and inlining it here would put a
+   * hundred kilobytes of findings into every response that mentions a lead.
+   */
+  websiteAudit: { auditId: string; overallScore: number; verdict: string; pdfFileId: string | null; markdownFileId: string | null } | null;
   costUsd: number;
 }
 
@@ -74,6 +83,18 @@ export interface PrepOptions {
    * blank, and a picture of the old one would then be a picture of nothing.
    */
   captured?: { website: string; result: ShotResult } | null;
+  /**
+   * Run the four-reviewer website audit afterwards and produce the report.
+   *
+   * Off for a batch and on for the button, because it is the slow, thorough
+   * half: two more model calls, a second Apify run for the phone view, and a
+   * rendered PDF at the end. Sixty leads prepared overnight want the scan; one
+   * lead somebody is about to write to wants the report.
+   *
+   * The scan's own work is handed over rather than repeated — the DNS audit
+   * and the desktop screenshot are both already in hand by the time this runs.
+   */
+  withAuditTeam?: boolean;
 }
 
 /** True when this lead has never been looked at, or was looked at too long ago. */
@@ -160,6 +181,7 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
 
   let look: HomepageLook | null = null;
   let shot: Screenshot | null = null;
+  let desktopShot: ShotResult | null = null;
   if (liveUrl && !options.skipLook) {
     // A batched picture is reused only when it was taken of this same address
     // *and* it worked. A failed shot of the address on file tells us nothing
@@ -178,6 +200,7 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     });
     look = looked.look;
     shot = looked.shot;
+    desktopShot = looked.captured;
     costUsd += looked.costUsd;
     notes.push(...looked.notes);
     if (liveUrl !== subject.website) {
@@ -208,6 +231,57 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     );
   }
   const facts = buildFacts({ research, audit, look, filled, strength, hasWebsite: Boolean(subject.website) });
+
+  // --- 5. The audit team, when it was asked for ----------------------------
+  //
+  // Deliberately last, and deliberately after `facts` is built. The scan
+  // decides what the *letter* argues, and it has always done that on its own;
+  // the audit team produces the *report*, which is a different document for a
+  // different reader. Running it here rather than folding it into the stages
+  // above means nothing about the email pipeline changes when this is off.
+  //
+  // Two things are handed over rather than redone: the DNS audit, which asked
+  // the same questions of the same domain a minute ago, and the desktop
+  // screenshot, which cost an Apify container boot. The phone view is the only
+  // new picture.
+  let websiteAudit: LeadPrep["websiteAudit"] = null;
+  if (options.withAuditTeam) {
+    // The address that answered, in preference to the one on file. `corrected`
+    // is only ever a hostname swap, so it is the fallback rather than the
+    // first choice — `liveUrl` is already where the page actually came from.
+    const auditUrl = liveUrl ?? corrected;
+    if (!auditUrl) {
+      notes.push("The audit team was not run: there is no website to review. For a business with no site at all, that absence is the whole argument and there is nothing to audit.");
+    } else {
+      try {
+        const run = await runWebsiteAudit(
+          {
+            leadId,
+            businessName: subject.companyName,
+            website: auditUrl,
+            trade: look?.states?.trade ?? subject.category,
+            town: look?.states?.town ?? subject.city,
+          },
+          { companyAudit: audit, desktopShot },
+        );
+        websiteAudit = {
+          auditId: run.auditId,
+          overallScore: run.report.overallScore,
+          verdict: run.report.verdict,
+          pdfFileId: run.pdfFileId,
+          markdownFileId: run.markdownFileId,
+        };
+        costUsd += run.report.costUsd;
+        notes.push(...run.report.notes.filter((note) => !notes.includes(note)));
+      } catch (err) {
+        // The scan is what the email is written from. Losing it because the
+        // report could not be produced would cost the useful half to save the
+        // thorough one.
+        notes.push(`The audit team did not finish: ${(err as Error).message} The scan above is unaffected.`);
+      }
+    }
+  }
+
   const ranAt = new Date();
 
   await prisma.leadResearch.upsert({
@@ -249,6 +323,7 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     facts,
     notes,
     strength,
+    websiteAudit,
     costUsd,
   };
 }

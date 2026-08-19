@@ -27,10 +27,13 @@ import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
 import { demosRouter, demoPagesRouter } from "./routes/demos.js";
+import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureAgents } from "./services/agentRegistry.js";
 import { backfillTags } from "./services/leadTags.js";
+import { AnalystError } from "./lib/claude.js";
+import { ApifyError } from "./lib/apify.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -167,6 +170,7 @@ app.use("/api/scrapers", scrapersRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/capture", captureRouter);
 app.use("/api/demos", demosRouter);
+app.use("/api/audits", auditsRouter);
 app.use("/api/tools", toolsRouter);
 app.use("/api/mcp", mcpRouter);
 app.use("/api/settings", settingsRouter);
@@ -202,6 +206,27 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err && typeof err === "object" && "issues" in err) {
     return res.status(400).json({ error: "Validation failed", details: (err as { issues: unknown }).issues });
   }
+
+  // The exceptions to the rule above, and the reason the rule needed one.
+  //
+  // "Add a ChatGPT key under Settings -> AI models" is not a leak, it is the
+  // answer. These two classes are the only ones in the app whose message is
+  // *written for the person reading it* — they are raised deliberately, at a
+  // known point, with a sentence somebody composed. Everything else that
+  // reaches here is an accident, and an accident's message is a map of the
+  // system.
+  //
+  // This mattered: building a demo with no model connected threw a 503 saying
+  // exactly what to do about it, and the Owner was shown "Something went
+  // wrong." A useless sentence about a fixable problem sends somebody looking
+  // for a bug that was never there.
+  if (err instanceof AnalystError) {
+    return res.status(err.status).json({ error: err.message, reference });
+  }
+  if (err instanceof ApifyError) {
+    return res.status(503).json({ error: err.message, reference });
+  }
+
   if (process.env.NODE_ENV === "production") {
     return res.status(500).json({ error: "Something went wrong.", reference });
   }

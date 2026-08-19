@@ -111,6 +111,17 @@ export interface HomepageLook {
 export interface LookResult {
   look: HomepageLook | null;
   shot: Screenshot | null;
+  /**
+   * The picture itself, so a caller that wants a second thing done with it
+   * does not pay for a second Apify run to get the same bytes.
+   *
+   * An Apify run boots a container and a browser before it does anything
+   * useful, and that boot is nearly the whole cost — see siteShot.ts. The
+   * website audit team needs this exact screenshot to draw its findings onto,
+   * and re-photographing the page would be a second boot for a picture we are
+   * already holding.
+   */
+  captured: ShotResult | null;
   /** Why there is no look, or what was cut from the picture. Never a failure. */
   notes: string[];
   costUsd: number;
@@ -297,7 +308,7 @@ export async function lookAtHomepage(args: {
   const notes: string[] = [];
   const captured = args.captured ?? (await captureHomepage(args.website));
   if (captured.note) notes.push(captured.note);
-  if (!captured.shot || !captured.base64) return { look: null, shot: null, notes, costUsd: 0 };
+  if (!captured.shot || !captured.base64) return { look: null, shot: null, captured, notes, costUsd: 0 };
 
   const structural = (args.audit?.findings ?? [])
     .filter((finding) => finding.severity !== "GOOD")
@@ -355,13 +366,14 @@ export async function lookAtHomepage(args: {
         lookedBy: PROVIDERS[result.provider].name,
       },
       shot: captured.shot,
+      captured,
       notes,
       costUsd: result.costUsd,
     };
   } catch (err) {
     // A model that will not answer is not a reason to abandon the email.
     notes.push(`Their homepage was photographed but not reviewed: ${(err as Error).message}`);
-    return { look: null, shot: captured.shot, notes, costUsd: 0 };
+    return { look: null, shot: captured.shot, captured, notes, costUsd: 0 };
   }
 }
 

@@ -4,6 +4,9 @@ import type { ToolDefinition } from "./types.js";
 import { auditCompany } from "../companyAudit.js";
 import { isStale, prepareLead, prepareLeads, storedPrep } from "../leadPrep.js";
 import { lookAtHomepage } from "../homepageLook.js";
+import { runWebsiteAudit } from "../audit/team.js";
+import { DISCIPLINE_NAMES } from "../audit/types.js";
+import { normaliseSiteUrl } from "../siteShot.js";
 import { polishEmail } from "../../lib/emailPolish.js";
 import { buildDemo, demoUrl, subjectFromLead } from "../demoBuilder.js";
 import { appUrl } from "../emailSender.js";
@@ -770,6 +773,152 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     run: async (input) => {
       const result = await lookAtHomepage({ website: input.website, companyName: input.companyName ?? null, audit: null });
       return { look: result.look, shot: result.shot, notes: result.notes };
+    },
+  },
+  {
+    key: "audit.website",
+    name: "Run the website audit team",
+    group: "Research",
+    purpose:
+      "Four reviewers over one site — UI/UX, speed and findability, content, security — compiled into one report, with the findings drawn onto a screenshot of the homepage. Produces a branded PDF and a Markdown copy.",
+    scope: "write",
+    // Two screenshots through Apify and three model calls, so both gates
+    // apply. Declaring only one of them would let a run start with half of
+    // what it needs and produce a report full of "could not be checked".
+    requires: "apify",
+    job: "vision",
+    spends: true,
+    // Nothing is sent anywhere and nothing is published — the report is a row
+    // in this database with two files beside it.
+    outward: false,
+    input: z.object({
+      leadId: z.string().optional().describe("The lead whose website to review."),
+      website: z.string().max(300).optional().describe("A web address, when there is no lead behind it."),
+      businessName: z.string().max(200).optional(),
+    }),
+    preview: async (input) => {
+      const who = input.leadId
+        ? ((await prisma.lead.findUnique({ where: { id: input.leadId }, select: { companyName: true, contactName: true, website: true } })) ?? null)
+        : null;
+      const site = input.website ?? who?.website ?? "their site";
+      return `Photograph ${site} on a desktop and a phone, then have the ${Object.values(DISCIPLINE_NAMES).join(", ")} reviewers each go over it, compile the four into one report, and file a PDF and a Markdown copy.`;
+    },
+    run: async (input) => {
+      let subject: Parameters<typeof runWebsiteAudit>[0];
+
+      if (input.leadId) {
+        const lead = await prisma.lead.findUnique({ where: { id: input.leadId }, include: { research: true } });
+        if (!lead) throw new Error("No such lead.");
+        const website = normaliseSiteUrl(input.website ?? lead.website ?? "");
+        if (!website) {
+          // The same refusal the route makes, for the same reason: a review of
+          // a business with no website is four sections saying there was
+          // nothing to check, rendered as a PDF.
+          throw new Error(
+            "There is no website on this lead to review. For a business with no site at all the absence is the argument — build them a demo page instead.",
+          );
+        }
+        const look = (lead.research?.look ?? null) as { states?: { trade?: string | null; town?: string | null } } | null;
+        subject = {
+          leadId: lead.id,
+          businessName: lead.companyName ?? lead.contactName,
+          website,
+          trade: look?.states?.trade ?? lead.category,
+          town: look?.states?.town ?? lead.city,
+        };
+      } else {
+        const website = normaliseSiteUrl(input.website ?? "");
+        if (!website) throw new Error("Give a leadId or a website this can open.");
+        subject = {
+          leadId: null,
+          businessName: input.businessName?.trim() || new URL(website).hostname.replace(/^www\./, ""),
+          website,
+          trade: null,
+          town: null,
+        };
+      }
+
+      const run = await runWebsiteAudit(subject);
+      // Not the whole report: it is tens of kilobytes and it would go into the
+      // agent's context in full, on every turn after this one. What comes back
+      // is the shape of it plus the ids to fetch the rest with.
+      return {
+        auditId: run.auditId,
+        businessName: run.report.businessName,
+        website: run.report.website,
+        overallScore: run.report.overallScore,
+        verdict: run.report.verdict,
+        sections: run.report.disciplines.map((discipline) => ({
+          section: DISCIPLINE_NAMES[discipline.discipline],
+          reviewer: discipline.reviewer,
+          score: discipline.score,
+          headline: discipline.headline,
+          findings: discipline.findings.length,
+        })),
+        theOneThing: run.report.synthesis?.theOneThing ?? null,
+        pdfFileId: run.pdfFileId,
+        markdownFileId: run.markdownFileId,
+        couldNotCheck: run.report.notes,
+        costUsd: run.report.costUsd,
+      };
+    },
+  },
+  {
+    key: "audit.read",
+    name: "Read a website review",
+    group: "Research",
+    purpose: "What the audit team found on a site, as the Markdown report — the evidence an email or a proposal argues from.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({
+      auditId: z.string().optional(),
+      leadId: z.string().optional().describe("The most recent review of this lead's site."),
+      full: z.boolean().default(false).describe("The whole report rather than the summary and the email brief."),
+    }),
+    run: async (input) => {
+      const audit = input.auditId
+        ? await prisma.websiteAudit.findUnique({ where: { id: input.auditId } })
+        : input.leadId
+          ? await prisma.websiteAudit.findFirst({ where: { leadId: input.leadId }, orderBy: { ranAt: "desc" } })
+          : null;
+      if (!audit) throw new Error("No review found. Run audit.website first, or give an auditId.");
+
+      const report = audit.report as unknown as {
+        disciplines: { discipline: keyof typeof DISCIPLINE_NAMES; reviewer: string; score: number; headline: string; summary: string }[];
+        synthesis: { executiveSummary: string; theOneThing: string; emailBrief: unknown } | null;
+        notes: string[];
+      };
+
+      // The full Markdown is several thousand words. Handing it over by
+      // default would fill an agent's context with a document it mostly does
+      // not need — the summary and the brief are what a letter is written
+      // from, and `full` is there for the times that is not enough.
+      if (input.full) return { auditId: audit.id, ranAt: audit.ranAt, markdown: audit.markdown };
+
+      return {
+        auditId: audit.id,
+        businessName: audit.businessName,
+        website: audit.website,
+        ranAt: audit.ranAt,
+        overallScore: audit.overallScore,
+        verdict: audit.verdict,
+        sections: report.disciplines?.map((discipline) => ({
+          section: DISCIPLINE_NAMES[discipline.discipline],
+          reviewer: discipline.reviewer,
+          score: discipline.score,
+          headline: discipline.headline,
+          summary: discipline.summary,
+        })),
+        executiveSummary: report.synthesis?.executiveSummary ?? null,
+        theOneThing: report.synthesis?.theOneThing ?? null,
+        emailBrief: report.synthesis?.emailBrief ?? null,
+        // Handed over with the findings rather than left for somebody to ask
+        // about: a writer who does not know what was skipped will state the
+        // gap as a fault.
+        couldNotCheck: report.notes ?? [],
+      };
     },
   },
   {

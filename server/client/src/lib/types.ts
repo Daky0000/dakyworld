@@ -144,6 +144,8 @@ export interface Lead {
   researchStale?: boolean;
   /** Pages built for this prospect. */
   demos?: Demo[];
+  /** The most recent website reviews, newest first. Never the report itself. */
+  websiteAudits?: WebsiteAuditSummary[];
   /** Whether there is anything worth writing to them about. Null until looked at. */
   caseStrength?: CaseStrength | null;
 
@@ -1062,6 +1064,89 @@ export interface Demo {
     note?: string | null;
   } | null;
   brief?: { headline?: string; sections?: string[]; usedFacts?: string[] } | null;
+}
+
+// --- The website audit team -------------------------------------------------
+
+export type AuditDiscipline = "UX" | "SPEED_SEO" | "CONTENT" | "SECURITY";
+
+export const AUDIT_DISCIPLINE_NAMES: Record<AuditDiscipline, string> = {
+  UX: "UI/UX",
+  SPEED_SEO: "Speed & SEO",
+  CONTENT: "Content",
+  SECURITY: "Security",
+};
+
+export interface AuditFindingDetail {
+  id: string;
+  discipline: AuditDiscipline;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "GOOD";
+  title: string;
+  observed: string;
+  evidence: string;
+  impact: string;
+  /** The same point with no technical vocabulary. What an email should use. */
+  plainly: string;
+  recommendation?: string | null;
+  /** The numbered box on the marked-up screenshot, when there is one. */
+  marker?: number | null;
+}
+
+export interface AuditDisciplineReport {
+  discipline: AuditDiscipline;
+  /** The agent that owns this section. */
+  reviewer: string;
+  /** The model that answered, or "checked directly" when no model was involved. */
+  reviewedBy: string;
+  score: number;
+  /** False when the reviewer could not run. An unscored section shows a dash. */
+  scored: boolean;
+  headline: string;
+  summary: string;
+  findings: AuditFindingDetail[];
+  checked: string[];
+  notes: string[];
+}
+
+export interface WebsiteAuditReport {
+  businessName: string;
+  website?: string | null;
+  ranAt: string;
+  overallScore: number;
+  verdict: string;
+  disciplines: AuditDisciplineReport[];
+  synthesis?: {
+    executiveSummary: string;
+    theOneThing: string;
+    worthFixing: { problem: string; costsThem: string; whyWorthPaying: string };
+    priority: { findingId: string; why: string }[];
+    whatIsWorking: string[];
+    emailBrief: { openOn: string; consequence: string; ask: "DEMO" | "FIX" | "NOTHING"; whyThatAsk: string; doNotSay: string[] };
+  } | null;
+  screenshots: { view: "desktop" | "mobile"; width: number; height: number; cropped: boolean; takenAt: string; annotatedBase64?: string | null }[];
+  notes: string[];
+  costUsd: number;
+}
+
+/** What a list or a drawer shows. Never the report or the Markdown — both are large. */
+export interface WebsiteAuditSummary {
+  id: string;
+  leadId?: string | null;
+  businessName?: string;
+  website?: string | null;
+  ranAt: string;
+  overallScore: number;
+  verdict: string;
+  pdfFileId?: string | null;
+  markdownFileId?: string | null;
+  screenshots?: { view: "desktop" | "mobile"; annotated: boolean; fileId: string }[] | null;
+  costUsd?: string | number;
+}
+
+/** The whole row, from `GET /audits/:id`. */
+export interface WebsiteAudit extends WebsiteAuditSummary {
+  report: WebsiteAuditReport;
+  markdown: string;
 }
 
 /**

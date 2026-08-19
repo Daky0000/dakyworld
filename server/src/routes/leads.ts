@@ -558,6 +558,14 @@ leadsRouter.get("/:id", async (req, res, next) => {
         communications: { orderBy: { occurredAt: "desc" }, include: { loggedBy: { select: { id: true, name: true } } } },
         research: true,
         demos: { orderBy: { updatedAt: "desc" }, select: { id: true, slug: true, title: true, status: true, version: true, views: true, lastViewedAt: true, sentAt: true, updatedAt: true, createdAt: true, businessName: true, builtBy: true } },
+        // The newest review only, and without `report` or `markdown`. Both are
+        // large, both have their own endpoint, and neither is wanted by a
+        // drawer that is showing a score and two links.
+        websiteAudits: {
+          orderBy: { ranAt: "desc" },
+          take: 3,
+          select: { id: true, ranAt: true, overallScore: true, verdict: true, website: true, pdfFileId: true, markdownFileId: true, screenshots: true, costUsd: true },
+        },
       },
     });
     if (!lead) return res.status(404).json({ error: "Lead not found" });
@@ -643,6 +651,15 @@ const prepareInput = z.object({
   skipLook: z.boolean().default(false),
   /** Overwrite a discovery note that is already there. Off by default. */
   replaceDiscoveryNotes: z.boolean().default(false),
+  /**
+   * Run the four-reviewer website audit afterwards and produce the report.
+   *
+   * On by default here and off in the batch route, which is the split that
+   * matters: this is one lead with a person watching, and the report is the
+   * thing they are watching for. Sixty leads prepared overnight want the scan
+   * and nothing else.
+   */
+  withAuditTeam: z.boolean().default(true),
 });
 
 /**
