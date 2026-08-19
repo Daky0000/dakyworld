@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { prisma } from "../lib/prisma.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
+import { passwordProblem } from "../lib/passwordPolicy.js";
 import { readSessionCookie, resolveSession } from "../lib/session.js";
 import type { User } from "@prisma/client";
 
@@ -41,6 +42,12 @@ export async function bootstrapOwner() {
     }
     return; // already in sync
   }
+
+  // A warning, never a refusal. This variable is the documented way back into a
+  // locked-out system, so a boot that refuses it turns a weak password into an
+  // outage. The Owner sees the sentence in the deploy log and can fix it.
+  const problem = passwordProblem(password, { email });
+  if (problem) console.warn(`  ⚠ OWNER_PASSWORD is weak: ${problem} Change it in Railway and redeploy.`);
 
   const passwordHash = await hashPassword(password);
   await prisma.user.upsert({
@@ -85,6 +92,28 @@ export async function attachUser(req: Request, _res: Response, next: NextFunctio
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.dbUser) return res.status(401).json({ error: "Not authenticated" });
   next();
+}
+
+/**
+ * A `CLIENT_VIEWER` is, by definition, somebody outside the company — and the
+ * role carried no restriction at all: it appeared in the enum, could be
+ * assigned from the Team screen, and then read every lead, every client, every
+ * invoice and every email in the business, because nothing between `requireAuth`
+ * and the routers ever looked at it.
+ *
+ * There is no client portal yet, and no column linking a user to the client
+ * they belong to, so there is nothing to scope a client's view *down to*. Until
+ * there is, the honest position is a closed door rather than an open one: the
+ * role can be assigned and the account can sign in and see itself, and that is
+ * all. Widen this deliberately, per route, when the portal exists — never by
+ * deleting the check.
+ */
+const CLIENT_VIEWER_ALLOWED = [/^\/auth\//, /^\/users\/me$/, /^\/health$/];
+
+export function scopeClientViewer(req: Request, res: Response, next: NextFunction) {
+  if (req.dbUser?.role !== "CLIENT_VIEWER") return next();
+  if (CLIENT_VIEWER_ALLOWED.some((allowed) => allowed.test(req.path))) return next();
+  return res.status(403).json({ error: "This account does not have access to the internal system." });
 }
 
 /** Restricts a route to one or more roles. Use after requireAuth. */

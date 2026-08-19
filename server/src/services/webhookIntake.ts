@@ -4,6 +4,7 @@ import { SETTING, getSetting } from "../lib/settings.js";
 import { buildDedupeKey, cleanWebsite, scoreLead, type NormalizedLead } from "./leadMapping.js";
 import { enrolNewLeads } from "./emailSequences.js";
 import { registerTags } from "./leadTags.js";
+import { looksAutomated } from "./botCheck.js";
 
 /**
  * What to do with an event somebody else sent us.
@@ -59,6 +60,12 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
  * `name` would lose a real enquiry.
  */
 export async function intakeFormLead(payload: Record<string, unknown>): Promise<IntakeResult> {
+  // This is the one endpoint an anonymous caller can write to, so it is the one
+  // that needs to tell a person from a script. Flagged posts are still recorded
+  // as WebhookEvents — see services/botCheck.ts for why nothing is deleted.
+  const bot = looksAutomated(payload);
+  if (bot.reason) return { handled: false, result: null, note: `Not created: ${bot.reason}` };
+
   const name = pick(payload, ["name", "fullName", "full_name", "contactName", "firstName"]);
   const email = pick(payload, ["email", "emailAddress", "email_address", "contactEmail"])?.toLowerCase() ?? null;
   const phone = pick(payload, ["phone", "phoneNumber", "phone_number", "tel", "mobile"]);

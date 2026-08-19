@@ -9,6 +9,7 @@ import { handleGoogleCallback } from "./settings.js";
 import { detectTables, normalizePlan, type ImportPlan } from "../services/sheetPlan.js";
 import { SpreadsheetError, isSpreadsheetName, listWorkbookSheets, parseWorkbook, type SheetGrid } from "../services/spreadsheet.js";
 import { buildPreviews, commitPlan } from "../services/leadImport.js";
+import { assertSpreadsheetBytes, FileTypeError } from "../lib/fileType.js";
 
 export const importsRouter = Router();
 
@@ -48,7 +49,7 @@ function cacheGrids(importId: string, grids: SheetGrid[]) {
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-function decodeUpload(dataBase64: string): Buffer {
+function decodeUpload(dataBase64: string, fileName: string): Buffer {
   // Accepts a bare base64 string or a data: URL, since both are one line of
   // client code away and neither is worth failing over.
   const payload = dataBase64.includes(",") && dataBase64.startsWith("data:") ? dataBase64.slice(dataBase64.indexOf(",") + 1) : dataBase64;
@@ -56,6 +57,19 @@ function decodeUpload(dataBase64: string): Buffer {
   if (!buffer.length) throw new SpreadsheetError("That file came through empty.");
   if (buffer.length > MAX_UPLOAD_BYTES) {
     throw new SpreadsheetError("That file is over 20 MB. Split it, or import it from Google Drive instead.");
+  }
+  // The extension was checked by the caller; this checks that the bytes agree
+  // with it, and that an .xlsx is not a decompression bomb wearing the name of
+  // a spreadsheet. Both parsers behind this are handed a whole Buffer, so the
+  // only place to refuse one is before it is opened.
+  try {
+    assertSpreadsheetBytes(buffer, fileName);
+  } catch (err) {
+    // Re-thrown as this router's own error so it reaches the user as the 400 it
+    // is. Left as a FileTypeError it would fall through to the central handler
+    // and arrive as "Something went wrong", about a file the user can see.
+    if (err instanceof FileTypeError) throw new SpreadsheetError(err.message);
+    throw err;
   }
   return buffer;
 }
@@ -91,7 +105,7 @@ importsRouter.post("/sheets", async (req, res, next) => {
     if (!isSpreadsheetName(fileName)) {
       return res.status(400).json({ error: "Upload an .xlsx, .csv or .tsv file." });
     }
-    res.json({ sheets: await listWorkbookSheets(decodeUpload(dataBase64), fileName) });
+    res.json({ sheets: await listWorkbookSheets(decodeUpload(dataBase64, fileName), fileName) });
   } catch (err) {
     if (err instanceof SpreadsheetError) return res.status(err.status).json({ error: err.message });
     next(err);
@@ -117,7 +131,7 @@ async function loadGrids(input: z.infer<typeof analyzeInput>): Promise<{ grids: 
     throw new SpreadsheetError("Send a file to import, or pick one from Google Drive.");
   }
   if (!isSpreadsheetName(input.fileName)) throw new SpreadsheetError("Upload an .xlsx, .csv or .tsv file.");
-  const grids = await parseWorkbook(decodeUpload(input.dataBase64), input.fileName, input.sheetNames);
+  const grids = await parseWorkbook(decodeUpload(input.dataBase64, input.fileName), input.fileName, input.sheetNames);
   return { grids, fileName: input.fileName };
 }
 
@@ -229,7 +243,7 @@ async function grabGrids(importId: string, fallback: { dataBase64?: string; file
   if (!fallback.dataBase64 || !name) {
     throw new SpreadsheetError("The uploaded file is no longer in memory. Upload it again to finish the import.");
   }
-  const grids = await parseWorkbook(decodeUpload(fallback.dataBase64), name, record.sheetNames);
+  const grids = await parseWorkbook(decodeUpload(fallback.dataBase64, name), name, record.sheetNames);
   cacheGrids(importId, grids);
   return grids;
 }

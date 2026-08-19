@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { PUBLIC_USER } from "../lib/userSelect.js";
 
 export const projectsRouter = Router();
 
@@ -39,7 +40,9 @@ projectsRouter.get("/:id", async (req, res, next) => {
       where: { id: req.params.id },
       include: {
         client: true,
-        assignments: { include: { user: true } },
+        // select, never include — a whole User row carries the password hash
+        // and the second-factor secret. See lib/userSelect.ts.
+        assignments: { include: { user: { select: PUBLIC_USER } } },
         milestones: { orderBy: { dueDate: "asc" } },
         tasks: { include: { assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" } },
         timeEntries: { include: { user: { select: { id: true, name: true } } }, orderBy: { date: "desc" } },

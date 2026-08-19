@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
-import { attachUser, bootstrapOwner, requireAuth, DEV_NO_AUTH } from "./middleware/auth.js";
+import { attachUser, bootstrapOwner, requireAuth, scopeClientViewer, DEV_NO_AUTH } from "./middleware/auth.js";
 import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
 import { leadsRouter } from "./routes/leads.js";
@@ -22,7 +22,7 @@ import { agentsRouter } from "./routes/agents.js";
 import { captureRouter } from "./routes/capture.js";
 import { toolsRouter } from "./routes/tools.js";
 import { mcpRouter } from "./routes/mcp.js";
-import { securityHeaders } from "./middleware/security.js";
+import { apiRateLimit, forceHttps, securityHeaders, webhookRateLimit } from "./middleware/security.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
@@ -46,7 +46,24 @@ const PORT = Number(process.env.PORT ?? 4000);
 const CLIENT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../client/dist");
 const hasBuiltClient = existsSync(path.join(CLIENT_DIST, "index.html"));
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? "http://localhost:5173", credentials: true }));
+// Railway terminates TLS and rewrites the host one hop in front of us. Without
+// this, `req.ip` is the proxy's address and `req.secure` is always false — so
+// every rate limiter would share one bucket and the HTTPS check would redirect
+// forever. A hop *count* rather than `true`: trusting the whole chain means
+// trusting whatever the caller put at the front of X-Forwarded-For, which is
+// how a per-IP limiter becomes a per-request one.
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+app.use(forceHttps);
+
+// In production the client is served from this same origin, so nothing needs a
+// cross-origin grant at all and the safe answer is to issue none. Locally, Vite
+// on :5173 does. Handing out `credentials: true` against a default of
+// localhost:5173 on the live system would be a standing offer nobody needs.
+const CORS_ORIGIN = process.env.CLIENT_ORIGIN ?? (process.env.NODE_ENV === "production" ? null : "http://localhost:5173");
+if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
+
 app.use(securityHeaders);
 
 // Stripe webhook needs the raw request body for signature verification, so
@@ -79,7 +96,7 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
 // above the JSON parser: the signature covers the exact bytes that were sent,
 // so the body has to arrive raw. Public by design — a contact form on a static
 // site cannot log in. routes/webhooks.ts explains what guards it instead.
-app.use("/api/webhooks", express.raw({ type: "*/*", limit: "256kb" }), webhooksRouter);
+app.use("/api/webhooks", webhookRateLimit, express.raw({ type: "*/*", limit: "256kb" }), webhooksRouter);
 
 // A prospect's demo page, to whoever holds the link. Mounted here for two
 // reasons: it is public — the whole point is that it can be opened from an
@@ -123,11 +140,18 @@ app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toIS
 // not an unsubscribe link. Every cold email this app sends carries one.
 app.use("/api/emails", unsubscribeRouter);
 
+// A ceiling on everything under /api. Above attachUser on purpose: a request
+// that is going to be refused should be refused before it costs a database
+// round trip.
+app.use("/api", apiRateLimit);
+
 // Resolves the session cookie but never rejects — /api/auth/login has to stay
 // reachable without one. requireAuth below is what actually closes the door.
 app.use(attachUser);
 app.use("/api/auth", authRouter);
 app.use("/api", requireAuth);
+// Signed in is not the same as "belongs in here" — see scopeClientViewer.
+app.use("/api", scopeClientViewer);
 
 app.use("/api/clients", clientsRouter);
 app.use("/api/leads", leadsRouter);
@@ -163,13 +187,25 @@ a{color:#B8FF3D;text-decoration:none}</style></head>
 }
 
 // Central error handler — zod validation errors become 400s, everything else 500s.
+//
+// The 500 body is deliberately uninformative in production. It used to return
+// `err.message`, which is whatever threw: a Prisma failure names the table and
+// the constraint, a fetch failure names the internal host, and a stack-shaped
+// message names the file layout. All of that is a map of the system handed to
+// whoever caused the error. The real message is on stdout, where Railway keeps
+// it, and the reference ties the two together so a user reporting "it said
+// something went wrong" can be traced to the exact log line.
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  console.error(err);
+  const reference = Math.random().toString(36).slice(2, 10);
+  console.error(`[${reference}]`, err);
+
   if (err && typeof err === "object" && "issues" in err) {
     return res.status(400).json({ error: "Validation failed", details: (err as { issues: unknown }).issues });
   }
-  const message = err instanceof Error ? err.message : "Internal server error";
-  res.status(500).json({ error: message });
+  if (process.env.NODE_ENV === "production") {
+    return res.status(500).json({ error: "Something went wrong.", reference });
+  }
+  res.status(500).json({ error: err instanceof Error ? err.message : "Internal server error", reference });
 });
 
 // Runs before the port opens, so the first request can't beat the Owner into

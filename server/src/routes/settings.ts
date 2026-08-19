@@ -50,6 +50,7 @@ import { GitHubError, verifyGitHubToken } from "../lib/github.js";
 import { calendarReady, listCalendars } from "../lib/calendar.js";
 import { rotateWebhookSecret, webhookSecret } from "../lib/webhooks.js";
 import { clearReadinessCache } from "../services/tools/readiness.js";
+import { assertImageBytes, FileTypeError } from "../lib/fileType.js";
 import {
   BRAND_SLOTS,
   DEFAULT_PROFILE,
@@ -1331,13 +1332,20 @@ settingsRouter.put("/system/brand/:slot", async (req, res, next) => {
     if (!LOGO_TYPES.includes(match[1])) {
       return res.status(400).json({ error: `${match[1]} isn't an image type email clients render. Use PNG, JPEG, SVG, WebP or GIF.` });
     }
-    if (Buffer.from(match[2], "base64").length > MAX_LOGO_BYTES) {
+    const bytes = Buffer.from(match[2], "base64");
+    if (bytes.length > MAX_LOGO_BYTES) {
       return res.status(400).json({ error: "That file is over 1 MB. Export a smaller cut — this rides along on every email." });
     }
+    // The type above is whatever the caller typed into the front of the data
+    // URL, not a fact about the bytes. This checks the bytes, which matters
+    // most for SVG: it is markup, it can carry a script, and this artwork is
+    // rendered into the OS UI, into email and onto every generated document.
+    assertImageBytes(bytes, match[1]);
 
     await saveBrandImage(slot, dataUrl.trim());
     res.json(await describeAll(req));
   } catch (err) {
+    if (err instanceof FileTypeError) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });

@@ -38,6 +38,20 @@ model User {
   hourlyRate          Decimal? @db.Decimal(10, 2)
   weeklyCapacityHours Decimal  @default(0) @db.Decimal(5, 2)
   active              Boolean  @default(true)
+
+  // --- Second factor (see server/src/lib/totp.ts) ---------------------------
+  // The shared secret, encrypted at rest with APP_SECRET exactly like every
+  // integration token — a database dump must not hand over the second factor
+  // along with the first. Present but unconfirmed means enrolment was started
+  // and never finished, and does not gate a login.
+  totpSecret          String?
+  totpConfirmedAt     DateTime?
+  // SHA-256 of each unused recovery code. Removed as they are spent.
+  totpRecoveryHashes  String[] @default([])
+  // The last time step already spent, so a code cannot be replayed inside the
+  // thirty seconds it stays arithmetically valid.
+  totpLastStep        Int?
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
