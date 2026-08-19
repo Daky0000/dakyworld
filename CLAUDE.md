@@ -194,11 +194,23 @@ Four rules hold it honest, and each has a failure mode behind it:
 - **Every stage degrades to a note, never an error.** No Perplexity key, no
   Apify token, a site that blocks headless browsers — each is a sentence in
   `notes[]`, and what comes back is still something a person can send.
-- **The email opens where the evidence is strongest.** `headlineFinding()`
-  names it, and the fact list marks it THE STRONGEST THING TO OPEN ON, because
-  a drafter left to itself opens on whichever finding reads most neatly. Every
-  observation must be followed by what it costs them in customers or enquiries;
-  "unprofessional" and "looks unfinished" are opinions and read as sales.
+- **The email opens where the evidence is strongest, and "strongest" means to
+  the business.** `strongestPoint(audit, look)` ranks by severity and then
+  breaks ties in favour of what a customer can *see* over what a tool measured.
+  This was a real defect: the headline came from `audit.findings` alone, so a
+  CRITICAL observation about the page could never beat a MEDIUM DNS detail, and
+  a cement manufacturer got a letter about which hostname resolves. Accurate,
+  and worth nothing to the reader.
+- **The look answers a business question, not a design one.** `worthFixing`
+  (problem / costsThem / whyWorthPaying), `fitsTheBusiness` — the gap between
+  what a company is and what its page makes it look like, which is invisible in
+  the markup and lands hardest with an established firm — and a `plainly` line
+  on every observation with no web vocabulary in it at all. The email reaches
+  for `plainly`; the owner is not a developer and never will be.
+- **When there is no screenshot, the drafter is told nobody has seen the page**
+  and forbidden from stretching a technical check into a design opinion; the
+  composer says so in amber. Without that, a lead whose Apify token is missing
+  silently produces DNS-trivia emails and nobody can tell why.
 
 Results live on `LeadResearch` (one row per lead, `STALE_AFTER_DAYS = 30`), so
 the second draft to the same person costs nothing and the Owner can read what

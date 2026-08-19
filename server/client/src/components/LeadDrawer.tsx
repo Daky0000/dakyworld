@@ -732,6 +732,15 @@ function ResearchDetail({
 
       {research.look && (
         <div className="rounded-2xl border border-line bg-white p-4">
+          {/* The business case first. Everything below it is the evidence. */}
+          {research.look.worthFixing && (
+            <div className="mb-3 rounded-xl border border-blue/25 bg-blue/[.05] p-3">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-blue">Worth paying to fix</div>
+              <p className="text-sm leading-relaxed text-ink/80">{research.look.worthFixing.problem}</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink/60">{research.look.worthFixing.costsThem}</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink/50">{research.look.worthFixing.whyWorthPaying}</p>
+            </div>
+          )}
           <p className="text-sm leading-relaxed text-ink/80">{research.look.firstImpression}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Badge tone={research.look.offerClear ? "muted" : "warn"}>
@@ -741,12 +750,17 @@ function ResearchDetail({
               {research.look.contactClear ? "Contact visible" : "No contact visible"}
             </Badge>
             {research.look.looksDated && <Badge tone="warn">Dated: {research.look.looksDated}</Badge>}
+            {research.look.fitsTheBusiness === false && <Badge tone="warn">Does not suit the business</Badge>}
           </div>
+          {research.look.fitNote && research.look.fitsTheBusiness === false && (
+            <p className="mt-2 text-xs leading-relaxed text-ink/60">{research.look.fitNote}</p>
+          )}
+          {research.look.speed && <p className="mt-2 text-xs leading-relaxed text-ink/60">{research.look.speed}</p>}
           <ul className="mt-3 space-y-2 border-t border-ink/10 pt-3 text-xs text-ink/70">
             {research.look.observations.map((observation, index) => (
               <li key={index} className="leading-relaxed">
                 <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">{observation.severity}</span>{" "}
-                {observation.observed} <span className="text-ink/50">— {observation.soWhat}</span>
+                {observation.plainly || observation.observed} <span className="text-ink/50">— {observation.soWhat}</span>
               </li>
             ))}
           </ul>

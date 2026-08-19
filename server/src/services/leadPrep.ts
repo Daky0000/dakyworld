@@ -145,7 +145,15 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
   let look: HomepageLook | null = null;
   let shot: Screenshot | null = null;
   if (subject.website && !options.skipLook) {
-    const looked = await lookAtHomepage({ website: subject.website, companyName: subject.companyName, audit });
+    const looked = await lookAtHomepage({
+      website: subject.website,
+      companyName: subject.companyName,
+      trade: subject.category,
+      town: subject.city,
+      rating: subject.rating,
+      reviewsCount: subject.reviewsCount,
+      audit,
+    });
     look = looked.look;
     shot = looked.shot;
     costUsd += looked.costUsd;
@@ -158,7 +166,12 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
   Object.assign(filled, await applyObserved(lead, audit, look, filled));
 
   const strength = caseStrength(audit, look);
-  const facts = buildFacts({ research, audit, look, filled, strength });
+  if (subject.website && !look) {
+    notes.push(
+      "Nobody has seen how their site actually looks — only what it is made of. The design, the layout and the first impression are the half a business owner cares about, and none of it was checked.",
+    );
+  }
+  const facts = buildFacts({ research, audit, look, filled, strength, hasWebsite: Boolean(subject.website) });
   const ranAt = new Date();
 
   await prisma.leadResearch.upsert({
@@ -421,6 +434,71 @@ async function applyObserved(
 }
 
 /**
+ * The one thing an email should open on, chosen across everything that was
+ * found rather than only across the technical checks.
+ *
+ * This was a real defect and it produced a real email. `headlineFinding` only
+ * ever read `audit.findings`, so a CRITICAL observation from *looking at the
+ * page* — nothing on the first screen says what they sell; the site makes a
+ * twenty-year-old manufacturer look like a start-up — could never win the
+ * opening, while a MEDIUM DNS detail always could. The result was a letter to
+ * a cement company about which hostname resolves. Accurate, and worth nothing
+ * to the person reading it.
+ *
+ * Two rules decide it:
+ *
+ *  1. **Severity first**, judged by what it costs the business.
+ *  2. **At equal severity, what a customer can see beats what a tool can
+ *     measure.** An owner can check "your homepage never says what you make"
+ *     by opening their own site. They cannot check an SPF record, they do not
+ *     care, and they will not spend money on one.
+ */
+export interface StrongestPoint {
+  /** The sentence to open on, already in the owner's own language. */
+  say: string;
+  /** Why it costs them something, in customers or enquiries. */
+  costs: string;
+  /** What makes it checkable — a URL, a header, or "open your own homepage". */
+  evidence: string;
+  severity: string;
+  /** Whether this came from looking at the page or from measuring it. */
+  kind: "seen" | "checked";
+}
+
+export function strongestPoint(audit: CompanyAudit | null, look: HomepageLook | null): StrongestPoint | null {
+  const candidates: StrongestPoint[] = [];
+
+  for (const observation of look?.observations ?? []) {
+    if (observation.severity === "GOOD") continue;
+    candidates.push({
+      // `plainly` is the version with no web vocabulary in it, which is the
+      // only version worth putting in front of a business owner.
+      say: observation.plainly || observation.observed,
+      costs: observation.soWhat,
+      evidence: `visible on their own homepage (${observation.where})`,
+      severity: observation.severity,
+      kind: "seen",
+    });
+  }
+
+  for (const finding of audit?.findings ?? []) {
+    if (finding.severity === "GOOD") continue;
+    candidates.push({ say: finding.observed, costs: "", evidence: finding.evidence, severity: finding.severity, kind: "checked" });
+  }
+
+  if (candidates.length === 0) return null;
+
+  const rank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+  candidates.sort((a, b) => {
+    const bySeverity = (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0);
+    if (bySeverity !== 0) return bySeverity;
+    // The tie-break that fixes the cement email.
+    return Number(b.kind === "seen") - Number(a.kind === "seen");
+  });
+  return candidates[0];
+}
+
+/**
  * Is there a case here at all.
  *
  * This exists because of the email that prompted it: a letter that opened on
@@ -466,6 +544,7 @@ function buildFacts(input: {
   look: HomepageLook | null;
   filled: LeadPrep["filled"];
   strength: CaseStrength;
+  hasWebsite: boolean;
 }): string[] {
   const facts: string[] = [];
 
@@ -480,10 +559,12 @@ function buildFacts(input: {
     // whichever finding reads most neatly rather than the one that costs them
     // most — which is how a letter ends up leading with missing link-preview
     // tags at a business whose site has been insecure since 2019.
-    const headline = headlineFinding(input.audit);
+    const headline = strongestPoint(input.audit, input.look);
     if (headline && (input.strength === "STRONG" || input.strength === "MODERATE")) {
       facts.push(
-        `THE STRONGEST THING TO OPEN ON (${headline.severity.toLowerCase()}): ${headline.observed} You can say this because: ${headline.evidence}`,
+        `THE STRONGEST THING TO OPEN ON (${headline.severity.toLowerCase()}, ${
+          headline.kind === "seen" ? "something they can see on their own page" : "measured"
+        }): ${headline.say}${headline.costs ? ` What it costs them: ${headline.costs}` : ""} You can say this because: ${headline.evidence}`,
       );
     } else {
       facts.push(
@@ -506,7 +587,17 @@ function buildFacts(input: {
     }
   }
 
-  if (input.look) facts.push(...lookForPrompt(input.look));
+  if (input.look) {
+    facts.push(...lookForPrompt(input.look));
+  } else if (input.hasWebsite) {
+    // Without this the drafter has only the technical checks and no way to
+    // know that the interesting half is missing — which is how a letter about
+    // a DNS record gets written to a business whose real problem is that their
+    // homepage looks fifteen years old.
+    facts.push(
+      "NOBODY HAS ACTUALLY SEEN THEIR PAGE. Their site was checked by machine but never looked at, so nothing is known about how it looks, whether it says what they sell, or whether it suits the business. Do not write as though you have seen it, and do not stretch a technical check into a design opinion. If the checks alone give you nothing a business owner would pay to fix, say so.",
+    );
+  }
 
   return facts;
 }

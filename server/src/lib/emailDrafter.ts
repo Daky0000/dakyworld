@@ -165,7 +165,11 @@ Open on the single most specific thing that was actually observed there, and say
 
 Do not list the findings. Take one, at most two, and make them concrete enough that they can check it themselves in ten seconds while still reading. Anything they can verify without leaving the email is worth more than anything they cannot.
 
-Say what it costs them, not what it looks like. A browser security warning costs them the patients who close the tab; a homepage that never says what they sell costs them the visitor who cannot tell in five seconds; a form that goes nowhere costs them the enquiry itself. If a fact in the list shows demand — a review count, a rating — use it: it turns "your site is dated" into "people are already looking for you and this is what they find".
+**Write about something the owner can see, not something a tool measured.** They are not technical and they never will be. A missing DNS record, a header, a certificate, a tag — these are true and they are worth nothing to the person reading, because they cannot picture them and cannot picture the money. What they can picture is a customer opening their page and leaving. If the facts contain a line marked WORTH PAYING TO FIX, or an observation with a "say it to them like this" wording, use that wording — it exists because it has already been put into words a business owner would use.
+
+Say what it costs them, not what it looks like, and say it in people: the builder who opens the page and cannot tell within five seconds whether they sell what he needs; the distributor comparing three suppliers with two other tabs open; the patient who goes back to the search results. If a fact in the list shows demand — a review count, a rating — use it: it turns "your site is dated" into "people are already looking for you and this is what they find".
+
+**The hardest-landing point with an established business is the gap between what they are and what their site makes them look like.** A twenty-year-old company with a page that looks like a template from 2013 is losing work to smaller competitors who look bigger. If that is in the facts, it is usually the letter.
 
 Never suggest a new website when the facts describe a site that mostly works. Fixing what was observed is the honest offer, and it is a smaller ask.
 

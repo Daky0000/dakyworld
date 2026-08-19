@@ -869,6 +869,9 @@ function DraftReport({
   const prep = result.prep;
   const polish = result.polish;
   const weak = result.strength === "WEAK" || result.strength === "NONE";
+  // A lead with a site that nobody photographed leaves the drafter with the
+  // technical checks alone, and those produce letters about DNS records.
+  const unseen = Boolean(prep && !prep.shot && prep.notes.some((note) => note.toLowerCase().includes("screenshot")));
 
   return (
     <div className="mb-5 space-y-3">
@@ -915,6 +918,17 @@ function DraftReport({
               ))}
             </ul>
           )}
+        </div>
+      )}
+
+      {unseen && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-amber-900">Nobody has seen their page</div>
+          <p className="text-xs leading-relaxed text-amber-900">
+            Their site was checked by machine but never photographed, so nothing is known about how it looks — the half a business owner
+            actually cares about. What is left is technical detail, and an email built on that reads as trivia. Connect Apify under Lead
+            Sources → Connection and look again.
+          </p>
         </div>
       )}
 

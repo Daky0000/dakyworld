@@ -1074,6 +1074,8 @@ export type CaseStrength = "STRONG" | "MODERATE" | "WEAK" | "NONE";
 export interface HomepageObservation {
   observed: string;
   soWhat: string;
+  /** The same point with no web vocabulary in it — the version worth sending. */
+  plainly?: string;
   where: string;
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "GOOD";
 }
@@ -1083,7 +1085,13 @@ export interface HomepageLook {
   offerClear: boolean;
   contactClear: boolean;
   looksDated?: string | null;
+  /** Whether the page looks like it belongs to a business of this kind and size. */
+  fitsTheBusiness?: boolean;
+  fitNote?: string;
+  speed?: string | null;
   observations: HomepageObservation[];
+  /** The case for spending money, in the owner's own terms. */
+  worthFixing?: { problem: string; costsThem: string; whyWorthPaying: string } | null;
   theOneThing: string;
   /** What the page states about the business, as opposed to how it looks. */
   states?: { trade: string | null; town: string | null; services: string[]; phone: string | null };
