@@ -260,6 +260,28 @@ skips localhost so preview traffic never enters the real numbers.
 
 ---
 
+## Deploy state
+
+The **website is live** — GitHub Pages publishes the repo root on every push and
+did so for all of this.
+
+The **OS is not**. As of 19 Aug 2026 the Railway subscription had ended, so
+`os.dakyworld.com` is still serving the build from that morning and nothing in
+this document's server half is in production yet. The code is on `main` and
+needs no special handling when Railway is back: `npm start` already runs
+`prisma migrate deploy`, so the 2FA columns and the row-level-security migration
+apply on their own, and both are additive — no existing row changes and nobody
+is locked out.
+
+Confirm a deploy actually landed by looking at a header rather than at the
+dashboard:
+
+```bash
+curl -sI https://os.dakyworld.com/api/health | grep -i content-security
+# nothing back  -> still the old build
+# a CSP line    -> the new one is live
+```
+
 ## Still to do — these need an account, not a commit
 
 1. **Paste the GA4 Measurement ID** into the top of
