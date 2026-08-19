@@ -36,8 +36,8 @@ export function reviewSecurity(evidence: AuditEvidence, audit: CompanyAudit | nu
   if (!security) {
     notes.push(
       evidence.fetch.domainDoesNotResolve
-        ? "There is no site at that address, so nothing about the site itself could be checked. The mail domain was still examined."
-        : "Their site could not be retrieved, so its certificate, headers and cookies were not examined. Only the mail domain was.",
+        ? "There is no site at that address, so nothing about the site itself could be checked. The mail domain was still examined, and this section is not scored — what is below is everything that was looked at, not a verdict on their security."
+        : "Their site could not be retrieved, so its certificate, headers and cookies were not examined. Only the mail domain was, and this section is not scored — what is below is everything that was looked at, not a verdict on their security.",
     );
   } else {
     // --- The certificate, and whether it is actually used -------------------
@@ -310,10 +310,16 @@ export function reviewSecurity(evidence: AuditEvidence, audit: CompanyAudit | nu
     // than leaving the reader to assume one did.
     reviewedBy: "Checked directly, no model",
     score,
-    // Every check here is arithmetic on a header, a tag or a DNS record, so
-    // this section is scored whenever any of them ran. There is no model to
-    // fail.
-    scored: checked.length > 0,
+    // Scored only when the site itself was examined, which is where all but one
+    // of these checks live.
+    //
+    // `checked.length > 0` was the first rule and it was too weak by half: a
+    // site that would not open still reaches the mail lookup, so one DNS query
+    // finding one missing DMARC record scored 92/100 — a mark out of a hundred
+    // where ninety-two of the points stood for a certificate, headers, cookies
+    // and forms that nobody had read. The mail findings are still true and
+    // still printed; there is simply no denominator to put them over.
+    scored: Boolean(security),
     headline: headlineFor(sorted, evidence),
     summary: summaryFor(sorted, checked, evidence),
     findings: sorted,

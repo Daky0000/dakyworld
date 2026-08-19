@@ -88,6 +88,11 @@ function AuditDetail({
 
   const report = data.report;
   const shots = data.screenshots ?? [];
+  // The same rule the PDF and the Markdown apply: a number is shown only when
+  // enough of the site was examined to mean one. Rows written before that gate
+  // existed carry no flag, and are read under the rule in force when they were
+  // written rather than judged by a newer one.
+  const scored = report.scored ?? report.disciplines.some((discipline) => discipline.scored);
 
   return (
     <div className="space-y-3">
@@ -95,10 +100,11 @@ function AuditDetail({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-baseline gap-2">
-              <span className="font-mono text-3xl leading-none text-ink">{data.overallScore}</span>
-              <span className="font-mono text-xs text-ink/40">/100</span>
-              <span className="ml-1 text-sm font-semibold text-ink">{data.verdict}</span>
+              <span className="font-mono text-3xl leading-none text-ink">{scored ? data.overallScore : "—"}</span>
+              {scored && <span className="font-mono text-xs text-ink/40">/100</span>}
+              <span className="ml-1 text-sm font-semibold text-ink">{scored ? data.verdict : "Not scored"}</span>
             </div>
+            {!scored && <p className="mt-1 text-[11px] text-ink/45">Too little of the site could be examined to put one number on it. The sections below are what did run.</p>}
             <p className="mt-1 text-[11px] text-ink/45">
               {data.website ?? "no address"} · reviewed <RelativeTime value={data.ranAt} />
               {olderCount > 0 && ` · ${olderCount} earlier review${olderCount === 1 ? "" : "s"}`}

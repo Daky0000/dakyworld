@@ -1,4 +1,4 @@
-import { DISCIPLINE_NAMES, type AuditFindingDetail, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
+import { DISCIPLINE_NAMES, reportScored, type AuditFindingDetail, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
 
 /**
  * The report as Markdown.
@@ -58,7 +58,7 @@ export function auditMarkdown(report: WebsiteAuditReport, options: MarkdownOptio
     `|---|---|`,
     `| Site reviewed | ${report.website ?? "no website answered"} |`,
     `| Reviewed | ${ran.toISOString().slice(0, 10)} |`,
-    `| Score | ${report.disciplines.some((discipline) => discipline.scored) ? `**${report.overallScore}/100** — ${report.verdict}` : "not scored — no section could run"} |`,
+    `| Score | ${reportScored(report) ? `**${report.overallScore}/100** — ${report.verdict}` : "not scored — too little of the site could be examined to put one number on it"} |`,
     `| Reviewed by | ${report.disciplines.map((discipline) => discipline.reviewer).join(", ")} |`,
     "",
     "The score is arithmetic on the findings below, not a judgement: each fault costs a fixed number of points by severity, weighted across the sections that ran. A section that could not run is left out rather than counted either way. It moves when a fault is fixed and at no other time.",

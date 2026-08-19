@@ -31,6 +31,9 @@ import { DISCIPLINE_AGENTS, scoreFindings, sortBySeverity, trimFindings, type Au
  * reporting a Lighthouse score nobody ran.
  */
 
+/** The cap the schema asks for in words, applied to what comes back. */
+const MAX_OBSERVATIONS = 10;
+
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -54,7 +57,9 @@ const SCHEMA = {
     },
     observations: {
       type: "array",
-      maxItems: 10,
+      // Not `maxItems`: structured outputs reject array constraints, so the
+      // cap goes in the description and is enforced by the slice below.
+      description: "At most 10, worst first.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -219,7 +224,7 @@ export async function reviewUx(
   }
 
   const available = new Set(views);
-  const findings: AuditFindingDetail[] = looked.observations.map((observation, index) => {
+  const findings: AuditFindingDetail[] = looked.observations.slice(0, MAX_OBSERVATIONS).map((observation, index) => {
     // A reviewer shown one picture occasionally attributes a point to the
     // other one. Snapping it back is better than dropping the observation or
     // drawing the box on an image that was never taken.

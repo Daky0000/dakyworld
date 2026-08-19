@@ -157,14 +157,22 @@ export async function reviewWebsite(subject: AuditSubject, options: RunOptions =
     };
   });
 
-  const score = overallScore(disciplines);
+  const { score, scored } = overallScore(disciplines);
+  if (!scored) {
+    notes.push(
+      disciplines.some((discipline) => discipline.scored)
+        ? "Too little of the site could be examined to put one score on it, so the front page carries no number. The sections that did run are scored individually below."
+        : "Nothing could be examined, so there is no score at all. What follows is only what could be established without opening the site.",
+    );
+  }
   const draft: WebsiteAuditReport = {
     leadId: subject.leadId,
     businessName: subject.businessName,
     website: evidence.finalUrl ?? subject.website,
     ranAt: new Date().toISOString(),
     overallScore: score,
-    verdict: verdictFor(score),
+    scored,
+    verdict: scored ? verdictFor(score) : "Not scored",
     disciplines,
     synthesis: null,
     screenshots,

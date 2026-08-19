@@ -1,4 +1,4 @@
-import { AnalystError, callClaude, type Effort, type FailureKind, type PromptImage } from "../claude.js";
+import { AnalystError, callClaude, forStructuredOutput, type Effort, type FailureKind, type PromptImage } from "../claude.js";
 import { costOf, rateFor, type ModelRate } from "../claudePricing.js";
 import { recordLlmCall } from "../llmLedger.js";
 import { SETTING, getSetting } from "../settings.js";
@@ -336,7 +336,10 @@ async function callOpenAI(apiKey: string, model: string, request: ModelRequest):
       ],
       response_format: {
         type: "json_schema",
-        json_schema: { name: "result", strict: true, schema: request.schema },
+        // Same restriction as Anthropic's structured outputs, same 400 when a
+        // schema carries `maxItems` — strict mode compiles the schema rather
+        // than validating against it.
+        json_schema: { name: "result", strict: true, schema: forStructuredOutput(request.schema) },
       },
     },
     "OpenAI",

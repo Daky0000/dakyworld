@@ -16,7 +16,7 @@ import {
   stampLetterhead,
   type LetterheadIdentity,
 } from "../letterhead.js";
-import { DISCIPLINE_AGENTS, DISCIPLINE_NAMES, type AuditFindingDetail, type AuditSeverity, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
+import { DISCIPLINE_AGENTS, DISCIPLINE_NAMES, reportScored, type AuditFindingDetail, type AuditSeverity, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
 
 /**
  * The review as a document.
@@ -174,7 +174,7 @@ function scoreBand(doc: PDFDoc, report: WebsiteAuditReport) {
   doc.rect(MARGIN_X, y, CONTENT_W, height).fill(INK);
   doc.rect(MARGIN_X, y, 3.5, height).fill(MARK);
 
-  const scored = report.disciplines.some((discipline) => discipline.scored);
+  const scored = reportScored(report);
   const headline = scored ? String(report.overallScore) : "—";
   doc
     .fillColor(CREAM)
@@ -182,11 +182,15 @@ function scoreBand(doc: PDFDoc, report: WebsiteAuditReport) {
     .fontSize(40)
     .text(headline, MARGIN_X + 22, y + 20, { lineBreak: false });
   const numberWidth = doc.widthOfString(headline);
-  doc
-    .fillColor(MUTED)
-    .font("Helvetica")
-    .fontSize(12)
-    .text("/100", MARGIN_X + 24 + numberWidth, y + 42, { lineBreak: false });
+  // No denominator over a dash: "— /100" reads as a score that came out empty
+  // rather than as a review that could not reach one.
+  if (scored) {
+    doc
+      .fillColor(MUTED)
+      .font("Helvetica")
+      .fontSize(12)
+      .text("/100", MARGIN_X + 24 + numberWidth, y + 42, { lineBreak: false });
+  }
 
   const textLeft = MARGIN_X + 22 + numberWidth + 46;
   doc
@@ -206,7 +210,7 @@ function scoreBand(doc: PDFDoc, report: WebsiteAuditReport) {
     .text(
       scored
         ? "Points are deducted per fault by severity, weighted across the sections that ran. It is arithmetic, not an opinion."
-        : "No section could be scored — see what this review did not check, at the end.",
+        : "Too little of the site could be examined to score it — see what this review did not check, at the end.",
       textLeft,
       y + 58,
       { width: RIGHT_EDGE - textLeft - 16 },

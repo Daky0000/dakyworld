@@ -29,6 +29,9 @@ const THIN_WORDS = 150;
 /** How much of the page's text the reviewer is given. Enough for a homepage, several times over. */
 const MAX_TEXT_CHARS = 12_000;
 
+/** The cap the schema asks for in words, applied to what comes back. */
+const MAX_OBSERVATIONS = 9;
+
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -51,7 +54,9 @@ const SCHEMA = {
     },
     observations: {
       type: "array",
-      maxItems: 9,
+      // Not `maxItems`: structured outputs reject array constraints, so the
+      // cap goes in the description and is enforced by the slice below.
+      description: "At most 9, worst first.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -240,7 +245,7 @@ export async function reviewContent(
 
   if (read) {
     findings.push(
-      ...read.observations.map((observation, index) => ({
+      ...read.observations.slice(0, MAX_OBSERVATIONS).map((observation, index) => ({
         id: `content-${index + 1}`,
         discipline: "CONTENT" as const,
         severity: observation.severity,

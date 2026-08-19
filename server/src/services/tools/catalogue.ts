@@ -846,12 +846,15 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         auditId: run.auditId,
         businessName: run.report.businessName,
         website: run.report.website,
-        overallScore: run.report.overallScore,
+        // Null rather than a number an agent would quote in a letter: an
+        // unscored review is one where too little of the site could be
+        // examined, and its arithmetic is not a smaller version of the truth.
+        overallScore: run.report.scored ? run.report.overallScore : null,
         verdict: run.report.verdict,
         sections: run.report.disciplines.map((discipline) => ({
           section: DISCIPLINE_NAMES[discipline.discipline],
           reviewer: discipline.reviewer,
-          score: discipline.score,
+          score: discipline.scored ? discipline.score : null,
           headline: discipline.headline,
           findings: discipline.findings.length,
         })),
@@ -886,10 +889,16 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       if (!audit) throw new Error("No review found. Run audit.website first, or give an auditId.");
 
       const report = audit.report as unknown as {
-        disciplines: { discipline: keyof typeof DISCIPLINE_NAMES; reviewer: string; score: number; headline: string; summary: string }[];
+        scored?: boolean;
+        disciplines: { discipline: keyof typeof DISCIPLINE_NAMES; reviewer: string; score: number; scored: boolean; headline: string; summary: string }[];
         synthesis: { executiveSummary: string; theOneThing: string; emailBrief: unknown } | null;
         notes: string[];
       };
+
+      // Same rule as the PDF and the screen: the stored column holds the
+      // arithmetic, and it is only a score when enough of the site was
+      // examined for one. Rows predating the gate keep the older rule.
+      const scored = report.scored ?? (report.disciplines ?? []).some((discipline) => discipline.scored);
 
       // The full Markdown is several thousand words. Handing it over by
       // default would fill an agent's context with a document it mostly does
@@ -902,12 +911,12 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         businessName: audit.businessName,
         website: audit.website,
         ranAt: audit.ranAt,
-        overallScore: audit.overallScore,
+        overallScore: scored ? audit.overallScore : null,
         verdict: audit.verdict,
         sections: report.disciplines?.map((discipline) => ({
           section: DISCIPLINE_NAMES[discipline.discipline],
           reviewer: discipline.reviewer,
-          score: discipline.score,
+          score: discipline.scored ? discipline.score : null,
           headline: discipline.headline,
           summary: discipline.summary,
         })),

@@ -97,7 +97,12 @@ export interface ClaudeRequest {
    * building on the way to discovering there's no key is not.
    */
   prompt: () => string;
-  /** JSON Schema. Must be closed (`additionalProperties: false`) and fully `required`. */
+  /**
+   * JSON Schema. Must be closed (`additionalProperties: false`) and fully
+   * `required`. Bounds keywords (`maxItems`, `minimum`, `pattern`, …) are
+   * stripped on the way out — see `forStructuredOutput` — so state a limit in
+   * the field's `description` and enforce it on the reply.
+   */
   schema: Record<string, unknown>;
   effort?: Effort;
   maxTokens?: number;
@@ -139,6 +144,82 @@ export async function analystConfigured(): Promise<boolean> {
   return Boolean(await analystKey());
 }
 
+
+/**
+ * The JSON Schema keywords structured outputs will not accept.
+ *
+ * `output_config.format` compiles the schema into a grammar rather than
+ * validating against it, and a keyword it cannot express is a 400 on the whole
+ * request — not a warning, and not a constraint quietly ignored. Array bounds,
+ * numeric bounds and string lengths are all in that set.
+ *
+ * It cost a shipped feature to learn: every website audit that reached the
+ * compile step died on `output_config.format.schema: For 'array' type,
+ * property 'maxItems' is not supported`, and the error surfaced to the reader
+ * as a paragraph of vendor JSON in the middle of their report.
+ *
+ * A schema is easy to write and hard to test — the request only fails when
+ * that particular branch is exercised against a live key. So the boundary
+ * strips them rather than trusting every caller to remember. **A stripped
+ * keyword is not enforced**: say the limit in the field's `description`, which
+ * the model reads, and apply it to what comes back.
+ */
+const UNSUPPORTED_KEYWORDS = new Set([
+  "maxItems",
+  "minItems",
+  "uniqueItems",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "minLength",
+  "maxLength",
+  "pattern",
+  "minProperties",
+  "maxProperties",
+]);
+
+/**
+ * Drops them, recursively, without touching the schema the caller wrote.
+ *
+ * `properties` is stepped over rather than through: a schema describing an
+ * object with a field genuinely called `pattern` or `maximum` must keep it.
+ */
+export function forStructuredOutput(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(forStructuredOutput);
+  if (!schema || typeof schema !== "object") return schema;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+    if (UNSUPPORTED_KEYWORDS.has(key)) continue;
+    // Below `properties`, the keys are the caller's field names, not schema
+    // keywords. Only their values are schemas.
+    if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
+      const fields: Record<string, unknown> = {};
+      for (const [name, subschema] of Object.entries(value as Record<string, unknown>)) fields[name] = forStructuredOutput(subschema);
+      out[key] = fields;
+      continue;
+    }
+    out[key] = forStructuredOutput(value);
+  }
+  return out;
+}
+
+/**
+ * The vendor's own sentence, rather than the envelope it arrived in.
+ *
+ * `APIError.message` is the whole serialised body — `400 {"type":"error",
+ * "error":{...},"request_id":"req_011Ce…"}` — and these messages are not only
+ * logged: a failed compile step becomes a line in a website review a person
+ * reads. A paragraph of JSON and a request id in the middle of that document
+ * tells the reader nothing and looks like the report broke rather than one
+ * stage of it.
+ */
+function vendorSentence(err: InstanceType<typeof Anthropic.APIError>): string {
+  const body = (err as { error?: { error?: { message?: unknown } } }).error?.error?.message;
+  return typeof body === "string" && body.trim() ? body.trim() : err.message;
+}
 
 export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResult<T>> {
   const say = (kind: FailureKind) => request.messages?.[kind] ?? DEFAULT_MESSAGES[kind];
@@ -192,7 +273,7 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
       system: request.system,
       output_config: {
         effort,
-        format: { type: "json_schema", schema: request.schema },
+        format: { type: "json_schema", schema: forStructuredOutput(request.schema) as Record<string, unknown> },
       },
       ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
       messages: [{ role: "user", content: userContent }],
@@ -213,7 +294,7 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
     if (err instanceof Anthropic.AuthenticationError) throw await fail(400, say("auth"));
     if (err instanceof Anthropic.RateLimitError) throw await fail(429, say("rate"));
     if (err instanceof Anthropic.APIError) {
-      throw await fail(err.status ?? 502, `${request.purpose} failed: ${err.message}`);
+      throw await fail(err.status ?? 502, `${request.purpose} failed: ${vendorSentence(err)}`);
     }
     throw await fail(502, `Could not reach Anthropic: ${(err as Error).message}`);
   }

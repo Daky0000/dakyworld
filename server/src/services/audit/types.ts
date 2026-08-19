@@ -172,9 +172,19 @@ export interface WebsiteAuditReport {
   /** The address that actually answered, which may not be the one on file. */
   website: string | null;
   ranAt: string;
-  /** 0-100 across all four, weighted. Computed in code. */
+  /** 0-100 across all four, weighted. Computed in code. Meaningless unless `scored`. */
   overallScore: number;
-  /** "Serious problems" through "Strong" — derived from the score. */
+  /**
+   * Whether enough of the site was examined to put one number on it.
+   *
+   * The same rule as `DisciplineReport.scored`, one level up. A single section
+   * out of four is 22% of a website, and averaging it alone produced "92/100 —
+   * Strong" for a site whose certificate had expired and which nobody could
+   * open. A number that describes a fifth of something is not a smaller
+   * version of the truth, it is a different claim.
+   */
+  scored: boolean;
+  /** "Serious problems" through "Strong" — derived from the score, or "Not scored". */
   verdict: string;
   disciplines: DisciplineReport[];
   synthesis: AuditSynthesis | null;
@@ -196,6 +206,26 @@ export interface WebsiteAuditReport {
  */
 const WEIGHT: Record<AuditSeverity, number> = { CRITICAL: 28, HIGH: 16, MEDIUM: 8, LOW: 3, GOOD: 0 };
 
+/**
+ * **A score out of 100 is a claim about the checks that did not fire.**
+ *
+ * This is subtraction from a hundred, so every point *not* deducted is an
+ * assertion that something was looked at and found sound. That holds only when
+ * the battery actually ran. A reviewer that made one check out of ten and found
+ * one medium fault returns 92 — and 92 of those points were never earned by
+ * anything.
+ *
+ * That is not hypothetical: a site whose certificate had expired could not be
+ * opened at all, so the only thing examined was its mail domain, the only
+ * finding was a missing DMARC record, and the report went out reading
+ * "92/100 — Strong · No DMARC policy". Whoever reads that sees a number
+ * flatly contradicting the sentence beside it, in a document about their own
+ * business.
+ *
+ * So the arithmetic here is unchanged and always available — but a caller may
+ * only publish it once its own checks ran (`DisciplineReport.scored`). Deciding
+ * that is the reviewer's job, because only the reviewer knows what it skipped.
+ */
 export function scoreFindings(findings: { severity: AuditSeverity }[]): number {
   const lost = findings.reduce((total, finding) => total + WEIGHT[finding.severity], 0);
   return Math.max(0, Math.min(100, 100 - lost));
@@ -211,17 +241,43 @@ export function scoreFindings(findings: { severity: AuditSeverity }[]): number {
  */
 const DISCIPLINE_WEIGHT: Record<Discipline, number> = { UX: 0.32, SPEED_SEO: 0.28, CONTENT: 0.18, SECURITY: 0.22 };
 
-export function overallScore(reports: DisciplineReport[]): number {
+/**
+ * How much of the table has to have sat down before the document puts one
+ * number on the front page.
+ *
+ * Half, by weight. Leaving out one section that failed and averaging the other
+ * three is a fair summary of a site; averaging *one* section is not a summary
+ * of anything — it is that section's score with the whole site's name on it.
+ */
+export const MIN_SCORED_WEIGHT = 0.5;
+
+export function overallScore(reports: DisciplineReport[]): { score: number; scored: boolean } {
   // A discipline that could not run is left out of the average rather than
   // scored either way. "Nobody looked" is not "it is broken" and it is not
   // "it is perfect"; averaging in a zero states the first and averaging in a
   // hundred states the second, and both are claims about a stranger's website
   // that nothing checked.
   const present = reports.filter((report) => report.scored);
-  if (!present.length) return 0;
-  const total = present.reduce((sum, report) => sum + DISCIPLINE_WEIGHT[report.discipline], 0);
+  if (!present.length) return { score: 0, scored: false };
+  const covered = present.reduce((sum, report) => sum + DISCIPLINE_WEIGHT[report.discipline], 0);
   const weighted = present.reduce((sum, report) => sum + report.score * DISCIPLINE_WEIGHT[report.discipline], 0);
-  return Math.round(weighted / total);
+  // Rescaling to the sections that ran is what makes leaving one out fair — and
+  // it is also what makes one section alone come out as the whole site's score,
+  // so the coverage gate below is not optional. The epsilon is there because
+  // 0.32 + 0.18 is not exactly 0.5 in binary.
+  return { score: Math.round(weighted / covered), scored: covered >= MIN_SCORED_WEIGHT - 1e-9 };
+}
+
+/**
+ * Whether a stored report may show its number.
+ *
+ * Rows written before the coverage gate existed carry no `scored` field, and
+ * the honest reading of one of those is the rule that was in force when it was
+ * written — not the new one applied retrospectively to a document nobody can
+ * re-derive.
+ */
+export function reportScored(report: Pick<WebsiteAuditReport, "disciplines"> & { scored?: boolean }): boolean {
+  return report.scored ?? report.disciplines.some((discipline) => discipline.scored);
 }
 
 export function verdictFor(score: number): string {

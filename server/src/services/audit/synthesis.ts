@@ -29,6 +29,9 @@ import { DISCIPLINE_NAMES, allFindings, type AuditSynthesis, type DisciplineRepo
  * back — a synthesis that invents a problem is discarded rather than published.
  */
 
+/** What the schema used to say as `maxItems`, enforced here instead. */
+const CAP = { priority: 8, whatIsWorking: 5, doNotSay: 5 };
+
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -56,8 +59,10 @@ const SCHEMA = {
     },
     priority: {
       type: "array",
-      maxItems: 8,
-      description: "The order to fix things in. Every entry must name a finding id that appears in the reports you were given.",
+      // The cap is in the wording, not in a `maxItems` keyword: structured
+      // outputs reject array constraints outright, and this schema spent a
+      // release 400ing on one. `PRIORITY_CAP` enforces it on the way back.
+      description: "The order to fix things in, at most 8 entries. Every entry must name a finding id that appears in the reports you were given.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -70,10 +75,9 @@ const SCHEMA = {
     },
     whatIsWorking: {
       type: "array",
-      maxItems: 5,
       items: { type: "string" },
       description:
-        "What is genuinely good about this site, in the owner's words. Take these from the GOOD findings and from what was checked and found sound. If there is nothing, return an empty array rather than inventing one.",
+        "What is genuinely good about this site, in the owner's words, at most 5 of them. Take these from the GOOD findings and from what was checked and found sound. If there is nothing, return an empty array rather than inventing one.",
     },
     emailBrief: {
       type: "object",
@@ -95,10 +99,9 @@ const SCHEMA = {
         whyThatAsk: { type: "string", description: "One sentence on why that ask and not the other two." },
         doNotSay: {
           type: "array",
-          maxItems: 5,
           items: { type: "string" },
           description:
-            "Anything a writer might reasonably conclude from this report that the evidence does not actually support — a check that could not run, a page nobody saw, a number that is a floor rather than a total.",
+            "At most 5. Anything a writer might reasonably conclude from this report that the evidence does not actually support — a check that could not run, a page nobody saw, a number that is a floor rather than a total.",
         },
       },
     },
@@ -128,7 +131,7 @@ export interface SynthesisResult {
 }
 
 export async function synthesise(
-  report: Pick<WebsiteAuditReport, "businessName" | "website" | "overallScore" | "verdict" | "disciplines" | "notes">,
+  report: Pick<WebsiteAuditReport, "businessName" | "website" | "overallScore" | "scored" | "verdict" | "disciplines" | "notes">,
   evidence: AuditEvidence,
   business: { trade: string | null; town: string | null },
 ): Promise<SynthesisResult> {
@@ -159,11 +162,17 @@ export async function synthesise(
     // The one check that matters: a priority entry naming a finding nobody
     // reported is a fault this step invented, and it would appear in the
     // document as though a reviewer had found it.
-    const priority = result.data.priority.filter((entry) => validIds.has(entry.findingId));
-    const invented = result.data.priority.length - priority.length;
+    const real = result.data.priority.filter((entry) => validIds.has(entry.findingId));
+    const priority = real.slice(0, CAP.priority);
+    const invented = result.data.priority.length - real.length;
 
     return {
-      synthesis: { ...result.data, priority },
+      synthesis: {
+        ...result.data,
+        priority,
+        whatIsWorking: result.data.whatIsWorking.slice(0, CAP.whatIsWorking),
+        emailBrief: { ...result.data.emailBrief, doNotSay: result.data.emailBrief.doNotSay.slice(0, CAP.doNotSay) },
+      },
       costUsd: result.costUsd,
       notes: invented
         ? [`${invented} entr${invented === 1 ? "y" : "ies"} in the suggested order named a finding that does not exist, and ${invented === 1 ? "was" : "were"} dropped.`]
@@ -181,7 +190,7 @@ export async function synthesise(
 }
 
 function buildPrompt(
-  report: Pick<WebsiteAuditReport, "businessName" | "website" | "overallScore" | "verdict" | "disciplines" | "notes">,
+  report: Pick<WebsiteAuditReport, "businessName" | "website" | "overallScore" | "scored" | "verdict" | "disciplines" | "notes">,
   evidence: AuditEvidence,
   business: { trade: string | null; town: string | null },
   findings: ReturnType<typeof allFindings>,
@@ -191,13 +200,15 @@ function buildPrompt(
     business.trade ? `What they do: ${business.trade}` : null,
     business.town ? `Where: ${business.town}` : null,
     report.website ? `The site reviewed: ${report.website}` : "They have no website that answered.",
-    `The score the checks produced: ${report.overallScore} out of 100 — "${report.verdict}". It is arithmetic on the findings, not a judgement, so do not defend it or explain how it was reached.`,
+    report.scored
+      ? `The score the checks produced: ${report.overallScore} out of 100 — "${report.verdict}". It is arithmetic on the findings, not a judgement, so do not defend it or explain how it was reached.`
+      : "There is no score. Too little of the site could be examined to put one number on it, so do not state, estimate or imply one — and do not treat the absence of a score as a bad result.",
     "",
   ].filter(Boolean) as string[];
 
   for (const discipline of report.disciplines) {
     parts.push(
-      `## ${DISCIPLINE_NAMES[discipline.discipline]} — reviewed by the ${discipline.reviewer} (${discipline.reviewedBy}), scored ${discipline.score}/100`,
+      `## ${DISCIPLINE_NAMES[discipline.discipline]} — reviewed by the ${discipline.reviewer} (${discipline.reviewedBy}), ${discipline.scored ? `scored ${discipline.score}/100` : "not scored: this reviewer could not examine enough to mark it"}`,
       discipline.headline,
       discipline.summary,
       "",

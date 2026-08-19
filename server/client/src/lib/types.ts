@@ -1113,6 +1113,11 @@ export interface WebsiteAuditReport {
   website?: string | null;
   ranAt: string;
   overallScore: number;
+  /**
+   * Whether enough of the site was examined to show `overallScore` at all.
+   * Absent on rows written before the coverage gate — see `auditScored`.
+   */
+  scored?: boolean;
   verdict: string;
   disciplines: AuditDisciplineReport[];
   synthesis?: {
