@@ -93,11 +93,30 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
  * A write over plain HTTP is refused rather than redirected: the body has
  * already crossed the network in clear by the time we could redirect it, and a
  * 308 would only send the same secret a second time.
+ *
+ * **It only acts on a request that carries `X-Forwarded-Proto: http`** — that
+ * is, one that reached the public edge and came in over plain HTTP. A request
+ * with no such header never went through the proxy at all, which on Railway
+ * means it originated inside the private network: the platform's own
+ * healthcheck, or another service on the same project. There is no plaintext
+ * hop across the internet to protect, and redirecting it does real harm —
+ * Railway healthchecks `/api/health` over internal HTTP and wants a 200, so a
+ * 308 there marks every deploy unhealthy and rolls it back. `/api/health` is
+ * exempted outright as well, because a healthcheck that can be broken by a
+ * header change is a healthcheck waiting to break.
  */
+const HEALTHCHECK_PATH = "/api/health";
+
 export function forceHttps(req: Request, res: Response, next: NextFunction) {
   if (!isProduction()) return next();
+  if (req.path === HEALTHCHECK_PATH) return next();
+
   // req.secure is only meaningful with `trust proxy` set; index.ts sets it.
   if (req.secure) return next();
+  // No proxy header at all: internal traffic, not a plaintext request from the
+  // internet. Nothing to upgrade.
+  if (!req.headers["x-forwarded-proto"]) return next();
+
   if (req.method !== "GET" && req.method !== "HEAD") {
     return res.status(403).json({ error: "HTTPS is required." });
   }
