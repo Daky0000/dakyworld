@@ -42,6 +42,7 @@ export const PURPOSES: { value: EmailPurpose; label: string; hint: string }[] = 
   { value: "REACTIVATION", label: "Reactivation", hint: "Someone who went quiet." },
   { value: "THANK_YOU", label: "Thank you", hint: "A referral, a testimonial, a project closing well." },
   { value: "ANNOUNCEMENT", label: "Announcement", hint: "Something new, to people who already know us." },
+  { value: "DEMO_READY", label: "Demo is ready", hint: "The page you built for them is live — send them the link." },
   { value: "CUSTOM", label: "Something else", hint: "Describe it in the brief." },
 ];
 

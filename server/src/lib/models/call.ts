@@ -86,6 +86,15 @@ export interface ModelRequest {
   /** Perplexity only: how recent a source has to be to count. */
   recency?: "day" | "week" | "month" | "year";
   /**
+   * Perplexity only: the domains it may search, at most ten.
+   *
+   * This is what turns "find some design inspiration" into "find it on these
+   * four sites" — a question answered from the whole web comes back with
+   * whatever a content farm wrote about web design in 2019, and the entire
+   * point of naming sources is that a person chose them.
+   */
+  searchDomains?: string[];
+  /**
    * Pictures to look at alongside the prompt — job `vision`, in practice.
    *
    * Only the vendors that declare `vision` are ever routed a job that sends
@@ -377,6 +386,9 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
       ],
       response_format: { type: "json_schema", json_schema: { schema: request.schema } },
       ...(request.recency ? { search_recency_filter: request.recency } : {}),
+      // Ten is the API's ceiling; beyond that the rest are ignored silently,
+      // which is the worst way to find out.
+      ...(request.searchDomains?.length ? { search_domain_filter: request.searchDomains.slice(0, 10) } : {}),
     },
     "Perplexity",
   );

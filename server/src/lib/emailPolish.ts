@@ -107,6 +107,9 @@ What you fix:
 - Length. If a sentence can go without losing a fact, it goes.
 - Two asks where there should be one, or an ask that is bigger than it needs to be.
 
+What you must catch:
+- **A claim about the recipient's business that is not in the facts you were given.** Not a wording problem — a false statement about somebody, in a letter addressed to the one person who can check it. Leave the sentence exactly as it is, set servesPurpose false, and say in concerns which sentence and that it is unsupported. Do not soften it into something defensible: the sender has to see it.
+
 What you leave alone:
 - The angle. If the draft opens on their missing website, your version opens on their missing website.
 - Anything specific. Specificity is the entire reason this email is not spam; generic writing is the failure you are here to prevent, not a style you may retreat to.

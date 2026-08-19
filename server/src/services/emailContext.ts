@@ -1,4 +1,6 @@
 import { prisma } from "../lib/prisma.js";
+import { demoUrl } from "./demoBuilder.js";
+import { appUrl } from "./emailSender.js";
 
 /**
  * What the drafter is allowed to know about the person being written to.
@@ -68,6 +70,7 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
       communications: { orderBy: { occurredAt: "desc" }, take: 5 },
       emails: { where: { status: "SENT" }, orderBy: { sentAt: "desc" }, take: 5, select: { subject: true, sentAt: true } },
       research: true,
+      demos: { orderBy: { updatedAt: "desc" }, take: 2 },
     },
   });
   if (!lead) throw new Error("Lead not found");
@@ -100,6 +103,23 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
     facts.push(`We already emailed them ${ago(sent.sentAt)}: "${sent.subject}"`);
   }
   if (lead.emails.length === 0) facts.push("We have never emailed this person before.");
+
+  // The demo, when one has been built. The link is a fact like any other, and
+  // the email that carries it is useless without it — a "go and look at this"
+  // with nothing to look at is the worst email in the set.
+  if (lead.demos.length) {
+    const base = await appUrl();
+    for (const demo of lead.demos) {
+      const brief = (demo.brief ?? null) as { headline?: string; sections?: string[] } | null;
+      facts.push(
+        `A demo page has been built for them at ${demoUrl(demo.slug, base)} — ${demo.title}${
+          brief?.headline ? `, headlined "${brief.headline}"` : ""
+        }${brief?.sections?.length ? `, with sections: ${brief.sections.join(", ")}` : ""}. Status: ${demo.status.toLowerCase()}${
+          demo.views > 0 ? `, opened ${demo.views} time${demo.views === 1 ? "" : "s"}` : ", not opened yet"
+        }.`,
+      );
+    }
+  }
 
   // Everything that came from going and looking: what research established,
   // what the audit found on their site and mail domain, and what a model saw

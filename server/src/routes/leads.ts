@@ -16,6 +16,8 @@ import {
 import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
 import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLeads, tagSlug } from "../services/leadTags.js";
 import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
+import { demoUrl } from "../services/demoBuilder.js";
+import { appUrl } from "../services/emailSender.js";
 
 export const leadsRouter = Router();
 
@@ -554,15 +556,20 @@ leadsRouter.get("/:id", async (req, res, next) => {
         proposals: true,
         communications: { orderBy: { occurredAt: "desc" }, include: { loggedBy: { select: { id: true, name: true } } } },
         research: true,
+        demos: { orderBy: { updatedAt: "desc" }, select: { id: true, slug: true, title: true, status: true, version: true, views: true, lastViewedAt: true, sentAt: true, updatedAt: true, createdAt: true, businessName: true, builtBy: true } },
       },
     });
     if (!lead) return res.status(404).json({ error: "Lead not found" });
+    const base = await appUrl();
     res.json({
       ...lead,
       researchStale: isStale(lead.research?.ranAt),
       // Derived rather than stored: it is a reading of the findings, and a
       // stored copy would drift the day the thresholds change.
       caseStrength: lead.research ? caseStrength(lead.research.audit as never, lead.research.look as never) : null,
+      // Assembled here rather than in the client, so there is one spelling of
+      // a demo's address in the whole system.
+      demos: lead.demos.map((demo) => ({ ...demo, url: demoUrl(demo.slug, base) })),
     });
   } catch (err) {
     next(err);

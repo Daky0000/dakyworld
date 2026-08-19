@@ -26,6 +26,7 @@ import { securityHeaders } from "./middleware/security.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
+import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureAgents } from "./services/agentRegistry.js";
@@ -80,6 +81,16 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
 // site cannot log in. routes/webhooks.ts explains what guards it instead.
 app.use("/api/webhooks", express.raw({ type: "*/*", limit: "256kb" }), webhooksRouter);
 
+// A prospect's demo page, to whoever holds the link. Mounted here for two
+// reasons: it is public — the whole point is that it can be opened from an
+// email — and it has to come before the SPA catch-all below, which would
+// otherwise answer /demos/<slug> with the React app.
+//
+// `/demos` on its own has no route here and falls through to the app, which is
+// deliberate: the individual pages are unlisted-but-public, and the list of
+// every business Dakyworld is pitching to stays behind the login.
+app.use("/demos", demoPagesRouter);
+
 // The client is served ahead of the auth middleware below: attachUser does a
 // database round trip per request, and static assets have no business paying
 // for one. The "/api/" guard keeps API routes falling through to their routers.
@@ -131,6 +142,7 @@ app.use("/api/dashboard", dashboardRouter);
 app.use("/api/scrapers", scrapersRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/capture", captureRouter);
+app.use("/api/demos", demosRouter);
 app.use("/api/tools", toolsRouter);
 app.use("/api/mcp", mcpRouter);
 app.use("/api/settings", settingsRouter);

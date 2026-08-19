@@ -124,6 +124,11 @@ If the facts carry a line saying THERE IS NO STRONG CASE HERE, do not write the 
   THANK_YOU: "A short genuine thank-you. Three sentences at most. No upsell of any kind — that is what makes it worth sending.",
   ANNOUNCEMENT:
     "Telling existing contacts about something new. Lead with what it means for them, not with the news itself. One sentence on what to do if they want it.",
+  DEMO_READY: `The demo page is built and this email carries the link. They asked for it, so the selling is done — this email's only job is to get them to open it.
+
+Three or four sentences. Say it is ready, give the link on its own line, and say one specific thing you would point at when they look — a section, a decision, something taken from their own site or listing. Then ask what they think.
+
+Say plainly that it is a working page they can open on their phone, and that nothing is final. Do not re-pitch, do not list what a website does, do not mention price unless the brief does. If the facts include what the demo actually contains, use one detail from it rather than describing it in general.`,
   CUSTOM: "Follow the sender's brief exactly. If the brief is thin, keep the email short rather than padding it.",
 };
 
@@ -149,7 +154,9 @@ If the facts show demand already exists — a rating, a review count, a busy soc
 
 Make the cost concrete and theirs. "A customer who searches for a dentist in Osu finds the three clinics that have a site, and you are not one of them" is an argument. "A website builds credibility" is a brochure line and they have read it a hundred times.
 
-One concrete sentence about their situation beats three about ours.`;
+One concrete sentence about their situation beats three about ours.
+
+**The ask is the demo.** Offer to build them a page — their name, their trade, their services on it — free, with nothing owed either way, and ask whether they want to see it. That is a far smaller thing to say yes to than a call about a project, and it is the whole point of writing to a business with no website. One line, at the end, plainly: no "no-obligation", no "absolutely free", no exclamation mark.`;
   }
 
   return `They have a website and somebody has looked at it. The facts include what was checked on it and what it looks like.
@@ -160,7 +167,11 @@ Do not list the findings. Take one, at most two, and make them concrete enough t
 
 Say what it costs them, not what it looks like. A browser security warning costs them the patients who close the tab; a homepage that never says what they sell costs them the visitor who cannot tell in five seconds; a form that goes nowhere costs them the enquiry itself. If a fact in the list shows demand — a review count, a rating — use it: it turns "your site is dated" into "people are already looking for you and this is what they find".
 
-Never suggest a new website when the facts describe a site that mostly works. Fixing what was observed is the honest offer, and it is a smaller ask.`;
+Never suggest a new website when the facts describe a site that mostly works. Fixing what was observed is the honest offer, and it is a smaller ask.
+
+**If the facts say the design itself is the problem — dated, unclear, nothing above the fold that says what they sell — the ask is the demo.** Offer to redesign their homepage as a working page they can open and compare against their own, free, nothing owed either way, and ask whether they want to see it. Show, do not argue: they have been told their site is dated before and it changed nothing. One line, at the end, plainly.
+
+If the facts describe a technical fault rather than a design one — no HTTPS, a dead site, no way to make contact — do not offer a redesign. Offer the fix and ask for fifteen minutes. Offering to rebuild a site whose real problem is a certificate reads as somebody who wants a bigger job.`;
 }
 
 function buildPrompt(request: DraftRequest): string {
@@ -215,7 +226,11 @@ export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
     purpose: "email.draft",
     // Prose. Routed with everything else the system writes — see lib/models.
     job: "text",
-    system: `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${contactBlock(await companyProfile())}\n\n${VOICE}\n\nNever invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`,
+    system: `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${contactBlock(await companyProfile())}\n\n${VOICE}\n\n**Never state a fault you were not given.** Every negative thing this email says about their business must trace to one of the facts above, and those facts carry their own evidence in brackets — a URL, a header, a DNS record. If a fault is not in the list, it was not found, and "not found" is not the same as "not there": you have no idea, and a confident wrong claim about somebody's own business is read as a lie by the one person who knows the truth. A letter saying "your website did not load" to a company whose website loads is not a bad email, it is a false statement about them, and it ends the relationship at the first line.
+
+The list is also the complete account of what was checked. Anything absent from it was not looked at.
+
+Never invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`,
     prompt: () => buildPrompt(request),
     schema: SCHEMA as unknown as Record<string, unknown>,
     effort: "medium",

@@ -42,6 +42,7 @@ const PURPOSES = [
   "REACTIVATION",
   "THANK_YOU",
   "ANNOUNCEMENT",
+  "DEMO_READY",
   "CUSTOM",
 ] as const;
 

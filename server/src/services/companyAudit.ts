@@ -100,37 +100,21 @@ const MAX_BYTES = 600_000;
  * into a scrape can choose what this server fetches. Refusing anything that
  * isn't a public http(s) host closes the obvious door.
  */
-async function isPubliclyRoutable(hostname: string): Promise<boolean> {
-  const literal = net.isIP(hostname) ? hostname : null;
-  let addresses: string[];
-  if (literal) {
-    addresses = [literal];
-  } else {
-    try {
-      const looked = await dns.lookup(hostname, { all: true });
-      addresses = looked.map((entry) => entry.address);
-    } catch {
-      return false;
-    }
-  }
-  if (addresses.length === 0) return false;
-
-  return addresses.every((address) => {
-    if (net.isIPv4(address)) {
-      const [a, b] = address.split(".").map(Number);
-      if (a === 10 || a === 127 || a === 0) return false;
-      if (a === 172 && b >= 16 && b <= 31) return false;
-      if (a === 192 && b === 168) return false;
-      if (a === 169 && b === 254) return false;
-      if (a >= 224) return false;
-      return true;
-    }
-    const lower = address.toLowerCase();
-    if (lower === "::1" || lower === "::") return false;
-    // Unique-local (fc00::/7) and link-local (fe80::/10).
-    if (/^f[cd]/.test(lower) || /^fe[89ab]/.test(lower)) return false;
+function isPublicAddress(address: string): boolean {
+  if (net.isIPv4(address)) {
+    const [a, b] = address.split(".").map(Number);
+    if (a === 10 || a === 127 || a === 0) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 169 && b === 254) return false;
+    if (a >= 224) return false;
     return true;
-  });
+  }
+  const lower = address.toLowerCase();
+  if (lower === "::1" || lower === "::") return false;
+  // Unique-local (fc00::/7) and link-local (fe80::/10).
+  if (/^f[cd]/.test(lower) || /^fe[89ab]/.test(lower)) return false;
+  return true;
 }
 
 interface Fetched {
@@ -141,15 +125,87 @@ interface Fetched {
   responseMs: number;
 }
 
-async function fetchPage(url: string): Promise<Fetched | null> {
+/**
+ * Why a fetch failed, which is not the same question as whether their site
+ * works.
+ *
+ * This distinction exists because of a real email that went out saying "your
+ * website did not load at all" about a site that loads in a browser in just
+ * over a second. The address on file was the apex, `ghacem.com`, which has no
+ * DNS record; `www.ghacem.com` answers 200. One `catch { return null }` turned
+ * "we asked the wrong hostname" into a CRITICAL finding, and the drafter —
+ * correctly, because it may only use the facts it is given — put it in a
+ * letter to the company as a statement of fact.
+ *
+ * The rule that comes out of it is the one `probeDns` below already follows
+ * for DNS records, applied where it was missing: **an absent answer and a
+ * failed question are different things.** Only a failure that genuinely tells
+ * us something about their site becomes a finding. Everything else becomes a
+ * note, and a note never reaches an email as a claim.
+ */
+type FetchFailure =
+  /** DNS says there is no such host. This one really is about their domain. */
+  | "no-such-host"
+  /** Something answered and refused, or the connection dropped. */
+  | "refused"
+  /** TLS would not negotiate — often a chain a browser repairs and Node does not. */
+  | "tls"
+  | "timeout"
+  /** A 403/429 aimed at us, which says nothing about what a visitor would see. */
+  | "blocked"
+  | "not-public"
+  | "unknown";
+
+interface FetchAttempt {
+  url: string;
+  ok: boolean;
+  status: number | null;
+  failure: FetchFailure | null;
+  detail: string;
+}
+
+/** A browser's own UA, for the second attempt at a host that refused ours. */
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+const CRAWLER_UA = "DakyworldOS-SiteCheck/1.0 (+https://dakyworld.com)";
+
+/** Node's error codes, grouped by what they actually tell us. */
+function classify(err: unknown): { failure: FetchFailure; detail: string } {
+  const error = err as { name?: string; message?: string; cause?: { code?: string; message?: string } };
+  if (error?.name === "AbortError") return { failure: "timeout", detail: `no response within ${FETCH_TIMEOUT_MS / 1000} seconds` };
+
+  const code = error?.cause?.code ?? "";
+  const detail = code || error?.cause?.message || error?.message || "unknown error";
+
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return { failure: "no-such-host", detail: code };
+  if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EHOSTUNREACH" || code === "ENETUNREACH") {
+    return { failure: "refused", detail: code };
+  }
+  if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT") {
+    return { failure: "timeout", detail: code };
+  }
+  if (/CERT|SSL|TLS|DEPTH_ZERO|SELF_SIGNED|ERR_TLS/i.test(code)) return { failure: "tls", detail: code };
+  return { failure: "unknown", detail };
+}
+
+async function attempt(url: string, userAgent: string): Promise<{ page: Fetched | null; attempt: FetchAttempt }> {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    return null;
+    return { page: null, attempt: { url, ok: false, status: null, failure: "unknown", detail: "not a URL" } };
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-  if (!(await isPubliclyRoutable(parsed.hostname))) return null;
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { page: null, attempt: { url, ok: false, status: null, failure: "unknown", detail: "not http" } };
+  }
+
+  const routable = await routability(parsed.hostname);
+  if (routable !== "public") {
+    return {
+      page: null,
+      attempt: { url, ok: false, status: null, failure: routable === "no-such-host" ? "no-such-host" : "not-public", detail: routable },
+    };
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -159,15 +215,10 @@ async function fetchPage(url: string): Promise<Fetched | null> {
     const response = await fetch(parsed, {
       redirect: "follow",
       signal: controller.signal,
-      headers: {
-        // Identifying the crawler is the polite thing and costs nothing.
-        "User-Agent": "DakyworldOS-SiteCheck/1.0 (+https://dakyworld.com)",
-        Accept: "text/html,application/xhtml+xml",
-      },
+      headers: { "User-Agent": userAgent, Accept: "text/html,application/xhtml+xml" },
     });
     const responseMs = Date.now() - startedAt;
 
-    // Read at most MAX_BYTES rather than trusting Content-Length.
     const reader = response.body?.getReader();
     let html = "";
     if (reader) {
@@ -185,12 +236,118 @@ async function fetchPage(url: string): Promise<Fetched | null> {
       }
     }
 
-    return { finalUrl: response.url || parsed.toString(), status: response.status, headers: response.headers, html, responseMs };
-  } catch {
-    return null;
+    const page = { finalUrl: response.url || parsed.toString(), status: response.status, headers: response.headers, html, responseMs };
+    // A 403 or a 429 is a door shut in our face, not a broken website. It is
+    // returned as a failure so the caller can retry as a browser, and it never
+    // becomes a claim about their site.
+    const blocked = response.status === 403 || response.status === 429;
+    return {
+      page: blocked ? null : page,
+      attempt: {
+        url,
+        ok: !blocked,
+        status: response.status,
+        failure: blocked ? "blocked" : null,
+        detail: blocked ? `HTTP ${response.status}` : "",
+      },
+    };
+  } catch (err) {
+    const { failure, detail } = classify(err);
+    return { page: null, attempt: { url, ok: false, status: null, failure, detail } };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** `public`, or the reason it is not worth fetching. */
+async function routability(hostname: string): Promise<"public" | "no-such-host" | "private"> {
+  const literal = net.isIP(hostname) ? hostname : null;
+  let addresses: string[];
+  if (literal) {
+    addresses = [literal];
+  } else {
+    try {
+      const looked = await dns.lookup(hostname, { all: true });
+      addresses = looked.map((entry) => entry.address);
+    } catch {
+      // The resolver said no such name — which is a real fact about their
+      // domain, and the one fetch failure that is safe to report as one.
+      return "no-such-host";
+    }
+  }
+  if (addresses.length === 0) return "no-such-host";
+  return addresses.every(isPublicAddress) ? "public" : "private";
+}
+
+export interface SiteFetch {
+  /** Null when nothing could be retrieved. */
+  page: Fetched | null;
+  /** The URL that actually answered, which may not be the one on file. */
+  usedUrl: string | null;
+  /** Every URL tried, in order, with what each did. */
+  attempts: FetchAttempt[];
+  /**
+   * True only when DNS says none of the hostnames exist. This is the single
+   * case where "their site is not there" is a claim the evidence supports.
+   */
+  domainDoesNotResolve: boolean;
+  /** True when we could not tell — a timeout, a TLS error, a WAF, a refusal. */
+  inconclusive: boolean;
+}
+
+/**
+ * Fetches their homepage, trying the obvious alternatives before concluding
+ * anything.
+ *
+ * The www/apex pair is not a nicety: plenty of small-business domains have a
+ * record for one and not the other, and which one a scrape recorded is an
+ * accident. Asking only the one on file and declaring the business offline on
+ * the strength of it is how a false statement reaches a stranger's inbox.
+ */
+export async function fetchSite(requested: string): Promise<SiteFetch> {
+  const attempts: FetchAttempt[] = [];
+  const candidates: string[] = [];
+
+  const add = (value: string) => {
+    if (!candidates.includes(value)) candidates.push(value);
+  };
+  add(requested);
+  try {
+    const parsed = new URL(requested);
+    const swapped = new URL(requested);
+    swapped.hostname = parsed.hostname.startsWith("www.") ? parsed.hostname.slice(4) : `www.${parsed.hostname}`;
+    add(swapped.toString());
+  } catch {
+    /* a URL we cannot parse is handled by `attempt` */
+  }
+
+  for (const candidate of candidates) {
+    const first = await attempt(candidate, CRAWLER_UA);
+    attempts.push(first.attempt);
+    if (first.page) return finish(first.page, candidate, attempts);
+
+    // Blocked on our own user agent: ask again the way a browser would before
+    // saying anything about their site.
+    if (first.attempt.failure === "blocked") {
+      const retry = await attempt(candidate, BROWSER_UA);
+      attempts.push({ ...retry.attempt, detail: `${retry.attempt.detail} (retried as a browser)` });
+      if (retry.page) return finish(retry.page, candidate, attempts);
+    }
+  }
+
+  const real = attempts.filter((entry) => entry.failure !== "not-public");
+  return {
+    page: null,
+    usedUrl: null,
+    attempts,
+    // Every hostname we know about is unknown to DNS. That is about them.
+    domainDoesNotResolve: real.length > 0 && real.every((entry) => entry.failure === "no-such-host"),
+    inconclusive: real.some((entry) => entry.failure !== "no-such-host"),
+  };
+}
+
+function finish(page: Fetched, usedUrl: string, attempts: FetchAttempt[]): SiteFetch {
+  return { page, usedUrl, attempts, domainDoesNotResolve: false, inconclusive: false };
 }
 
 // --- Reading the markup ----------------------------------------------------
@@ -240,6 +397,15 @@ function detectPlatform(html: string, finalUrl: string, headers: Headers): strin
   if (/webflow/i.test(generator ?? "")) return "Webflow";
   if (generator) return generator.trim();
   return null;
+}
+
+/** `https://www.ghacem.com/en` becomes `www.ghacem.com`, for a sentence a person reads. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 /** The most recent four-digit year in a copyright line, which dates the site. */
@@ -344,7 +510,8 @@ export async function auditCompany(subject: AuditSubject): Promise<CompanyAudit>
 
   // --- The site itself -----------------------------------------------------
   if (subject.website) {
-    const page = await fetchPage(subject.website);
+    const fetched = await fetchSite(subject.website);
+    const page = fetched.page;
     checked.push("Their website: whether it loads, over what, and what it is built on");
 
     if (!page) {
@@ -358,15 +525,33 @@ export async function auditCompany(subject: AuditSubject): Promise<CompanyAudit>
         platform: null,
         server: null,
       };
-      add({
-        id: "site-unreachable",
-        area: "WEBSITE",
-        severity: "CRITICAL",
-        observed: `Their website did not load at all. A customer who looks them up finds a dead address on the business's own name.`,
-        evidence: `${subject.website} did not respond within ${FETCH_TIMEOUT_MS / 1000} seconds.`,
-        service: "website-build",
-      });
-      notes.push("The site did not load, so nothing else about it could be checked — it may be down temporarily rather than gone.");
+
+      const tried = fetched.attempts.map((entry) => `${entry.url} (${entry.failure ?? "no answer"}${entry.detail ? `: ${entry.detail}` : ""})`).join("; ");
+
+      if (fetched.domainDoesNotResolve) {
+        // The only version of this that is a fact about them: DNS has no
+        // record for any hostname we know of. Worded as what was actually
+        // established — the address does not resolve — rather than as the
+        // larger claim that they have no working site, which is not the same
+        // thing and is not what was tested.
+        add({
+          id: "site-unreachable",
+          area: "WEBSITE",
+          severity: "CRITICAL",
+          observed: `The web address on their record does not exist as far as the internet is concerned — there is no DNS record for it. Anyone typing it, or following it from a listing, lands on nothing.`,
+          evidence: `No DNS record for ${tried}.`,
+          service: "website-build",
+        });
+        notes.push("Nothing else about the site could be checked, because there was no host to ask.");
+      } else {
+        // Everything else is a failed question, not an answer. It stays out of
+        // the findings entirely, so it can never reach a letter as a claim —
+        // this is the exact failure that put "your website did not load" in
+        // front of a company whose website loads in a second.
+        notes.push(
+          `Their website could not be checked from here, and nothing may be claimed about it either way — it may well be working perfectly. Tried: ${tried}. Somebody should open ${subject.website} by hand before any of this is used.`,
+        );
+      }
     } else {
       const finalUrl = page.finalUrl;
       const https = finalUrl.startsWith("https://");
@@ -381,6 +566,22 @@ export async function auditCompany(subject: AuditSubject): Promise<CompanyAudit>
         platform,
         server: page.headers.get("server"),
       };
+
+      // The address on file is not the one that answered. This is a real
+      // finding in its own right — a domain with a record for www and none for
+      // the bare name loses everybody who types it without — and it is the
+      // thing that was previously mistaken for a dead website.
+      const original = fetched.attempts[0];
+      if (fetched.usedUrl && fetched.usedUrl !== subject.website && original?.failure === "no-such-host") {
+        add({
+          id: "one-host-only",
+          area: "WEBSITE",
+          severity: "MEDIUM",
+          observed: `Their site answers at ${hostOf(fetched.usedUrl)} but not at ${hostOf(subject.website)} — the second one has no DNS record at all. Anyone who types the address the short way, or follows it from a listing that stored it that way, gets nothing.`,
+          evidence: `${original.url} does not resolve; ${fetched.usedUrl} answered ${page.status}.`,
+          service: "website-rescue",
+        });
+      }
 
       if (page.status >= 400) {
         add({
@@ -811,6 +1012,7 @@ export function readPublishedContacts(html: string, finalUrl: string): CompanyAu
 const TAGGABLE: Record<string, string> = {
   "no-website": "No website",
   "site-unreachable": "Site down",
+  "one-host-only": "Only one host resolves",
   "site-error": "Site down",
   "no-https": "Not secure",
   "not-mobile": "Not mobile",

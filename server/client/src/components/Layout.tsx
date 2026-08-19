@@ -32,6 +32,9 @@ const navItems: NavItem[] = [
     ],
   },
   { to: "/proposals", label: "Proposals" },
+  // Building one spends real money on two models, so it sits with the other
+  // things that do; reading the list does not, hence no role restriction here.
+  { to: "/demos", label: "Demos" },
   { to: "/projects", label: "Projects" },
   { to: "/invoices", label: "Invoices" },
   // Care plans decide what recurring money moves and when, so the API limits

@@ -384,7 +384,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
           "Deploys and rollbacks",
         ],
         kpis: ["Pages shipped", "Lighthouse scores", "Accessibility defects", "Rollbacks needed"],
-        toolkit: ["web.page", "github.read", "github.issue", "security.scan", "company.audit", "site.look", "projects.read", "tasks.write"],
+        toolkit: ["web.page", "demo.build", "demo.read", "github.read", "github.issue", "security.scan", "company.audit", "site.look", "projects.read", "tasks.write"],
         escalationPolicy:
           "Never touches production without a rollback plan. Anything that changes price, scope, a client's DNS or a live site's availability goes to the CTO first.",
         process:
@@ -648,6 +648,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
           "content.humanise",
           "email.draft",
           "email.polish",
+          "demo.read",
           "suppression.check",
           "analytics.read",
         ],

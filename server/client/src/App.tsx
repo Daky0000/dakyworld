@@ -5,6 +5,7 @@ import { Leads } from "./pages/Leads";
 import { LeadImport } from "./pages/LeadImport";
 import { LeadSources } from "./pages/LeadSources";
 import { Proposals } from "./pages/Proposals";
+import { Demos } from "./pages/Demos";
 import { Projects } from "./pages/Projects";
 import { ProjectDetail } from "./pages/ProjectDetail";
 import { Invoices } from "./pages/Invoices";
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/leads/import" element={<LeadImport />} />
         <Route path="/lead-sources" element={<LeadSources />} />
         <Route path="/proposals" element={<Proposals />} />
+        <Route path="/demos" element={<Demos />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:id" element={<ProjectDetail />} />
         <Route path="/invoices" element={<Invoices />} />

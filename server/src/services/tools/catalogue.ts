@@ -5,6 +5,8 @@ import { auditCompany } from "../companyAudit.js";
 import { isStale, prepareLead, storedPrep } from "../leadPrep.js";
 import { lookAtHomepage } from "../homepageLook.js";
 import { polishEmail } from "../../lib/emailPolish.js";
+import { buildDemo, demoUrl, subjectFromLead } from "../demoBuilder.js";
+import { appUrl } from "../emailSender.js";
 import { composeMessage, sendMessage } from "../emailSender.js";
 import { enrol, stopOnReply } from "../emailSequences.js";
 import { runSource } from "../scraperRunner.js";
@@ -1680,6 +1682,81 @@ Output one complete HTML document. Rules it must follow:
         recipient: input.recipient ?? null,
         facts: input.facts,
       }),
+  },
+  {
+    key: "demo.build",
+    name: "Build a demo page",
+    group: "Studio",
+    purpose:
+      "Builds a landing page for one prospect — their name, trade and services — from what the scan found, against design references from real published work. Hosted at /demos/<slug>.",
+    scope: "write",
+    requires: "models",
+    job: "html",
+    // A design lookup on Perplexity and a whole page of HTML from ChatGPT.
+    // The largest single model spend in the app.
+    spends: true,
+    // The page is publicly reachable the moment it exists, so this counts as
+    // reaching outside the company even though nothing is sent.
+    outward: true,
+    input: z.object({
+      leadId: z.string().min(1),
+      rebuild: z.boolean().default(true).describe("Replace the page at the existing link rather than opening a second one."),
+    }),
+    preview: async (input) => {
+      const lead = await prisma.lead.findUnique({
+        where: { id: input.leadId },
+        select: { contactName: true, companyName: true, website: true, research: { select: { ranAt: true } } },
+      });
+      const who = lead?.companyName ?? lead?.contactName ?? "an unknown lead";
+      return `Build a ${lead?.website ? "redesign of" : "first landing page for"} ${who}, publish it at a public /demos link, and leave it as a draft for a person to read. ${
+        lead?.research ? "" : "Nobody has looked at this business yet, so the page would be generic — run the scan first."
+      }`.trim();
+    },
+    run: async (input) => {
+      const lead = await prisma.lead.findUnique({ where: { id: input.leadId }, include: { research: true } });
+      if (!lead) throw new Error("No such lead.");
+      if (!lead.research) {
+        // A demo built from a bare record is a template with a name dropped
+        // into it, which is the one thing this feature exists not to be.
+        throw new Error("Nobody has looked at this business yet. Run lead.prepare first — a demo built from a bare record is a template.");
+      }
+      const result = await buildDemo(subjectFromLead(lead, lead.research.audit as never, lead.research.look as never), {
+        rebuild: input.rebuild,
+      });
+      return result;
+    },
+  },
+  {
+    key: "demo.read",
+    name: "Read demos",
+    group: "Studio",
+    purpose: "What has been built for whom, whether the link has gone out, and whether they opened it.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({ leadId: z.string().optional(), status: z.enum(["DRAFT", "READY", "SENT", "ACCEPTED", "DECLINED", "ARCHIVED"]).optional(), limit }),
+    run: async (input) => {
+      const base = await appUrl();
+      const demos = await prisma.demo.findMany({
+        where: { ...(input.leadId ? { leadId: input.leadId } : {}), ...(input.status ? { status: input.status } : {}) },
+        orderBy: { updatedAt: "desc" },
+        take: input.limit,
+        select: {
+          id: true,
+          slug: true,
+          title: true,
+          businessName: true,
+          status: true,
+          version: true,
+          views: true,
+          lastViewedAt: true,
+          sentAt: true,
+          leadId: true,
+        },
+      });
+      return demos.map((demo) => ({ ...demo, url: demoUrl(demo.slug, base) }));
+    },
   },
   {
     key: "security.scan",

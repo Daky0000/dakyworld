@@ -232,6 +232,7 @@ model Lead {
   enrollments    EmailEnrollment[]
   /// What was learnt by going and looking, as opposed to what a scrape handed over.
   research       LeadResearch?
+  demos          Demo[]
 
   agentTasks   AgentTask[]
 
@@ -288,6 +289,73 @@ model LeadResearch {
   updatedAt DateTime @updatedAt
 
   @@index([ranAt])
+}
+
+/// Where a demo stands. A demo is only worth building for somebody who asked,
+/// so DRAFT is short and SENT is the state that matters.
+enum DemoStatus {
+  /// Built, not shown to anybody yet.
+  DRAFT
+  /// The link is fit to send.
+  READY
+  /// The follow-up carrying the link has gone out.
+  SENT
+  /// They said yes to the work.
+  ACCEPTED
+  DECLINED
+  ARCHIVED
+}
+
+/// A landing page built for one prospect, hosted at `/demos/<slug>`.
+///
+/// The argument a cold email makes to a business with no website — or a bad
+/// one — is easier to make by showing than by describing, and a page with
+/// their own name, trade and services on it is a different conversation from a
+/// portfolio link. This is that page: generated for one business, from what
+/// the scan found out about them, against real design references rather than
+/// out of a model's head.
+///
+/// The HTML lives in this row rather than on disk. Railway's filesystem is
+/// ephemeral, so a file written at run time survives until the next deploy and
+/// *looks like it worked* — the same trap the uploaded logos avoided.
+model Demo {
+  id     String @id @default(cuid())
+  /// The public path segment: `/demos/adjei-dental-centre`.
+  slug   String @unique
+  lead   Lead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId String?
+
+  /// What it is called on the Demos screen.
+  title        String
+  /// The business it is for, as the page itself says it.
+  businessName String
+  status       DemoStatus @default(DRAFT)
+
+  /// The complete page. One string, served as-is.
+  html String
+  /// What it was built from: the facts, the angle, the style direction.
+  brief Json?
+  /// The design references the style came from, each with its source URL.
+  references Json?
+
+  /// Which model wrote the page, and what the whole build cost.
+  builtBy      String?
+  buildCostUsd Decimal @default(0) @db.Decimal(10, 4)
+  /// Rebuilt pages keep the same slug and bump this.
+  version      Int     @default(1)
+
+  /// Whether they actually opened it. The one signal worth having before a
+  /// follow-up call — and unlike a tracking pixel in an email, this is a
+  /// hit on a page we host, which is an ordinary web server counting requests.
+  views        Int       @default(0)
+  lastViewedAt DateTime?
+
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([status])
+  @@index([leadId])
 }
 
 /// A named bucket of leads — normally one scrape batch ("Accra dentists,
@@ -976,6 +1044,8 @@ enum EmailPurpose {
   REACTIVATION
   THANK_YOU
   ANNOUNCEMENT
+  /// The demo landing page is built — go and look at it.
+  DEMO_READY
   CUSTOM
 }
 

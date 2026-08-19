@@ -142,6 +142,8 @@ export interface Lead {
   research?: LeadResearch | null;
   /** True when nobody has looked, or the last look is old enough to redo. */
   researchStale?: boolean;
+  /** Pages built for this prospect. */
+  demos?: Demo[];
   /** Whether there is anything worth writing to them about. Null until looked at. */
   caseStrength?: CaseStrength | null;
 
@@ -927,6 +929,7 @@ export type EmailPurpose =
   | "REACTIVATION"
   | "THANK_YOU"
   | "ANNOUNCEMENT"
+  | "DEMO_READY"
   | "CUSTOM";
 
 export type EmailStatus = "DRAFT" | "SCHEDULED" | "SENDING" | "SENT" | "FAILED" | "CANCELLED";
@@ -1027,6 +1030,38 @@ export interface EmailContext {
   preparedAt?: string | null;
   /** What the looking could not establish. */
   prepNotes?: string[];
+}
+
+export type DemoStatus = "DRAFT" | "READY" | "SENT" | "ACCEPTED" | "DECLINED" | "ARCHIVED";
+
+/** A landing page built for one prospect, hosted at /demos/<slug>. */
+export interface Demo {
+  id: string;
+  slug: string;
+  title: string;
+  businessName: string;
+  status: DemoStatus;
+  version: number;
+  views: number;
+  lastViewedAt?: string | null;
+  sentAt?: string | null;
+  builtBy?: string | null;
+  buildCostUsd?: string | number;
+  createdAt: string;
+  updatedAt: string;
+  /** The public address, assembled server-side so there is one spelling of it. */
+  url: string;
+  lead?: { id: string; contactName: string; companyName?: string | null; contactEmail?: string | null; website?: string | null } | null;
+  /** The design direction it was built to, and where that came from. */
+  references?: {
+    direction: string;
+    references: { name: string; source: string; url: string; whyItFits: string }[];
+    avoid: string[];
+    chosenBy: string;
+    fromLiveSources: boolean;
+    note?: string | null;
+  } | null;
+  brief?: { headline?: string; sections?: string[]; usedFacts?: string[] } | null;
 }
 
 /**

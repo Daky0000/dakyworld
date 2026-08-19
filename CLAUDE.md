@@ -210,6 +210,44 @@ It is sixty lines of `zlib.inflateSync` and an unfilter loop rather than an
 image library, and it refuses anything that is not 8-bit non-interlaced — which
 is everything a headless Chrome emits.
 
+**A failed question is not an answer** — `companyAudit.fetchSite()`. The audit
+used to collapse every fetch failure into `catch { return null }` and raise a
+CRITICAL "their website did not load at all". A real email went out saying that
+to a company whose site loads in a second: the address on file was the apex,
+which has no DNS record, while `www.` answers 200. So the fetch now tries the
+www/apex pair, retries a 403 with a browser user agent, classifies the failure,
+and **only DNS saying "no such host" on every candidate becomes a finding**.
+Everything else — a timeout, a TLS chain Node rejects and a browser repairs, a
+WAF — is a `note`, and notes never reach the drafter. This is the same rule
+`probeDns` already followed for DNS records, applied where it was missing. The
+drafter and the polish carry it too: a negative claim that is not in the facts
+is a false statement about somebody, made to the one person who can check it.
+
+**Demos** — `src/services/demoBuilder.ts`, `designReferences.ts`,
+`routes/demos.ts`. For a lead with no website or a bad one, the cold email's
+ask is a free demo rather than a call: far easier to say yes to, and it is the
+argument itself rather than a claim about the argument. When they agree,
+`buildDemo` runs — design direction first (`job: "research"` → Perplexity, with
+`search_domain_filter` pinned to variant.com, themeforest.net, motionsites.ai
+and aura.build, so the style comes from published work rather than a model's
+memory), then the page (`job: "html"` → ChatGPT). It is stored on `Demo` and
+served at **`/demos/<slug>`**.
+
+- **The demo banner is injected by `demoBuilder`, never asked of the model.** A
+  page carrying a real business's name that does not say it is a concept can be
+  mistaken for theirs, by them or by anyone the link reaches.
+- **`/demos/<slug>` is public and mounted above the SPA catch-all in
+  `index.ts`** or the React app answers it. `/demos` itself has no route there
+  and falls through to the authenticated Demos screen — the list of who is
+  being pitched to must not be public.
+- The served page gets a strict CSP; `sanitiseDemoHtml` strips external
+  scripts, iframes, offsite form actions and flags hotlinked images first, so
+  the page does not arrive broken by its own headers.
+- Nothing builds without a scan behind it. The route answers 409 and the tool
+  throws — a guard that only exists in a button is not a guard.
+- `EmailPurpose.DEMO_READY` carries the link, and `emailContext` puts the URL
+  and whether it has been opened into the facts.
+
 **The agent runtime** — `src/services/agents/`. `runner.ts` is what turns a
 task into work: it claims an `AgentTask`, builds the prompt from the agent's
 ten prompt layers plus its recalled memories plus the resolved record, hands it

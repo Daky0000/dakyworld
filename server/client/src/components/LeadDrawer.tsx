@@ -263,6 +263,8 @@ export function LeadDrawer({
 
           <ResearchSection lead={lead} onDone={invalidate} />
 
+          <DemoSection lead={lead} onDone={invalidate} />
+
           <CustomFieldsForm lead={lead} onSave={(customFields) => update.mutate({ customFields })} pending={update.isPending} />
 
           <QualificationForm lead={lead} onSave={(body) => update.mutate(body)} pending={update.isPending} />
@@ -556,6 +558,109 @@ function ResearchSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
           error={error}
         />
       )}
+    </Section>
+  );
+}
+
+/**
+ * The demo, and the button that builds one.
+ *
+ * This is the offer a cold email makes to a business with no website, or one
+ * whose site is the problem: not "we could build you a site" but a page with
+ * their own name on it, at a link they can open on their phone. So the button
+ * lives on the lead, next to the evidence that says whether it is worth
+ * building at all.
+ *
+ * It refuses to build before the scan has run, and says why. A demo built from
+ * a bare record is a template with a business name dropped into it, which is
+ * exactly what the whole pipeline exists to avoid producing.
+ */
+function DemoSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [built, setBuilt] = useState<{ url: string; notes: string[]; builtBy: string } | null>(null);
+  const demos = lead.demos ?? [];
+  const looked = Boolean(lead.research);
+
+  const build = useMutation({
+    mutationFn: () => api.post<{ url: string; notes: string[]; builtBy: string }>("/demos/build", { leadId: lead.id, rebuild: true }),
+    onMutate: () => {
+      setError(null);
+      setBuilt(null);
+    },
+    onSuccess: (result) => {
+      setBuilt(result);
+      onDone();
+    },
+    onError: (err: unknown) => setError(err instanceof Error ? err.message : "The build failed"),
+  });
+
+  return (
+    <Section title="Demo page">
+      <div className="rounded-2xl border border-line bg-white p-4">
+        {demos.length > 0 ? (
+          <ul className="mb-3 space-y-2">
+            {demos.map((demo) => (
+              <li key={demo.id} className="flex flex-wrap items-center gap-2 text-sm">
+                <a href={demo.url} target="_blank" rel="noreferrer" className="break-all text-blue hover:underline">
+                  {demo.url.replace(/^https?:\/\//, "")}
+                </a>
+                <Badge tone="muted">{demo.status.toLowerCase().replace(/_/g, " ")}</Badge>
+                {demo.version > 1 && <Badge tone="muted">v{demo.version}</Badge>}
+                <span className="text-xs text-ink/45">
+                  {demo.views > 0 ? `opened ${demo.views}×` : "not opened"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mb-3 text-sm text-ink/60">
+            {lead.website
+              ? "Nothing built yet. A redesign they can open beside their own site argues better than another sentence about why it is dated."
+              : "Nothing built yet. For a business with no website, a page with their own name on it is the offer — it is far easier to say yes to than a call."}
+          </p>
+        )}
+
+        {!looked && (
+          <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Nobody has looked at this business yet. Run the scan first — a demo built from a bare record is a template with their name
+            dropped into it.
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" onClick={() => build.mutate()} disabled={build.isPending || !looked}>
+            {build.isPending ? "Building…" : demos.length > 0 ? "Build it again" : "Build a demo"}
+          </Button>
+          {demos.length > 0 && (
+            <Link to="/demos" className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline">
+              All demos →
+            </Link>
+          )}
+          <span className="text-[11px] text-ink/45">
+            Researches a design direction from real published work, then builds the page. Takes a minute, and costs a few cents.
+          </span>
+        </div>
+
+        {built && (
+          <div className="mt-3 border-t border-ink/10 pt-3 text-xs text-ink/65">
+            <p>
+              Built by {built.builtBy} —{" "}
+              <a href={built.url} target="_blank" rel="noreferrer" className="text-blue hover:underline">
+                open it
+              </a>
+              . Read it before you send the link.
+            </p>
+            {built.notes.length > 0 && (
+              <ul className="mt-2 space-y-1 text-[11px] text-ink/45">
+                {built.notes.map((note, index) => (
+                  <li key={index}>· {note}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
+      </div>
     </Section>
   );
 }
