@@ -199,7 +199,7 @@ export async function reviewUx(
       effort: "medium",
       maxTokens: 4000,
       messages: {
-        noKey: "No model is connected that can look at a picture. Add a ChatGPT key under Settings → AI models.",
+        noKey: "No model is connected that can look at a picture, so the pictures were taken and nobody read them. Add a ChatGPT, Claude or Gemini key under Settings → AI models — any one of the three can do this.",
       },
     });
     looked = result.data;

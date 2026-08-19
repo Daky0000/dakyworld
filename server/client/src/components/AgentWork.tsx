@@ -204,9 +204,19 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
   });
 
   const act = useMutation({
-    mutationFn: ({ what, body }: { what: string; body?: unknown }) => api.post(`/agents/tasks/${taskId}/${what}`, body),
-    onSuccess: () => {
-      setNotice(null);
+    mutationFn: ({ what, body }: { what: string; body?: unknown }) =>
+      api.post<{ asked?: boolean; message?: string; resuming?: boolean; resumingFrom?: number }>(
+        `/agents/tasks/${taskId}/${what}`,
+        body,
+      ),
+    onSuccess: (result) => {
+      // Stopping a running task is a request the run honours at its next safe
+      // point, so the reply is a sentence rather than a finished task. Saying
+      // nothing here would look like the button did nothing.
+      setNotice(
+        result?.message ??
+          (result?.resuming ? `Carrying on from step ${result.resumingFrom ?? 0} — it does not start again.` : null),
+      );
       setAnswer("");
       onChanged();
     },
@@ -240,6 +250,7 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
             <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
               {task.toolCalls} tool call{task.toolCalls === 1 ? "" : "s"} · ${task.costUsd.toFixed(4)}
               {task.attempts > 1 && ` · attempt ${task.attempts}`}
+              {task.resumesFrom && ` · saved at step ${task.resumesFrom.steps}`}
             </span>
             <div className="flex gap-2">
               {task.status === "NEEDS_APPROVAL" && (
@@ -247,14 +258,18 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
                   Approve
                 </Button>
               )}
-              {(task.status === "QUEUED" || task.status === "BLOCKED" || task.status === "FAILED") && (
+              {(task.status === "QUEUED" || task.status === "BLOCKED" || task.status === "FAILED" || task.status === "CANCELLED") && (
                 <Button onClick={() => act.mutate({ what: "run", body: { answer } })} disabled={act.isPending}>
-                  {task.status === "BLOCKED" ? "Answer and continue" : "Run now"}
+                  {task.status === "BLOCKED" ? "Answer and continue" : task.resumesFrom ? "Carry on" : "Run now"}
                 </Button>
               )}
-              {task.status !== "RUNNING" && task.status !== "DONE" && task.status !== "CANCELLED" && (
-                <Button variant="ghost" onClick={() => act.mutate({ what: "cancel" })} disabled={act.isPending}>
-                  Cancel
+              {task.status !== "DONE" && (task.status !== "CANCELLED" || Boolean(task.resumesFrom)) && (
+                <Button
+                  variant="ghost"
+                  onClick={() => act.mutate({ what: "cancel" })}
+                  disabled={act.isPending || task.stopRequested}
+                >
+                  {task.status === "RUNNING" ? (task.stopRequested ? "Stopping…" : "Stop") : "Cancel"}
                 </Button>
               )}
             </div>

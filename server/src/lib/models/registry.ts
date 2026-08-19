@@ -299,12 +299,55 @@ export interface Routing {
 }
 
 /**
+ * Everyone who could serve this job if the first choice is not connected, in
+ * the order they should be tried.
+ *
+ * The declared fallback first — that is the Owner-facing promise, and Claude
+ * is the floor for a reason — and then **every other vendor that can actually
+ * do this job**. That last clause is the whole point of this function, and it
+ * exists because of a real failure: `vision` is routed to ChatGPT and falls
+ * back to Claude, so a deployment holding only a Gemini key had no model at
+ * all for looking at a page. The audit dutifully took two screenshots of a
+ * prospect's homepage, paid Apify for them, and then filed
+ * "the homepage was photographed but not reviewed" — while a vendor that reads
+ * pictures perfectly well sat connected and unasked one line away.
+ *
+ * A vendor that cannot do the job is never in this list, so the chain can only
+ * ever end at somebody who can. Perplexity is not a stand-in for looking at a
+ * screenshot no matter how many keys are missing.
+ */
+function standInsFor(job: ModelJob, chosen: ProviderKey): ProviderKey[] {
+  const fallback = JOBS[job].fallback;
+  const ordered = [fallback, ...PROVIDER_KEYS];
+  const seen = new Set<ProviderKey>([chosen]);
+  const chain: ProviderKey[] = [];
+  for (const candidate of ordered) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (!PROVIDERS[candidate].jobs.includes(job)) continue;
+    chain.push(candidate);
+  }
+  return chain;
+}
+
+/** "ChatGPT, Claude or Gemini" — everyone who could do this job. */
+function couldServe(job: ModelJob): string {
+  const names = PROVIDER_KEYS.filter((key) => PROVIDERS[key].jobs.includes(job)).map((key) => PROVIDERS[key].name);
+  if (names.length <= 1) return names[0] ?? "a model";
+  return `${names.slice(0, -1).join(", ")} or ${names.at(-1)}`;
+}
+
+/**
  * Who serves this job right now.
  *
  * The fallback is the point of this function. A job routed to a vendor with no
- * key does not fail and does not silently produce nothing — it goes to Claude
- * and says so, so the system keeps working from the moment it is deployed and
- * gets better with each key that arrives.
+ * key does not fail and does not silently produce nothing — it goes to whoever
+ * *is* connected and can do the work, and says so, so the system keeps working
+ * from the moment it is deployed and gets better with each key that arrives.
+ *
+ * "Not connected" is therefore reserved for what it actually means: not one of
+ * the vendors that can do this job has a key. That is a sentence the Owner can
+ * act on, and it is now only ever printed when it is true.
  */
 export async function routeFor(job: ModelJob): Promise<Routing> {
   const routes = await readRoutes();
@@ -314,28 +357,28 @@ export async function routeFor(job: ModelJob): Promise<Routing> {
     return { job, chosen, serving: chosen, model: await providerModel(chosen), ready: true, note: null };
   }
 
-  const fallback = JOBS[job].fallback;
   const chosenName = PROVIDERS[chosen].name;
-  if (chosen !== fallback && (await providerConfigured(fallback))) {
+  for (const standIn of standInsFor(job, chosen)) {
+    if (!(await providerConfigured(standIn))) continue;
     return {
       job,
       chosen,
-      serving: fallback,
-      model: await providerModel(fallback),
+      serving: standIn,
+      model: await providerModel(standIn),
       ready: false,
-      note: `${chosenName} isn't connected, so ${PROVIDERS[fallback].name} is doing ${JOBS[job].phrase} for now. Add a ${chosenName} key under Settings → AI models.`,
+      note: `${chosenName} isn't connected, so ${PROVIDERS[standIn].name} is doing ${JOBS[job].phrase} for now. Add a ${chosenName} key under Settings → AI models.`,
     };
   }
 
-  // Nothing is connected. The caller turns this into the sentence the Owner
-  // reads, so it is named here rather than thrown.
+  // Nothing that can do this job is connected. The caller turns this into the
+  // sentence the Owner reads, so it is named here rather than thrown.
   return {
     job,
     chosen,
     serving: chosen,
     model: await providerModel(chosen),
     ready: false,
-    note: `No model is connected for ${JOBS[job].phrase}. Add a ${chosenName} key under Settings → AI models.`,
+    note: `No model is connected for ${JOBS[job].phrase}. Add a ${couldServe(job)} key under Settings → AI models — any one of them can do this.`,
   };
 }
 

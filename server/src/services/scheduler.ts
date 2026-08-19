@@ -7,7 +7,8 @@ import { readCaptureConfig } from "./captureConfig.js";
 import { billDuePlans } from "./carePlanBilling.js";
 import { dispatchDueEmails } from "./emailSender.js";
 import { runDueSequences } from "./emailSequences.js";
-import { runDueTasks } from "./agents/runner.js";
+import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
+import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { purgeExpiredSessions } from "../lib/session.js";
 
 /**
@@ -177,6 +178,11 @@ async function housekeepingTick(now: Date) {
   // system has ever issued.
   const dropped = await purgeExpiredSessions();
   if (dropped) console.log(`[scheduler] cleared ${dropped} expired session(s)`);
+
+  // Conversations kept so a blocked or failed task could be continued, long
+  // after anybody was going to continue one.
+  const staleCheckpoints = await pruneCheckpoints();
+  if (staleCheckpoints) console.log(`[scheduler] cleared ${staleCheckpoints} stale agent checkpoint(s)`);
 }
 
 export function startScheduler() {
@@ -188,6 +194,11 @@ export function startScheduler() {
   timer.unref?.();
 
   void resumeInterruptedRuns().catch((err) => console.error("[scheduler] resume failed:", err));
+  // Agent runs the last process died in the middle of. Handed back before the
+  // first tick, because each one is holding an agent that cannot work until it
+  // lets go — and each carries a checkpoint, so being handed back costs
+  // nothing but the seconds since the restart.
+  void resumeInterruptedTasks().catch((err) => console.error("[scheduler] agent resume failed:", err));
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
   console.log("  → Scheduler running (lead capture, care plan billing, email, agent tasks — checks every minute)");
 }

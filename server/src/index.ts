@@ -30,7 +30,8 @@ import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
-import { ensureAgents } from "./services/agentRegistry.js";
+import { ensureAgents, narrowSeededAgents } from "./services/agentRegistry.js";
+import { drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { AnalystError } from "./lib/claude.js";
 import { ApifyError } from "./lib/apify.js";
@@ -239,7 +240,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 bootstrapOwner()
   .catch((err) => console.error("Owner bootstrap failed:", err))
   .finally(() => {
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Dakyworld OS API listening on http://localhost:${PORT}`);
       console.log(hasBuiltClient ? "  → Serving the built client from client/dist" : "  → No client build found — API only");
       // Daily lead capture, monthly billing, and outbound email. Harmless with
@@ -250,7 +251,24 @@ bootstrapOwner()
       void ensureBuiltinTemplates().catch((err) => console.error("Template seed failed:", err));
       // Adds agents that don't exist yet; never overwrites one the Owner has changed.
       void ensureAgents()
-        .then((added) => added && console.log(`  → Seeded ${added} agent(s) into the workforce`))
+        .then(async (added) => {
+          if (added) console.log(`  → Seeded ${added} agent(s) into the workforce`);
+          // The other half of the one-job split: the new agents arrive above,
+          // and this narrows the ones they were carved out of. Runs once ever.
+          const narrowed = await narrowSeededAgents();
+          if (!narrowed) return;
+          if (narrowed.updated.length) {
+            console.log(`  → Narrowed ${narrowed.updated.length} agent(s) to one job each: ${narrowed.updated.join(", ")}`);
+          }
+          if (narrowed.keptAsEdited.length) {
+            console.log(`  → Left alone because you have rewritten their prompts: ${narrowed.keptAsEdited.join(", ")}`);
+          }
+          for (const surplus of narrowed.surplusTools) {
+            console.log(
+              `  → ${surplus.name} still holds ${surplus.tools.join(", ")} — its narrowed job has no use for those. Untick them on the Agents screen if you agree.`,
+            );
+          }
+        })
         .catch((err) => console.error("Agent seed failed:", err));
       // Every tag written into a lead before the registry existed. Without
       // this the Tags screen opens empty on a database full of tagged leads.
@@ -272,4 +290,32 @@ bootstrapOwner()
         console.warn("  ⚠ OWNER_EMAIL / OWNER_PASSWORD are not set — no way to create the first account.");
       }
     });
+
+    /**
+     * Put the agents down properly before the container goes.
+     *
+     * Railway sends SIGTERM and then waits a few seconds. An agent task is
+     * minutes long, so a redeploy almost always lands mid-run — and what
+     * happens in these few seconds decides whether that run resumes from where
+     * it was or from the brief. Each one is asked to stop at its next safe
+     * point, which writes a checkpoint and puts the task back in the queue;
+     * anything that does not make it is picked up on the next boot instead,
+     * from the same checkpoint.
+     */
+    let stopping = false;
+    const shutdown = (signal: string) => {
+      if (stopping) return;
+      stopping = true;
+      console.log(`
+${signal} — finishing up.`);
+      void drainRunningTasks()
+        .catch((err) => console.error("Agent drain failed:", err))
+        .finally(() => {
+          server.close(() => process.exit(0));
+          // A held-open keep-alive connection must not outlive the deploy.
+          setTimeout(() => process.exit(0), 3_000).unref();
+        });
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
   });

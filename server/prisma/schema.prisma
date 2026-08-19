@@ -1734,8 +1734,36 @@ model AgentTask {
   startedAt  DateTime?
   finishedAt DateTime?
   /// Bumped on each claim, so a task that keeps dying is visible rather than
-  /// retried forever in silence.
+  /// retried forever in silence. Reset to zero by any claim that actually
+  /// advances the conversation, because a task interrupted four times by four
+  /// deploys is not a task that is failing.
   attempts Int @default(0)
+
+  /// Touched by the running process on every checkpoint.
+  ///
+  /// `startedAt` said when a run began and nothing said whether it was still
+  /// alive, so a stranded RUNNING row could only be recognised by being old —
+  /// and since one agent holds one task at a time, a crashed run took its
+  /// agent off the floor for the whole of that timeout. A heartbeat is the
+  /// difference between "this started 40 minutes ago" and "nothing has
+  /// happened here for four minutes", and only the second is evidence.
+  heartbeatAt DateTime?
+
+  /// Which run owns this row right now: `${processId}:${cuid}`, rewritten on
+  /// every claim. A process that comes back from the dead and finds its own
+  /// token replaced knows it was reaped and must not write.
+  runOwner String?
+
+  /// Set by a person asking a running task to stop.
+  ///
+  /// The loop reads it between iterations and between tool calls, so a stop
+  /// lands at a point where the conversation is whole and the checkpoint is
+  /// valid. That is why cancelling a RUNNING task is now possible at all: it
+  /// is a request the run honours, not a status written over the top of work
+  /// that is still happening.
+  interruptRequested Boolean @default(false)
+
+  checkpoint AgentTaskCheckpoint?
 
   /// What it did, in its own words — the last thing it said before finishing.
   summary String?
@@ -1773,6 +1801,69 @@ model AgentTask {
   @@index([status, priority, scheduledFor])
   @@index([createdAt])
   @@index([parentId])
+  /// The reaper's query: every RUNNING row whose heartbeat has gone quiet.
+  @@index([status, heartbeatAt])
+}
+
+/// Where a run had got to, so an interrupted one continues instead of starting again.
+///
+/// An agent task is a conversation with tools in it: sixteen model turns at
+/// most, each of which may have called something that cost money, sent an
+/// email or wrote to a client's record. Before this, a deploy landing mid-task
+/// threw all of that away and the task began again from the brief — the
+/// research repaid for, the audit re-run, the same first email drafted twice.
+/// A checkpoint is the conversation so far, written after every step that
+/// cannot be repeated cheaply, so the next runner rejoins it rather than
+/// replacing it.
+///
+/// **The half-finished turn is the part that matters.** A model turn asking
+/// for three tools, two of which have already run, is the exact moment a crash
+/// is most expensive and most dangerous — resuming without it would call those
+/// two again, and "again" for `email.send` means a prospect receives the same
+/// letter twice. So `pendingAssistant` holds the turn that is mid-flight and
+/// `pendingResults` holds the calls already answered inside it; a resume
+/// replays neither, and runs only what genuinely never happened.
+///
+/// One row per task, deleted when the task reaches a state that will not
+/// continue. A checkpoint outliving its task is a conversation nobody will
+/// ever rejoin.
+model AgentTaskCheckpoint {
+  id String @id @default(cuid())
+
+  task   AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId String    @unique
+
+  /// How many model turns have already been paid for. The iteration cap is
+  /// counted across resumes, never reset by one — otherwise a task interrupted
+  /// repeatedly could turn the loop forever, a few iterations at a time.
+  iteration Int @default(0)
+
+  /// The conversation: every complete turn, in the API's own shape.
+  messages Json
+  /// Everything the agent has said so far, so a resumed run's summary is the
+  /// whole job rather than the tail of it.
+  narration Json
+
+  /// The assistant turn that was in flight when the checkpoint was written,
+  /// and the tool results already gathered inside it. Both null between turns.
+  pendingAssistant Json?
+  pendingResults   Json?
+
+  /// The runner's own tallies, which decide how the task ends. Carried across
+  /// a resume because a task whose first run prepared three things and whose
+  /// second run prepared none still finishes at NEEDS_APPROVAL.
+  counters Json
+
+  /// What the whole task has cost so far, across every run of it. The ledger
+  /// is written per run; this is the total the task reports.
+  costUsd      Decimal @default(0) @db.Decimal(10, 6)
+  inputTokens  Int     @default(0)
+  outputTokens Int     @default(0)
+  /// The model that has been serving it.
+  model String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum AgentStepKind {
@@ -1789,6 +1880,11 @@ enum AgentStepKind {
   BLOCKED
   FINISHED
   FAILED
+  /// The run stopped part-way and kept its place. Not a failure: the next
+  /// runner picks the conversation up where this one left it.
+  INTERRUPTED
+  /// A run continuing from a checkpoint rather than starting again.
+  RESUMED
 }
 
 /// The timeline of one task, written as it happens.

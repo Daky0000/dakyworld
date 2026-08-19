@@ -6,6 +6,7 @@ import { listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
 import { permissionFor } from "../services/tools/invoke.js";
 import { isBusy, runTask } from "../services/agents/runner.js";
+import { appendOwnerAnswer, clearCheckpoint } from "../services/agents/checkpoint.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
 
@@ -608,6 +609,7 @@ agentsRouter.get("/tasks/:id", async (req, res, next) => {
       where: { id: req.params.id },
       include: {
         ...taskInclude,
+        checkpoint: { select: { iteration: true, updatedAt: true } },
         steps: { orderBy: { seq: "asc" } },
         parent: { select: { id: true, title: true, agent: { select: { name: true } } } },
         children: { select: { id: true, title: true, status: true, agent: { select: { key: true, name: true } } } },
@@ -627,6 +629,12 @@ agentsRouter.get("/tasks/:id", async (req, res, next) => {
       result: task.result,
       attempts: task.attempts,
       steps: task.steps,
+      // What a resume would carry on from. Shown because "it will continue
+      // where it stopped" is only reassuring if you can see that there is
+      // something to continue from.
+      resumesFrom: task.checkpoint ? { steps: task.checkpoint.iteration, savedAt: task.checkpoint.updatedAt } : null,
+      heartbeatAt: task.heartbeatAt,
+      stopRequested: task.interruptRequested,
       parent: task.parent,
       children: task.children,
       about: {
@@ -643,15 +651,25 @@ agentsRouter.get("/tasks/:id", async (req, res, next) => {
 });
 
 /**
- * Runs a task now.
+ * Runs a task now — in the background, and continuing rather than restarting.
  *
- * Also how a BLOCKED task is resumed: the runner claims QUEUED and BLOCKED
- * alike, so answering an escalation is a matter of adding what was missing to
- * the brief and pressing this.
+ * Two things this deliberately does not do. It does not wait: the reply comes
+ * back the moment the run is under way, so closing the tab, losing the
+ * connection or shutting the laptop has no effect on work that is happening on
+ * a server. And it does not start over: if the task has a checkpoint, the
+ * runner rejoins that conversation.
+ *
+ * Also how a BLOCKED task is answered. The answer goes two places — appended
+ * to the brief, where it stays on the record, and appended to the conversation
+ * itself, because an agent that resumes without being told the answer carries
+ * on from the question it asked.
  */
 agentsRouter.post("/tasks/:id/run", async (req, res, next) => {
   try {
-    const task = await prisma.agentTask.findUnique({ where: { id: req.params.id }, include: { agent: true } });
+    const task = await prisma.agentTask.findUnique({
+      where: { id: req.params.id },
+      include: { agent: true, checkpoint: { select: { iteration: true } } },
+    });
     if (!task) return res.status(404).json({ error: "No such task." });
     if (task.status === "RUNNING") return res.status(409).json({ error: "That one is already running." });
     if (task.agent.status !== "ACTIVE") {
@@ -673,29 +691,63 @@ agentsRouter.post("/tasks/:id/run", async (req, res, next) => {
 
     // An answer to an escalation, appended rather than replacing the brief:
     // what it was originally asked stays on the record.
-    const { answer } = z.object({ answer: z.string().max(2000).optional() }).parse(req.body ?? {});
+    const { answer, fresh } = z
+      .object({
+        answer: z.string().max(2000).optional(),
+        /** Throw away where it had got to and work the brief again from the top. */
+        fresh: z.boolean().optional(),
+      })
+      .parse(req.body ?? {});
+
     if (answer?.trim()) {
       await prisma.agentTask.update({
         where: { id: task.id },
         data: { brief: `${task.brief}\n\n--- Answer from the Owner ---\n${answer.trim()}` },
       });
+      // Into the conversation as well as onto the record. Without this the
+      // agent resumes at the moment it asked its question, having never been
+      // told the answer, and asks it again.
+      await appendOwnerAnswer(task.id, answer.trim());
     }
 
+    const resuming = Boolean(task.checkpoint) && !fresh;
+    if (fresh) await clearCheckpoint(task.id);
+
+    // Deliberately not awaited. The work belongs to the server, not to whoever
+    // is looking at it: this returns immediately and the run carries on through
+    // a closed tab, a dropped connection and a shut laptop.
     void runTask(task.id).catch((err) => console.error(`[agent] ${task.id} died:`, (err as Error).message));
-    res.json({ started: true });
+    res.json({
+      started: true,
+      resuming,
+      resumingFrom: resuming ? (task.checkpoint?.iteration ?? 0) : 0,
+    });
   } catch (err) {
     next(err);
   }
 });
 
+/**
+ * Stops a task.
+ *
+ * A running one is *asked* rather than told. The loop reads the request between
+ * steps and stops at the next point where the conversation is whole — usually
+ * within one tool call — writing its checkpoint on the way out, so the task
+ * comes back to the queue rather than being lost. That is why this now works at
+ * all on a RUNNING task: it used to answer "it cannot be interrupted safely",
+ * which was true of a loop that checked nothing and kept no place.
+ */
 agentsRouter.post("/tasks/:id/cancel", async (req, res, next) => {
   try {
     const task = await prisma.agentTask.findUnique({ where: { id: req.params.id } });
     if (!task) return res.status(404).json({ error: "No such task." });
     if (task.status === "RUNNING") {
-      // The loop checks nothing mid-flight, so cancelling one that is already
-      // turning would be a lie. Saying so beats a status that does not hold.
-      return res.status(409).json({ error: "That one is mid-run. Wait for it to finish — it cannot be interrupted safely." });
+      await prisma.agentTask.update({ where: { id: task.id }, data: { interruptRequested: true } });
+      return res.json({
+        asked: true,
+        message:
+          "Asked it to stop. It finishes the step it is on, saves its place, and goes back to the queue — nothing it has already done is lost, and running it again carries on from there.",
+      });
     }
     const updated = await prisma.agentTask.update({
       where: { id: task.id },

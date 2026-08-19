@@ -3,6 +3,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Agent, AgentTask, AgentStepKind } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { runAgentLoop, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
+import { clearCheckpoint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
 import { AnalystError } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
 import { invokeTool } from "../tools/invoke.js";
@@ -39,6 +40,52 @@ import { describeTask, taskSubjects } from "./context.js";
 /** Concurrency across the whole process. One service, one loop, one ceiling. */
 const MAX_CONCURRENT = 2;
 const running = new Set<string>();
+
+/**
+ * Who this process is, from the database's point of view.
+ *
+ * Stamped on every task this process claims and checked on every checkpoint
+ * write. Two processes can hold the same task id in mind — the one that
+ * stalled long enough to be reaped, and the one that took over — and only the
+ * one whose token is on the row may write. Without it the slow process would
+ * eventually wake up and overwrite the newer run's conversation with its own
+ * older one, which is the single way this design could corrupt work rather
+ * than merely waste it.
+ */
+const PROCESS_ID = `${process.pid}-${Date.now().toString(36)}`;
+let claimCounter = 0;
+
+/**
+ * Set when the process has been told to stop — a Railway deploy, a Ctrl-C.
+ *
+ * Every run in flight reads this between steps and puts itself down properly:
+ * checkpoint written, task back to QUEUED, agent freed. The alternative is
+ * what used to happen, which is that the container vanished mid-sentence and
+ * the task sat RUNNING — blocking its agent — until the reaper noticed.
+ */
+let shuttingDown = false;
+
+/**
+ * Asks every run in flight to stop at its next safe point.
+ *
+ * Returns once they have, or after `graceMs`, whichever is first. Called from
+ * the process's own SIGTERM handler: the platform gives a container a few
+ * seconds to die politely and this is what spends them well.
+ */
+export async function drainRunningTasks(graceMs = 8_000): Promise<number> {
+  shuttingDown = true;
+  if (running.size === 0) return 0;
+  const waiting = running.size;
+  console.log(`[agent] shutting down — asking ${waiting} run(s) to stop and keep their place`);
+  const until = Date.now() + graceMs;
+  while (running.size > 0 && Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  if (running.size > 0) {
+    console.warn(`[agent] ${running.size} run(s) did not stop in time — they will be picked up from their last checkpoint`);
+  }
+  return waiting;
+}
 
 /**
  * **One agent, one task at a time.**
@@ -184,6 +231,25 @@ interface Counters {
   refused: number;
   escalated: string | null;
   delegated: number;
+}
+
+/**
+ * The tallies as a checkpoint holds them.
+ *
+ * They decide how the task *ends* — a run that prepared three things finishes
+ * at NEEDS_APPROVAL, one that escalated finishes BLOCKED — so losing them on a
+ * resume would mean a task that prepared work in its first half and none in its
+ * second reporting DONE about work nobody has approved.
+ */
+function restoreCounters(stored: Record<string, unknown> | undefined): Counters {
+  const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  return {
+    toolCalls: number(stored?.toolCalls),
+    dryRun: number(stored?.dryRun),
+    refused: number(stored?.refused),
+    escalated: typeof stored?.escalated === "string" ? stored.escalated : null,
+    delegated: number(stored?.delegated),
+  };
 }
 
 /**
@@ -392,31 +458,53 @@ export interface RunOutcome {
 }
 
 /**
- * Claims one task and works it.
+ * Claims one task and works it — or picks up where the last runner left it.
  *
  * The claim is a conditional update rather than a read-then-write: two runners
  * reaching for the same task is the one race that matters here, and the loser
  * has to find out before it starts spending money rather than after.
+ *
+ * **A claim is not necessarily a beginning.** If the task has a checkpoint, the
+ * conversation it holds is what runs — same agent, same tools, same memories,
+ * but rejoining a job in progress rather than starting the brief again. A
+ * deploy landing mid-task used to cost the whole run: the research repaid for,
+ * the audit re-run, the same first email drafted twice from scratch.
  */
 export async function runTask(taskId: string): Promise<RunOutcome> {
   if (running.has(taskId)) return { status: "RUNNING", summary: null };
+  if (shuttingDown) return { status: "QUEUED", summary: null };
   running.add(taskId);
 
   // Set inside the claim below, and cleared in the same `finally` as the task
   // id — so an agent is freed by every exit, including a throw.
   let claimedAgent: string | null = null;
+  const runOwner = `${PROCESS_ID}:${(claimCounter += 1)}`;
 
   try {
     const claimed = await prisma.agentTask.updateMany({
       where: {
         id: taskId,
-        status: { in: ["QUEUED", "BLOCKED"] },
+        // CANCELLED and FAILED are here so that pressing Run on one continues
+        // it rather than being refused — the checkpoint is still there, and
+        // "run this again" almost never means "throw away what it had done".
+        status: { in: ["QUEUED", "BLOCKED", "CANCELLED", "FAILED"] },
         // The rule, enforced where two processes can both see it. A relation
         // filter inside the conditional update means the loser of the race
         // finds out before it starts spending money rather than after.
         agent: { tasks: { none: { status: "RUNNING" } } },
       },
-      data: { status: "RUNNING", startedAt: new Date(), attempts: { increment: 1 }, error: null, blockedReason: null },
+      data: {
+        status: "RUNNING",
+        startedAt: new Date(),
+        heartbeatAt: new Date(),
+        runOwner,
+        // Whatever asked the last run to stop has been honoured. Leaving it set
+        // would stop this one on its first step, for ever.
+        interruptRequested: false,
+        attempts: { increment: 1 },
+        error: null,
+        blockedReason: null,
+      },
     });
     if (claimed.count === 0) {
       const current = await prisma.agentTask.findUnique({
@@ -444,15 +532,34 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       return finishTask(task.id, "BLOCKED", { blockedReason: `${agent.name} is ${agent.status.toLowerCase()} and cannot work.` });
     }
 
-    await step(task.id, "STARTED", `${agent.name} picked this up.`);
+    const saved = await loadCheckpoint(task.id);
+    const counters: Counters = saved
+      ? restoreCounters(saved.counters)
+      : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0 };
+    // A resume must not carry the escalation that ended the last run, or the
+    // task would go straight back to BLOCKED without doing anything. What the
+    // Owner answered is already in the conversation by this point.
+    counters.escalated = null;
+    const startedFrom = saved?.state.iteration ?? 0;
 
-    const counters: Counters = { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0 };
+    if (saved) {
+      await step(task.id, "RESUMED", `${agent.name} picked this up where it left off, ${startedFrom} step(s) in.`, {
+        data: { iteration: startedFrom, toolCalls: counters.toolCalls },
+      });
+    } else {
+      await step(task.id, "STARTED", `${agent.name} picked this up.`);
+    }
+
     const memories = await recall(agent.key, taskSubjects(task));
     const [system, tools, brief] = await Promise.all([
       systemPrompt(agent, memories),
       toolsFor(agent, task, counters),
       describeTask(task),
     ]);
+
+    // Flipped by a checkpoint that finds the row no longer belongs to this run.
+    // The only correct response is to stop touching it.
+    let lostOwnership = false;
 
     try {
       const result = await runAgentLoop({
@@ -464,7 +571,27 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         // a job whose steps are mostly obvious. Raised for the tiers whose
         // whole output is a judgement.
         effort: agent.tier === "BOARD" || agent.tier === "EXECUTIVE" ? "high" : "medium",
+        resume: saved?.state ?? null,
+        onCheckpoint: async (state) => {
+          const held = await saveCheckpoint(task.id, runOwner, state, { ...counters });
+          if (!held) lostOwnership = true;
+        },
+        shouldStop: async () => {
+          if (shuttingDown || lostOwnership) return true;
+          const row = await prisma.agentTask.findUnique({ where: { id: task.id }, select: { interruptRequested: true } });
+          return Boolean(row?.interruptRequested);
+        },
       });
+
+      // Stopped on request with its place kept. Not an outcome — an intermission.
+      if (result.stoppedBecause === "interrupted") {
+        return interruptedTask(task.id, runOwner, {
+          costUsd: result.costUsd,
+          toolCalls: counters.toolCalls,
+          dryRunCalls: counters.dryRun,
+          progressed: result.state.iteration > startedFrom,
+        });
+      }
 
       const summary = result.text || "Finished, but said nothing about what it did.";
 
@@ -496,13 +623,20 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       await step(task.id, "FAILED", message);
 
       // A rate limit is not a broken task — it goes back in the queue unless
-      // it has already failed too many times.
+      // it has already failed too many times. Its checkpoint is kept either
+      // way, so the retry continues the conversation rather than repeating it.
       const retryable = err instanceof AnalystError && err.status === 429;
       const attempts = task.attempts + 1;
       if (retryable && attempts < MAX_ATTEMPTS) {
         await prisma.agentTask.update({
           where: { id: task.id },
-          data: { status: "QUEUED", scheduledFor: new Date(Date.now() + 5 * 60_000), error: message },
+          data: {
+            status: "QUEUED",
+            scheduledFor: new Date(Date.now() + 5 * 60_000),
+            error: message,
+            runOwner: null,
+            startedAt: null,
+          },
         });
         return { status: "QUEUED", summary: null };
       }
@@ -514,6 +648,51 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
     if (claimedAgent) busyAgents.delete(claimedAgent);
   }
 }
+
+/**
+ * Puts a run down mid-job without losing it.
+ *
+ * Back to QUEUED, not FAILED and not CANCELLED: nothing went wrong and there is
+ * a conversation on disk the next tick will carry on. The one thing that must
+ * happen here is the `attempts` reset — that counter exists to stop a task that
+ * keeps dying being retried for ever, and a task interrupted four times by four
+ * deploys is not that task. Progress is the test: if the conversation moved
+ * forward, this run was work rather than a failure.
+ */
+async function interruptedTask(
+  taskId: string,
+  runOwner: string,
+  data: { costUsd: number; toolCalls: number; dryRunCalls: number; progressed: boolean },
+): Promise<RunOutcome> {
+  await step(taskId, "INTERRUPTED", "Stopped part-way and kept its place. It carries on from here rather than starting again.");
+  // Matched on the owner: a run that was reaped while it was stopping must not
+  // drag the task that replaced it back into the queue.
+  await prisma.agentTask.updateMany({
+    where: { id: taskId, runOwner },
+    data: {
+      status: "QUEUED",
+      runOwner: null,
+      startedAt: null,
+      interruptRequested: false,
+      costUsd: data.costUsd.toFixed(6),
+      toolCalls: data.toolCalls,
+      dryRunCalls: data.dryRunCalls,
+      ...(data.progressed ? { attempts: 0 } : {}),
+    },
+  });
+  return { status: "QUEUED", summary: null };
+}
+
+/**
+ * The endings that will never be continued.
+ *
+ * DONE and NEEDS_APPROVAL are finished work: the conversation behind them is
+ * of no further use and holding it costs storage and a small amount of
+ * confusion. Everything else keeps its checkpoint on purpose — a BLOCKED task
+ * resumes when its question is answered, and a FAILED one resumes when
+ * somebody presses Run, both of which should continue rather than repeat.
+ */
+const FINISHED_FOR_GOOD: AgentTask["status"][] = ["DONE", "NEEDS_APPROVAL"];
 
 async function finishTask(
   taskId: string,
@@ -528,11 +707,17 @@ async function finishTask(
     dryRunCalls?: number;
   },
 ): Promise<RunOutcome> {
+  if (FINISHED_FOR_GOOD.includes(status)) await clearCheckpoint(taskId);
+
   const task = await prisma.agentTask.update({
     where: { id: taskId },
     data: {
       status,
       finishedAt: new Date(),
+      // The row is nobody's now. Left set, a stale owner would make the reaper
+      // hesitate and a returning process think it still had the floor.
+      runOwner: null,
+      interruptRequested: false,
       summary: data.summary ?? undefined,
       result: (data.result ?? undefined) as never,
       blockedReason: data.blockedReason ?? null,
@@ -548,17 +733,29 @@ async function finishTask(
 // --- The queue --------------------------------------------------------------
 
 /**
- * How long a run may take before it is assumed dead.
+ * How long a run may go quiet before it is assumed dead.
  *
- * A real run is bounded: sixteen iterations, each capped by the SDK's own
- * timeout, so a long one is minutes rather than an hour. This is generous
- * against that, because reaping a task that was only slow would kill work that
- * had already been paid for.
+ * This used to be forty-five minutes measured from the *start* of the run,
+ * because the start was the only thing recorded — which meant a container
+ * killed thirty seconds into a task took its agent off the floor for the rest
+ * of the hour. A heartbeat is written on every checkpoint, which is after every
+ * model turn and after every tool call, so five minutes of silence is a run
+ * that has genuinely stopped rather than one that is thinking.
+ *
+ * Generous against the slowest single step: one model turn at high effort with
+ * a large conversation behind it, or one tool call that fetches a site,
+ * photographs it twice and waits on Apify.
  */
-const ABANDONED_AFTER_MS = 45 * 60_000;
+const SILENT_FOR_MS = 5 * 60_000;
 
 /**
- * Clears out runs whose process is gone.
+ * A run that predates the heartbeat, or died before writing its first one.
+ * Judged on `startedAt` instead, with the old generous timeout.
+ */
+const NEVER_BEAT_AFTER_MS = 45 * 60_000;
+
+/**
+ * Clears out runs whose process is gone, and hands their work back.
  *
  * A task is set RUNNING in the database and finished by the process that
  * claimed it. When that process dies — a deploy, a restart, an out-of-memory
@@ -567,33 +764,57 @@ const ABANDONED_AFTER_MS = 45 * 60_000;
  * Before that rule, a stranded task was one lost job; now it is an employee
  * who never comes back to their desk, so it has to be swept up.
  *
+ * Requeued, never restarted. Whatever it had got to is on its checkpoint, so
+ * the next runner rejoins the conversation — which is also why `attempts` is
+ * no longer the right thing to fail on by itself: the cap now catches a task
+ * that keeps dying *without progressing*, because any run that moves the
+ * conversation forward resets it.
+ *
  * Only rows this process is not actually running are touched, which is what
  * makes it safe to run on every tick: a task in the `running` set belongs to
  * somebody here and is left alone however long it has been going.
  */
 async function reapAbandoned(now: Date): Promise<number> {
-  const stale = new Date(now.getTime() - ABANDONED_AFTER_MS);
+  const silent = new Date(now.getTime() - SILENT_FOR_MS);
+  const ancient = new Date(now.getTime() - NEVER_BEAT_AFTER_MS);
   const abandoned = await prisma.agentTask.findMany({
-    where: { status: "RUNNING", startedAt: { lt: stale } },
-    select: { id: true, agentKey: true, attempts: true },
+    where: {
+      status: "RUNNING",
+      OR: [{ heartbeatAt: { lt: silent } }, { heartbeatAt: null, startedAt: { lt: ancient } }],
+    },
+    select: { id: true, agentKey: true, attempts: true, checkpoint: { select: { iteration: true } } },
   });
 
   const orphans = abandoned.filter((task) => !running.has(task.id));
   if (orphans.length === 0) return 0;
 
   for (const task of orphans) {
-    await step(task.id, "FAILED", "This run was abandoned — the process working on it stopped before it finished.");
+    const at = task.checkpoint?.iteration ?? 0;
+    await step(
+      task.id,
+      "INTERRUPTED",
+      at > 0
+        ? `The process working on this stopped without finishing. ${at} step(s) were saved, and it carries on from there.`
+        : "The process working on this stopped before it had done anything. It starts again from the brief.",
+    );
     // Requeued rather than failed while it still has attempts left: a deploy
     // landing mid-task is the common cause, and the work is still wanted.
     const retryable = task.attempts < MAX_ATTEMPTS;
     await prisma.agentTask.update({
       where: { id: task.id },
       data: retryable
-        ? { status: "QUEUED", startedAt: null, error: "Picked up again after the previous run was interrupted." }
+        ? {
+            status: "QUEUED",
+            startedAt: null,
+            runOwner: null,
+            interruptRequested: false,
+            error: "Picked up again after the previous run was interrupted.",
+          }
         : {
             status: "FAILED",
             finishedAt: now,
-            error: `Abandoned ${task.attempts} time(s) without finishing. Something is stopping this run rather than it failing.`,
+            runOwner: null,
+            error: `Interrupted ${task.attempts} time(s) without getting any further. Something is stopping this run rather than it failing.`,
           },
     });
     busyAgents.delete(task.agentKey);
@@ -601,6 +822,49 @@ async function reapAbandoned(now: Date): Promise<number> {
 
   console.warn(`[agent] recovered ${orphans.length} abandoned task(s)`);
   return orphans.length;
+}
+
+/**
+ * Hands back every run this process was in the middle of when it last died.
+ *
+ * Called once at boot, before the first tick. `reapAbandoned` would get to
+ * these eventually, but only after five minutes of a silence we already know
+ * about: nothing is running in a process that has just started, so a RUNNING
+ * row at this moment is by definition abandoned. Without it, the first minute
+ * after every deploy has each interrupted agent standing at its desk unable to
+ * take the task it is already holding.
+ */
+export async function resumeInterruptedTasks(): Promise<number> {
+  const stranded = await prisma.agentTask.findMany({
+    where: { status: "RUNNING" },
+    select: { id: true, agentKey: true, checkpoint: { select: { iteration: true } } },
+  });
+  if (stranded.length === 0) return 0;
+
+  for (const task of stranded) {
+    const at = task.checkpoint?.iteration ?? 0;
+    await step(
+      task.id,
+      "INTERRUPTED",
+      at > 0
+        ? `The service restarted mid-run. ${at} step(s) were saved, and this carries on from there.`
+        : "The service restarted before this had got anywhere. It starts again from the brief.",
+    );
+    await prisma.agentTask.update({
+      where: { id: task.id },
+      data: {
+        status: "QUEUED",
+        startedAt: null,
+        runOwner: null,
+        interruptRequested: false,
+        error: "The service restarted while this was running. It was picked up again.",
+      },
+    });
+    busyAgents.delete(task.agentKey);
+  }
+
+  console.log(`  → ${stranded.length} interrupted agent task(s) returned to the queue, each from its own checkpoint`);
+  return stranded.length;
 }
 
 /**

@@ -97,11 +97,23 @@ as descriptions; nothing in one is ever executed.
 says `callModel({ job: "text" })` and the routing decides who serves it:
 Gemini writes, ChatGPT draws, builds pages and looks at pictures, Perplexity
 researches companies, checks facts against live sources and rewrites drafts
-into plain English. **Every job falls back to Claude when the vendor picked
-for it has no key**, so nothing waits on a
-credential and each key the Owner pastes moves one job onto its chosen model.
-`registry.ts` holds the vendors, the shipped routing, the published rates and
-the fallback; `call.ts` holds one adapter per vendor.
+into plain English. **A job whose chosen vendor has no key falls through a
+chain: the declared fallback first, then every other vendor that can actually
+do that job**, so nothing waits on a credential and each key the Owner pastes
+moves one job onto its chosen model. `registry.ts` holds the vendors, the
+shipped routing, the published rates and `standInsFor()`; `call.ts` holds one
+adapter per vendor.
+
+**The chain is not decoration — a two-step fallback had a hole in it.** `vision`
+is routed to ChatGPT and fell back to Claude only, so a deployment holding a
+Gemini key and nothing else had *no model at all* for looking at a page: the
+audit paid Apify for two screenshots of a prospect's homepage and then filed
+"the homepage was photographed but not reviewed", while a vendor that reads
+pictures perfectly well sat connected and unasked. "No model is connected" is
+now reserved for what it means — not one vendor that can do this job has a key —
+and the sentence names all of them. A vendor that *cannot* do the job is never
+in the chain, so Perplexity is never asked to look at a screenshot however many
+keys are missing.
 
 Three things that will bite:
 
@@ -443,11 +455,30 @@ does not. Shared memories get a point of importance in the recall ranking but
 not in the stored row, and `pruneMemories()` never sweeps them.
 
 **Agents come in two kinds.** The eighteen management agents recommend and
-decide; the eleven `SUB_AGENT` specialists make things — Web Developer,
+decide; the thirty-one `SUB_AGENT` specialists make things — Web Developer,
 Graphic Designer, Video Editor, Ad Designer, Proposal Writer, Cold Lead Writer
 and the rest, each with `skills` (a client's words, matched by a router)
 separate from `toolkit` (a permission). Both kinds seed at autonomy 1 with dry
 run on, and the create route cannot say otherwise.
+
+**One agent, one job — one *deliverable*, not one department.** Applied to the
+whole roster in Aug 2026, which is where eighteen of the specialists came from.
+The Lead Lifecycle Manager was told to "capture, enrich, score, qualify and
+route"; Commercial Operations wrote proposals, raised invoices *and* chased
+payment; Business Intelligence was four analysts in one prompt. An agent
+holding three jobs has one prompt that must describe all three, one toolkit
+that is the union of all three, and one memory in which what it concluded about
+chasing an invoice is recalled while it is writing a proposal — three separate
+ways of being worse at each. The test for anything added: **does this produce
+more than one kind of finished thing?** A cold email and a LinkedIn message are
+one thing in two wrappers; a proposal and an invoice are two things.
+
+`narrowSeededAgents()` is what carried that split onto a database that already
+had the old wording. It runs **once** (`agents.oneJobPass`), only over the
+fourteen agents in `NARROWED`, **skips any agent whose prompt the Owner has
+rewritten** (`promptEditedAt`), and **never touches a toolkit** — it prints the
+tools an agent no longer needs and leaves the untick to a person, because
+revoking a grant silently is invisible until the day something cannot be done.
 
 **`ensureAgents()` only ever creates, which cuts both ways.** A new seeded
 agent — `design.ux` and `sec.analyst` arrived with the audit team — appears on
@@ -478,7 +509,47 @@ about the same subject, so two tasks about one lead running side by side
 interleave those writes and the agent contradicts itself with nothing in the
 timeline to show why. **This makes a stranded `RUNNING` row block its agent
 entirely**, which is why `reapAbandoned()` runs on every tick and requeues
-anything running for more than 45 minutes that no live process owns.
+anything whose heartbeat has been quiet for five minutes that no live process
+owns.
+
+**A run survives the browser, the deploy and the stop button**
+(`agents/checkpoint.ts`, `AgentTaskCheckpoint`). `POST /tasks/:id/run` was
+always fire-and-forget, so a closed tab never stopped anything; what was lost
+was everything else. A task is up to sixteen model turns with tool calls in
+them, and a deploy landing mid-task threw all of it away and began again from
+the brief — research repaid for, an audit re-run, the same first email drafted
+twice. Now the loop hands its whole state out after every model turn **and
+after every single tool call**, and a claim with a checkpoint on it rejoins that
+conversation instead of starting one.
+
+- **The half-finished turn is the part that matters.** A turn asking for three
+  tools with two already run is where a crash is most dangerous, because
+  "again" for `email.send` means the prospect gets the letter twice.
+  `pendingAssistant` and `pendingResults` hold that turn *outside* `messages`
+  — an assistant turn with only some of its results after it is not a
+  conversation the API will accept — and a resume runs only the calls that
+  genuinely never happened.
+- **The iteration cap counts across resumes**, or a task interrupted five times
+  gets five times the budget. `attempts` works the other way: it resets on any
+  run that *progressed*, so the cap catches a task that keeps dying in the same
+  place rather than one that keeps meeting deploys.
+- **Every checkpoint write proves ownership** (`runOwner`, matched in the
+  update) and touches the heartbeat in the same statement. A process reaped as
+  dead that later wakes up finds its token replaced and stops rather than
+  writing its stale conversation over the run that took over.
+- **A RUNNING task can be stopped now.** It used to answer "it cannot be
+  interrupted safely", which was true of a loop that checked nothing and kept
+  no place. `interruptRequested` is read between iterations and between tool
+  calls — the two points where the conversation is whole — so a stop is a pause,
+  and the task returns to QUEUED with its place kept. SIGTERM does the same
+  thing to every run at once (`drainRunningTasks()`), and `resumeInterruptedTasks()`
+  hands back on boot whatever did not make it.
+- **Answering an escalation appends to the conversation, not just the brief.**
+  Without `appendOwnerAnswer()` the agent resumes at the moment it asked its
+  question, having never been told the answer, and asks it again.
+- DONE and NEEDS_APPROVAL clear the checkpoint; BLOCKED, FAILED and CANCELLED
+  keep it, which is what makes "Carry on" mean carry on. `pruneCheckpoints()`
+  sweeps them after 30 days.
 
 **Client** — Vite + React + React Router + TanStack Query, in `server/client/`.
 The server serves the built client from `client/dist` when it exists, and falls
@@ -708,6 +779,17 @@ substitute, so headings come out serif. The files are still correct — do not
   fallback, pricing, the dry-run and refusal paths, per-agent concurrency, the
   reaper, shared-memory recall and prompt edits were all verified — a compile
   is not evidence that a loop turns.
+- **The agent loop's interrupt and resume are verified against a real
+  database.** `tmp/checkpointResume.ts` runs the whole runner against a local
+  Anthropic stub using `remember` as the tool — every call leaves a row, so
+  "was this called twice" is a count rather than an opinion — and
+  `tmp/agentRecovery.ts` covers the deploy kill, the silent hang, the slow run
+  that must be left alone, and the cap. The first attempt at the first one gave
+  six false failures because three tool calls against a local database finish
+  before a poller can ask the task to stop: an interrupt test needs enough work
+  in flight to have a window to land in. `tmp/rosterCheck.ts` checks every seed
+  for a duplicate key, a `managerKey` pointing at nobody (which silently breaks
+  `delegate`) and a `toolkit` naming a tool the catalogue does not have.
 - **Verifying an API response through `curl | python` on Windows mangles UTF-8**
   — Python decodes stdin as cp1252/gbk, so `·` comes back as a CJK ideograph and
   a correct render looks broken. Write the body to a file and read it with

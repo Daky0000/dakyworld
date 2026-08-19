@@ -346,7 +346,7 @@ export async function lookAtHomepage(args: {
       effort: "medium",
       maxTokens: 4000,
       messages: {
-        noKey: "Nothing is connected that can look at a picture, so their homepage was not reviewed. Add a ChatGPT or Claude key under Settings → AI models.",
+        noKey: "Nothing is connected that can look at a picture, so their homepage was not reviewed. Add a ChatGPT, Claude or Gemini key under Settings → AI models — any one of the three can do this.",
         refusal: "The model declined to review this homepage.",
         empty: "Nothing came back from the look at their homepage.",
       },

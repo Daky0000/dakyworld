@@ -43,7 +43,9 @@ export const DISCIPLINE_NAMES: Record<Discipline, string> = {
  * for a document.
  */
 export const DISCIPLINE_AGENTS: Record<Discipline, { key: string; name: string; role: string }> = {
-  UX: { key: "design.ux", name: "UI/UX Designer", role: "What a first-time visitor sees, and what stops them" },
+  // Not design.ux any more. Looking at a page and designing one are two jobs,
+  // and this one is the looking: the reviewer that reads the screenshots.
+  UX: { key: "review.look", name: "Page Reviewer", role: "What a first-time visitor sees, and what stops them" },
   SPEED_SEO: { key: "seo.specialist", name: "SEO Specialist", role: "Whether the page is fast enough to keep and findable enough to reach" },
   CONTENT: { key: "content.writer", name: "Content Writer", role: "Whether the words do the selling the design cannot" },
   SECURITY: { key: "sec.analyst", name: "Security Analyst", role: "Whether the site, the certificate and the mail domain are safe" },

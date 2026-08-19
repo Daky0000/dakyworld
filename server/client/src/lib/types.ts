@@ -1529,6 +1529,15 @@ export interface AgentTaskStep {
 }
 
 export interface AgentTaskDetail extends Omit<AgentTask, "steps"> {
+  /**
+   * Where a resumed run would carry on from, when there is a checkpoint.
+   * Null means it would start from the brief.
+   */
+  resumesFrom?: { steps: number; savedAt: string } | null;
+  /** Last sign of life from the process working on it. */
+  heartbeatAt?: string | null;
+  /** Somebody has asked it to stop and it has not got there yet. */
+  stopRequested?: boolean;
   brief: string;
   input: unknown;
   result: unknown;

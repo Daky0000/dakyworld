@@ -161,6 +161,16 @@ export const SETTING = {
    */
   AGENT_TOOL_GRANTS: "agents.toolGrants",
   /**
+   * The date the one-job pass ran, or blank if it has not.
+   *
+   * `ensureAgents()` only ever creates, so splitting an agent that was doing
+   * three jobs would otherwise change nothing on a database that already has
+   * the old wording in it. This marker makes that a one-off migration rather
+   * than a policy of overwriting the Owner's agents on every deploy — see
+   * narrowSeededAgents() in services/agentRegistry.ts.
+   */
+  AGENT_ONE_JOB_PASS: "agents.oneJobPass",
+  /**
    * Hard ceiling on what one tool call may spend, in USD. The tool layer
    * refuses anything above it rather than trusting an agent's arithmetic.
    */
