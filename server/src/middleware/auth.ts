@@ -16,8 +16,42 @@ declare global {
 }
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
-/** Deliberately ignored in production — a stray env var must never disable login on the live system. */
-const DEV_NO_AUTH = !IS_PRODUCTION && process.env.DEV_NO_AUTH === "true";
+
+/**
+ * Whether this process is running on a hosting platform rather than somebody's
+ * laptop, established from variables the platform sets about itself.
+ *
+ * This exists because the guard below used to rest on `NODE_ENV` alone, and
+ * **nothing in this repository sets `NODE_ENV`.** On Railway it is injected by
+ * the Nixpacks builder. That was fine right up until you notice what is on the
+ * other side of it: `DEV_NO_AUTH=true` is set on the live service, so the only
+ * thing standing between the public internet and an API that treats every
+ * caller as the Owner was a variable this codebase neither sets nor controls. A
+ * builder change, a runtime migration, or somebody moving the service could have
+ * removed it, and the failure would have been silent and total — no error, no
+ * crash, just every lead, client, invoice and mailbox credential readable
+ * without a login.
+ *
+ * Two independent signals now have to agree that this is not a deployment, and
+ * a missing `NODE_ENV` fails closed instead of open.
+ */
+const DEPLOYED = Boolean(
+  process.env.RAILWAY_ENVIRONMENT ||
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID ||
+    process.env.RENDER ||
+    process.env.FLY_APP_NAME ||
+    process.env.DYNO ||
+    process.env.VERCEL ||
+    process.env.KUBERNETES_SERVICE_HOST,
+);
+
+/** Local convenience only. A stray env var must never disable login on a deployed system. */
+const DEV_NO_AUTH = !IS_PRODUCTION && !DEPLOYED && process.env.DEV_NO_AUTH === "true";
+
+/** True when the variable was set and deliberately ignored — worth saying out loud at boot. */
+export const DEV_NO_AUTH_REFUSED = process.env.DEV_NO_AUTH === "true" && !DEV_NO_AUTH;
+
 const DEV_OWNER_EMAIL = "dan@dakyworld.local";
 
 /**

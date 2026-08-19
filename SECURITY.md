@@ -282,6 +282,60 @@ curl -sI https://os.dakyworld.com/api/health | grep -i content-security
 # a CSP line    -> the new one is live
 ```
 
+## Two live configuration problems on the Railway service
+
+Both found on 19 Aug 2026 by reading the boot log of the deploy that carried
+this work. Neither is fixable from the repository — they are service variables.
+
+### 1. `OWNER_PASSWORD` is six characters
+
+That is the master credential for a publicly reachable admin panel holding every
+lead, client, invoice and mailbox credential the business has, and it is the
+account `bootstrapOwner` recreates on every deploy. Six characters does not
+survive a determined guess; the login limiter slows that down and does not stop
+it.
+
+Change it to something the policy accepts (twelve characters minimum, and not
+built out of the name or the address), then redeploy — the new value becomes the
+Owner's password on the next boot:
+
+```bash
+railway variables --service dakyworld --set 'OWNER_PASSWORD=<a long passphrase>'
+railway redeploy --service dakyworld -y
+```
+
+The app now warns about this on **every** boot rather than only on the deploy
+that changed it, which is why it surfaced at all — see the note in
+`bootstrapOwner`.
+
+### 2. `DEV_NO_AUTH=true` is set on the live service
+
+It is inert, and it should still be deleted.
+
+`DEV_NO_AUTH` runs the API as one implicit Owner with no login. It is refused on
+a deployed service, but until this pass the refusal rested on `NODE_ENV` alone —
+and **nothing in this repository sets `NODE_ENV`**. On Railway it is injected by
+the Nixpacks builder. So the only thing between the public internet and an
+unauthenticated CRM was a variable this codebase neither sets nor controls, and
+the failure mode of losing it was silent and total: no error, no crash, every
+record readable without signing in.
+
+`middleware/auth.ts` now requires two independent signals to agree that this is
+not a deployment, and a missing `NODE_ENV` fails closed. Verified across all six
+combinations, including the one that matters — `DEV_NO_AUTH=true`, no
+`NODE_ENV`, Railway variables present — which used to evaluate to "no login
+required" and now does not.
+
+Delete it anyway. A variable that is set and ignored is one somebody believes is
+doing something:
+
+```bash
+railway variables --service dakyworld --remove DEV_NO_AUTH
+```
+
+Setting `NODE_ENV=production` explicitly on the service is also worth doing, so
+nothing depends on the builder injecting it.
+
 ## Still to do — these need an account, not a commit
 
 1. **Paste the GA4 Measurement ID** into the top of

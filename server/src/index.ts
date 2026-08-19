@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
-import { attachUser, bootstrapOwner, requireAuth, scopeClientViewer, DEV_NO_AUTH } from "./middleware/auth.js";
+import { attachUser, bootstrapOwner, requireAuth, scopeClientViewer, DEV_NO_AUTH, DEV_NO_AUTH_REFUSED } from "./middleware/auth.js";
 import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
 import { leadsRouter } from "./routes/leads.js";
@@ -232,8 +232,17 @@ bootstrapOwner()
       void backfillTags()
         .then((added) => added && console.log(`  → Registered ${added} tag(s) already in use`))
         .catch((err) => console.error("Tag backfill failed:", err));
+      if (DEV_NO_AUTH_REFUSED) {
+        // Said loudly, because a variable that is set and silently ignored is
+        // one somebody believes is doing something. It is doing nothing, and
+        // the safe thing is to delete it from the deployed service entirely.
+        console.warn(
+          "  ⚠ DEV_NO_AUTH=true is set on a deployed service and is being IGNORED. " +
+            "Login is enforced. Delete that variable — it does nothing here except sit one config change away from disabling authentication.",
+        );
+      }
       if (DEV_NO_AUTH) {
-        console.log("  → DEV_NO_AUTH=true: implicit Owner, no login required (ignored when NODE_ENV=production).");
+        console.log("  → DEV_NO_AUTH=true: implicit Owner, no login required (never honoured on a deployed service).");
       } else if (!process.env.OWNER_EMAIL || !process.env.OWNER_PASSWORD) {
         console.warn("  ⚠ OWNER_EMAIL / OWNER_PASSWORD are not set — no way to create the first account.");
       }
