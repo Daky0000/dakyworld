@@ -35,6 +35,19 @@ export async function bootstrapOwner() {
   const password = process.env.OWNER_PASSWORD;
   if (!email || !password) return;
 
+  // A warning, never a refusal. This variable is the documented way back into a
+  // locked-out system, so a boot that refuses it turns a weak password into an
+  // outage.
+  //
+  // It runs on *every* boot, before the early return below. Sitting after it —
+  // where this started — meant the warning fired only on the one deploy that
+  // actually changed the password, and never again: a weak OWNER_PASSWORD would
+  // be flagged once, into a log nobody was reading at the time, and then stay
+  // weak in silence. A standing reminder is the whole point of it. It costs one
+  // line per deploy and disappears the moment it is fixed.
+  const problem = passwordProblem(password, { email });
+  if (problem) console.warn(`  ⚠ OWNER_PASSWORD is weak: ${problem} Change it in Railway and redeploy.`);
+
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing && (await verifyPassword(password, existing.passwordHash))) {
     if (existing.role !== "OWNER" || !existing.active) {
@@ -42,12 +55,6 @@ export async function bootstrapOwner() {
     }
     return; // already in sync
   }
-
-  // A warning, never a refusal. This variable is the documented way back into a
-  // locked-out system, so a boot that refuses it turns a weak password into an
-  // outage. The Owner sees the sentence in the deploy log and can fix it.
-  const problem = passwordProblem(password, { email });
-  if (problem) console.warn(`  ⚠ OWNER_PASSWORD is weak: ${problem} Change it in Railway and redeploy.`);
 
   const passwordHash = await hashPassword(password);
   await prisma.user.upsert({
