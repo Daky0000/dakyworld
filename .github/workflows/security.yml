@@ -1,0 +1,106 @@
+name: Security
+
+# Two things this catches that a person reading a diff does not: a credential
+# pasted into a file, and a dependency that became vulnerable while nobody was
+# touching it. The second is why this also runs on a schedule — most advisories
+# land against code that has not changed in months.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # Monday morning, before the week starts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Credentials
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The scan of the history needs the history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scan the working tree
+        run: node scripts/scan-secrets.mjs
+      - name: Scan every commit ever made
+        run: node scripts/scan-secrets.mjs --history
+
+  dependencies:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Only what actually ships. A dev-only advisory (a bundler's dev server,
+      # a test runner) is worth knowing about but is not a reason to fail a
+      # deploy, and a job that fails for reasons nobody can act on gets ignored.
+      - name: Server — shipped dependencies
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Client — shipped dependencies
+        working-directory: server/client
+        run: npm audit --omit=dev --audit-level=high
+
+      # Reported, never fatal.
+      - name: Everything else, for information
+        if: always()
+        run: |
+          echo "::group::server (including dev)"
+          npm --prefix server audit || true
+          echo "::endgroup::"
+          echo "::group::client (including dev)"
+          npm --prefix server/client audit || true
+          echo "::endgroup::"
+
+  build:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix server ci
+      - run: npm --prefix server/client ci
+      - name: Prisma client
+        working-directory: server
+        run: npx prisma generate
+      - name: Server typecheck
+        working-directory: server
+        run: npx tsc --noEmit
+      - name: Client build
+        working-directory: server/client
+        run: npm run build
+
+  website:
+    name: Website metadata and links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Both generators are idempotent, so a difference means somebody edited a
+      # <head> or a breadcrumb by hand and the thirteen pages have started to
+      # drift apart again — which is the state this replaced.
+      - name: SEO metadata is generated, not hand-edited
+        run: node scripts/build-seo.mjs --check
+      - name: Breadcrumbs match the BreadcrumbList schema
+        run: node scripts/build-breadcrumbs.mjs --check
+
+      # Catches a link to a page that does not exist, and a link to the
+      # non-canonical `.html` spelling of one that does.
+      - name: Internal links
+        run: node scripts/check-links.mjs

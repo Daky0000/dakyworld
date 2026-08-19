@@ -442,6 +442,44 @@ per filter, so `skipClosedPlaces` costs more than the closed places it avoids.
 **Auth** — `src/middleware/auth.ts`. `DEV_NO_AUTH=true` runs the API as one
 implicit Owner and is force-disabled when `NODE_ENV=production`. `requireRole()`
 gates the routes that spend money (scrapers, imports) or write to clients.
+Sign-in is email + password + an optional TOTP second factor (`lib/totp.ts`,
+`routes/auth.ts`); `scopeClientViewer` refuses the internal API to the
+`CLIENT_VIEWER` role entirely, because there is no client portal to scope one
+down to yet.
+
+**[SECURITY.md](SECURITY.md) is the security runbook** — what protects what,
+where each control lives, the two accepted risks, and the four things still
+waiting on somebody with a login. Read it before touching auth, headers, uploads
+or the webhook intake. Four rules from it that are easy to undo by accident:
+
+- **Never write `include: { user: true }`.** A whole `User` row carries the
+  password hash, the TOTP secret and the recovery-code hashes, and
+  `GET /api/projects/:id` shipped all three to every signed-in user for months.
+  `select: PUBLIC_USER` from `lib/userSelect.ts`.
+- **`trust proxy` is a hop count, never `true`.** The login limiter reads
+  `req.ip`; trusting the whole chain means trusting whatever the caller put at
+  the front of `X-Forwarded-For`, which turns a per-address limiter into a
+  per-request one that stops nobody.
+- **Every path that sets a password goes through `lib/passwordPolicy.ts`.**
+  There were three copies of `min(10)` in two files before it; the weakest path
+  is the one an attacker uses.
+- **Uploads are judged on their bytes** (`lib/fileType.ts`), never on the
+  filename or the `data:` prefix, both of which the caller writes.
+
+## The website's metadata is generated
+
+Everything between the `BEGIN SEO` / `END SEO` markers in each `<head>`, the
+visible breadcrumbs, `robots.txt` and `sitemap.xml` all come from
+`scripts/build-seo.mjs` and `scripts/build-breadcrumbs.mjs`. **Hand-editing
+inside the markers fails CI.** Change the table at the top of the script and run
+`npm run site`; the page copy itself (title, description) is read *out* of each
+page rather than written into it, so the words stay the owner's.
+
+```bash
+npm run site        # regenerate metadata + breadcrumbs, then check links
+npm run security    # secret scan (tree and history) + dependency audit
+npm run links:fix   # rewrite any .html internal link to the canonical form
+```
 
 ## The brand design system is canonical
 
