@@ -118,6 +118,18 @@ export const WRITER_JOBS: WriterJob[] = [
     outward: true,
   },
   {
+    key: "audit.speed",
+    label: "Audit — speed and findability",
+    agentKey: "seo.specialist",
+    where: "services/audit/performance.ts",
+    // Deliberately narrow. This section's *findings* are arithmetic on a
+    // header, a measured millisecond or a tag, and no model may add to them —
+    // an edit here changes how the numbers are explained and can never
+    // introduce a fault, which is the whole reason that reviewer is trusted.
+    what: "How the measured speed and SEO numbers are explained. The findings themselves are measured, never written.",
+    outward: true,
+  },
+  {
     key: "audit.content",
     label: "Audit — the words",
     agentKey: "content.writer",
@@ -136,6 +148,22 @@ export const WRITER_JOBS: WriterJob[] = [
     where: "services/audit/synthesis.ts",
     what: "The single verdict over the four reviews, and the sentence the email is written from.",
     outward: true,
+  },
+  {
+    key: "content.draft",
+    label: "Dakyworld's own copy",
+    agentKey: "content.writer",
+    where: "services/tools/catalogue.ts",
+    what: "Posts, landing pages and one-pagers written for Dakyworld itself, through the content.draft tool.",
+    outward: true,
+  },
+  {
+    key: "content.plain",
+    label: "The plain-English rewrite",
+    agentKey: "content.writer",
+    where: "services/tools/catalogue.ts",
+    what: "The content.plain tool, which rewrites business writing so it reads on one pass.",
+    outward: false,
   },
   {
     key: "demo.page",

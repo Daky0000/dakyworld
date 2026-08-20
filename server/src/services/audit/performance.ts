@@ -2,6 +2,7 @@ import { callModel } from "../../lib/models/call.js";
 import { PROVIDERS } from "../../lib/models/registry.js";
 import type { AuditEvidence } from "./evidence.js";
 import { DISCIPLINE_AGENTS, scoreFindings, sortBySeverity, trimFindings, type AuditFindingDetail, type DisciplineReport } from "./types.js";
+import { composeWriterSystem, resolveBrief } from "../writers/brief.js";
 
 /**
  * The speed and findability review.
@@ -644,6 +645,29 @@ const SUMMARY_SCHEMA = {
   },
 } as const;
 
+/**
+ * How the numbers are explained. Overridable by `seo.specialist`.
+ *
+ * Narrower than the other reviewers on purpose. This section's *findings* are
+ * arithmetic on a header, a tag or a measured millisecond, and this call writes
+ * the headline and the summary only — it cannot add a finding. So an edit here
+ * changes how the measurements are explained to an owner and can never
+ * introduce a fault, which is exactly why this reviewer is the credible one.
+ */
+const SHIPPED_DOCTRINE = `Write for somebody who runs a business and does not know what a meta description is. Say what it costs them, in customers and enquiries, not in ranking factors.`;
+
+/** The evidence rule and the house style. Never reachable by an edit. */
+const CONTRACT = `The measurements you are given were taken by the system, not by you. **You may not state a number that is not in that list, and you may not describe a fault that is not in the findings.** If you want to say the site is slow, the measurement has to say so. A review that overstates a fault to a business owner who then checks it is worse than no review.
+
+British English. No exclamation marks, no "leverage", no "optimise" — say what actually happens.`;
+
+async function speedSummarySystem(business: { name: string; trade: string | null; town: string | null }): Promise<string> {
+  const brief = await resolveBrief("audit.speed", SHIPPED_DOCTRINE);
+  const who = brief.agentName ?? "SEO Specialist";
+  const preamble = `You are the Dakyworld ${who} writing the speed-and-findability section of a website review for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.`;
+  return composeWriterSystem(brief, { preamble: [preamble], contract: CONTRACT });
+}
+
 async function writeSummary(
   findings: AuditFindingDetail[],
   evidence: AuditEvidence,
@@ -706,11 +730,7 @@ async function writeSummary(
       // Prose about numbers somebody else measured. Routed with the rest of
       // the system's writing.
       job: "text",
-      system: `You are the Dakyworld SEO Specialist writing the speed-and-findability section of a website review for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
-
-The measurements below were taken by the system, not by you. **You may not state a number that is not in that list, and you may not describe a fault that is not in the findings.** If you want to say the site is slow, the measurement has to say so. A review that overstates a fault to a business owner who then checks it is worse than no review.
-
-Write for somebody who runs a business and does not know what a meta description is. Say what it costs them, in customers and enquiries, not in ranking factors. British English. No exclamation marks, no "leverage", no "optimise" — say what actually happens.`,
+      system: await speedSummarySystem(business),
       prompt: () =>
         [
           "What was measured on their homepage:",

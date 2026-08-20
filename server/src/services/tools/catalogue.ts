@@ -44,6 +44,7 @@ import { callClaude } from "../../lib/claude.js";
 import { callModel, generateImage } from "../../lib/models/call.js";
 import { PROVIDERS, routeFor } from "../../lib/models/registry.js";
 import { BRAND, VOICE, catalogueForPrompt } from "../dakyworld.js";
+import { writerSystem } from "../writers/brief.js";
 import { allMcpTools, callOn, imageProvider, mcpTools } from "./mcpTools.js";
 import { companyProfile } from "../systemProfile.js";
 // Circular with services/agents/hiring.ts, which imports listAllTools from
@@ -112,6 +113,66 @@ const leadSummary = {
   source: true,
   createdAt: true,
 } as const;
+
+/**
+ * The shipped doctrine for `content.draft`, overridable by `content.writer`.
+ *
+ * Same rule as every other writer in this system: the judgement is the
+ * agent's once somebody has edited it, the shape of the answer is not. See
+ * `services/writers/brief.ts`.
+ */
+const CONTENT_DRAFT_DOCTRINE = `You write for Dakyworld.
+
+${VOICE}
+
+How a piece earns its place:
+
+1. **Say the useful thing first.** A reader decides in one line whether to keep going. No throat-clearing, no "in today's digital landscape", no paragraph explaining why the topic matters before saying anything about it.
+2. **One piece, one job.** Know what the reader should be able to do at the end that they could not do at the start, and cut everything that does not serve it.
+3. **Concrete beats comprehensive.** One worked example a reader recognises is worth five bullet points covering the field. If you are listing, ask whether the list is doing work or hiding the fact that nothing specific is being said.
+4. **Write to somebody who is busy and not technical.** Explain the thing before naming it, and where the name adds nothing, leave it out.
+5. **No pitch unless the brief asks for one.** A piece that turns into an advertisement in its last paragraph loses the reader it just earned.`;
+
+/**
+ * The invention rule is contract, not doctrine.
+ *
+ * `claimsToCheck` is a field a person reads before anything ships, so the
+ * instruction that fills it has to survive a rewritten voice — a doctrine edit
+ * that dropped it would leave unsourced statistics sitting in the body with an
+ * empty list beside them saying everything had been checked.
+ */
+const CONTENT_DRAFT_CONTRACT = `**Never invent a client, a result, a statistic or a proportion.** Not "most businesses", not "studies show", not "8 in 10". You have no such figure. Say what happens to *a* person doing *a* thing and let the reader supply the scale.
+
+Anything you cannot evidence goes in \`claimsToCheck\` rather than in the body. That field existing is not permission to be vague in the body — it is where a claim goes to be checked before it ships.
+
+Return the body as Markdown.`;
+
+/** The shipped doctrine for `content.plain`, overridable by `content.writer`. */
+const CONTENT_PLAIN_DOCTRINE = `You rewrite business writing so a busy person understands it on one reading.
+
+${VOICE}
+
+What you change:
+- Consultant vocabulary, and any sentence that could be said in half the words.
+- The passive voice, where the doer matters.
+- Jargon a reader outside the trade would stumble on — either explain it in the sentence or cut it.
+- Sentences carrying three ideas. One idea each.
+- Anything that reads as though a machine wrote it: throat-clearing openings, "it's not just X, it's Y", "in today's fast-paced world", a dash in every sentence, and closing paragraphs that restate the opening.`;
+
+/**
+ * What an editor may never do, and where the cuts are declared.
+ *
+ * This is contract rather than doctrine for the same reason the email polish's
+ * is: this stage is the *last* writer, so whatever it is told becomes the
+ * house style. An edit that loosened "never change a figure" would not change
+ * the register — it would let a rewrite quietly alter a price.
+ */
+const CONTENT_PLAIN_CONTRACT = `What you never change:
+- A fact, a figure, a date, a name, a price or a promise. If a number is in the draft it is in your rewrite, unaltered.
+- The meaning. A shorter piece that says something different is a failure, not an edit.
+- A claim you think is wrong — that is somebody else's job. Say so in \`changes\` and leave the sentence alone.
+
+British spelling. No exclamation marks. Nothing you cut goes unmentioned: anything you dropped goes in \`removed\` so a person can put it back.`;
 
 export const TOOLS: ToolDefinition<any, any>[] = [
   // --- Pipeline -------------------------------------------------------------
@@ -1636,22 +1697,10 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       const { data, provider } = await callModel<{ title: string; body: string; callToAction: string; claimsToCheck: string[] }>({
         purpose: "content.draft",
         job: "text",
-        system: `You write for Dakyworld.
-
-${BRAND}
-
-${VOICE}
-
-${catalogueForPrompt()}
-
-How a piece earns its place:
-
-1. **Say the useful thing first.** A reader decides in one line whether to keep going. No throat-clearing, no "in today's digital landscape", no paragraph explaining why the topic matters before saying anything about it.
-2. **One piece, one job.** Know what the reader should be able to do at the end that they could not do at the start, and cut everything that does not serve it.
-3. **Concrete beats comprehensive.** One worked example a reader recognises is worth five bullet points covering the field. If you are listing, ask whether the list is doing work or hiding the fact that nothing specific is being said.
-4. **Never invent a client, a result, a statistic or a proportion.** Not "most businesses", not "studies show", not "8 in 10". You have no such figure. Say what happens to *a* person doing *a* thing and let the reader supply the scale. Anything you cannot evidence goes in claimsToCheck rather than in the body — that field existing is not permission to be vague in the body, it is where a claim goes to be checked before it ships.
-5. **Write to somebody who is busy and not technical.** Explain the thing before naming it, and where the name adds nothing, leave it out.
-6. **No pitch unless the brief asks for one.** A piece that turns into an advertisement in its last paragraph loses the reader it just earned.`,
+        system: await writerSystem("content.draft", CONTENT_DRAFT_DOCTRINE, {
+          facts: [BRAND, catalogueForPrompt()],
+          contract: CONTENT_DRAFT_CONTRACT,
+        }),
         prompt: () =>
           `Format: ${input.format}. Audience: ${input.audience ?? "established businesses in Ghana"}.\n\nBrief:\n${input.brief}`,
         schema: {
@@ -1811,23 +1860,7 @@ Rules:
       const result = await callModel<{ rewritten: string; changes: string[]; readingLevel: string; removed: string[] }>({
         purpose: "content.humanise",
         job: "humanise",
-        system: `You rewrite business writing so a busy person understands it on one reading.
-
-${VOICE}
-
-What you change:
-- Consultant vocabulary, and any sentence that could be said in half the words.
-- The passive voice, where the doer matters.
-- Jargon a reader outside the trade would stumble on — either explain it in the sentence or cut it.
-- Sentences carrying three ideas. One idea each.
-- Anything that reads as though a machine wrote it: throat-clearing openings, "it's not just X, it's Y", "in today's fast-paced world", a dash in every sentence, and closing paragraphs that restate the opening.
-
-What you never change:
-- A fact, a figure, a date, a name, a price or a promise. If a number is in the draft it is in your rewrite, unaltered.
-- The meaning. A shorter piece that says something different is a failure, not an edit.
-- A claim you think is wrong — that is somebody else's job. Say so in changes and leave the sentence alone.
-
-British spelling. No exclamation marks. Nothing you cut goes unmentioned: anything you dropped goes in removed so a person can put it back.`,
+        system: await writerSystem("content.plain", CONTENT_PLAIN_DOCTRINE, { contract: CONTENT_PLAIN_CONTRACT }),
         prompt: () =>
           [
             input.audience ? `Who reads this: ${input.audience}` : "",
