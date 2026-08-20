@@ -17,6 +17,8 @@ import { emailsRouter, unsubscribeRouter } from "./routes/emails.js";
 import { hubtelWebhook, paystackWebhook } from "./routes/paymentWebhooks.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { slackRouter } from "./routes/slack.js";
+import { messagingRouter } from "./routes/messaging.js";
+import { messagesRouter } from "./routes/messages.js";
 import { usersRouter } from "./routes/users.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
@@ -39,6 +41,9 @@ import { drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { AnalystError } from "./lib/claude.js";
 import { ApifyError } from "./lib/apify.js";
+import { WhatsAppError } from "./lib/whatsapp.js";
+import { HubtelError } from "./lib/hubtel.js";
+import { MessagingError } from "./services/messageSender.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -121,6 +126,14 @@ app.use("/api/webhooks", webhookRateLimit, express.raw({ type: "*/*", limit: "25
 // and with none configured it refuses everything. See routes/slack.ts.
 app.use("/api/slack", webhookRateLimit, express.raw({ type: "*/*", limit: "128kb" }), slackRouter);
 
+// Replies on WhatsApp and SMS, and the delivery receipts for both. Above the
+// JSON parser for the third time on this page and for the same reason: Meta
+// signs the exact bytes it sent. Public, because neither Meta nor Hubtel can
+// log in — what guards each is in routes/messaging.ts, and it matters more
+// here than on the generic webhook route, because an unverified inbound would
+// open a 24-hour free-form window or opt a live prospect out.
+app.use("/api/messaging", webhookRateLimit, express.raw({ type: "*/*", limit: "128kb" }), messagingRouter);
+
 // A prospect's demo page, to whoever holds the link. Mounted here for two
 // reasons: it is public — the whole point is that it can be opened from an
 // email — and it has to come before the SPA catch-all below, which would
@@ -184,6 +197,7 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/invoices", invoicesRouter);
 app.use("/api/care-plans", carePlansRouter);
 app.use("/api/emails", emailsRouter);
+app.use("/api/messages", messagesRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/scrapers", scrapersRouter);
@@ -247,6 +261,15 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   }
   if (err instanceof ApifyError) {
     return res.status(503).json({ error: err.message, reference });
+  }
+
+  // The messaging classes belong in the same exemption and for the same
+  // reason. "They haven't messaged us in 24 hours, so WhatsApp will only carry
+  // an approved template" is the answer, not a leak — and rendered as
+  // "Something went wrong." it sends somebody hunting for a bug in an app that
+  // is working exactly as Meta requires.
+  if (err instanceof WhatsAppError || err instanceof HubtelError || err instanceof MessagingError) {
+    return res.status(err.status).json({ error: err.message, reference });
   }
 
   if (process.env.NODE_ENV === "production") {

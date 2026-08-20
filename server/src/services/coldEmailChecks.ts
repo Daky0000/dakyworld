@@ -150,8 +150,24 @@ function normalise(text: string): string {
     .trim();
 }
 
+/**
+ * Which pipe the message is going down.
+ *
+ * The checklist is the playbook's, and the playbook is about what a first
+ * approach must establish — that does not change between email and a chat
+ * bubble. What changes is the arithmetic: a WhatsApp has no subject line to
+ * check, and 70-120 words is a short email and an unreadable text message.
+ *
+ * So this is one checklist with three sets of numbers rather than three
+ * checklists, deliberately. Two copies of a doctrine drift, and the drift is
+ * invisible until a v3 email and a v2 WhatsApp reach the same prospect.
+ */
+export type OutreachChannel = "EMAIL" | "WHATSAPP" | "SMS";
+
 export interface PreSendInput {
   subject: string;
+  /** Defaults to EMAIL, which is how every existing caller behaves. */
+  channel?: OutreachChannel;
   /** The body as it will actually be sent, signature and footer included. */
   body: string;
   /** False for a follow-up, where identification and the ask work differently. */
@@ -175,6 +191,7 @@ export interface PreSendInput {
 export function preSendCheck(input: PreSendInput): PreSendReport {
   const { subject, body } = input;
   const firstEmail = input.firstEmail ?? true;
+  const channel = input.channel ?? "EMAIL";
   const checks: CheckResult[] = [];
 
   const add = (id: string, label: string, severity: CheckSeverity, passed: boolean, detail = "") =>
@@ -256,32 +273,62 @@ export function preSendCheck(input: PreSendInput): PreSendReport {
     jargon.length ? `Explain in plain words or drop: ${jargon.join(", ")}` : "",
   );
 
-  // 13. The subject is honest and not a fake internal message.
+  // 13. The subject is honest and not a fake internal message. A message on
+  // a phone has no subject at all, so the check is skipped rather than run
+  // against an empty string — which passes, and reads as a tick for
+  // something that was never checked.
   const subjectWords = words(subject);
   const shouty = /[!]|^(re|fwd):/i.test(subject.trim()) || subject === subject.toUpperCase();
-  add(
-    "subject",
-    "The subject is short, honest, and not disguised as a reply",
-    "BLOCK",
-    !shouty && subjectWords <= 8,
-    shouty
-      ? "It imitates a reply or shouts. A first email is not a Re: and never carries an exclamation mark."
-      : subjectWords > 8
-        ? `${subjectWords} words — keep it short and specific.`
-        : "",
-  );
+  if (channel === "EMAIL")
+    add(
+      "subject",
+      "The subject is short, honest, and not disguised as a reply",
+      "BLOCK",
+      !shouty && subjectWords <= 8,
+      shouty
+        ? "It imitates a reply or shouts. A first email is not a Re: and never carries an exclamation mark."
+        : subjectWords > 8
+          ? `${subjectWords} words — keep it short and specific.`
+          : "",
+    );
 
-  // 1 (Style). Length: about 70–120 words.
+  // 1 (Style). Length. Three sets of numbers for one rule: enough to say who
+  // is writing, what was seen and what happens next, and not a word past
+  // that. Where that lands depends entirely on the screen it arrives on.
   const bodyWords = words(body);
+  const LENGTHS: Record<OutreachChannel, { min: number; max: number; label: string; thin: string; fat: string }> = {
+    EMAIL: {
+      min: 55,
+      max: 165,
+      label: "About 70–120 words",
+      thin: "too thin to explain who is writing, what was seen and why it matters.",
+      fat: "this is a report, not a note.",
+    },
+    WHATSAPP: {
+      min: 20,
+      max: 90,
+      label: "About 35–70 words",
+      thin: "too thin to say who is writing and why, which on a chat from an unknown number is the whole message.",
+      fat: "a wall of text in a chat window. It reads as a broadcast, because it looks like one.",
+    },
+    SMS: {
+      min: 12,
+      max: 55,
+      label: "Short enough for one or two segments",
+      thin: "too thin to say who is writing, and a text from an unknown short code that does not is deleted.",
+      fat: "several segments, each charged separately, on a channel nobody reads at length.",
+    },
+  };
+  const length = LENGTHS[channel];
   add(
     "length",
-    "About 70–120 words",
+    length.label,
     "WARN",
-    bodyWords >= 55 && bodyWords <= 165,
-    bodyWords < 55
-      ? `${bodyWords} words — too thin to explain who is writing, what was seen and why it matters.`
-      : bodyWords > 165
-        ? `${bodyWords} words — this is a report, not a note.`
+    bodyWords >= length.min && bodyWords <= length.max,
+    bodyWords < length.min
+      ? `${bodyWords} words — ${length.thin}`
+      : bodyWords > length.max
+        ? `${bodyWords} words — ${length.fat}`
         : "",
   );
 

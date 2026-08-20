@@ -1,4 +1,5 @@
 import { SETTING, getSetting } from "./settings.js";
+import { defaultCallingCode, toE164 } from "./phone.js";
 
 /**
  * Hubtel — the prompt that arrives on the client's phone, and the text message.
@@ -204,8 +205,13 @@ export async function checkStatus(clientReference: string): Promise<HubtelStatus
  */
 export async function sendSms(to: string, message: string): Promise<{ messageId: string | null; to: string }> {
   const auth = await basicAuth(SETTING.HUBTEL_SMS_ID, SETTING.HUBTEL_SMS_SECRET, "SMS");
-  const recipient = normaliseGhanaNumber(to);
-  if (!recipient) throw new HubtelError(`"${to}" is not a Ghanaian mobile number this can send to.`, 400);
+  // `toE164` first, `normaliseGhanaNumber` as the fallback. The Ghanaian
+  // normaliser below is still right for the *payments* half of this file — a
+  // mobile-money prompt can only go to a Ghanaian handset — but it returns null
+  // for every international number, and a Ghanaian business owner living in
+  // London is exactly the lead this channel exists to reach. See lib/phone.ts.
+  const recipient = toE164(to, await defaultCallingCode())?.e164 ?? normaliseGhanaNumber(to);
+  if (!recipient) throw new HubtelError(`"${to}" is not a mobile number this can send to.`, 400);
 
   const from = (await getSetting(SETTING.HUBTEL_SMS_SENDER)) || (await getSetting(SETTING.HUBTEL_MERCHANT_ID)) || "Dakyworld";
   const data = await callJson<{ status?: number; messageId?: string; statusDescription?: string }>(`${SMS_BASE}/v1/messages/send`, auth, {

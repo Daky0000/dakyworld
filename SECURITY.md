@@ -211,6 +211,50 @@ the stdout line Railway keeps.
 
 ---
 
+
+### The phone-channel webhooks (added Aug 2026)
+
+`/api/messaging/*` is public and mounted above the JSON parser, joining Stripe,
+Paystack/Hubtel payments, the generic intake and Slack. Verification matters
+more here than on any of them, because of what an unverified inbound could do:
+
+- **Open a 24-hour free-form window.** `MessageThread.lastInboundAt` is the only
+  thing deciding whether WhatsApp will carry a written message to a number. A
+  forged inbound would let anybody who found the URL make this app willing to
+  send free text to a number of their choosing.
+- **Opt a live prospect out.** An inbound `STOP` suppresses the number across
+  both channels, cancels everything queued for it and stops any email sequence
+  the lead is in. Forging one is a denial-of-service against a real pipeline
+  that would look like the prospect having asked.
+
+What protects each:
+
+- **WhatsApp** — `X-Hub-Signature-256`, HMAC-SHA256 over the raw body keyed on
+  the Meta **app secret**, compared with `timingSafeEqual` after a length check
+  (it throws on a mismatch rather than returning false, and a truncated header
+  is the shape of a probe). **With no app secret configured, inbound deliveries
+  are stored and not acted on** — recorded as a `WebhookEvent` with the reason,
+  so a run of them is visible rather than silent.
+- **The GET handshake** echoes Meta's challenge only when the verify token
+  matches. The token is minted by the app, not typed by a person.
+- **SMS through Hubtel** — Hubtel signs nothing whatsoever. The only control
+  available is a secret inside the callback URL (`SMS_INBOUND_TOKEN`, minted by
+  the app, compared in constant time). **Blank means the SMS callbacks are
+  refused entirely**, which is the correct default. This is a genuinely weaker
+  control than the other four routes have, and it is weaker because the provider
+  offers nothing better — worth knowing before treating an inbound SMS as
+  evidence of anything.
+
+Both are answered `200` before the work is done, because both providers retry
+what they do not hear from quickly, and a retried inbound would file a reply
+twice. Body size is capped at 128kB.
+
+`WHATSAPP_TOKEN` and `WHATSAPP_APP_SECRET` are stored encrypted in `AppSetting`
+like every other credential and are masked in the API response.
+`WHATSAPP_VERIFY_TOKEN` and `SMS_INBOUND_TOKEN` are returned **in the clear**,
+deliberately: they grant nothing on their own and have to be typed into somebody
+else's dashboard, which a masked value cannot be.
+
 ## The website
 
 Everything in each `<head>` between the `BEGIN SEO` / `END SEO` markers is

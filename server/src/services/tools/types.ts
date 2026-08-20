@@ -45,6 +45,12 @@ export type ToolRequirement =
   | "hubtel"
   /** Hubtel SMS. Kept apart from `hubtel` because the credentials genuinely are. */
   | "hubtelSms"
+  /**
+   * WhatsApp through Meta's Cloud API. Separate from `hubtelSms` because
+   * they are different accounts with different rules — and because a
+   * deployment will very commonly have one and not the other.
+   */
+  | "whatsapp"
   | "cloudinary"
   | "google"
   | "calendar"

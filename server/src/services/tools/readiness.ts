@@ -4,6 +4,7 @@ import { apifyConfigured } from "../../lib/apify.js";
 import { mailerConfigured } from "../../lib/mailer.js";
 import { paystackConfigured } from "../../lib/paystack.js";
 import { hubtelConfigured, hubtelSmsConfigured } from "../../lib/hubtel.js";
+import { whatsappConfigured } from "../../lib/whatsapp.js";
 import { stripeConfigured } from "../../lib/stripe.js";
 import { cloudinaryConfigured } from "../../lib/cloudinary.js";
 import { googleConfigured, googleConnected } from "../../lib/google.js";
@@ -81,6 +82,10 @@ async function compute(requirement: ToolRequirement): Promise<Readiness> {
       // being told "Hubtel isn't connected" while looking at connected Hubtel
       // payments is the confusing version of this message.
       return (await hubtelSmsConfigured()) ? ok : no("Hubtel SMS isn't connected. It uses a different credential pair from payments — add it under Settings → Payments.");
+    case "whatsapp":
+      return (await whatsappConfigured())
+        ? ok
+        : no("WhatsApp isn't connected. Add the access token and phone number ID under Settings → Messaging.");
     case "cloudinary":
       return (await cloudinaryConfigured()) ? ok : no("Cloudinary isn't connected. Add the three values under Settings → Storage.");
     case "github":

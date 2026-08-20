@@ -206,6 +206,70 @@ no click tracking — a tracking pixel is how a business letter starts being
 filtered as marketing. Replies are recorded the way calls already are, by
 logging them, which is what stops the sequence.
 
+
+## WhatsApp and SMS
+
+Most of the leads a scrape brings in have a phone number and no email address.
+Until this module they could not be written to at all, which made capturing
+them close to pointless. **Outreach → WhatsApp & SMS** opens on exactly that
+list: every lead with a number and no address, best first.
+
+### The one thing worth understanding first
+
+WhatsApp lets a business write freely to somebody only **within 24 hours of
+that person's last message to it**. Outside that window it will carry a
+template Meta approved in advance, and nothing else.
+
+A lead who has never messaged you has never opened that window. So a first
+WhatsApp is always a template, and a template always waits for Meta to review
+it — usually minutes, sometimes a day.
+
+**You do not have to wait for any of that.** Every message in the composer can
+be sent as a `wa.me` link instead: it opens WhatsApp on your own phone with the
+message already typed, and you press send. No Business account, no review, no
+per-conversation fee — and it arrives from you rather than from a brand, which
+is what a small business here actually replies to. A message sent that way sits
+in the outbox as *waiting for you to send it* until you say you did, because
+copying a link is not sending a message.
+
+### The screens
+
+- **Who to reach** — leads with a number and no email. Each row says whether
+  that number can carry a message at all: a landline says so, an unreadable
+  number says so, and somebody who opted out says so.
+- **Conversations** — replies as they arrive, with how long is left of the
+  window to answer freely in.
+- **Outbox** — what went, what is queued, what is waiting for you to send by
+  hand, and what failed with the reason in plain words.
+- **Templates** — what Meta has approved, and four starters written to the
+  playbook that can be submitted with one click.
+- **Opted out** — anyone who replied STOP. It applies to both channels at once:
+  somebody who stopped a WhatsApp has not asked to keep getting texts.
+
+### What it costs, and what it says
+
+A text is billed per 160 characters, and a single curly apostrophe — the kind a
+word processor inserts — re-encodes the whole message and drops that to 70,
+tripling the price of a message that looks identical. The composer counts it
+live, names the character responsible, and offers to swap it.
+
+Messages are drafted from the same evidence an email is: the research, the site
+audit, the homepage screenshot. The same rules apply, with the shape adjusted —
+who is writing goes in the first line (there is no signature to append), one
+thing noticed, one small ask, no price, and 70 words at the outside.
+
+### Connecting it
+
+Under **Settings → Messaging**. WhatsApp needs an access token and a phone
+number ID from the Meta app dashboard; add the App Secret too or replies are
+recorded and never acted on. The callback URL on that panel has to be pasted
+into Meta's Configuration tab, or a prospect's reply never reaches the app.
+
+SMS goes through Hubtel and shares the credentials under **Settings →
+Payments**. What is set under Messaging is the address Hubtel posts replies and
+delivery reports back to — Hubtel signs nothing, so that URL carries a secret
+and must not be shared.
+
 ## System settings
 
 **Settings → System** is the one place the company describes itself.

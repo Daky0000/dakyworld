@@ -42,7 +42,18 @@ const navItems: NavItem[] = [
   { to: "/care-plans", label: "Retainers", roles: ["OWNER", "OPERATIONS_FINANCE"] },
   // Writing to a client under the company's name isn't a junior privilege —
   // the API restricts it the same way, so hiding the tab avoids a 403.
-  { to: "/emails", label: "Email", roles: ["OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"] },
+  // Email and the phone channels are one job — reaching somebody — and which
+  // one is even possible is decided per lead by whether an address exists. So
+  // they are one menu rather than two tabs competing for the same row.
+  {
+    to: "/emails",
+    label: "Outreach",
+    roles: ["OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"],
+    children: [
+      { to: "/emails", label: "Email", end: true },
+      { to: "/messages", label: "WhatsApp & SMS" },
+    ],
+  },
   { to: "/clients", label: "Clients" },
   // Raising an agent's autonomy is the one action here that lets software act
   // on a client without being asked, so it sits with Settings behind the Owner.

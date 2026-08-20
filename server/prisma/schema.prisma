@@ -44,16 +44,16 @@ model User {
   // integration token — a database dump must not hand over the second factor
   // along with the first. Present but unconfirmed means enrolment was started
   // and never finished, and does not gate a login.
-  totpSecret          String?
-  totpConfirmedAt     DateTime?
+  totpSecret         String?
+  totpConfirmedAt    DateTime?
   // SHA-256 of each unused recovery code. Removed as they are spent.
-  totpRecoveryHashes  String[] @default([])
+  totpRecoveryHashes String[]  @default([])
   // The last time step already spent, so a code cannot be replayed inside the
   // thirty seconds it stays arithmetically valid.
-  totpLastStep        Int?
+  totpLastStep       Int?
 
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   assignedProjects ProjectAssignment[]
   assignedTasks    Task[]
@@ -62,6 +62,7 @@ model User {
   performanceNotes PerformanceNote[]
   sessions         Session[]
   emailsWritten    EmailMessage[]
+  messagesWritten  Message[]
   uploadedFiles    StoredFile[]
   agentTasks       AgentTask[]
 }
@@ -117,7 +118,9 @@ model Client {
   communications Communication[]
   emails         EmailMessage[]
   enrollments    EmailEnrollment[]
-  agentTasks   AgentTask[]
+  messages       Message[]
+  threads        MessageThread[]
+  agentTasks     AgentTask[]
 }
 
 model Contact {
@@ -185,24 +188,24 @@ enum LeadStatus {
 }
 
 model Lead {
-  id                String     @id @default(cuid())
-  client            Client?    @relation(fields: [clientId], references: [id])
+  id                String            @id @default(cuid())
+  client            Client?           @relation(fields: [clientId], references: [id])
   clientId          String?
   contactName       String
   contactEmail      String?
   contactPhone      String?
   companyName       String?
-  source            LeadSource @default(OTHER)
+  source            LeadSource        @default(OTHER)
   /// The route in — a scrape, a spreadsheet, typed by hand. See LeadCaptureMethod.
   captureMethod     LeadCaptureMethod @default(MANUAL)
-  status            LeadStatus @default(NEW)
-  leadScore         Int        @default(0) // 0-100
+  status            LeadStatus        @default(NEW)
+  leadScore         Int               @default(0) // 0-100
   discoveryCallAt   DateTime?
   discoveryNotes    String?
-  estimatedDealSize Decimal?   @db.Decimal(12, 2)
+  estimatedDealSize Decimal?          @db.Decimal(12, 2)
   winLossReason     String?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   // --- Firmographics, mostly filled by the scrapers -----------------------
   website      String?
@@ -244,12 +247,16 @@ model Lead {
   communications Communication[]
   emails         EmailMessage[]
   enrollments    EmailEnrollment[]
+  /// WhatsApp and SMS. The route in for the majority of scraped leads,
+  /// which carry a number and no address at all.
+  messages       Message[]
+  threads        MessageThread[]
   /// What was learnt by going and looking, as opposed to what a scrape handed over.
   research       LeadResearch?
   demos          Demo[]
   websiteAudits  WebsiteAudit[]
 
-  agentTasks   AgentTask[]
+  agentTasks AgentTask[]
 
   @@index([status])
   @@index([groupId])
@@ -280,15 +287,15 @@ model LeadResearch {
   /// `{ "<Lead field>": { value, source, confidence } }` — what this run put
   /// into empty fields on the lead, and where each one came from, so a wrong
   /// value can be traced to the page that claimed it.
-  filled Json?
+  filled   Json?
   /// The live-source pass: the discovery note it wrote, and the URLs it read.
   research Json?
   /// services/companyAudit.ts output as it stood at `ranAt`.
-  audit Json?
+  audit    Json?
   /// The homepage screenshot: where the image is and what was asked for.
-  shot Json?
+  shot     Json?
   /// What a model saw when it looked at that screenshot.
-  look Json?
+  look     Json?
 
   /// The whole thing as plain lines, which is what the drafter actually reads.
   /// Denormalised deliberately: the email that goes out has to be reproducible
@@ -334,10 +341,10 @@ enum DemoStatus {
 /// ephemeral, so a file written at run time survives until the next deploy and
 /// *looks like it worked* — the same trap the uploaded logos avoided.
 model Demo {
-  id     String @id @default(cuid())
+  id     String  @id @default(cuid())
   /// The public path segment: `/demos/adjei-dental-centre`.
-  slug   String @unique
-  lead   Lead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  slug   String  @unique
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
   leadId String?
 
   /// What it is called on the Demos screen.
@@ -347,9 +354,9 @@ model Demo {
   status       DemoStatus @default(DRAFT)
 
   /// The complete page. One string, served as-is.
-  html String
+  html       String
   /// What it was built from: the facts, the angle, the style direction.
-  brief Json?
+  brief      Json?
   /// The design references the style came from, each with its source URL.
   references Json?
 
@@ -474,19 +481,19 @@ model LeadGroup {
 /// arrays hold `slug`, never the label — renaming a tag then costs one row
 /// instead of an update across every lead that carries it.
 model LeadTag {
-  id    String @id @default(cuid())
+  id          String    @id @default(cuid())
   /// What the arrays actually store. Lowercase, hyphenated, ≤40 chars.
-  slug  String @unique
+  slug        String    @unique
   /// What a person reads. Editable without touching a single lead.
-  label String
+  label       String
   /// One of the brand tag colours — see services/leadTags.ts. Null means neutral.
   colour      String?
   description String?
   /// True when a scrape, an import or a webhook coined it rather than the Owner.
   /// The Owner naming a tag is a decision; a scraper coining one is a side effect.
-  autoCreated Boolean @default(false)
+  autoCreated Boolean   @default(false)
   /// Kept so an unused tag can be found and cleared out.
-  lastUsedAt DateTime?
+  lastUsedAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -577,7 +584,7 @@ model LeadImport {
   sheetNames  String[] @default([])
 
   /// The analysed plan, as edited by the Owner. See services/sheetPlan.ts.
-  plan Json?
+  plan       Json?
   /// "claude-opus-5" when the AI analyst ran, "rules" when the fallback did.
   analyzedBy String?
   /// The analyst's own summary of what it found and what looked doubtful.
@@ -645,10 +652,10 @@ model ScraperSource {
   leadSource LeadSource @default(GOOGLE_MAPS)
   groupName  String? // supports {{name}} and {{date}}
 
-  enabled   Boolean @default(true)
-  maxItems  Int     @default(100)
+  enabled      Boolean @default(true)
+  maxItems     Int     @default(100)
   /// Leads scoring below this are dropped instead of saved — the noise filter.
-  minScore  Int     @default(0)
+  minScore     Int     @default(0)
   /// Move leads that clear `qualifyScore` straight to QUALIFYING.
   autoQualify  Boolean @default(true)
   qualifyScore Int     @default(60)
@@ -696,7 +703,7 @@ model ScraperRun {
 
   /// What Apify billed for this run, in USD. Null while it is still going, or
   /// when Apify reported no charge for it.
-  costUsd Float?
+  costUsd     Float?
   /// What the run was expected to cost when it started, so the two can be
   /// compared afterwards.
   estimateUsd Float?
@@ -765,11 +772,11 @@ model Proposal {
   /// The full argued document — situation, findings, scope, investment. See
   /// lib/proposalWriter.ts for its shape. Null for proposals written by hand
   /// before the writer existed, which still render from `scopeSummary` alone.
-  body Json?
+  body        Json?
   /// What was observed about the company at the moment this was drafted, with
   /// the evidence for each finding. Kept so a claim can be defended — or
   /// retracted — months later, when their site has changed.
-  audit Json?
+  audit       Json?
   /// Model id when this was drafted by the writer; null when a person wrote it.
   generatedBy String?
   /// The writer's own 0-1 read on how well the evidence supported it. Low means
@@ -779,7 +786,8 @@ model Proposal {
   project Project?
   emails  EmailMessage[]
 
-  agentTasks   AgentTask[]
+  agentTasks AgentTask[]
+  Message    Message[]
 
   @@index([status])
 }
@@ -821,7 +829,8 @@ model Project {
   communications Communication[]
   emails         EmailMessage[]
   carePlan       CarePlan?
-  agentTasks   AgentTask[]
+  agentTasks     AgentTask[]
+  Message        Message[]
 }
 
 model ProjectAssignment {
@@ -918,13 +927,13 @@ model CarePlan {
   currency   String       @default("GHS")
 
   // --- Billing ---------------------------------------------------------
-  billingDay Int     @default(1) // day of month, 1-28: every month has one
+  billingDay    Int       @default(1) // day of month, 1-28: every month has one
   /// Billing runs on this zone's calendar, not the server's.
-  timezone   String  @default("Africa/Accra")
+  timezone      String    @default("Africa/Accra")
   /// False bills the plan by hand from the Care Plans page instead.
-  autoInvoice Boolean @default(true)
+  autoInvoice   Boolean   @default(true)
   /// Days from issue to due date on the invoices this plan raises.
-  dueDays     Int     @default(14)
+  dueDays       Int       @default(14)
   /// Advanced *before* an invoice is raised, so a failure can't retry-loop.
   nextBillingAt DateTime?
   lastBilledAt  DateTime?
@@ -953,6 +962,7 @@ model CarePlan {
   invoices Invoice[]
   cycles   CarePlanCycle[]
   emails   EmailMessage[]
+  Message  Message[]
 }
 
 /// One billed month of a care plan. The retainer is invoiced in advance, so a
@@ -1036,13 +1046,14 @@ model Invoice {
   /// "mobile money (MTN)", "card". Null until something does.
   paidVia         String?
 
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  lineItems InvoiceLineItem[]
-  cycle     CarePlanCycle?
-  emails    EmailMessage[]
-  agentTasks   AgentTask[]
+  lineItems  InvoiceLineItem[]
+  cycle      CarePlanCycle?
+  emails     EmailMessage[]
+  agentTasks AgentTask[]
+  Message    Message[]
 
   /// A payment webhook arrives quoting the provider's reference and nothing
   /// else, so this is the lookup that has to be fast — and it is on the path
@@ -1149,8 +1160,8 @@ enum EmailPurpose {
 }
 
 model EmailMessage {
-  id      String @id @default(cuid())
-  subject String
+  id       String @id @default(cuid())
+  subject  String
   /// The body as written, in HTML. `bodyText` is the plain-text alternative
   /// that keeps the message readable in text-only clients and out of spam.
   bodyHtml String
@@ -1254,23 +1265,23 @@ enum SequenceTrigger {
 /// A series of emails sent on a delay — the follow-up nobody remembers to send
 /// by hand, which is where most of a cold pipeline is actually lost.
 model EmailSequence {
-  id            String          @id @default(cuid())
-  name          String
-  description   String?
-  trigger       SequenceTrigger @default(MANUAL)
+  id              String          @id @default(cuid())
+  name            String
+  description     String?
+  trigger         SequenceTrigger @default(MANUAL)
   /// Narrows an automatic trigger: `{ "status": "QUALIFIED", "minScore": 60 }`.
-  triggerFilter Json?
-  active        Boolean         @default(false)
+  triggerFilter   Json?
+  active          Boolean         @default(false)
   /// Stops the rest of the sequence once the person replies. On by default:
   /// nothing reads worse than a follow-up to an email already answered.
-  stopOnReply     Boolean @default(true)
+  stopOnReply     Boolean         @default(true)
   /// Every message waits for approval instead of going out on its own.
-  requireApproval Boolean @default(false)
+  requireApproval Boolean         @default(false)
   /// Local hours a sequence email may be sent in, so nothing lands at 3am.
-  sendWindowStart Int     @default(8)
-  sendWindowEnd   Int     @default(18)
-  weekdaysOnly    Boolean @default(true)
-  timezone        String  @default("Africa/Accra")
+  sendWindowStart Int             @default(8)
+  sendWindowEnd   Int             @default(18)
+  weekdaysOnly    Boolean         @default(true)
+  timezone        String          @default("Africa/Accra")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1350,6 +1361,248 @@ model EmailSuppression {
   email  String @unique
   reason String
   /// UNSUBSCRIBED, BOUNCED, COMPLAINED, MANUAL
+  source String @default("MANUAL")
+
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Phone channels — WhatsApp and SMS
+// ---------------------------------------------------------------------------
+//
+// Most of a scraped list has a phone number and no email. A Google Maps
+// listing carries a number because a number is what a customer needs; an
+// address is a thing a business has to have chosen to publish. So the largest
+// single group of leads in this database was, until this module, unreachable
+// by anything the app could do — which made capturing them pointless.
+//
+// These models are deliberately *parallel* to EmailMessage rather than folded
+// into it. The two look similar and behave nothing alike:
+//
+//  - A phone message has no subject, no HTML, no attachments and no cc.
+//  - WhatsApp will not carry a message you wrote. Outside a 24-hour window
+//    opened by the recipient's own last inbound message, Meta accepts only a
+//    template it approved in advance, and rejects everything else. That single
+//    rule shapes every field here — see `MessageThread.lastInboundAt` and
+//    `WhatsAppTemplate`.
+//  - An SMS costs money per 160 characters and cannot be recalled.
+//
+// `EmailPurpose` and `EmailKind` are reused rather than duplicated. They
+// answer "why does this message exist" and "who wrote it", and those are
+// properties of the outreach, not of the pipe it went down — the scenario
+// library and the drafter read the same vocabulary for both.
+
+enum MessageChannel {
+  WHATSAPP
+  SMS
+}
+
+enum MessageDirection {
+  OUTBOUND
+  /// A reply. The only thing that opens WhatsApp's free-form window.
+  INBOUND
+}
+
+enum MessageStatus {
+  DRAFT
+  /// Approved and waiting for its send time.
+  SCHEDULED
+  /// Written, checked, and waiting for a person to send it by hand from their
+  /// own WhatsApp. See `MessageRoute.LINK` — this is not "sent".
+  READY
+  SENDING
+  SENT
+  /// Handset acknowledged it. WhatsApp reports this; Hubtel does on request.
+  DELIVERED
+  /// Opened. WhatsApp only, and only when read receipts are on at their end.
+  READ
+  FAILED
+  CANCELLED
+}
+
+/// How an outbound message actually leaves the building.
+enum MessageRoute {
+  /// The provider sends it — Meta's Cloud API, or Hubtel's SMS gateway.
+  API
+  /// A `wa.me` link a person opens and sends from their own WhatsApp. No
+  /// template approval, no per-conversation fee, and no pretending: a message
+  /// on this route reads READY until somebody says they sent it.
+  LINK
+}
+
+/// One conversation with one number on one channel.
+///
+/// It exists for `lastInboundAt`. Meta's rule is that a business may send
+/// free-form text only within 24 hours of the customer's own last message;
+/// outside that window the only thing that will be delivered is an approved
+/// template. Without somewhere to record when they last wrote, every send is
+/// a guess, and a wrong guess is a hard API error at the moment of sending.
+model MessageThread {
+  id      String         @id @default(cuid())
+  channel MessageChannel
+  /// E.164, digits only, no `+` — `233241234567`. Normalised on the way in by
+  /// lib/phone.ts, because the same number is written six ways by six people.
+  phone   String
+  name    String?
+
+  lead     Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId   String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId String?
+
+  /// When they last wrote to us. The 24-hour service window is measured from
+  /// here and nowhere else.
+  lastInboundAt   DateTime?
+  lastOutboundAt  DateTime?
+  /// Their last inbound message, so the list is readable without opening it.
+  lastInboundText String?
+  unreadCount     Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+
+  /// One thread per number per channel. WhatsApp and SMS to the same handset
+  /// are genuinely different conversations with different rules, so they are
+  /// two rows rather than one.
+  @@unique([channel, phone])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([lastInboundAt])
+}
+
+model Message {
+  id        String           @id @default(cuid())
+  channel   MessageChannel
+  direction MessageDirection @default(OUTBOUND)
+  status    MessageStatus    @default(DRAFT)
+  route     MessageRoute     @default(API)
+
+  /// E.164 without the `+`, matching MessageThread.phone.
+  toPhone String
+  toName  String?
+  /// What the recipient sees, as plain text. For a template send this is the
+  /// template rendered with its variables filled in — so the outbox shows the
+  /// message that was actually delivered rather than `{{1}}`.
+  body    String
+
+  kind    EmailKind    @default(MANUAL)
+  purpose EmailPurpose @default(CUSTOM)
+
+  // --- WhatsApp templates --------------------------------------------------
+  //
+  // Set when this went out as an approved template rather than as free text.
+  // A cold approach always does: the recipient has never written to us, so
+  // the free-form window has never been open.
+  /// The name Meta approved, e.g. `site_check_offer`. Null on a free-form send.
+  templateName      String?
+  /// `en`, `en_GB`. Meta matches on name *and* language.
+  templateLanguage  String?
+  /// Positional `{{1}}`, `{{2}}` values, in order.
+  templateVariables String[] @default([])
+
+  // --- Provider ------------------------------------------------------------
+  /// "meta", "hubtel", or "manual" for a message a person sent by hand.
+  provider          String?
+  /// The provider's id for it — what a delivery receipt quotes.
+  providerMessageId String?
+  /// What one SMS actually cost in segments. 160 GSM-7 characters per segment,
+  /// 70 if anything in it is Unicode — an emoji triples the price of a text.
+  segments          Int?
+
+  scheduledFor DateTime?
+  sentAt       DateTime?
+  deliveredAt  DateTime?
+  readAt       DateTime?
+  failedAt     DateTime?
+  error        String?
+  attempts     Int       @default(0)
+
+  thread   MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  threadId String
+
+  lead       Lead?     @relation(fields: [leadId], references: [id])
+  leadId     String?
+  client     Client?   @relation(fields: [clientId], references: [id])
+  clientId   String?
+  project    Project?  @relation(fields: [projectId], references: [id])
+  projectId  String?
+  proposal   Proposal? @relation(fields: [proposalId], references: [id])
+  proposalId String?
+  invoice    Invoice?  @relation(fields: [invoiceId], references: [id])
+  invoiceId  String?
+  carePlan   CarePlan? @relation(fields: [carePlanId], references: [id])
+  carePlanId String?
+
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+  createdById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, scheduledFor])
+  @@index([threadId, createdAt])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([toPhone])
+  @@index([providerMessageId])
+}
+
+/// A message template as Meta holds it, mirrored here.
+///
+/// This table is a **copy, never a source**. A template that exists here and
+/// not at Meta cannot be sent; one edited here and not resubmitted is sent in
+/// its approved form, not the edited one. Everything is synced from the Graph
+/// API so the composer can only offer what would actually be delivered — the
+/// alternative is discovering an unapproved template at the moment of sending
+/// to a real prospect.
+model WhatsAppTemplate {
+  id              String  @id @default(cuid())
+  /// Meta's own id, when it has been synced back.
+  metaId          String?
+  name            String
+  language        String  @default("en")
+  /// MARKETING, UTILITY or AUTHENTICATION. A cold approach is MARKETING, and
+  /// Meta prices and polices that category hardest.
+  category        String  @default("MARKETING")
+  /// APPROVED, PENDING, REJECTED, PAUSED, DISABLED — Meta's word for it.
+  status          String  @default("PENDING")
+  /// Why Meta rejected it, in their words. The single most useful field here
+  /// when a submission comes back and nobody knows what to change.
+  rejectionReason String?
+
+  /// The body with `{{1}}` placeholders, exactly as submitted.
+  body          String
+  header        String?
+  footer        String?
+  /// [{ type, text, url }] — quick replies and call-to-action buttons.
+  buttons       Json     @default("[]")
+  /// How many `{{n}}` the body takes. Sending the wrong number is a hard error.
+  variableCount Int      @default(0)
+  /// What each variable is for, so the composer can label the inputs.
+  variableHints String[] @default([])
+
+  syncedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([name, language])
+}
+
+/// Numbers that must never be written to again, on any channel.
+///
+/// The email equivalent is per-address; this is per-*number*, deliberately
+/// crossing channels. Someone who replies STOP to a WhatsApp has not asked to
+/// keep receiving texts, and honouring an opt-out on one channel while
+/// carrying on down another is the behaviour that gets a sender-id revoked and
+/// a WhatsApp number banned.
+model MessageSuppression {
+  id     String @id @default(cuid())
+  /// E.164 without the `+`.
+  phone  String @unique
+  reason String
+  /// STOPPED, BOUNCED, BLOCKED, MANUAL
   source String @default("MANUAL")
 
   createdAt DateTime @default(now())
@@ -1442,7 +1695,7 @@ model Agent {
   /// editing it writes here; the layers stay underneath untouched, so Reset is
   /// nothing more than clearing this column. `refreshUneditedSeedPrompts()`
   /// keeps working on the layers for every agent that has not been rewritten.
-  promptText       String?
+  promptText String?
 
   /// True for an agent the Owner created on the Agents screen rather than one
   /// the seed shipped. A deploy never touches these, and only these can be
@@ -1453,7 +1706,7 @@ model Agent {
 
   /// Bumped in the seed when the built-in wording changes, so a later deploy
   /// can tell an untouched agent from one somebody has edited.
-  seedRevision Int      @default(1)
+  seedRevision   Int       @default(1)
   /// Set the first time the Owner rewrites a *seeded* agent's wording.
   ///
   /// The wording of a built-in agent used to be read-only here on the grounds
@@ -1463,8 +1716,8 @@ model Agent {
   /// shipped wording recoverable — set means "rewritten here", which is what
   /// the Reset action on the Agents screen offers to undo.
   promptEditedAt DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   tasks     AgentTask[]
   memories  AgentMemory[]
@@ -1530,19 +1783,19 @@ model ToolCall {
   id String @id @default(cuid())
 
   /// Catalogue key, e.g. `lead.read`, `email.send`, `capture.run`.
-  tool String
+  tool     String
   /// The agent that asked, when one did. Null for a call made by a person.
   agentKey String?
   /// The signed-in user, when a person made or approved the call.
-  userId String?
+  userId   String?
 
   input  Json?
   output Json?
 
-  ok    Boolean @default(true)
-  error String?
+  ok            Boolean @default(true)
+  error         String?
   /// True when the call was prepared and stopped short of taking effect.
-  dryRun Boolean @default(false)
+  dryRun        Boolean @default(false)
   /// Set when the tool refused: out of scope, over a limit, or policy-gated.
   refusedReason String?
 
@@ -1659,13 +1912,13 @@ model McpServer {
 
   /// Short slug used in every tool key this server contributes. Immutable —
   /// changing it would silently revoke every grant that names it.
-  key   String @unique
-  name  String
+  key     String  @unique
+  name    String
   /// What this server is for, in the Owner's words.
   purpose String?
 
   /// Streamable HTTP endpoint. SSE-only servers are reached through the same URL.
-  url String
+  url        String
   /// Sent as `Authorization: <value>`. Encrypted, like every other credential.
   authHeader String?
 
@@ -1761,9 +2014,9 @@ model AgentTask {
   parentId String?
   children AgentTask[] @relation("Delegation")
 
-  status AgentTaskStatus @default(QUEUED)
+  status       AgentTaskStatus @default(QUEUED)
   /// 1 urgent, 2 normal, 3 whenever. Drives the order the runner picks in.
-  priority Int @default(2)
+  priority     Int             @default(2)
   /// Not before this. Null means as soon as there is capacity.
   scheduledFor DateTime?
   /// What it is measured against, when there is one.
@@ -1775,7 +2028,7 @@ model AgentTask {
   /// retried forever in silence. Reset to zero by any claim that actually
   /// advances the conversation, because a task interrupted four times by four
   /// deploys is not a task that is failing.
-  attempts Int @default(0)
+  attempts   Int       @default(0)
 
   /// Touched by the running process on every checkpoint.
   ///
@@ -1804,18 +2057,18 @@ model AgentTask {
   checkpoint AgentTaskCheckpoint?
 
   /// What it did, in its own words — the last thing it said before finishing.
-  summary String?
-  result  Json?
+  summary       String?
+  result        Json?
   /// Why it stopped short. Set only when BLOCKED.
   blockedReason String?
   error         String?
 
   /// What the run cost in model tokens, and how much of the tool layer it used.
-  costUsd   Decimal @default(0) @db.Decimal(10, 6)
-  toolCalls Int     @default(0)
+  costUsd     Decimal @default(0) @db.Decimal(10, 6)
+  toolCalls   Int     @default(0)
   /// How many of those were prepared rather than carried out. A task that is
   /// all preview is a task waiting on an autonomy decision.
-  dryRunCalls Int @default(0)
+  dryRunCalls Int     @default(0)
 
   steps AgentTaskStep[]
 
@@ -1877,7 +2130,7 @@ model AgentTaskCheckpoint {
   iteration Int @default(0)
 
   /// The conversation: every complete turn, in the API's own shape.
-  messages Json
+  messages  Json
   /// Everything the agent has said so far, so a resumed run's summary is the
   /// whole job rather than the tail of it.
   narration Json
@@ -1898,7 +2151,7 @@ model AgentTaskCheckpoint {
   inputTokens  Int     @default(0)
   outputTokens Int     @default(0)
   /// The model that has been serving it.
-  model String?
+  model        String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1951,13 +2204,13 @@ model AgentTaskStep {
   taskId String
   /// Monotonic within a task. Ordering by timestamp alone puts two events
   /// written in the same millisecond in an arbitrary order.
-  seq Int
+  seq    Int
 
   kind    AgentStepKind
   message String
 
   /// The catalogue key, when this step was a tool call.
-  tool String?
+  tool       String?
   /// The ToolCall row it produced, so the two records join up.
   toolCallId String?
   ok         Boolean?
@@ -2018,7 +2271,7 @@ model AgentMemory {
   agent    Agent?  @relation(fields: [agentKey], references: [key], onDelete: Cascade)
   agentKey String?
 
-  scope AgentMemoryScope @default(AGENT)
+  scope     AgentMemoryScope @default(AGENT)
   /// Who wrote it, as a bare key rather than a relation — a shared memory
   /// survives its author being retired, and "who concluded this" is still
   /// worth answering afterwards. `owner` for one the Owner typed in.
@@ -2041,7 +2294,7 @@ model AgentMemory {
   useCount   Int       @default(0)
   lastUsedAt DateTime?
   /// Set on anything that stops being true on a date.
-  expiresAt DateTime?
+  expiresAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2169,26 +2422,26 @@ model AgentGap {
   /// The task it was working on, so the brief that exposed the gap is
   /// readable. A bare id: the record is history and survives the task's
   /// deletion, at the cost of occasionally pointing at nothing.
-  taskId String?
+  taskId         String?
 
   /// The craft, in a few words and in a client's vocabulary — "edit a video",
   /// "reconcile a bank statement". Matched against on the way in, so a second
   /// agent asking for the same thing finds this row.
   skillNeeded String
   /// Why it was needed here, in the requesting agent's own words.
-  reason String
+  reason      String
 
   /// How many separate agents have asked for this. The demand signal.
-  timesRequested Int @default(1)
+  timesRequested  Int      @default(1)
   /// Every agent that has asked, so the count can be trusted and the same
   /// agent asking twice does not look like two.
   requestedByKeys String[] @default([])
 
-  status AgentGapStatus @default(OPEN)
+  status      AgentGapStatus @default(OPEN)
   /// Set when an agent exists for it.
   filledByKey String?
   /// Why it was declined, or what filled it. Written by whoever decided.
-  note String?
+  note        String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2227,11 +2480,11 @@ model AgentHireRequest {
 
   /// The gap this answers, when it answers one. Null for a hire proposed
   /// without a gap behind it — the Owner asking directly.
-  gapId String?
+  gapId         String?
   /// The agent that designed it. Bare key, for the reason AgentGap gives.
   proposedByKey String
   /// The task the proposal was made on.
-  taskId String?
+  taskId        String?
 
   // The design, exactly as it will be created. Mirrors the create route's
   // input, because it is the same thing arriving by a different road.
@@ -2245,13 +2498,13 @@ model AgentHireRequest {
   /// stored on Agent — it is the one-job test, and its job is to be readable
   /// by the person deciding, who is the only one who can apply that test.
   deliverable      String
-  skills           String[] @default([])
-  kpis             String[] @default([])
-  toolkit          String[] @default([])
+  skills           String[]        @default([])
+  kpis             String[]        @default([])
+  toolkit          String[]        @default([])
   escalationPolicy String
   avatar           String?
   /// The ten layers, same shape as Agent.prompt.
-  prompt           Json     @default("{}")
+  prompt           Json            @default("{}")
 
   /// Why this is a new agent rather than work for somebody who already exists.
   /// The argument the Owner is actually being asked to accept.
@@ -2259,13 +2512,13 @@ model AgentHireRequest {
   /// Agents whose skills overlap this design, found before it was filed. Shown
   /// on the Slack card: "this is 40% the Web Developer" is the single most
   /// useful thing a person can be told before agreeing to a hire.
-  overlaps Json @default("[]")
+  overlaps  Json   @default("[]")
 
   status HireRequestStatus @default(PENDING)
   /// Which policy was in force when it was filed — ASK or AUTO. Recorded
   /// rather than inferred, so a hire made under AUTO stays identifiable after
   /// the policy is changed back.
-  policy String @default("ASK")
+  policy String            @default("ASK")
 
   /// Who decided. One of these is set, never both: a User id when it was
   /// decided in the app, a Slack user id when it was decided from Slack, and
@@ -2320,11 +2573,11 @@ model AgentSchedule {
   brief String
 
   /// `HH:MM`, local to `timezone`. Several a day is a list, as with scrapers.
-  runTimes String[] @default([])
+  runTimes     String[] @default([])
   /// IANA name. Defaults to the company's, not the server's.
-  timezone String   @default("Africa/Accra")
+  timezone     String   @default("Africa/Accra")
   /// Skip Saturday and Sunday. Most standing work is business-day work.
-  weekdaysOnly Boolean @default(true)
+  weekdaysOnly Boolean  @default(true)
 
   enabled Boolean @default(false)
 
@@ -2396,7 +2649,7 @@ model ActionRequest {
   input Json
 
   /// What the tool's `preview()` said it would do, as at proposal time.
-  wouldDo String
+  wouldDo     String
   /// Why it stopped short — "acting outside the company needs autonomy 3".
   heldBecause String?
 
@@ -2417,8 +2670,8 @@ model ActionRequest {
   decisionNote       String?
 
   /// What came back when it ran, and what went wrong if it did not.
-  result Json?
-  error  String?
+  result  Json?
+  error   String?
   costUsd Decimal @default(0) @db.Decimal(10, 4)
 
   /// A decision nobody makes goes stale — the invoice gets paid, the lead goes

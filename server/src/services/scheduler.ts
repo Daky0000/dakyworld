@@ -6,6 +6,7 @@ import { CaptureBudgetError, CaptureBusyError, pruneRunHistory, resumeInterrupte
 import { readCaptureConfig } from "./captureConfig.js";
 import { billDuePlans } from "./carePlanBilling.js";
 import { dispatchDueEmails } from "./emailSender.js";
+import { dispatchDueMessages } from "./messageSender.js";
 import { runDueSequences } from "./emailSequences.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
@@ -94,6 +95,9 @@ export async function tick(now = new Date()) {
     captureTick(now),
     billDuePlans(now),
     dispatchDueEmails(now),
+    // WhatsApp and SMS, on the same tick and settled separately for the same
+    // reason: a WhatsApp token that has expired must not stop an invoice email.
+    dispatchDueMessages(now),
     runDueSequences(now),
     runDueTasks(now),
     // What the agents do without being asked. Raises tasks; runDueTasks above
@@ -221,7 +225,7 @@ export function startScheduler() {
   // nothing but the seconds since the restart.
   void resumeInterruptedTasks().catch((err) => console.error("[scheduler] agent resume failed:", err));
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
-  console.log("  → Scheduler running (lead capture, care plan billing, email, agent tasks — checks every minute)");
+  console.log("  → Scheduler running (lead capture, care plan billing, email, WhatsApp/SMS, agent tasks — checks every minute)");
 }
 
 export function stopScheduler() {

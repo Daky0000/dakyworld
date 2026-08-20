@@ -1,5 +1,8 @@
 import express, { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { randomBytes } from "node:crypto";
+import { prisma } from "../lib/prisma.js";
+import { describeNumber, verifyWhatsAppKeys } from "../lib/whatsapp.js";
 import { requireRole } from "../middleware/auth.js";
 import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
 import { maskSecret } from "../lib/secrets.js";
@@ -215,6 +218,7 @@ async function describeAll(req: Request) {
         sender: hubtelSender || null,
       },
     },
+    messaging: await describeMessaging(req, appUrl),
     /**
      * Which repositories agents may write to. Deliberately reported even when
      * empty, because empty is a meaningful state — it is what stops an agent
@@ -1620,6 +1624,182 @@ settingsRouter.put("/github-repos", async (req, res, next) => {
     if (guardEnv(SETTING.GITHUB_ALLOWED_REPOS, "The writable repositories", res)) return;
     const { repos } = z.object({ repos: z.string().max(2000) }).parse(req.body);
     await setSetting(SETTING.GITHUB_ALLOWED_REPOS, repos.trim());
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// ---------------------------------------------------------------------------
+// Messaging — WhatsApp and SMS
+// ---------------------------------------------------------------------------
+//
+// The panel for reaching a lead who has a phone number and no email, which is
+// most of a scraped list. Two integrations behind one heading because from the
+// Owner's point of view they are one job, and because the app chooses between
+// them per lead — see services/messageSender.ts.
+//
+// **Both callback URLs are reported whether or not anything is connected.**
+// Pasting the URL into the provider's dashboard is the step most likely to be
+// missed, and missing it does not look like a missing setting: WhatsApp simply
+// never delivers a reply, so a prospect who answered appears not to have.
+
+/**
+ * What is connected, and the two addresses that have to be pasted elsewhere.
+ *
+ * The verify token and the SMS callback token are **shown in full, once
+ * generated**, because they are not credentials that grant anything — they are
+ * shared strings that have to be typed into somebody else's dashboard, and a
+ * masked one cannot be. The Meta app secret and the access token are masked
+ * like every other credential here.
+ */
+async function describeMessaging(req: Request, appUrl: string | null) {
+  const [token, phoneId, businessId, verifyToken, appSecret, smsToken, countryCode] = await Promise.all([
+    getSetting(SETTING.WHATSAPP_TOKEN),
+    getSetting(SETTING.WHATSAPP_PHONE_NUMBER_ID),
+    getSetting(SETTING.WHATSAPP_BUSINESS_ID),
+    getSetting(SETTING.WHATSAPP_VERIFY_TOKEN),
+    getSetting(SETTING.WHATSAPP_APP_SECRET),
+    getSetting(SETTING.SMS_INBOUND_TOKEN),
+    getSetting(SETTING.PHONE_COUNTRY_CODE),
+  ]);
+
+  const base = origin(req, appUrl);
+
+  // Meta's own read on how recipients are reacting to us. Fetched live because
+  // it changes without anybody doing anything: a number whose quality reaches
+  // RED has its sending limit cut and then loses the ability to start
+  // conversations at all, and there is nowhere else in this app to see it.
+  let number: Awaited<ReturnType<typeof describeNumber>> | null = null;
+  let numberError: string | null = null;
+  if (token && phoneId) {
+    try {
+      number = await describeNumber();
+    } catch (err) {
+      numberError = (err as Error).message;
+    }
+  }
+
+  const approvedTemplates = await prisma.whatsAppTemplate.count({ where: { status: "APPROVED" } });
+
+  return {
+    whatsapp: {
+      configured: Boolean(token && phoneId),
+      envManaged: isEnvManaged(SETTING.WHATSAPP_TOKEN),
+      token: token ? maskSecret(token) : null,
+      phoneNumberId: phoneId,
+      businessId,
+      appSecret: appSecret ? maskSecret(appSecret) : null,
+      /** Shown in full: it has to be typed into Meta's dashboard to mean anything. */
+      verifyToken: verifyToken || null,
+      /** What goes in the Callback URL field of the WhatsApp product's Configuration tab. */
+      callbackUrl: `${base}/api/messaging/whatsapp`,
+      /** Without the app secret, inbound replies are stored and never acted on. */
+      inboundTrusted: Boolean(appSecret),
+      number,
+      numberError,
+      approvedTemplates,
+    },
+    sms: {
+      /** The credentials themselves live under Payments — Hubtel issues one pair for both. */
+      inboundToken: smsToken || null,
+      inboundUrl: smsToken ? `${base}/api/messaging/sms/inbound?token=${encodeURIComponent(smsToken)}` : null,
+      statusUrl: smsToken ? `${base}/api/messaging/sms/status?token=${encodeURIComponent(smsToken)}` : null,
+      inboundTrusted: Boolean(smsToken),
+    },
+    countryCode: countryCode || "233",
+  };
+}
+
+/**
+ * Connects WhatsApp.
+ *
+ * **Verified against Meta before anything is stored.** The commonest mistake
+ * here is pasting the App Secret into the token field, which produces a 190
+ * that reads as an expired token — and the second commonest is a *temporary*
+ * token, which works perfectly for 24 hours and then stops. Neither is visible
+ * from a Settings screen that only writes what it is given, and both surface
+ * as "WhatsApp stopped working" days later.
+ */
+settingsRouter.put("/whatsapp", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.WHATSAPP_TOKEN, "The WhatsApp credentials", res)) return;
+    const input = z
+      .object({
+        token: z.string().min(20),
+        phoneNumberId: z.string().min(5).max(40),
+        businessId: z.string().max(40).optional(),
+        appSecret: z.string().max(120).optional(),
+      })
+      .parse(req.body);
+
+    const number = await verifyWhatsAppKeys(input.token.trim(), input.phoneNumberId.trim());
+
+    // Minted here rather than asked for. It is a string we choose and echo back
+    // during Meta's handshake, so making somebody invent one is a field they
+    // will fill with "test".
+    const existingVerify = await getSetting(SETTING.WHATSAPP_VERIFY_TOKEN);
+
+    await Promise.all([
+      setSetting(SETTING.WHATSAPP_TOKEN, input.token.trim(), { secret: true }),
+      setSetting(SETTING.WHATSAPP_PHONE_NUMBER_ID, input.phoneNumberId.trim()),
+      setSetting(SETTING.WHATSAPP_BUSINESS_ID, input.businessId?.trim() ?? ""),
+      input.appSecret?.trim()
+        ? setSetting(SETTING.WHATSAPP_APP_SECRET, input.appSecret.trim(), { secret: true })
+        : Promise.resolve(),
+      existingVerify ? Promise.resolve() : setSetting(SETTING.WHATSAPP_VERIFY_TOKEN, randomBytes(18).toString("hex")),
+    ]);
+
+    res.json({ number, ...(await describeAll(req)) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/whatsapp", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.WHATSAPP_TOKEN, "The WhatsApp credentials", res)) return;
+    await Promise.all([
+      deleteSetting(SETTING.WHATSAPP_TOKEN),
+      deleteSetting(SETTING.WHATSAPP_PHONE_NUMBER_ID),
+      deleteSetting(SETTING.WHATSAPP_BUSINESS_ID),
+      deleteSetting(SETTING.WHATSAPP_APP_SECRET),
+      deleteSetting(SETTING.WHATSAPP_VERIFY_TOKEN),
+    ]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Mints the secret that goes in Hubtel's SMS callback URL.
+ *
+ * Hubtel signs nothing, so this string is the only thing separating a real
+ * delivery report from anybody who guessed the address — and a forged inbound
+ * could opt a live prospect out of everything. Regenerating it invalidates the
+ * URL already in Hubtel's dashboard, which is said plainly in the response
+ * rather than discovered when replies quietly stop being acted on.
+ */
+settingsRouter.post("/sms-callback-token", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.SMS_INBOUND_TOKEN, "The SMS callback token", res)) return;
+    await setSetting(SETTING.SMS_INBOUND_TOKEN, randomBytes(18).toString("hex"));
+    res.json({
+      note: "Paste the two URLs below into Hubtel's dashboard. Any URL you had there before this will no longer be accepted.",
+      ...(await describeAll(req)),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** The country a bare local number is read as. See lib/phone.ts for why it matters. */
+settingsRouter.put("/messaging/country", async (req, res, next) => {
+  try {
+    const { countryCode } = z.object({ countryCode: z.string().regex(/^\d{1,4}$/) }).parse(req.body);
+    await setSetting(SETTING.PHONE_COUNTRY_CODE, countryCode);
     res.json(await describeAll(req));
   } catch (err) {
     next(err);

@@ -870,6 +870,21 @@ Write the rationale for a person, not for a model. Name the agents you checked a
           "audit.read",
           "suppression.check",
           "analytics.read",
+          // The phone channels. This agent's skills already claimed "a first
+          // message for WhatsApp as well as email" and it had no way to send
+          // one, which was the gap: most of the leads it is handed have a
+          // number and no address at all.
+          //
+          // `message.reach` first, and it is the one that changes the work —
+          // an agent that cannot ask which channel is even possible will draft
+          // an email to a lead who has no email. `whatsapp.link` prepares a
+          // message for a person to send by hand and reaches nobody on its
+          // own, which is why this writer gets it and not `whatsapp.send`:
+          // the rule that it never sends is unchanged.
+          "message.reach",
+          "message.draft",
+          "whatsapp.link",
+          "whatsapp.templates",
         ],
         escalationPolicy:
           "Checks the suppression list before writing to anybody, and stops dead on a reply, an unsubscribe or a complaint. Never claims a result Dakyworld did not get, never implies a prior relationship, and never sends — every message is a draft a person approves.",
@@ -1022,7 +1037,12 @@ Fact-check anything you assert about their business before it goes in. Being wro
           "Knowing when to stop and hand it over",
         ],
         kpis: ["Days sales outstanding", "Overdue invoices cleared", "Clients lost to a chase", "Promises kept"],
-        toolkit: ["finance.read", "client.read", "email.draft", "email.polish"],
+        // `sms.send` is genuinely the right tool for this job and the wrong one
+        // for outreach: a reminder about a real invoice to a client who has
+        // already agreed to pay is expected, gets read, and is the one message
+        // on this channel nobody resents. It is outward and spends money, so
+        // every call still goes through the approval queue.
+        toolkit: ["finance.read", "client.read", "email.draft", "email.polish", "message.reach", "message.draft", "sms.send"],
         escalationPolicy:
           "Never threatens, never implies legal action, and never offers a discount or a payment plan on its own authority. A dispute about the work itself is not a collections matter and goes to the person who owns the account.",
         process:
@@ -1372,7 +1392,22 @@ Fact-check anything you assert about their business before it goes in. Being wro
           "Timing and spacing",
         ],
         kpis: ["Reply rate on follow-ups", "Unsubscribes and complaints", "Sequences stopped early", "Meetings booked from a follow-up"],
-        toolkit: ["lead.read", "audit.read", "email.draft", "email.polish", "content.humanise", "suppression.check", "demo.read", "analytics.read"],
+        toolkit: [
+          "lead.read",
+          "audit.read",
+          "email.draft",
+          "email.polish",
+          "content.humanise",
+          "suppression.check",
+          "demo.read",
+          "analytics.read",
+          // A follow-up has to go down the channel the first message went
+          // down. Same split as the first writer: it may prepare a message,
+          // and a person still presses send.
+          "message.reach",
+          "message.draft",
+          "whatsapp.link",
+        ],
         escalationPolicy:
           "Checks the suppression list before every message and stops dead on a reply, an unsubscribe or a complaint. Never sends — every message is a draft a person approves — and never implies a previous conversation that did not happen.",
         process: `The sequence is day 0, 3, 8, 14 and 21, and each touch has one job. Keep the same single issue throughout — a follow-up that raises a second problem is a new cold email wearing a thread.

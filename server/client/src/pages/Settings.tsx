@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import { AgentReposPanel, HubtelPanel, PaystackPanel } from "../components/GhanaPayments";
+import { SmsCallbackPanel, WhatsAppPanel } from "../components/MessagingSettings";
 import type {
   ActorHealthReport,
   AppSettings,
@@ -32,6 +33,7 @@ type SectionId =
   | "security"
   | "system"
   | "email"
+  | "messaging"
   | "analyst"
   | "models"
   | "google"
@@ -47,6 +49,7 @@ const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
   { id: "security", label: "Security", blurb: "Your password and two-factor" },
   { id: "system", label: "System", blurb: "Your name, address, phone and logo" },
   { id: "email", label: "Email", blurb: "The mailbox everything sends from" },
+  { id: "messaging", label: "Messaging", blurb: "WhatsApp and SMS, for leads with no email" },
   { id: "analyst", label: "AI analyst", blurb: "Reads sheets, runs the agents" },
   { id: "models", label: "AI models", blurb: "Who writes, draws and checks facts" },
   { id: "google", label: "Google", blurb: "Drive imports and the calendar" },
@@ -121,6 +124,15 @@ export function Settings() {
         return data.cloudinary.configured ? "ok" : "idle";
       case "email":
         return data.email.configured ? "ok" : "idle";
+      // Amber for a connected WhatsApp whose webhook is not verified: it can
+      // send perfectly well and cannot hear a word back, which is the state
+      // most likely to be mistaken for working.
+      case "messaging":
+        return data.messaging.whatsapp.configured
+          ? data.messaging.whatsapp.inboundTrusted
+            ? "ok"
+            : "warn"
+          : "idle";
       case "alerts":
         return data.alerts.configured ? "ok" : "idle";
       case "developer":
@@ -184,6 +196,12 @@ export function Settings() {
                   <PaystackPanel settings={data} />
                   <HubtelPanel settings={data} />
                   <PaymentsPanel settings={data} />
+                </div>
+              )}
+              {section === "messaging" && (
+                <div className="space-y-6">
+                  <WhatsAppPanel settings={data} />
+                  <SmsCallbackPanel settings={data} />
                 </div>
               )}
               {section === "storage" && <StoragePanel settings={data} />}

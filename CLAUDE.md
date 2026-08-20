@@ -431,6 +431,98 @@ drafter, and the `outreach.writer` / `outreach.followup` prompts — plus the
 agents that already exist, marked by `agents.coldEmailPlaybookV3` and skipping
 any prompt the Owner has rewritten.
 
+
+**The phone channels** — `src/lib/{phone,whatsapp,messageDrafter}.ts`,
+`src/services/{messageSender,whatsappTemplates}.ts`, `routes/messages.ts`,
+`routes/messaging.ts`. Most of a scraped list has a number and no email — a
+Maps listing carries a phone number because a customer needs one, while an
+address is a thing a business chose to publish — so the largest group of leads
+in this database could not be reached by anything the app did.
+
+**One rule shapes the whole module.** WhatsApp carries a message you wrote only
+within **24 hours of that person's last inbound message**; outside that window
+it carries a template Meta approved in advance and nothing else. A scraped lead
+has never written to us, so **every first WhatsApp is a MARKETING template and
+waits on Meta's review** — minutes, occasionally a day. That is not a latency
+this code can engineer away, which is why `MessageThread.lastInboundAt` exists
+and why the window is re-read at the moment of sending rather than trusted from
+the composer: 24 hours is long enough for it to have closed since the draft.
+
+**So `wa.me` is a first-class route, not a fallback.** `MessageRoute.LINK`
+prepares a message and hands back a click-to-chat link a person opens and sends
+from their own WhatsApp — no Business account, no template review, no
+per-conversation fee, and it arrives from a human being rather than a brand,
+which is what a small business here actually replies to. **A LINK message reads
+`READY` until somebody says they sent it** (`markSentByHand`). Copying a link is
+not sending a message, and an outbox that marks things sent on the strength of a
+click is an outbox nobody can trust about anything.
+
+- **`lib/phone.ts` refuses rather than guesses.** The same handset arrives six
+  ways and the number *is* the identity here — it is what a thread is keyed on
+  and what an opt-out is recorded against, so two spellings means two threads
+  and an opt-out on one that does not stop the other. The failure mode is
+  silence, not an error: both providers accept a malformed number and the
+  message goes to nobody, or to a stranger under Dakyworld's name.
+- **A landline is not "no phone".** A WhatsApp to one is a conversation fee for
+  nothing and an SMS to one is money burnt, so `reachabilityOf` reports it
+  unreachable *with the reason* rather than quietly trying.
+- **An SMS cliff is invisible and `smsCost` is why it is priced in code.** 160
+  GSM-7 characters is one segment, 161 is two, and one curly apostrophe pasted
+  in from a word processor re-encodes the whole message as UCS-2 and drops the
+  limit to 70. `toGsm7` is offered, never applied silently.
+- **`MessageSuppression` is keyed on the number and crosses channels.** Somebody
+  who replies STOP on WhatsApp has not asked to keep getting texts. An inbound
+  STOP also cancels everything queued on both channels and stops any email
+  sequence the lead is in — `emailSequences.stopOnReply` is keyed on an address,
+  and a lead reached by phone because they have no address could never have
+  triggered it.
+- **`lib/messageDrafter.ts` is part of the playbook surface.** Same doctrine as
+  the email drafter — identify yourself first, say what it makes harder rather
+  than what it has cost, no price, an ask that offers rather than requests — and
+  a different shape, because there is no signature to append (the name goes *in*
+  the words, which the email drafter is explicitly forbidden from doing) and 70
+  words is the ceiling rather than the floor.
+- **`coldEmailChecks.preSendCheck` took a `channel` rather than being forked.**
+  One doctrine with three sets of numbers: the subject check does not run where
+  there is no subject, and the length band differs. Two copies of a checklist
+  drift, and the drift is invisible until a v3 email and a v2 WhatsApp reach the
+  same prospect on the same day.
+- **`WhatsAppTemplate` mirrors Meta and never leads it.** Only `syncTemplates`
+  writes a status, because Meta is the only thing that knows one — a template
+  can be approved and then paused a week later because recipients blocked it.
+  `checkTemplate` catches every one of Meta's refusals *before* submission
+  (a name with capitals, a body starting or ending on a variable, adjacent
+  variables, a gap in the numbering), because each of them comes back as a
+  generic "invalid parameter" hours later.
+- **A template body is never modified.** Meta approved an exact string, so the
+  opt-out is *not* appended to one — which is why every starter template carries
+  its own.
+- **Meta's error codes are translated.** `explain()` in `lib/whatsapp.ts` turns
+  `(#131047) Re-engagement message` into the sentence that says what to do. The
+  raw text sends somebody looking for a bug in an app that is working exactly as
+  Meta requires. `WhatsAppError`, `HubtelError` and `MessagingError` join
+  `AnalystError` and `ApifyError` as the classes whose message the error handler
+  passes through, for the same stated reason.
+- **`routes/messaging.ts` is public and mounted above the JSON parser** — the
+  fourth route on that page for which the signature covers the exact bytes.
+  Verification matters *more* here than on the generic webhook route: an
+  unverified inbound would open a 24-hour free-form window to a number of the
+  caller's choosing, or opt a live prospect out. Meta signs with the app secret;
+  **Hubtel signs nothing at all**, so its SMS callbacks carry a secret in the
+  query string and are refused without one.
+- **`quality_rating` is fetched, not stored.** It falls when recipients block or
+  report, a RED number loses the ability to start conversations at all, and
+  there is nowhere else in this app to see it.
+
+`tmp/phoneChannels.ts` drives all of it — the number table, the segment
+arithmetic, the channel-aware checklist, Meta's template rules, then the whole
+send-and-receive loop against a real Postgres and a local stub playing Meta and
+Hubtel, then the webhook over **real HTTP mounted as `index.ts` mounts it**.
+That last part is the one that cannot be faked, and it is the same trap
+`tmp/slackButtons.ts` exists for. It also audits the composed prompt the way
+`tmp/writerAudit.ts` does: every v3 rule present, and every superseded one
+absent.
+
 **Demos** — `src/services/demoBuilder.ts`, `designReferences.ts`,
 `routes/demos.ts`. For a lead with no website or a bad one, the demo is the
 strongest thing to offer instead of a call: far easier to say yes to, and it is

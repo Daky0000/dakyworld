@@ -550,6 +550,39 @@ export interface ModelSettings {
   jobs: ModelJobInfo[];
 }
 
+/**
+ * WhatsApp, and the two addresses Hubtel posts SMS replies back to.
+ *
+ * `verifyToken` and `inboundToken` are deliberately in the clear where every
+ * other credential here is masked. They are not credentials — they are shared
+ * strings that have to be typed into somebody else's dashboard, and a masked
+ * one cannot be.
+ */
+export interface MessagingSettings {
+  whatsapp: {
+    configured: boolean;
+    envManaged: boolean;
+    token: string | null;
+    phoneNumberId: string | null;
+    businessId: string | null;
+    appSecret: string | null;
+    verifyToken: string | null;
+    callbackUrl: string;
+    /** False when no app secret is set, which means replies are stored and not acted on. */
+    inboundTrusted: boolean;
+    number: { displayNumber: string | null; verifiedName: string | null; qualityRating: string | null; messagingLimit: string | null } | null;
+    numberError: string | null;
+    approvedTemplates: number;
+  };
+  sms: {
+    inboundToken: string | null;
+    inboundUrl: string | null;
+    statusUrl: string | null;
+    inboundTrusted: boolean;
+  };
+  countryCode: string;
+}
+
 export interface AppSettings {
   apify: {
     connected: boolean;
@@ -673,6 +706,8 @@ export interface AppSettings {
     resolvedAppUrl: string;
     timezone: string;
   };
+  messaging: MessagingSettings;
+
 }
 
 /** The four brand images. Keys match server/src/services/systemProfile.ts. */
@@ -1269,6 +1304,20 @@ export interface PreSendCheck {
   severity: "BLOCK" | "WARN";
   passed: boolean;
   detail: string;
+}
+
+/**
+ * The checklist as a whole. Named rather than left inline because the message
+ * drafter returns exactly the same shape — the playbook is one doctrine across
+ * email, WhatsApp and SMS, and two names for its report would be the first
+ * step towards two doctrines.
+ */
+export interface PreSendReport {
+  checks: PreSendCheck[];
+  sendable: boolean;
+  blocking: PreSendCheck[];
+  warnings: PreSendCheck[];
+  humanMustConfirm: string[];
 }
 
 export interface EmailDraft {
@@ -1913,5 +1962,179 @@ export interface ActionRequestRow {
   expiresAt: string;
   /** True when it sat unanswered long enough that it can no longer be carried out. */
   expired: boolean;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp and SMS
+// ---------------------------------------------------------------------------
+//
+// Parallel to the email types rather than folded into them, for the same
+// reason the server models are: no subject, no HTML, no attachments, and a
+// 24-hour window that decides whether a written message can be sent at all.
+
+export type MessageChannel = "WHATSAPP" | "SMS";
+export type MessageRoute = "API" | "LINK";
+export type MessageStatus =
+  | "DRAFT"
+  | "SCHEDULED"
+  | "READY"
+  | "SENDING"
+  | "SENT"
+  | "DELIVERED"
+  | "READ"
+  | "FAILED"
+  | "CANCELLED";
+
+export interface MessageRow {
+  id: string;
+  channel: MessageChannel;
+  direction: "OUTBOUND" | "INBOUND";
+  status: MessageStatus;
+  route: MessageRoute;
+  toPhone: string;
+  /** `+233 24 123 4567` — formatted by the server, never re-derived here. */
+  display: string;
+  toName: string | null;
+  body: string;
+  purpose: EmailPurpose;
+  templateName: string | null;
+  segments: number | null;
+  scheduledFor: string | null;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  error: string | null;
+  lead?: { id: string; contactName: string; companyName: string | null } | null;
+  client?: { id: string; name: string } | null;
+  createdAt: string;
+}
+
+export interface MessageThreadRow {
+  id: string;
+  channel: MessageChannel;
+  phone: string;
+  display: string;
+  name: string | null;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  lastInboundText: string | null;
+  unreadCount: number;
+  /** True when a written WhatsApp would be delivered right now. */
+  windowOpen: boolean;
+  windowMinutesLeft: number | null;
+  lead?: { id: string; contactName: string; companyName: string | null; status: string } | null;
+  client?: { id: string; name: string } | null;
+  _count?: { messages: number };
+}
+
+export interface MessageThreadDetail extends MessageThreadRow {
+  messages: MessageRow[];
+  suppressed: string | null;
+}
+
+/** A lead with a number and no email — the group this whole module exists for. */
+export interface PhoneOnlyLead {
+  id: string;
+  contactName: string;
+  companyName: string | null;
+  contactPhone: string | null;
+  city: string | null;
+  category: string | null;
+  website: string | null;
+  leadScore: number;
+  status: string;
+  tags: string[];
+  createdAt: string;
+  phone: { e164: string; display: string; mobile: boolean; country: string | null } | null;
+  /** A sentence when they cannot be reached, null when they can. */
+  unreachable: string | null;
+  contacted: boolean;
+  replied: boolean;
+  unread: number;
+}
+
+export interface MessagingStatus {
+  whatsapp: boolean;
+  whatsappTemplates: boolean;
+  sms: boolean;
+  drafterReady: boolean;
+  drafts: number;
+  scheduled: number;
+  ready: number;
+  sent: number;
+  failed: number;
+  threads: number;
+  unread: number;
+  suppressed: number;
+  quality: { displayNumber: string | null; verifiedName: string | null; qualityRating: string | null; messagingLimit: string | null } | null;
+  qualityError: string | null;
+  defaultCallingCode: string;
+}
+
+export interface WhatsAppTemplateRow {
+  id: string;
+  name: string;
+  language: string;
+  category: string;
+  status: string;
+  rejectionReason: string | null;
+  body: string;
+  header: string | null;
+  footer: string | null;
+  variableCount: number;
+  variableHints: string[];
+  syncedAt: string | null;
+}
+
+export interface StarterTemplate {
+  label: string;
+  name: string;
+  category: "MARKETING" | "UTILITY";
+  purpose: string;
+  body: string;
+  footer: string;
+  examples: string[];
+  variables: string[];
+}
+
+export interface SmsCost {
+  encoding: "GSM-7" | "UCS-2";
+  characters: number;
+  segments: number;
+  /** The character that forced UCS-2 — nearly always an emoji or a curly quote. */
+  forcedBy: string | null;
+}
+
+export interface Reachability {
+  email: string | null;
+  phone: { e164: string; display: string; mobile: boolean; country: string | null } | null;
+  channel: "EMAIL" | "WHATSAPP" | "SMS" | null;
+  why: string;
+}
+
+export interface MessageDraftResponse {
+  body: string;
+  rationale: string;
+  confidence: number;
+  model: string;
+  channel: MessageChannel;
+  cost?: SmsCost | null;
+  checks: PreSendReport;
+  facts: string[];
+  recipient: { name: string | null; phone: string | null; email: string | null };
+  caseStrength: CaseStrength | null;
+  lookedNow: boolean;
+  prepError: string | null;
+  scenario: { key: string; number: number; name: string; exampleAsk: string; guard: string | null; matched: string[]; alsoAvailable: string[] } | null;
+  pickableScenarios: { key: string; number: number; name: string }[];
+}
+
+export interface MessageSuppressionRow {
+  id: string;
+  phone: string;
+  display: string;
+  reason: string;
+  source: string;
   createdAt: string;
 }

@@ -22,12 +22,20 @@ export function LeadDrawer({
   groups,
   onClose,
   onEmail,
+  onMessage,
 }: {
   leadId: string | null;
   groups: LeadGroup[];
   onClose: () => void;
   /** Opens the composer on this lead. Handled by the page so the composer isn't nested inside a drawer. */
   onEmail?: (leadId: string) => void;
+  /**
+   * The same, for WhatsApp and SMS. Separate from `onEmail` rather than one
+   * button that picks: which channel a lead can be reached on is the single
+   * most useful thing to be able to see at a glance on this row, and folding
+   * the two together hides it.
+   */
+  onMessage?: (leadId: string) => void;
 }) {
   const qc = useQueryClient();
   const { data: lead, isLoading } = useQuery({
@@ -100,6 +108,19 @@ export function LeadDrawer({
                 title={lead.contactEmail ? `Write to ${lead.contactEmail}` : "No email address on this lead"}
               >
                 Email
+              </Button>
+            )}
+            {/* The route in when there is no address — which, on a scraped
+                lead, is the usual case rather than the exception. Offered as
+                the primary action when email is not available at all. */}
+            {onMessage && (
+              <Button
+                variant={lead.contactEmail ? "secondary" : "primary"}
+                onClick={() => onMessage(lead.id)}
+                disabled={!lead.contactPhone}
+                title={lead.contactPhone ? `Message ${lead.contactPhone}` : "No phone number on this lead"}
+              >
+                WhatsApp
               </Button>
             )}
             {/* Opens the writer against this lead rather than sending the

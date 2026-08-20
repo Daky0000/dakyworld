@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
 import { raisePayment, settleFromProvider } from "../payments.js";
-import { normaliseGhanaNumber, sendSms } from "../../lib/hubtel.js";
+import { defaultCallingCode, displayPhone, smsCost, toE164, waLink } from "../../lib/phone.js";
+import { draftMessage } from "../../lib/messageDrafter.js";
+import { resolveContext } from "../emailContext.js";
 import { agentBranchName, commitFiles, createBranch, createRepo, getPullRequest, listTree, mergePullRequest, openPullRequest, readFile } from "../../lib/github.js";
 import type { ToolDefinition } from "./types.js";
 import { auditCompany } from "../companyAudit.js";
@@ -14,6 +16,15 @@ import { polishEmail } from "../../lib/emailPolish.js";
 import { buildDemo, demoUrl, subjectFromLead } from "../demoBuilder.js";
 import { appUrl } from "../emailSender.js";
 import { composeMessage, sendMessage } from "../emailSender.js";
+import {
+  composeMessage as composePhoneMessage,
+  leadReachability,
+  reachabilityOf,
+  resolveThread,
+  sendPhoneMessage,
+  windowOpen,
+  windowRemainingMinutes,
+} from "../messageSender.js";
 import { enrol, stopOnReply } from "../emailSequences.js";
 import { runSource } from "../scraperRunner.js";
 import { estimateCost } from "../captureCost.js";
@@ -1138,26 +1149,229 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       };
     },
   },
+  // --- The phone channels ---------------------------------------------------
+  //
+  // Most of a scraped list has a number and no email, so for the largest group
+  // of leads in the database these are the only tools that can reach anybody
+  // at all. Four rules run through them and are worth reading once:
+  //
+  //  - **Nothing here calls a provider directly.** Every send goes through
+  //    services/messageSender.ts, which is where the opt-out list is checked,
+  //    the thread is written and the contact is logged on the lead. A tool
+  //    that called Meta or Hubtel itself would send messages the outbox has
+  //    never heard of, which is the same as no outbox.
+  //  - **WhatsApp and SMS are separate grants** because they are separate
+  //    accounts with separate costs. An agent trusted to text an invoice
+  //    reminder is not thereby trusted to start WhatsApp conversations.
+  //  - **`whatsapp.link` is not outward** — it prepares a message and a person
+  //    presses send. That is the difference between a draft and an act, and it
+  //    is why this one is the tool an agent on a low autonomy level can still
+  //    usefully hold.
+  //  - **The previews say what the message will cost and whether it can go at
+  //    all.** On this channel the second question has a real answer: outside
+  //    the 24-hour window WhatsApp carries only an approved template.
+  {
+    key: "message.reach",
+    name: "How to reach somebody",
+    group: "Communication",
+    purpose:
+      "Says which channel a lead can actually be reached on — email, WhatsApp, a text — and why. Reading only. Ask this before writing anything, because it is the difference between an email nobody can receive and a message that lands.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({
+      leadId: z.string().cuid().optional(),
+      email: z.string().max(200).optional(),
+      phone: z.string().max(24).optional().describe("Any usual form — 024…, +233…"),
+    }),
+    run: async (input) => {
+      const reach = input.leadId ? await leadReachability(input.leadId) : await reachabilityOf({ email: input.email, phone: input.phone });
+      return {
+        channel: reach.channel,
+        why: reach.why,
+        email: reach.email,
+        phone: reach.phone ? { number: reach.phone.display, mobile: reach.phone.mobile, country: reach.phone.country } : null,
+      };
+    },
+  },
+  {
+    key: "message.draft",
+    name: "Draft a WhatsApp or a text",
+    group: "Communication",
+    purpose:
+      "Writes a short message for a phone, from what is on the record. Returns the words and never sends them. Forty words on WhatsApp, fewer by text — a message on somebody's phone is not a shorter email.",
+    scope: "write",
+    requires: "models",
+    job: "text",
+    spends: true,
+    outward: false,
+    input: z.object({
+      channel: z.enum(["WHATSAPP", "SMS"]),
+      leadId: z.string().cuid().optional(),
+      clientId: z.string().cuid().optional(),
+      toPhone: z.string().max(24).optional(),
+      toName: z.string().max(120).optional(),
+      purpose: z
+        .enum(["COLD_OUTREACH", "FOLLOW_UP", "MEETING_REQUEST", "DEMO_READY", "INVOICE_DELIVERY", "INVOICE_REMINDER", "PROJECT_UPDATE", "THANK_YOU", "ONBOARDING", "REACTIVATION", "CUSTOM"])
+        .default("COLD_OUTREACH"),
+      brief: z.string().max(1200).optional().describe("What this message is for, in your words."),
+    }),
+    run: async (input) => {
+      const context = await resolveMessageContext(input);
+      const draft = await draftMessage({
+        channel: input.channel,
+        purpose: input.purpose,
+        context,
+        brief: input.brief ?? null,
+      });
+      return {
+        body: draft.body,
+        rationale: draft.rationale,
+        confidence: draft.confidence,
+        writtenBy: draft.model,
+        words: draft.body.trim().split(/\s+/).length,
+        cost: draft.cost ?? null,
+      };
+    },
+  },
+  {
+    key: "whatsapp.send",
+    name: "Send a WhatsApp message",
+    group: "Communication",
+    purpose:
+      "Sends one WhatsApp message. Inside 24 hours of their last reply it carries what you wrote; outside it, only a template Meta approved in advance — name one, or use whatsapp.link instead and let a person send it.",
+    scope: "send",
+    requires: "whatsapp",
+    spends: true,
+    outward: true,
+    input: z.object({
+      leadId: z.string().cuid().optional(),
+      clientId: z.string().cuid().optional(),
+      to: z.string().max(24).optional().describe("Only needed when there is no lead or client to take the number from."),
+      message: z.string().max(1000).optional().describe("Free text. Only delivered inside the 24-hour window."),
+      template: z.string().max(120).optional().describe("An approved template name. Required outside the window — see whatsapp.templates."),
+      variables: z.array(z.string().max(400)).max(10).optional().describe("Values for the template's {{1}}, {{2}} … in order."),
+      purpose: z
+        .enum(["COLD_OUTREACH", "FOLLOW_UP", "MEETING_REQUEST", "DEMO_READY", "INVOICE_DELIVERY", "INVOICE_REMINDER", "PROJECT_UPDATE", "THANK_YOU", "ONBOARDING", "REACTIVATION", "CUSTOM"])
+        .default("CUSTOM"),
+    }),
+    preview: async (input) => describeSend("WHATSAPP", input),
+    run: async (input) => {
+      const message = await composePhoneMessage({
+        channel: "WHATSAPP",
+        purpose: input.purpose,
+        kind: input.template ? "TEMPLATE" : "AUTOMATION",
+        body: input.message ?? null,
+        templateName: input.template ?? null,
+        templateVariables: input.variables ?? [],
+        toPhone: input.to ?? null,
+        leadId: input.leadId ?? null,
+        clientId: input.clientId ?? null,
+      });
+      const result = await sendPhoneMessage(message.id);
+      if (!result.sent) throw new Error(result.reason ?? "The message was not sent.");
+      return { messageId: message.id, to: displayPhone(message.toPhone), providerMessageId: result.providerMessageId ?? null };
+    },
+  },
+  {
+    key: "whatsapp.link",
+    name: "Prepare a WhatsApp message to send by hand",
+    group: "Communication",
+    purpose:
+      "Writes the message and returns a wa.me link a person opens and sends from their own WhatsApp. No template approval, no fee, and it arrives from a human being rather than a brand — which is what a small business here actually replies to. Nothing is sent by this tool.",
+    scope: "write",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({
+      leadId: z.string().cuid().optional(),
+      clientId: z.string().cuid().optional(),
+      to: z.string().max(24).optional(),
+      message: z.string().min(4).max(1000),
+      purpose: z
+        .enum(["COLD_OUTREACH", "FOLLOW_UP", "MEETING_REQUEST", "DEMO_READY", "REACTIVATION", "CUSTOM"])
+        .default("COLD_OUTREACH"),
+    }),
+    run: async (input) => {
+      const message = await composePhoneMessage({
+        channel: "WHATSAPP",
+        purpose: input.purpose,
+        kind: "AI_DRAFT",
+        route: "LINK",
+        body: input.message,
+        toPhone: input.to ?? null,
+        leadId: input.leadId ?? null,
+        clientId: input.clientId ?? null,
+        status: "READY",
+      });
+      return {
+        messageId: message.id,
+        to: displayPhone(message.toPhone),
+        link: waLink(message.toPhone, message.body),
+        note: "Nothing has been sent. Open the link, check the message, and press send — then mark it sent in the app.",
+      };
+    },
+  },
+  {
+    key: "whatsapp.templates",
+    name: "List the approved WhatsApp templates",
+    group: "Communication",
+    purpose:
+      "The templates Meta has approved, with how many variables each takes. Outside the 24-hour window these are the only things that can be sent, so read this before writing a first WhatsApp to anybody.",
+    scope: "read",
+    requires: "whatsapp",
+    spends: false,
+    outward: false,
+    input: z.object({ includeUnapproved: z.boolean().default(false) }),
+    run: async (input) => {
+      const templates = await prisma.whatsAppTemplate.findMany({
+        where: input.includeUnapproved ? undefined : { status: "APPROVED" },
+        orderBy: { name: "asc" },
+        select: { name: true, language: true, category: true, status: true, body: true, variableCount: true, variableHints: true, rejectionReason: true },
+      });
+      return { templates, note: templates.length ? undefined : "No approved template exists yet, so a first WhatsApp can only go out as a wa.me link — see whatsapp.link." };
+    },
+  },
   {
     key: "sms.send",
     name: "Send a text message",
     group: "Communication",
     purpose:
-      "Sends one SMS to a Ghanaian mobile number through Hubtel. For a payment reminder or an appointment confirmation — the things that get read. Not for outreach.",
+      "Sends one SMS. For a payment reminder or an appointment confirmation — the things that get read. Costs money per 160 characters and cannot be recalled, so it is the last resort, not the first: check message.reach before reaching for it.",
     scope: "send",
     requires: "hubtelSms",
-    spends: false,
+    spends: true,
     outward: true,
     input: z.object({
-      to: z.string().min(9).max(20).describe("A Ghanaian mobile number in any usual form — 024…, 0244…, +233…"),
+      to: z.string().min(9).max(24).optional().describe("Any usual form — 024…, 0244…, +233…. Only needed when there is no lead or client."),
+      leadId: z.string().cuid().optional(),
+      clientId: z.string().cuid().optional(),
       message: z.string().min(4).max(480).describe("Kept short. Say who it is from, because a sender id is easy to miss."),
+      purpose: z
+        .enum(["INVOICE_DELIVERY", "INVOICE_REMINDER", "PROJECT_UPDATE", "MEETING_REQUEST", "THANK_YOU", "ONBOARDING", "CUSTOM"])
+        .default("CUSTOM"),
     }),
-    preview: async (input) => {
-      const to = normaliseGhanaNumber(input.to);
-      if (!to) return `"${input.to}" is not a Ghanaian mobile number, so nothing would be sent.`;
-      return `Text ${to}: "${input.message.slice(0, 160)}${input.message.length > 160 ? "…" : ""}"`;
+    preview: async (input) => describeSend("SMS", input),
+    run: async (input) => {
+      const message = await composePhoneMessage({
+        channel: "SMS",
+        purpose: input.purpose,
+        kind: "AUTOMATION",
+        body: input.message,
+        toPhone: input.to ?? null,
+        leadId: input.leadId ?? null,
+        clientId: input.clientId ?? null,
+      });
+      const result = await sendPhoneMessage(message.id);
+      if (!result.sent) throw new Error(result.reason ?? "The text was not sent.");
+      return {
+        messageId: message.id,
+        to: displayPhone(message.toPhone),
+        segments: message.segments,
+        providerMessageId: result.providerMessageId ?? null,
+      };
     },
-    run: async (input) => sendSms(input.to, input.message),
   },
   // --- Changing the software ------------------------------------------------
   //
@@ -2409,4 +2623,81 @@ export async function resolveTool(key: string): Promise<ToolDefinition | undefin
   if (builtin) return builtin;
   if (!key.startsWith("mcp.")) return undefined;
   return (await allMcpTools()).find((tool) => tool.key === key);
+}
+
+
+// --- Helpers for the phone channels ----------------------------------------
+
+/**
+ * The facts a phone-channel draft is written from.
+ *
+ * The same resolver the email composer uses, so an agent's WhatsApp and a
+ * person's email about the same lead argue from one set of facts. A second
+ * context builder here would be a second thing to keep in step with the audit,
+ * the research and the demo link.
+ */
+async function resolveMessageContext(input: { leadId?: string; clientId?: string; toPhone?: string; toName?: string }) {
+  return resolveContext({
+    leadId: input.leadId ?? null,
+    clientId: input.clientId ?? null,
+    toPhone: input.toPhone ?? null,
+    toName: input.toName ?? null,
+  });
+}
+
+/**
+ * The number a tool is actually going to write to, resolved the same way the
+ * composer resolves it — from the lead or client when one was named, from the
+ * typed number otherwise.
+ */
+async function resolveTargetNumber(input: { leadId?: string; clientId?: string; to?: string }): Promise<ReturnType<typeof toE164>> {
+  const code = await defaultCallingCode();
+  if (input.to) return toE164(input.to, code);
+  if (input.leadId) {
+    const lead = await prisma.lead.findUnique({ where: { id: input.leadId }, select: { contactPhone: true } });
+    return toE164(lead?.contactPhone, code);
+  }
+  if (input.clientId) {
+    const client = await prisma.client.findUnique({
+      where: { id: input.clientId },
+      select: { phone: true, contacts: { where: { isPrimary: true }, take: 1, select: { phone: true } } },
+    });
+    return toE164(client?.contacts[0]?.phone ?? client?.phone, code);
+  }
+  return null;
+}
+
+/**
+ * What an approval card says about a message before it goes.
+ *
+ * Answers the three things the Owner needs and cannot get anywhere else: who
+ * it is going to, what it will cost, and — the one that is unique to this
+ * channel — whether WhatsApp will carry it at all. A preview that says "sends
+ * a message" is a preview of nothing.
+ */
+async function describeSend(
+  channel: "WHATSAPP" | "SMS",
+  input: { leadId?: string; clientId?: string; to?: string; message?: string; template?: string; variables?: string[] },
+): Promise<string> {
+  const parsed = await resolveTargetNumber(input);
+  if (!parsed) return "There is no phone number on that record, so nothing would be sent.";
+  if (!parsed.mobile) return `${parsed.display} looks like a landline, so nothing would arrive.`;
+
+  const suppressed = await prisma.messageSuppression.findUnique({ where: { phone: parsed.e164 } });
+  if (suppressed) return `${parsed.display} has asked not to be contacted (${suppressed.reason}), so nothing would be sent.`;
+
+  const preview = (input.template ? `template "${input.template}"` : `"${(input.message ?? "").slice(0, 160)}${(input.message ?? "").length > 160 ? "…" : ""}"`);
+
+  if (channel === "SMS") {
+    const cost = smsCost(input.message ?? "");
+    return `Text ${parsed.display}: ${preview} — ${cost.segments} segment${cost.segments === 1 ? "" : "s"} in ${cost.encoding}.`;
+  }
+
+  const thread = await resolveThread("WHATSAPP", parsed.e164, { leadId: input.leadId ?? null, clientId: input.clientId ?? null });
+  const open = windowOpen(thread);
+  const left = windowRemainingMinutes(thread);
+
+  if (input.template) return `WhatsApp ${parsed.display} the approved ${preview}${input.variables?.length ? ` with ${input.variables.join(", ")}` : ""}.`;
+  if (open) return `WhatsApp ${parsed.display}: ${preview} — their window is open for another ${left} minute${left === 1 ? "" : "s"}.`;
+  return `This would be refused: ${parsed.display} has not messaged us in 24 hours, so WhatsApp will only carry an approved template. Name one, or use whatsapp.link.`;
 }

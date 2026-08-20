@@ -30,9 +30,18 @@ function findingIdsFrom(audit: unknown): string[] {
 }
 
 export interface RecipientContext {
-  kind: "lead" | "client" | "address";
+  kind: "lead" | "client" | "address" | "phone";
   /** Who the email actually goes to. */
   email: string | null;
+  /**
+   * The number, exactly as it is written on the record — not normalised.
+   *
+   * Normalising is `lib/phone.ts`'s job and it happens at the point of
+   * sending, so what is held here stays the thing a person would recognise
+   * if they read the lead. It is null far less often than `email` is, which
+   * is the entire reason the phone channels exist.
+   */
+  phone?: string | null;
   name: string | null;
   /** Rendered for the prompt — plain lines, no JSON, nothing invented. */
   facts: string[];
@@ -162,6 +171,7 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
     prepNotes: lead.research?.notes ?? [],
     leadId: lead.id,
     email: lead.contactEmail,
+    phone: lead.contactPhone,
     name: lead.contactName,
     facts,
     findingIds: findingIdsFrom(lead.research?.audit),
@@ -229,6 +239,7 @@ export async function clientContext(clientId: string): Promise<RecipientContext>
     kind: "client",
     clientId: client.id,
     email: primary?.email ?? client.email,
+    phone: primary?.phone ?? client.phone,
     name: primary?.name ?? client.name,
     facts,
     variables: {
@@ -252,14 +263,34 @@ export function addressContext(email: string, name?: string | null): RecipientCo
   };
 }
 
+/**
+ * A bare number with no record behind it. The phone-channel twin of
+ * `addressContext`, and it exists for the same reason: somebody typing a
+ * number into the composer has given the drafter nothing to personalise
+ * from, and the drafter has to be told that rather than left to infer it
+ * from an empty list.
+ */
+export function phoneContext(phone: string, name?: string | null): RecipientContext {
+  return {
+    kind: "phone",
+    email: null,
+    phone,
+    name: name ?? null,
+    facts: ["We hold no record for this number beyond the name given. Do not invent any detail about them."],
+    variables: { first_name: firstName(name), contact_name: name ?? "", company: "" },
+  };
+}
+
 export async function resolveContext(args: {
   leadId?: string | null;
   clientId?: string | null;
   toEmail?: string | null;
+  toPhone?: string | null;
   toName?: string | null;
 }): Promise<RecipientContext> {
   if (args.leadId) return leadContext(args.leadId);
   if (args.clientId) return clientContext(args.clientId);
   if (args.toEmail) return addressContext(args.toEmail, args.toName);
-  throw new Error("An email needs a lead, a client, or an address");
+  if (args.toPhone) return phoneContext(args.toPhone, args.toName);
+  throw new Error("A message needs a lead, a client, an address, or a number");
 }

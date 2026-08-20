@@ -6,6 +6,7 @@ import { useAuth } from "../lib/auth";
 import type { Lead, LeadFieldDef, LeadGroup, LeadStats } from "../lib/types";
 import { LeadDrawer } from "../components/LeadDrawer";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
+import { MessageComposer, type MessageTarget } from "../components/MessageComposer";
 import {
   CAPTURE_METHODS,
   ColumnManager,
@@ -128,6 +129,7 @@ export function Leads() {
   const [columnsFor, setColumnsFor] = useState<string | null | undefined>(undefined);
 
   const [emailing, setEmailing] = useState<ComposerTarget | null>(null);
+  const [messaging, setMessaging] = useState<MessageTarget | null>(null);
   const [managingTags, setManagingTags] = useState(false);
 
   // The open lead lives in the URL, so a lead can be linked to directly.
@@ -435,9 +437,14 @@ export function Leads() {
           setOpenLeadId(null);
           setEmailing({ leadId, purpose: "COLD_OUTREACH" });
         }}
+        onMessage={(leadId) => {
+          setOpenLeadId(null);
+          setMessaging({ leadId, channel: "WHATSAPP", purpose: "COLD_OUTREACH" });
+        }}
       />
 
       <EmailComposer target={emailing} open={emailing !== null} onClose={() => setEmailing(null)} />
+      <MessageComposer target={messaging} open={messaging !== null} onClose={() => setMessaging(null)} />
 
       <ColumnManager
         open={columnsFor !== undefined}

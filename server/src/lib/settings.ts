@@ -124,6 +124,54 @@ export const SETTING = {
   HUBTEL_SMS_SECRET: "hubtel.smsSecret",
   /** What a text appears to come from. Alphanumeric sender ids must be registered with Hubtel first. */
   HUBTEL_SMS_SENDER: "hubtel.smsSender",
+
+  // WhatsApp, through Meta's Cloud API. The other half of reaching a lead who
+  // has a number and no email — see lib/whatsapp.ts for why this is not simply
+  // "email with a phone number" and why the wa.me path exists beside it.
+  //
+  // Five values rather than one because they come from three different places
+  // in Meta's dashboard and mean three different things. Pasting the App
+  // Secret into the token field is the commonest mistake and produces a 190
+  // that reads as an expired token.
+  /** A permanent System User access token. A temporary one expires in 24 hours. */
+  WHATSAPP_TOKEN: "whatsapp.token",
+  /** The sending number's id — *not* the number itself, which Meta will not accept here. */
+  WHATSAPP_PHONE_NUMBER_ID: "whatsapp.phoneNumberId",
+  /** The WhatsApp Business Account id. Only templates need it; sending does not. */
+  WHATSAPP_BUSINESS_ID: "whatsapp.businessId",
+  /**
+   * A string we invent, echoed back during Meta's one-time GET handshake when
+   * the webhook URL is saved. It proves the URL belongs to whoever configured
+   * it and is never used again afterwards.
+   */
+  WHATSAPP_VERIFY_TOKEN: "whatsapp.verifyToken",
+  /**
+   * The Meta **app** secret, which is what every webhook delivery is signed
+   * with. Without it inbound messages are stored and not acted on: an
+   * unverified inbound could open a 24-hour free-form window or opt somebody
+   * out, and neither should be reachable by guessing a URL.
+   */
+  WHATSAPP_APP_SECRET: "whatsapp.appSecret",
+
+  /**
+   * A secret in the SMS callback URL, because Hubtel signs nothing.
+   *
+   * WhatsApp has an app secret and a real HMAC; Hubtel's SMS callbacks arrive
+   * with no signature of any kind, so the only thing that can distinguish a
+   * real delivery report from anybody who guessed the URL is a token in the
+   * query string. Blank means the SMS callbacks are refused entirely, which is
+   * the right default — a forged inbound could opt a live prospect out.
+   */
+  SMS_INBOUND_TOKEN: "messaging.smsInboundToken",
+
+  /**
+   * The country a bare local number is read as — `233` for Ghana.
+   *
+   * The assumption is the whole risk: `0241234567` read as Ghanaian is right,
+   * read as British sends the message to a different continent. See lib/phone.ts.
+   */
+  PHONE_COUNTRY_CODE: "messaging.countryCode",
+
   CLOUDINARY_CLOUD_NAME: "cloudinary.cloudName",
   CLOUDINARY_API_KEY: "cloudinary.apiKey",
   CLOUDINARY_API_SECRET: "cloudinary.apiSecret",
@@ -306,6 +354,13 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.HUBTEL_SMS_ID]: "HUBTEL_SMS_ID",
   [SETTING.HUBTEL_SMS_SECRET]: "HUBTEL_SMS_SECRET",
   [SETTING.HUBTEL_SMS_SENDER]: "HUBTEL_SMS_SENDER",
+  [SETTING.WHATSAPP_TOKEN]: "WHATSAPP_TOKEN",
+  [SETTING.WHATSAPP_PHONE_NUMBER_ID]: "WHATSAPP_PHONE_NUMBER_ID",
+  [SETTING.WHATSAPP_BUSINESS_ID]: "WHATSAPP_BUSINESS_ID",
+  [SETTING.WHATSAPP_VERIFY_TOKEN]: "WHATSAPP_VERIFY_TOKEN",
+  [SETTING.WHATSAPP_APP_SECRET]: "WHATSAPP_APP_SECRET",
+  [SETTING.SMS_INBOUND_TOKEN]: "SMS_INBOUND_TOKEN",
+  [SETTING.PHONE_COUNTRY_CODE]: "PHONE_COUNTRY_CODE",
   [SETTING.CLOUDINARY_CLOUD_NAME]: "CLOUDINARY_CLOUD_NAME",
   [SETTING.CLOUDINARY_API_KEY]: "CLOUDINARY_API_KEY",
   [SETTING.CLOUDINARY_API_SECRET]: "CLOUDINARY_API_SECRET",

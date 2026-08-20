@@ -11,6 +11,7 @@ import { ProjectDetail } from "./pages/ProjectDetail";
 import { Invoices } from "./pages/Invoices";
 import { CarePlans } from "./pages/CarePlans";
 import { Emails } from "./pages/Emails";
+import { Messages } from "./pages/Messages";
 import { Clients } from "./pages/Clients";
 import { Settings } from "./pages/Settings";
 import { Agents } from "./pages/Agents";
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/care-plans" element={<CarePlans />} />
         <Route path="/emails" element={<Emails />} />
+        <Route path="/messages" element={<Messages />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/clients/:id" element={<ClientDetail />} />
         <Route path="/settings" element={<Settings />} />
