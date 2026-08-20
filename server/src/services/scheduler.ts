@@ -10,6 +10,7 @@ import { runDueSequences } from "./emailSequences.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { ensureGapReviews, expireStaleHireRequests } from "./agents/hiring.js";
+import { expireStaleRequests } from "./approvals.js";
 import { purgeExpiredSessions } from "../lib/session.js";
 
 /**
@@ -197,6 +198,14 @@ async function housekeepingTick(now: Date) {
   // afterwards.
   const reviews = await ensureGapReviews();
   if (reviews) console.log(`[scheduler] raised ${reviews} skill-gap review(s)`);
+
+  // Prepared actions nobody decided on. A week-old proposal is a re-ask rather
+  // than a refusal — the invoice may have been paid and the lead gone cold
+  // since — and carrying one out on the strength of a decision that was never
+  // actually made is the mistake this guards against. Leaving them PENDING
+  // would also make the queue a list of things that are not going to happen,
+  // which is how a queue stops being read.
+  await expireStaleRequests();
 }
 
 export function startScheduler() {

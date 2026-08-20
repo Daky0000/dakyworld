@@ -13,6 +13,7 @@ import {
   PAGE_H,
   PAGE_W,
   letterheadIdentity,
+  pdfText,
   stampLetterhead,
   type LetterheadIdentity,
 } from "../letterhead.js";
@@ -63,37 +64,6 @@ function collectBuffer(doc: PDFDoc): Promise<Buffer> {
     doc.on("error", reject);
     doc.end();
   });
-}
-
-/**
- * Text that the built-in fonts can actually draw.
- *
- * PDFKit's standard Helvetica is WinAnsi-encoded, which has no arrow. Every
- * "Settings -> AI models" sentence in this app is written with a real arrow,
- * and one of them reached a rendered page as `Settings !' AI models` before
- * anybody looked at the PDF. The notes in this document come from all over the
- * system, so they are cleaned on the way in rather than at each source.
- *
- * Embedding a Unicode font instead would be the other answer, and it is the
- * wrong one here: it is 300KB in every generated document to render four
- * characters that have perfectly good ASCII spellings.
- */
-const UNRENDERABLE: [RegExp, string][] = [
-  [/[→➡⇒]/g, "->"],
-  [/[←⇐]/g, "<-"],
-  [/[✓✔]/g, "yes"],
-  [/[✗✘]/g, "no"],
-  [/[•●▪]/g, "-"],
-  [/…/g, "..."],
-  [/[≤]/g, "<="],
-  [/[≥]/g, ">="],
-  [/[×]/g, "x"],
-];
-
-function pdfText(value: string): string {
-  let out = value;
-  for (const [pattern, replacement] of UNRENDERABLE) out = out.replace(pattern, replacement);
-  return out;
 }
 
 function header(doc: PDFDoc, kicker: string, title: string) {

@@ -1,6 +1,7 @@
 import type { AgentTask } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { subjectOf } from "./memory.js";
+import { dossierForPrompt } from "../context/dossier.js";
 
 /**
  * What the agent is told the task is.
@@ -50,6 +51,16 @@ export async function describeTask(task: AgentTask): Promise<string> {
   if (records.length > 0) {
     parts.push("", "WHAT THIS IS ABOUT — the current state of the record. Anything not here, fetch with a tool rather than assume:", ...records);
   }
+
+  // The record says where this stands. The dossier says how it got there, and
+  // without it an agent writes as though nobody here has spoken to this company
+  // before — which, three letters in, is the thing the reader notices.
+  //
+  // Kept short on purpose: this is paid for on every task whether it turns out
+  // to matter or not, so it is the headlines and a sentence saying the rest is
+  // one `context.read` away.
+  const dossier = await dossierForPrompt(taskSubjects(task));
+  if (dossier) parts.push("", dossier);
 
   if (task.input && typeof task.input === "object") {
     parts.push("", `Additional context supplied with the task:\n${JSON.stringify(task.input, null, 1).slice(0, 3000)}`);

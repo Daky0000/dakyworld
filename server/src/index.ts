@@ -22,6 +22,8 @@ import { scrapersRouter } from "./routes/scrapers.js";
 import { agentsRouter } from "./routes/agents.js";
 import { captureRouter } from "./routes/capture.js";
 import { toolsRouter } from "./routes/tools.js";
+import { approvalsRouter } from "./routes/approvals.js";
+import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
 import { apiRateLimit, forceHttps, securityHeaders, webhookRateLimit } from "./middleware/security.js";
 import { settingsRouter } from "./routes/settings.js";
@@ -181,6 +183,8 @@ app.use("/api/capture", captureRouter);
 app.use("/api/demos", demosRouter);
 app.use("/api/audits", auditsRouter);
 app.use("/api/tools", toolsRouter);
+app.use("/api/approvals", approvalsRouter);
+app.use("/api/context", contextRouter);
 app.use("/api/mcp", mcpRouter);
 app.use("/api/settings", settingsRouter);
 

@@ -63,8 +63,19 @@ const RECALL_LIMIT = 24;
 const CONTENT_MAX = 600;
 
 export interface MemoryInput {
-  /** Who wrote it. `owner` when a person did. Kept even on a shared memory. */
+  /** Whose memory this is — the agent that will be shown it. */
   agentKey: string;
+  /**
+   * Who concluded it, where that is not the agent holding it.
+   *
+   * Almost always the same thing, and left unset when it is. The exception is
+   * the Owner telling one agent to do something differently: the memory
+   * belongs to that agent, because that is who needs to be shown it, but
+   * `owner` wrote it — and the panel says which, because "you told it this"
+   * and "it worked this out" are worth telling apart when deciding whether to
+   * delete one.
+   */
+  authorKey?: string;
   kind: AgentMemoryKind;
   subject: string;
   content: string;
@@ -184,7 +195,7 @@ export async function remember(input: MemoryInput) {
     data: {
       scope,
       agentKey: shared ? null : input.agentKey,
-      authorKey: input.agentKey,
+      authorKey: input.authorKey ?? input.agentKey,
       kind: input.kind,
       subject: input.subject,
       content,

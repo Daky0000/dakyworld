@@ -1459,6 +1459,8 @@ export interface Agent {
   custom: boolean;
   /** Set when the Owner has rewritten a seeded agent's wording. Null means it is as shipped. */
   promptEditedAt?: string | null;
+  /** Prose written here that replaces the ten layers. Null means the layers are still the instruction. */
+  promptText?: string | null;
   /** What it has on right now. Present on the roster. */
   work?: AgentWorkload;
   escalationPolicy: string | null;
@@ -1495,6 +1497,39 @@ export interface AgentDetail extends Agent {
 }
 
 /** The shipped wording for a seeded agent, for comparing against an edit. */
+/** One labelled block of the prompt an agent actually receives. */
+export interface PromptRegion {
+  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "working";
+  label: string;
+  /** Where the words come from, for somebody deciding whether they can change them. */
+  source: string;
+  /** True only for the part a person authored. The rest is assembled at run time. */
+  editable: boolean;
+  text: string;
+}
+
+/**
+ * The prompt as the model gets it.
+ *
+ * The screen used to draw the ten stored layers, which is what the database
+ * holds and not what the agent is told — most of the prompt was assembled
+ * elsewhere and never shown. This is the assembled thing, from the same
+ * function the runner calls.
+ */
+export interface CompiledPrompt {
+  regions: PromptRegion[];
+  /** The whole thing, joined. What a copy button would copy. */
+  text: string;
+  /** Just the authored part, which is what an edit starts from. */
+  instruction: string;
+  /** True when prose written here has replaced the ten shipped sections. */
+  overridden: boolean;
+  layers: string[];
+  prompt: Record<string, string>;
+  resettable: boolean;
+  approxTokens: number;
+}
+
 export interface ShippedPrompt {
   layers: string[];
   prompt: Record<string, string>;
@@ -1821,4 +1856,42 @@ export interface ToolCallRecord {
 export interface ToolCallsResponse {
   calls: ToolCallRecord[];
   lastThirtyDays: { calls: number; spendUsd: string | number };
+}
+
+// --- Approvals -------------------------------------------------------------
+
+export type ActionRequestStatus = "PENDING" | "APPROVED" | "EXECUTED" | "FAILED" | "DECLINED" | "EXPIRED";
+
+/**
+ * One action an agent prepared and could not carry out alone.
+ *
+ * `why`, `gain` and `risk` are required fields on the tool call itself for
+ * anything outward-facing, so every card arrives with the agent's case already
+ * made rather than with a preview nobody can weigh up.
+ */
+export interface ActionRequestRow {
+  id: string;
+  agentKey: string;
+  agent: { key: string; name: string; title: string; avatar: string | null };
+  taskId: string | null;
+  taskTitle: string | null;
+  /** The lead or client the work was about, where there was one. */
+  about: { kind: "lead" | "client"; id: string; name: string } | null;
+  tool: string;
+  toolName: string;
+  wouldDo: string;
+  heldBecause: string | null;
+  why: string;
+  gain: string;
+  risk: string;
+  status: ActionRequestStatus;
+  spends: boolean;
+  outward: boolean;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  error: string | null;
+  expiresAt: string;
+  /** True when it sat unanswered long enough that it can no longer be carried out. */
+  expired: boolean;
+  createdAt: string;
 }

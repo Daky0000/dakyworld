@@ -5,10 +5,11 @@ import { requireRole } from "../middleware/auth.js";
 import { listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
 import { permissionFor } from "../services/tools/invoke.js";
-import { isBusy, runTask } from "../services/agents/runner.js";
+import { authoredInstruction, composePrompt, isBusy, runTask } from "../services/agents/runner.js";
 import { appendOwnerAnswer, clearCheckpoint } from "../services/agents/checkpoint.js";
-import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, remember } from "../services/agents/memory.js";
+import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
+import { taskSubjects } from "../services/agents/context.js";
 import {
   HireRefused,
   applyHire,
@@ -199,6 +200,16 @@ const patchInput = z.object({
   managerKey: z.string().max(64).nullish(),
   department: z.enum(DEPARTMENTS).optional(),
   prompt: z.record(z.string().max(2000)).optional(),
+  /**
+   * The instruction as one piece of prose, which is how the screen edits it.
+   *
+   * Null clears it and hands the job back to the ten layers — that is what
+   * Reset does, and why it needs no separate route. The ceiling is well above
+   * the ten layers' combined 20k because a prompt somebody has actually worked
+   * on is longer than the seed, and being truncated silently at save time is
+   * the worst way to find out about a limit.
+   */
+  promptText: z.string().max(24_000).nullish(),
 });
 
 
@@ -212,7 +223,7 @@ agentsRouter.patch("/:key", async (req, res, next) => {
     // ever creates, so an edit made here survives every future deploy — the
     // flag is what lets the screen offer the shipped wording back rather than
     // what protects it.
-    const rewriting = ["name", "title", "mission", "skills", "kpis", "responsibilities", "escalationPolicy", "avatar", "managerKey", "department", "prompt"].filter(
+    const rewriting = ["name", "title", "mission", "skills", "kpis", "responsibilities", "escalationPolicy", "avatar", "managerKey", "department", "prompt", "promptText"].filter(
       (field) => input[field as keyof typeof input] !== undefined,
     );
 
@@ -326,10 +337,68 @@ agentsRouter.post("/:key/prompt/reset", async (req, res, next) => {
         escalationPolicy: seed.escalationPolicy,
         avatar: seed.avatar ?? null,
         prompt: seed.prompt as unknown as object,
+        // Clearing this is the whole of "go back to the shipped instruction":
+        // the layers underneath were never overwritten, so handing the job back
+        // to them restores the seed exactly.
+        promptText: null,
         promptEditedAt: null,
       },
     });
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The prompt as the model actually receives it.
+ *
+ * The Agents screen used to draw ten boxes, one per layer, which is what the
+ * database holds and not what the agent is told. The gap between those two was
+ * most of the prompt: who Dakyworld is, the company's contact details, how to
+ * write, what the agent recalled, and the whole passage about tools, dry run
+ * and asking colleagues — none of it authored on that screen, all of it in
+ * front of the model.
+ *
+ * So this returns the assembled thing, in labelled regions, from the same
+ * `composePrompt()` the runner calls. One region is editable and the rest say
+ * where they come from, which is the honest answer to "can I change this".
+ *
+ * **The memories shown are the ones a task with no particular subject would
+ * recall** — the agent's standing lessons and the company's house rules. A
+ * task about a lead recalls more, and the region says so rather than implying
+ * this is everything.
+ */
+agentsRouter.get("/:key/prompt/compiled", async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const memories = await recall(agent.key, []);
+    const regions = await composePrompt(agent, memories);
+    const text = regions
+      .map((region) => region.text)
+      .filter(Boolean)
+      .join("\n\n");
+
+    res.json({
+      regions: regions.filter((region) => region.text.trim().length > 0),
+      text,
+      /** What the editable region currently holds, which is what an edit starts from. */
+      instruction: authoredInstruction(agent),
+      /** True when the Owner has replaced the layers with their own prose. */
+      overridden: Boolean(agent.promptText?.trim()),
+      layers: PROMPT_LAYERS,
+      prompt: agent.prompt,
+      resettable: !agent.custom,
+      /**
+       * Roughly what this costs to send, every task, before the brief. Four
+       * characters to the token is close enough to be worth showing and not
+       * worth a dependency — it is there to make a prompt that has grown to
+       * eight thousand tokens visible, not to bill anybody.
+       */
+      approxTokens: Math.round(text.length / 4),
+    });
   } catch (err) {
     next(err);
   }
@@ -943,6 +1012,102 @@ agentsRouter.post("/:key/memory", async (req, res, next) => {
     try {
       const memory = await remember({ agentKey: agent.key, ...input });
       res.status(201).json(memory);
+    } catch (err) {
+      if (err instanceof MemoryRefused) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * "Next time, do this."
+ *
+ * The Owner reads a draft and knows what is wrong with it. Until now the only
+ * ways to act on that were to rewrite the prompt — a permanent change made
+ * from one example — or to fix the draft by hand and watch the same agent make
+ * the same choice tomorrow. Neither is what a person would do with a
+ * colleague, which is to say the thing once and expect it to stick.
+ *
+ * So this is one sentence typed under a piece of work, filed as a
+ * `PREFERENCE`, which recall already puts in front of the agent on its next
+ * task. No prompt engineering, and it is undoable — it is a memory row like
+ * any other, editable and deletable on the Memory panel.
+ *
+ * Three decisions the caller makes, and each changes when it comes up again:
+ *
+ * - **`shared`** widens it from this agent to all of them. For a house rule —
+ *   "we never quote a price in a first email" — which is otherwise typed
+ *   forty-nine times and still missed by the fiftieth agent hired next month.
+ * - **`aboutThisRecord`** files it against the lead or client the task was
+ *   about instead of against the agent's own way of working, so it surfaces
+ *   for this company and no other. That is the right home for "they asked us
+ *   not to call before ten".
+ * - **`taskId`** records which piece of work produced it, so "why does it
+ *   think that" is answerable months later.
+ */
+agentsRouter.post("/:key/feedback", async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const input = z
+      .object({
+        note: z.string().min(8).max(600),
+        taskId: z.string().max(40).optional(),
+        shared: z.boolean().default(false),
+        aboutThisRecord: z.boolean().default(false),
+        importance: z.number().int().min(1).max(5).default(4),
+      })
+      .parse(req.body);
+
+    // The record the work was about, when there was one and the Owner asked for
+    // the lesson to be filed against it. `taskSubjects` is the same ordering the
+    // agent's own `remember` uses, so a note the Owner files and a note the
+    // agent files about one lead land on the same subject key.
+    let subject = input.shared ? "company" : "self";
+    if (input.aboutThisRecord && input.taskId) {
+      const task = await prisma.agentTask.findUnique({
+        where: { id: input.taskId },
+        select: { leadId: true, clientId: true, projectId: true, proposalId: true, invoiceId: true },
+      });
+      const subjects = task ? taskSubjects(task) : [];
+      if (subjects.length === 0) {
+        return res.status(400).json({
+          error: "That task wasn't about a particular lead or client, so there's no record to file this against. Leave it as a general lesson instead.",
+        });
+      }
+      [subject] = subjects;
+    }
+
+    try {
+      const memory = await remember({
+        // The memory belongs to the agent that has to act on it; `owner`
+        // records who said so. On a shared one the agent key is dropped
+        // entirely — it is the company's — and `owner` remains the author.
+        agentKey: input.shared ? "owner" : agent.key,
+        authorKey: "owner",
+        shared: input.shared,
+        kind: "PREFERENCE",
+        subject,
+        content: input.note,
+        importance: input.importance,
+        sourceTaskId: input.taskId ?? null,
+      });
+
+      res.status(201).json({
+        memory,
+        // Said plainly, because the point of typing it is that something
+        // changes, and a person should know what and when.
+        appliesTo: input.shared ? "every agent" : agent.name,
+        appliesWhen:
+          subject === "self"
+            ? `every task ${agent.name} picks up`
+            : subject === "company"
+              ? "every task, whoever picks it up"
+              : "the next task about this record",
+      });
     } catch (err) {
       if (err instanceof MemoryRefused) return res.status(400).json({ error: err.message });
       throw err;

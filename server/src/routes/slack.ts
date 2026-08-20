@@ -16,6 +16,8 @@ import {
   withdrawHire,
   type HirePolicy,
 } from "../services/agents/hiring.js";
+import { ApprovalRefused, approve, decline } from "../services/approvals.js";
+import { APPROVAL_ACTIONS, settleApprovalCard } from "../services/approvalCards.js";
 
 /**
  * Slack talking back.
@@ -133,13 +135,43 @@ async function handleAction(
     if (ctx.responseUrl) await replyToInteraction(ctx.responseUrl, text);
   };
 
+  // The signature proves the click came from Slack. It says nothing about
+  // whether this person may decide — that is this check, and it now guards
+  // spending and outward-facing actions as well as hires.
   if (!(await mayDecideFromSlack(ctx.userId))) {
-    await say("You are not on the list of people who can decide hires. Ask the Owner to add your Slack user id under Settings → Alerts.");
+    await say("You are not on the list of people who can decide these. Ask the Owner to add your Slack user id under Settings → Alerts.");
     return;
   }
 
   try {
     switch (actionId) {
+      case APPROVAL_ACTIONS.approve: {
+        const outcome = await approve(value, { slackUserId: ctx.userId, note: `Approved in Slack by ${ctx.who}.` });
+        // Slack retries anything it does not hear from inside three seconds, so
+        // a re-delivered click lands here having already been carried out. The
+        // honest answer is what became of it, not a second attempt.
+        if (outcome.alreadySettled) {
+          await say(`That was already ${outcome.request.status.toLowerCase()} — nothing further has been done.`);
+          return;
+        }
+        await settleApprovalCard(outcome.request, ctx.who);
+        await say(
+          outcome.request.status === "EXECUTED"
+            ? "Done — carried out exactly as prepared."
+            : `Approved, but it did not go through: ${outcome.request.error ?? "the tool refused it"}.`,
+        );
+        return;
+      }
+      case APPROVAL_ACTIONS.decline: {
+        const outcome = await decline(value, { slackUserId: ctx.userId, note: `Declined in Slack by ${ctx.who}.` });
+        if (outcome.alreadySettled) {
+          await say(`That was already ${outcome.request.status.toLowerCase()}.`);
+          return;
+        }
+        await settleApprovalCard(outcome.request, ctx.who);
+        await say("Declined. Nothing was carried out, and the agent will be told when it next picks the task up.");
+        return;
+      }
       case HIRE_ACTIONS.approve: {
         const result = await applyHire(value, { slackUserId: ctx.userId, note: `Approved in Slack by ${ctx.who}.` });
         await say(
@@ -175,7 +207,7 @@ async function handleAction(
         return;
     }
   } catch (err) {
-    if (err instanceof HireRefused) {
+    if (err instanceof HireRefused || err instanceof ApprovalRefused) {
       await say(err.message);
       return;
     }

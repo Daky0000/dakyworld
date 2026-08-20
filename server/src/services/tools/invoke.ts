@@ -40,6 +40,30 @@ export class ToolRefused extends Error {
 export interface InvokeOptions extends ToolContext {
   /** Skips the grant and autonomy checks. Only ever set for a person acting directly. */
   asOwner?: boolean;
+  /** The task this call belongs to, so a prepared action can be traced back to the work that proposed it. */
+  taskId?: string | null;
+  /**
+   * The case the agent made for acting outside the company or spending money.
+   *
+   * Required for those tools and supplied by the model, because the schema in
+   * `agents/runner.ts` asks for it — not by a prompt that can be forgotten.
+   * It is what turns a preview into something a person can actually decide on:
+   * "send this email" is not a question anybody can answer, and "send this
+   * email, because their certificate expired, which gets us the strongest
+   * opening we have, and the risk is that their host caused it" is.
+   */
+  rationale?: { why: string; gain: string; risk: string };
+  /**
+   * Set only when carrying out an action a person has already approved.
+   *
+   * This is the one thing that lifts the dry-run floor, and it is deliberately
+   * narrow: it lifts *only* that. Readiness and the grant are still checked, so
+   * an approval sitting in the queue after the tool is revoked, or after the
+   * integration is disconnected, is refused rather than honoured. That is the
+   * difference between this and `asOwner`, which skips the checks entirely
+   * because a person is driving the tool directly.
+   */
+  approvedRequestId?: string;
 }
 
 /**
@@ -65,6 +89,13 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
   if (!agent.toolkit.includes(tool.key)) {
     return { allowed: false, mustDryRun: false, reason: `${agent.name} hasn't been granted ${tool.key}.` };
   }
+
+  // A person has already looked at this exact call and said yes. Everything
+  // above still had to pass — the agent exists, is not paused, and still holds
+  // the tool — and it is only the "prepare rather than act" downgrade below
+  // that the approval lifts. Without this the queue could file an action and
+  // never carry one out, which is the state the app was already in.
+  if (options.approvedRequestId) return { allowed: true, mustDryRun: false, reason: null };
 
   // The agent's own dry-run flag is a floor, not a default: an Owner asking for
   // a real run cannot switch it off from the call site.
@@ -131,7 +162,40 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
     }
     const durationMs = Date.now() - startedAt;
     await record({ tool: key, options, ok: true, dryRun: true, input: parsed.data, output: { wouldDo }, durationMs });
-    return { tool: key, ok: true, output: null, dryRun: true, wouldDo, refusedReason: permission.reason ?? undefined, costUsd: 0, durationMs };
+
+    // A preview that nobody can act on is a description of work that will only
+    // ever be done again by hand. Filing it here — with the input as the tool's
+    // own schema validated it — is what lets Approve mean "carry this out"
+    // rather than "mark it read".
+    //
+    // Only for the calls that actually need a decision. A `write` tool held
+    // back by the agent's dry-run flag is prepared work, not a proposal for the
+    // Owner's desk, and putting fifty of those in the queue would bury the two
+    // that matter.
+    let requestId: string | undefined;
+    if (options.agentKey && (tool.outward || tool.spends)) {
+      requestId = await fileActionRequest({
+        agentKey: options.agentKey,
+        taskId: options.taskId ?? null,
+        tool: key,
+        input: parsed.data,
+        wouldDo,
+        heldBecause: permission.reason ?? null,
+        rationale: options.rationale,
+      });
+    }
+
+    return {
+      tool: key,
+      ok: true,
+      output: null,
+      dryRun: true,
+      wouldDo,
+      refusedReason: permission.reason ?? undefined,
+      actionRequestId: requestId,
+      costUsd: 0,
+      durationMs,
+    };
   }
 
   try {
@@ -145,6 +209,67 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
     const message = (err as Error).message ?? "The tool failed.";
     await record({ tool: key, options, ok: false, input: parsed.data, error: message, durationMs });
     return { tool: key, ok: false, output: null, dryRun: false, error: message, costUsd: 0, durationMs };
+  }
+}
+
+/** How long a prepared action stays decidable before it has to be re-proposed. */
+const REQUEST_LIVES_FOR_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * Files a prepared action for a person to decide on.
+ *
+ * Lives here rather than in `services/approvals.ts` so the two do not import
+ * each other: approvals calls back into `invokeTool` to carry an approved
+ * action out, and a cycle between the gate and the queue is the kind that only
+ * shows up as an undefined export at boot.
+ *
+ * **Failing to file must not fail the preview.** The preview itself is
+ * accurate and the agent should carry on preparing the rest of the work; a
+ * queue write that fell over is worth shouting about in the log, not worth
+ * turning into a failed task.
+ */
+async function fileActionRequest(entry: {
+  agentKey: string;
+  taskId: string | null;
+  tool: string;
+  input: unknown;
+  wouldDo: string;
+  heldBecause: string | null;
+  rationale?: { why: string; gain: string; risk: string };
+}): Promise<string | undefined> {
+  try {
+    const request = await prisma.actionRequest.create({
+      data: {
+        agentKey: entry.agentKey,
+        taskId: entry.taskId,
+        tool: entry.tool,
+        input: trim(entry.input) as never,
+        wouldDo: entry.wouldDo.slice(0, 2000),
+        heldBecause: entry.heldBecause,
+        // The schema asks the model for these on every outward tool, so they
+        // are normally present. The fallback covers a tool driven from the API
+        // rather than by an agent mid-task, where there is no model to ask.
+        why: entry.rationale?.why?.slice(0, 1000) || "Not stated.",
+        gain: entry.rationale?.gain?.slice(0, 1000) || "Not stated.",
+        risk: entry.rationale?.risk?.slice(0, 1000) || "Not stated.",
+        expiresAt: new Date(Date.now() + REQUEST_LIVES_FOR_MS),
+      },
+      select: { id: true },
+    });
+
+    // Posted without waiting. The agent is mid-loop and the card is a courtesy
+    // — the queue in the app is the record. Imported here rather than at module
+    // scope because the card builder reaches back into the catalogue, and a
+    // cycle between the gate and anything else is the kind that shows up as an
+    // undefined export at boot.
+    void import("../approvalCards.js")
+      .then(({ postApprovalCard }) => postApprovalCard(request.id))
+      .catch((err: Error) => console.error("[tools] could not post the approval card:", err.message));
+
+    return request.id;
+  } catch (err) {
+    console.error(`[tools] could not file an approval for ${entry.tool}:`, (err as Error).message);
+    return undefined;
   }
 }
 

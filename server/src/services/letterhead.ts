@@ -380,6 +380,40 @@ export async function hasLogoAsset(): Promise<boolean> {
 /** The box the lock-up is fitted into, shared by every letterhead renderer. */
 export const LOGO_BOX = { width: 190, height: 46 };
 
+/**
+ * Text that the built-in fonts can actually draw.
+ *
+ * PDFKit's standard Helvetica is WinAnsi-encoded, which has no arrow. Every
+ * "Settings -> AI models" sentence in this app is written with a real arrow,
+ * and one of them reached a rendered page as `Settings !' AI models` before
+ * anybody looked at the PDF.
+ *
+ * Lives here rather than in one renderer because there are now several, and a
+ * second copy is a second thing to forget: the dossier PDF renders Markdown
+ * written by agents, which is the text most likely of all to contain an arrow
+ * or a bullet. Embedding a Unicode font instead would be the other answer, and
+ * it is the wrong one — 300KB in every generated document to render four
+ * characters that have perfectly good ASCII spellings.
+ */
+const UNRENDERABLE: [RegExp, string][] = [
+  [/[→➡⇒]/g, "->"],
+  [/[←⇐]/g, "<-"],
+  [/[✓✔]/g, "yes"],
+  [/[✗✘]/g, "no"],
+  [/[•●▪]/g, "-"],
+  [/…/g, "..."],
+  [/[≤]/g, "<="],
+  [/[≥]/g, ">="],
+  [/[×]/g, "x"],
+];
+
+export function pdfText(value: string): string {
+  let out = value;
+  for (const [pattern, replacement] of UNRENDERABLE) out = out.replace(pattern, replacement);
+  return out;
+}
+
+
 /** Intrinsic size from a PNG's IHDR. Null for anything that is not a PNG. */
 function pngSize(data: Buffer): { width: number; height: number } | null {
   const isPng = data.length > 24 && data.readUInt32BE(0) === 0x89504e47;

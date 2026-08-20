@@ -1017,6 +1017,25 @@ model Invoice {
   paidAt                DateTime?
   pdfUrl                String? // Cloudinary URL once generated
   stripePaymentIntentId String?
+
+  /// How this one is being collected — `paystack`, `hubtel`, `stripe`, or null
+  /// where nobody has raised a payment for it yet.
+  ///
+  /// Two rails are wired because Ghana has two answers: a hosted page that
+  /// takes a card or mobile money, and a prompt that arrives on the phone. The
+  /// agent picks per client and has to say why, because a payment nobody can
+  /// trace back to a decision is a reconciliation problem later.
+  paymentProvider String?
+  /// The provider's own id for the attempt — a Paystack reference, a Hubtel
+  /// transaction id. What a webhook arrives quoting.
+  paymentRef      String?
+  /// The hosted page, where the rail has one. This is what goes in the email,
+  /// and it is why an invoice stopped printing with no way to pay it.
+  paymentUrl      String?
+  /// What actually settled it, read off the webhook rather than assumed —
+  /// "mobile money (MTN)", "card". Null until something does.
+  paidVia         String?
+
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
@@ -1024,6 +1043,12 @@ model Invoice {
   cycle     CarePlanCycle?
   emails    EmailMessage[]
   agentTasks   AgentTask[]
+
+  /// A payment webhook arrives quoting the provider's reference and nothing
+  /// else, so this is the lookup that has to be fast — and it is on the path
+  /// where being slow means the provider retries and the invoice is settled
+  /// twice.
+  @@index([paymentRef])
 }
 
 model InvoiceLineItem {
@@ -1407,6 +1432,18 @@ model Agent {
   /// version table until prompts are actually edited in the app.
   prompt           Json     @default("{}")
 
+  /// The instruction as one piece of prose, when the Owner has written it that
+  /// way. Null means the ten layers above are still the instruction.
+  ///
+  /// The layers are a good way to *seed* fifty agents — they force each one to
+  /// answer the same ten questions — and a poor way to *edit* one, because the
+  /// thing that actually reaches the model is the layers run together and no
+  /// screen ever showed that. Now the screen shows the assembled prompt and
+  /// editing it writes here; the layers stay underneath untouched, so Reset is
+  /// nothing more than clearing this column. `refreshUneditedSeedPrompts()`
+  /// keeps working on the layers for every agent that has not been rewritten.
+  promptText       String?
+
   /// True for an agent the Owner created on the Agents screen rather than one
   /// the seed shipped. A deploy never touches these, and only these can be
   /// renamed, rewritten or deleted — a seeded agent's wording is a diff.
@@ -1429,8 +1466,9 @@ model Agent {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  tasks    AgentTask[]
-  memories AgentMemory[]
+  tasks     AgentTask[]
+  memories  AgentMemory[]
+  schedules AgentSchedule[]
 
   @@index([status, department])
   @@index([tier])
@@ -1885,6 +1923,11 @@ enum AgentStepKind {
   /// "Nobody on the roster can do this." The signal the Agent Creator reads.
   GAP_RAISED
   REMEMBERED
+  /// Something added to a company's history — what happened, as opposed to
+  /// what this agent concluded about it. Kept apart from REMEMBERED because
+  /// the two are read back differently: a note is evidence the next agent may
+  /// cite, a memory is an opinion the record can overrule.
+  NOTED
   BLOCKED
   FINISHED
   FAILED
@@ -2006,6 +2049,81 @@ model AgentMemory {
   @@index([agentKey, subject])
   @@index([agentKey, createdAt])
   @@index([scope, subject])
+}
+
+// ---------------------------------------------------------------------------
+// Context — what happened, as opposed to what an agent concluded
+// ---------------------------------------------------------------------------
+
+/// What kind of thing happened.
+enum ContextNoteKind {
+  /// Something observed or worth writing down that has no other home.
+  NOTE
+  /// A phone call. Nothing here dials, so this is written by a person or by an
+  /// agent that was told about it — never detected.
+  CALL
+  /// A meeting, in person or otherwise.
+  MEETING
+  /// They replied, or got in touch first. Written from the reply signal, since
+  /// there is no inbound mail path to read one out of.
+  REPLY
+  /// A choice somebody made about this company, and why.
+  DECISION
+  /// What came of it. The half that makes a decision worth keeping.
+  OUTCOME
+  /// Something to be careful about here.
+  RISK
+}
+
+/// One entry in a company's history that no other table holds.
+///
+/// **This is not the dossier.** The dossier is assembled at read time from what
+/// the system already stores — the audit row, the research row, the emails, the
+/// proposals, the invoices, the logged communications — because duplicating
+/// those into an event log would give every fact two homes and let them
+/// disagree. Reading the source tables also means the history that already
+/// exists is there on the first day rather than from whenever a log started.
+///
+/// What that leaves is everything with no home of its own: an observation an
+/// agent wants the next agent to have, a call somebody took, a decision and
+/// what came of it. That is what this table is, and it is the part agents add
+/// to as they go.
+///
+/// Filed against a subject in the same vocabulary memory uses — `lead:abc123`,
+/// `client:xyz` — so one spelling answers both questions.
+model ContextNote {
+  id String @id @default(cuid())
+
+  /// `lead:abc123`, `client:xyz`, `project:def`. The key the dossier gathers on.
+  subject String
+  kind    ContextNoteKind @default(NOTE)
+
+  /// One line for the timeline.
+  summary String
+  /// The rest of it, where there is more. Markdown, because that is the form
+  /// the dossier is read in.
+  body    String?
+
+  /// The agent key that wrote it, or `owner` when a person did. A bare string
+  /// rather than a relation: a note about a client outlives the agent that
+  /// happened to observe it, exactly as a shared memory does.
+  authorKey String
+
+  /// Kept out of the recency cut, for the handful of facts that should be in
+  /// front of every agent that opens this company.
+  pinned Boolean @default(false)
+
+  /// When it happened, which is not always when it was written down.
+  occurredAt DateTime @default(now())
+
+  /// The task that produced it, so "why does it say that" is answerable.
+  sourceTaskId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subject, occurredAt])
+  @@index([subject, pinned])
 }
 
 // ---------------------------------------------------------------------------
@@ -2171,4 +2289,151 @@ model AgentHireRequest {
 
   @@index([status, createdAt])
   @@index([gapId])
+}
+
+// ---------------------------------------------------------------------------
+// Standing work — what an agent does without being asked
+// ---------------------------------------------------------------------------
+
+/// A recurring brief that raises a task on a schedule.
+///
+/// `AgentTaskOrigin.SCHEDULE` has existed since the runtime shipped and nothing
+/// has ever written it: every task so far has come from a person opening the
+/// Agents screen, or from one agent handing work to another. That makes the
+/// workforce entirely reactive — fifty agents that can work, and no reason for
+/// any of them to start.
+///
+/// This is the reason to start. The cadence fields deliberately mirror
+/// `ScraperSource`, and `computeNextRunAt()` in `services/scheduler.ts` is
+/// shared rather than reimplemented, because "every weekday at 08:00 in
+/// Africa/Accra" is a problem this app has already solved once.
+model AgentSchedule {
+  id String @id @default(cuid())
+
+  agent    Agent  @relation(fields: [agentKey], references: [key], onDelete: Cascade)
+  agentKey String
+
+  /// What the task will be called, and what it will say. The brief is fixed
+  /// wording rather than a template: an agent that reads the record itself
+  /// needs the *standing question*, not a filled-in one.
+  title String
+  brief String
+
+  /// `HH:MM`, local to `timezone`. Several a day is a list, as with scrapers.
+  runTimes String[] @default([])
+  /// IANA name. Defaults to the company's, not the server's.
+  timezone String   @default("Africa/Accra")
+  /// Skip Saturday and Sunday. Most standing work is business-day work.
+  weekdaysOnly Boolean @default(true)
+
+  enabled Boolean @default(false)
+
+  /// A ceiling of its own, on top of the per-agent one-task-at-a-time lock. A
+  /// schedule that raises work faster than the agent finishes it would queue
+  /// forever, and the first sign would be the bill.
+  maxOpenTasks Int @default(1)
+
+  nextRunAt DateTime?
+  lastRunAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled, nextRunAt])
+  @@index([agentKey])
+}
+
+// ---------------------------------------------------------------------------
+// Approvals — an agent proposing something, and a person deciding
+// ---------------------------------------------------------------------------
+
+enum ActionRequestStatus {
+  /// Prepared and waiting on a decision.
+  PENDING
+  /// Approved, and the call is being made.
+  APPROVED
+  /// Approved and carried out. The end state that means something happened.
+  EXECUTED
+  /// Approved, attempted, and the tool failed. Distinct from DECLINED because
+  /// nobody said no — the world did.
+  FAILED
+  /// A person said no.
+  DECLINED
+  /// Nobody answered in time. A card that has gone stale is a re-ask, not a
+  /// refusal, and executing a week-old decision is its own kind of mistake.
+  EXPIRED
+}
+
+/// One action an agent prepared and could not carry out on its own.
+///
+/// The gate in `services/tools/invoke.ts` has always downgraded an outward or
+/// spending call to a preview rather than refusing it, which is the right
+/// behaviour — a prepared action somebody can approve is more useful than an
+/// error. What was missing was the second half: approving a task marked it
+/// `DONE` and the previewed letter was never sent. So the preview was a
+/// description of work that could only ever be done again by hand.
+///
+/// This row is that preview made durable. It holds the **validated** input, so
+/// approving re-invokes exactly what was proposed rather than asking a model to
+/// produce it a second time and hoping for the same thing.
+///
+/// **Approving is not a bypass.** Execution still goes through `invokeTool`,
+/// which still checks that the integration is configured and that the agent is
+/// still granted the tool — so an approval sitting in the queue after a grant
+/// is revoked is refused, not honoured.
+model ActionRequest {
+  id String @id @default(cuid())
+
+  /// The agent that prepared it. A bare key, like every other cross-boundary
+  /// agent reference here.
+  agentKey String
+  /// The task it was prepared during, where there was one. Null when a person
+  /// drove the tool directly and asked for a dry run.
+  taskId   String?
+
+  /// The catalogue key, and the input as the tool's own schema validated it.
+  tool  String
+  input Json
+
+  /// What the tool's `preview()` said it would do, as at proposal time.
+  wouldDo String
+  /// Why it stopped short — "acting outside the company needs autonomy 3".
+  heldBecause String?
+
+  /// The three things the agent has to say before it may propose anything
+  /// outward-facing. Required at the schema level for those tools, so a model
+  /// cannot skip them and a prompt cannot forget to ask.
+  why  String
+  gain String
+  risk String
+
+  status ActionRequestStatus @default(PENDING)
+
+  /// Who decided, in the same shape as a hire request: a User id in the app, a
+  /// Slack user id from Slack, neither when it expired.
+  decidedById        String?
+  decidedBySlackUser String?
+  decidedAt          DateTime?
+  decisionNote       String?
+
+  /// What came back when it ran, and what went wrong if it did not.
+  result Json?
+  error  String?
+  costUsd Decimal @default(0) @db.Decimal(10, 4)
+
+  /// A decision nobody makes goes stale — the invoice gets paid, the lead goes
+  /// cold — so a card has a life and the tool's own handler stays the last guard.
+  expiresAt DateTime
+
+  /// Where the card was posted, so a settled decision does not leave a live
+  /// Approve button behind in Slack.
+  slackChannel String?
+  slackTs      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([agentKey, status])
+  @@index([taskId])
 }

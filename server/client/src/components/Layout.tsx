@@ -52,6 +52,10 @@ const navItems: NavItem[] = [
     ownerOnly: true,
     children: [
       { to: "/agents", label: "Workforce", end: true },
+      // Every row in here is either visible outside the company or spends
+      // money — the same test the tool gate applies — so it sits behind the
+      // Owner with the rest of the workforce.
+      { to: "/approvals", label: "Approvals" },
       { to: "/agents/tools", label: "Tools" },
     ],
   },

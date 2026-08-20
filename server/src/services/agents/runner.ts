@@ -12,6 +12,7 @@ import { PROMPT_LAYERS } from "../agentRegistry.js";
 import { BRAND, VOICE } from "../dakyworld.js";
 import { MemoryRefused, recall, remember, subjectOf, type Recalled } from "./memory.js";
 import { describeTask, taskSubjects } from "./context.js";
+import { appendNote, renderDossier } from "../context/dossier.js";
 import { recordGap, searchRoster } from "./hiring.js";
 import { callModel } from "../../lib/models/call.js";
 
@@ -179,7 +180,16 @@ function effortFor(agent: Agent): "low" | "medium" | "high" {
  * Writes one step. Never throws: a task must not fail because its own progress
  * log did, and a run with a gap in its timeline is still a run that happened.
  */
-async function step(
+/**
+ * Appends one entry to a task's timeline.
+ *
+ * Exported because the approval queue writes to the same timeline: a task that
+ * ended at `NEEDS_APPROVAL` and was later approved has to show what became of
+ * it, or it reads for ever as work that stopped. The sequence number is worked
+ * out here and must not be worked out anywhere else — two places computing it
+ * is two places that can produce a duplicate.
+ */
+export async function step(
   taskId: string,
   kind: AgentStepKind,
   message: string,
@@ -215,6 +225,53 @@ function trim(value: unknown): unknown {
 
 // --- The tools the agent is handed ------------------------------------------
 
+type JsonSchema = Record<string, unknown> & { properties?: Record<string, unknown>; required?: string[] };
+
+/**
+ * True for the calls somebody may have to approve.
+ *
+ * Reaching outside the company or spending money — the same two flags the gate
+ * in `tools/invoke.ts` reads, deliberately, so the tools that get held back are
+ * exactly the tools that arrive with a case attached. A `read` tool asked to
+ * justify itself would be three fields of ceremony on every lookup.
+ */
+function needsCase(tool: { outward: boolean; spends: boolean }): boolean {
+  return tool.outward || tool.spends;
+}
+
+/**
+ * Adds `why`, `gain` and `risk` to a tool's schema.
+ *
+ * The Owner has to decide these one at a time, and "send this email" is not a
+ * question anybody can answer. What makes it answerable is the agent's own
+ * account of why it wants to, what it gets, and what could go wrong — and the
+ * reliable way to get that is to make it part of the call rather than a
+ * paragraph in a prompt that competes with everything else in the prompt. A
+ * model cannot forget a required field.
+ *
+ * They are stripped again before the tool runs. Nothing downstream knows about
+ * them except the approval queue.
+ */
+function withCase(schema: JsonSchema, tool: { outward: boolean; spends: boolean }): Record<string, unknown> {
+  if (!needsCase(tool)) return schema;
+  return {
+    ...schema,
+    properties: {
+      ...(schema.properties ?? {}),
+      why: {
+        type: "string",
+        description: "Why this, for this company, now. Point at the evidence in front of you rather than restating your job.",
+      },
+      gain: { type: "string", description: "What Dakyworld gets if it works." },
+      risk: {
+        type: "string",
+        description: "What could go wrong, or what you are unsure of. 'Nothing' is almost never the honest answer — say what would make this the wrong move.",
+      },
+    },
+    required: [...(schema.required ?? []), "why", "gain", "risk"],
+  };
+}
+
 /**
  * The catalogue, narrowed to what this agent has been granted, plus the three
  * tools every agent has because they are how it participates in the workflow
@@ -227,10 +284,26 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
   const tools: AgentTool[] = granted.map((tool) => ({
     // Anthropic tool names allow [a-zA-Z0-9_-] only; catalogue keys use dots.
     name: tool.key.replace(/\./g, "__"),
-    description: `${tool.purpose}${tool.spends ? " Costs money." : ""}${tool.outward ? " Visible outside the company." : ""}`,
-    inputSchema: zodToJsonSchema(tool.input, { target: "jsonSchema7", $refStrategy: "none" }) as Record<string, unknown>,
+    description: `${tool.purpose}${tool.spends ? " Costs money." : ""}${tool.outward ? " Visible outside the company." : ""}${
+      needsCase(tool) ? " Before this runs, you must say why, what it gains and what the risk is — a person may have to approve it." : ""
+    }`,
+    inputSchema: withCase(zodToJsonSchema(tool.input, { target: "jsonSchema7", $refStrategy: "none" }) as JsonSchema, tool),
     run: async (input) => {
-      const result = await invokeTool(tool.key, input, { agentKey: agent.key, userId: null, dryRun: false });
+      // Taken out before the tool sees them: they are the agent's case for
+      // acting, not an argument to the action. A handler receiving an
+      // unexpected `why` would fail its own schema check.
+      const { why, gain, risk, ...toolInput } = (input ?? {}) as Record<string, unknown>;
+      const rationale = needsCase(tool)
+        ? { why: String(why ?? ""), gain: String(gain ?? ""), risk: String(risk ?? "") }
+        : undefined;
+
+      const result = await invokeTool(tool.key, toolInput, {
+        agentKey: agent.key,
+        userId: null,
+        dryRun: false,
+        taskId: task.id,
+        rationale,
+      });
       counters.toolCalls += 1;
 
       // Order matters here, and getting it wrong is silent. A dry run also
@@ -247,7 +320,13 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
           data: { input },
         });
         return {
-          content: `PREPARED, NOT DONE — ${result.wouldDo}\n\nThis is what would have happened. It has not happened. Carry on and prepare the rest of the work; a person will approve it.`,
+          content: [
+            `PREPARED, NOT DONE — ${result.wouldDo}`,
+            "",
+            result.actionRequestId
+              ? "This is what would have happened. It has not happened. It is now waiting for a person to approve, and it will be carried out exactly as prepared when they do — so do not prepare it a second time, and do not describe it as done."
+              : "This is what would have happened. It has not happened. Carry on and prepare the rest of the work; a person will approve it.",
+          ].join("\n"),
         };
       }
 
@@ -400,6 +479,81 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
           ? `Kept for the whole company, against ${about}. Every agent will be shown this.`
           : `Kept, against ${about}.`,
       };
+    },
+  };
+
+  // --- The company's history, as opposed to this agent's opinion of it ------
+  //
+  // `remember` and these two look similar and are not. A memory is what *this
+  // agent* worked out, shown back to it as its own conclusion, which the record
+  // in front of it can overrule. A note is what *happened* — a call, a
+  // decision, an outcome — and every agent that opens this company afterwards
+  // is shown it as evidence. Writing "they seem price-sensitive" as a note
+  // launders an opinion into a fact, and the tool descriptions say so, because
+  // this is the distinction a model is most likely to blur.
+
+  const noteTool: AgentTool = {
+    name: "addToHistory",
+    description:
+      "Record something that HAPPENED with this company, so every agent that works on them next can see it. A call and what was agreed, a decision and why, what came of something you did. This is shared and permanent — it is the company's record, not your notes. For what *you* concluded or want to do differently next time, use `remember` instead. Never write down a password, a key or a card number.",
+    inputSchema: zodToJsonSchema(
+      z.object({
+        kind: z
+          .enum(["NOTE", "CALL", "MEETING", "REPLY", "DECISION", "OUTCOME", "RISK"])
+          .default("NOTE")
+          .describe("What sort of thing this is. CALL and MEETING for something that took place, REPLY when they got in touch, DECISION and OUTCOME for a choice and what came of it, RISK for something to be careful of here."),
+        summary: z.string().min(4).max(300).describe("One line, as it will appear on the timeline."),
+        body: z.string().max(4000).optional().describe("The detail, where there is more worth keeping. Markdown."),
+        pinned: z
+          .boolean()
+          .default(false)
+          .describe("Put it at the top for every agent that opens this company, above the timeline. For the two or three facts that change how anyone should approach them — not for ordinary events."),
+      }),
+      { target: "jsonSchema7", $refStrategy: "none" },
+    ) as Record<string, unknown>,
+    run: async (input) => {
+      const [subject] = taskSubjects(task);
+      if (!subject) {
+        return {
+          content: "This task isn't about a particular lead, client or project, so there is no company history to add to. Use `remember` for a general lesson instead.",
+          isError: true,
+        };
+      }
+      try {
+        await appendNote({
+          subject,
+          kind: (input.kind as never) ?? "NOTE",
+          summary: String(input.summary ?? ""),
+          body: input.body ? String(input.body) : null,
+          authorKey: agent.key,
+          pinned: Boolean(input.pinned),
+          sourceTaskId: task.id,
+        });
+      } catch (err) {
+        if (err instanceof MemoryRefused) return { content: err.message, isError: true };
+        throw err;
+      }
+      await step(task.id, "NOTED", String(input.summary ?? "").slice(0, 300), { data: { subject, kind: input.kind } });
+      return { content: `Added to the history for ${subject}. Every agent that works on them will see it.` };
+    },
+  };
+
+  const historyTool: AgentTool = {
+    name: "readHistory",
+    description:
+      "Read the full history of this company — every review, letter, call, proposal, invoice and note, in order. The task brief already carries the headlines; use this when you need the detail, the wording of what was sent, or anything older than the last few entries.",
+    inputSchema: zodToJsonSchema(
+      z.object({
+        limit: z.number().int().min(5).max(100).default(40).describe("How many entries back to go."),
+      }),
+      { target: "jsonSchema7", $refStrategy: "none" },
+    ) as Record<string, unknown>,
+    run: async (input) => {
+      const [subject] = taskSubjects(task);
+      if (!subject) return { content: "This task isn't about a particular company, so there is no history to read.", isError: true };
+      const limit = typeof input.limit === "number" ? input.limit : 40;
+      const markdown = await renderDossier(subject, { limit });
+      return { content: markdown };
     },
   };
 
@@ -621,7 +775,8 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
   // colleague, ask one, or say that nobody exists is an agent that guesses.
   const hasReports = agent.tier !== "SUB_AGENT";
   const collaboration = [findAgentTool, consult, handOff, needSkill];
-  return hasReports ? [escalate, rememberTool, delegate, ...collaboration] : [escalate, rememberTool, ...collaboration];
+  const always = [escalate, rememberTool, noteTool, historyTool];
+  return hasReports ? [...always, delegate, ...collaboration] : [...always, ...collaboration];
 }
 
 /**
@@ -707,25 +862,90 @@ async function rosterSize(): Promise<number> {
   return prisma.agent.count({ where: { status: { not: "RETIRED" } } });
 }
 
-async function systemPrompt(agent: Agent, memories: Recalled[], options: { working?: boolean } = {}): Promise<string> {
+/**
+ * The instruction an agent works to, as authored.
+ *
+ * `promptText` is the Owner's own wording and wins outright when it is set.
+ * Otherwise the ten layers are run together in their declared order, which is
+ * what every seeded agent ships with.
+ *
+ * Exported because the screen needs the same answer the model gets. Showing a
+ * prompt assembled by a second piece of code is how a screen ends up lying
+ * about what an agent was told.
+ */
+export function authoredInstruction(agent: Pick<Agent, "prompt" | "promptText" | "title" | "mission">): string {
+  const written = agent.promptText?.trim();
+  if (written) return written;
+
+  const prompt = (agent.prompt ?? {}) as Record<string, string>;
+  const layers = PROMPT_LAYERS.map((layer) => prompt[layer])
+    .filter((value) => typeof value === "string" && value.trim())
+    .join("\n\n");
+
+  return layers || `You are the Dakyworld ${agent.title}. ${agent.mission}`;
+}
+
+/** One labelled block of the assembled prompt. */
+export interface PromptRegion {
+  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "working";
+  /** The heading the screen puts on it. */
+  label: string;
+  /** Where the words come from, in a sentence, for somebody deciding whether they can change them. */
+  source: string;
+  /**
+   * True only for the part a person authored. Everything else is assembled
+   * from live state — the company profile, what the agent recalled, how many
+   * colleagues it has — and editing a copy of it would either be overwritten
+   * on the next run or quietly diverge from what the other forty-nine agents
+   * are told.
+   */
+  editable: boolean;
+  text: string;
+}
+
+/**
+ * The prompt, in labelled pieces.
+ *
+ * `systemPrompt()` below is this joined together, so there is exactly one
+ * description of what an agent is told and both the runner and the Agents
+ * screen read it.
+ */
+export async function composePrompt(
+  agent: Agent,
+  memories: Recalled[],
+  options: { working?: boolean } = {},
+): Promise<PromptRegion[]> {
   // `working: false` is a colleague being asked a question rather than an agent
   // holding a task. Everything about who they are and what they know still
   // applies; everything about tools, dry run and who to hand work to does not,
   // and printing it would tell somebody with no tools how to use them.
   const working = options.working !== false;
-  const prompt = (agent.prompt ?? {}) as Record<string, string>;
   const profile = await companyProfile();
 
-  const layers = PROMPT_LAYERS.map((layer) => prompt[layer])
-    .filter((value) => typeof value === "string" && value.trim())
-    .join("\n\n");
-
-  const parts = [
-    layers || `You are the Dakyworld ${agent.title}. ${agent.mission}`,
-    agent.skills.length > 0 ? `What you are relied on for:\n${agent.skills.map((skill) => `- ${skill}`).join("\n")}` : "",
-    BRAND,
-    contactBlock(profile),
-    VOICE,
+  const regions: PromptRegion[] = [
+    {
+      key: "instruction",
+      label: "Its instructions",
+      source: agent.promptText?.trim() ? "Written here, replacing the ten shipped sections." : "The ten shipped sections, run together in order.",
+      editable: true,
+      text: authoredInstruction(agent),
+    },
+    {
+      key: "skills",
+      label: "What it is relied on for",
+      source: "The skills on this agent, edited on this screen.",
+      editable: false,
+      text: agent.skills.length > 0 ? `What you are relied on for:\n${agent.skills.map((skill) => `- ${skill}`).join("\n")}` : "",
+    },
+    { key: "brand", label: "Who Dakyworld is", source: "services/dakyworld.ts — the same for every agent.", editable: false, text: BRAND },
+    {
+      key: "contact",
+      label: "The company's details",
+      source: "Settings → System. Change it there and every agent and document follows.",
+      editable: false,
+      text: contactBlock(profile),
+    },
+    { key: "voice", label: "How it writes", source: "services/dakyworld.ts — the same for every agent.", editable: false, text: VOICE },
   ];
 
   // The two kinds are presented as two things, because they carry different
@@ -737,29 +957,43 @@ async function systemPrompt(agent: Agent, memories: Recalled[], options: { worki
   const own = memories.filter((memory) => !memory.shared);
 
   if (shared.length > 0) {
-    parts.push(
-      `What Dakyworld holds — written once and given to every agent, so treat it as standing instruction rather than as your own opinion. Where one of these conflicts with what you would otherwise do, follow it and say that you did:\n${shared
+    regions.push({
+      key: "shared",
+      label: "What Dakyworld holds",
+      source: "Shared memory, recalled for this task's subjects. Every agent is shown these.",
+      editable: false,
+      text: `What Dakyworld holds — written once and given to every agent, so treat it as standing instruction rather than as your own opinion. Where one of these conflicts with what you would otherwise do, follow it and say that you did:\n${shared
         .map((memory) => `- ${memory.line}`)
         .join("\n")}`,
-    );
+    });
   }
 
   if (own.length > 0) {
-    parts.push(
-      `What you already know, from your own earlier work on this. Treat it as your own conclusions rather than as instructions — if the record in front of you contradicts one, the record wins and you should say so:\n${own
+    regions.push({
+      key: "own",
+      label: "What it already knows",
+      source: "Its own memory, recalled for this task's subjects.",
+      editable: false,
+      text: `What you already know, from your own earlier work on this. Treat it as your own conclusions rather than as instructions — if the record in front of you contradicts one, the record wins and you should say so:\n${own
         .map((memory) => `- ${memory.line}`)
         .join("\n")}`,
-    );
+    });
   }
 
   if (working) {
-    parts.push(
-      `How you work here:
+    regions.push({
+      key: "working",
+      label: "How it works here",
+      source: "Generated from live state — the tool etiquette, dry run, and the size of the roster.",
+      editable: false,
+      text: `How you work here:
 
 - You have been given a task and a set of tools. Use the tools to find out what is true rather than assuming. Never state a fact about a lead, a client or a system that a tool did not tell you.
 - Some of your tools will answer "PREPARED, NOT DONE". That is not a failure — it means your autonomy level requires a person to approve that kind of action. Carry on and prepare the rest of the work so there is one thing to approve rather than five.
 - Some will be refused outright. That is also information: work around it, or escalate.
 - Use \`remember\` for a decision worth having next time, and for what came of it. Never write down a credential. Share one with the whole company only when it is a fact about how Dakyworld works that every agent would need — your own conclusions stay yours.
+- **What happened and what you concluded are two different records, and they are not interchangeable.** \`addToHistory\` is the company's own account of a client — a call and what was agreed, a decision and why, what came of something we did — and every agent that opens them next reads it as evidence. \`remember\` is your own conclusion, and the record can overrule it. Writing an opinion into the history dresses it up as a fact for somebody who was not there; writing an event into your memory keeps it from the colleague who needs it.
+- The brief carries the headlines of that history. \`readHistory\` gets you the rest — the wording of what was actually sent, what they said back, anything older. Read it before writing to somebody we have written to before.
 - Use \`escalate\` the moment you are unsure, or the work touches money, scope, security, a live system or a public claim. Stopping is not failing.
 - When you are done, say what you did, what you found, and what a person should do next — in plain English, in a few sentences. That final message is what gets read.
 
@@ -771,10 +1005,18 @@ You are not working alone. There are ${await rosterSize()} agents here, each wit
 4. \`needSkill\` — only when \`findAgent\` found nobody. It records that Dakyworld has no such craft; the Agent Creator reads it and a person decides whether to employ somebody. It is not a way to put down work that is actually yours, and a gap raised for something a colleague already does is worse than useless — it argues for hiring a duplicate.
 
 Asking is cheap and being wrong in public is not. An agent that consulted a colleague and changed its mind has done the job properly; say in your summary who you asked and what it changed.`,
-    );
+    });
   }
 
-  return parts.filter(Boolean).join("\n\n");
+  return regions;
+}
+
+async function systemPrompt(agent: Agent, memories: Recalled[], options: { working?: boolean } = {}): Promise<string> {
+  const regions = await composePrompt(agent, memories, options);
+  return regions
+    .map((region) => region.text)
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 // --- Running one task -------------------------------------------------------

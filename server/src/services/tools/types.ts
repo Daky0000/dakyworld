@@ -119,6 +119,12 @@ export interface ToolResult<O = unknown> {
   error?: string;
   /** Set when the call was refused rather than attempted. */
   refusedReason?: string;
+  /**
+   * Set on a dry run of an outward or spending tool: the `ActionRequest` now
+   * waiting for a person. The agent is told this id so its own summary can say
+   * what is waiting on whom, rather than reporting the work as finished.
+   */
+  actionRequestId?: string;
   costUsd: number;
   durationMs: number;
 }
