@@ -2,6 +2,8 @@ import type { EmailPurpose } from "@prisma/client";
 import { callModel } from "./models/call.js";
 import { PROVIDERS } from "./models/registry.js";
 import { VOICE as BRAND_VOICE } from "../services/dakyworld.js";
+import { resolveBrief } from "../services/writers/brief.js";
+import { emailJobFor } from "../services/writers/registry.js";
 
 /**
  * The last pass before a person reads the draft.
@@ -77,7 +79,24 @@ const SCHEMA = {
   },
 } as const;
 
-/** What each purpose has to achieve for the polish to call it a working email. */
+/**
+ * What each purpose has to achieve for the polish to call it a working email.
+ *
+ * **These are the shipped defaults and they are not the authority.** The
+ * standard the polish judges against is resolved through
+ * `services/writers/brief.ts`, which hands back the owning agent's own
+ * instruction the moment somebody has edited it — so the drafter and the
+ * polish are held to one doctrine rather than two.
+ *
+ * That is not a tidiness argument. The polish runs *after* the drafter and
+ * rewrites the text, which makes it the last writer and therefore the one that
+ * sets the house style whatever the first one was told. When this table held
+ * its own private copy of the checklist it went on enforcing the previous
+ * doctrine over the top of the new one — deleting the self-introduction the
+ * playbook requires and restoring the predictions it forbids — and the symptom
+ * was a founder rewriting the drafter's prompt and seeing no change at all.
+ * A second copy of a doctrine is a second doctrine.
+ */
 const TEST: Partial<Record<EmailPurpose, string>> = {
   COLD_OUTREACH: `Cold Email Playbook v3. It works if all of this is true:
 
@@ -140,7 +159,13 @@ export interface PolishRequest {
 }
 
 export async function polishEmail(request: PolishRequest): Promise<PolishResult> {
-  const test = TEST[request.purpose];
+  // The standard this email is held to, resolved the same way the drafter's
+  // own instruction is. When nobody has edited the owning agent this is the
+  // shipped checklist above; once somebody has, it is their wording — and the
+  // two stages are reading one doctrine, which is the only arrangement in
+  // which editing a prompt changes what comes out.
+  const brief = await resolveBrief(emailJobFor(request.purpose), TEST[request.purpose] ?? "");
+  const test = brief.text.trim();
   const result = await callModel<{
     subject: string;
     body: string;
@@ -155,7 +180,7 @@ export async function polishEmail(request: PolishRequest): Promise<PolishResult>
     prompt: () =>
       [
         `What this email is for: ${request.purpose.replace(/_/g, " ").toLowerCase()}.`,
-        test ? `It works if: ${test}` : "",
+        test ? `The standard it is held to — this is what the writer was told, so judge the draft against it and name the item that failed:\n${test}` : "",
         request.recipient ? `It goes to: ${request.recipient}` : "",
         request.facts?.length
           ? `Everything the writer was given about the recipient. Nothing outside this list may appear in the email — that is how you tell a fact from an invention:\n${request.facts

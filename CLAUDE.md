@@ -359,9 +359,24 @@ Four things in it overturn what the drafter used to do, so check before
   correction: the sentence was added on 19 Aug and the playbook removed it.
 
 **A prompt improvement that never reaches the model is not an improvement, and
-the symptom is "nothing changed".** Two ways that happened here, both worth
+the symptom is "nothing changed".** Three ways that happened here, all worth
 checking before writing another word of prompt:
 
+0. **The prompt being edited was not the prompt being run.** The largest of the
+   three, and the one that made the other two hard to see. Every deliverable
+   this company produces — the cold email, the polish, the proposal, the
+   WhatsApp message, three audit sections, the demo page, the research — was
+   written by a string constant in `lib/` or `services/` that **no screen
+   displayed and no edit could reach**, while the Agents screen showed a prompt
+   that governed only that agent's own task runs. `DISCIPLINE_AGENTS` made it
+   literal: it supplied the name printed on the audit PDF — "Reviewed by the
+   Page Reviewer" — while an anonymous constant did the reviewing, and the UX
+   prompt actually opened "You are the Dakyworld UI/UX Designer", an agent the
+   one-job split had moved off that work. So the doctrine existed twice:
+   `outreach.writer`'s seed carried the whole playbook in its `process` layer,
+   and so did `draftSystem()`. One was editable; the other was the one that
+   ran. **See "Writers read the agent that owns them" below** — that is the fix
+   and the rule that keeps it fixed.
 1. **A later stage was enforcing the earlier doctrine.** `emailPolish` runs
    *after* the drafter and rewrites the text. Its `TEST.COLD_OUTREACH` still
    required "what it costs them" and treated a self-introduction as
@@ -379,6 +394,47 @@ checking before writing another word of prompt:
 each rule is present *and* that its opposite is not, and reports what fraction of
 the prompt is actually facts about the business. Run it before adding
 instructions, not after.
+
+**Writers read the agent that owns them** — `src/services/writers/`. Every job a
+model writes is named in `registry.ts` and given exactly one owning agent, and
+`brief.ts` resolves what that writer is told: a per-job override first, then
+**the owning agent's own instruction once a person has edited it**, then the
+wording the code ships. An agent may own several jobs; a job has exactly one
+owner, because two agents editing one deliverable is the contradiction that
+makes a model fall back to the generic output it already knew.
+
+- **Doctrine and contract are different things and only one is editable.** The
+  doctrine is how Dakyworld writes this — voice, judgement, what may be
+  claimed. The contract is the shape of the answer: the fields, the plain-text
+  rule, the severity words that get scored, the opt-out the app appends, the
+  fabrication rules on a demo page carrying somebody's real business name.
+  `composeWriterSystem()` puts the contract *after* the doctrine and no edit
+  path can reach it, so a rewritten voice can make a letter worse and can never
+  make it unparseable, uncompliant, or libellous about a stranger.
+- **An untouched seed deliberately falls through to the shipped wording.** A
+  seeded agent's ten layers describe a colleague ("you report to the CRO,
+  escalate when…"); the shipped doctrine describes the letter. Swapping one for
+  the other on an agent nobody edited would quietly make every draft worse.
+  The first edit is what hands the agent authority over its own deliverable.
+- **The override is read with a direct query, not `getSetting`.** That cache is
+  per-process and cleared only by the process that wrote it — on more than one
+  instance, a brief edited on one would go on being ignored by the other, which
+  is this bug again wearing a different hat.
+- **`emailPolish` no longer carries its own copy of the checklist.** It runs
+  last and rewrites the text, which makes it the house style whatever the
+  drafter was told, so it is resolved to the *same* job as the drafter. A
+  second copy of a doctrine is a second doctrine.
+- The Agents screen's compiled prompt returns `writes`: which deliverables this
+  agent's wording governs, and whether it is governing them *yet*. That panel
+  is the answer to "where do these words actually go", which the screen could
+  not answer before.
+
+`tmp/writerReach.ts` is the harness. It plants a shibboleth in an agent's
+wording and asserts it comes out of the real composer, that the contract
+survives, that the polish sees the same doctrine, and — the check that catches
+the next version of this bug — that **every job in the registry is actually
+passed to the composer by the file it claims**, since a job key is a string and
+nothing else verifies it. 63 checks, database only, no key.
 
 **The old doctrine also reaches the drafter through the facts.** Two files feed
 the cold writer in words rather than in rules: `audit/markdown.ts` writes the
@@ -425,8 +481,13 @@ the reviewer, never ticked by code. The reply-based opt-out is appended by
 message cannot depend on a model remembering it.
 
 The same doctrine lives in three places that must agree — the playbook, the
-drafter, and the `outreach.writer` / `outreach.followup` prompts — plus the
-`dakyworld-cold-email` skill for writing outside the app.
+drafter's `SHIPPED_DOCTRINE`, and the `outreach.writer` / `outreach.followup`
+prompts — plus the `dakyworld-cold-email` skill for writing outside the app.
+**The drafter's copy is now a default rather than the authority**: once either
+agent has been edited, its wording is what writes the letter and the constant
+steps aside (`services/writers/`). That is what makes the third copy safe —
+before it, the agent prompts were documentation of a doctrine that a constant
+enforced.
 `applyColdEmailPlaybook()` is the one-off pass that puts the v3 wording onto
 agents that already exist, marked by `agents.coldEmailPlaybookV3` and skipping
 any prompt the Owner has rewritten.

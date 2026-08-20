@@ -3,6 +3,7 @@ import { callModel } from "../lib/models/call.js";
 import { PROVIDERS } from "../lib/models/registry.js";
 import { chooseDirection, type DesignDirection } from "./designReferences.js";
 import { companyProfile } from "./systemProfile.js";
+import { writerSystem } from "./writers/brief.js";
 import { appUrl } from "./emailSender.js";
 import type { CompanyAudit } from "./companyAudit.js";
 import type { HomepageLook } from "./homepageLook.js";
@@ -100,34 +101,32 @@ const SCHEMA = {
   },
 } as const;
 
-function systemPrompt(direction: DesignDirection, senderName: string): string {
-  return `You build one landing page for one small business, as a working demonstration of what their site could be.
+/**
+ * How the page is designed. Overridable by `dev.web`.
+ *
+ * Note what is *not* in here. The fabrication rules and the build rules live
+ * in `CONTRACT` below, out of reach of any edit, because this page goes on the
+ * public internet carrying a real business's name and a rewritten voice must
+ * not be able to authorise an invented testimonial on it. That is the sharpest
+ * case for the doctrine/contract split in this codebase: the thing being
+ * edited is taste, and the thing being protected is somebody else's reputation.
+ */
+const SHIPPED_DOCTRINE = `You build one landing page for one small business, as a working demonstration of what their site could be.
 
-This page is for the business, not for us. It carries their name, their trade and their words. ${senderName} built it to show them what is possible, and it will be sent to them as a link.
+This page is for the business, not for us. It carries their name, their trade and their words.
 
-**The design direction, which was chosen by looking at real published work — follow it:**
-${direction.direction}
-
-${
-  direction.references.length
-    ? direction.references
-        .map(
-          (reference, index) =>
-            `Reference ${index + 1} — ${reference.name} (${reference.source})\n  Why it fits: ${reference.whyItFits}\n  Layout: ${reference.layout}\n  Look: ${reference.look}\n  Motion: ${reference.motion}`,
-        )
-        .join("\n\n")
-    : "No specific references were found, so build to the direction above and keep it plain, fast and clear."
-}
-
-${direction.avoid.length ? `**Avoid, specifically for this trade:**\n${direction.avoid.map((entry) => `- ${entry}`).join("\n")}` : ""}
-
-Take the *direction* from those references. Never reproduce anybody's actual design, and never copy markup — that work belongs to whoever made it.
+Take the *direction* from the references you are given. Never reproduce anybody's actual design, and never copy markup — that work belongs to whoever made it.
 
 **What you may put on the page:**
 - Only the facts you are given. Their name, trade, town, services, phone, email, rating and review count if those are supplied.
 - Ordinary, true copy written around those facts.
 
-**What you may never put on the page:**
+Say what the business does in the first line — not a slogan, and not "Welcome to".`;
+
+/**
+ * The fabrication rules and the build rules. Never reachable by an edit.
+ */
+const CONTRACT = `**What you may never put on the page:**
 - An invented testimonial, review, client name, case study, statistic, price, award, certification or number of years in business. A fabricated review on a page carrying somebody's real business name is the one thing here that could genuinely damage them, and it is the first thing they will check.
 - A claim about what they do beyond what the facts say. If you were given three services, the page offers three services.
 - Any image from another server. There are no photographs available to you. Build with type, colour, spacing, CSS gradients and inline SVG — a page that is well set and empty of stock imagery looks *more* considered than one wallpapered in somebody else's photographs, and it loads on a slow phone.
@@ -140,7 +139,32 @@ Take the *direction* from those references. Never reproduce anybody's actual des
 - Accessible basics: one \`<h1>\`, real heading order, alt text on any SVG that carries meaning, colour contrast that passes on the body text.
 - No cookie banner, no newsletter pop-up, no chat widget.
 
-Write British English. Say what the business does in the first line — not a slogan, and not "Welcome to".`;
+Write British English.`;
+
+async function systemPrompt(direction: DesignDirection, senderName: string): Promise<string> {
+  const chosen = `${senderName} built this to show them what is possible, and it will be sent to them as a link.
+
+**The design direction, which was chosen by looking at real published work — follow it:**
+${direction.direction}
+
+${
+    direction.references.length
+      ? direction.references
+          .map(
+            (reference, index) =>
+              `Reference ${index + 1} — ${reference.name} (${reference.source})
+  Why it fits: ${reference.whyItFits}
+  Layout: ${reference.layout}
+  Look: ${reference.look}
+  Motion: ${reference.motion}`,
+          )
+          .join("\n\n")
+      : "No specific references were found, so build to the direction above and keep it plain, fast and clear."
+  }
+
+${direction.avoid.length ? `**Avoid, specifically for this trade:**\n${direction.avoid.map((entry) => `- ${entry}`).join("\n")}` : ""}`;
+
+  return writerSystem("demo.page", SHIPPED_DOCTRINE, { facts: [chosen], contract: CONTRACT });
 }
 
 function buildPrompt(subject: DemoSubject): string {
@@ -356,7 +380,7 @@ export async function buildDemo(subject: DemoSubject, options: { rebuild?: boole
     purpose: "demo.build",
     // Complete web pages. The one job ChatGPT was picked for.
     job: "html",
-    system: systemPrompt(direction, profile.displayName),
+    system: await systemPrompt(direction, profile.displayName),
     prompt: () => buildPrompt(subject),
     schema: SCHEMA as unknown as Record<string, unknown>,
     effort: "high",

@@ -4,6 +4,7 @@ import { smsCost, toGsm7 } from "./phone.js";
 import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
 import { chooseScenario, scenarioForPrompt } from "../services/coldEmailScenarios.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
+import { writerSystem } from "../services/writers/brief.js";
 import type { RecipientContext } from "../services/emailContext.js";
 
 /**
@@ -159,25 +160,47 @@ function briefFor(purpose: EmailPurpose): string {
   );
 }
 
-async function draftSystem(channel: MessageChannel): Promise<string> {
-  const profile = await companyProfile();
-  return `You write short outbound messages for one specific company, sent to a phone. Every draft is read by a person before it is sent — write the message they would send, not a template they have to rewrite.
-
-${CHANNEL_NOTE[channel]}
-
-${BRAND}
-
-${contactBlock(profile)}
+/**
+ * The doctrine Dakyworld ships for a message to a phone.
+ *
+ * A default, not the authority: `outreach.writer`'s own wording replaces it as
+ * soon as somebody edits that agent — see `services/writers/brief.ts`. The
+ * channel mechanics below are deliberately *not* in here, because a rewritten
+ * voice must not be able to take the segment limit or the opt-out rule with it.
+ */
+const SHIPPED_DOCTRINE = `You write short outbound messages for one specific company, sent to a phone. Every draft is read by a person before it is sent — write the message they would send, not a template they have to rewrite.
 
 ${VOICE}
-
-${LENGTH[channel]}
 
 **Never state a fault you were not given.** Every negative thing this message says about their business must trace to one of the facts you are handed. If a fault is not in that list it was not found, and "not found" is not "not there" — you have no idea, and a confident wrong claim about somebody's own business, sent to their personal phone, is read as a lie by the one person who knows the truth.
 
 The list is also the complete account of what was checked. Anything absent from it was not looked at.
 
-Never invent a fact about the recipient. If the facts are thin, write a shorter message; do not fill the space with claims. Return the body as plain text. Do not add a sign-off, a name at the end, or an opt-out line — the app appends the opt-out itself, and the name belongs in your opening.`;
+Never invent a fact about the recipient. If the facts are thin, write a shorter message; do not fill the space with claims.`;
+
+/**
+ * The mechanics, which no prompt edit can reach.
+ *
+ * The opt-out rule is the one that matters most: the app appends it, so a
+ * model that writes its own produces two, and a model told not to bother
+ * because somebody rewrote the voice produces a marketing message to a phone
+ * with no way out of it. That is a compliance property of this system, not a
+ * matter of style, and it belongs on this side of the line.
+ */
+function contractFor(channel: MessageChannel): string {
+  return `${CHANNEL_NOTE[channel]}
+
+${LENGTH[channel]}
+
+Return the body as plain text. Do not add a sign-off, a name at the end, or an opt-out line — the app appends the opt-out itself, and the name belongs in your opening.`;
+}
+
+async function draftSystem(channel: MessageChannel): Promise<string> {
+  const profile = await companyProfile();
+  return writerSystem("message.phone", SHIPPED_DOCTRINE, {
+    facts: [BRAND, contactBlock(profile)],
+    contract: contractFor(channel),
+  });
 }
 
 function buildPrompt(request: MessageDraftRequest): string {

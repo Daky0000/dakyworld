@@ -1,5 +1,6 @@
 import { callModel } from "../lib/models/call.js";
 import { PROVIDERS } from "../lib/models/registry.js";
+import { writerSystem } from "./writers/brief.js";
 
 /**
  * Finding out who a lead actually is, before anybody writes to them.
@@ -129,7 +130,11 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM = `You establish who a business is, from sources you can cite, so that a letter to them can be specific rather than generic.
+/**
+ * How the research is done. Overridable by `lead.enricher`, the agent whose
+ * one job this is.
+ */
+const SHIPPED_DOCTRINE = `You establish who a business is, from sources you can cite, so that a letter to them can be specific rather than generic.
 
 You are given whatever is already known about them, which is usually very little. Your job is to fill in what is missing and to write a short brief for the person who will write to them.
 
@@ -140,7 +145,10 @@ The rules, and they are absolute:
 - **Distinguish the business from businesses with similar names.** If you cannot tell which of two you are looking at, return nothing and say so in couldNotFind. Half a record about the wrong company is worse than none.
 - **A rating is a number from a specific platform on a specific day.** If you cannot see the number and the count, leave both empty.
 
-The discovery note is written for one reader: somebody who is about to send this business a cold email and has thirty seconds to prepare. Tell them what the business does, who its customers are, how established it looks, and anything that changes the approach — a recent opening, an award, a busy social account with an obviously neglected website, a listing that is the only thing about them online. Say plainly where your picture is thin. Do not speculate about their budget, their staff, their systems or their plans; you have no way to know any of it.
+The discovery note is written for one reader: somebody who is about to send this business a cold email and has thirty seconds to prepare. Tell them what the business does, who its customers are, how established it looks, and anything that changes the approach — a recent opening, an award, a busy social account with an obviously neglected website, a listing that is the only thing about them online. Say plainly where your picture is thin. Do not speculate about their budget, their staff, their systems or their plans; you have no way to know any of it.`;
+
+/** The mechanics. Citation is a storage rule here — an uncited value is dropped on arrival. */
+const CONTRACT = `Every value you return carries the URL you read it on, and a value without one is discarded before it reaches the record. An empty field is a correct answer.
 
 Write in British English, plainly, no marketing register. This is a briefing note, not copy.`;
 
@@ -191,7 +199,7 @@ export async function researchLead(subject: ResearchSubject): Promise<LeadResear
   }>({
     purpose: "lead.research",
     job: "research",
-    system: SYSTEM,
+    system: await writerSystem("lead.research", SHIPPED_DOCTRINE, { contract: CONTRACT }),
     prompt: () =>
       [
         "Everything currently on file for this lead:",

@@ -3,6 +3,7 @@ import { PROVIDERS } from "../../lib/models/registry.js";
 import type { CompanyAudit } from "../companyAudit.js";
 import type { AuditEvidence } from "./evidence.js";
 import { DISCIPLINE_AGENTS, scoreFindings, sortBySeverity, trimFindings, type AuditFindingDetail, type DisciplineReport } from "./types.js";
+import { composeWriterSystem, resolveBrief } from "../writers/brief.js";
 
 /**
  * The content review: whether the words do the selling the design cannot.
@@ -228,7 +229,7 @@ export async function reviewContent(
         purpose: "audit.content",
         // Reading and judging prose. Routed with the rest of the writing.
         job: "text",
-        system: systemPrompt(business),
+        system: await systemPrompt(business),
         prompt: () => buildPrompt(evidence, page, text, business),
         schema: SCHEMA as unknown as Record<string, unknown>,
         effort: "medium",
@@ -308,14 +309,11 @@ function fallbackSummary(findings: AuditFindingDetail[], wordCount: number): str
     .join(" ");
 }
 
-function systemPrompt(business: { name: string; trade: string | null; town: string | null }): string {
-  return `You are the Dakyworld Content Writer, reviewing the words on one homepage for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
-
-You are given the visible text of the page with the markup taken out. **That text is the whole of your evidence.** You have not seen the layout, the pictures, the other pages, or what happens when a button is pressed, and you may not say anything about any of them. Where you are not sure whether something is absent or merely somewhere you were not shown, say so rather than asserting it.
-
-The text arrives in the order it appears in the source, which is usually navigation, then the page, then the footer. Do not treat that order as the order a visitor reads in.
-
-**What you are judging.** Not grammar, and not tone for its own sake. Whether these words:
+/**
+ * How this reviewer judges. Overridable by `content.writer`, the agent whose
+ * name the report already prints at the foot of this section.
+ */
+const SHIPPED_DOCTRINE = `**What you are judging.** Not grammar, and not tone for its own sake. Whether these words:
 - say what the business sells, in the first thing a visitor reads
 - say who it is for, and where
 - answer the questions a customer actually arrives with — what it costs, how long it takes, whether they cover my area, are you any good
@@ -327,9 +325,22 @@ The text arrives in the order it appears in the source, which is usually navigat
 
 **Never invent a fault.** If the copy is good, say so and mark it GOOD. A review that only criticises reads as a sales pitch and is read as one. If the page is genuinely fine, three GOOD observations and a short summary is the honest answer.
 
-**Never claim something is missing when you were only given part of the page.** "There is no pricing on the homepage" is a fair observation. "They do not publish pricing" is not — you have not seen their pricing page.
+**Never claim something is missing when you were only given part of the page.** "There is no pricing on the homepage" is a fair observation. "They do not publish pricing" is not — you have not seen their pricing page.`;
 
-Write for somebody who runs a business and has never heard the words "value proposition". British English. No exclamation marks. Do not use "compelling", "engaging", "leverage", "resonate" or "messaging".`;
+/** The mechanics. The severity words are scored, so they are not a style choice. */
+const CONTRACT = `Write for somebody who runs a business and has never heard the words "value proposition". British English. No exclamation marks. Do not use "compelling", "engaging", "leverage", "resonate" or "messaging".`;
+
+async function systemPrompt(business: { name: string; trade: string | null; town: string | null }): Promise<string> {
+  const brief = await resolveBrief("audit.content", SHIPPED_DOCTRINE);
+  const who = brief.agentName ?? "Content Writer";
+
+  const evidence = `You are the Dakyworld ${who}, reviewing the words on one homepage for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
+
+You are given the visible text of the page with the markup taken out. **That text is the whole of your evidence.** You have not seen the layout, the pictures, the other pages, or what happens when a button is pressed, and you may not say anything about any of them. Where you are not sure whether something is absent or merely somewhere you were not shown, say so rather than asserting it.
+
+The text arrives in the order it appears in the source, which is usually navigation, then the page, then the footer. Do not treat that order as the order a visitor reads in.`;
+
+  return composeWriterSystem(brief, { preamble: [evidence], contract: CONTRACT });
 }
 
 function buildPrompt(

@@ -193,6 +193,57 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
             assembled when it runs, from the company profile, what it remembers, and what it is allowed to do.
           </p>
 
+          {/*
+            Where these words go, beyond this agent's own tasks.
+
+            The panel exists because the screen used to answer only half the
+            question. An agent's prompt governed its task runs; the cold email,
+            the proposal and the audit sections were written by constants in the
+            server that nothing here displayed — so a rewritten Cold Lead Writer
+            showed new wording on this page and sent the old letter.
+
+            `active` is the part worth being precise about. Until somebody edits
+            this agent, the shipped doctrine is still what writes the
+            deliverable, and the row says so rather than implying an authority
+            the wording does not yet have.
+          */}
+          {compiled.writes && compiled.writes.length > 0 && (
+            <div className="border border-line bg-white px-3 py-2">
+              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">What this wording writes</p>
+              <p className="mt-0.5 text-[11px] text-ink/45">
+                Not only {agent.name}'s own tasks. These are written elsewhere in the app, and this instruction is what writes them.
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {compiled.writes.map((entry) => (
+                  <li key={entry.job} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-sm text-ink/75">{entry.label}</span>
+                    {entry.outward && (
+                      <span
+                        className="font-mono text-[9px] uppercase tracking-[.1em] text-blue"
+                        title="Somebody outside Dakyworld reads this"
+                      >
+                        goes outside
+                      </span>
+                    )}
+                    <span
+                      className={`font-mono text-[9px] uppercase tracking-[.1em] ${entry.active ? "text-blue" : "text-ink/30"}`}
+                      title={entry.explains}
+                    >
+                      {entry.active ? "your wording" : "shipped wording"}
+                    </span>
+                    <span className="w-full text-[11px] text-ink/40">{entry.what}</span>
+                  </li>
+                ))}
+              </ul>
+              {compiled.writes.some((entry) => !entry.active) && (
+                <p className="mt-2 text-[11px] text-ink/45">
+                  The ones marked <em>shipped wording</em> still use what Dakyworld ships. Edit this prompt once and your version takes
+                  over — the format each one has to return is kept separately and is never affected.
+                </p>
+              )}
+            </div>
+          )}
+
           {compiled.regions.map((region) => (
             <div key={region.key} className={region.editable ? "" : "border-l-2 border-line pl-3"}>
               <div className="flex flex-wrap items-baseline gap-2">

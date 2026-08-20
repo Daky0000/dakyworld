@@ -1597,6 +1597,26 @@ export interface CompiledPrompt {
   prompt: Record<string, string>;
   resettable: boolean;
   approxTokens: number;
+  /**
+   * The deliverables this agent's wording writes outside its own tasks — the
+   * cold email, the proposal, an audit section. Empty for most of the roster.
+   */
+  writes?: WriterJobStatus[];
+}
+
+/** One thing an agent's instruction writes, and whether it is doing so yet. */
+export interface WriterJobStatus {
+  job: string;
+  label: string;
+  what: string;
+  /** True when somebody outside Dakyworld reads it. */
+  outward: boolean;
+  /** The file that composes the call, for anyone reading the server. */
+  where: string;
+  source: "override" | "agent" | "shipped";
+  /** True when this agent's own wording is what writes it today. */
+  active: boolean;
+  explains: string;
 }
 
 export interface ShippedPrompt {

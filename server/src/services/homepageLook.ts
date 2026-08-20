@@ -1,6 +1,7 @@
 import { callModel } from "../lib/models/call.js";
 import { PROVIDERS } from "../lib/models/registry.js";
 import { captureHomepage, type Screenshot, type ShotResult } from "./siteShot.js";
+import { writerSystem } from "./writers/brief.js";
 import type { CompanyAudit } from "./companyAudit.js";
 
 /**
@@ -250,7 +251,12 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM = `You are looking at a screenshot of one business's homepage, and reporting what is visibly true of it.
+/**
+ * How the page is read. Overridable by `review.look`, which owns both this
+ * first read and the audit team's UX section — one craft, one wording, so the
+ * two never disagree about the same homepage.
+ */
+const SHIPPED_DOCTRINE = `You are looking at a screenshot of one business's homepage, and reporting what is visibly true of it.
 
 You are doing this so that a letter to that business can name something specific rather than something generic. "A modern website builds trust" is worthless; "the first thing on your homepage is a stock photo of a handshake, and nothing on that screen says you are a dental clinic" is worth replying to.
 
@@ -279,7 +285,15 @@ Two things that keep this honest:
 - **If the homepage is genuinely good, say so, mark the observations GOOD, and set fitsTheBusiness true.** A review that always finds fault is a sales pitch and it reads as one. There is no shame in "this is a decent site".
 - **Be concrete about what you can see.** "The photograph across the top is stretched out of shape and there is nothing on that screen saying what they make" is useful. "The design feels unprofessional" is an opinion and a business owner rejects it on sight.
 
-**Every observation carries a plainly line: the same point with no web vocabulary in it whatsoever.** No hero, no CTA, no above the fold, no viewport, no responsive, no UX, no conversion. If you would not say the word to a cement wholesaler across a desk, it does not go in that line.
+**Every observation carries a plainly line: the same point with no web vocabulary in it whatsoever.** No hero, no CTA, no above the fold, no viewport, no responsive, no UX, no conversion. If you would not say the word to a cement wholesaler across a desk, it does not go in that line.`;
+
+/**
+ * The mechanics. The `plainly` rule is restated here because an email reaches
+ * straight for that field — a doctrine rewrite that dropped it would not make
+ * the report read differently, it would put "above the fold" into a letter to
+ * somebody who has never heard the phrase.
+ */
+const CONTRACT = `Every observation must fill its \`plainly\` field with the same point in words a business owner would use, containing no web vocabulary at all.
 
 British spelling. No exclamation marks. Nothing you write should sound like a report about a website; it should sound like somebody who opened it and said what they saw.`;
 
@@ -319,7 +333,7 @@ export async function lookAtHomepage(args: {
     const result = await callModel<Omit<HomepageLook, "lookedBy">>({
       purpose: "lead.homepageLook",
       job: "vision",
-      system: SYSTEM,
+      system: await writerSystem("homepage.look", SHIPPED_DOCTRINE, { contract: CONTRACT }),
       prompt: () =>
         [
           `The homepage of ${args.companyName ?? args.website}${args.trade ? `, a ${args.trade}` : ""}${args.town ? ` in ${args.town}` : ""}, at ${captured.shot!.finalUrl ?? captured.shot!.requested}.`,

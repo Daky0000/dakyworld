@@ -1,6 +1,7 @@
 import { callClaude } from "../../lib/claude.js";
 import type { AuditEvidence } from "./evidence.js";
 import { DISCIPLINE_NAMES, allFindings, type AuditSynthesis, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
+import { writerSystem } from "../writers/brief.js";
 
 /**
  * Putting the four reviews together.
@@ -112,19 +113,41 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM = `You are compiling one website review out of four specialists' reports, for a business that has not asked for it and has never heard of us.
+/**
+ * How the verdict is reached. Overridable by `outreach.writer`.
+ *
+ * The owner looks wrong until you follow what this produces: the `consequence`
+ * sentence and the DEMO/FIX ask decided here are read by the cold email
+ * drafter *as facts about the business*. So this is an outreach instrument as
+ * much as an audit one, and it was one of the places the previous doctrine
+ * survived a full round of prompt work — the drafter had stopped saying "what
+ * that costs them" and "ask for fifteen minutes" long before this file did,
+ * and the drafter dutifully read the old wording back out of the brief.
+ *
+ * **Anything that writes an instruction another writer will read is part of
+ * the playbook surface.** One owner over both is what keeps them in step.
+ */
+const SHIPPED_DOCTRINE = `You are compiling one website review out of four specialists' reports, for a business that has not asked for it and has never heard of us.
 
 Two people read what you write. The business owner reads the summary and the priority order: they are not technical, they will not become technical, and they decide whether to spend money on the strength of whether the first paragraph describes something they recognise. A colleague reads the email brief, to write to them.
 
 **The rules, in order of how much damage breaking them does:**
 
-1. **You may not introduce a fault.** Every problem you name has to be one of the findings you were given, and every entry in the priority list must use a finding id exactly as it appears. If you want to make a point the findings do not support, leave it out. This report goes to a stranger about their own business, and they know the truth better than the reports do.
+1. **You may not introduce a fault.** Every problem you name has to be one of the findings you were given. If you want to make a point the findings do not support, leave it out. This report goes to a stranger about their own business, and they know the truth better than the reports do.
 
 2. **Never turn "we could not check it" into "it is wrong".** The notes list what could not be examined. A check that did not run is not a finding; saying otherwise is a false statement about somebody's company.
 
 3. **Rank by what it costs them, not by severity.** A CRITICAL security header and a homepage that does not say what the business sells are not equally urgent to somebody who wants the phone to ring. What changes the most for the least effort goes first.
 
-4. **Say what is good.** A review that only criticises reads as a sales pitch and is read as one. If something is genuinely sound, it goes in \`whatIsWorking\` — and if the whole site is sound, say so and set the ask to NOTHING. Being able to say there is nothing worth writing about is what makes the other reports believable.
+4. **Say what is good.** A review that only criticises reads as a sales pitch and is read as one. If something is genuinely sound, it goes in \`whatIsWorking\` — and if the whole site is sound, say so and set the ask to NOTHING. Being able to say there is nothing worth writing about is what makes the other reports believable.`;
+
+/**
+ * The mechanics. The finding-id rule is here rather than in the doctrine
+ * because `synthesise()` drops any priority entry naming an id no reviewer
+ * produced — a rewritten doctrine that lost the rule would not change the
+ * report's tone, it would silently empty its priority list.
+ */
+const CONTRACT = `Every entry in the priority list must use a finding id exactly as it appears in the findings you were given. An entry naming anything else is discarded.
 
 Write British English, plainly, the way a competent person explains something to a customer. No exclamation marks. Do not use: leverage, optimise, robust, seamless, cutting-edge, best practice, in today's digital landscape, or any sentence that would fit any business.`;
 
@@ -153,7 +176,7 @@ export async function synthesise(
   try {
     const result = await callClaude<AuditSynthesis>({
       purpose: "audit.synthesis",
-      system: SYSTEM,
+      system: await writerSystem("audit.synthesis", SHIPPED_DOCTRINE, { contract: CONTRACT }),
       prompt: () => buildPrompt(report, evidence, business, findings),
       schema: SCHEMA as unknown as Record<string, unknown>,
       effort: "high",

@@ -9,6 +9,8 @@ import { authoredInstruction, composePrompt, isBusy, runTask } from "../services
 import { appendOwnerAnswer, clearCheckpoint } from "../services/agents/checkpoint.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
+import { resolveBrief } from "../services/writers/brief.js";
+import { jobsOwnedBy } from "../services/writers/registry.js";
 import { taskSubjects } from "../services/agents/context.js";
 import { syncStandingWork } from "../services/agents/standingWork.js";
 import { isValidTimezone } from "../lib/timezone.js";
@@ -393,6 +395,37 @@ agentsRouter.get("/:key/prompt/compiled", async (req, res, next) => {
       layers: PROMPT_LAYERS,
       prompt: agent.prompt,
       resettable: !agent.custom,
+      /**
+       * The deliverables this agent's wording writes, outside its own tasks.
+       *
+       * The question this answers is the one the screen could not answer
+       * before: *where do these words actually go?* An agent's prompt used to
+       * mean only "what it is told when it runs a task", while the cold email,
+       * the proposal and the audit sections were written by string constants
+       * in `lib/` that no screen displayed. Somebody could rewrite the Cold
+       * Lead Writer, watch this page show their new wording, send an email and
+       * get the old one — because the two were never connected.
+       *
+       * `active` is the honest part. A seeded agent nobody has edited still
+       * falls through to the shipped doctrine, so the row says "shipped
+       * wording — your edit will take this over" rather than claiming an
+       * authority it does not yet have.
+       */
+      writes: await Promise.all(
+        jobsOwnedBy(agent.key).map(async (job) => {
+          const brief = await resolveBrief(job.key, "");
+          return {
+            job: job.key,
+            label: job.label,
+            what: job.what,
+            outward: job.outward,
+            where: job.where,
+            source: brief.source,
+            active: brief.source === "agent",
+            explains: brief.explains,
+          };
+        }),
+      ),
       /**
        * Roughly what this costs to send, every task, before the brief. Four
        * characters to the token is close enough to be worth showing and not

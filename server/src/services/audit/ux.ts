@@ -2,6 +2,7 @@ import { callModel, type PromptImage } from "../../lib/models/call.js";
 import { PROVIDERS } from "../../lib/models/registry.js";
 import type { AuditEvidence } from "./evidence.js";
 import { DISCIPLINE_AGENTS, scoreFindings, sortBySeverity, trimFindings, type AuditFindingDetail, type DisciplineReport, type Region, type ScreenshotView } from "./types.js";
+import { composeWriterSystem, resolveBrief } from "../writers/brief.js";
 
 /**
  * The UI/UX review: what a first-time visitor actually sees.
@@ -118,22 +119,45 @@ interface LookedAt {
   }[];
 }
 
-function systemPrompt(business: { name: string; trade: string | null; town: string | null }, views: ScreenshotView[]): string {
-  return `You are the Dakyworld UI/UX Designer, reviewing one homepage for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
-
-You are looking at ${views.length === 2 ? "two screenshots of the same page: the first as it appears on a desktop browser at 1280px wide, the second as it appears on a phone at 390px wide" : `one screenshot of the page, taken at ${views[0] === "mobile" ? "phone width (390px)" : "desktop width (1280px)"}`}. ${views.includes("mobile") ? "Most of the people who will open this site are on the phone one." : ""}
-
-**The pictures are the whole of your evidence.** They show the top of the page — roughly the first screen and a little of what follows. You may not say anything about a page you were not shown, about what happens when a button is pressed, about their booking system, their prices, or how fast the site loads. If you cannot see it, it is not an observation.
-
-**Judge the business, not the design.** "The type is inconsistent" is a critique. "A builder comparing three suppliers cannot tell from this screen whether you sell what he needs, so he goes back to the search results" is a reason to spend money. Every observation must end up somewhere a business owner recognises: a customer lost, an enquiry not made, a comparison gone the wrong way, a company made to look smaller than it is.
+/**
+ * How this reviewer judges. Overridable by the agent that owns it.
+ *
+ * The PDF has always printed "Reviewed by the Page Reviewer" at the foot of
+ * this section while the prompt opened "You are the Dakyworld UI/UX Designer"
+ * — two different agents since the one-job split moved *looking at a page*
+ * away from *designing one*. The identity line is assembled from the resolved
+ * owner now, so the name in the document and the name in the prompt are the
+ * same name.
+ */
+const SHIPPED_DOCTRINE = `**Judge the business, not the design.** "The type is inconsistent" is a critique. "A builder comparing three suppliers cannot tell from this screen whether you sell what he needs, so he goes back to the search results" is a reason to spend money. Every observation must end up somewhere a business owner recognises: a customer lost, an enquiry not made, a comparison gone the wrong way, a company made to look smaller than it is.
 
 **Say when there is nothing to say.** A homepage that is genuinely fine is a real answer, and reporting it honestly is what makes the criticism credible when there is some. Mark what is good as GOOD rather than leaving it out — a review that only criticises reads as a sales pitch, and it is read as one.
 
-**Every observation has to be one the owner can check in ten seconds by opening their own site.** Anything they cannot verify while still reading is an opinion, and it reads as one.
+**Every observation has to be one the owner can check in ten seconds by opening their own site.** Anything they cannot verify while still reading is an opinion, and it reads as one.`;
 
-Severity means: CRITICAL — a visitor cannot use or trust the page. HIGH — it is costing them enquiries now. MEDIUM — it is holding them back. LOW — worth doing, not urgent. GOOD — this is right and should stay.
+/**
+ * The mechanics. Severity is here rather than in the doctrine because the
+ * words are read back by `scoreFindings()` — a rewritten scale would not
+ * change how the section reads, it would change what the section scores.
+ */
+const CONTRACT = `Severity means: CRITICAL — a visitor cannot use or trust the page. HIGH — it is costing them enquiries now. MEDIUM — it is holding them back. LOW — worth doing, not urgent. GOOD — this is right and should stay. Use those words exactly; they are read back and scored.
 
 British English. No exclamation marks. No "modern", "sleek", "user-friendly" or "seamless" — say what is actually there.`;
+
+async function systemPrompt(
+  business: { name: string; trade: string | null; town: string | null },
+  views: ScreenshotView[],
+): Promise<string> {
+  const brief = await resolveBrief("audit.ux", SHIPPED_DOCTRINE);
+  const who = brief.agentName ?? "Page Reviewer";
+
+  const evidence = `You are the Dakyworld ${who}, reviewing one homepage for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
+
+You are looking at ${views.length === 2 ? "two screenshots of the same page: the first as it appears on a desktop browser at 1280px wide, the second as it appears on a phone at 390px wide" : `one screenshot of the page, taken at ${views[0] === "mobile" ? "phone width (390px)" : "desktop width (1280px)"}`}. ${views.includes("mobile") ? "Most of the people who will open this site are on the phone one." : ""}
+
+**The pictures are the whole of your evidence.** They show the top of the page — roughly the first screen and a little of what follows. You may not say anything about a page you were not shown, about what happens when a button is pressed, about their booking system, their prices, or how fast the site loads. If you cannot see it, it is not an observation.`;
+
+  return composeWriterSystem(brief, { preamble: [evidence], contract: CONTRACT });
 }
 
 export async function reviewUx(
@@ -199,7 +223,7 @@ export async function reviewUx(
       purpose: "audit.ux",
       // Looking at a picture. ChatGPT unless the Owner has moved it.
       job: "vision",
-      system: systemPrompt(business, views),
+      system: await systemPrompt(business, views),
       prompt: () => [...facts, "", "Review the page."].join("\n"),
       images,
       schema: SCHEMA as unknown as Record<string, unknown>,

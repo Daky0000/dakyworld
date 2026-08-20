@@ -4,6 +4,8 @@ import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
 import { chooseScenario, scenarioForPrompt } from "../services/coldEmailScenarios.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
+import { writerSystem } from "../services/writers/brief.js";
+import { emailJobFor } from "../services/writers/registry.js";
 import type { RecipientContext } from "../services/emailContext.js";
 
 /**
@@ -282,19 +284,56 @@ function buildPrompt(request: DraftRequest): string {
  * doctrine over the top of this one.
  */
 export async function buildColdEmailPrompt(request: DraftRequest): Promise<{ system: string; user: string }> {
-  return { system: await draftSystem(), user: buildPrompt(request) };
+  return { system: await draftSystem(request.purpose), user: buildPrompt(request) };
 }
 
-async function draftSystem(): Promise<string> {
-  return `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.\n\n${BRAND}\n\n${contactBlock(await companyProfile())}\n\n${VOICE}\n\n**Never state a fault you were not given.** Every negative thing this email says about their business must trace to one of the facts above, and those facts carry their own evidence in brackets — a URL, a header, a DNS record. If a fault is not in the list, it was not found, and "not found" is not the same as "not there": you have no idea, and a confident wrong claim about somebody's own business is read as a lie by the one person who knows the truth. A letter saying "your website did not load" to a company whose website loads is not a bad email, it is a false statement about them, and it ends the relationship at the first line.
+/**
+ * The doctrine Dakyworld ships for outbound email.
+ *
+ * **This is a default, not the authority.** The moment somebody edits the
+ * owning agent on the Agents screen — `outreach.writer` for a cold email,
+ * `outreach.followup` for a nudge, `billing.collector` for a chase,
+ * `client.notifier` for the rest — their wording replaces this and writes the
+ * letter instead. That is the whole point of `services/writers/brief.ts`: this
+ * constant used to be the only thing that ever reached the model, so a founder
+ * could rewrite the Cold Lead Writer's prompt, watch the screen show the new
+ * wording, and get the identical email back, because the screen and the writer
+ * were two unconnected things.
+ *
+ * Keep the *judgement* here and the *format* in `CONTRACT` below. Anything in
+ * this string can be replaced by an edit; nothing in the contract can.
+ */
+const SHIPPED_DOCTRINE = `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.
+
+${VOICE}
+
+**Never state a fault you were not given.** Every negative thing this email says about their business must trace to one of the facts you are handed, and those facts carry their own evidence in brackets — a URL, a header, a DNS record. If a fault is not in the list, it was not found, and "not found" is not the same as "not there": you have no idea, and a confident wrong claim about somebody's own business is read as a lie by the one person who knows the truth. A letter saying "your website did not load" to a company whose website loads is not a bad email, it is a false statement about them, and it ends the relationship at the first line.
 
 The list is also the complete account of what was checked. Anything absent from it was not looked at.
 
-Never invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims. Return the body as plain text with blank lines between paragraphs — the app renders it and appends the signature.`;
+Never invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims.`;
+
+/**
+ * The mechanics of the answer, which no prompt edit can reach.
+ *
+ * The signature rule is here rather than in the doctrine on purpose: the app
+ * appends the sign-off, so a model that adds one produces a letter with the
+ * founder's name in it twice. That is a rendering fact about this system, not
+ * a matter of taste, and it must survive somebody rewriting the voice.
+ */
+const CONTRACT = `Return the body as plain text with blank lines between paragraphs. No HTML.
+
+End on the ask. Do not type a sign-off or a name at the end — the app appends the signature, and a name typed above it arrives directly on top of the real one.`;
+
+async function draftSystem(purpose: EmailPurpose): Promise<string> {
+  return writerSystem(emailJobFor(purpose), SHIPPED_DOCTRINE, {
+    facts: [BRAND, contactBlock(await companyProfile())],
+    contract: CONTRACT,
+  });
 }
 
 export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
-  const system = await draftSystem();
+  const system = await draftSystem(request.purpose);
   const { data, model, inputTokens, outputTokens } = await callModel<{
     subject: string;
     body: string;

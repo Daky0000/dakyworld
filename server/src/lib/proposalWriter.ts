@@ -3,6 +3,7 @@ import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE, SERVICE_LINES, catalogueForPrompt } from "../services/dakyworld.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { auditForPrompt } from "../services/companyAudit.js";
+import { writerSystem } from "../services/writers/brief.js";
 import type { ProposalContext } from "../services/proposalContext.js";
 
 /**
@@ -171,13 +172,22 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM = `You write service proposals for one specific company at a time, for Dakyworld.
-
-${BRAND}
+/**
+ * The doctrine Dakyworld ships for a proposal.
+ *
+ * A default, not the authority: `proposal.writer`'s own wording replaces this
+ * once somebody edits that agent on the Agents screen — see
+ * `services/writers/brief.ts`. Before that existed this constant was the only
+ * thing that ever reached the model, and the Proposal Writer's card was a
+ * label over a string nobody could edit.
+ *
+ * The service catalogue, the brand block and the contact details are passed
+ * separately as facts, because they are live state rather than writing: a
+ * rewritten voice must not be able to take the published prices with it.
+ */
+const SHIPPED_DOCTRINE = `You write service proposals for one specific company at a time, for Dakyworld.
 
 ${VOICE}
-
-${catalogueForPrompt()}
 
 How this proposal must work:
 
@@ -193,9 +203,20 @@ How this proposal must work:
 
 5. **No filler sections.** No "In today's digital landscape". No mission statement. No bulleted list of everything Dakyworld does. The reader's time is the budget: if a sentence does not either state a fact about them or say what will be done, cut it.
 
-6. **Do not oversell.** Recommend what the evidence supports. If they need a website and nothing else, propose a website. A proposal that recommends all seven service lines is a brochure, and reads as one.
+6. **Do not oversell.** Recommend what the evidence supports. If they need a website and nothing else, propose a website. A proposal that recommends all seven service lines is a brochure, and reads as one.`;
 
-7. **British spelling. Currency as GHS 35,000. No exclamation marks, no emoji.**`;
+/**
+ * The mechanics, which no prompt edit can reach.
+ *
+ * The pricing rule is here as well as in the doctrine on purpose. How firmly
+ * to quote is a judgement somebody may want to change; *which fields carry an
+ * un-firm price* is the shape of the answer, and a rewritten voice that lost
+ * it would produce a proposal whose totals the document renderer then prints
+ * as though they were quoted.
+ */
+const CONTRACT = `British spelling. Currency as GHS 35,000. No exclamation marks, no emoji.
+
+Only the catalogue's published prices may be quoted as firm. Anything priced after the discovery call is returned with \`firm: false\` and \`amount: 0\`, with the reason in the basis line — never as a guessed number in the amount field.`;
 
 export interface ProposalDraft {
   title: string;
@@ -256,7 +277,10 @@ export async function writeProposal(context: ProposalContext, brief?: string | n
     // Prose, so it goes wherever writing is routed — Gemini by default,
     // falling back to Claude while no Gemini key is set. See lib/models.
     job: "text",
-    system: `${SYSTEM}\n\n${contactBlock(await companyProfile())}`,
+    system: await writerSystem("proposal", SHIPPED_DOCTRINE, {
+      facts: [BRAND, catalogueForPrompt(), contactBlock(await companyProfile())],
+      contract: CONTRACT,
+    }),
     prompt: () => buildPrompt(context, brief),
     schema: SCHEMA as unknown as Record<string, unknown>,
     // A proposal is written once and decides a deal; this is not the place to

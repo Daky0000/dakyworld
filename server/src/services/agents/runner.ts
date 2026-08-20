@@ -8,9 +8,9 @@ import { AnalystError } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
 import { invokeTool } from "../tools/invoke.js";
 import { companyProfile, contactBlock } from "../systemProfile.js";
-import { PROMPT_LAYERS } from "../agentRegistry.js";
 import { BRAND, VOICE } from "../dakyworld.js";
 import { MemoryRefused, recall, remember, subjectOf, type Recalled } from "./memory.js";
+import { authoredInstruction } from "./authored.js";
 import { describeTask, taskSubjects } from "./context.js";
 import { appendNote, renderDossier } from "../context/dossier.js";
 import { recordGap, searchRoster } from "./hiring.js";
@@ -863,27 +863,11 @@ async function rosterSize(): Promise<number> {
 }
 
 /**
- * The instruction an agent works to, as authored.
- *
- * `promptText` is the Owner's own wording and wins outright when it is set.
- * Otherwise the ten layers are run together in their declared order, which is
- * what every seeded agent ships with.
- *
- * Exported because the screen needs the same answer the model gets. Showing a
- * prompt assembled by a second piece of code is how a screen ends up lying
- * about what an agent was told.
+ * Re-exported so the Agents screen and the runner keep one import between them.
+ * The definition is in `./authored.js` — a leaf, because the writers in `lib/`
+ * need it too and this module imports the tool catalogue, which imports them.
  */
-export function authoredInstruction(agent: Pick<Agent, "prompt" | "promptText" | "title" | "mission">): string {
-  const written = agent.promptText?.trim();
-  if (written) return written;
-
-  const prompt = (agent.prompt ?? {}) as Record<string, string>;
-  const layers = PROMPT_LAYERS.map((layer) => prompt[layer])
-    .filter((value) => typeof value === "string" && value.trim())
-    .join("\n\n");
-
-  return layers || `You are the Dakyworld ${agent.title}. ${agent.mission}`;
-}
+export { authoredInstruction } from "./authored.js";
 
 /** One labelled block of the assembled prompt. */
 export interface PromptRegion {
