@@ -32,6 +32,10 @@ import { PROVIDERS, routeFor } from "../../lib/models/registry.js";
 import { BRAND, VOICE, catalogueForPrompt } from "../dakyworld.js";
 import { allMcpTools, callOn, imageProvider, mcpTools } from "./mcpTools.js";
 import { companyProfile } from "../systemProfile.js";
+// Circular with services/agents/hiring.ts, which imports listAllTools from
+// here. Safe because every reference in both directions is inside a function
+// body rather than at module scope — see the note at the top of hiring.ts.
+import { closeGap, findOverlaps, hirePolicy, openGaps, proposeHire, searchRoster } from "../agents/hiring.js";
 
 /**
  * Every tool an agent can actually call.
@@ -2002,6 +2006,121 @@ Output one complete HTML document. Rules it must follow:
       // The whole audit is a lot of context for a question about security, so
       // this returns the parts a security conversation is actually about.
       return { ranAt: audit.ranAt, site: audit.site, domain: audit.domain, findings: audit.findings };
+    },
+  },
+
+  // --- Hiring ---------------------------------------------------------------
+  //
+  // Granted to the Agent Creator and to nobody else. Every other agent reaches
+  // this ground through `needSkill`, which records a need and decides nothing —
+  // see services/agents/hiring.ts for why the two are separate.
+  {
+    key: "agent.gaps",
+    name: "Read the skill gaps",
+    group: "Operations",
+    purpose: "Every craft an agent has said Dakyworld does not have, and how many separate agents have asked for it.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({ gapId: z.string().max(64).optional() }),
+    run: async (input) => {
+      if (input.gapId) return prisma.agentGap.findUnique({ where: { id: input.gapId } });
+      return openGaps();
+    },
+  },
+  {
+    key: "agent.roster",
+    name: "Search the roster",
+    group: "Operations",
+    purpose: "Who already does a kind of work, matched on what they are good at rather than on a tool key. The check before proposing a hire.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({ need: z.string().min(3).max(200) }),
+    run: async (input) => {
+      const matches = await searchRoster(input.need);
+      return {
+        matches,
+        // Said in words rather than left to be inferred from an empty array:
+        // "no matches" and "I did not look properly" produce the same JSON.
+        verdict: matches.length === 0 ? "Nobody on the roster is a match for this." : `${matches.length} existing agent(s) do some of this already.`,
+      };
+    },
+  },
+  {
+    key: "agent.hire",
+    name: "Propose a new agent",
+    group: "Operations",
+    purpose:
+      "Files a complete design for a new agent. It does NOT create one — the Owner approves it in Slack, or the standing hiring policy does. Nothing exists until then.",
+    scope: "write",
+    requires: "database",
+    spends: false,
+    // Not outward — nobody outside the company sees a hire. It is gated by the
+    // hiring policy and by dry run, which are the two that mean anything here:
+    // the autonomy ladder is about acting on the world, and this acts on the
+    // company.
+    outward: false,
+    input: z.object({
+      key: z.string().min(3).max(48).describe("Lowercase letters, numbers and dots, e.g. finance.bookkeeper."),
+      name: z.string().min(1).max(80),
+      title: z.string().min(1).max(120),
+      department: z.enum(["EXECUTIVE", "REVENUE", "DELIVERY", "FINANCE", "MARKETING", "TECHNOLOGY", "CLIENT", "RISK", "PEOPLE"]),
+      managerKey: z.string().min(1).max(64).describe("An existing agent for this one to report to and escalate into."),
+      mission: z.string().min(10).max(600).describe("One sentence with one verb in it. A mission needing an 'and' is usually two agents."),
+      deliverable: z.string().min(10).max(300).describe("The single finished thing this agent produces. If you cannot name one, this is not one agent."),
+      skills: z.array(z.string().max(80)).min(1).max(12).describe("What it is good at, in a client's words rather than in tool keys."),
+      kpis: z.array(z.string().max(120)).max(8).default([]),
+      toolkit: z.array(z.string().max(64)).max(30).default([]).describe("Tool keys from the catalogue. Anything that is not a real key is dropped and named back to you."),
+      escalationPolicy: z.string().min(10).max(600),
+      avatar: z.string().max(4).optional().describe("One glyph for the roster card."),
+      prompt: z
+        .record(z.string().max(4000))
+        .describe("The ten prompt layers: role, mission, scope, dataRules, tools, policy, process, escalateWhen, output, memory. Write process and output properly — they are what makes it good at the job rather than generically competent."),
+      rationale: z.string().min(20).max(2000).describe("Why this is a new agent rather than work for somebody who already exists. Name the agents you checked."),
+      gapId: z.string().max(64).optional().describe("The gap this answers, when it answers one."),
+    }),
+    preview: async (input, ctx) => {
+      const overlaps = await findOverlaps(`${input.title} ${input.mission} ${input.deliverable}`, input.skills);
+      const policy = await hirePolicy();
+      return [
+        `Propose hiring ${input.name} (${input.key}) — ${input.title}, reporting to ${input.managerKey}.`,
+        `Produces: ${input.deliverable}`,
+        input.toolkit.length ? `Asks for: ${input.toolkit.join(", ")}.` : "Asks for no tools.",
+        overlaps.length ? `Overlaps ${overlaps.map((o) => `${o.name} (${Math.round(o.score * 100)}%)`).join(", ")}.` : "No existing agent overlaps it.",
+        policy === "AUTO"
+          ? "The hiring policy is AUTO, so approving this run would create the agent immediately at autonomy 1 with dry run on."
+          : "The hiring policy is ASK, so this would go to the Owner in Slack and nothing would be created yet.",
+      ].join(" ");
+    },
+    run: async (input, ctx) => {
+      const { gapId, ...design } = input;
+      return proposeHire(
+        { ...design, avatar: design.avatar ?? null, prompt: design.prompt as Record<string, string> },
+        { proposedByKey: ctx.agentKey ?? "owner", gapId: gapId ?? null, taskId: null },
+      );
+    },
+  },
+  {
+    key: "agent.closeGap",
+    name: "Close a skill gap",
+    group: "Operations",
+    purpose: "Records that a reported gap is not a new agent — the work belongs to somebody who already exists, or Dakyworld does not do it.",
+    scope: "write",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({
+      gapId: z.string().min(1).max(64),
+      reason: z.string().min(10).max(1000).describe("Why this is not a hire. Say who should have taken the work, if anybody."),
+      belongsTo: z.string().max(64).optional().describe("The existing agent whose job this is. The agent that raised the gap is told, by name."),
+    }),
+    preview: async (input) => `Close the gap ${input.gapId} without hiring${input.belongsTo ? `, saying it belongs to ${input.belongsTo}` : ""}: ${input.reason.slice(0, 160)}`,
+    run: async (input) => {
+      const closed = await closeGap(input.gapId, input.reason, input.belongsTo ?? null);
+      return closed ? { closed: true, gapId: input.gapId } : { closed: false, note: "That gap is already filled or does not exist." };
     },
   },
 ];

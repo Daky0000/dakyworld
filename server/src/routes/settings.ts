@@ -250,13 +250,15 @@ async function describeModels() {
   };
 }
 
-/** Slack: which route is live, and where messages land by default. */
+/** Slack: which route is live, where messages land, and whether it can talk back. */
 async function describeSlack() {
-  const [transport, webhook, token, channel] = await Promise.all([
+  const [transport, webhook, token, channel, signing, approvers] = await Promise.all([
     slackTransport(),
     getSetting(SETTING.SLACK_WEBHOOK_URL),
     getSetting(SETTING.SLACK_BOT_TOKEN),
     getSetting(SETTING.SLACK_DEFAULT_CHANNEL),
+    getSetting(SETTING.SLACK_SIGNING_SECRET),
+    getSetting(SETTING.SLACK_APPROVERS),
   ]);
   return {
     configured: transport !== "NONE",
@@ -267,6 +269,14 @@ async function describeSlack() {
     webhookUrl: webhook ? maskSecret(webhook) : null,
     botToken: token ? maskSecret(token) : null,
     defaultChannel: channel,
+    // The inbound half. Reported separately from `configured` because they are
+    // genuinely different states: Slack can be perfectly able to receive alerts
+    // and completely unable to send a decision back, and the symptom of that is
+    // a hiring card whose buttons do nothing.
+    signingSecret: signing ? maskSecret(signing) : null,
+    canReceive: Boolean(signing),
+    approvers: (approvers ?? "").split(/[,\s]+/).filter(Boolean),
+    signingSecretEnvManaged: isEnvManaged(SETTING.SLACK_SIGNING_SECRET),
   };
 }
 
@@ -1131,11 +1141,15 @@ settingsRouter.put("/general", async (req, res, next) => {
 settingsRouter.put("/slack", async (req, res, next) => {
   try {
     if (guardEnv(SETTING.SLACK_WEBHOOK_URL, "The Slack connection", res)) return;
-    const { webhookUrl, botToken, defaultChannel } = z
+    const { webhookUrl, botToken, defaultChannel, signingSecret, approvers } = z
       .object({
         webhookUrl: z.string().optional(),
         botToken: z.string().optional(),
         defaultChannel: z.string().max(80).optional(),
+        /** Slack app → Basic Information → Signing Secret. Lets Slack talk back. */
+        signingSecret: z.string().max(200).optional(),
+        /** Slack user ids allowed to decide a hire. Empty means anyone in the channel. */
+        approvers: z.array(z.string().max(32)).max(20).optional(),
       })
       .parse(req.body);
 
@@ -1162,6 +1176,31 @@ settingsRouter.put("/slack", async (req, res, next) => {
     if (defaultChannel !== undefined) {
       if (defaultChannel.trim()) await setSetting(SETTING.SLACK_DEFAULT_CHANNEL, defaultChannel.trim());
       else await deleteSetting(SETTING.SLACK_DEFAULT_CHANNEL);
+    }
+
+    // Not verified against Slack, because there is nothing to verify it
+    // against — a signing secret is only ever proved by a request arriving and
+    // matching. What *is* checked is the shape, since the commonest mistake is
+    // pasting the app's Verification Token or Client Secret instead.
+    if (signingSecret !== undefined) {
+      if (guardEnv(SETTING.SLACK_SIGNING_SECRET, "The Slack signing secret", res)) return;
+      const value = signingSecret.trim();
+      if (value) {
+        if (!/^[0-9a-f]{16,}$/i.test(value)) {
+          return res.status(400).json({
+            error: "That doesn't look like a Slack signing secret — they're a long string of hex. Find it under your Slack app → Basic Information → App Credentials → Signing Secret.",
+          });
+        }
+        await setSetting(SETTING.SLACK_SIGNING_SECRET, value, { secret: true });
+      } else {
+        await deleteSetting(SETTING.SLACK_SIGNING_SECRET);
+      }
+    }
+
+    if (approvers !== undefined) {
+      const ids = approvers.map((id) => id.trim().toUpperCase()).filter(Boolean);
+      if (ids.length > 0) await setSetting(SETTING.SLACK_APPROVERS, ids.join(","));
+      else await deleteSetting(SETTING.SLACK_APPROVERS);
     }
 
     clearReadinessCache();
@@ -1195,6 +1234,8 @@ settingsRouter.delete("/slack", async (req, res, next) => {
       deleteSetting(SETTING.SLACK_WEBHOOK_URL),
       deleteSetting(SETTING.SLACK_BOT_TOKEN),
       deleteSetting(SETTING.SLACK_DEFAULT_CHANNEL),
+      deleteSetting(SETTING.SLACK_SIGNING_SECRET),
+      deleteSetting(SETTING.SLACK_APPROVERS),
     ]);
     clearReadinessCache();
     res.json(await describeAll(req));

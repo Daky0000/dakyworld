@@ -9,6 +9,17 @@ import { isBusy, runTask } from "../services/agents/runner.js";
 import { appendOwnerAnswer, clearCheckpoint } from "../services/agents/checkpoint.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
+import {
+  HireRefused,
+  applyHire,
+  declineHire,
+  hirePolicy,
+  listHireRequests,
+  openGaps,
+  setHirePolicy,
+  withdrawHire,
+} from "../services/agents/hiring.js";
+import { slackConfigured } from "../lib/slack.js";
 
 /**
  * The workforce.
@@ -985,6 +996,102 @@ agentsRouter.delete("/:key/memory/:id", async (req, res, next) => {
     await forget(req.params.id);
     res.status(204).end();
   } catch (err) {
+    next(err);
+  }
+});
+
+// --- Hiring -----------------------------------------------------------------
+
+/**
+ * The same decisions Slack offers, in the app.
+ *
+ * Slack is the *convenient* place to answer a hiring card — it arrives on a
+ * phone at the moment it matters. It must not be the *only* place. A Slack
+ * workspace that has not been connected yet, a signing secret nobody has
+ * pasted, an app somebody removed: each of those would otherwise mean the
+ * Agent Creator files proposals nothing can ever approve, and the failure
+ * would look like the agent not working.
+ *
+ * Mounted under `/agents` and above nothing — these paths cannot be mistaken
+ * for an agent key, because `:key` is matched by the routes declared before
+ * them and Express takes the first match. `hiring/policy` and `gaps` are two
+ * segments where `/:key` is one.
+ */
+agentsRouter.get("/hiring/policy", async (_req, res, next) => {
+  try {
+    const [policy, slack, pending] = await Promise.all([hirePolicy(), slackConfigured(), listHireRequests("PENDING")]);
+    res.json({
+      policy,
+      pending: pending.length,
+      slackConnected: slack,
+      // Said plainly, because the combination that surprises people is AUTO
+      // with dry run still on: agents appear on the roster and appear to do
+      // nothing, which reads as broken rather than as safe.
+      explanation:
+        policy === "AUTO"
+          ? "The Agent Creator's proposals become agents as soon as it makes them — at autonomy 1 with dry run on, so nothing a new agent decides takes effect until you raise it."
+          : "Nothing is created until you approve it. Proposals arrive in Slack when it is connected, and are listed here either way.",
+      ...(slack ? {} : { note: "Slack is not connected, so hiring cards have nowhere to go. Proposals still land here." }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.put("/hiring/policy", async (req, res, next) => {
+  try {
+    const { policy } = z.object({ policy: z.enum(["ASK", "AUTO"]) }).parse(req.body ?? {});
+    await setHirePolicy(policy, `${req.dbUser?.email ?? "the Owner"} in the app`);
+    res.json({ policy });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.get("/hiring/gaps", async (_req, res, next) => {
+  try {
+    res.json({ gaps: await openGaps() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.get("/hiring/requests", async (req, res, next) => {
+  try {
+    const status = z.enum(["PENDING", "APPROVED", "DECLINED", "EXPIRED", "WITHDRAWN"]).optional().parse(req.query.status);
+    res.json({ requests: await listHireRequests(status) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.post("/hiring/requests/:id/approve", async (req, res, next) => {
+  try {
+    const result = await applyHire(req.params.id, { userId: req.dbUser?.id ?? null, note: "Approved in the app." });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof HireRefused) return res.status(409).json({ error: err.message });
+    next(err);
+  }
+});
+
+agentsRouter.post("/hiring/requests/:id/decline", async (req, res, next) => {
+  try {
+    const { note } = z.object({ note: z.string().max(600).optional() }).parse(req.body ?? {});
+    const request = await declineHire(req.params.id, { userId: req.dbUser?.id ?? null, note: note ?? null });
+    res.json(request);
+  } catch (err) {
+    if (err instanceof HireRefused) return res.status(409).json({ error: err.message });
+    next(err);
+  }
+});
+
+agentsRouter.post("/hiring/requests/:id/undo", async (req, res, next) => {
+  try {
+    const result = await withdrawHire(req.params.id, { userId: req.dbUser?.id ?? null });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof HireRefused) return res.status(409).json({ error: err.message });
     next(err);
   }
 });

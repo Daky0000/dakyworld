@@ -598,6 +598,17 @@ export interface AppSettings {
     webhookUrl: string | null;
     botToken: string | null;
     defaultChannel: string | null;
+    /**
+     * The inbound half — whether Slack can talk *back*. Reported separately
+     * from `configured` because they are genuinely different states: Slack can
+     * be perfectly able to deliver an alert and unable to return a decision,
+     * and the symptom of that is a hiring card whose buttons do nothing.
+     */
+    signingSecret: string | null;
+    canReceive: boolean;
+    signingSecretEnvManaged: boolean;
+    /** Slack user ids allowed to decide a hire. Empty means anyone in the channel. */
+    approvers: string[];
   };
   developer: { configured: boolean; envManaged: boolean; token: string | null; owner: string | null };
   calendar: {

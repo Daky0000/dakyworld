@@ -132,6 +132,27 @@ export const SETTING = {
   SLACK_WEBHOOK_URL: "slack.webhookUrl",
   SLACK_BOT_TOKEN: "slack.botToken",
   SLACK_DEFAULT_CHANNEL: "slack.defaultChannel",
+  /**
+   * Slack's signing secret — the only thing that makes an *inbound* Slack
+   * request trustworthy.
+   *
+   * The two settings above are outbound: they prove we are allowed to post.
+   * This one proves a request that says it is Slack actually is, which is what
+   * an Approve button on a hiring card depends on. Without it the interactivity
+   * endpoint refuses everything rather than trusting a payload's word for who
+   * sent it — see lib/slack.ts and routes/slackActions.ts.
+   */
+  SLACK_SIGNING_SECRET: "slack.signingSecret",
+  /**
+   * Slack user ids allowed to decide a hire, comma-separated (`U012ABCDEF`).
+   *
+   * Blank means anybody who can see the message can click the button, which is
+   * the right default for a one-person company and the wrong one the day a
+   * channel gets a second member. The Slack payload carries the clicking user's
+   * id, verified by the signature, so this is a real check rather than a
+   * cosmetic one.
+   */
+  SLACK_APPROVERS: "slack.approverIds",
 
   // GitHub, read-mostly, for the technical agents. See lib/github.ts.
   GITHUB_TOKEN: "github.token",
@@ -182,6 +203,37 @@ export const SETTING = {
    * refuses anything above it rather than trusting an agent's arithmetic.
    */
   AGENT_MAX_CALL_USD: "agents.maxCallUsd",
+
+  /**
+   * What happens when the Agent Creator proposes a new agent: `ASK` or `AUTO`.
+   *
+   * ASK posts the design to Slack with Approve and Decline on it and waits.
+   * AUTO creates it there and then, and posts the same card with an Undo on it
+   * instead. Defaults to ASK, and it is meant to be flipped from Slack —
+   * `/dakyworld hiring auto` — because the moment somebody wants to change it
+   * is the moment they are reading a hiring card, not the moment they are
+   * looking at a Settings screen.
+   *
+   * **Sits under dry run, not beside it.** An agent in dry run decides nothing
+   * at all, so the policy only comes into play once the Owner has taken the
+   * Agent Creator out of dry run. AUTO then decides *who exists*; it never
+   * decides what they may do, because every hire lands at autonomy 1 with dry
+   * run on whichever way it was approved.
+   */
+  AGENT_HIRE_POLICY: "agents.hirePolicy",
+  /**
+   * The most custom agents the roster may hold. Beyond it the Agent Creator is
+   * refused and told to escalate — a workforce that can grow without limit
+   * grows to the size of every task that ever confused somebody.
+   */
+  AGENT_MAX_CUSTOM: "agents.maxCustomAgents",
+  /**
+   * The most agents that may be hired in one rolling day. A runaway loop —
+   * agent asks for a craft, gets one, that one asks for another — is cheap to
+   * start and expensive to unpick, and this is what stops it at three rather
+   * than at thirty.
+   */
+  AGENT_MAX_HIRES_PER_DAY: "agents.maxHiresPerDay",
 } as const;
 
 /** Env fallbacks, checked before the database. */
@@ -232,6 +284,10 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.SLACK_WEBHOOK_URL]: "SLACK_WEBHOOK_URL",
   [SETTING.SLACK_BOT_TOKEN]: "SLACK_BOT_TOKEN",
   [SETTING.SLACK_DEFAULT_CHANNEL]: "SLACK_DEFAULT_CHANNEL",
+  // Pinnable for the same reason as the webhook secret below: it is what
+  // authenticates every inbound Slack request, and rotating it in the UI
+  // should not be the same action as breaking every button already posted.
+  [SETTING.SLACK_SIGNING_SECRET]: "SLACK_SIGNING_SECRET",
   [SETTING.GITHUB_TOKEN]: "GITHUB_TOKEN",
   [SETTING.GITHUB_OWNER]: "GITHUB_OWNER",
   [SETTING.GOOGLE_CALENDAR_ID]: "GOOGLE_CALENDAR_ID",

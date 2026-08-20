@@ -9,6 +9,7 @@ import { dispatchDueEmails } from "./emailSender.js";
 import { runDueSequences } from "./emailSequences.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
+import { ensureGapReviews, expireStaleHireRequests } from "./agents/hiring.js";
 import { purgeExpiredSessions } from "../lib/session.js";
 
 /**
@@ -183,6 +184,19 @@ async function housekeepingTick(now: Date) {
   // after anybody was going to continue one.
   const staleCheckpoints = await pruneCheckpoints();
   if (staleCheckpoints) console.log(`[scheduler] cleared ${staleCheckpoints} stale agent checkpoint(s)`);
+
+  // Hiring cards nobody answered. They have to expire rather than sit PENDING
+  // for ever: pending proposals are *counted*, so five forgotten ones would
+  // stop the Agent Creator proposing anything at all with nothing to show why.
+  const expired = await expireStaleHireRequests(now);
+  if (expired) console.log(`[scheduler] expired ${expired} unanswered hire request(s)`);
+
+  // A gap whose review task somebody cancelled would otherwise sit IN_REVIEW
+  // with nothing reviewing it. recordGap raises the review at the moment the
+  // gap is filed; this is the only path that covers one being taken away
+  // afterwards.
+  const reviews = await ensureGapReviews();
+  if (reviews) console.log(`[scheduler] raised ${reviews} skill-gap review(s)`);
 }
 
 export function startScheduler() {

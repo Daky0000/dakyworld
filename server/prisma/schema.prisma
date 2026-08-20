@@ -1876,6 +1876,14 @@ enum AgentStepKind {
   /// A call the policy refused.
   REFUSED
   DELEGATED
+  /// A question asked of a colleague, and the answer it gave. Sideways, not
+  /// down: nothing was handed over, an opinion was sought.
+  CONSULTED
+  /// The remaining work handed to an agent that is not a report, because it is
+  /// their craft rather than this one's.
+  HANDED_OFF
+  /// "Nobody on the roster can do this." The signal the Agent Creator reads.
+  GAP_RAISED
   REMEMBERED
   BLOCKED
   FINISHED
@@ -1998,4 +2006,169 @@ model AgentMemory {
   @@index([agentKey, subject])
   @@index([agentKey, createdAt])
   @@index([scope, subject])
+}
+
+// ---------------------------------------------------------------------------
+// Hiring — the workforce growing itself
+// ---------------------------------------------------------------------------
+
+/// What happened to a request for a craft nobody on the roster has.
+enum AgentGapStatus {
+  /// Raised and not yet looked at.
+  OPEN
+  /// The Agent Creator has a task on it.
+  IN_REVIEW
+  /// An agent now exists for it. `filledByKey` is who.
+  FILLED
+  /// Looked at and refused — the work belongs to somebody who already exists,
+  /// or it is not work Dakyworld does.
+  DECLINED
+}
+
+/// One agent saying "this needs a craft nobody here has".
+///
+/// The signal, not the decision. An agent that hits work outside its own craft
+/// and finds nobody on the roster to hand it to has three bad options — attempt
+/// it badly, escalate to a person for something structural, or quietly do
+/// nothing — and until this existed it took the first. What it does now is
+/// record the gap and stop, which is the honest answer.
+///
+/// **Deliberately not a hire.** A gap is demand, and demand is counted before
+/// it is met: `timesRequested` is bumped when a second agent asks for the same
+/// thing rather than opening a second row, so "three different agents have
+/// wanted a bookkeeper this month" is a fact somebody can see. One agent's
+/// frustration is a bad reason to add a permanent member of staff; the same
+/// request three times from three jobs is a good one.
+///
+/// `requestedByKey` and `filledByKey` are bare keys rather than relations, the
+/// same choice `Agent.managerKey` makes: a gap outlives the agent that raised
+/// it, and "who asked for this" stays answerable after that agent is retired.
+model AgentGap {
+  id String @id @default(cuid())
+
+  /// The agent that ran into the wall.
+  requestedByKey String
+  /// The task it was working on, so the brief that exposed the gap is
+  /// readable. A bare id: the record is history and survives the task's
+  /// deletion, at the cost of occasionally pointing at nothing.
+  taskId String?
+
+  /// The craft, in a few words and in a client's vocabulary — "edit a video",
+  /// "reconcile a bank statement". Matched against on the way in, so a second
+  /// agent asking for the same thing finds this row.
+  skillNeeded String
+  /// Why it was needed here, in the requesting agent's own words.
+  reason String
+
+  /// How many separate agents have asked for this. The demand signal.
+  timesRequested Int @default(1)
+  /// Every agent that has asked, so the count can be trusted and the same
+  /// agent asking twice does not look like two.
+  requestedByKeys String[] @default([])
+
+  status AgentGapStatus @default(OPEN)
+  /// Set when an agent exists for it.
+  filledByKey String?
+  /// Why it was declined, or what filled it. Written by whoever decided.
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([skillNeeded])
+}
+
+enum HireRequestStatus {
+  /// Waiting on the Owner. The whole design of the ASK policy.
+  PENDING
+  /// The agent exists. `createdAgentKey` is its key.
+  APPROVED
+  DECLINED
+  /// Nobody answered inside the window. Not a refusal — a re-ask.
+  EXPIRED
+  /// Approved and then undone from Slack. The agent it created is RETIRED.
+  WITHDRAWN
+}
+
+/// A proposed agent, waiting on a decision.
+///
+/// **The Agent Creator never creates an agent.** It files one of these, and
+/// what turns one into a row on the roster is a decision made outside the
+/// model: the Owner's click in Slack, or the standing hiring policy when it is
+/// set to AUTO. That separation is the entire safety story of self-staffing —
+/// an agent that could write to the `Agent` table directly could grant itself a
+/// toolkit by hiring a copy of itself with a wider one.
+///
+/// Holds the whole design rather than a summary, because the decision and the
+/// creation happen at different moments and possibly days apart: what the
+/// Owner approves in Slack on Thursday has to be exactly what gets created,
+/// with no second pass through a model in between.
+model AgentHireRequest {
+  id String @id @default(cuid())
+
+  /// The gap this answers, when it answers one. Null for a hire proposed
+  /// without a gap behind it — the Owner asking directly.
+  gapId String?
+  /// The agent that designed it. Bare key, for the reason AgentGap gives.
+  proposedByKey String
+  /// The task the proposal was made on.
+  taskId String?
+
+  // The design, exactly as it will be created. Mirrors the create route's
+  // input, because it is the same thing arriving by a different road.
+  key              String
+  name             String
+  title            String
+  department       AgentDepartment
+  managerKey       String
+  mission          String
+  /// One sentence naming the single finished thing this agent produces. Not
+  /// stored on Agent — it is the one-job test, and its job is to be readable
+  /// by the person deciding, who is the only one who can apply that test.
+  deliverable      String
+  skills           String[] @default([])
+  kpis             String[] @default([])
+  toolkit          String[] @default([])
+  escalationPolicy String
+  avatar           String?
+  /// The ten layers, same shape as Agent.prompt.
+  prompt           Json     @default("{}")
+
+  /// Why this is a new agent rather than work for somebody who already exists.
+  /// The argument the Owner is actually being asked to accept.
+  rationale String
+  /// Agents whose skills overlap this design, found before it was filed. Shown
+  /// on the Slack card: "this is 40% the Web Developer" is the single most
+  /// useful thing a person can be told before agreeing to a hire.
+  overlaps Json @default("[]")
+
+  status HireRequestStatus @default(PENDING)
+  /// Which policy was in force when it was filed — ASK or AUTO. Recorded
+  /// rather than inferred, so a hire made under AUTO stays identifiable after
+  /// the policy is changed back.
+  policy String @default("ASK")
+
+  /// Who decided. One of these is set, never both: a User id when it was
+  /// decided in the app, a Slack user id when it was decided from Slack, and
+  /// neither when the AUTO policy decided it.
+  decidedById        String?
+  decidedBySlackUser String?
+  decidedAt          DateTime?
+  decisionNote       String?
+
+  /// The agent that was created, once one was.
+  createdAgentKey String?
+
+  /// Where the card was posted, so the same message can be edited to show the
+  /// outcome rather than leaving a live Approve button under a settled
+  /// decision.
+  slackChannel String?
+  slackTs      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([gapId])
 }

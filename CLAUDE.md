@@ -543,11 +543,140 @@ downgraded — so checking the refusal first files prepared work as refused,
 leaves `dryRunCalls` at zero, and finishes the task `DONE`. The Owner then
 reads "done" about work that never happened. This shipped broken once.
 
-Three tools exist outside the catalogue and every agent has them regardless of
-its toolkit, because they are how an agent takes part in the system rather than
-things it does to the business: `escalate` (stop and ask → `BLOCKED`),
-`remember` (write a memory), and `delegate` (hand work to a *direct report*
-only — never sideways or upward). A specialist gets the first two.
+**Seven tools exist outside the catalogue** and every agent has them regardless
+of its toolkit, because they are how an agent takes part in the system rather
+than things it does to the business. Three are about the agent itself:
+`escalate` (stop and ask → `BLOCKED`), `remember` (write a memory), and
+`delegate` (hand work to a *direct report* only — never sideways or upward; a
+specialist does not get this one). Four are about working with the rest of the
+workforce.
+
+**Agents can reach each other now** — `workflowTools()` in `agents/runner.ts`.
+Before Aug 2026 an agent had exactly two ways out of work it could not do: hand
+it *down* to a report, or stop and ask a person. Neither is what a colleague
+would do, and the result was agents attempting crafts that were not theirs. The
+prompt teaches four steps and says to stop at the first one that answers:
+
+1. **`findAgent`** — search the roster in plain words ("edit a video"). Free, no
+   model call, matched on skills and mission rather than on tool keys.
+   Everything else depends on it: an agent cannot hand work to a key it has
+   never seen, and one that cannot *look* would report a gap for a craft that
+   has been on the roster since March.
+2. **`consult`** — ask a colleague one question and get the answer back inside
+   this task. **Deliberately one model call and no tools**, not a nested agent
+   run: a consult that could call tools would be a second agent working the same
+   task at once, which is the thing "one agent, one task" exists to prevent, and
+   it could spend money the asking agent never budgeted for. The colleague
+   answers from *its own* prompt layers and *its own* recalled memories of this
+   lead — which is the entire value, and is asserted in `tmp/collaboration.ts`
+   with a shibboleth planted in the colleague's prompt. Capped at
+   `MAX_CONSULTS` (3).
+3. **`handOff`** — the work itself is somebody else's craft. Goes *sideways*
+   where `delegate` only goes down, so it demands a `why` that lands on the
+   brief and on the timeline. Capped at `MAX_HANDOFFS` (2): a task with three
+   craft pieces in it was somebody else's brief from the start, and the honest
+   answer to that is an escalation.
+4. **`needSkill`** — only when `findAgent` found nobody. This is the road to the
+   Agent Creator, below.
+
+A consult's answer is put in front of the asking agent as **an opinion, not a
+checked fact**, with the standing rule that the record in front of it wins. Two
+agents agreeing with each other is not evidence.
+
+**The workforce hires itself, and no model can** — `agents/hiring.ts`,
+`routes/slack.ts`, the `people.recruiter` seed. Three steps, and keeping them
+apart *is* the safety story:
+
+```
+needSkill          AgentGap            Agent Creator       AgentHireRequest    Agent
+an agent says   →  demand, counted  →  reads the gap,   →  a design waiting →  the row
+"nobody here       per craft           checks the           on a decision       (only
+ can do this"      (timesRequested)    roster first                             applyHire)
+```
+
+- **`agent.hire` files a request. It never creates an agent.** `applyHire()` is
+  the only thing that writes to `Agent`, and it is reached from a signed Slack
+  interaction, an authenticated API call, or the AUTO policy — never from a
+  model. An agent that could write that table could grant itself any tool in the
+  catalogue by hiring a copy of itself with a wider toolkit, and no prompt
+  wording reliably prevents that. So the wording is not what prevents it.
+- **A gap is demand, and demand is counted before it is met.** A second agent
+  asking for the same craft joins the existing row and bumps `timesRequested`
+  rather than opening a second one; `requestedByKeys` is the set, so the same
+  agent asking twice does not count twice. One agent's frustration is a bad
+  reason to employ somebody permanently; three agents on three different jobs is
+  a good one, and that fact only exists if the requests land together.
+- **The loop closes.** A blocking `needSkill` stops the task at `BLOCKED` with
+  its checkpoint kept. When a hire is approved, `nudgeWaitingTask()` appends the
+  new agent's name to *both* the brief and the conversation it will rejoin, and
+  requeues it — the same mechanism, and the same reason, as
+  `appendOwnerAnswer()`. Without it a filled gap is a new agent nobody thinks to
+  use and a blocked task that stays blocked.
+- **The Agent Creator's real job is the refusal.** The easy answer to every gap
+  is yes, and forty agents each doing a third of somebody else's job is worse
+  than the nine crafts this started with. `findOverlaps()` puts "this is 75% the
+  Video Editor" on the card, and `agent.closeGap` — which names who *should*
+  have taken the work, and tells the agent that asked — is expected to be the
+  common outcome.
+- **The overlap threshold was tuned against real proposals, not chosen.** At
+  `score >= 0.25` a proposed Bookkeeper was flagged as 27% the Proposal Writer
+  on the single shared word "invoice". It is now `shared.length >= 2 && score >=
+  0.4`, at which a genuine second Cold Lead Writer still scores 85%.
+  `tmp/overlapCheck.ts` holds both halves: the duplicates that must warn and the
+  honest new crafts that must not.
+- **The guards all refuse at proposal time**, so what reaches a person would
+  work if they said yes: a key already taken or already proposed, a manager that
+  does not exist, `agents.maxCustomAgents` (25), `agents.maxHiresPerDay` (3) and
+  `MAX_PENDING` (5) waiting. **Zero is a value in those ceilings, not an
+  absence** — setting one to zero is the obvious way to stop hiring, and the
+  usual `parsed > 0` guard would silently restore the default instead.
+- Pending requests **expire after 72 hours** rather than sitting for ever,
+  because pending requests are counted: five forgotten ones would stop the Agent
+  Creator proposing anything at all with nothing on screen to say why.
+
+**ASK or AUTO, and it is answered from Slack** — `agents.hirePolicy`.
+
+- **ASK** (the default) posts the design to Slack with Approve / Decline /
+  "approve these automatically from now on". **AUTO** creates it there and then
+  and posts the same card with an Undo on it instead. `/dakyworld hiring
+  auto|ask` changes the standing setting, because the moment somebody wants to
+  change it is the moment they are reading a hiring card, not the moment they
+  are looking at a Settings screen.
+- **The policy sits under dry run, not beside it.** An agent in dry run decides
+  nothing, so AUTO only comes into play once the Owner has taken the Agent
+  Creator out of it. **AUTO decides who exists; it never decides what they may
+  do** — every hire lands at autonomy 1 with dry run on whichever way it was
+  approved.
+- **A hire lands ACTIVE where `POST /agents` lands DRAFT, and that is not an
+  inconsistency.** Filling in a form is not by itself a decision to employ
+  somebody. Clicking Approve on a card that says *hire this* is, and making
+  somebody then find the agent and switch it on turns one decision into two, the
+  second of which is invisible and gets forgotten.
+- **Slack must never be the only road.** A workspace nobody connected, a signing
+  secret nobody pasted, an app somebody removed — each would otherwise mean
+  proposals nothing can approve, and the symptom would read as the agent not
+  working. `GET`/`PUT /agents/hiring/policy`, `/agents/hiring/gaps`,
+  `/agents/hiring/requests` and the panel at the top of the Agents screen do
+  everything the buttons do.
+
+**Slack talks back now, and one thing guards it** — `routes/slack.ts`,
+`verifySlackRequest()`. Every payload carries an HMAC over the exact bytes sent
+plus a timestamp, so the router is mounted **above the JSON parser** in
+`index.ts` for the same reason the two webhook routes are. Four rules:
+
+- **An unconfigured Slack refuses everything inbound**, which is the opposite of
+  the outbound rule and the right way round for each: failing to *send* an alert
+  must not break the work, and failing to *verify* a click must never approve a
+  hire.
+- **Replay matters here**, so a payload more than five minutes old is refused
+  however well it is signed.
+- **The signature proves it came from Slack, not that the clicker may decide.**
+  `slack.approverIds` is the second check. Blank means anybody in the channel —
+  right for a one-person company, wrong the day somebody else joins it.
+- **Acknowledged first, worked afterwards.** Slack retries anything it does not
+  hear from within three seconds, and a retried Approve would be a second agent
+  — so `applyHire` is idempotent about an already-approved request rather than
+  throwing, and `tmp/slackButtons.ts` asserts that a re-delivery creates nothing.
 
 **Memory is recalled by subject, not by similarity.** `agents/memory.ts` files
 a memory against `lead:abc`, `client:xyz` or `self`, and recall returns only
@@ -569,7 +698,7 @@ an agent's own conclusions lose to the record in front of it, a house rule
 does not. Shared memories get a point of importance in the recall ranking but
 not in the stored row, and `pruneMemories()` never sweeps them.
 
-**Agents come in two kinds.** The eighteen management agents recommend and
+**Agents come in two kinds.** The nineteen management agents recommend and
 decide; the thirty-one `SUB_AGENT` specialists make things — Web Developer,
 Graphic Designer, Video Editor, Ad Designer, Proposal Writer, Cold Lead Writer
 and the rest, each with `skills` (a client's words, matched by a router)
@@ -670,7 +799,7 @@ conversation instead of starting one.
 The server serves the built client from `client/dist` when it exists, and falls
 back to an API-only status page when it doesn't.
 
-**Database** — Prisma, 40 models. `prisma/schema.prisma` is the source of truth.
+**Database** — Prisma, 42 models. `prisma/schema.prisma` is the source of truth.
 
 **Integration keys live encrypted in the database**, not in env vars — the
 `AppSetting` model, keyed by `APP_SECRET`. That is deliberate: adding or
@@ -934,6 +1063,24 @@ substitute, so headings come out serif. The files are still correct — do not
   in flight to have a window to land in. `tmp/rosterCheck.ts` checks every seed
   for a duplicate key, a `managerKey` pointing at nobody (which silently breaks
   `delegate`) and a `toolkit` naming a tool the catalogue does not have.
+- **The hiring loop and the collaboration tools need no key either.**
+  `tmp/hiringLoop.ts` runs the whole thing against a real local database — the
+  line that matters most in it is that a proposal under ASK creates *nothing*.
+  `tmp/collaboration.ts` drives a real `runTask` against an Anthropic stub that
+  plays two parts, the asking agent's loop and the consulted colleague, told
+  apart by what is in the system prompt; a shibboleth in the colleague's prompt
+  is what proves a consult is not the asker talking to itself.
+  `tmp/slackButtons.ts` mounts the Slack router exactly as `index.ts` does and
+  drives it over real HTTP, which is the only way to catch the classic failure
+  here: a router below the JSON parser sees a parsed object rather than the
+  bytes Slack signed, and every signature then fails with a message that says
+  nothing about body parsing.
+- **A harness that creates rows must delete them, including the ones it expects
+  to be refused.** Two leftovers came out of writing these: `reset()` called at
+  the *end* of a run re-created the pair of test agents it was meant to remove
+  (it deletes and creates — the final call has to be the delete-only half), and
+  a cleanup list naming only the keys expected to succeed left a stale PENDING
+  hire request behind, which counts against the next run's proposal limit.
 - **Verifying an API response through `curl | python` on Windows mangles UTF-8**
   — Python decodes stdin as cp1252/gbk, so `·` comes back as a CJK ideograph and
   a correct render looks broken. Write the body to a file and read it with

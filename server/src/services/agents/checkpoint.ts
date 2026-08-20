@@ -150,25 +150,25 @@ export async function clearCheckpoint(taskId: string): Promise<void> {
 }
 
 /**
- * Adds the Owner's answer to a conversation that stopped and asked.
- *
- * Without this, answering an escalation would be answered into the brief while
- * the agent resumed the conversation it had already had — and it would carry
- * on from the question it asked, never having been told the answer.
+ * Says something to a conversation that stopped, so it hears it on resume.
  *
  * Appended to the final user turn rather than pushed as a new one, because two
  * user messages in a row is not a shape the API accepts. Tool results have to
- * come first inside that turn, so the answer goes on the end, which is where a
- * reply belongs anyway.
+ * come first inside that turn, so the new text goes on the end, which is where
+ * a reply belongs anyway.
+ *
+ * Two things use this and they are different kinds of news: the Owner
+ * answering an escalation, and the system telling an agent that the craft it
+ * said was missing now exists. Both fail the same way without it — the agent
+ * resumes at the moment it stopped, having never been told, and stops again.
  */
-export async function appendOwnerAnswer(taskId: string, answer: string): Promise<boolean> {
+export async function appendToConversation(taskId: string, text: string): Promise<boolean> {
   const row = await prisma.agentTaskCheckpoint.findUnique({ where: { taskId }, select: { messages: true } });
   if (!row) return false;
 
   const messages = (row.messages ?? []) as unknown as AgentCheckpointState["messages"];
   if (!Array.isArray(messages) || messages.length === 0) return false;
 
-  const text = `The Owner has answered what you asked:\n\n${answer.trim()}\n\nCarry on from here.`;
   const last = messages[messages.length - 1];
 
   if (last.role === "user" && Array.isArray(last.content)) {
@@ -184,4 +184,15 @@ export async function appendOwnerAnswer(taskId: string, answer: string): Promise
     data: { messages: messages as unknown as Prisma.InputJsonValue },
   });
   return true;
+}
+
+/**
+ * Adds the Owner's answer to a conversation that stopped and asked.
+ *
+ * Without this, answering an escalation would be written into the brief while
+ * the agent resumed the conversation it had already had — and it would carry
+ * on from the question it asked, never having been told the answer.
+ */
+export async function appendOwnerAnswer(taskId: string, answer: string): Promise<boolean> {
+  return appendToConversation(taskId, `The Owner has answered what you asked:\n\n${answer.trim()}\n\nCarry on from here.`);
 }

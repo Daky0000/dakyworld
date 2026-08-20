@@ -15,6 +15,7 @@ import { invoicesRouter } from "./routes/invoices.js";
 import { carePlansRouter } from "./routes/carePlans.js";
 import { emailsRouter, unsubscribeRouter } from "./routes/emails.js";
 import { webhooksRouter } from "./routes/webhooks.js";
+import { slackRouter } from "./routes/slack.js";
 import { usersRouter } from "./routes/users.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
@@ -101,6 +102,13 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
 // so the body has to arrive raw. Public by design — a contact form on a static
 // site cannot log in. routes/webhooks.ts explains what guards it instead.
 app.use("/api/webhooks", webhookRateLimit, express.raw({ type: "*/*", limit: "256kb" }), webhooksRouter);
+
+// Slack pressing a button, and the /dakyworld slash command. Above the JSON
+// parser for the same reason as the two routes above it — Slack signs the
+// exact bytes it sent, and a parsed-and-restringified body is not those bytes.
+// Public, because Slack cannot log in; what guards it is the signing secret,
+// and with none configured it refuses everything. See routes/slack.ts.
+app.use("/api/slack", webhookRateLimit, express.raw({ type: "*/*", limit: "128kb" }), slackRouter);
 
 // A prospect's demo page, to whoever holds the link. Mounted here for two
 // reasons: it is public — the whole point is that it can be opened from an

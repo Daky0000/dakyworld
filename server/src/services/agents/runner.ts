@@ -12,6 +12,8 @@ import { PROMPT_LAYERS } from "../agentRegistry.js";
 import { BRAND, VOICE } from "../dakyworld.js";
 import { MemoryRefused, recall, remember, subjectOf, type Recalled } from "./memory.js";
 import { describeTask, taskSubjects } from "./context.js";
+import { recordGap, searchRoster } from "./hiring.js";
+import { callModel } from "../../lib/models/call.js";
 
 /**
  * What actually runs an agent.
@@ -113,6 +115,18 @@ const busyAgents = new Set<string>();
 
 /** Cheap enough to be wrong about, expensive enough to be worth capping. */
 const MAX_ATTEMPTS = 3;
+
+/**
+ * How many colleagues one task may ask, and how many pieces it may hand away.
+ *
+ * Both are cheap individually and pathological in bulk. Three consults is a
+ * hard question being worked properly; ten is an agent canvassing the building
+ * instead of deciding, at a model call each. Two hand-offs is a task with two
+ * craft pieces in it; five is a task that was somebody else's from the start,
+ * and the right answer to that is an escalation about the brief.
+ */
+const MAX_CONSULTS = 3;
+const MAX_HANDOFFS = 2;
 
 /**
  * The agents whose entire output is a piece of writing somebody outside the
@@ -276,6 +290,12 @@ interface Counters {
   refused: number;
   escalated: string | null;
   delegated: number;
+  /** Questions asked of colleagues. Capped — see `MAX_CONSULTS`. */
+  consulted: number;
+  /** Work handed sideways to an agent that is not a report. */
+  handedOff: number;
+  /** Gaps raised: "nobody here can do this". */
+  gapsRaised: number;
 }
 
 /**
@@ -294,6 +314,9 @@ function restoreCounters(stored: Record<string, unknown> | undefined): Counters 
     refused: number(stored?.refused),
     escalated: typeof stored?.escalated === "string" ? stored.escalated : null,
     delegated: number(stored?.delegated),
+    consulted: number(stored?.consulted),
+    handedOff: number(stored?.handedOff),
+    gapsRaised: number(stored?.gapsRaised),
   };
 }
 
@@ -425,9 +448,240 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
     },
   };
 
+  // --- Working with the rest of the workforce -------------------------------
+  //
+  // Before these three, an agent had exactly two ways out of work it could not
+  // do: hand it *down* to a report, or stop and ask a person. Neither is what
+  // a colleague would do. The Cold Lead Writer that wants to know whether an
+  // SEO finding is worth leading on had to guess, because the SEO Specialist
+  // was unreachable — one rung across the chart and no road between them.
+
+  const findAgentTool: AgentTool = {
+    name: "findAgent",
+    description:
+      "Search the roster for a colleague who does a particular kind of work. Use it whenever the task needs a craft that is not yours — before attempting it yourself, and before deciding nobody can do it. Say what you need in ordinary words: 'edit a video', 'reconcile a bank statement'.",
+    inputSchema: zodToJsonSchema(
+      z.object({ need: z.string().min(3).max(200).describe("The craft you are looking for, in plain words rather than in tool keys.") }),
+      { target: "jsonSchema7", $refStrategy: "none" },
+    ) as Record<string, unknown>,
+    run: async (input) => {
+      const need = String(input.need ?? "");
+      const matches = await searchRoster(need, agent.key);
+      if (matches.length === 0) {
+        return {
+          content: `Nobody on the roster matches “${need}”. If this work genuinely has to be done and it is not your craft, use \`needSkill\` to record that — do not attempt it badly, and do not assume somebody will pick it up.`,
+        };
+      }
+      return {
+        content: matches
+          .map(
+            (match) =>
+              `${match.name} (\`${match.key}\`) — ${match.title}. ${match.mission}${match.skills.length ? ` Good at: ${match.skills.slice(0, 5).join(", ")}.` : ""}${
+                match.status === "ACTIVE" ? "" : ` [${match.status.toLowerCase()} — cannot take work right now]`
+              }${match.reportsToYou ? " [reports to you — you may `delegate`]" : ""}`,
+          )
+          .join("\n"),
+      };
+    },
+  };
+
+  const consult: AgentTool = {
+    name: "consult",
+    description:
+      "Ask a colleague a question and get their answer back now, without handing the work over. Use it for a judgement inside their craft that would change what you do — 'is this finding worth leading an email on', 'would this scope need a designer'. They answer from their own instructions and their own memory of this client. You keep the work.",
+    inputSchema: zodToJsonSchema(
+      z.object({
+        agentKey: z.string().max(64).describe("Who to ask. Find one with findAgent first."),
+        question: z.string().min(10).max(1200).describe("One specific question. They cannot see your conversation, so give them the facts they need to answer it."),
+      }),
+      { target: "jsonSchema7", $refStrategy: "none" },
+    ) as Record<string, unknown>,
+    run: async (input) => {
+      if (counters.consulted >= MAX_CONSULTS) {
+        return {
+          content: `You have already asked ${MAX_CONSULTS} colleagues on this task, which is the limit. Decide with what you have, or escalate — a fourth opinion is a sign the brief is unclear rather than that the answer is close.`,
+          isError: true,
+        };
+      }
+      const key = String(input.agentKey ?? "");
+      if (key === agent.key) return { content: "You cannot consult yourself.", isError: true };
+
+      const colleague = await prisma.agent.findUnique({ where: { key } });
+      if (!colleague) return { content: `There is no agent with the key ${key}. Use findAgent to see who exists.`, isError: true };
+      if (colleague.status === "RETIRED") return { content: `${colleague.name} is retired and no longer answers.`, isError: true };
+
+      const question = String(input.question ?? "").slice(0, 1200);
+      const answer = await askColleague(colleague, agent, task, question);
+      counters.consulted += 1;
+      await step(task.id, "CONSULTED", `Asked ${colleague.name}: ${question.slice(0, 200)}`, {
+        ok: true,
+        data: { agentKey: colleague.key, question, answer: answer.text, answeredBy: answer.provider },
+      });
+      return {
+        content: `${colleague.name} says:\n\n${answer.text}\n\n(That is their opinion from their own instructions, not a fact you have checked. The work is still yours. If they contradict the record in front of you, the record wins and you should say so.)`,
+      };
+    },
+  };
+
+  const handOff: AgentTool = {
+    name: "handOff",
+    description:
+      "Give the remaining work to an agent that does not report to you, because it is their craft rather than yours. Unlike `delegate` this goes sideways across the chart, so it needs a reason a person would accept. They get a task of their own; you do not wait for it, and you say in your summary that you handed it over.",
+    inputSchema: zodToJsonSchema(
+      z.object({
+        agentKey: z.string().max(64).describe("Who takes it. Find one with findAgent first."),
+        title: z.string().min(3).max(120),
+        brief: z.string().min(20).max(2000).describe("Everything they need. They cannot see your conversation — write it as if to somebody who was not here."),
+        why: z.string().min(10).max(400).describe("Why this is their craft and not yours. One sentence, and it goes on the record."),
+      }),
+      { target: "jsonSchema7", $refStrategy: "none" },
+    ) as Record<string, unknown>,
+    run: async (input) => {
+      if (counters.handedOff >= MAX_HANDOFFS) {
+        return { content: `You have already handed off ${MAX_HANDOFFS} pieces of this task. Anything more and the brief belongs to somebody else entirely — escalate instead.`, isError: true };
+      }
+      const target = await prisma.agent.findUnique({ where: { key: String(input.agentKey ?? "") } });
+      if (!target) return { content: `There is no agent with the key ${input.agentKey}. Use findAgent to see who exists.`, isError: true };
+      if (target.key === agent.key) return { content: "You cannot hand work to yourself.", isError: true };
+      if (target.status === "RETIRED" || target.status === "PAUSED") {
+        return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work. Try findAgent again, or use needSkill if nobody else can.`, isError: true };
+      }
+
+      const child = await prisma.agentTask.create({
+        data: {
+          agentKey: target.key,
+          title: String(input.title ?? "").slice(0, 120),
+          brief: `${String(input.brief ?? "").slice(0, 2000)}\n\n--- Handed over by ${agent.name} ---\n${String(input.why ?? "")}`,
+          origin: "AGENT",
+          parentId: task.id,
+          priority: task.priority,
+          leadId: task.leadId,
+          clientId: task.clientId,
+          projectId: task.projectId,
+          proposalId: task.proposalId,
+          invoiceId: task.invoiceId,
+        },
+      });
+      counters.handedOff += 1;
+      await step(task.id, "HANDED_OFF", `To ${target.name}: ${child.title} — ${String(input.why ?? "")}`, {
+        data: { agentKey: target.key, taskId: child.id, why: input.why },
+      });
+      return { content: `Queued for ${target.name}. You are not waiting on it — finish your own part and say in your summary that this went to them.` };
+    },
+  };
+
+  const needSkill: AgentTool = {
+    name: "needSkill",
+    description:
+      "Record that this work needs a craft nobody on the roster has. Use it only after findAgent has come back with nobody — it is not a way to avoid work that is yours. It does not create anything: it tells the Agent Creator that the gap exists, and a person decides whether Dakyworld employs somebody for it.",
+    inputSchema: zodToJsonSchema(
+      z.object({
+        skill: z.string().min(3).max(120).describe("The craft, in a client's words rather than a tool key — 'edit a video', 'keep the books'."),
+        reason: z.string().min(20).max(800).describe("What you were trying to do, and why it is not a stretch of your own job. Be specific: this is the evidence somebody decides on."),
+        blocking: z
+          .boolean()
+          .default(true)
+          .describe("True when the task cannot be finished without it — you stop here and are picked up again if somebody is hired. False when you can carry on with the rest."),
+      }),
+      { target: "jsonSchema7", $refStrategy: "none" },
+    ) as Record<string, unknown>,
+    run: async (input) => {
+      const skill = String(input.skill ?? "");
+      const outcome = await recordGap({
+        requestedByKey: agent.key,
+        taskId: task.id,
+        skillNeeded: skill,
+        reason: String(input.reason ?? ""),
+      });
+      counters.gapsRaised += 1;
+      await step(task.id, "GAP_RAISED", `Nobody can ${skill} — recorded${outcome.joined ? ` (${outcome.timesRequested} agents have now asked)` : ""}`, {
+        data: { gapId: outcome.gapId, skill, joined: outcome.joined, reviewTaskId: outcome.reviewTaskId },
+      });
+
+      const told = outcome.note
+        ? outcome.note
+        : outcome.joined
+          ? `Recorded. ${outcome.timesRequested} agents have now asked for this, which is the argument for hiring somebody.`
+          : "Recorded. The Agent Creator will decide whether Dakyworld employs somebody for it.";
+
+      if (input.blocking !== false) {
+        // Stopped, exactly as an escalation stops — and for the same reason. The
+        // difference is what happens next: an approved hire puts this task back
+        // in the queue with the new agent's name in it, which `escalate` could
+        // never do.
+        counters.escalated = `Waiting on somebody who can ${skill}. ${told}`;
+        return { content: `${told} You are stopping here. If somebody is hired for this, you will be given their name and picked up where you left off.`, stop: true };
+      }
+      return { content: `${told} Carry on with the parts of this you can do, and say in your summary what is still outstanding.` };
+    },
+  };
+
   // A specialist has nobody under it, so delegation would only ever fail.
+  // Everything else here is for every agent: an agent that cannot look for a
+  // colleague, ask one, or say that nobody exists is an agent that guesses.
   const hasReports = agent.tier !== "SUB_AGENT";
-  return hasReports ? [escalate, rememberTool, delegate] : [escalate, rememberTool];
+  const collaboration = [findAgentTool, consult, handOff, needSkill];
+  return hasReports ? [escalate, rememberTool, delegate, ...collaboration] : [escalate, rememberTool, ...collaboration];
+}
+
+/**
+ * One colleague answering one question, from their own prompt and their own
+ * memory of this client.
+ *
+ * Deliberately **one model call and no tools**, rather than a nested agent run.
+ * A consult that could call tools would be a second agent working on the same
+ * task at the same time — the exact thing "one agent, one task" exists to
+ * prevent — and it could spend money on a question the asking agent did not
+ * budget for. What is wanted here is a judgement, and a judgement is what an
+ * agent's prompt and memories produce without touching anything.
+ *
+ * It is routed by job like everything else, so a deployment with no Anthropic
+ * key can still hold a conversation between two agents.
+ */
+async function askColleague(
+  colleague: Agent,
+  asker: Agent,
+  task: AgentTask,
+  question: string,
+): Promise<{ text: string; provider: string }> {
+  // Their memories of the subjects *this* task is about — which is the whole
+  // value of asking a colleague rather than asking the same model twice. The
+  // SEO Specialist answering about this lead has read what it concluded about
+  // this lead before.
+  const memories = await recall(colleague.key, taskSubjects(task));
+  const system = [
+    await systemPrompt(colleague, memories, { working: false }),
+    `A colleague is asking you a question. You are not taking the work on — ${asker.name} keeps it — and you have no tools here, so answer from your own judgement and say plainly where you are unsure.`,
+    "Answer in three or four sentences. If the honest answer is that you cannot tell from what you have been given, say that and name the one thing you would need.",
+  ].join("\n\n");
+
+  try {
+    const result = await callModel<{ answer: string; confident: boolean; wouldNeed: string }>({
+      purpose: `consult.${colleague.key}`,
+      job: "text",
+      system,
+      prompt: () => `${asker.name} (${asker.title}) asks:\n\n${question}`,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["answer", "confident", "wouldNeed"],
+        properties: {
+          answer: { type: "string", description: "Three or four sentences." },
+          confident: { type: "boolean", description: "False when you are guessing." },
+          wouldNeed: { type: "string", description: "The one thing that would let you answer properly, or an empty string." },
+        },
+      },
+      effort: "medium",
+      maxTokens: 1200,
+    });
+    const caveat = result.data.confident ? "" : `\n\n(Not confident.${result.data.wouldNeed ? ` Would need: ${result.data.wouldNeed}` : ""})`;
+    return { text: `${result.data.answer}${caveat}`, provider: result.provider };
+  } catch (err) {
+    // A colleague who cannot be reached is a colleague who cannot be reached.
+    // Reported as an answer rather than thrown, because the asking agent still
+    // has a task to finish and "I could not get hold of them" is information.
+    return { text: `[${colleague.name} could not be reached: ${(err as Error).message}]`, provider: "none" };
+  }
 }
 
 // --- The prompt -------------------------------------------------------------
@@ -441,7 +695,24 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
  * printed blank.
  */
 
-async function systemPrompt(agent: Agent, memories: Recalled[]): Promise<string> {
+/**
+ * How many colleagues there are, for the prompt.
+ *
+ * A number rather than a list: the roster is fifty agents and printing it in
+ * every prompt would cost more tokens than the task, while telling an agent it
+ * has fifty colleagues is what makes `findAgent` the obvious next move instead
+ * of a tool it never thinks to reach for.
+ */
+async function rosterSize(): Promise<number> {
+  return prisma.agent.count({ where: { status: { not: "RETIRED" } } });
+}
+
+async function systemPrompt(agent: Agent, memories: Recalled[], options: { working?: boolean } = {}): Promise<string> {
+  // `working: false` is a colleague being asked a question rather than an agent
+  // holding a task. Everything about who they are and what they know still
+  // applies; everything about tools, dry run and who to hand work to does not,
+  // and printing it would tell somebody with no tools how to use them.
+  const working = options.working !== false;
   const prompt = (agent.prompt ?? {}) as Record<string, string>;
   const profile = await companyProfile();
 
@@ -481,16 +752,27 @@ async function systemPrompt(agent: Agent, memories: Recalled[]): Promise<string>
     );
   }
 
-  parts.push(
-    `How you work here:
+  if (working) {
+    parts.push(
+      `How you work here:
 
 - You have been given a task and a set of tools. Use the tools to find out what is true rather than assuming. Never state a fact about a lead, a client or a system that a tool did not tell you.
 - Some of your tools will answer "PREPARED, NOT DONE". That is not a failure — it means your autonomy level requires a person to approve that kind of action. Carry on and prepare the rest of the work so there is one thing to approve rather than five.
 - Some will be refused outright. That is also information: work around it, or escalate.
 - Use \`remember\` for a decision worth having next time, and for what came of it. Never write down a credential. Share one with the whole company only when it is a fact about how Dakyworld works that every agent would need — your own conclusions stay yours.
 - Use \`escalate\` the moment you are unsure, or the work touches money, scope, security, a live system or a public claim. Stopping is not failing.
-- When you are done, say what you did, what you found, and what a person should do next — in plain English, in a few sentences. That final message is what gets read.`,
-  );
+- When you are done, say what you did, what you found, and what a person should do next — in plain English, in a few sentences. That final message is what gets read.
+
+You are not working alone. There are ${await rosterSize()} agents here, each with one craft, and the difference between a good outcome and a mediocre one is usually whether the right one was asked. **When the work needs a craft that is not yours, the answer is never to attempt it anyway.** Work through it in this order, and stop at the first step that answers:
+
+1. \`findAgent\` — look for somebody whose craft this is. Do this *before* attempting anything outside your own job, not after producing something you are unsure of.
+2. \`consult\` — you keep the work and want their judgement on one question inside their craft. They answer from their own instructions and their own memory of this client, so ask them the thing only they would know. Their answer is an opinion, not a checked fact: where it contradicts the record in front of you, the record wins and you say so.
+3. \`handOff\` (or \`delegate\`, if they report to you) — the work itself is theirs. Write the brief as if to somebody who was not here, because they were not.
+4. \`needSkill\` — only when \`findAgent\` found nobody. It records that Dakyworld has no such craft; the Agent Creator reads it and a person decides whether to employ somebody. It is not a way to put down work that is actually yours, and a gap raised for something a colleague already does is worse than useless — it argues for hiring a duplicate.
+
+Asking is cheap and being wrong in public is not. An agent that consulted a colleague and changed its mind has done the job properly; say in your summary who you asked and what it changed.`,
+    );
+  }
 
   return parts.filter(Boolean).join("\n\n");
 }
@@ -580,7 +862,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
     const saved = await loadCheckpoint(task.id);
     const counters: Counters = saved
       ? restoreCounters(saved.counters)
-      : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0 };
+      : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
     // A resume must not carry the escalation that ended the last run, or the
     // task would go straight back to BLOCKED without doing anything. What the
     // Owner answered is already in the conversation by this point.
@@ -655,7 +937,14 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
 
       return finishTask(task.id, needsApproval ? "NEEDS_APPROVAL" : "DONE", {
         summary,
-        result: { narration: result.narration, stoppedBecause: result.stoppedBecause, delegated: counters.delegated },
+        result: {
+          narration: result.narration,
+          stoppedBecause: result.stoppedBecause,
+          delegated: counters.delegated,
+          handedOff: counters.handedOff,
+          consulted: counters.consulted,
+          gapsRaised: counters.gapsRaised,
+        },
         costUsd: result.costUsd,
         toolCalls: counters.toolCalls,
         dryRunCalls: counters.dryRun,

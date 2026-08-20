@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { SETTING, getSetting } from "./settings.js";
 
 /**
@@ -185,4 +186,150 @@ export async function verifySlack(credential: { token?: string; webhookUrl?: str
   }
 
   throw new SlackError(400, "Give either a bot token or a webhook URL.");
+}
+
+// --- Slack talking back -----------------------------------------------------
+
+/**
+ * Everything above is outbound: it proves *we* may post. This half is the
+ * other direction, and it is a different problem — a request that says it is
+ * Slack has to be proved to be Slack before a button on it can approve
+ * anything.
+ *
+ * Slack signs every interactive payload and every slash command with the app's
+ * signing secret, over `v0:${timestamp}:${rawBody}`. Three things have to hold
+ * and all three are checked here:
+ *
+ *  - the signature matches, compared in constant time;
+ *  - the timestamp is recent, so a payload captured off the wire cannot be
+ *    replayed tomorrow to approve a hire;
+ *  - the secret exists at all. An unconfigured Slack refuses inbound requests
+ *    rather than accepting them, which is the opposite of the outbound rule
+ *    above and the right way round for each: failing to *send* an alert must
+ *    not break the work, and failing to *verify* a click must never approve.
+ */
+
+/** Slack's own header names. */
+export const SLACK_SIGNATURE_HEADER = "x-slack-signature";
+export const SLACK_TIMESTAMP_HEADER = "x-slack-request-timestamp";
+/** Slack's documented replay window. */
+const MAX_SKEW_SECONDS = 5 * 60;
+
+export interface SlackVerification {
+  verified: boolean;
+  /** Why not, in a sentence worth logging. Null when it verified. */
+  reason: string | null;
+  /** True when no signing secret is configured — a setup problem, not an attack. */
+  unconfigured: boolean;
+}
+
+export async function verifySlackRequest(headers: Record<string, unknown>, rawBody: string): Promise<SlackVerification> {
+  const secret = await getSetting(SETTING.SLACK_SIGNING_SECRET);
+  if (!secret) {
+    return { verified: false, unconfigured: true, reason: "No Slack signing secret is set, so an inbound Slack request cannot be trusted." };
+  }
+
+  const signature = String(headers[SLACK_SIGNATURE_HEADER] ?? "");
+  const timestamp = String(headers[SLACK_TIMESTAMP_HEADER] ?? "");
+  if (!signature || !timestamp) {
+    return { verified: false, unconfigured: false, reason: "The request carried no Slack signature." };
+  }
+
+  const sent = Number.parseInt(timestamp, 10);
+  if (!Number.isFinite(sent) || Math.abs(Date.now() / 1000 - sent) > MAX_SKEW_SECONDS) {
+    return { verified: false, unconfigured: false, reason: "That Slack request is too old to act on." };
+  }
+
+  const expected = `v0=${crypto.createHmac("sha256", secret).update(`v0:${timestamp}:${rawBody}`).digest("hex")}`;
+  // Length-checked first: timingSafeEqual throws on a mismatch rather than
+  // returning false, and a wrong-length signature is a wrong signature.
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(signature, "utf8");
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  return ok ? { verified: true, unconfigured: false, reason: null } : { verified: false, unconfigured: false, reason: "That Slack signature did not match." };
+}
+
+/**
+ * Who, if anyone, is allowed to decide things from Slack.
+ *
+ * Empty means anybody in the channel, which is deliberate rather than
+ * forgotten: Dakyworld is one person today, and demanding a user id be pasted
+ * before a button works would mean the button never works. The moment a second
+ * person is in the channel it is worth filling in — see the setting's note.
+ */
+export async function slackApprovers(): Promise<string[]> {
+  const raw = await getSetting(SETTING.SLACK_APPROVERS);
+  return (raw ?? "")
+    .split(/[,\s]+/)
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+export async function mayDecideFromSlack(userId: string | null | undefined): Promise<boolean> {
+  const allowed = await slackApprovers();
+  if (allowed.length === 0) return true;
+  return Boolean(userId && allowed.includes(userId));
+}
+
+/**
+ * Rewrites a message already in the channel — how a settled decision stops
+ * showing a live Approve button.
+ *
+ * Token transport only. A webhook has no way to edit what it posted, so a
+ * webhook-only Slack gets the outcome as a reply instead; `updateSlack` says
+ * so by returning false rather than throwing, and the caller posts.
+ */
+export async function updateSlack(channel: string, ts: string, message: SlackMessage | { text: string; blocks: unknown[] }): Promise<boolean> {
+  const token = await getSetting(SETTING.SLACK_BOT_TOKEN);
+  if (!token) return false;
+  const body = "blocks" in message ? { channel, ts, text: message.text, blocks: message.blocks } : { channel, ts, text: message.text, blocks: blocks(message) };
+  const response = await post(`${API_BASE}/chat.update`, body, token);
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+  if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+  return true;
+}
+
+/**
+ * Posts one message built from Block Kit blocks the caller assembled itself.
+ *
+ * `sendSlack` builds its own blocks from a title and some text, which is right
+ * for an alert and useless for a card with buttons on it. This is the escape
+ * hatch, and it keeps the same fail-soft contract: an unconfigured Slack
+ * answers `delivered: false` rather than throwing.
+ */
+export async function sendSlackBlocks(input: { text: string; blocks: unknown[]; channel?: string | null }): Promise<SlackResult> {
+  const [token, webhook, fallbackChannel] = await Promise.all([
+    getSetting(SETTING.SLACK_BOT_TOKEN),
+    getSetting(SETTING.SLACK_WEBHOOK_URL),
+    defaultChannel(),
+  ]);
+
+  if (token) {
+    const channel = input.channel?.trim() || fallbackChannel;
+    if (!channel) throw new SlackError(400, "No Slack channel to send to. Set a default channel under Settings → Alerts.");
+    const response = await post(`${API_BASE}/chat.postMessage`, { channel, text: input.text, blocks: input.blocks }, token);
+    const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string } | null;
+    if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+    return { delivered: true, transport: "TOKEN", channel, ts: payload.ts ?? null };
+  }
+
+  if (webhook) {
+    const response = await post(webhook, { text: input.text, blocks: input.blocks });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new SlackError(response.status, `Slack rejected the webhook: ${detail || response.statusText}`);
+    }
+    return { delivered: true, transport: "WEBHOOK", channel: null };
+  }
+
+  return { delivered: false, transport: "NONE", channel: null };
+}
+
+/**
+ * Answers straight back down the `response_url` Slack hands out with every
+ * interaction. Works without a bot token, expires after thirty minutes, and is
+ * the only way to say anything at all to somebody on a webhook-only setup.
+ */
+export async function replyToInteraction(responseUrl: string, text: string, replaceOriginal = false): Promise<void> {
+  await post(responseUrl, { text, replace_original: replaceOriginal, response_type: "ephemeral" }).catch(() => undefined);
 }

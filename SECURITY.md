@@ -142,6 +142,32 @@ column to the model can never quietly widen an existing response.
   would have to describe, and a measurable share of real people who give up on
   the form. Flagged posts are recorded and simply do not become leads, because
   the failure mode of a spam filter is the enquiry it eats.
+- **The second anonymous route is Slack, and it is the higher-value one** —
+  [`src/routes/slack.ts`](server/src/routes/slack.ts). The webhook intake can
+  create a lead; a forged Slack interaction could **employ an agent**, so this
+  one has no unsigned path at all. Three things must hold on every request and
+  all three are checked in `verifySlackRequest()`: the HMAC over
+  `v0:${timestamp}:${rawBody}` matches under `timingSafeEqual` (length-checked
+  first, because `timingSafeEqual` throws on a mismatch rather than returning
+  false); the timestamp is inside five minutes, so a payload captured off the
+  wire cannot be replayed tomorrow; and a signing secret exists at all.
+  **With no secret configured it refuses everything**, which is deliberately the
+  opposite of the outbound Slack rule — failing to send an alert must not break
+  the work, failing to verify a click must never approve anything.
+- **A valid signature is not authorisation.** It proves the request came from
+  the workspace, not that the person who clicked may decide. `slack.approverIds`
+  is the second check; blank means anybody in the channel, which is right for a
+  one-person company and wrong the day somebody else joins it. **Fill it in
+  before adding a second person to the channel.**
+- **Nothing a model produces reaches the `Agent` table.** The Agent Creator's
+  `agent.hire` tool writes an `AgentHireRequest`; `applyHire()` in
+  [`services/agents/hiring.ts`](server/src/services/agents/hiring.ts) is the only
+  code that creates an agent, and it is reachable only from a verified Slack
+  interaction, an authenticated `OWNER` API call, or the AUTO policy. This is a
+  privilege-escalation boundary rather than a tidiness one: an agent able to
+  write that table could grant itself any tool in the catalogue by hiring a copy
+  of itself with a wider toolkit. Every hire, by every road, lands at autonomy 1
+  with dry run on.
 - **User content is never rendered as markup.** React escapes by default and
   there is no `dangerouslySetInnerHTML` anywhere in the client. The one place
   model-written HTML *is* served — `/demos/:slug` — is sanitised and served under

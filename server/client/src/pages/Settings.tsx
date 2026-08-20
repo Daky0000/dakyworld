@@ -2500,12 +2500,24 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [botToken, setBotToken] = useState("");
   const [channel, setChannel] = useState(settings.alerts.defaultChannel ?? "");
+  const [signingSecret, setSigningSecret] = useState("");
+  // Defaulted rather than assumed: a whole Settings screen going blank because
+  // one field arrived undefined is a bad trade for one character saved.
+  const [approvers, setApprovers] = useState((settings.alerts.approvers ?? []).join(", "));
 
   const connect = useMutation({
-    mutationFn: () => api.put<AppSettings>("/settings/slack", { webhookUrl, botToken, defaultChannel: channel }),
+    mutationFn: () =>
+      api.put<AppSettings>("/settings/slack", {
+        webhookUrl,
+        botToken,
+        defaultChannel: channel,
+        ...(signingSecret.trim() ? { signingSecret } : {}),
+        approvers: approvers.split(/[,\s]+/).filter(Boolean),
+      }),
     onSuccess: (result) => {
       setWebhookUrl("");
       setBotToken("");
+      setSigningSecret("");
       save(result);
     },
   });
@@ -2568,7 +2580,7 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
           className="mt-4 grid gap-3 sm:grid-cols-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (webhookUrl.trim() || botToken.trim() || channel !== (alerts.defaultChannel ?? "")) connect.mutate();
+            connect.mutate();
           }}
         >
           <Field label="Incoming webhook URL">
@@ -2598,6 +2610,39 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
               className="input"
             />
           </Field>
+
+          {/* The inbound half. Separated by a rule because everything above is
+              "can we post to Slack" and everything below is "can Slack decide
+              something here", which is a much bigger permission. */}
+          <div className="sm:col-span-2 border-t border-line pt-4">
+            <p className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Letting Slack answer back</p>
+            <p className="mt-1 text-sm text-ink/55">
+              Needed for the Approve and Decline buttons on a hiring card, and for <code className="font-mono">/dakyworld</code>. Create a
+              Slack app, switch on Interactivity with the request URL{" "}
+              <code className="font-mono text-xs">{`${window.location.origin}/api/slack/actions`}</code>, add a slash command pointing at{" "}
+              <code className="font-mono text-xs">{`${window.location.origin}/api/slack/commands`}</code>, and paste the signing secret from
+              Basic Information. Without it every inbound Slack request is refused.
+            </p>
+          </div>
+          <Field label="Signing secret" hint={alerts.canReceive ? `Set — ${alerts.signingSecret}` : "Not set, so the buttons do nothing"}>
+            <input
+              type="password"
+              value={signingSecret}
+              onChange={(event) => setSigningSecret(event.target.value)}
+              placeholder={alerts.canReceive ? "•••• (leave blank to keep)" : "a long hex string"}
+              autoComplete="off"
+              className="input font-mono text-xs"
+            />
+          </Field>
+          <Field label="Who may approve" hint="Slack user ids, comma separated. Blank means anyone in the channel.">
+            <input
+              value={approvers}
+              onChange={(event) => setApprovers(event.target.value)}
+              placeholder="U01ABCDEF"
+              className="input font-mono text-xs"
+            />
+          </Field>
+
           <div className="sm:col-span-2">
             <Button type="submit" disabled={connect.isPending}>
               {connect.isPending ? "Checking…" : "Save"}

@@ -7,6 +7,7 @@ import type { Agent, AgentDetail, AgentList } from "../lib/types";
 import { AgentMemories, AgentWork } from "../components/AgentWork";
 import { AgentPromptEditor } from "../components/AgentPrompt";
 import { SharedMemoryPanel } from "../components/SharedMemory";
+import { AgentHiring } from "../components/AgentHiring";
 
 /** What each level actually permits, in the Owner's terms rather than the blueprint's. */
 const LEVELS = [
@@ -101,6 +102,10 @@ export function Agents() {
           sub={data?.summary.waiting ? `${data.summary.waiting} waiting on you` : "nothing in flight"}
         />
       </div>
+
+      {/* Above the roster, because a proposal waiting on a decision is the one
+          thing on this screen that is blocking work rather than describing it. */}
+      <AgentHiring />
 
       {isLoading ? (
         <div className="text-sm text-ink/50">Loading…</div>
