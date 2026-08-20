@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
+import { AgentReposPanel, HubtelPanel, PaystackPanel } from "../components/GhanaPayments";
 import type {
   ActorHealthReport,
   AppSettings,
@@ -50,7 +51,7 @@ const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
   { id: "models", label: "AI models", blurb: "Who writes, draws and checks facts" },
   { id: "google", label: "Google", blurb: "Drive imports and the calendar" },
   { id: "capture", label: "Lead capture", blurb: "Apify scrapers and their schedule" },
-  { id: "payments", label: "Payments", blurb: "Stripe checkout links on invoices" },
+  { id: "payments", label: "Payments", blurb: "Paystack, Hubtel mobile money, Stripe" },
   { id: "storage", label: "File storage", blurb: "Where generated PDFs are kept" },
   { id: "alerts", label: "Alerts", blurb: "Slack, for anything worth interrupting you" },
   { id: "developer", label: "Developer", blurb: "GitHub, for the technical agents" },
@@ -176,10 +177,23 @@ export function Settings() {
               {section === "models" && <ModelsPanel settings={data} />}
               {section === "google" && <GooglePanel settings={data} result={googleResult} params={searchParams} />}
               {section === "capture" && <CapturePanel settings={data} />}
-              {section === "payments" && <PaymentsPanel settings={data} />}
+              {section === "payments" && (
+                <div className="space-y-6">
+                  {/* The Ghanaian rails first: they are the ones that make a GHS
+                      invoice payable, and Stripe is here for anything abroad. */}
+                  <PaystackPanel settings={data} />
+                  <HubtelPanel settings={data} />
+                  <PaymentsPanel settings={data} />
+                </div>
+              )}
               {section === "storage" && <StoragePanel settings={data} />}
               {section === "alerts" && <AlertsPanel settings={data} />}
-              {section === "developer" && <DeveloperPanel settings={data} />}
+              {section === "developer" && (
+                <div className="space-y-6">
+                  <DeveloperPanel settings={data} />
+                  <AgentReposPanel settings={data} />
+                </div>
+              )}
               {section === "webhooks" && <WebhooksPanel settings={data} />}
               {section === "general" && <GeneralPanel settings={data} />}
             </>

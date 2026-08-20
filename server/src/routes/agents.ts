@@ -10,6 +10,8 @@ import { appendOwnerAnswer, clearCheckpoint } from "../services/agents/checkpoin
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
 import { taskSubjects } from "../services/agents/context.js";
+import { syncStandingWork } from "../services/agents/standingWork.js";
+import { isValidTimezone } from "../lib/timezone.js";
 import {
   HireRefused,
   applyHire,
@@ -1257,6 +1259,79 @@ agentsRouter.post("/hiring/requests/:id/undo", async (req, res, next) => {
     res.json(result);
   } catch (err) {
     if (err instanceof HireRefused) return res.status(409).json({ error: err.message });
+    next(err);
+  }
+});
+
+// --- Standing work ----------------------------------------------------------
+
+/**
+ * What an agent does without being asked.
+ *
+ * `AgentTaskOrigin.SCHEDULE` existed from the start and nothing ever wrote it,
+ * so the workforce was entirely reactive: fifty agents that could work, and no
+ * reason for any of them to begin. A schedule is the reason.
+ *
+ * Everything lands disabled. Switching one on is the decision, and it is a
+ * different decision from writing it down.
+ */
+agentsRouter.get("/:key/schedules", async (req, res, next) => {
+  try {
+    const schedules = await prisma.agentSchedule.findMany({ where: { agentKey: req.params.key }, orderBy: { createdAt: "asc" } });
+    res.json({ schedules });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const scheduleInput = z.object({
+  title: z.string().min(4).max(120),
+  brief: z.string().min(20).max(4000),
+  runTimes: z.array(z.string().regex(/^\d{1,2}:\d{2}$/)).min(1).max(6),
+  timezone: z.string().max(64).default("Africa/Accra"),
+  weekdaysOnly: z.boolean().default(true),
+  enabled: z.boolean().default(false),
+  maxOpenTasks: z.number().int().min(1).max(5).default(1),
+});
+
+agentsRouter.post("/:key/schedules", async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const input = scheduleInput.parse(req.body);
+    if (!isValidTimezone(input.timezone)) return res.status(400).json({ error: `"${input.timezone}" is not a timezone.` });
+
+    const schedule = await prisma.agentSchedule.create({ data: { ...input, agentKey: agent.key } });
+    await syncStandingWork(schedule.id);
+    res.status(201).json(await prisma.agentSchedule.findUnique({ where: { id: schedule.id } }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.patch("/schedules/:id", async (req, res, next) => {
+  try {
+    const input = scheduleInput.partial().parse(req.body);
+    if (input.timezone && !isValidTimezone(input.timezone)) {
+      return res.status(400).json({ error: `"${input.timezone}" is not a timezone.` });
+    }
+    const existing = await prisma.agentSchedule.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: "No such schedule." });
+
+    await prisma.agentSchedule.update({ where: { id: req.params.id }, data: input });
+    const nextRunAt = await syncStandingWork(req.params.id);
+    res.json({ ...(await prisma.agentSchedule.findUnique({ where: { id: req.params.id } })), nextRunAt });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.delete("/schedules/:id", async (req, res, next) => {
+  try {
+    await prisma.agentSchedule.deleteMany({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (err) {
     next(err);
   }
 });

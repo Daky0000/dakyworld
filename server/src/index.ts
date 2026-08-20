@@ -14,6 +14,7 @@ import { projectsRouter } from "./routes/projects.js";
 import { invoicesRouter } from "./routes/invoices.js";
 import { carePlansRouter } from "./routes/carePlans.js";
 import { emailsRouter, unsubscribeRouter } from "./routes/emails.js";
+import { hubtelWebhook, paystackWebhook } from "./routes/paymentWebhooks.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { slackRouter } from "./routes/slack.js";
 import { usersRouter } from "./routes/users.js";
@@ -98,6 +99,14 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
   }
   res.json({ received: true });
 });
+
+// Paystack and Hubtel, above the generic handler below because each verifies
+// its own way — Paystack signs with HMAC-SHA512 over the raw body keyed by the
+// secret key, and Hubtel signs nothing at all — and neither fits the shared
+// secret the generic route uses. Registered as exact paths so they win over
+// `/api/webhooks/:source`, which would otherwise swallow both.
+app.post("/api/webhooks/paystack", webhookRateLimit, express.raw({ type: "*/*", limit: "256kb" }), paystackWebhook);
+app.post("/api/webhooks/hubtel", webhookRateLimit, express.raw({ type: "*/*", limit: "256kb" }), hubtelWebhook);
 
 // Everything that isn't Stripe comes in here, and for the same reason it sits
 // above the JSON parser: the signature covers the exact bytes that were sent,

@@ -1,7 +1,7 @@
 import type { ScraperSource } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { apifyConfigured } from "../lib/apify.js";
-import { isValidTimezone, safeZone, zonedDateParts, zonedTimeToUtc } from "../lib/timezone.js";
+import { isValidTimezone, parseScheduleTime, safeZone, zonedDateParts, zonedTimeToUtc } from "../lib/timezone.js";
 import { CaptureBudgetError, CaptureBusyError, pruneRunHistory, resumeInterruptedRuns, runSource } from "./scraperRunner.js";
 import { readCaptureConfig } from "./captureConfig.js";
 import { billDuePlans } from "./carePlanBilling.js";
@@ -11,6 +11,7 @@ import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { ensureGapReviews, expireStaleHireRequests } from "./agents/hiring.js";
 import { expireStaleRequests } from "./approvals.js";
+import { raiseStandingWork } from "./agents/standingWork.js";
 import { purgeExpiredSessions } from "../lib/session.js";
 
 /**
@@ -43,16 +44,9 @@ let timer: NodeJS.Timeout | null = null;
 
 // The zone maths moved to lib/timezone.ts once care plan billing needed it
 // too; re-exported because the scrapers router validates against it.
-export { isValidTimezone };
+export { isValidTimezone, parseScheduleTime };
 
-export function parseScheduleTime(value: string): { hour: number; minute: number } | null {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  if (hour > 23 || minute > 59) return null;
-  return { hour, minute };
-}
+
 
 /**
  * The next instant this source should run, strictly after `from`. Returns null
@@ -102,6 +96,10 @@ export async function tick(now = new Date()) {
     dispatchDueEmails(now),
     runDueSequences(now),
     runDueTasks(now),
+    // What the agents do without being asked. Raises tasks; runDueTasks above
+    // is what works them, on the next tick rather than this one — deliberately,
+    // so raising work and doing it stay separable.
+    raiseStandingWork(now),
     housekeepingTick(now),
   ]);
   for (const result of results) {

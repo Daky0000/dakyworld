@@ -97,6 +97,33 @@ export const SETTING = {
   GOOGLE_ACCOUNT: "google.account",
   STRIPE_SECRET_KEY: "stripe.secretKey",
   STRIPE_WEBHOOK_SECRET: "stripe.webhookSecret",
+
+  // The two Ghanaian rails. Stripe does not acquire in Ghana, so an invoice in
+  // GHS — which every invoice, proposal and care plan in this system is — had
+  // no way to be paid at all until these.
+  //
+  // Paystack is the hosted page: one link that takes a card, mobile money or a
+  // bank transfer, which is what goes in an email. Hubtel is the prompt that
+  // arrives on somebody's phone, which is what a client who has never paid for
+  // anything on the web will actually complete. They are kept as separate
+  // integrations rather than one "payments" setting because a business will
+  // commonly have one and not the other.
+  /** Secret key, `sk_live_…` or `sk_test_…`. Paystack signs webhooks with this same key. */
+  PAYSTACK_SECRET_KEY: "paystack.secretKey",
+  /** Hubtel Merchant Account number — the one the money lands in. */
+  HUBTEL_MERCHANT_ID: "hubtel.merchantId",
+  /** Basic-auth pair from the Hubtel dashboard, used for checkout and receive-money. */
+  HUBTEL_CLIENT_ID: "hubtel.clientId",
+  HUBTEL_CLIENT_SECRET: "hubtel.clientSecret",
+  /**
+   * SMS is a *different* Hubtel credential pair from payments, and using one
+   * for the other returns a 401 that says nothing about which. Kept apart so
+   * the Settings screen can ask for them separately and say why.
+   */
+  HUBTEL_SMS_ID: "hubtel.smsId",
+  HUBTEL_SMS_SECRET: "hubtel.smsSecret",
+  /** What a text appears to come from. Alphanumeric sender ids must be registered with Hubtel first. */
+  HUBTEL_SMS_SENDER: "hubtel.smsSender",
   CLOUDINARY_CLOUD_NAME: "cloudinary.cloudName",
   CLOUDINARY_API_KEY: "cloudinary.apiKey",
   CLOUDINARY_API_SECRET: "cloudinary.apiSecret",
@@ -158,6 +185,15 @@ export const SETTING = {
   GITHUB_TOKEN: "github.token",
   /** Lets a repository be named `os` rather than `dakyworld/os`. */
   GITHUB_OWNER: "github.owner",
+  /**
+   * Repositories agents may *write* to — branch, commit, open a pull request.
+   *
+   * Empty by default and deny-by-default, which is the point: reading a
+   * codebase is a research capability and writing to one changes the software
+   * running the company. Naming this repository here is a deliberate act.
+   * `*` opens everything the token can see.
+   */
+  GITHUB_ALLOWED_REPOS: "github.allowedRepos",
 
   /**
    * Which calendar bookings land in. Blank means the connected account's own.
@@ -263,6 +299,13 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.GOOGLE_REFRESH_TOKEN]: "GOOGLE_REFRESH_TOKEN",
   [SETTING.STRIPE_SECRET_KEY]: "STRIPE_SECRET_KEY",
   [SETTING.STRIPE_WEBHOOK_SECRET]: "STRIPE_WEBHOOK_SECRET",
+  [SETTING.PAYSTACK_SECRET_KEY]: "PAYSTACK_SECRET_KEY",
+  [SETTING.HUBTEL_MERCHANT_ID]: "HUBTEL_MERCHANT_ID",
+  [SETTING.HUBTEL_CLIENT_ID]: "HUBTEL_CLIENT_ID",
+  [SETTING.HUBTEL_CLIENT_SECRET]: "HUBTEL_CLIENT_SECRET",
+  [SETTING.HUBTEL_SMS_ID]: "HUBTEL_SMS_ID",
+  [SETTING.HUBTEL_SMS_SECRET]: "HUBTEL_SMS_SECRET",
+  [SETTING.HUBTEL_SMS_SENDER]: "HUBTEL_SMS_SENDER",
   [SETTING.CLOUDINARY_CLOUD_NAME]: "CLOUDINARY_CLOUD_NAME",
   [SETTING.CLOUDINARY_API_KEY]: "CLOUDINARY_API_KEY",
   [SETTING.CLOUDINARY_API_SECRET]: "CLOUDINARY_API_SECRET",
@@ -290,6 +333,7 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.SLACK_SIGNING_SECRET]: "SLACK_SIGNING_SECRET",
   [SETTING.GITHUB_TOKEN]: "GITHUB_TOKEN",
   [SETTING.GITHUB_OWNER]: "GITHUB_OWNER",
+  [SETTING.GITHUB_ALLOWED_REPOS]: "GITHUB_ALLOWED_REPOS",
   [SETTING.GOOGLE_CALENDAR_ID]: "GOOGLE_CALENDAR_ID",
   // Pinning this one from the deploy is the difference between rotating the
   // secret in the UI and having every sender break on the next restart.

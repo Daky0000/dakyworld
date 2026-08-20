@@ -36,6 +36,8 @@ import {
   rememberState,
 } from "../lib/google.js";
 import { verifyStripeKey } from "../lib/stripe.js";
+import { verifyPaystackKey } from "../lib/paystack.js";
+import { verifyHubtelKeys } from "../lib/hubtel.js";
 import { MailerError, activeTransport, readMailerConfig, sendMail, verifySmtp } from "../lib/mailer.js";
 import {
   HostingerMailError,
@@ -139,7 +141,10 @@ function origin(req: Request, configured: string | null): string {
 }
 
 async function describeAll(req: Request) {
-  const [apify, anthropicKey, googleClientId, googleAccount, stripeKey, stripeHook, cloudName, cloudKey, cloudSecret, appUrl, timezone] =
+  const [
+    apify, anthropicKey, googleClientId, googleAccount, stripeKey, stripeHook, cloudName, cloudKey, cloudSecret, appUrl, timezone,
+    paystackKey, hubtelClientId, hubtelMerchant, hubtelSmsId, hubtelSender, githubRepos,
+  ] =
     await Promise.all([
       describeApify(),
       getSetting(SETTING.ANTHROPIC_KEY),
@@ -152,6 +157,12 @@ async function describeAll(req: Request) {
       getSetting(SETTING.CLOUDINARY_API_SECRET),
       getSetting(SETTING.APP_URL),
       getSetting(SETTING.DEFAULT_TIMEZONE),
+      getSetting(SETTING.PAYSTACK_SECRET_KEY),
+      getSetting(SETTING.HUBTEL_CLIENT_ID),
+      getSetting(SETTING.HUBTEL_MERCHANT_ID),
+      getSetting(SETTING.HUBTEL_SMS_ID),
+      getSetting(SETTING.HUBTEL_SMS_SENDER),
+      getSetting(SETTING.GITHUB_ALLOWED_REPOS),
     ]);
 
   return {
@@ -179,6 +190,41 @@ async function describeAll(req: Request) {
       livemode: stripeKey ? !stripeKey.startsWith("sk_test_") : null,
       webhookConfigured: Boolean(stripeHook),
       webhookUrl: `${origin(req, appUrl)}/api/webhooks/stripe`,
+    },
+    // The two Ghanaian rails. Each carries the webhook address to paste into
+    // the provider's dashboard, because that is the step most likely to be
+    // missed — a key with no webhook takes money and never marks an invoice
+    // paid, which looks like the integration not working at all.
+    paystack: {
+      configured: Boolean(paystackKey),
+      envManaged: isEnvManaged(SETTING.PAYSTACK_SECRET_KEY),
+      key: paystackKey ? maskSecret(paystackKey) : null,
+      livemode: paystackKey ? paystackKey.startsWith("sk_live_") : null,
+      webhookUrl: `${origin(req, appUrl)}/api/webhooks/paystack`,
+    },
+    hubtel: {
+      configured: Boolean(hubtelClientId && hubtelMerchant),
+      envManaged: isEnvManaged(SETTING.HUBTEL_CLIENT_ID),
+      clientId: hubtelClientId ? maskSecret(hubtelClientId) : null,
+      merchantId: hubtelMerchant,
+      callbackUrl: `${origin(req, appUrl)}/api/webhooks/hubtel`,
+      sms: {
+        configured: Boolean(hubtelSmsId),
+        envManaged: isEnvManaged(SETTING.HUBTEL_SMS_ID),
+        smsId: hubtelSmsId ? maskSecret(hubtelSmsId) : null,
+        sender: hubtelSender || null,
+      },
+    },
+    /**
+     * Which repositories agents may write to. Deliberately reported even when
+     * empty, because empty is a meaningful state — it is what stops an agent
+     * changing the software that runs the company — and a panel that hid itself
+     * until configured would never explain that.
+     */
+    agentRepos: {
+      envManaged: isEnvManaged(SETTING.GITHUB_ALLOWED_REPOS),
+      repos: githubRepos ?? "",
+      writable: Boolean(githubRepos?.trim()),
     },
     cloudinary: {
       configured: Boolean(cloudName && cloudKey && cloudSecret),
@@ -1430,6 +1476,150 @@ settingsRouter.delete("/system/brand/:slot", async (req, res, next) => {
       return res.status(404).json({ error: `There is no brand slot called ${req.params.slot}.` });
     }
     await deleteBrandImage(slot);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Paystack and Hubtel ---------------------------------------------------
+//
+// Stripe does not acquire in Ghana, and every invoice this system produces is
+// in GHS. Two rails rather than one because a business here commonly has one
+// and not the other, and because they answer different questions: a hosted page
+// for somebody comfortable paying on the web, a prompt on the handset for
+// somebody who is not.
+
+settingsRouter.put("/paystack", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.PAYSTACK_SECRET_KEY, "The Paystack secret key", res)) return;
+    const { secretKey } = z.object({ secretKey: z.string().min(10, "That doesn't look like a Paystack secret key") }).parse(req.body);
+
+    try {
+      await verifyPaystackKey(secretKey.trim());
+    } catch (err) {
+      return res.status(400).json({ error: `Paystack rejected that key: ${(err as Error).message}` });
+    }
+
+    await setSetting(SETTING.PAYSTACK_SECRET_KEY, secretKey.trim(), { secret: true });
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/paystack", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.PAYSTACK_SECRET_KEY, "The Paystack secret key", res)) return;
+    await deleteSetting(SETTING.PAYSTACK_SECRET_KEY);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Hubtel's payment credentials.
+ *
+ * Verified before they are stored, the same as every other key here. A 404 from
+ * the status endpoint counts as success: it means the credentials were accepted
+ * and the reference simply does not exist, which is exactly what a connection
+ * check wants to see.
+ */
+settingsRouter.put("/hubtel", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.HUBTEL_CLIENT_ID, "The Hubtel credentials", res)) return;
+    const { clientId, clientSecret, merchantId } = z
+      .object({
+        clientId: z.string().min(4),
+        clientSecret: z.string().min(4),
+        merchantId: z.string().min(4, "That is the Merchant Account number from the Hubtel dashboard"),
+      })
+      .parse(req.body);
+
+    try {
+      await verifyHubtelKeys(clientId.trim(), clientSecret.trim(), merchantId.trim());
+    } catch (err) {
+      return res.status(400).json({ error: `Hubtel rejected those: ${(err as Error).message}` });
+    }
+
+    await Promise.all([
+      setSetting(SETTING.HUBTEL_CLIENT_ID, clientId.trim(), { secret: true }),
+      setSetting(SETTING.HUBTEL_CLIENT_SECRET, clientSecret.trim(), { secret: true }),
+      setSetting(SETTING.HUBTEL_MERCHANT_ID, merchantId.trim()),
+    ]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/hubtel", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.HUBTEL_CLIENT_ID, "The Hubtel credentials", res)) return;
+    await Promise.all([
+      deleteSetting(SETTING.HUBTEL_CLIENT_ID),
+      deleteSetting(SETTING.HUBTEL_CLIENT_SECRET),
+      deleteSetting(SETTING.HUBTEL_MERCHANT_ID),
+    ]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Hubtel SMS, which is a different credential pair from Hubtel payments.
+ *
+ * Not verified on save: Hubtel has no free probe for the SMS API, and the only
+ * way to check is to send a message, which is not something a Settings screen
+ * should do to somebody's phone without being asked.
+ */
+settingsRouter.put("/hubtel-sms", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.HUBTEL_SMS_ID, "The Hubtel SMS credentials", res)) return;
+    const { smsId, smsSecret, sender } = z
+      .object({ smsId: z.string().min(4), smsSecret: z.string().min(4), sender: z.string().max(11).optional() })
+      .parse(req.body);
+
+    await Promise.all([
+      setSetting(SETTING.HUBTEL_SMS_ID, smsId.trim(), { secret: true }),
+      setSetting(SETTING.HUBTEL_SMS_SECRET, smsSecret.trim(), { secret: true }),
+      setSetting(SETTING.HUBTEL_SMS_SENDER, sender?.trim() ?? ""),
+    ]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/hubtel-sms", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.HUBTEL_SMS_ID, "The Hubtel SMS credentials", res)) return;
+    await Promise.all([
+      deleteSetting(SETTING.HUBTEL_SMS_ID),
+      deleteSetting(SETTING.HUBTEL_SMS_SECRET),
+      deleteSetting(SETTING.HUBTEL_SMS_SENDER),
+    ]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Which repositories agents may write to.
+ *
+ * Separate from the GitHub token on purpose. The token decides what the app can
+ * see; this decides what an *agent* may change, and the two are different
+ * decisions — reading a codebase is research, writing to one changes the
+ * software running the company. Empty means none, which is where it starts.
+ */
+settingsRouter.put("/github-repos", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.GITHUB_ALLOWED_REPOS, "The writable repositories", res)) return;
+    const { repos } = z.object({ repos: z.string().max(2000) }).parse(req.body);
+    await setSetting(SETTING.GITHUB_ALLOWED_REPOS, repos.trim());
     res.json(await describeAll(req));
   } catch (err) {
     next(err);

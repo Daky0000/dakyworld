@@ -39,6 +39,12 @@ export type ToolRequirement =
   | "email"
   | "slack"
   | "stripe"
+  /** Paystack — the hosted payment page. See lib/paystack.ts. */
+  | "paystack"
+  /** Hubtel mobile money. A different credential pair from Hubtel SMS. */
+  | "hubtel"
+  /** Hubtel SMS. Kept apart from `hubtel` because the credentials genuinely are. */
+  | "hubtelSms"
   | "cloudinary"
   | "google"
   | "calendar"

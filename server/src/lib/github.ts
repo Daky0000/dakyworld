@@ -44,7 +44,7 @@ export async function defaultOwner(): Promise<string | null> {
   return getSetting(SETTING.GITHUB_OWNER);
 }
 
-async function request<T>(path: string, options: { method?: "GET" | "POST"; body?: unknown; token?: string } = {}): Promise<T> {
+async function request<T>(path: string, options: { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown; token?: string } = {}): Promise<T> {
   const token = options.token ?? (await getSetting(SETTING.GITHUB_TOKEN));
   if (!token) throw new GitHubNotConfiguredError();
 
@@ -204,4 +204,293 @@ export async function verifyGitHubToken(token: string): Promise<{ login: string;
   const account = await getAccount(token);
   const repos = await request<any[]>("/user/repos?per_page=1", { token }).catch(() => []);
   return { login: account.login, repos: repos.length };
+}
+
+// ---------------------------------------------------------------------------
+// Writing code — branches, commits, pull requests
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything below this line lets an agent change a repository.
+ *
+ * That includes *this* repository, which is the one that runs the agents, so
+ * the boundaries are drawn deliberately rather than by what the API happens to
+ * allow:
+ *
+ * - **An agent may open a pull request. It may not merge one.** Merging `main`
+ *   here auto-deploys to Railway, so a merge puts code in front of clients and
+ *   is a decision a person makes. `mergePullRequest` is reachable only through
+ *   the approval queue, where the Owner sees the diffstat and the agent's
+ *   reasoning first.
+ * - **Every agent branch is prefixed `agent/`**, so what software wrote is
+ *   obvious in a branch list and a stray branch is easy to sweep.
+ * - **Nothing force-pushes and nothing commits to a default branch.**
+ *   `createBranch` refuses to write over an existing ref: moving a ref is how
+ *   one agent's work disappears under another's with nothing in the history to
+ *   say it happened.
+ * - **`repo.allowedRepos` is the outer fence, and it denies by default.**
+ */
+
+/** Repositories an agent may write to, from Settings. Empty means none. */
+export async function allowedRepos(): Promise<string[]> {
+  const raw = (await getSetting(SETTING.GITHUB_ALLOWED_REPOS)) ?? "";
+  return raw
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * Whether an agent may write to this repository.
+ *
+ * **Deny by default.** An empty list means an agent can read but write nowhere,
+ * which is the right starting position for a capability that can change the
+ * software running the company. Pointing agents at Dakyworld OS itself is then
+ * a deliberate act — somebody typing the repository's name into a settings
+ * field — rather than something that arrived switched on.
+ *
+ * `*` opens everything the token can see, for when that is genuinely wanted.
+ */
+export async function repoAllowed(repo: string): Promise<boolean> {
+  const full = (await fullName(repo)).toLowerCase();
+  const allowed = await allowedRepos();
+  if (allowed.length === 0) return false;
+  if (allowed.includes("*")) return true;
+  return allowed.includes(full) || allowed.includes(full.split("/")[1]);
+}
+
+export class RepoNotAllowedError extends GitHubError {
+  constructor(repo: string) {
+    super(
+      403,
+      `Agents are not allowed to write to ${repo}. Add it to the writable repositories under Settings -> Developer — the list is empty by default, deliberately.`,
+    );
+  }
+}
+
+async function assertWritable(repo: string): Promise<string> {
+  if (!(await repoAllowed(repo))) throw new RepoNotAllowedError(repo);
+  return fullName(repo);
+}
+
+/** Every branch an agent opens carries this, so what software wrote is obvious. */
+export const AGENT_BRANCH_PREFIX = "agent/";
+
+export function agentBranchName(slug: string): string {
+  const clean = slug
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 50);
+  return `${AGENT_BRANCH_PREFIX}${clean || "change"}-${Date.now().toString(36)}`;
+}
+
+export interface RepoFile {
+  path: string;
+  content: string;
+}
+
+/** The default branch's name and the commit it points at. */
+export async function defaultBranch(repo: string): Promise<{ name: string; sha: string }> {
+  const full = await fullName(repo);
+  const info = await request<{ default_branch: string }>(`/repos/${full}`);
+  const ref = await request<{ object: { sha: string } }>(`/repos/${full}/git/ref/heads/${info.default_branch}`);
+  return { name: info.default_branch, sha: ref.object.sha };
+}
+
+/** One file's text, or null when it is not there. */
+export async function readFile(repo: string, path: string, ref?: string): Promise<string | null> {
+  const full = await fullName(repo);
+  try {
+    const file = await request<{ content?: string; encoding?: string }>(
+      `/repos/${full}/contents/${path.split("/").map(encodeURIComponent).join("/")}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`,
+    );
+    if (!file.content) return null;
+    return Buffer.from(file.content, (file.encoding as BufferEncoding) ?? "base64").toString("utf8");
+  } catch (err) {
+    if (err instanceof GitHubError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+/** What is in a directory, so an agent can look before it writes. */
+export async function listTree(repo: string, path = "", ref?: string): Promise<Array<{ path: string; type: string; size: number }>> {
+  const full = await fullName(repo);
+  const entries = await request<Array<{ path: string; type: string; size?: number }>>(
+    `/repos/${full}/contents/${path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`,
+  );
+  return (Array.isArray(entries) ? entries : []).map((entry) => ({ path: entry.path, type: entry.type, size: entry.size ?? 0 }));
+}
+
+/** Opens a branch off the default one. Refuses to move an existing ref. */
+export async function createBranch(repo: string, branch: string, fromSha?: string): Promise<{ branch: string; sha: string }> {
+  const full = await assertWritable(repo);
+  const base = fromSha ?? (await defaultBranch(repo)).sha;
+
+  try {
+    await request(`/repos/${full}/git/refs`, { method: "POST", body: { ref: `refs/heads/${branch}`, sha: base } });
+  } catch (err) {
+    if (err instanceof GitHubError && err.status === 422) {
+      throw new GitHubError(409, `The branch ${branch} already exists. Pick another name rather than writing over it.`);
+    }
+    throw err;
+  }
+  return { branch, sha: base };
+}
+
+/**
+ * Writes a set of files to a branch as one commit.
+ *
+ * Built as a tree rather than one Contents API call per file, because per-file
+ * commits leave the branch in states that never existed as a whole: a change
+ * touching three files becomes three commits, two of which do not compile, and
+ * a reviewer reading the pull request sees work in progress rather than a
+ * change.
+ */
+export async function commitFiles(input: { repo: string; branch: string; message: string; files: RepoFile[] }): Promise<{ sha: string; url: string }> {
+  const full = await assertWritable(input.repo);
+  if (input.files.length === 0) throw new GitHubError(400, "There are no files in that change.");
+
+  const head = await request<{ object: { sha: string } }>(`/repos/${full}/git/ref/heads/${input.branch}`);
+  const parent = head.object.sha;
+  const commit = await request<{ tree: { sha: string } }>(`/repos/${full}/git/commits/${parent}`);
+
+  const blobs = await Promise.all(
+    input.files.map(async (file) => {
+      const blob = await request<{ sha: string }>(`/repos/${full}/git/blobs`, {
+        method: "POST",
+        body: { content: Buffer.from(file.content, "utf8").toString("base64"), encoding: "base64" },
+      });
+      return { path: file.path.replace(/^\/+/, ""), mode: "100644" as const, type: "blob" as const, sha: blob.sha };
+    }),
+  );
+
+  const tree = await request<{ sha: string }>(`/repos/${full}/git/trees`, {
+    method: "POST",
+    body: { base_tree: commit.tree.sha, tree: blobs },
+  });
+
+  const created = await request<{ sha: string; html_url: string }>(`/repos/${full}/git/commits`, {
+    method: "POST",
+    body: { message: input.message.slice(0, 2000), tree: tree.sha, parents: [parent] },
+  });
+
+  // No `force`. A branch that has moved under us is a conflict to be reported,
+  // never something to overwrite.
+  await request(`/repos/${full}/git/refs/heads/${input.branch}`, { method: "PATCH", body: { sha: created.sha, force: false } });
+
+  return { sha: created.sha, url: created.html_url };
+}
+
+export interface PullRequestSummary {
+  number: number;
+  url: string;
+  title: string;
+  branch: string;
+  state: string;
+  merged: boolean;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
+}
+
+export async function openPullRequest(input: { repo: string; branch: string; title: string; body: string; base?: string }): Promise<PullRequestSummary> {
+  const full = await assertWritable(input.repo);
+  const base = input.base ?? (await defaultBranch(input.repo)).name;
+
+  const pr = await request<{ number: number; html_url: string; title: string; state: string }>(`/repos/${full}/pulls`, {
+    method: "POST",
+    body: { title: input.title.slice(0, 250), head: input.branch, base, body: input.body.slice(0, 60_000) },
+  });
+  return { number: pr.number, url: pr.html_url, title: pr.title, branch: input.branch, state: pr.state, merged: false };
+}
+
+/** A pull request with its diffstat, which is what a person decides on. */
+export async function getPullRequest(repo: string, number: number): Promise<PullRequestSummary> {
+  const full = await fullName(repo);
+  const pr = await request<{
+    number: number;
+    html_url: string;
+    title: string;
+    state: string;
+    merged: boolean;
+    additions: number;
+    deletions: number;
+    changed_files: number;
+    head: { ref: string };
+  }>(`/repos/${full}/pulls/${number}`);
+  return {
+    number: pr.number,
+    url: pr.html_url,
+    title: pr.title,
+    branch: pr.head.ref,
+    state: pr.state,
+    merged: pr.merged,
+    additions: pr.additions,
+    deletions: pr.deletions,
+    changedFiles: pr.changed_files,
+  };
+}
+
+/**
+ * Merges a pull request.
+ *
+ * **This is the one that deploys.** Railway builds `server/` on every push to
+ * `main`, so merging here puts code in front of clients. It is never reached
+ * from a model: `code.merge` is `outward`, so an agent below autonomy 3 can
+ * only prepare it, and preparing it files an approval card carrying the
+ * diffstat and the agent's reasoning.
+ *
+ * Idempotent about an already-merged request, because a decision can be
+ * retried from Slack.
+ */
+export async function mergePullRequest(
+  repo: string,
+  number: number,
+  method: "squash" | "merge" | "rebase" = "squash",
+): Promise<{ merged: boolean; sha: string | null; note: string }> {
+  const full = await assertWritable(repo);
+  const existing = await getPullRequest(repo, number);
+  if (existing.merged) return { merged: true, sha: null, note: `#${number} was already merged.` };
+  if (existing.state !== "open") return { merged: false, sha: null, note: `#${number} is ${existing.state}, so there is nothing to merge.` };
+
+  try {
+    const result = await request<{ merged: boolean; sha: string; message: string }>(`/repos/${full}/pulls/${number}/merge`, {
+      method: "PUT",
+      body: { merge_method: method },
+    });
+    return { merged: result.merged, sha: result.sha, note: result.message };
+  } catch (err) {
+    if (err instanceof GitHubError && (err.status === 405 || err.status === 409)) {
+      throw new GitHubError(409, `GitHub would not merge #${number}: ${err.message}. That usually means the branch is behind, or a check has not passed.`);
+    }
+    throw err;
+  }
+}
+
+/** A new repository, for a client project. */
+export async function createRepo(input: { name: string; description?: string; private?: boolean }): Promise<{ fullName: string; url: string; cloneUrl: string }> {
+  const owner = await defaultOwner();
+  const body = {
+    name: input.name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-"),
+    description: input.description?.slice(0, 350),
+    // Private by default. A client's half-built site, under Dakyworld's
+    // account, is not something to make public by omission.
+    private: input.private ?? true,
+    auto_init: true,
+  };
+
+  const repo = await request<{ full_name: string; html_url: string; clone_url: string }>(owner ? `/orgs/${owner}/repos` : "/user/repos", {
+    method: "POST",
+    body,
+  }).catch(async (err: unknown) => {
+    // A personal account is not an organisation, and GitHub answers 404 for
+    // `/orgs/<user>/repos` rather than saying so.
+    if (err instanceof GitHubError && err.status === 404 && owner) {
+      return request<{ full_name: string; html_url: string; clone_url: string }>("/user/repos", { method: "POST", body });
+    }
+    throw err;
+  });
+
+  return { fullName: repo.full_name, url: repo.html_url, cloneUrl: repo.clone_url };
 }

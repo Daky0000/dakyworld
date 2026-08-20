@@ -589,6 +589,26 @@ export interface AppSettings {
     webhookConfigured: boolean;
     webhookUrl: string;
   };
+  /** Paystack — the hosted payment page. The Ghanaian rail Stripe cannot serve. */
+  paystack: {
+    configured: boolean;
+    envManaged: boolean;
+    key: string | null;
+    livemode: boolean | null;
+    /** Paste this into Paystack's dashboard, or an invoice is never marked paid. */
+    webhookUrl: string;
+  };
+  /** Hubtel — mobile money, and SMS on a separate credential pair. */
+  hubtel: {
+    configured: boolean;
+    envManaged: boolean;
+    clientId: string | null;
+    merchantId: string | null;
+    callbackUrl: string;
+    sms: { configured: boolean; envManaged: boolean; smsId: string | null; sender: string | null };
+  };
+  /** Which repositories agents may write to. Empty means none, deliberately. */
+  agentRepos: { envManaged: boolean; repos: string; writable: boolean };
   cloudinary: { configured: boolean; envManaged: boolean; cloudName: string | null; apiKey: string | null };
   alerts: {
     configured: boolean;

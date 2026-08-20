@@ -2,6 +2,8 @@ import { analystConfigured } from "../../lib/claude.js";
 import { PROVIDER_KEYS, providerConfigured } from "../../lib/models/registry.js";
 import { apifyConfigured } from "../../lib/apify.js";
 import { mailerConfigured } from "../../lib/mailer.js";
+import { paystackConfigured } from "../../lib/paystack.js";
+import { hubtelConfigured, hubtelSmsConfigured } from "../../lib/hubtel.js";
 import { stripeConfigured } from "../../lib/stripe.js";
 import { cloudinaryConfigured } from "../../lib/cloudinary.js";
 import { googleConfigured, googleConnected } from "../../lib/google.js";
@@ -70,6 +72,15 @@ async function compute(requirement: ToolRequirement): Promise<Readiness> {
       return (await slackConfigured()) ? ok : no("Slack isn't connected. Add a webhook URL or bot token under Settings → Alerts.");
     case "stripe":
       return (await stripeConfigured()) ? ok : no("Stripe isn't connected. Add a secret key under Settings → Payments.");
+    case "paystack":
+      return (await paystackConfigured()) ? ok : no("Paystack isn't connected. Add a secret key under Settings → Payments.");
+    case "hubtel":
+      return (await hubtelConfigured()) ? ok : no("Hubtel isn't connected. Add the client id, secret and merchant account number under Settings → Payments.");
+    case "hubtelSms":
+      // Named apart from the payments pair on purpose: Hubtel issues two, and
+      // being told "Hubtel isn't connected" while looking at connected Hubtel
+      // payments is the confusing version of this message.
+      return (await hubtelSmsConfigured()) ? ok : no("Hubtel SMS isn't connected. It uses a different credential pair from payments — add it under Settings → Payments.");
     case "cloudinary":
       return (await cloudinaryConfigured()) ? ok : no("Cloudinary isn't connected. Add the three values under Settings → Storage.");
     case "github":

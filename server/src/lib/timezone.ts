@@ -67,3 +67,21 @@ export function zonedDateParts(instant: Date, timeZone: string): [number, number
     .map(Number);
   return [parts[0], parts[1], parts[2]];
 }
+
+/**
+ * "08:30" into hours and minutes, or null when it is not a time.
+ *
+ * Lives here rather than in the scheduler because two different things now
+ * schedule against it — lead capture and the agents' standing work — and the
+ * scheduler importing standing work while standing work imported the scheduler
+ * is a module cycle that would eventually surface as an undefined export at
+ * boot.
+ */
+export function parseScheduleTime(value: string): { hour: number; minute: number } | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return { hour, minute };
+}

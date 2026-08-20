@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
+import { raisePayment, settleFromProvider } from "../payments.js";
+import { normaliseGhanaNumber, sendSms } from "../../lib/hubtel.js";
+import { agentBranchName, commitFiles, createBranch, createRepo, getPullRequest, listTree, mergePullRequest, openPullRequest, readFile } from "../../lib/github.js";
 import type { ToolDefinition } from "./types.js";
 import { auditCompany } from "../companyAudit.js";
 import { isStale, prepareLead, prepareLeads, storedPrep } from "../leadPrep.js";
@@ -1041,6 +1044,255 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         orderBy: { createdAt: "desc" },
         take: input.limit,
       }),
+  },
+  // --- Getting paid ---------------------------------------------------------
+  //
+  // Two rails because Ghana has two answers, and the agent picks per client.
+  // Stripe acquires in neither, which is why every invoice this system has
+  // produced so far printed with no way to settle it.
+  //
+  // All three of these are `outward` — a payment request arrives in front of a
+  // client under Dakyworld's name — so an agent below autonomy 3 prepares one
+  // and it waits in the approval queue with its reasoning attached.
+  {
+    key: "payment.link",
+    name: "Raise a payment link",
+    group: "Money",
+    purpose:
+      "Opens a Paystack payment page for an invoice and puts the link on the record. The client can pay by card, mobile money or bank transfer. Use this when they are comfortable paying on the web, or when you are putting a link in an email.",
+    scope: "send",
+    requires: "paystack",
+    spends: false,
+    outward: true,
+    input: z.object({ invoiceId: z.string().min(1) }),
+    preview: async (input) => {
+      const invoice = await prisma.invoice.findUnique({
+        where: { id: input.invoiceId },
+        select: { invoiceNumber: true, amountTotal: true, currency: true, status: true, client: { select: { name: true, email: true } } },
+      });
+      if (!invoice) return `There is no invoice with the id ${input.invoiceId}.`;
+      if (invoice.status === "PAID") return `${invoice.invoiceNumber} has already been paid, so no link would be raised.`;
+      return `Open a Paystack payment page for ${invoice.invoiceNumber} — ${invoice.currency} ${Number(invoice.amountTotal.toString()).toLocaleString("en-GB")} from ${invoice.client.name} (${invoice.client.email ?? "no email on file"}) — and put the link on the invoice.`;
+    },
+    run: async (input) => raisePayment(input.invoiceId, "paystack"),
+  },
+  {
+    key: "payment.momo",
+    name: "Request mobile money",
+    group: "Money",
+    purpose:
+      "Opens a Hubtel checkout for an invoice, so the client can pay from the phone they already have open. Use this where a hosted web page is the wrong ask — which for a great many small businesses here it is.",
+    scope: "charge",
+    requires: "hubtel",
+    // Not marked `spends` — this collects money rather than spending it, and
+    // the flag drives the autonomy-4 gate, which exists to stop an agent
+    // running up a bill. Requesting payment is `outward`, which is the gate
+    // that actually applies to it.
+    spends: false,
+    outward: true,
+    input: z.object({ invoiceId: z.string().min(1) }),
+    preview: async (input) => {
+      const invoice = await prisma.invoice.findUnique({
+        where: { id: input.invoiceId },
+        select: { invoiceNumber: true, amountTotal: true, currency: true, status: true, client: { select: { name: true, phone: true } } },
+      });
+      if (!invoice) return `There is no invoice with the id ${input.invoiceId}.`;
+      if (invoice.status === "PAID") return `${invoice.invoiceNumber} has already been paid, so nothing would be requested.`;
+      return `Ask ${invoice.client.name} (${invoice.client.phone ?? "no phone on file"}) for ${invoice.currency} ${Number(invoice.amountTotal.toString()).toLocaleString("en-GB")} against ${invoice.invoiceNumber}, through Hubtel mobile money.`;
+    },
+    run: async (input) => raisePayment(input.invoiceId, "hubtel"),
+  },
+  {
+    key: "payment.status",
+    name: "Check a payment",
+    group: "Money",
+    purpose:
+      "Asks the provider directly whether an invoice has been paid, and marks it paid if it has. Reading only — it never asks anybody for money.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({ invoiceId: z.string().min(1) }),
+    run: async (input) => {
+      const invoice = await prisma.invoice.findUnique({
+        where: { id: input.invoiceId },
+        select: { invoiceNumber: true, status: true, paidAt: true, paidVia: true, paymentProvider: true, paymentRef: true, paymentUrl: true },
+      });
+      if (!invoice) return { found: false };
+      if (!invoice.paymentRef) {
+        return { found: true, invoiceNumber: invoice.invoiceNumber, status: invoice.status, raised: false, note: "No payment has been raised for this invoice yet." };
+      }
+      // Asks the provider rather than trusting the row, because the row is only
+      // as fresh as the last webhook that arrived.
+      const settled = await settleFromProvider(invoice.paymentRef);
+      return {
+        found: true,
+        invoiceNumber: invoice.invoiceNumber,
+        raised: true,
+        provider: invoice.paymentProvider,
+        paymentUrl: invoice.paymentUrl,
+        status: settled?.invoice.status ?? invoice.status,
+        paidAt: settled?.invoice.paidAt ?? invoice.paidAt,
+        paidVia: settled?.invoice.paidVia ?? invoice.paidVia,
+        justSettled: settled?.changed ?? false,
+      };
+    },
+  },
+  {
+    key: "sms.send",
+    name: "Send a text message",
+    group: "Communication",
+    purpose:
+      "Sends one SMS to a Ghanaian mobile number through Hubtel. For a payment reminder or an appointment confirmation — the things that get read. Not for outreach.",
+    scope: "send",
+    requires: "hubtelSms",
+    spends: false,
+    outward: true,
+    input: z.object({
+      to: z.string().min(9).max(20).describe("A Ghanaian mobile number in any usual form — 024…, 0244…, +233…"),
+      message: z.string().min(4).max(480).describe("Kept short. Say who it is from, because a sender id is easy to miss."),
+    }),
+    preview: async (input) => {
+      const to = normaliseGhanaNumber(input.to);
+      if (!to) return `"${input.to}" is not a Ghanaian mobile number, so nothing would be sent.`;
+      return `Text ${to}: "${input.message.slice(0, 160)}${input.message.length > 160 ? "…" : ""}"`;
+    },
+    run: async (input) => sendSms(input.to, input.message),
+  },
+  // --- Changing the software ------------------------------------------------
+  //
+  // These let an agent write code, including to the repository that runs the
+  // agents. The split is deliberate and is the whole safety story: opening a
+  // pull request changes nothing that anybody can see, and merging one deploys
+  // to Railway. So `code.propose` is ordinary write work, and `code.merge` is
+  // `outward` — which routes it through the approval queue, where the Owner
+  // reads the diffstat and the agent's reasoning before anything ships.
+  //
+  // `repo.allowedRepos` is the outer fence and is empty by default: an agent
+  // can read any repository the token can see and write to none until somebody
+  // names one.
+  {
+    key: "repo.read",
+    name: "Read a repository",
+    group: "Operations",
+    purpose: "Lists a folder in a repository, or reads one file. For understanding a codebase before proposing a change to it.",
+    scope: "read",
+    requires: "github",
+    spends: false,
+    outward: false,
+    input: z.object({
+      repo: z.string().min(1).describe("owner/name, or just the name when a default owner is set."),
+      path: z.string().max(300).default("").describe("A file to read, or a folder to list. Empty lists the root."),
+      ref: z.string().max(200).optional().describe("A branch or commit. Defaults to the default branch."),
+    }),
+    run: async (input) => {
+      // A path with an extension is almost always a file; try that first and
+      // fall back to listing, because asking GitHub twice is cheaper than
+      // making the agent guess which one it wanted.
+      if (input.path && /\.[a-z0-9]+$/i.test(input.path)) {
+        const content = await readFile(input.repo, input.path, input.ref);
+        if (content !== null) return { kind: "file", path: input.path, content: content.slice(0, 60_000) };
+      }
+      return { kind: "tree", path: input.path, entries: await listTree(input.repo, input.path, input.ref) };
+    },
+  },
+  {
+    key: "repo.create",
+    name: "Create a repository",
+    group: "Operations",
+    purpose: "Opens a new private repository, for a client project that is starting.",
+    scope: "write",
+    requires: "github",
+    spends: false,
+    outward: true,
+    input: z.object({
+      name: z.string().min(2).max(80),
+      description: z.string().max(350).optional(),
+      private: z.boolean().default(true).describe("Leave true unless the client has asked for it to be public."),
+    }),
+    preview: async (input) =>
+      `Create a ${input.private ? "private" : "PUBLIC"} repository called ${input.name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-")}${
+        input.description ? ` — "${input.description}"` : ""
+      }.`,
+    run: async (input) => createRepo(input),
+  },
+  {
+    key: "code.propose",
+    name: "Propose a code change",
+    group: "Operations",
+    purpose:
+      "Opens a branch, commits a set of files to it, and raises a pull request explaining the change. Changes nothing that is live — merging is a separate decision a person makes.",
+    scope: "write",
+    requires: "github",
+    spends: false,
+    // Not outward: a pull request is visible to nobody outside the company and
+    // changes nothing running. Held back only by the agent's own dry-run flag,
+    // which is what dry run is for — preparing work somebody then looks at.
+    outward: false,
+    input: z.object({
+      repo: z.string().min(1),
+      title: z.string().min(6).max(200).describe("What the change does, in the imperative — 'fix the invoice footer'."),
+      body: z
+        .string()
+        .min(30)
+        .max(20_000)
+        .describe("Why the change is right, what you checked, and what could go wrong. Whoever merges this reads only what you write here."),
+      files: z
+        .array(z.object({ path: z.string().min(1).max(300), content: z.string().max(200_000) }))
+        .min(1)
+        .max(30)
+        .describe("The complete new content of each file. Read the file first — this replaces it entirely."),
+    }),
+    preview: async (input) =>
+      `Open a pull request on ${input.repo} — "${input.title}" — changing ${input.files.length} file(s): ${input.files
+        .map((file: { path: string }) => file.path)
+        .slice(0, 6)
+        .join(", ")}.`,
+    run: async (input) => {
+      const branch = agentBranchName(input.title);
+      await createBranch(input.repo, branch);
+      const commit = await commitFiles({ repo: input.repo, branch, message: input.title, files: input.files });
+      const pr = await openPullRequest({
+        repo: input.repo,
+        branch,
+        title: input.title,
+        // Said on the pull request itself, so somebody reading it on GitHub
+        // rather than in this app still knows what wrote it.
+        body: `${input.body}\n\n---\nOpened by a Dakyworld OS agent. Nothing here is merged automatically.`,
+      });
+      return { ...pr, commit: commit.sha };
+    },
+  },
+  {
+    key: "code.merge",
+    name: "Merge a pull request",
+    group: "Operations",
+    purpose:
+      "Merges a pull request. On this repository that deploys to production, so it always needs a person to approve it.",
+    scope: "write",
+    requires: "github",
+    spends: false,
+    // The reason this is `outward` when opening a pull request is not: merging
+    // puts code in front of clients. The flag is what routes it through the
+    // approval queue rather than a prompt asking the agent to be careful.
+    outward: true,
+    input: z.object({
+      repo: z.string().min(1),
+      number: z.number().int().min(1),
+      method: z.enum(["squash", "merge", "rebase"]).default("squash"),
+    }),
+    preview: async (input) => {
+      try {
+        const pr = await getPullRequest(input.repo, input.number);
+        if (pr.merged) return `#${input.number} on ${input.repo} has already been merged.`;
+        return `Merge #${input.number} on ${input.repo} — "${pr.title}" — ${pr.changedFiles ?? "?"} file(s), +${pr.additions ?? "?"} −${
+          pr.deletions ?? "?"
+        }. On this repository, merging deploys.`;
+      } catch (err) {
+        return `Merge #${input.number} on ${input.repo}. (Could not read it just now: ${(err as Error).message})`;
+      }
+    },
+    run: async (input) => mergePullRequest(input.repo, input.number, input.method),
   },
   {
     key: "webhook.dispatch",
