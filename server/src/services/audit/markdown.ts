@@ -219,9 +219,19 @@ function findingLines(finding: AuditFindingDetail): string[] {
   ].filter((line): line is string => line !== null);
 }
 
+/**
+ * What the first email should ask for, in the words the cold writer reads.
+ *
+ * This section of the Markdown is instructions to another writer, so it has to
+ * agree with the playbook or it becomes a second, older voice arguing with it.
+ * It used to say "ask for fifteen minutes", which Playbook v3 forbids in a
+ * first email — the ask offers something rather than requesting time — and the
+ * drafter was reading that sentence as a fact about the business it was writing
+ * to. See `server/docs/cold-email-playbook.md`.
+ */
 function askLabel(ask: "DEMO" | "FIX" | "NOTHING"): string {
-  if (ask === "DEMO") return "offer to build them a demo page";
-  if (ask === "FIX") return "offer the fix and ask for fifteen minutes";
+  if (ask === "DEMO") return "offer to build them a page they can look at";
+  if (ask === "FIX") return "offer to find out what is causing it, or to send the exact change — never a call or a meeting in a first email";
   return "write nothing — there is no honest case here";
 }
 

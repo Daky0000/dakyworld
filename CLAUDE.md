@@ -380,6 +380,22 @@ each rule is present *and* that its opposite is not, and reports what fraction o
 the prompt is actually facts about the business. Run it before adding
 instructions, not after.
 
+**The old doctrine also reaches the drafter through the facts.** Two files feed
+the cold writer in words rather than in rules: `audit/markdown.ts` writes the
+internal email brief the writer argues from, and `audit/synthesis.ts` decides
+the `consequence` sentence and the DEMO/FIX ask that go into it. Both were still
+saying "ask for fifteen minutes" and "what that costs them" long after the
+drafter stopped. **Anything that writes an instruction another writer will read
+is part of the playbook surface** — the drafter, the polish, the two agent
+prompts, the synthesis and the audit Markdown.
+
+**Effort is a quality decision and it was set wrong.** The cold email — the
+shortest, most-read thing the company produces — was drafted at `medium` while a
+proposal and a demo page were at `high`. Both email stages are `high` now, and
+the agent runner picks by *what the work is* rather than by tier alone
+(`WRITES_FOR_OUTSIDE` in `agents/runner.ts`): a judgement or a piece of writing
+that leaves the building gets high, reading a record and filing a task does not.
+
 **The playbook guides; it does not dictate.** The scenarios say what a letter
 must establish and how small the ask should be. `subjectExamples` and
 `exampleAsk` are named that way on purpose — they calibrate register and are

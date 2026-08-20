@@ -114,6 +114,51 @@ const busyAgents = new Set<string>();
 /** Cheap enough to be wrong about, expensive enough to be worth capping. */
 const MAX_ATTEMPTS = 3;
 
+/**
+ * The agents whose entire output is a piece of writing somebody outside the
+ * company reads.
+ *
+ * Effort used to be decided by tier alone — high for the board and the
+ * executives, medium for everybody else — on the reasoning that a manager's
+ * output is a judgement and a specialist's steps are mostly obvious. Half of
+ * that is right and half of it produced the complaint that the drafts read the
+ * same. The *steps* of writing a cold email are obvious; the writing is not,
+ * and it is the part a stranger judges the company by. A proposal, a first
+ * email, a case study and a client report are each one piece of prose that has
+ * to be good, and they were all being written at the cheaper setting while a
+ * weekly internal brief nobody outside sees got the expensive one.
+ *
+ * Deliberately a list rather than a flag on the seed: it is a statement about
+ * which work is worth paying more for, and that belongs in one place where it
+ * can be read and argued with.
+ */
+const WRITES_FOR_OUTSIDE = new Set([
+  "outreach.writer",
+  "outreach.followup",
+  "proposal.writer",
+  "content.writer",
+  "content.casestudy",
+  "careplan.reporter",
+  "client.notifier",
+  "billing.collector",
+  "delivery.handover",
+  "review.look",
+  "design.ux",
+  "ads.designer",
+]);
+
+/**
+ * How hard the model works on this agent's task.
+ *
+ * High for a judgement (the management tiers) and high for a piece of writing
+ * that leaves the building. Medium for everything else, which is genuinely
+ * most of it: reading a record, filing a task, checking a list.
+ */
+function effortFor(agent: Agent): "low" | "medium" | "high" {
+  if (agent.tier === "BOARD" || agent.tier === "EXECUTIVE") return "high";
+  return WRITES_FOR_OUTSIDE.has(agent.key) ? "high" : "medium";
+}
+
 // --- The timeline -----------------------------------------------------------
 
 /**
@@ -567,10 +612,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         system,
         prompt: brief,
         tools,
-        // Enough to plan a few tool calls without paying for deliberation on
-        // a job whose steps are mostly obvious. Raised for the tiers whose
-        // whole output is a judgement.
-        effort: agent.tier === "BOARD" || agent.tier === "EXECUTIVE" ? "high" : "medium",
+        effort: effortFor(agent),
         resume: saved?.state ?? null,
         onCheckpoint: async (state) => {
           const held = await saveCheckpoint(task.id, runOwner, state, { ...counters });

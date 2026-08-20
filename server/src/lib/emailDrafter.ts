@@ -307,7 +307,13 @@ export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
     system,
     prompt: () => buildPrompt(request),
     schema: SCHEMA as unknown as Record<string, unknown>,
-    effort: "medium",
+    // High, and it was medium — which is hard to defend once written down. A
+    // proposal was already high and so was a demo page, while the cold email,
+    // the shortest and most-read thing this company produces and the one a
+    // stranger judges it by, was being written at the cheaper setting. It is a
+    // hundred and twenty words: the difference in cost is a fraction of a penny
+    // and the difference in output is the whole product.
+    effort: "high",
     messages: {
       noKey: "No model is connected for writing. Add a key under Settings → AI models, or write this one by hand.",
       auth: "The model provider rejected the API key. Check it under Settings → AI models.",

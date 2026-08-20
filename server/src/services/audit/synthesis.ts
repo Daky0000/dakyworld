@@ -89,12 +89,16 @@ const SCHEMA = {
           description:
             "The one observation a cold email should open on, written the way somebody would say it across a desk. It must be something the owner can check on their own site in ten seconds.",
         },
-        consequence: { type: "string", description: "What that costs them, concretely and in people rather than in metrics." },
+        consequence: {
+          type: "string",
+          description:
+            "What that makes harder for them, concretely and in people rather than in metrics — 'somebody on a phone has to type the number out by hand', not 'you are losing customers'. State what a person meets, never an outcome nobody measured: this sentence goes into a first email to the one person who can check it, and a prediction there is what gets a reply saying so. See the cold email playbook.",
+        },
         ask: {
           type: "string",
           enum: ["DEMO", "FIX", "NOTHING"],
           description:
-            "DEMO when the design itself is the problem and a free rebuilt page is the argument. FIX when the fault is technical — a certificate, a dead page, no way to make contact — because offering a redesign for those reads as chasing a bigger job. NOTHING when the site is sound and there is no honest case to write about.",
+            "DEMO when the design itself is the problem and a page they can look at is the argument. FIX when the fault is technical — a certificate, a dead page, no way to make contact — because offering a redesign for those reads as chasing a bigger job; the ask is then to find out the cause or to send the exact change, never a call. NOTHING when the site is sound and there is no honest case to write about.",
         },
         whyThatAsk: { type: "string", description: "One sentence on why that ask and not the other two." },
         doNotSay: {

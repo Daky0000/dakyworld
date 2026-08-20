@@ -171,7 +171,12 @@ export async function polishEmail(request: PolishRequest): Promise<PolishResult>
         .filter((part) => part !== "")
         .join("\n"),
     schema: SCHEMA as unknown as Record<string, unknown>,
-    effort: "medium",
+    // The same reasoning as the drafter, plus one of its own: this pass has to
+    // tell a fact it was given from a fact it invented, across a list it is
+    // reading for the first time. That is the judgement that keeps a false
+    // claim about somebody's business out of their inbox, and it is not the
+    // place to save a fraction of a penny.
+    effort: "high",
     maxTokens: 4000,
     messages: {
       noKey: "No model is connected for the plain-English pass. Add a Perplexity key under Settings → AI models, or send the draft as it is.",
