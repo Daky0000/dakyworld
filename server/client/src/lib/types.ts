@@ -1604,6 +1604,33 @@ export interface CompiledPrompt {
   writes?: WriterJobStatus[];
 }
 
+/** The prompt that writes one deliverable, as the model receives it. */
+export interface WriterBrief {
+  job: string;
+  label: string;
+  what: string;
+  where: string;
+  outward: boolean;
+  /** What would be sent right now — the founder's wording, or the shipped default. */
+  text: string;
+  source: "override" | "agent" | "shipped";
+  explains: string;
+  /** The wording Dakyworld ships, so "put it back" needs no second call. */
+  shipped: string;
+  edited: boolean;
+}
+
+/** A pasted instruction, filed into the ten sections by a model. */
+export interface OrganisedPrompt {
+  layers: Record<string, string>;
+  /** Anything it could not confidently place, quoted. Normally empty. */
+  unplaced: string[];
+  summary: string;
+  organisedBy: string;
+  note: string | null;
+  costUsd: number;
+}
+
 /** One thing an agent's instruction writes, and whether it is doing so yet. */
 export interface WriterJobStatus {
   job: string;

@@ -121,7 +121,7 @@ const leadSummary = {
  * agent's once somebody has edited it, the shape of the answer is not. See
  * `services/writers/brief.ts`.
  */
-const CONTENT_DRAFT_DOCTRINE = `You write for Dakyworld.
+export const CONTENT_DRAFT_DOCTRINE = `You write for Dakyworld.
 
 ${VOICE}
 
@@ -148,7 +148,7 @@ Anything you cannot evidence goes in \`claimsToCheck\` rather than in the body. 
 Return the body as Markdown.`;
 
 /** The shipped doctrine for `content.plain`, overridable by `content.writer`. */
-const CONTENT_PLAIN_DOCTRINE = `You rewrite business writing so a busy person understands it on one reading.
+export const CONTENT_PLAIN_DOCTRINE = `You rewrite business writing so a busy person understands it on one reading.
 
 ${VOICE}
 

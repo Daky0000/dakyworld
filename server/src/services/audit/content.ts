@@ -313,7 +313,7 @@ function fallbackSummary(findings: AuditFindingDetail[], wordCount: number): str
  * How this reviewer judges. Overridable by `content.writer`, the agent whose
  * name the report already prints at the foot of this section.
  */
-const SHIPPED_DOCTRINE = `**What you are judging.** Not grammar, and not tone for its own sake. Whether these words:
+export const SHIPPED_DOCTRINE = `**What you are judging.** Not grammar, and not tone for its own sake. Whether these words:
 - say what the business sells, in the first thing a visitor reads
 - say who it is for, and where
 - answer the questions a customer actually arrives with — what it costs, how long it takes, whether they cover my area, are you any good

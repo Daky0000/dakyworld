@@ -256,7 +256,7 @@ const SCHEMA = {
  * first read and the audit team's UX section — one craft, one wording, so the
  * two never disagree about the same homepage.
  */
-const SHIPPED_DOCTRINE = `You are looking at a screenshot of one business's homepage, and reporting what is visibly true of it.
+export const SHIPPED_DOCTRINE = `You are looking at a screenshot of one business's homepage, and reporting what is visibly true of it.
 
 You are doing this so that a letter to that business can name something specific rather than something generic. "A modern website builds trust" is worthless; "the first thing on your homepage is a stock photo of a handshake, and nothing on that screen says you are a dental clinic" is worth replying to.
 

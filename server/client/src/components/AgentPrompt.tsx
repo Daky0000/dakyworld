@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { AgentDetail, CompiledPrompt, ShippedPrompt } from "../lib/types";
+import type { AgentDetail, CompiledPrompt, OrganisedPrompt, ShippedPrompt, WriterBrief } from "../lib/types";
 import { Button, Field } from "./ui";
 
 /**
@@ -54,6 +54,8 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [comparing, setComparing] = useState(false);
+  const [toOrganise, setToOrganise] = useState("");
+  const [organised, setOrganised] = useState<OrganisedPrompt | null>(null);
 
   const { data: compiled, isLoading } = useQuery({
     queryKey: ["agent-prompt", agent.key],
@@ -124,6 +126,18 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
       setSaved("Put back to the wording this agent shipped with.");
       setMode("read");
       refresh();
+    },
+    onError: (err: Error) => setNotice(err.message),
+  });
+
+  // Fills the section boxes from what came back; nothing reaches the server
+  // until Save is pressed, so a bad split is undone by not saving it.
+  const organise = useMutation({
+    mutationFn: () => api.post<OrganisedPrompt>(`/agents/${agent.key}/prompt/organise`, { text: toOrganise }),
+    onSuccess: (result) => {
+      setNotice(null);
+      setOrganised(result);
+      setDraft((current) => ({ ...current, ...result.layers }));
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -213,34 +227,13 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
               <p className="mt-0.5 text-[11px] text-ink/45">
                 Not only {agent.name}'s own tasks. These are written elsewhere in the app, and this instruction is what writes them.
               </p>
-              <ul className="mt-2 space-y-1.5">
+              <ul className="mt-2 space-y-1">
                 {compiled.writes.map((entry) => (
-                  <li key={entry.job} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className="text-sm text-ink/75">{entry.label}</span>
-                    {entry.outward && (
-                      <span
-                        className="font-mono text-[9px] uppercase tracking-[.1em] text-blue"
-                        title="Somebody outside Dakyworld reads this"
-                      >
-                        goes outside
-                      </span>
-                    )}
-                    <span
-                      className={`font-mono text-[9px] uppercase tracking-[.1em] ${entry.active ? "text-blue" : "text-ink/30"}`}
-                      title={entry.explains}
-                    >
-                      {entry.active ? "your wording" : "shipped wording"}
-                    </span>
-                    <span className="w-full text-[11px] text-ink/40">{entry.what}</span>
+                  <li key={entry.job}>
+                    <WriterBriefRow agentKey={agent.key} job={entry.job} label={entry.label} what={entry.what} outward={entry.outward} />
                   </li>
                 ))}
               </ul>
-              {compiled.writes.some((entry) => !entry.active) && (
-                <p className="mt-2 text-[11px] text-ink/45">
-                  The ones marked <em>shipped wording</em> still use what Dakyworld ships. Edit this prompt once and your version takes
-                  over — the format each one has to return is kept separately and is never affected.
-                </p>
-              )}
             </div>
           )}
 
@@ -304,6 +297,54 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
             The ten sections the shipped agents are built from. Saving here makes them the instruction again
             {compiled?.overridden ? ", replacing the prose you wrote" : ""}. A change takes effect on the agent's next task.
           </p>
+
+          {/*
+            Paste doctrine, get sections.
+
+            Without this the realistic outcome is everything going into
+            `process`, because it is the only section big enough to take a page
+            — which leaves a prompt that is one wall of text with nine empty
+            headings above it. The model files the writing and changes not one
+            word of it; nothing is saved until the founder reads the result and
+            presses Save, because an organiser that wrote straight to the agent
+            would be a model editing a prompt with nobody looking.
+          */}
+          <div className="border border-line bg-white px-3 py-3">
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">Paste an instruction and have it sorted</p>
+            <p className="mt-0.5 text-[11px] text-ink/45">
+              Write the doctrine however you write it — a playbook, a page of rules, a paste out of a document — and a model files it
+              under the headings below. It copies your sentences and never rewrites them. Nothing is saved until you press Save sections.
+            </p>
+            <textarea
+              rows={4}
+              className="input mt-2"
+              placeholder="Paste the instruction here…"
+              value={toOrganise}
+              onChange={(event) => setToOrganise(event.target.value)}
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <Button
+                disabled={organise.isPending || !toOrganise.trim()}
+                onClick={() => organise.mutate()}
+              >
+                {organise.isPending ? "Sorting…" : "Sort it into sections"}
+              </Button>
+              {organised && <span className="text-[11px] text-ink/45">Sorted by {organised.organisedBy}. Read it below, then save.</span>}
+            </div>
+            {organised?.note && <p className="mt-2 text-[11px] text-amber-700">{organised.note}</p>}
+            {organised && organised.unplaced.length > 0 && (
+              <div className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2">
+                <p className="text-[11px] font-medium text-amber-900">It could not place these, so they were left out. Put them somewhere by hand:</p>
+                <ul className="mt-1 space-y-0.5">
+                  {organised.unplaced.map((line, index) => (
+                    <li key={index} className="text-[11px] text-amber-900">
+                      “{line}”
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
 
           <Field label="Mission" full hint="One sentence. Shown on the roster and put at the top of every brief.">
             <textarea rows={2} className="input" value={mission} onChange={(event) => setMission(event.target.value)} />
@@ -386,5 +427,139 @@ function ResetButton({ pending, onReset }: { pending: boolean; onReset: () => vo
     >
       Reset to shipped
     </button>
+  );
+}
+
+/**
+ * The prompt that writes one deliverable — shown, and editable.
+ *
+ * This is the half the screen was missing. An agent's ten sections govern how
+ * it *reasons through a task*; this governs what the cold email, the proposal
+ * or an audit section actually says, which for most of this app is the only
+ * part anybody outside ever reads. Both used to be called "the prompt" and
+ * only one of them was on screen.
+ *
+ * It opens on the wording that is running right now — the founder's if they
+ * have written one, the shipped default otherwise — rather than on a blank
+ * box, because an editor that starts empty and silently replaces a doctrine
+ * the moment you type into it is the same lie in a new place.
+ *
+ * Fetched only when opened. Fifteen briefs on one screen is fifteen requests
+ * for text nobody has asked to read.
+ */
+function WriterBriefRow({
+  agentKey,
+  job,
+  label,
+  what,
+  outward,
+}: {
+  agentKey: string;
+  job: string;
+  label: string;
+  what: string;
+  outward: boolean;
+}) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const { data: brief, isLoading } = useQuery({
+    queryKey: ["writer-brief", agentKey, job],
+    queryFn: () => api.get<WriterBrief>(`/agents/${agentKey}/writes/${job}`),
+    enabled: open,
+  });
+
+  useEffect(() => {
+    if (!brief) return;
+    const stamp = `${job}:${brief.source}:${brief.text.length}`;
+    if (loadedFor === stamp) return;
+    setText(brief.text);
+    setLoadedFor(stamp);
+  }, [brief, job, loadedFor]);
+
+  const save = useMutation({
+    mutationFn: () => api.put<{ appliesFrom?: string }>(`/agents/${agentKey}/writes/${job}`, { text }),
+    onSuccess: (result) => {
+      setNote(result.appliesFrom ?? "Saved.");
+      setLoadedFor(null);
+      qc.invalidateQueries({ queryKey: ["writer-brief", agentKey, job] });
+      qc.invalidateQueries({ queryKey: ["agent-prompt", agentKey] });
+    },
+    onError: (err: Error) => setNote(err.message),
+  });
+
+  const dirty = brief ? text.trim() !== brief.text.trim() : false;
+
+  return (
+    <div className={open ? "border border-line bg-cream/40 px-3 py-2" : ""}>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          className="text-left text-sm text-ink/75 underline decoration-line underline-offset-4 transition hover:text-ink"
+        >
+          {label}
+        </button>
+        {outward && (
+          <span className="font-mono text-[9px] uppercase tracking-[.1em] text-blue" title="Somebody outside Dakyworld reads this">
+            goes outside
+          </span>
+        )}
+        {brief && (
+          <span
+            className={`font-mono text-[9px] uppercase tracking-[.1em] ${brief.edited ? "text-blue" : "text-ink/30"}`}
+            title={brief.explains}
+          >
+            {brief.edited ? "your wording" : "shipped wording"}
+          </span>
+        )}
+        {!open && <span className="w-full text-[11px] text-ink/40">{what}</span>}
+      </div>
+
+      {open && (
+        <div className="mt-2 space-y-2">
+          <p className="text-[11px] text-ink/45">{what}</p>
+          {isLoading && <p className="text-sm text-ink/45">Reading what writes it…</p>}
+          {brief && (
+            <>
+              <p className="text-[11px] text-ink/40">
+                This is what the model is given, word for word. The format it has to return — the fields, the length, the rules that keep
+                it honest — is kept separately and is never affected by anything you write here.
+              </p>
+              <textarea rows={14} className="input font-mono text-[12px]" value={text} onChange={(event) => setText(event.target.value)} />
+              {note && <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{note}</p>}
+              <div className="flex flex-wrap items-center gap-3">
+                <Button disabled={save.isPending || !dirty} onClick={() => save.mutate()}>
+                  {save.isPending ? "Saving…" : "Save this prompt"}
+                </Button>
+                {dirty && (
+                  <button
+                    type="button"
+                    onClick={() => setText(brief.text)}
+                    className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+                  >
+                    Undo
+                  </button>
+                )}
+                <span className="flex-1" />
+                {brief.edited && (
+                  <button
+                    type="button"
+                    onClick={() => setText(brief.shipped)}
+                    className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+                    title="Loads the shipped wording into the box. Nothing changes until you save."
+                  >
+                    Put the shipped wording back
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

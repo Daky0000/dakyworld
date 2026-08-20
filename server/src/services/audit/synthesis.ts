@@ -127,7 +127,7 @@ const SCHEMA = {
  * **Anything that writes an instruction another writer will read is part of
  * the playbook surface.** One owner over both is what keeps them in step.
  */
-const SHIPPED_DOCTRINE = `You are compiling one website review out of four specialists' reports, for a business that has not asked for it and has never heard of us.
+export const SHIPPED_DOCTRINE = `You are compiling one website review out of four specialists' reports, for a business that has not asked for it and has never heard of us.
 
 Two people read what you write. The business owner reads the summary and the priority order: they are not technical, they will not become technical, and they decide whether to spend money on the strength of whether the first paragraph describes something they recognise. A colleague reads the email brief, to write to them.
 

@@ -11,6 +11,7 @@ import {
   providerModel,
   requestFee,
   routeFor,
+  serveChain,
   type ModelJob,
   type ProviderKey,
 } from "./registry.js";
@@ -491,41 +492,151 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
  * the fallback beta, the refusal handling and the effort setting all live
  * there and are worth having.
  */
+/**
+ * One vendor's attempt failed, and whether it is worth asking the next one.
+ *
+ * The distinction is the whole safety story of the failover below. A vendor
+ * that is busy, rejected, out of credits, timing out or returning something
+ * unparseable has told us nothing about the request — asking somebody else is
+ * obviously right. A vendor that *declined the content* has, and asking a
+ * second model until one says yes is shopping for a yes. So a 422 is carried
+ * straight out and never retried anywhere.
+ */
+class AttemptFailed extends Error {
+  constructor(
+    readonly error: AnalystError,
+    readonly failover: boolean,
+    /** A few words for the note a person reads: "rate-limited", "rejected the key". */
+    readonly why: string,
+  ) {
+    super(error.message);
+    this.name = "AttemptFailed";
+  }
+}
+
+/** Short, human words for why one vendor did not answer. */
+function whyFailed(status: number): string {
+  if (status === 429) return "rate-limited";
+  if (status === 401 || status === 403) return "rejected the key";
+  if (status === 503) return "not connected";
+  if (status === 400) return "refused the request shape";
+  return "failed";
+}
+
+/**
+ * Asks whoever serves this job, and moves on to the next one that can if they
+ * cannot.
+ *
+ * The routing chain used to run **only when a vendor had no key**, so a vendor
+ * that was connected and then failed took the whole job down with it. That is
+ * the expensive shape: a screenshot is paid for at Apify and then nobody looks
+ * at it, a demo build pays for its design lookup and then never gets a page.
+ * Both of those had a second vendor sitting connected and unasked.
+ *
+ * Three rules hold it honest:
+ *
+ * - **A named provider is never routed around.** A caller that passed
+ *   `provider` meant that vendor, usually because it is comparing them.
+ * - **Only vendors that declare the job are in the chain**, so a failing
+ *   vision call never falls through to a model that cannot see.
+ * - **A content refusal stops everything.** See `AttemptFailed`.
+ *
+ * What comes back says who actually answered. A fallback that is invisible is
+ * a fallback nobody can price or fix.
+ */
 export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T>> {
   const say = (kind: FailureKind) => request.messages?.[kind] ?? DEFAULT_MESSAGES[kind];
 
-  const route = request.provider
-    ? { chosen: request.provider, serving: request.provider, model: "", ready: true, note: null as string | null, job: request.job }
-    : await routeFor(request.job);
-  const serving = route.serving;
+  if (request.provider) {
+    try {
+      return await attemptProvider<T>(request.provider, request, say);
+    } catch (err) {
+      throw err instanceof AttemptFailed ? err.error : err;
+    }
+  }
 
+  const { chosen, chain } = await serveChain(request.job);
+  if (chain.length === 0) {
+    const route = await routeFor(request.job);
+    throw new AnalystError(503, route.note ?? say("noKey"));
+  }
+
+  const tried: string[] = [];
+  let last: AnalystError | null = null;
+
+  for (const serving of chain) {
+    try {
+      const result = await attemptProvider<T>(serving, request, say);
+      return { ...result, fallbackNote: handoverNote(request.job, chosen, serving, tried) };
+    } catch (err) {
+      if (!(err instanceof AttemptFailed)) throw err;
+      if (!err.failover) throw err.error;
+      tried.push(`${PROVIDERS[serving].name} ${err.why}`);
+      last = err.error;
+    }
+  }
+
+  // Everyone who could do this job was asked and none of them answered. The
+  // sentence names all of them, because "the model failed" sends somebody to
+  // check one key when the answer is that four vendors are unreachable or one
+  // request is malformed for all of them.
+  throw new AnalystError(
+    last?.status ?? 502,
+    `${JOBS[request.job].phrase} could not be done. ${tried.join("; ")}. Last error: ${last?.message ?? "unknown"}`,
+  );
+}
+
+/** Who answered, when it was not the first choice. Null when it was. */
+function handoverNote(job: ModelJob, chosen: ProviderKey, serving: ProviderKey, tried: string[]): string | null {
+  if (serving === chosen && tried.length === 0) return null;
+  if (tried.length === 0) {
+    return `${PROVIDERS[chosen].name} isn't connected, so ${PROVIDERS[serving].name} is doing ${JOBS[job].phrase} for now. Add a ${PROVIDERS[chosen].name} key under Settings → AI models.`;
+  }
+  return `${tried.join("; ")}, so ${PROVIDERS[serving].name} did ${JOBS[job].phrase} instead.`;
+}
+
+async function attemptProvider<T>(
+  serving: ProviderKey,
+  request: ModelRequest,
+  say: (kind: FailureKind) => string,
+): Promise<ModelResult<T>> {
   if (serving === "anthropic") {
-    const result = await callClaude<T>({
-      purpose: request.purpose,
-      system: request.system,
-      prompt: request.prompt,
-      schema: request.schema,
-      effort: request.effort,
-      maxTokens: request.maxTokens,
-      images: request.images,
-      messages: request.messages,
-    });
-    return {
-      data: result.data,
-      provider: "anthropic",
-      model: result.model,
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      costUsd: result.costUsd,
-      sources: [],
-      fallbackNote: route.ready ? null : route.note,
-    };
+    try {
+      const result = await callClaude<T>({
+        purpose: request.purpose,
+        system: request.system,
+        prompt: request.prompt,
+        schema: request.schema,
+        effort: request.effort,
+        maxTokens: request.maxTokens,
+        images: request.images,
+        messages: request.messages,
+      });
+      return {
+        data: result.data,
+        provider: "anthropic",
+        model: result.model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        costUsd: result.costUsd,
+        sources: [],
+        fallbackNote: null,
+      };
+    } catch (err) {
+      // `callClaude` already prices and records its own failures, so this only
+      // classifies. 422 is its refusal — carried out untouched, never retried
+      // on a second vendor.
+      if (err instanceof AnalystError) {
+        throw new AttemptFailed(err, err.status !== 422, whyFailed(err.status));
+      }
+      throw err;
+    }
   }
 
   const apiKey = await providerKey(serving);
-  if (!apiKey) throw new AnalystError(503, route.note ?? say("noKey"));
+  if (!apiKey) throw new AttemptFailed(new AnalystError(503, say("noKey")), true, "not connected");
 
-  const model = route.model || (await providerModel(serving));
+  const model = await providerModel(serving);
   const startedAt = Date.now();
 
   const fail = async (status: number, message: string) => {
@@ -540,7 +651,7 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
       ok: false,
       error: message,
     });
-    return new AnalystError(status, message);
+    return new AttemptFailed(new AnalystError(status, message), status !== 422, whyFailed(status));
   };
 
   let completion: Completion;
@@ -591,9 +702,12 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
       error,
     });
 
+  // Truncated, empty and unparseable are all "this vendor produced nothing
+  // usable", which is exactly the case another vendor may well handle — a
+  // schema one model chokes on is routine for the next.
   const rejected = async (status: number, message: string) => {
     await spent(false, message);
-    return new AnalystError(status, message);
+    return new AttemptFailed(new AnalystError(status, message), true, "returned nothing usable");
   };
 
   // Hitting the cap leaves valid-looking JSON cut off mid-string, which would
@@ -617,7 +731,7 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
     outputTokens: completion.outputTokens,
     costUsd,
     sources: completion.sources,
-    fallbackNote: route.ready ? null : route.note,
+    fallbackNote: null,
   };
 }
 

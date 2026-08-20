@@ -134,7 +134,7 @@ const SCHEMA = {
  * How the research is done. Overridable by `lead.enricher`, the agent whose
  * one job this is.
  */
-const SHIPPED_DOCTRINE = `You establish who a business is, from sources you can cite, so that a letter to them can be specific rather than generic.
+export const SHIPPED_DOCTRINE = `You establish who a business is, from sources you can cite, so that a letter to them can be specific rather than generic.
 
 You are given whatever is already known about them, which is usually very little. Your job is to fill in what is missing and to write a short brief for the person who will write to them.
 

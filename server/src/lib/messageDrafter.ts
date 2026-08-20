@@ -168,7 +168,7 @@ function briefFor(purpose: EmailPurpose): string {
  * channel mechanics below are deliberately *not* in here, because a rewritten
  * voice must not be able to take the segment limit or the opt-out rule with it.
  */
-const SHIPPED_DOCTRINE = `You write short outbound messages for one specific company, sent to a phone. Every draft is read by a person before it is sent — write the message they would send, not a template they have to rewrite.
+export const SHIPPED_DOCTRINE = `You write short outbound messages for one specific company, sent to a phone. Every draft is read by a person before it is sent — write the message they would send, not a template they have to rewrite.
 
 ${VOICE}
 

@@ -64,20 +64,6 @@ export const WRITER_JOBS: WriterJob[] = [
     outward: true,
   },
   {
-    key: "email.polish",
-    label: "The polish pass",
-    // Deliberately the drafter, not a writer of its own. The polish runs
-    // *after* the draft and rewrites it, which makes it the last writer and
-    // therefore the one that sets the house style. When it had its own
-    // doctrine it quietly overruled the drafter's — deleting the
-    // self-introduction the playbook requires and restoring the predictions it
-    // forbids. One owner for both stages is what stops that returning.
-    agentKey: "outreach.writer",
-    where: "lib/emailPolish.ts",
-    what: "The last rewrite before a person reads the draft. Changes how it is said, never what it says.",
-    outward: true,
-  },
-  {
     key: "email.billing",
     label: "Invoice email",
     agentKey: "billing.collector",

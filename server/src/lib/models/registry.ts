@@ -35,6 +35,8 @@ export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity";
 export type ModelJob =
   /** Prose. Emails, proposals, ad copy, briefs — anything a person reads. */
   | "text"
+  /** Sorting a written instruction into the sections an agent prompt is made of. */
+  | "organise"
   /** Pictures. */
   | "image"
   /** A complete web page: HTML, CSS, the lot. */
@@ -48,7 +50,7 @@ export type ModelJob =
   /** Looking at a picture and saying what is in it — a screenshot of a page, mostly. */
   | "vision";
 
-export const MODEL_JOBS: ModelJob[] = ["text", "image", "html", "factcheck", "research", "humanise", "vision"];
+export const MODEL_JOBS: ModelJob[] = ["text", "organise", "image", "html", "factcheck", "research", "humanise", "vision"];
 
 export interface JobDescription {
   job: ModelJob;
@@ -82,13 +84,31 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     defaultProvider: "gemini",
     fallback: "anthropic",
   },
+  organise: {
+    job: "organise",
+    name: "Sorting a prompt",
+    phrase: "sorting a prompt into sections",
+    blurb:
+      "Reading a written instruction and filing it under the ten headings an agent prompt is made of — so a pasted playbook becomes a prompt rather than a wall of text.",
+    // Claude rather than the writing model. This job is comprehension and
+    // filing, not prose: nothing it returns is read by a customer, and the
+    // failure that matters is a paragraph put under the wrong heading or
+    // quietly reworded. Every vendor that can follow a schema can do it, so
+    // the chain is wide and the cost is a rounding error against being wrong.
+    defaultProvider: "anthropic",
+    fallback: "gemini",
+  },
   image: {
     job: "image",
     name: "Images",
     phrase: "images",
     blurb: "Pictures for ads, social posts and mock-ups.",
     defaultProvider: "openai",
-    fallback: "anthropic",
+    // Itself, because it is the only vendor here that draws. `standInsFor`
+    // filters candidates by what they declare, so naming anybody else would
+    // be filtered out anyway — saying it plainly beats a line that reads like
+    // a fallback exists when none does.
+    fallback: "openai",
   },
   html: {
     job: "html",
@@ -166,9 +186,20 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     defaultModel: MODEL_DEFAULT,
     console: "https://console.anthropic.com/settings/keys",
     keyHint: "sk-ant-…",
-    // Deliberately every job: it is the floor, and a floor with holes in it
-    // isn't one.
-    jobs: ["text", "image", "html", "factcheck", "research", "humanise", "vision"],
+    // Deliberately every job it can actually do: it is the floor, and a floor
+    // with holes in it isn't one.
+    //
+    // **`image` is not one of them.** It was listed here on the "every job"
+    // reasoning, and that made the floor a trap rather than a floor: Claude
+    // does not draw pictures, `generateImage` refuses outright anything that
+    // is not ChatGPT, so routing images to Claude — or simply having no
+    // ChatGPT key and letting the chain reach for the stand-in — produced
+    // "Images are routed to Claude, which this app cannot ask for a picture"
+    // instead of a picture. A vendor belongs in a job's chain only if asking
+    // it would work, because the chain is now what runs when the first choice
+    // fails and a candidate that cannot do the work is a wasted attempt with
+    // a confusing error at the end of it.
+    jobs: ["text", "organise", "html", "factcheck", "research", "humanise", "vision"],
     models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
   },
   openai: {
@@ -181,7 +212,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     defaultModel: "gpt-5.4",
     console: "https://platform.openai.com/api-keys",
     keyHint: "sk-proj-…",
-    jobs: ["text", "image", "html", "vision"],
+    jobs: ["text", "organise", "image", "html", "vision"],
     models: ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini"],
   },
   gemini: {
@@ -198,7 +229,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // this app doesn't wire up, and offering a route that silently can't serve
     // is worse than not offering it. It does read pictures, though, which is a
     // different model family it does wire up — so `vision` is on the list.
-    jobs: ["text", "html", "vision"],
+    jobs: ["text", "organise", "html", "vision"],
     models: ["gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
   },
   perplexity: {
@@ -380,6 +411,50 @@ export async function routeFor(job: ModelJob): Promise<Routing> {
     ready: false,
     note: `No model is connected for ${JOBS[job].phrase}. Add a ${couldServe(job)} key under Settings → AI models — any one of them can do this.`,
   };
+}
+
+/**
+ * Everyone who could actually serve this job right now, best first.
+ *
+ * `routeFor` answers "who starts". This answers "and who takes over when that
+ * one fails", which is a different question and was missing: the routing chain
+ * only ever ran when a vendor had **no key**, so a vendor that was connected
+ * and then rate-limited, rejected the key, timed out, ran out of credits or
+ * returned something unparseable took the whole job down with it. A screenshot
+ * nobody looked at and a demo page that was never built are the two that cost
+ * the most, because both are paid for upstream — the Apify run happened, the
+ * design lookup happened, and then the one vendor that mattered was busy.
+ *
+ * Only vendors that declare the job are in the chain, so a failing vision call
+ * never falls through to a model that cannot see, however many keys exist.
+ * Configured is checked here rather than at the point of failure so that a
+ * chain of one is knowable in advance.
+ */
+export async function serveChain(job: ModelJob): Promise<{ chosen: ProviderKey; chain: ProviderKey[] }> {
+  const routes = await readRoutes();
+  const chosen = routes[job] ?? JOBS[job].defaultProvider;
+
+  const ordered = [chosen, ...standInsFor(job, chosen)];
+  const chain: ProviderKey[] = [];
+  for (const candidate of ordered) {
+    if (!PROVIDERS[candidate].jobs.includes(job)) continue;
+    if (!(await providerConfigured(candidate))) continue;
+    chain.push(candidate);
+  }
+  return { chosen, chain };
+}
+
+/**
+ * The sentence a person reads when somebody other than the first choice
+ * answered, or when nobody could.
+ */
+export function describeHandover(job: ModelJob, chosen: ProviderKey, serving: ProviderKey, why: string): string {
+  return `${PROVIDERS[chosen].name} could not do ${JOBS[job].phrase} (${why}), so ${PROVIDERS[serving].name} did it instead.`;
+}
+
+/** "ChatGPT, Claude or Gemini" — everyone who could do this job. Exported for the caller's error wording. */
+export function vendorsFor(job: ModelJob): string {
+  return couldServe(job);
 }
 
 /** Every job and who serves it — what the Settings screen and the Tools screen show. */

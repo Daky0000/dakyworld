@@ -654,7 +654,7 @@ const SUMMARY_SCHEMA = {
  * changes how the measurements are explained to an owner and can never
  * introduce a fault, which is exactly why this reviewer is the credible one.
  */
-const SHIPPED_DOCTRINE = `Write for somebody who runs a business and does not know what a meta description is. Say what it costs them, in customers and enquiries, not in ranking factors.`;
+export const SHIPPED_DOCTRINE = `Write for somebody who runs a business and does not know what a meta description is. Say what it costs them, in customers and enquiries, not in ranking factors.`;
 
 /** The evidence rule and the house style. Never reachable by an edit. */
 const CONTRACT = `The measurements you are given were taken by the system, not by you. **You may not state a number that is not in that list, and you may not describe a fault that is not in the findings.** If you want to say the site is slow, the measurement has to say so. A review that overstates a fault to a business owner who then checks it is worse than no review.

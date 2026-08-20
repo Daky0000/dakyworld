@@ -129,7 +129,7 @@ interface LookedAt {
  * owner now, so the name in the document and the name in the prompt are the
  * same name.
  */
-const SHIPPED_DOCTRINE = `**Judge the business, not the design.** "The type is inconsistent" is a critique. "A builder comparing three suppliers cannot tell from this screen whether you sell what he needs, so he goes back to the search results" is a reason to spend money. Every observation must end up somewhere a business owner recognises: a customer lost, an enquiry not made, a comparison gone the wrong way, a company made to look smaller than it is.
+export const SHIPPED_DOCTRINE = `**Judge the business, not the design.** "The type is inconsistent" is a critique. "A builder comparing three suppliers cannot tell from this screen whether you sell what he needs, so he goes back to the search results" is a reason to spend money. Every observation must end up somewhere a business owner recognises: a customer lost, an enquiry not made, a comparison gone the wrong way, a company made to look smaller than it is.
 
 **Say when there is nothing to say.** A homepage that is genuinely fine is a real answer, and reporting it honestly is what makes the criticism credible when there is some. Mark what is good as GOOD rather than leaving it out — a review that only criticises reads as a sales pitch, and it is read as one.
 

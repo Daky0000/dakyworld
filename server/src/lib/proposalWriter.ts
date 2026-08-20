@@ -185,7 +185,7 @@ const SCHEMA = {
  * separately as facts, because they are live state rather than writing: a
  * rewritten voice must not be able to take the published prices with it.
  */
-const SHIPPED_DOCTRINE = `You write service proposals for one specific company at a time, for Dakyworld.
+export const SHIPPED_DOCTRINE = `You write service proposals for one specific company at a time, for Dakyworld.
 
 ${VOICE}
 

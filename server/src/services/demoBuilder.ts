@@ -111,7 +111,7 @@ const SCHEMA = {
  * case for the doctrine/contract split in this codebase: the thing being
  * edited is taste, and the thing being protected is somebody else's reputation.
  */
-const SHIPPED_DOCTRINE = `You build one landing page for one small business, as a working demonstration of what their site could be.
+export const SHIPPED_DOCTRINE = `You build one landing page for one small business, as a working demonstration of what their site could be.
 
 This page is for the business, not for us. It carries their name, their trade and their words.
 

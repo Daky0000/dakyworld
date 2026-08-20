@@ -213,9 +213,18 @@ Never propose a new website for a site that mostly works. Fixing what was actual
 
 function buildPrompt(request: DraftRequest): string {
   const { context } = request;
+  // **The cold email's brief is its system prompt now, so it is not repeated
+  // here.** `COLD_DOCTRINE` states the four paragraphs, the length, the ask and
+  // the register in full; emitting `PURPOSE_BRIEF.COLD_OUTREACH` as well would
+  // put two overlapping accounts of one letter in front of the model, and a
+  // model given two does not merge them — it falls back to the generic email it
+  // already knew. That is the exact failure this codebase has already paid for
+  // once, with `angle()` and the scenario.
+  const purposeBrief = request.purpose === "COLD_OUTREACH" ? "" : PURPOSE_BRIEF[request.purpose];
+
   const parts = [
     `Purpose: ${request.purpose.replace(/_/g, " ").toLowerCase()}`,
-    PURPOSE_BRIEF[request.purpose],
+    purposeBrief,
     "",
     "Everything known about the recipient. These are the only facts you may use — you may leave any of them out, but you may not add to them:",
     context.facts.map((fact) => `- ${fact}`).join("\n"),
@@ -303,15 +312,96 @@ export async function buildColdEmailPrompt(request: DraftRequest): Promise<{ sys
  * Keep the *judgement* here and the *format* in `CONTRACT` below. Anything in
  * this string can be replaced by an edit; nothing in the contract can.
  */
-const SHIPPED_DOCTRINE = `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.
-
-${VOICE}
-
-**Never state a fault you were not given.** Every negative thing this email says about their business must trace to one of the facts you are handed, and those facts carry their own evidence in brackets — a URL, a header, a DNS record. If a fault is not in the list, it was not found, and "not found" is not the same as "not there": you have no idea, and a confident wrong claim about somebody's own business is read as a lie by the one person who knows the truth. A letter saying "your website did not load" to a company whose website loads is not a bad email, it is a false statement about them, and it ends the relationship at the first line.
+/** The evidence rules. True of every outbound letter, whatever it is for. */
+const EVIDENCE_RULES = `**Never state a fault you were not given.** Every negative thing this email says about their business must trace to one of the facts you are handed, and those facts carry their own evidence in brackets — a URL, a header, a DNS record. If a fault is not in the list, it was not found, and "not found" is not the same as "not there": you have no idea, and a confident wrong claim about somebody's own business is read as a lie by the one person who knows the truth. A letter saying "your website did not load" to a company whose website loads is not a bad email, it is a false statement about them, and it ends the relationship at the first line.
 
 The list is also the complete account of what was checked. Anything absent from it was not looked at.
 
 Never invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims.`;
+
+/**
+ * Cold Email Playbook v3, written as the instruction rather than as a summary
+ * of one.
+ *
+ * This *is* the doctrine now, not a pointer at it. It used to be four
+ * paragraphs of voice here plus a separate purpose brief in the user message
+ * plus a scenario block, and the founder's instruction was that the playbook
+ * should be the system prompt rather than background reading a model is
+ * expected to infer rules from. So the whole of `docs/cold-email-playbook.md`
+ * sections 0 and 1 is stated here as rules, in order of how much damage
+ * breaking each one does.
+ *
+ * **`PURPOSE_BRIEF.COLD_OUTREACH` is deliberately not emitted alongside this**
+ * — see `buildPrompt`. Two descriptions of the same letter is the failure mode
+ * that produced "I changed the prompt and nothing changed": a model given two
+ * overlapping accounts of one task does not merge them, it falls back to the
+ * generic email it already knew.
+ */
+const COLD_DOCTRINE = `You write the first letter from Dakyworld to a business that has never heard of us. One letter, to one company, about one thing somebody actually checked. Every draft is read by a person before it is sent — write the letter they would send, not a template they have to rewrite.
+
+${VOICE}
+
+## The rules, in order of how much damage breaking them does
+
+1. **Only write about what was confirmed.** A check that failed, timed out or did not complete is not a finding. "Not checked" is not "broken". If their site could not be reached, do not write that they have no website.
+
+2. **Keep facts apart from possibilities.** State the confirmed observation, then what it may make *harder*. Never claim it has already cost them sales, customers, money or reputation — nobody measured that, and the one person who could check it is the one reading. "People using a phone may find it harder to read the page or contact you" is the shape. "Customers are leaving your website" is not.
+
+3. **Say who you are in the first two lines, before the observation.** "Daky here from Dakyworld. I was looking at your website before writing and noticed one thing worth your attention." A stranger who cannot tell in one line who is writing has already stopped reading. No company introduction beyond that clause — one sentence of identification, then straight to what was seen.
+
+4. **Everyday language only.** Do not use SPF, DMARC, DKIM, DNS, robots.txt, Open Graph, LCP, TTFB, metadata, structured data, schema, viewport, canonical, TLS or page source in the explanation. Explain the issue in plain words; in most first emails the term can be left out completely, and where one genuinely helps it comes *after* the plain explanation, never instead of it.
+
+5. **Never name a private individual.** Not the person on the domain account, not a former supplier, not an employee, not whoever owns the mailbox on the contact page. State the business question without identifying anybody.
+
+6. **One issue and one question.** Not a list of problems. This is a personal note, not an audit report. Never two asks.
+
+7. **The ask offers something rather than requesting something** — the screenshot, the exact setting, the short checklist. **It is not a meeting and it is not a call**, and it never asks for a slice of their time. Time is the largest thing you can ask of somebody who has not yet agreed there is a problem; a call is what the *second* conversation is for.
+
+8. **No price, ever, in a first email.** A number belongs in a proposal, after they understand the issue and want help. Quoting one now asks them to judge a cost before they have agreed there is a problem.
+
+9. **Every name, number and detail comes from the facts you were given.** Nothing is filled in from memory or pattern.
+
+## The shape of the letter
+
+About 70–120 words. Four short paragraphs, in this order and no others:
+
+1. The greeting, on its own line, exactly as you are given it.
+2. Who you are and why you are writing — the identification clause, then immediately something about *them* that could not have been said about any other business.
+3. The observation and what it makes harder. One issue only. The confirmed fact stated plainly, then what the reader may notice or find more difficult.
+4. The ask. One question, answerable in one line, offering something.
+
+Never list the findings. Never pitch the service catalogue. Never write a closing paragraph that restates the opening.
+
+## Subject and register
+
+Short, specific and honest — six words or fewer, and never disguised as a reply, a system alert or a notification. No exclamation marks. Plain, conversational, the register of one person who looked carefully. Not "touching base", "circling back", "reaching out", "unlock growth", "in today's digital landscape", "leverage", "solutions", "seamless".
+
+## The scenario, when you are given one
+
+You may be handed one of the eighteen playbook scenarios, chosen from the evidence rather than by you. **It is a guide, not a script.** It tells you what this letter has to establish and roughly how small the ask should be. Any example subject or example question in it exists to calibrate the register — it is never a sentence to reuse. Write every line out of *this* business's own facts. The test: if this email could be sent unchanged to another company with the same fault, it is not finished, and the reader can tell. Twenty businesses in one scenario must receive twenty different letters.
+
+**A guard is different from guidance.** Where a scenario states a guard, it is a rule and it binds every time.
+
+## When there is no real case
+
+If the facts carry a line saying THERE IS NO STRONG CASE HERE, do not write the four paragraphs above. Write three sentences at most, say the true good thing about their setup, offer the one small improvement that was actually found, and set confidence low — then say in the rationale that this business is doing fine and may not be worth writing to. That is a more useful answer than a polished email about nothing, and the person reading it can still send it if they disagree.
+
+${EVIDENCE_RULES}`;
+
+/** Everything that is not a first approach. Structure comes from the purpose brief. */
+const GENERAL_EMAIL_DOCTRINE = `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.
+
+${VOICE}
+
+${EVIDENCE_RULES}`;
+
+const DOCTRINE_BY_JOB: Record<string, string> = {
+  "email.cold": COLD_DOCTRINE,
+};
+
+export function shippedDoctrineFor(job: string): string {
+  return DOCTRINE_BY_JOB[job] ?? GENERAL_EMAIL_DOCTRINE;
+}
 
 /**
  * The mechanics of the answer, which no prompt edit can reach.
@@ -326,7 +416,8 @@ const CONTRACT = `Return the body as plain text with blank lines between paragra
 End on the ask. Do not type a sign-off or a name at the end — the app appends the signature, and a name typed above it arrives directly on top of the real one.`;
 
 async function draftSystem(purpose: EmailPurpose): Promise<string> {
-  return writerSystem(emailJobFor(purpose), SHIPPED_DOCTRINE, {
+  const job = emailJobFor(purpose);
+  return writerSystem(job, shippedDoctrineFor(job), {
     facts: [BRAND, contactBlock(await companyProfile())],
     contract: CONTRACT,
   });

@@ -10,7 +10,9 @@ import { appendOwnerAnswer, clearCheckpoint } from "../services/agents/checkpoin
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
 import { resolveBrief } from "../services/writers/brief.js";
-import { jobsOwnedBy } from "../services/writers/registry.js";
+import { briefSettingKey, jobsOwnedBy, writerJob } from "../services/writers/registry.js";
+import { shippedDoctrine } from "../services/writers/shipped.js";
+import { organisePrompt } from "../services/writers/organise.js";
 import { taskSubjects } from "../services/agents/context.js";
 import { syncStandingWork } from "../services/agents/standingWork.js";
 import { isValidTimezone } from "../lib/timezone.js";
@@ -434,6 +436,128 @@ agentsRouter.get("/:key/prompt/compiled", async (req, res, next) => {
        */
       approxTokens: Math.round(text.length / 4),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Sort a written instruction into the ten sections, without saving it.
+ *
+ * The founder writes doctrine as doctrine — a playbook, a page of rules, a
+ * paste out of a document — and this screen wants ten named layers. Doing that
+ * by hand means everything lands in `process`, because it is the only layer
+ * big enough to take a page.
+ *
+ * **It proposes and returns; it never writes.** What comes back goes into the
+ * editor for a person to read and press Save on. An organiser that wrote
+ * straight to the agent would be a model editing a prompt with nobody looking,
+ * and the whole point of this area of the app is that a person can see what an
+ * agent was told.
+ */
+agentsRouter.post("/:key/prompt/organise", async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { key: req.params.key }, select: { key: true } });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const parsed = z.object({ text: z.string().min(1).max(40_000) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Paste the instruction you want sorted." });
+
+    res.json(await organisePrompt(parsed.data.text));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The prompt that writes one deliverable, as the model receives it.
+ *
+ * This is the other half of "the screen shows what runs". The compiled view
+ * above answers it for an agent's *task*; this answers it for the thing the
+ * agent actually produces — the cold email, the proposal, an audit section —
+ * which for most of this app is the part anybody outside ever sees.
+ *
+ * `text` is what would be sent right now, whether that is the founder's own
+ * wording or the shipped default, so the editor opens on the truth rather than
+ * on a blank box.
+ */
+agentsRouter.get("/:key/writes/:job", async (req, res, next) => {
+  try {
+    const job = writerJob(req.params.job);
+    if (!job || job.agentKey !== req.params.key) return res.status(404).json({ error: "That agent does not write that." });
+
+    const shipped = await shippedDoctrine(job.key);
+    const brief = await resolveBrief(job.key, shipped);
+    res.json({
+      job: job.key,
+      label: job.label,
+      what: job.what,
+      where: job.where,
+      outward: job.outward,
+      text: brief.text,
+      source: brief.source,
+      explains: brief.explains,
+      /** So the editor can offer "put the shipped wording back" without a second call. */
+      shipped,
+      edited: brief.source === "override",
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const briefBody = z.object({ text: z.string().max(40_000) });
+
+/**
+ * Rewrite what writes a deliverable.
+ *
+ * Saved against the job rather than the agent because one agent may own
+ * several — `content.writer` judges a prospect's copy, writes Dakyworld's own
+ * and rewrites prose into plain English, and those are three different
+ * instructions that must not overwrite each other.
+ *
+ * **It takes effect on the next draft, not the next restart.** The resolver
+ * reads this row on every call and deliberately bypasses the settings cache,
+ * which is per-process and would otherwise leave a second instance writing to
+ * the old wording with nothing on screen to say why.
+ */
+agentsRouter.put("/:key/writes/:job", async (req, res, next) => {
+  try {
+    const job = writerJob(req.params.job);
+    if (!job || job.agentKey !== req.params.key) return res.status(404).json({ error: "That agent does not write that." });
+
+    const parsed = briefBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "That prompt could not be read." });
+
+    const text = parsed.data.text.trim();
+    const key = briefSettingKey(job.key);
+
+    // Empty means "go back to what Dakyworld ships" rather than "write with no
+    // instruction at all", which is the only sane reading of an emptied box and
+    // the one that cannot leave a model working from nothing.
+    if (!text) {
+      await prisma.appSetting.deleteMany({ where: { key } });
+      return res.json({ reset: true, appliesFrom: "The next draft, which will use the shipped wording again." });
+    }
+
+    await prisma.appSetting.upsert({
+      where: { key },
+      update: { value: text, secret: false },
+      create: { key, value: text, secret: false },
+    });
+    res.json({ saved: true, appliesFrom: `The next ${job.label.toLowerCase()}. Nothing already drafted changes.` });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Put the shipped wording back, without having to paste it. */
+agentsRouter.delete("/:key/writes/:job", async (req, res, next) => {
+  try {
+    const job = writerJob(req.params.job);
+    if (!job || job.agentKey !== req.params.key) return res.status(404).json({ error: "That agent does not write that." });
+    await prisma.appSetting.deleteMany({ where: { key: briefSettingKey(job.key) } });
+    res.json({ reset: true });
   } catch (err) {
     next(err);
   }
