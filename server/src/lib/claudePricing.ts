@@ -1,3 +1,4 @@
+import type { Effort } from "./claude.js";
 import { SETTING, getSetting } from "./settings.js";
 
 /**
@@ -23,6 +24,16 @@ export interface ModelRate {
 
 /** The default model for every call that doesn't name one. */
 export const MODEL_DEFAULT = "claude-opus-5";
+
+/**
+ * The model for work that does not need the headline one.
+ *
+ * Sonnet 5 is 40% cheaper than Opus on both halves and does the reading,
+ * filling-in and checking that most of an agent run actually consists of.
+ * Overridable through `anthropic.model.economy`; see the setting for where the
+ * line is drawn.
+ */
+export const MODEL_ECONOMY = "claude-sonnet-5";
 
 export const MODEL_PRICING: Record<string, ModelRate> = {
   "claude-opus-5": { inputPerMTok: 5, outputPerMTok: 25 },
@@ -104,4 +115,21 @@ export function costOf(rate: ModelRate, tokens: TokenCounts): number {
 export async function defaultModel(): Promise<string> {
   const configured = (await getSetting(SETTING.ANTHROPIC_MODEL))?.trim();
   return configured || MODEL_DEFAULT;
+}
+
+/**
+ * Which model an agent turn runs on, given how hard the work is.
+ *
+ * "high" is the runner's word for an agent that either sits on the board or
+ * writes something a stranger will read — the two places where the better
+ * model is worth what it costs. Everything else is a sub-agent doing a job
+ * with a right answer, and pays the economy rate for it.
+ */
+export async function modelForEffort(effort: Effort): Promise<string> {
+  // Named the cheap way round on purpose: a new effort level added above
+  // "high" must default to the better model, not quietly fall through to the
+  // cheaper one because nobody remembered to list it.
+  if (effort !== "low" && effort !== "medium") return defaultModel();
+  const configured = (await getSetting(SETTING.ANTHROPIC_MODEL_ECONOMY))?.trim();
+  return configured || MODEL_ECONOMY;
 }

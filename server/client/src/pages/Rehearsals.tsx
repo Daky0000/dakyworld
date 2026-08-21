@@ -86,6 +86,9 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
   const [website, setWebsite] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [note, setNote] = useState("");
+  // A string rather than a number, because the field has to be allowed to be
+  // empty while somebody retypes it, and an empty number input is NaN.
+  const [budget, setBudget] = useState("3");
   const [scenario, setScenario] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -109,6 +112,9 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
         scenario,
         businessName: businessName.trim() || null,
         note: note.trim() || null,
+        // Blank means "use the shipped ceiling", which is not the same as 0 —
+        // 0 is somebody deliberately asking for no ceiling at all.
+        budgetUsd: budget.trim() === "" ? null : Number(budget),
       }),
     onSuccess: (result) => {
       setNotice(null);
@@ -183,13 +189,30 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
           </div>
         </div>
 
-        <div className="mt-7">
+        <div className="mt-7 grid gap-5 sm:grid-cols-[minmax(0,1fr)_180px]">
           <Field
             label="Anything you want watched"
             full
             hint="Optional, and it goes into the brief as your words. “I want to see whether anybody checks their opening hours” is a perfectly good instruction."
           >
             <textarea rows={2} className="input" value={note} onChange={(event) => setNote(event.target.value)} />
+          </Field>
+          <Field
+            label="Stop it at"
+            hint="Real research on real models costs real money. The run stops itself here and says so. 0 means no ceiling."
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted">$</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={100}
+                step={0.5}
+                value={budget}
+                onChange={(event) => setBudget(event.target.value)}
+              />
+            </div>
           </Field>
         </div>
 
@@ -367,7 +390,15 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
       )}
 
       <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <StatTile label="Spent" value={`$${run.spend.costUsd.toFixed(3)}`} sub={`${run.spend.modelCalls} model calls`} />
+        <StatTile
+          label="Spent"
+          value={`$${run.spend.costUsd.toFixed(3)}`}
+          sub={
+            run.budgetUsd && run.budgetUsd > 0
+              ? `of $${run.budgetUsd.toFixed(2)} · ${run.spend.modelCalls} model run${run.spend.modelCalls === 1 ? "" : "s"}`
+              : `${run.spend.modelCalls} model run${run.spend.modelCalls === 1 ? "" : "s"}`
+          }
+        />
         <StatTile label="Agents on it" value={run.agents.length} sub={`${run.agents.reduce((sum, agent) => sum + agent.tasks.length, 0)} tasks`} />
         <StatTile label="Tool calls" value={run.spend.toolCalls} sub={run.spend.refusedCalls > 0 ? `${run.spend.refusedCalls} refused` : "none refused"} />
         <StatTile
@@ -377,8 +408,16 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
         />
         <StatTile
           label="Tokens"
-          value={`${Math.round((run.spend.inputTokens + run.spend.outputTokens) / 1000)}k`}
-          sub={`${run.spend.inputTokens.toLocaleString()} in · ${run.spend.outputTokens.toLocaleString()} out`}
+          value={`${Math.round((run.spend.inputTokens + run.spend.cacheReadTokens + run.spend.outputTokens) / 1000)}k`}
+          // The cached share is the part worth watching. Every turn of an agent
+          // re-sends the ones before it, so a run whose cache reads dwarf its
+          // fresh input is one that paid for its instructions once instead of
+          // a dozen times — and one where they are zero is a run that did not.
+          sub={
+            run.spend.cacheReadTokens > 0
+              ? `${run.spend.cacheReadTokens.toLocaleString()} from cache · ${run.spend.inputTokens.toLocaleString()} fresh · ${run.spend.outputTokens.toLocaleString()} out`
+              : `${run.spend.inputTokens.toLocaleString()} in · ${run.spend.outputTokens.toLocaleString()} out`
+          }
         />
       </div>
 

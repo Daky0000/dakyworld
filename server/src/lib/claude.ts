@@ -34,6 +34,16 @@ export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 const DEFAULT_MAX_TOKENS = 8000;
 
 /**
+ * How long a system prompt has to be before it is worth caching.
+ *
+ * Anthropic will not cache a prefix under 1,024 tokens, and a write costs a
+ * quarter more than sending it plainly — so a prompt hovering at the floor
+ * that is only ever asked once is made *more* expensive by marking it. Five
+ * thousand characters is comfortably clear of both.
+ */
+const CACHE_FLOOR_CHARS = 5_000;
+
+/**
  * Opus 5's safety classifiers decline a small number of legitimate requests —
  * a proposal that catalogues what is wrong with a company's TLS and DNS is
  * exactly the shape that trips them. This re-serves a declined request on
@@ -266,11 +276,26 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
       ]
     : prompt;
 
+  // A one-shot answer has no conversation to cache, but it does have a system
+  // prompt — and the long ones here are a playbook, an audit rubric or a
+  // brand brief that the same run asks four different questions against. Those
+  // four calls land inside the five-minute window and read the prompt from
+  // cache at a tenth of the rate.
+  //
+  // Gated on length because a cache write costs a quarter more than a plain
+  // read: below Anthropic's 1,024-token floor nothing is cached at all, and
+  // just above it the write premium is not worth the miss. `CACHE_FLOOR_CHARS`
+  // is that floor with room to spare.
+  const system: string | Anthropic.Beta.BetaTextBlockParam[] =
+    request.system.length >= CACHE_FLOOR_CHARS
+      ? [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }]
+      : request.system;
+
   const send = (withFallbacks: boolean) =>
     client.beta.messages.create({
       model,
       max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
-      system: request.system,
+      system,
       output_config: {
         effort,
         format: { type: "json_schema", schema: forStructuredOutput(request.schema) as Record<string, unknown> },

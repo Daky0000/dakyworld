@@ -60,6 +60,21 @@ export const SETTING = {
   /** Which model every Claude call uses unless it names another. */
   ANTHROPIC_MODEL: "anthropic.model",
   /**
+   * The model an agent runs on when its work does not need the expensive one.
+   *
+   * An agent loop is the costliest thing this app does — a dozen turns, each
+   * re-sending the ones before it — and most of those turns are a sub-agent
+   * reading a record, filling a field or checking a link. Paying Opus rates
+   * for that was never a decision anybody made; it was `defaultModel()` being
+   * the only answer the loop knew.
+   *
+   * The split follows `effortFor()` in the agent runner: whoever writes to
+   * somebody outside the company, and whoever sits on the board, stays on the
+   * headline model. Everybody else runs here. Set this to the same value as
+   * `ANTHROPIC_MODEL` to put the whole workforce back on one model.
+   */
+  ANTHROPIC_MODEL_ECONOMY: "anthropic.model.economy",
+  /**
    * Per-model rate overrides as JSON, so a price change doesn't need a
    * redeploy: `{"claude-opus-5":{"inputPerMTok":5,"outputPerMTok":25}}`.
    * See lib/claudePricing.ts.
@@ -388,6 +403,7 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   // the model decides what a call costs. Pricing overrides are deliberately
   // database-only — they're a correction to a published rate, not a knob.
   [SETTING.ANTHROPIC_MODEL]: "ANTHROPIC_MODEL",
+  [SETTING.ANTHROPIC_MODEL_ECONOMY]: "ANTHROPIC_MODEL_ECONOMY",
   // Pinnable from the deploy for the same reason as the Anthropic key: the
   // model decides what a call costs, and a key baked into Railway shouldn't be
   // silently replaceable through the UI.

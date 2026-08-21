@@ -86,6 +86,10 @@ const startInput = z.object({
   scenario: z.string().min(2).max(64),
   businessName: z.string().max(200).nullish(),
   note: z.string().max(1000).nullish(),
+  // Zero is a value, not an absence: it is the obvious way to ask for no
+  // ceiling at all, and a `.positive()` here would silently restore the
+  // default instead — the same trap as the hiring ceilings.
+  budgetUsd: z.number().min(0).max(100).nullish(),
 });
 
 rehearsalsRouter.post("/", async (req, res, next) => {

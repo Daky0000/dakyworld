@@ -47,7 +47,7 @@ import { permissionFor } from "../src/services/tools/invoke.js";
 import { findTool, TOOLS } from "../src/services/tools/catalogue.js";
 import { enrol } from "../src/services/emailSequences.js";
 import { buildWhere as buildLeadWhere } from "../src/routes/leads.js";
-import { tasksIn, teardownRehearsal, RehearsalRefused } from "../src/services/rehearsals/run.js";
+import { nudge, tasksIn, teardownRehearsal, RehearsalRefused } from "../src/services/rehearsals/run.js";
 import { SCENARIOS } from "../src/services/rehearsals/scenarios.js";
 import { heldByRehearsal } from "../src/services/rehearsals/policy.js";
 import { reportsUnder, restoreOrphanedWakes, restoreWakes, wakeFor } from "../src/services/rehearsals/wake.js";
@@ -307,6 +307,79 @@ function itStaysOutOfThePipeline() {
   check("and can be asked for them", asked.rehearsal === true);
 }
 
+// --- 4b. The spending ceiling -------------------------------------------------
+
+/**
+ * A rehearsal stops when it has spent what it was given.
+ *
+ * `MAX_TASKS` counts conversations, and a conversation is not a fixed price:
+ * each one is a dozen model turns and every turn re-sends the ones before it.
+ * A run can sit well inside twenty-four tasks and still spend more than the
+ * person watching it meant to — which is a thing you find out on the invoice,
+ * because a task ceiling has nothing to say about money.
+ *
+ * The negative is the half that matters: a run **under** its ceiling must not
+ * be stopped, or the ceiling is just a broken rehearsal room.
+ */
+async function itStopsWhenItHasSpentItsBudget() {
+  console.log("\nThe spending ceiling");
+
+  const make = async (budget: number, spent: number) => {
+    const lead = await prisma.lead.create({ data: { contactName: `${MARK} budget`, rehearsal: true, source: "OTHER" } });
+    const task = await prisma.agentTask.create({
+      data: {
+        agentKey: AGENT_KEY,
+        title: `${MARK} budget root`,
+        brief: "A harness task.",
+        origin: "OWNER",
+        rehearsal: true,
+        leadId: lead.id,
+        status: "DONE",
+        costUsd: spent,
+      },
+    });
+    return prisma.rehearsal.create({
+      data: {
+        website: `https://${MARK}.test`,
+        host: `${MARK}.test`,
+        scenario: "cold-outreach",
+        leadId: lead.id,
+        rootTaskId: task.id,
+        status: "RUNNING",
+        budgetUsd: budget,
+      },
+    });
+  };
+
+  const over = await make(1, 1.46);
+  await nudge(over.id);
+  const stopped = await prisma.rehearsal.findUnique({ where: { id: over.id } });
+  check("a run past its ceiling is stopped", stopped?.status === "STOPPED", stopped?.status);
+  check(
+    "and the row says what it spent and what it was allowed",
+    Boolean(stopped?.note?.includes("1.46") && stopped?.note?.includes("1.00")),
+    stopped?.note ?? "no note",
+  );
+
+  // The negatives. Both of these settle rather than staying RUNNING, because
+  // the harness's one task is already DONE and a run with nothing left to move
+  // is a run that has finished — which is the *right* ending and the one the
+  // ceiling must not pre-empt. So what is asserted is that it was not STOPPED.
+  const under = await make(5, 0.4);
+  await nudge(under.id);
+  const alive = await prisma.rehearsal.findUnique({ where: { id: under.id } });
+  check("a run inside its ceiling is not stopped", alive?.status !== "STOPPED", alive?.status);
+  check("and finishes on its own terms", alive?.status === "SETTLED" && !alive.note, `${alive?.status} / ${alive?.note ?? "no note"}`);
+
+  // Zero is somebody deliberately asking for no ceiling, not an absence — the
+  // same trap as the hiring ceilings, where `parsed > 0` would quietly restore
+  // the default for the one person who typed 0 on purpose.
+  const uncapped = await make(0, 99);
+  await nudge(uncapped.id);
+  const free = await prisma.rehearsal.findUnique({ where: { id: uncapped.id } });
+  check("a ceiling of zero means no ceiling, not no spending", free?.status !== "STOPPED", free?.status);
+}
+
 // --- 5. Teardown --------------------------------------------------------------
 
 async function itCanBeThrownAway() {
@@ -481,6 +554,7 @@ async function main() {
   await theFlagIsInherited();
   await nothingRehearsedEntersASequence();
   itStaysOutOfThePipeline();
+  await itStopsWhenItHasSpentItsBudget();
   await itCanBeThrownAway();
   await itWakesWhatItNeedsAndPutsItBack();
   await everyScenarioStartsWithSomebody();

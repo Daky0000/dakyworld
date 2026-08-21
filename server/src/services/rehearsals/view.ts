@@ -58,7 +58,19 @@ export interface RehearsalView {
    * that did not.
    */
   woke: string[];
-  spend: { costUsd: number; toolCalls: number; preparedCalls: number; refusedCalls: number; modelCalls: number; inputTokens: number; outputTokens: number };
+  /** What it may spend before it stops itself. Null is the shipped default; 0 is no ceiling. */
+  budgetUsd: number | null;
+  spend: {
+    costUsd: number;
+    toolCalls: number;
+    preparedCalls: number;
+    refusedCalls: number;
+    modelCalls: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
   agents: Array<{
     key: string;
     name: string;
@@ -127,7 +139,7 @@ export async function readRehearsal(id: string): Promise<RehearsalView | null> {
     traceIds.length
       ? prisma.llmCall.aggregate({
           where: { OR: [{ taskId: { in: taskIds } }, { traceId: { in: traceIds } }] },
-          _sum: { inputTokens: true, outputTokens: true },
+          _sum: { inputTokens: true, outputTokens: true, cacheReadTokens: true, cacheCreationTokens: true },
           _count: true,
         })
       : null,
@@ -203,6 +215,8 @@ export async function readRehearsal(id: string): Promise<RehearsalView | null> {
     movement: rehearsal.status === "RUNNING" ? movement(tasks.map((task) => task.status)) : rehearsal.status === "STOPPED" ? "stopped" : "finished",
     startedAt: rehearsal.startedAt,
     finishedAt: rehearsal.finishedAt,
+    /** What this run may spend before it stops itself. 0 is no ceiling. */
+    budgetUsd: rehearsal.budgetUsd === null ? null : Number(rehearsal.budgetUsd),
     lead: rehearsal.lead,
     woke: Object.keys((rehearsal.wokeAgents ?? {}) as Record<string, string>),
     spend: {
@@ -213,6 +227,12 @@ export async function readRehearsal(id: string): Promise<RehearsalView | null> {
       modelCalls: models?._count ?? 0,
       inputTokens: models?._sum.inputTokens ?? 0,
       outputTokens: models?._sum.outputTokens ?? 0,
+      // What the prompt cache took off the bill. A run that re-sends the same
+      // instruction twelve times should be able to show that it only paid for
+      // it once, and until this was on the screen nobody could tell whether
+      // caching was working at all.
+      cacheReadTokens: models?._sum.cacheReadTokens ?? 0,
+      cacheWriteTokens: models?._sum.cacheCreationTokens ?? 0,
     },
     agents: [...agents.values()],
     edges,

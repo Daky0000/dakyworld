@@ -47,11 +47,32 @@ const REHEARSAL_CONCURRENCY = 1;
  */
 const MAX_TASKS = 24;
 
+/**
+ * The ceiling in money, which is the one that was missing.
+ *
+ * `MAX_TASKS` counts conversations, and a conversation is not a fixed price: a
+ * run that stayed well inside twenty-four tasks can still spend more than the
+ * person watching it meant to, because each task is a dozen turns and each
+ * turn re-sends the ones before it. Counting tasks caps the shape of a run and
+ * says nothing about its cost.
+ *
+ * Checked on every drain, so a run stops within one task of crossing it rather
+ * than at the end. Deliberately low: a rehearsal is a look at the workforce,
+ * not a day's work, and the first thing anybody wants to know afterwards is
+ * what it cost — a number that should never be a surprise.
+ *
+ * Overridable per run through `rehearsal.budgetUsd`, for the deliberate long
+ * look.
+ */
+const DEFAULT_BUDGET_USD = 3;
+
 export interface StartInput {
   website: string;
   scenario: string;
   businessName?: string | null;
   note?: string | null;
+  /** What this run may spend before it stops itself. Undefined takes the default; 0 lifts the ceiling. */
+  budgetUsd?: number | null;
   userId?: string | null;
 }
 
@@ -159,6 +180,10 @@ export async function startRehearsal(input: StartInput) {
       leadId: lead.id,
       rootTaskId: task.id,
       taskCount: 1,
+      // Written on the row rather than read from a setting at each drain, so
+      // the ceiling a run was started under is the ceiling it keeps — and is
+      // still readable afterwards when somebody asks why it stopped where it did.
+      budgetUsd: input.budgetUsd === undefined || input.budgetUsd === null ? DEFAULT_BUDGET_USD : input.budgetUsd,
       createdById: input.userId ?? null,
     },
   });
@@ -245,6 +270,20 @@ export async function nudge(rehearsalId: string): Promise<void> {
   // stop is recorded on the row so the page can say why it went quiet.
   if (tasks.length > MAX_TASKS) {
     await stopRehearsal(rehearsalId, `This run reached ${tasks.length} tasks, which is past the ceiling of ${MAX_TASKS}. Whatever is queued was left unstarted.`);
+    return;
+  }
+
+  // The same stop, on the measure that actually runs out. Read off the tasks
+  // rather than the rehearsal row because `settle` writes that row afterwards,
+  // and a ceiling that only knows last drain's total is a ceiling that is
+  // always one task late.
+  const budget = rehearsal.budgetUsd === null ? DEFAULT_BUDGET_USD : Number(rehearsal.budgetUsd);
+  const spent = tasks.reduce((sum, task) => sum + Number(task.costUsd), 0);
+  if (budget > 0 && spent >= budget) {
+    await stopRehearsal(
+      rehearsalId,
+      `This run has spent $${spent.toFixed(2)}, which is at or past its ceiling of $${budget.toFixed(2)}. Whatever was queued was left unstarted. Raise the ceiling on the next run if you want to see further.`,
+    );
     return;
   }
 

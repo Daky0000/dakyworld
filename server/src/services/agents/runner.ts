@@ -3,7 +3,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Agent, AgentTask, AgentStepKind } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
-import { runAgentLoop, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
+import { clipToolResult, runAgentLoop, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
 import { clearCheckpoint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
 import { AnalystError } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
@@ -435,7 +435,7 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
         dryRun: false,
         data: { input, output: result.output, replayed: result.replayed },
       });
-      return { content: JSON.stringify(result.output ?? null).slice(0, 16_000) };
+      return { content: clipToolResult(JSON.stringify(result.output ?? null)) };
     },
   }));
 

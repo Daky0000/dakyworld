@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { recordLlmCall } from "./llmLedger.js";
 import { AnalystError, analystKey, type Effort } from "./claude.js";
-import { costOf, defaultModel, rateFor } from "./claudePricing.js";
+import { costOf, modelForEffort, rateFor } from "./claudePricing.js";
 
 /**
  * The agent loop.
@@ -133,6 +133,95 @@ export interface AgentRunResult {
 const MAX_ITERATIONS = 16;
 /** Under the SDK's HTTP timeout for a non-streaming call. */
 const MAX_TOKENS = 16_000;
+
+/**
+ * The prompt cache, which this loop existed for a month without using.
+ *
+ * An agent turn re-sends everything that came before it: the system prompt,
+ * every tool definition, the brief, and every tool result so far. Turn six of
+ * a run pays for turn one's brief for the sixth time. Nothing about that is
+ * avoidable — it is how the API works — but paying full price for it is,
+ * because a prefix that has not changed can be read from Anthropic's cache at
+ * a tenth of the input rate.
+ *
+ * The ledger has had `cacheReadTokens` and `cacheCreationTokens` columns, and
+ * `costOf` has had the multipliers, since the day it shipped. Both were always
+ * zero. This is the four lines that were missing.
+ *
+ * Four breakpoints is the API's limit and all four are used:
+ *
+ * 1. **The tools**, on the last definition — they are identical for every turn
+ *    of a run, and on a well-equipped agent they are the largest single block.
+ * 2. **The system prompt**, which is the agent's instruction, the brand, the
+ *    voice and the house rules. Also identical for every turn.
+ * 3 and 4. **A rolling pair inside the conversation**, on the last two user
+ *    turns. The newest one writes the turn that just happened into the cache;
+ *    the one behind it is what the *next* turn reads. Marking only the newest
+ *    would write a cache entry every turn and never read one, which is the
+ *    expensive half of caching with none of the saving.
+ *
+ * Entries live five minutes and every turn refreshes them, so a run only pays
+ * the write premium once per block. A resumed task minutes later has gone cold
+ * and pays it again — still cheaper than the alternative, which is what this
+ * loop did before.
+ */
+const CACHE: Anthropic.Beta.BetaCacheControlEphemeral = { type: "ephemeral" };
+
+/**
+ * How much of a tool's answer the model is shown.
+ *
+ * A tool result is not paid for once. It goes into the conversation and is
+ * re-sent with every turn after it, so a 16,000-character JSON blob on turn
+ * two is still being billed on turn twelve — ten more times, at full input
+ * rate for the part the cache has not reached. The old ceiling let eight tool
+ * calls put 35,000 tokens of mostly-irrelevant JSON permanently into the
+ * prompt.
+ *
+ * Six thousand characters is roughly a page and a half: enough for a lead, an
+ * audit's findings, a page of search results. Anything genuinely longer is
+ * something the agent should be reading a piece of, with a filter, rather than
+ * being handed whole.
+ */
+export const TOOL_RESULT_MAX_CHARS = 6_000;
+
+/**
+ * Cuts an answer to that ceiling, and says so.
+ *
+ * The saying-so is the point. A silent `.slice()` hands the model half a JSON
+ * object that looks complete, and an agent that concludes "there are four
+ * communications on this lead" from a list that was cut at four has been
+ * misled by its own tooling rather than by anything anybody wrote.
+ */
+export function clipToolResult(content: string, max = TOOL_RESULT_MAX_CHARS): string {
+  if (content.length <= max) return content;
+  return `${content.slice(0, max)}
+
+[Cut off here: this answer was ${content.length.toLocaleString("en-GB")} characters and you have been shown the first ${max.toLocaleString("en-GB")}. There is more that you have not seen. Ask again with a narrower filter, a smaller limit or a specific id rather than assuming this is all of it.]`;
+}
+
+/**
+ * The conversation, with the two rolling breakpoints on it.
+ *
+ * Returns a copy. The originals stay unmarked because `messages` is what goes
+ * into the checkpoint, and a checkpoint carrying breakpoints from wherever the
+ * last process happened to stop would put them in the wrong place on resume.
+ */
+function withCacheBreakpoints(messages: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
+  // Turns alternate, so the last message is always the newest user turn and
+  // the one three back is the user turn before it.
+  const marks = new Set([messages.length - 1, messages.length - 3].filter((index) => index >= 0));
+
+  return messages.map((message, index) => {
+    if (!marks.has(index)) return message;
+    const blocks: Anthropic.Beta.BetaContentBlockParam[] =
+      typeof message.content === "string" ? [{ type: "text", text: message.content }] : [...message.content];
+    if (blocks.length === 0) return message;
+    // A breakpoint goes on the *last* block of the turn, because it marks the
+    // end of the prefix rather than the start of anything.
+    blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: CACHE } as Anthropic.Beta.BetaContentBlockParam;
+    return { ...message, content: blocks };
+  });
+}
 /** See claude.ts — the same beta, for the same reason. */
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 let fallbacksAvailable = true;
@@ -196,16 +285,25 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   }
 
   const client = new Anthropic({ apiKey });
-  const model = await defaultModel();
   const effort = request.effort ?? "medium";
+  // Chosen from the effort rather than fixed, so a sub-agent checking a link
+  // is not billed at the rate of a director deciding what to say to a
+  // stranger. See `modelForEffort`.
+  const model = await modelForEffort(effort);
   const startedAt = Date.now();
 
   const byName = new Map(request.tools.map((tool) => [tool.name, tool]));
-  const definitions: Anthropic.Beta.BetaToolUnion[] = request.tools.map((tool) => ({
+  const definitions: Anthropic.Beta.BetaToolUnion[] = request.tools.map((tool, index) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.inputSchema as Anthropic.Beta.BetaTool["input_schema"],
+    // Breakpoint 1. On the last one, because it caches everything above it.
+    ...(index === request.tools.length - 1 ? { cache_control: CACHE } : {}),
   }));
+
+  // Breakpoint 2. A block rather than a bare string, because only a block can
+  // carry one.
+  const system: Anthropic.Beta.BetaTextBlockParam[] = [{ type: "text", text: request.system, cache_control: CACHE }];
 
   const resumed = request.resume ?? null;
   const messages: Anthropic.Beta.BetaMessageParam[] = resumed?.messages
@@ -316,14 +414,14 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         client.beta.messages.create({
           model,
           max_tokens: MAX_TOKENS,
-          system: request.system,
+          system,
           // Opus 5 thinks by default; asked for explicitly so the setting is
           // visible here rather than inherited. Summarised, because the
           // reasoning is worth showing on a task somebody is watching.
           thinking: { type: "adaptive", display: "summarized" },
           output_config: { effort },
           tools: definitions,
-          messages,
+          messages: withCacheBreakpoints(messages),
           ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
         });
 
@@ -459,7 +557,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         type: "tool_result",
         tool_use_id: call.id,
         ...(outcome.isError ? { is_error: true } : {}),
-        content: outcome.content.slice(0, 20_000),
+        content: clipToolResult(outcome.content),
       });
       if (outcome.stop) {
         stopAfterThisTurn = true;

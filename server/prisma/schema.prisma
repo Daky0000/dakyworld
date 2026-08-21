@@ -3212,6 +3212,15 @@ model Rehearsal {
   /// boot belongs to a process that died mid-run — see `restoreOrphanedWakes()`.
   wokeAgents Json?
 
+  /// What this run is allowed to spend before it stops itself, in USD.
+  ///
+  /// Null takes the shipped default; zero means no ceiling, for the deliberate
+  /// long look. The task ceiling caps the *shape* of a run and says nothing
+  /// about its cost — a run well inside twenty-four tasks can still spend more
+  /// than the person watching it meant to, because each task is a dozen model
+  /// turns and each turn re-sends the ones before it.
+  budgetUsd Decimal? @db.Decimal(10, 2)
+
   /// What the whole tree cost, totalled as it settles. Kept on the row because
   /// teardown deletes the tasks and "what did that cost me" should survive it.
   costUsd       Decimal @default(0) @db.Decimal(10, 6)

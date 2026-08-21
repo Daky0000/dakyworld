@@ -2434,6 +2434,8 @@ export interface RehearsalDetail {
   lead: { id: string; companyName: string | null; website: string | null; leadScore: number; status: string; tags: string[] } | null;
   /** Agents this run switched on, and puts back when it ends. */
   woke: string[];
+  /** What it may spend before it stops itself. Null is the shipped default; 0 is no ceiling. */
+  budgetUsd: number | null;
   spend: {
     costUsd: number;
     toolCalls: number;
@@ -2442,6 +2444,9 @@ export interface RehearsalDetail {
     modelCalls: number;
     inputTokens: number;
     outputTokens: number;
+    /** Prompt-cache reads, billed at a tenth of the input rate. */
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
   };
   agents: Array<{
     key: string;

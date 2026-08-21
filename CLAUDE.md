@@ -149,6 +149,53 @@ Three things that will bite:
   own sentence through, which is the only thing that separates *regenerate the
   key* from *top up the account*.
 
+**The prompt cache is load-bearing and invisible, so it has a check.** An agent
+turn re-sends everything before it — the system prompt, every tool definition,
+the brief, and every tool result so far — and for a month this app paid full
+input rate for all of it. `cache_control` appeared nowhere while `LlmCall` kept
+a `cacheReadTokens` column that was always zero and `costOf` kept a multiplier
+nothing multiplied. Nothing broke, no test failed, every answer was correct; the
+only symptom was the bill, arriving a month later with no way to say which run
+spent it.
+
+- **Four breakpoints, and all four are used** (`lib/claudeAgent.ts`): the last
+  tool definition, the system prompt, and a **rolling pair** on the two most
+  recent user turns. Four is the API's hard limit and a fifth is a 400 — so an
+  added one is not a slightly worse bill, it is every agent failing at once.
+- **Two inside the conversation, never one.** The newest turn writes what just
+  happened into the cache; the one behind it is what the *next* turn reads.
+  Marking only the newest writes an entry every turn and reads none, which is
+  the expensive half of caching with none of the saving.
+- **Breakpoints are applied at send time and never stored.** `messages` is what
+  the checkpoint holds, and a breakpoint frozen wherever a process happened to
+  stop lands in the wrong place on resume.
+- **The one-shot writers cache too**, gated on `CACHE_FLOOR_CHARS` — below
+  Anthropic's 1,024-token floor nothing is cached at all, and a write costs a
+  quarter more than sending it plainly, so marking a short prompt makes it
+  dearer.
+- `checks/promptCache.ts` drives the real loop against a fake Anthropic on
+  localhost and asserts on **what went over the wire**, because a correct
+  `withCacheBreakpoints()` that nothing calls is precisely the bug that was here.
+
+**An agent turn is priced by what the work is, not by what an agent is.**
+`modelForEffort()` sends `low` and `medium` to `MODEL_ECONOMY` (Sonnet 5,
+overridable at `anthropic.model.economy`) and everything above it to the
+headline model. The split follows `effortFor()` in the runner: whoever writes to
+somebody outside the company, and whoever sits on the board, keeps the expensive
+model; a sub-agent reading a record or checking a link does not. Paying Opus
+rates for the second was never a decision anybody made — it was `defaultModel()`
+being the only answer the loop knew. **Named the cheap way round on purpose**: a
+new effort level above `high` defaults to the better model rather than falling
+through to the cheaper one because nobody listed it.
+
+**A tool result is not paid for once.** It goes into the conversation and is
+re-sent with every turn after it, so a 16,000-character blob on turn two is
+still being billed on turn twelve. `TOOL_RESULT_MAX_CHARS` is 6,000 and
+`clipToolResult()` **says when it has cut**, because a silent `.slice()` hands
+the model half a record that reads as all of it — an agent concluding "there are
+four communications on this lead" from a list cut at four has been misled by its
+own tooling.
+
 A tool that routes declares `requires: "models"` and a `job`, never a vendor —
 naming one would make it refuse work the fallback could still do. What it must
 do instead is **say who answered**: `content.factcheck` returns `checkedBy` and
@@ -1127,6 +1174,17 @@ writes would mean a rehearsal in which every agent describes work nobody can
 open. Reads, writes to our own records, and **spending** all really happen; what
 the run cost is totalled on screen instead. `capture.run` is the one to watch:
 it spends without being outward.
+
+**A rehearsal has a ceiling in money as well as in tasks.** `MAX_TASKS` (24)
+counts conversations, and a conversation is not a fixed price — a run can sit
+well inside twenty-four tasks and still spend more than the person watching it
+meant to. `Rehearsal.budgetUsd` is checked on every drain (default $3, set on
+the start form, **0 means no ceiling** — a `.positive()` guard there would
+silently restore the default for the one person who typed 0 on purpose), and a
+run past it is stopped with what it spent and what it was allowed written on the
+row. The Spent tile shows the ceiling beside the total and the Tokens tile shows
+the cached share, because a run whose cache reads are zero is a run that paid
+for its instructions a dozen times and nothing else on the screen would say so.
 
 **A rehearsal wakes the agents it needs and puts them back** —
 `rehearsals/wake.ts`. Every specialist and most of the board seed as a **draft**
