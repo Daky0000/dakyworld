@@ -37,6 +37,7 @@ const LOADERS: Record<string, () => Promise<string>> = {
   "demo.page": async () => (await import("../demoBuilder.js")).SHIPPED_DOCTRINE,
   "lead.research": async () => (await import("../leadResearch.js")).SHIPPED_DOCTRINE,
   "homepage.look": async () => (await import("../homepageLook.js")).SHIPPED_DOCTRINE,
+  "mail.triage": async () => (await import("../mailbox/triage.js")).SHIPPED_DOCTRINE,
 };
 
 /** The shipped wording for a job, or empty when nothing claims it. */

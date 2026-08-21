@@ -37,6 +37,8 @@ export type ModelJob =
   | "text"
   /** Sorting a written instruction into the sections an agent prompt is made of. */
   | "organise"
+  /** Reading a message that arrived and saying what it is and whose it is. */
+  | "triage"
   /** Pictures. */
   | "image"
   /** A complete web page: HTML, CSS, the lot. */
@@ -50,7 +52,7 @@ export type ModelJob =
   /** Looking at a picture and saying what is in it — a screenshot of a page, mostly. */
   | "vision";
 
-export const MODEL_JOBS: ModelJob[] = ["text", "organise", "image", "html", "factcheck", "research", "humanise", "vision"];
+export const MODEL_JOBS: ModelJob[] = ["text", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision"];
 
 export interface JobDescription {
   job: ModelJob;
@@ -95,6 +97,21 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     // failure that matters is a paragraph put under the wrong heading or
     // quietly reworded. Every vendor that can follow a schema can do it, so
     // the chain is wide and the cost is a rounding error against being wrong.
+    defaultProvider: "anthropic",
+    fallback: "gemini",
+  },
+  triage: {
+    job: "triage",
+    name: "Reading the post",
+    phrase: "reading incoming mail",
+    blurb:
+      "Reading an email that arrived and saying what it is — a yes, a question, a complaint, an out-of-office — so it can be handed to the agent whose job it is. See services/mailbox/.",
+    // Its own job rather than borrowing `organise`, for a reason that is about
+    // money: this is the only job in the list that runs once per *arriving*
+    // message rather than once per piece of work somebody asked for. A busy
+    // mailbox is a thousand calls a month, and separating it is what lets the
+    // Owner put it on a cheap model from the Settings screen without moving
+    // everything else there too.
     defaultProvider: "anthropic",
     fallback: "gemini",
   },
@@ -199,7 +216,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // it would work, because the chain is now what runs when the first choice
     // fails and a candidate that cannot do the work is a wasted attempt with
     // a confusing error at the end of it.
-    jobs: ["text", "organise", "html", "factcheck", "research", "humanise", "vision"],
+    jobs: ["text", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
     models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
   },
   openai: {
@@ -212,7 +229,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     defaultModel: "gpt-5.4",
     console: "https://platform.openai.com/api-keys",
     keyHint: "sk-proj-…",
-    jobs: ["text", "organise", "image", "html", "vision"],
+    jobs: ["text", "organise", "triage", "image", "html", "vision"],
     models: ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini"],
   },
   gemini: {
@@ -229,7 +246,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // this app doesn't wire up, and offering a route that silently can't serve
     // is worse than not offering it. It does read pictures, though, which is a
     // different model family it does wire up — so `vision` is on the list.
-    jobs: ["text", "organise", "html", "vision"],
+    jobs: ["text", "organise", "triage", "html", "vision"],
     models: ["gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
   },
   perplexity: {
@@ -244,7 +261,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keyHint: "pplx-…",
     // It searches the live web on every call, which is what makes it the right
     // answer for "is this still true" and the wrong one for drawing a picture.
-    jobs: ["text", "factcheck", "research", "humanise"],
+    jobs: ["text", "triage", "factcheck", "research", "humanise"],
     models: ["sonar", "sonar-pro", "sonar-reasoning-pro"],
   },
 };

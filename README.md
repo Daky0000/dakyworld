@@ -40,6 +40,11 @@ Cloudinary (file storage, PDF hosting).
 - **Email** — write to a lead or client with a draft the AI wrote from their
   own record, send the invoice or the finished work as an attachment, and let
   follow-up sequences send themselves. See below.
+- **The inbox** — the mailbox is read as well as written to: replies are
+  matched to the lead or client they belong to, sequences stop the moment
+  somebody answers (including when *you* answer from your phone), bounces and
+  opt-outs act on themselves, and each message is handed to the agent whose job
+  it is. Nothing is ever sent on your behalf. See below.
 - **Revenue Dashboard** — live MRR, outstanding invoices, pipeline value,
   leads-by-status — computed on read, no manual reporting.
 - **Role model** — Owner / Project Manager / Developer / Designer /
@@ -201,10 +206,99 @@ would misrepresent it.
 
 ### What it deliberately doesn't do
 
-It sends; it does not read a mailbox. There is no inbox, no open tracking, and
-no click tracking — a tracking pixel is how a business letter starts being
-filtered as marketing. Replies are recorded the way calls already are, by
-logging them, which is what stops the sequence.
+There is no open tracking and no click tracking — a tracking pixel is how a
+business letter starts being filtered as marketing.
+
+It **does** read the mailbox now, which it did not until August 2026. See below.
+
+
+## The inbox
+
+Everything above this point writes *out*. For most of a year the app could
+compose, schedule, sequence and send, and had no idea whether anybody ever
+answered — a reply was something you noticed in your own webmail and then
+remembered to type in. That one manual step is where a pipeline is actually
+lost: a sequence goes on writing to somebody who has already said yes, a dead
+address is written to for weeks, and the fastest thing that happens to this
+business — a stranger replying to a cold letter — reaches the system last.
+
+**Outreach → Inbox** is the other half of the door. It opens on what is still
+owed a reply, not on what is newest.
+
+### Connecting it
+
+**Settings → Email → Reading the inbox.** The form arrives filled in: the IMAP
+server is your SMTP server with `smtp` swapped for `imap`, the port is 993, the
+username is the same, and the password is usually the same App Password already
+stored for sending — leave it blank to reuse it. Press Connect and it is checked
+against the real server before anything is saved, exactly as the sending half is.
+
+It is a separate connection on purpose. A mailbox that sends perfectly can be
+unreadable — a host with IMAP switched off, an App Password scoped to sending —
+and one "email is connected" covering both would hide precisely that.
+
+### What happens when something arrives
+
+A live connection sits on the mailbox, so a reply is read within seconds rather
+than on the next minute. Then, in order:
+
+1. **It is filed** — against the lead or client whose address it is, and joined
+   to the letter it answers by the threading headers.
+2. **What needs no judgement happens immediately.** Every sequence that person
+   is in stops. An opt-out suppresses the address everywhere and cancels what is
+   queued. A bounce suppresses the address that actually failed. A lead that has
+   never been spoken to moves from New to Qualifying. **None of this needs an AI
+   key** — it is arithmetic, and it happens whether or not a model is connected.
+3. **It is read once**, and labelled: interested, a question, wants to talk,
+   about an invoice, a new enquiry, an out-of-office, junk.
+4. **It is handed to whoever owns it.** A client's complaint goes to the Support
+   Desk; a prospect saying yes goes to the Follow-up Writer; an invoice query
+   goes to the Invoicer. Who gets what is a table in the code, not a decision a
+   model makes — you can read it, and it is the same every time.
+
+**Nothing here ever sends.** The agent that picks a message up drafts the reply
+into the outbox and stops; you send it. That is the same autonomy gate every
+other agent works under, and on a new deployment it means an answered cold email
+produces a draft waiting for you, never a letter that left while nobody was
+looking.
+
+### The Sent folder, which is the half people forget
+
+It reads what you sent as well as what arrived. If you answer a prospect from
+your phone at the weekend, the app has never heard of that message — and on
+Thursday the sequence writes to them again, under your name, asking whether they
+saw your first email. Reading Sent is what stops that. A message the app itself
+sent is told apart from one you typed by looking it up in the outbox.
+
+### An out-of-office is not a reply
+
+The single most expensive mistake available here, so it is handled from the
+headers rather than by a model: an autoresponder, a receipt, a newsletter and a
+delivery report are recognised as machine-sent, they stop no sequence, they are
+given to nobody, and they are kept off the "owed a reply" list. They are still
+filed, and still on the Everything tab.
+
+### What you can change
+
+Two switches under Settings → Email:
+
+- **Read each message with a model.** Off still files everything, still stops
+  sequences and still suppresses bounces.
+- **Hand messages to the agent whose job it is.** Off labels the post and leaves
+  every message for you, which is a reasonable way to run the first fortnight.
+
+A message the model was not confident about is never handed to an agent — it
+waits for you with an honest note saying who it *would* have gone to. So is one
+whose intended agent is paused or was never switched on.
+
+### After a deploy
+
+`mail.room` — the Mail Room agent, which places anything the table cannot —
+arrives as a **draft**, like every seeded agent. Set it Active on the Agents
+screen. The agents that receive post (Support Desk, Follow-up Writer, Invoicer,
+Proposal Writer, the CCO) also need `inbox.read` and `inbox.handled` ticked:
+a deploy adds new agents but never widens an existing one's toolkit, because
+granting a capability silently is not something software should do to you.
 
 
 ## WhatsApp and SMS
@@ -801,6 +895,7 @@ deploy stays the source of truth wherever you chose to make it one.
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
 | Email (SMTP) | Your own mailbox — Workspace, Zoho, cPanel | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM_EMAIL` |
 | Email (Hostinger MCP) | hPanel → Emails → Agentic mail → API | `HOSTINGER_MAIL_TOKEN`, `HOSTINGER_MAILBOX_ID`, `HOSTINGER_MAILBOX_ADDRESS`, `MAIL_TRANSPORT` |
+| Reading the inbox (IMAP) | The same mailbox — usually the SMTP host with `smtp` swapped for `imap` | `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASSWORD`, `IMAP_ENABLED`, `MAIL_OWN_DOMAINS` |
 | Alerts (Slack) | https://api.slack.com/messaging/webhooks | `SLACK_WEBHOOK_URL`, `SLACK_BOT_TOKEN`, `SLACK_DEFAULT_CHANNEL` |
 | Developer (GitHub) | https://github.com/settings/personal-access-tokens | `GITHUB_TOKEN`, `GITHUB_OWNER` |
 | Calendar | Rides on the Google connection above | `GOOGLE_CALENDAR_ID` |

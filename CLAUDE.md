@@ -596,6 +596,84 @@ That last part is the one that cannot be faked, and it is the same trap
 `tmp/writerAudit.ts` does: every v3 rule present, and every superseded one
 absent.
 
+**The mail room** — `src/lib/imap.ts`, `src/services/mailbox/`, `routes/inbox.ts`,
+the `mail.room` agent. Every email module before Aug 2026 was outbound: the app
+could compose, schedule, sequence and send, and had no idea whether anybody
+answered. A reply was something the founder noticed in his own webmail and then
+remembered to type in — the one step in the pipeline that depended on a person
+being at a desk. So a sequence kept writing to somebody who had already said
+yes, and the fastest-moving event this business produces reached the system last.
+
+```
+IMAP IDLE ──┐
+            ├─→ sync.ts ─→ parse.ts ─→ ingest.ts ─→ triage.ts ─→ router.ts ─→ AgentTask
+minute tick ┘   (UID       (quote      (dedupe,     (a model:    (a table:
+                 cursor)    stripped)   thread,      what is      whose job
+                                        match)       this)        is this)
+                                            └─→ consequences.ts (no model, always)
+```
+
+- **IMAP, not a provider API.** Sending has two paths because the provider
+  differences live there; reading has none, and every mailbox this company
+  could use already speaks IMAP. The Settings form arrives **pre-filled from
+  the SMTP block** — the host is the SMTP host with `smtp` swapped for `imap`,
+  the port is 993, and the password is usually the same App Password — so
+  connecting is normally read-it-and-press-Connect. Credentials are proved
+  against the real server before they are stored, exactly as SMTP is.
+- **Both folders are read, and Sent is the half people forget.** The founder
+  answers a prospect from his phone; the app knows nothing about it; the
+  sequence writes again on Thursday asking whether they saw his first email.
+  Reading Sent is what stops that — and a message the *app* sent is told apart
+  from one typed by hand by looking its `Message-ID` up in the outbox.
+- **The live connection is an optimisation over a poll that runs anyway.**
+  `watcher.ts` sits in IDLE so a reply is read in seconds; `readMailboxOnce()`
+  is also on the minute tick. Every failure path in the watcher degrades to the
+  tick, which is why it is safe to run a socket inside a web process.
+- **Consequences are code and run whether or not a model does.** Stop the
+  sequence, suppress a bounce, honour an opt-out, log the conversation, move a
+  NEW lead to Qualifying. None of that is contingent on an API key, because the
+  sequence that keeps writing to somebody who replied is the failure this whole
+  module exists to end.
+- **An out-of-office is not a reply.** It carries `Auto-Submitted`, arrives
+  seconds after a send, and treating it as an answer stops the sequence and
+  loses the prospect in silence. `parse.ts` decides from the headers whether a
+  machine wrote it and nothing acts on one — except a bounce, which suppresses
+  **the address in `Final-Recipient`**, never `mailer-daemon@`.
+- **The model says what a letter is; a table says whose it is.** `triage.ts`
+  chooses between sixteen named intents; `ROUTES` in `router.ts` maps each to
+  an agent, with a `known`/`stranger` split because the same question from a
+  client and from a stranger is two different jobs. A model that picked the
+  agent could hand a client's complaint to the cold outreach writer, and no
+  prompt wording makes that reliably impossible. Below `CONFIDENCE_FLOOR` (0.6)
+  the message goes to a person, and a paused or retired agent is not a
+  destination — the chain ends at the Mail Room and then at nobody.
+- **Routing raises a task; it never sends.** The brief tells the agent to draft
+  with `email.draft` and stop, and the existing autonomy and dry-run gates
+  decide the rest. On a fresh deployment an answered cold email produces a
+  draft in the outbox, never a letter that left unattended.
+- **`NEEDS_NO_REPLY` is not cosmetic.** The Inbox screen is a to-do list, and
+  the first render of it put a bounce and an out-of-office above a stranger
+  asking for a quote. A list that fills with machine mail is a list somebody
+  stops reading, and then the enquiry is lost for the reason the module exists.
+- **Threading is done by finding the stored message, not by matching a key.**
+  A conversation's *first* message has no `In-Reply-To` and no `References`, so
+  a key derived from the reference root keys it one way and every reply to it
+  another: the letter and its answer were two conversations, and a reply typed
+  on a phone was a third. `findThreadByReferences()` looks the ids up against
+  `MailMessage.messageId`; the subject-plus-counterpart key is the fallback for
+  the many clients that answer with neither header.
+- **`triage` is its own model job** (`lib/models/registry.ts`) because it is the
+  only one that runs once per *arriving* message rather than once per piece of
+  work somebody asked for. Separating it is what lets a busy mailbox be moved to
+  a cheap model from the Settings screen without moving everything else. The
+  wording is a **writer job** owned by `mail.room`, so editing that agent
+  changes how the post is read — see "Writers read the agent that owns them".
+- **`ensureAgents()` only ever creates**, so the routed agents — `support.desk`,
+  `outreach.followup`, `billing.invoicer`, `proposal.writer`, `cco` — do **not**
+  get `inbox.read` and `inbox.handled` on an existing database. Tick them on the
+  Agents screen, and set `mail.room` to Active; it seeds DRAFT like every other
+  specialist.
+
 **Demos** — `src/services/demoBuilder.ts`, `designReferences.ts`,
 `routes/demos.ts`. For a lead with no website or a bad one, the demo is the
 strongest thing to offer instead of a call: far easier to say yes to, and it is
@@ -1305,6 +1383,27 @@ substitute, so headings come out serif. The files are still correct — do not
   (it deletes and creates — the final call has to be the delete-only half), and
   a cleanup list naming only the keys expected to succeed left a stale PENDING
   hire request behind, which counts against the next run's proposal limit.
+- **The mailbox reader is verified against a real IMAP server, not a mock.**
+  `tmp/mailboxLive.ts` drives the real `ImapFlow` client against GreenMail
+  (`docker run -d --name dakyworld-greenmail -p 3025:3025 -p 3143:3143 -e
+  GREENMAIL_OPTS="-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0
+  -Dgreenmail.users=dan:pass@mailroomcheck.test" greenmail/standalone:2.1.0`)
+  — connect, wrong password, the UID cursor, a renumbered `UIDVALIDITY`, the
+  Sent folder found **by name with no special-use flag**, and an IDLE push
+  arriving with nothing polling. Two things it taught: GreenMail's login is the
+  local part while the address is the whole thing (which is why `ImapConfig`
+  keeps `user` and `mailbox` apart), and **it keeps its folders between runs**,
+  so a harness that appends a fixed `Message-ID` reads the *previous* run's copy
+  and calls the new one a duplicate. Fresh ids per run, not a looser assertion.
+  `checks/mailroom.ts` is the committed half and needs only Postgres.
+- **`res.json` throws outright on a `BigInt`** — "Do not know how to serialize a
+  BigInt" — so `MailMessage.uid` and `uidValidity` are excluded by an explicit
+  `select` in `routes/inbox.ts` (`MESSAGE_FIELDS`). A route that returned a whole
+  row would 500 on a message it had stored perfectly.
+- **A bounce is very often *from* your own domain.** `mailer-daemon@dakyworld.com`
+  is us by every test the loop guard applies, so a delivery report was filed as
+  something we sent and suppressed nothing. Direction is `isOurs(from) &&
+  !parsed.bounce` for that one reason.
 - **Verifying an API response through `curl | python` on Windows mangles UTF-8**
   — Python decodes stdin as cp1252/gbk, so `·` comes back as a CJK ideograph and
   a correct render looks broken. Write the body to a file and read it with

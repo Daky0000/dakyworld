@@ -8,6 +8,7 @@ import { billDuePlans } from "./carePlanBilling.js";
 import { dispatchDueEmails } from "./emailSender.js";
 import { dispatchDueMessages } from "./messageSender.js";
 import { runDueSequences } from "./emailSequences.js";
+import { readMailboxOnce } from "./mailbox/watcher.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { ensureGapReviews, expireStaleHireRequests } from "./agents/hiring.js";
@@ -23,6 +24,10 @@ import { purgeExpiredSessions } from "../lib/session.js";
  *    ones are due.
  *  - **Care plan billing.** Each active plan bills on its own day of the
  *    month — see `carePlanBilling.ts`.
+ *  - **The mailbox.** Whatever has arrived since the last pass, in both the
+ *    inbox and Sent — see `services/mailbox/`. A live IMAP connection normally
+ *    beats this to it; the tick is what makes the feature work anyway when
+ *    that connection is down, which on a mail server is often.
  *  - **The agent workforce.** Queued tasks belonging to agents that are ACTIVE
  *    are started, up to a concurrency ceiling — see `agents/runner.ts`. Unlike
  *    the other two this one does not wait: an agent's run can take minutes,
@@ -99,6 +104,11 @@ export async function tick(now = new Date()) {
     // reason: a WhatsApp token that has expired must not stop an invoice email.
     dispatchDueMessages(now),
     runDueSequences(now),
+    // Reading the mailbox. The IMAP watcher usually gets there first — this is
+    // the floor under it, and the only thing that reads the Sent folder, so a
+    // reply the Owner typed on his phone is noticed within the minute whether
+    // or not the live connection is up.
+    readMailboxOnce(),
     runDueTasks(now),
     // What the agents do without being asked. Raises tasks; runDueTasks above
     // is what works them, on the next tick rather than this one — deliberately,

@@ -698,6 +698,8 @@ export interface AppSettings {
     fromEmail: string | null;
     replyTo: string | null;
     signature: string | null;
+    /** Whether the same mailbox can be read. A different question from sending. */
+    inbox: InboxSettings;
   };
   system: SystemSettings;
   general: {
@@ -2184,4 +2186,163 @@ export interface MessageSuppressionRow {
   reason: string;
   source: string;
   createdAt: string;
+}
+
+// --- The mail room ----------------------------------------------------------
+//
+// What arrived, as opposed to what was sent. `EmailRow` above is the outbox.
+
+export type MailTriageStatus = "NEW" | "TRIAGED" | "ROUTED" | "HANDLED" | "IGNORED" | "FAILED";
+
+export type MailIntent =
+  | "INTERESTED"
+  | "NOT_INTERESTED"
+  | "QUESTION"
+  | "MEETING_REQUEST"
+  | "PROPOSAL_FEEDBACK"
+  | "SUPPORT_ISSUE"
+  | "INVOICE_QUERY"
+  | "PAYMENT_NOTICE"
+  | "NEW_ENQUIRY"
+  | "SUPPLIER"
+  | "UNSUBSCRIBE"
+  | "AUTO_REPLY"
+  | "BOUNCE"
+  | "SPAM"
+  | "PERSONAL"
+  | "OTHER";
+
+export interface InboxMessageRow {
+  id: string;
+  from: string;
+  fromEmail: string;
+  subject: string;
+  receivedAt: string;
+  direction: "INBOUND" | "OUTBOUND";
+  intent: MailIntent | null;
+  summary: string | null;
+  urgency: number | null;
+  needsReply: boolean;
+  status: MailTriageStatus;
+  routedTo: string | null;
+  taskId: string | null;
+  leadId: string | null;
+  clientId: string | null;
+  snippet: string;
+  threadId: string;
+  lead?: { id: string; contactName: string; companyName: string | null } | null;
+  client?: { id: string; name: string; company: string | null } | null;
+  /** Who it would go to, for a message that was read but handed to nobody. */
+  wouldGoTo?: { agentKey: string | null; because: string } | null;
+}
+
+/** One message in full, as the drawer shows it. */
+export interface InboxMessageDetail {
+  id: string;
+  messageId: string | null;
+  folder: "INBOX" | "SENT";
+  direction: "INBOUND" | "OUTBOUND";
+  fromEmail: string;
+  fromName: string | null;
+  toEmails: string[];
+  ccEmails: string[];
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | null;
+  snippet: string;
+  sentAt: string;
+  receivedAt: string;
+  attachments: { filename: string; contentType: string; size: number }[];
+  hasAttachments: boolean;
+  autoSubmitted: boolean;
+  triage: MailTriageStatus;
+  intent: MailIntent | null;
+  summary: string | null;
+  urgency: number | null;
+  needsReply: boolean;
+  confidence: number | null;
+  triagedAt: string | null;
+  triageError: string | null;
+  routedAgentKey: string | null;
+  taskId: string | null;
+  routedAt: string | null;
+  handledAt: string | null;
+  handledNote: string | null;
+  threadId: string;
+  thread: { id: string; subject: string; counterpartEmail: string; messageCount: number };
+  lead?: { id: string; contactName: string; companyName: string | null; status: string } | null;
+  client?: { id: string; name: string; company: string | null } | null;
+  replyToEmail?: { id: string; subject: string; sentAt: string | null; purpose: string } | null;
+  handledBy?: { id: string; name: string } | null;
+}
+
+export interface MailThreadRow {
+  id: string;
+  threadKey: string;
+  subject: string;
+  counterpartEmail: string;
+  counterpartName: string | null;
+  participants: string[];
+  lastMessageAt: string;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  lastSnippet: string | null;
+  messageCount: number;
+  unreadCount: number;
+  lead?: { id: string; contactName: string; companyName: string | null } | null;
+  client?: { id: string; name: string; company: string | null } | null;
+}
+
+export interface MailThreadDetail extends MailThreadRow {
+  messages: InboxMessageDetail[];
+}
+
+export interface InboxStatus {
+  connected: boolean;
+  mailbox: string | null;
+  host: string | null;
+  triage: boolean;
+  autoRoute: boolean;
+  watcher: { connected: boolean; connectedAt: string | null; lastPushAt: string | null; lastError: string | null; reading: boolean };
+  folders: { folder: "INBOX" | "SENT"; lastSyncAt: string | null; lastError: string | null; messagesSeen: number }[];
+  counts: Partial<Record<MailTriageStatus, number>>;
+  /** Still owed a reply — machine mail excluded. */
+  open: number;
+  /** Read, owed a reply, and handed to nobody. */
+  waiting: number;
+}
+
+export interface InboxSyncResult {
+  mailbox: string;
+  read: number;
+  routed: number;
+  notes: string[];
+  folders: { folder: "INBOX" | "SENT"; path: string | null; read: number; skipped: number; routed: number; more: boolean; error: string | null }[];
+}
+
+/** What Settings knows about reading the mailbox. */
+export interface InboxSettings {
+  configured: boolean;
+  paused: boolean;
+  envManaged: boolean;
+  host: string | null;
+  port: number;
+  secure: boolean;
+  user: string | null;
+  sentFolder: string | null;
+  backfillDays: number;
+  triage: boolean;
+  autoRoute: boolean;
+  ownDomains: string | null;
+  watcher: { connected: boolean; connectedAt: string | null; lastPushAt: string | null; lastError: string | null; reading: boolean };
+  folders: { folder: "INBOX" | "SENT"; lastSyncAt: string | null; lastError: string | null; messagesSeen: number }[];
+}
+
+export interface InboxSuggestion {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  canReusePassword: boolean;
+  from: "smtp" | null;
 }

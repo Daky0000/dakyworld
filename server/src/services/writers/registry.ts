@@ -168,6 +168,18 @@ export const WRITER_JOBS: WriterJob[] = [
     outward: false,
   },
   {
+    key: "mail.triage",
+    label: "Reading the post",
+    agentKey: "mail.room",
+    where: "services/mailbox/triage.ts",
+    // Not outward — nothing it writes is sent anywhere. It is here because it
+    // is a model reading words a customer wrote, and the judgement in it
+    // decides who picks the message up. An agent that owns the mailbox and
+    // cannot change how the mailbox is read owns nothing.
+    what: "How each message that arrives is read: what kind of letter it is, how urgent, and whether anybody has to answer.",
+    outward: false,
+  },
+  {
     key: "homepage.look",
     label: "Homepage read",
     agentKey: "review.look",

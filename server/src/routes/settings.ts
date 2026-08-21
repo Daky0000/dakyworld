@@ -6,6 +6,8 @@ import { describeNumber, verifyWhatsAppKeys } from "../lib/whatsapp.js";
 import { requireRole } from "../middleware/auth.js";
 import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
 import { maskSecret } from "../lib/secrets.js";
+import { ImapError, imapConfigured, readImapConfig, suggestFromSmtp, verifyImap } from "../lib/imap.js";
+import { restartWatcher, watcherStatus } from "../services/mailbox/watcher.js";
 import { ApifyError, clearApifyCaches, getAccount, getActorPricing, getActorSchema, getMonthlyUsage } from "../lib/apify.js";
 import { DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS, screenshotActorId } from "../services/screenshotActors.js";
 import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
@@ -452,6 +454,52 @@ async function describeEmail() {
     fromEmail,
     replyTo,
     signature: sign ?? (await signature()),
+    inbox: await describeInbox(),
+  };
+}
+
+/**
+ * Whether the mailbox can be *read*, which is a different question from
+ * whether it can be written to.
+ *
+ * Reported beside sending rather than under it: a provider with IMAP switched
+ * off, or an App Password scoped to SMTP alone, sends perfectly and reads
+ * nothing — and one "email is connected" covering both is what would hide that.
+ */
+async function describeInbox() {
+  const [config, connected, enabled, sentFolder, backfill, triage, autoRoute, ownDomains, cursors] = await Promise.all([
+    readImapConfig(),
+    imapConfigured(),
+    getSetting(SETTING.IMAP_ENABLED),
+    getSetting(SETTING.IMAP_SENT_FOLDER),
+    getSetting(SETTING.MAIL_BACKFILL_DAYS),
+    getSetting(SETTING.MAIL_TRIAGE),
+    getSetting(SETTING.MAIL_AUTOROUTE),
+    getSetting(SETTING.MAIL_OWN_DOMAINS),
+    prisma.mailSyncState.findMany({ orderBy: { folder: "asc" } }),
+  ]);
+
+  return {
+    configured: connected,
+    /** Credentials stored but switched off — not the same as never connected. */
+    paused: enabled === "false",
+    envManaged: isEnvManaged(SETTING.IMAP_HOST),
+    host: config?.host ?? (await getSetting(SETTING.IMAP_HOST)),
+    port: config?.port ?? Number((await getSetting(SETTING.IMAP_PORT)) ?? 993),
+    secure: config?.secure ?? true,
+    user: config?.user ?? (await getSetting(SETTING.IMAP_USER)),
+    sentFolder,
+    backfillDays: backfill ? Number(backfill) : 14,
+    triage: triage !== "false",
+    autoRoute: autoRoute !== "false",
+    ownDomains,
+    watcher: watcherStatus(),
+    folders: cursors.map((cursor) => ({
+      folder: cursor.folder,
+      lastSyncAt: cursor.lastSyncAt,
+      lastError: cursor.lastError,
+      messagesSeen: cursor.messagesSeen,
+    })),
   };
 }
 
@@ -1034,6 +1082,140 @@ settingsRouter.put("/email", async (req, res, next) => {
     res.json(await describeAll(req));
   } catch (err) {
     if (err instanceof MailerError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+// --- Reading the inbox ------------------------------------------------------
+//
+// The other half of the mailbox. Kept in its own block rather than folded into
+// the SMTP one above because the two fail independently: a mailbox that sends
+// perfectly can be unreadable (a provider with IMAP switched off, an App
+// Password scoped to sending), and saying "email is connected" for both would
+// hide exactly that.
+
+/**
+ * What connecting the reader would look like, filled in from what is already
+ * stored.
+ *
+ * Offered rather than demanded. The host is the SMTP host with `smtp` swapped
+ * for `imap` on every provider this company is likely to meet, the port is
+ * 993, and the password is usually the same App Password already pasted in for
+ * sending — so the form arrives filled in and the Owner confirms it, which is
+ * the difference between connecting mail in a minute and connecting it in an
+ * evening.
+ */
+settingsRouter.get("/inbox/suggestion", async (_req, res, next) => {
+  try {
+    const [smtpHost, smtpUser] = await Promise.all([getSetting(SETTING.SMTP_HOST), getSetting(SETTING.SMTP_USER)]);
+    const suggestion = suggestFromSmtp(smtpHost);
+    res.json({
+      ...(suggestion ?? { host: "", port: 993, secure: true }),
+      user: smtpUser ?? "",
+      /** True when there is an SMTP password stored that this could reuse. */
+      canReusePassword: Boolean(await getSetting(SETTING.SMTP_PASSWORD)),
+      from: smtpHost ? "smtp" : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.put("/inbox", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.IMAP_HOST, "The inbox settings", res)) return;
+    const input = z
+      .object({
+        host: z.string().min(3),
+        port: z.number().int().min(1).max(65535).default(993),
+        secure: z.boolean().optional(),
+        user: z.string().min(3),
+        /** Blank means "use the SMTP password", which is the usual answer. */
+        password: z.string().optional(),
+        sentFolder: z.string().max(120).optional(),
+        backfillDays: z.number().int().min(1).max(365).optional(),
+        triage: z.boolean().optional(),
+        autoRoute: z.boolean().optional(),
+        ownDomains: z.string().max(400).optional(),
+      })
+      .parse(req.body);
+
+    const password = input.password?.trim() || (await getSetting(SETTING.SMTP_PASSWORD));
+    if (!password) {
+      return res.status(400).json({ error: "No password for the mailbox, and none stored for sending to borrow." });
+    }
+
+    // Proved against the real server before it is stored, exactly as SMTP is.
+    // The folder list that comes back is what the Sent-folder dropdown is
+    // built from, so the Owner picks a name the server actually has.
+    const verification = await verifyImap({
+      host: input.host.trim(),
+      port: input.port,
+      secure: input.secure ?? input.port === 993,
+      user: input.user.trim(),
+      password,
+      sentFolder: input.sentFolder?.trim() || null,
+    });
+
+    await setSetting(SETTING.IMAP_HOST, input.host.trim());
+    await setSetting(SETTING.IMAP_PORT, String(input.port));
+    await setSetting(SETTING.IMAP_SECURE, String(input.secure ?? input.port === 993));
+    await setSetting(SETTING.IMAP_USER, input.user.trim());
+    await setSetting(SETTING.IMAP_PASSWORD, password, { secret: true });
+    await setSetting(SETTING.IMAP_ENABLED, "true");
+    // Stored as the server spells it, not as it was typed. A name that differs
+    // by a case or a delimiter opens nothing, and the failure is silent.
+    if (verification.sentFolder) await setSetting(SETTING.IMAP_SENT_FOLDER, verification.sentFolder);
+    else await deleteSetting(SETTING.IMAP_SENT_FOLDER);
+    if (input.backfillDays !== undefined) await setSetting(SETTING.MAIL_BACKFILL_DAYS, String(input.backfillDays));
+    if (input.triage !== undefined) await setSetting(SETTING.MAIL_TRIAGE, String(input.triage));
+    if (input.autoRoute !== undefined) await setSetting(SETTING.MAIL_AUTOROUTE, String(input.autoRoute));
+    if (input.ownDomains !== undefined) await setSetting(SETTING.MAIL_OWN_DOMAINS, input.ownDomains.trim());
+
+    // Reconnect now rather than on a timer, so pasting a password visibly does
+    // something: the watcher comes up and the first read starts before the
+    // person has looked away from the screen.
+    await restartWatcher();
+
+    res.json({ ...(await describeAll(req)), verification });
+  } catch (err) {
+    if (err instanceof ImapError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+/** Switches reading off without throwing the credentials away. */
+settingsRouter.post("/inbox/pause", async (req, res, next) => {
+  try {
+    const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
+    await setSetting(SETTING.IMAP_ENABLED, String(enabled));
+    await restartWatcher();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.delete("/inbox", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.IMAP_HOST, "The inbox settings", res)) return;
+    for (const key of [
+      SETTING.IMAP_HOST,
+      SETTING.IMAP_PORT,
+      SETTING.IMAP_SECURE,
+      SETTING.IMAP_USER,
+      SETTING.IMAP_PASSWORD,
+      SETTING.IMAP_SENT_FOLDER,
+      SETTING.IMAP_ENABLED,
+    ]) {
+      await deleteSetting(key);
+    }
+    // The cursors go too. Reconnecting a different mailbox and resuming from
+    // another one's UID would silently skip everything below that number.
+    await prisma.mailSyncState.deleteMany({});
+    await restartWatcher();
+    res.json(await describeAll(req));
+  } catch (err) {
     next(err);
   }
 });

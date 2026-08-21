@@ -265,6 +265,40 @@ like every other credential and are masked in the API response.
 deliberately: they grant nothing on their own and have to be typed into somebody
 else's dashboard, which a masked value cannot be.
 
+### Reading the mailbox
+
+The mail room (`src/lib/imap.ts`, `src/services/mailbox/`) is the first path in
+this app that ingests content written by strangers *and* stores it. Five things
+about it are decisions rather than accidents:
+
+- **The credentials are a separate grant from sending.** `imap.password` is
+  stored encrypted in `AppSetting` like every other credential, verified against
+  the real server before it is stored, and masked in the API response. Reading
+  can be paused (`imap.enabled`) without throwing the password away.
+- **Nothing renders the HTML.** `bodyHtml` is stored for the record and the
+  Inbox screen shows `bodyText` in a `<pre>` — a stranger's markup is never put
+  into the DOM, which is the whole of the XSS story here. Anything that renders
+  it later must sanitise it the way `sanitiseDemoHtml` does.
+- **Attachments are recorded, not kept.** Names, types and sizes only; the bytes
+  stay in the mailbox. Storing a stranger's files is a liability nobody asked
+  for, and it is also the cheapest way to fill a disk.
+- **A message read is never a message answered.** Routing raises an `AgentTask`
+  and the brief says to draft and stop; every send still goes through the same
+  autonomy and dry-run gate as any other outward tool call. There is no path
+  from "mail arrived" to "mail left" that does not cross that gate.
+- **Content is data, never instruction.** A message body is put in front of a
+  model as the thing being classified and as quoted text on a task brief.
+  Nothing in it is executed, and the classifier's output is constrained to a
+  closed list of sixteen intents that map to a routing table in code — so the
+  worst a crafted email can do is get itself labelled wrongly and sent to a
+  person, which is what the confidence floor already does with anything unclear.
+  **Do not add a path that lets a message body choose an agent, a tool or a
+  recipient.**
+
+The Inbox routes are behind `requireRole("OWNER", "OPERATIONS_FINANCE",
+"PROJECT_MANAGER")` — the same three as the outbox, on the grounds that what a
+stranger wrote to the company is at least as sensitive as what the company sent.
+
 ## The website
 
 Everything in each `<head>` between the `BEGIN SEO` / `END SEO` markers is

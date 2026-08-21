@@ -14,6 +14,7 @@ import type {
   ModelJobInfo,
   ModelProvider,
   ModelRoute,
+  InboxSuggestion,
 } from "../lib/types";
 import { Badge, Button, Field, PageHeader, StatusDot, Toggle } from "../components/ui";
 
@@ -48,7 +49,7 @@ type SectionId =
 const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
   { id: "security", label: "Security", blurb: "Your password and two-factor" },
   { id: "system", label: "System", blurb: "Your name, address, phone and logo" },
-  { id: "email", label: "Email", blurb: "The mailbox everything sends from" },
+  { id: "email", label: "Email", blurb: "The mailbox everything sends from, and is read from" },
   { id: "messaging", label: "Messaging", blurb: "WhatsApp and SMS, for leads with no email" },
   { id: "analyst", label: "AI analyst", blurb: "Reads sheets, runs the agents" },
   { id: "models", label: "AI models", blurb: "Who writes, draws and checks facts" },
@@ -184,7 +185,12 @@ export function Settings() {
             <>
               {section === "security" && <SecurityPanel />}
               {section === "system" && <SystemPanel settings={data} />}
-              {section === "email" && <EmailPanel settings={data} />}
+              {section === "email" && (
+                <>
+                  <EmailPanel settings={data} />
+                  <InboxPanel settings={data} />
+                </>
+              )}
               {section === "analyst" && <AnalystPanel settings={data} />}
               {section === "models" && <ModelsPanel settings={data} />}
               {section === "google" && <GooglePanel settings={data} result={googleResult} params={searchParams} />}
@@ -750,6 +756,204 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
           </div>
           {testResult && <p className="mt-2 text-sm text-ink/60">{testResult}</p>}
         </div>
+      )}
+    </Panel>
+  );
+}
+
+
+/**
+ * Reading the same mailbox.
+ *
+ * A second panel rather than four more fields on the one above, because the two
+ * genuinely fail apart: a provider with IMAP switched off, or an App Password
+ * scoped to sending, sends perfectly and reads nothing. One "email is
+ * connected" covering both is what would hide exactly that.
+ *
+ * **It arrives filled in.** The host is the SMTP host with `smtp` swapped for
+ * `imap`, the port is 993, the username is the same, and the password is
+ * usually the same App Password already stored — so the normal path through
+ * this form is to read it and press Connect.
+ */
+function InboxPanel({ settings }: { settings: AppSettings }) {
+  const inbox = settings.email.inbox;
+  const save = useSaveSettings();
+  const qc = useQueryClient();
+
+  const { data: suggestion } = useQuery({
+    queryKey: ["inbox-suggestion"],
+    queryFn: () => api.get<InboxSuggestion>("/settings/inbox/suggestion"),
+    enabled: !inbox.configured,
+  });
+
+  const [host, setHost] = useState(inbox.host ?? "");
+  const [port, setPort] = useState(String(inbox.port ?? 993));
+  const [user, setUser] = useState(inbox.user ?? "");
+  const [password, setPassword] = useState("");
+  const [triage, setTriage] = useState(inbox.triage);
+  const [autoRoute, setAutoRoute] = useState(inbox.autoRoute);
+  const [backfillDays, setBackfillDays] = useState(String(inbox.backfillDays ?? 14));
+
+  // Only ever fills blanks. A value typed into this form is a decision and has
+  // to survive the suggestion arriving a moment after the screen opened.
+  useEffect(() => {
+    if (!suggestion) return;
+    setHost((current) => current || suggestion.host);
+    setUser((current) => current || suggestion.user);
+  }, [suggestion]);
+
+  const connect = useMutation({
+    mutationFn: () =>
+      api.put<AppSettings>("/settings/inbox", {
+        host: host.trim(),
+        port: Number(port) || 993,
+        secure: (Number(port) || 993) === 993,
+        user: user.trim(),
+        password: password || undefined,
+        triage,
+        autoRoute,
+        backfillDays: Number(backfillDays) || 14,
+      }),
+    onSuccess: (result) => {
+      save(result);
+      setPassword("");
+      void qc.invalidateQueries({ queryKey: ["inbox-status"] });
+    },
+  });
+
+  const pause = useMutation({
+    mutationFn: (enabled: boolean) => api.post<AppSettings>("/settings/inbox/pause", { enabled }),
+    onSuccess: save,
+  });
+
+  const disconnect = useMutation({
+    mutationFn: () => api.delete<AppSettings>("/settings/inbox"),
+    onSuccess: (result) => {
+      save(result);
+      setPassword("");
+    },
+  });
+
+  const canSubmit = host.trim().length > 2 && user.trim().length > 2 && (password.length > 0 || suggestion?.canReusePassword || inbox.configured);
+
+  return (
+    <Panel
+      title="Reading the inbox"
+      what={
+        <>
+          Replies, enquiries and bounces — read as they arrive, matched to the lead or client they belong to, and handed to the agent
+          whose job it is. Reading the Sent folder too is what stops a sequence chasing somebody you already answered from your phone.
+        </>
+      }
+      where={
+        inbox.envManaged
+          ? "Pinned by environment variables on this deployment. Change them in Railway."
+          : "The same mailbox as above, over IMAP. Google Workspace and most hosts need an App Password, which is usually the one already stored for sending."
+      }
+      state={
+        inbox.configured ? (
+          <Connected>
+            <span className="text-ink/70">
+              {inbox.user} at {inbox.host}
+            </span>
+            <span className="text-ink/45">
+              {inbox.watcher.connected ? "live connection open" : "reading on the minute"}
+              {inbox.sentFolder ? ` · Sent: ${inbox.sentFolder}` : " · no Sent folder found"}
+            </span>
+          </Connected>
+        ) : inbox.paused ? (
+          <NotConnected>Reading is switched off. The credentials are still stored.</NotConnected>
+        ) : (
+          <NotConnected>Nothing reads the mailbox, so a reply only exists in your own webmail.</NotConnected>
+        )
+      }
+    >
+      {inbox.folders.some((folder) => folder.lastError) && (
+        <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          {inbox.folders
+            .filter((folder) => folder.lastError)
+            .map((folder) => (
+              <p key={folder.folder}>
+                {folder.folder}: {folder.lastError}
+              </p>
+            ))}
+        </div>
+      )}
+
+      {!inbox.envManaged && (
+        <>
+          <form
+            className="mt-6 grid gap-4 sm:grid-cols-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (canSubmit) connect.mutate();
+            }}
+          >
+            <Field label="IMAP server">
+              <input value={host} onChange={(event) => setHost(event.target.value)} placeholder="imap.hostinger.com" className="input" />
+            </Field>
+            <Field label="Port" hint="993 with TLS. 143 is the older, worse pair.">
+              <input value={port} onChange={(event) => setPort(event.target.value)} className="input" />
+            </Field>
+            <Field label="Username">
+              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="dan@dakyworld.com" className="input" />
+            </Field>
+            <Field
+              label="Password"
+              hint={
+                inbox.configured
+                  ? "Stored encrypted. Leave blank to keep it."
+                  : suggestion?.canReusePassword
+                    ? "Leave blank to reuse the one already stored for sending."
+                    : "An App Password where the mailbox has two-factor authentication on."
+              }
+            >
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="••••••••"
+                className="input"
+              />
+            </Field>
+            <Field label="Read the last" hint="How far back the very first pass reaches, in days.">
+              <input value={backfillDays} onChange={(event) => setBackfillDays(event.target.value)} className="input" />
+            </Field>
+            <div className="sm:col-span-2 space-y-3">
+              <Toggle
+                checked={triage}
+                onChange={setTriage}
+                label="Read each message with a model, to say what it is"
+              />
+              <Toggle
+                checked={autoRoute}
+                onChange={setAutoRoute}
+                label="Hand messages to the agent whose job it is"
+              />
+              <p className="text-xs text-ink/45">
+                With both off, mail is still filed, sequences still stop when somebody replies and bounces are still suppressed — those
+                are code, not judgement. Nothing here ever sends: a reply an agent writes is a draft you send.
+              </p>
+            </div>
+            <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+              <Button type="submit" disabled={connect.isPending || !canSubmit}>
+                {connect.isPending ? "Checking with the server…" : inbox.configured ? "Save" : "Connect"}
+              </Button>
+              <span className="text-xs text-ink/45">Checked against the mail server before it's saved.</span>
+              {inbox.configured && (
+                <Button variant="ghost" onClick={() => pause.mutate(inbox.paused)} disabled={pause.isPending}>
+                  {inbox.paused ? "Start reading again" : "Pause reading"}
+                </Button>
+              )}
+              {inbox.configured && (
+                <Button variant="ghost" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>
+                  Disconnect
+                </Button>
+              )}
+            </div>
+          </form>
+          <ErrorNote error={connect.error} />
+        </>
       )}
     </Panel>
   );

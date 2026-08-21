@@ -65,6 +65,7 @@ model User {
   messagesWritten  Message[]
   uploadedFiles    StoredFile[]
   agentTasks       AgentTask[]
+  handledMail      MailMessage[]
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -121,6 +122,8 @@ model Client {
   messages       Message[]
   threads        MessageThread[]
   agentTasks     AgentTask[]
+  mailMessages   MailMessage[]
+  mailThreads    MailThread[]
 }
 
 model Contact {
@@ -255,6 +258,9 @@ model Lead {
   research       LeadResearch?
   demos          Demo[]
   websiteAudits  WebsiteAudit[]
+  /// What actually arrived from them, and the conversations it belongs to.
+  mailMessages   MailMessage[]
+  mailThreads    MailThread[]
 
   agentTasks AgentTask[]
 
@@ -1216,6 +1222,9 @@ model EmailMessage {
 
   createdBy   User?   @relation(fields: [createdById], references: [id])
   createdById String?
+
+  /// Replies that came back, matched by `In-Reply-To`. See MailMessage.
+  replies MailMessage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2425,8 +2434,8 @@ enum ContextNoteKind {
   CALL
   /// A meeting, in person or otherwise.
   MEETING
-  /// They replied, or got in touch first. Written from the reply signal, since
-  /// there is no inbound mail path to read one out of.
+  /// They replied, or got in touch first. Written from the reply signal, and
+  /// since August 2026 also readable out of the mailbox — see MailMessage.
   REPLY
   /// A choice somebody made about this company, and why.
   DECISION
@@ -2797,4 +2806,290 @@ model ActionRequest {
   @@index([status, createdAt])
   @@index([agentKey, status])
   @@index([taskId])
+}
+
+// ---------------------------------------------------------------------------
+// The mail room — reading the mailbox, not only writing to it
+// ---------------------------------------------------------------------------
+//
+// Every email module before this one was outbound. The app could compose,
+// schedule, sequence and send, and had no idea whether anybody ever answered —
+// a reply was something the Owner noticed in his own webmail and then
+// remembered to type into the app, which is the one step in the whole pipeline
+// that depends on a person being at a desk. So a sequence kept sending to
+// somebody who had already said yes, a dead address kept being written to for
+// weeks, and the fastest-moving event this business produces — a stranger
+// replying to a cold letter — reached the system last.
+//
+// This is the other half of the door. A live IMAP connection reads **both**
+// folders: the inbox, because that is where the answers are, and Sent, because
+// the Owner answers from his phone and the app must not keep chasing somebody
+// he has already spoken to. What arrives is matched to the record it belongs
+// to, given the consequences that need no judgement (stop the sequence,
+// suppress a bounce, log the conversation), read once by a model for what it
+// actually is, and handed to the agent whose job it is.
+//
+// **Reading is not replying.** Nothing here sends. Routing raises an
+// `AgentTask`, and what that agent may then do is decided by the same autonomy
+// and dry-run gates as every other piece of work — so on a fresh deployment an
+// answered cold email produces a drafted reply waiting in the outbox, never a
+// letter that left the building while nobody was looking.
+
+/// Which mailbox folder a message was read out of.
+///
+/// Only two are watched. Drafts are not mail, Trash is a decision already
+/// made, and Junk is the provider's opinion — reading it would have the app
+/// route spam to agents on the strength of a filter it does not control.
+enum MailFolder {
+  INBOX
+  SENT
+}
+
+/// What an inbound message actually is, as a model read it.
+///
+/// The list is deliberately about *what happens next*, not about tone: each
+/// value maps to one routing decision in services/mailbox/router.ts, and a
+/// value nothing would do anything different about does not earn a place here.
+enum MailIntent {
+  /// They want to carry on. The most valuable event in the system.
+  INTERESTED
+  /// A no, clear enough to stop chasing them.
+  NOT_INTERESTED
+  /// A question about the work, the price, the timeline.
+  QUESTION
+  /// They want to talk — a call, a meeting, a time.
+  MEETING_REQUEST
+  /// A response to a proposal that was sent: a change, a query, a decision.
+  PROPOSAL_FEEDBACK
+  /// Something is broken, or a client needs help with what was delivered.
+  SUPPORT_ISSUE
+  /// About an invoice — a query, a dispute, a request for a different date.
+  INVOICE_QUERY
+  /// They say they have paid, or a rail says so.
+  PAYMENT_NOTICE
+  /// Somebody nobody has written to, asking about work. The website form's
+  /// competitor, and worth more than any scraped row.
+  NEW_ENQUIRY
+  /// A supplier, a host, a bank — a business the company deals with rather
+  /// than sells to.
+  SUPPLIER
+  /// Take me off the list. Acted on in code before any agent sees it.
+  UNSUBSCRIBE
+  /// Out of office, an autoresponder, a receipt. **Never treated as a reply** —
+  /// see services/mailbox/consequences.ts, the trap this value exists for.
+  AUTO_REPLY
+  /// A delivery failure. The address is dead and goes on the suppression list.
+  BOUNCE
+  SPAM
+  /// Not business at all.
+  PERSONAL
+  /// Genuinely unclear. Goes to the Mail Room agent to place, rather than to a
+  /// guess.
+  OTHER
+}
+
+/// How far one message has got through the mail room.
+enum MailTriageStatus {
+  /// Read out of the mailbox, nothing decided yet.
+  NEW
+  /// Classified, and either it needed nobody or nobody was free to take it.
+  TRIAGED
+  /// Handed to an agent. `taskId` is the work.
+  ROUTED
+  /// Dealt with — by an agent finishing, or by a person saying so.
+  HANDLED
+  /// Deliberately not acted on: an out-of-office, a newsletter, spam.
+  IGNORED
+  /// Triage itself failed. Visible rather than silently NEW for ever.
+  FAILED
+}
+
+/// One email conversation, both directions.
+///
+/// Parallel to `MessageThread` on the phone side and for the same reason: the
+/// question anybody asks of a mailbox is "where did this conversation get to",
+/// and that cannot be answered from a flat list of messages. `threadKey` is
+/// the root `Message-ID` of the chain where the headers give one, and a
+/// normalised subject plus the other party's address where they do not —
+/// because a good many mail clients answer without `In-Reply-To`.
+model MailThread {
+  id        String @id @default(cuid())
+  /// Root Message-ID, else `subject|counterpart`. Unique, so a reply lands in
+  /// the conversation it belongs to rather than starting a second one.
+  threadKey String @unique
+  subject   String
+
+  /// The other party — the address that is not one of ours.
+  counterpartEmail String
+  counterpartName  String?
+  /// Everyone who has been on any message in it, ours included.
+  participants     String[] @default([])
+
+  lead     Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId   String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId String?
+
+  lastMessageAt  DateTime
+  lastInboundAt  DateTime?
+  lastOutboundAt DateTime?
+  /// The last line of it, so the list reads without opening anything.
+  lastSnippet    String?
+  messageCount   Int       @default(0)
+  /// Inbound messages nobody has marked handled.
+  unreadCount    Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages MailMessage[]
+
+  @@index([lastMessageAt])
+  @@index([lastInboundAt])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([counterpartEmail])
+}
+
+/// One message as it was found in the mailbox.
+///
+/// Deliberately **not** folded into `EmailMessage`. That table is the outbox: a
+/// row in it is something this app composed and is responsible for. A row here
+/// is something that was found — it has a UID in somebody else's folder, it may
+/// have been written by a stranger, and it can never be edited, sent or
+/// scheduled. `replyToEmail` is the join between the two, which is what turns
+/// "an email arrived" into "they answered the letter we sent on Tuesday".
+model MailMessage {
+  id String @id @default(cuid())
+
+  /// What makes this message this message, for the purpose of never storing it
+  /// twice. The RFC `Message-ID` where there is one, and
+  /// `folder:uidvalidity:uid` where there is not — some senders omit the header
+  /// entirely, and a mailbox re-sync must not then duplicate every one of them.
+  dedupeKey String           @unique
+  /// The header itself, null when the sender left it out. What a reply's
+  /// `In-Reply-To` is matched against.
+  messageId String?
+  folder    MailFolder
+  /// INBOUND for the inbox, OUTBOUND for Sent. Reuses the phone side's enum:
+  /// the direction of a message is a property of the message, not of the pipe.
+  direction MessageDirection
+
+  /// IMAP's coordinates for it. `uidValidity` is a 32-bit unsigned that the
+  /// server may change at any time, and when it does every stored UID is
+  /// meaningless — which is why it is kept beside the UID rather than assumed.
+  uid         BigInt
+  uidValidity BigInt
+
+  fromEmail String
+  fromName  String?
+  toEmails  String[] @default([])
+  ccEmails  String[] @default([])
+  subject   String
+  /// The plain-text body, which is what the model reads and what the screen
+  /// shows. Truncated on the way in — see services/mailbox/parse.ts.
+  bodyText  String
+  /// Kept for display only, and never rendered without sanitising.
+  bodyHtml  String?
+  /// The first line or so, for the list.
+  snippet   String
+
+  inReplyTo  String?
+  references String[] @default([])
+
+  /// When the sender says they sent it, and when it reached the mailbox.
+  sentAt     DateTime
+  receivedAt DateTime @default(now())
+
+  /// Names, types and sizes only — the bytes stay in the mailbox. Storing a
+  /// stranger's attachments is a liability nobody asked for.
+  /// `[{ filename, contentType, size }]`
+  attachments    Json    @default("[]")
+  hasAttachments Boolean @default(false)
+
+  /// True when the headers say a machine sent it — `Auto-Submitted`,
+  /// `Precedence: bulk`, a `List-Id`. Read *before* the model, because an
+  /// out-of-office that stops a sequence is a lost customer.
+  autoSubmitted Boolean @default(false)
+
+  // --- What the mail room made of it ---------------------------------------
+  triage      MailTriageStatus @default(NEW)
+  intent      MailIntent?
+  /// One line, in the model's words, for the list and for the task brief.
+  summary     String?
+  /// 1 urgent, 2 normal, 3 whenever — the same scale as `AgentTask.priority`,
+  /// which is where it ends up.
+  urgency     Int?
+  needsReply  Boolean          @default(false)
+  /// 0–1. Below the floor in router.ts the message goes to a person rather than
+  /// an agent: a confident wrong routing is worse than an unrouted message.
+  confidence  Float?
+  triagedAt   DateTime?
+  triageError String?
+
+  /// Who it was handed to, and the task that is the handover. A bare key and a
+  /// bare id — the same choice `ToolCall` makes — so deleting a task does not
+  /// have to null out mail that has already been dealt with.
+  routedAgentKey String?
+  taskId         String?
+  routedAt       DateTime?
+
+  /// The outbound message this answers, where the headers or the address say
+  /// so. The join between the outbox and the mailbox.
+  replyToEmail   EmailMessage? @relation(fields: [replyToEmailId], references: [id], onDelete: SetNull)
+  replyToEmailId String?
+
+  lead     Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId   String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId String?
+
+  thread   MailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  threadId String
+
+  handledAt   DateTime?
+  handledBy   User?     @relation(fields: [handledById], references: [id], onDelete: SetNull)
+  handledById String?
+  handledNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([threadId, sentAt])
+  @@index([triage, receivedAt])
+  @@index([direction, receivedAt])
+  @@index([fromEmail])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([messageId])
+}
+
+/// Where the reader got to in one folder of one mailbox.
+///
+/// IMAP has no "give me what is new since I last asked" — it has UIDs that only
+/// mean anything alongside the folder's `UIDVALIDITY`, and a server is entitled
+/// to change that number and renumber everything behind it. So this row holds
+/// both, and a mismatch is not an error: it means the cursor is worthless and
+/// the folder has to be re-read from a date rather than from a number.
+model MailSyncState {
+  id      String     @id @default(cuid())
+  /// The mailbox address, so changing which account is watched does not
+  /// silently resume from another one's cursor.
+  mailbox String
+  folder  MailFolder
+
+  uidValidity  BigInt?
+  /// The highest UID read. Zero means nothing has been read yet, and the first
+  /// pass takes only recent mail — see `MAIL_BACKFILL_DAYS`.
+  lastUid      BigInt    @default(0)
+  lastSyncAt   DateTime?
+  /// What went wrong last time, for the Settings screen. Cleared by a good run.
+  lastError    String?
+  /// Running total, so "is it actually reading anything" has an answer.
+  messagesSeen Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([mailbox, folder])
 }

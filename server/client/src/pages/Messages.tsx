@@ -27,11 +27,11 @@ type Tab = "reach" | "conversations" | "outbox" | "templates" | "suppression";
  * in the database was one nothing could act on. "Reach" is that list, and it
  * is the default tab.
  *
- * The second difference is that this one really is an inbox. Email here is
- * send-only by design — no mailbox reading, no open tracking — but a WhatsApp
- * reply arrives over a webhook whether anybody asked for it or not, and it
- * opens a 24-hour window to answer in. A reply nobody sees is the most
- * expensive thing on this screen.
+ * The second difference is the 24-hour window. Email has an inbox of its own
+ * now (see pages/Inbox.tsx) and neither channel is send-only any more, but a
+ * WhatsApp reply does something no email reply does: it opens a window in which
+ * a message you wrote can be delivered at all, and that window is a day long.
+ * A reply nobody sees is still the most expensive thing on this screen.
  */
 export function Messages() {
   const [tab, setTab] = useState<Tab>("reach");

@@ -195,6 +195,61 @@ export const SETTING = {
   /** Appended to every outbound email — address, unsubscribe line, sign-off. */
   MAIL_SIGNATURE: "mail.signature",
 
+  // Inbound email — the mail room. See services/mailbox/.
+  //
+  // IMAP rather than a provider API, because IMAP is the one thing every
+  // mailbox this company might ever use already speaks: Hostinger, Google
+  // Workspace, Zoho, a cPanel address. The host and port are usually the SMTP
+  // ones with `smtp` swapped for `imap`, and the password is very often the
+  // same app password already pasted in above — which is why the Settings
+  // screen offers to fill all five in from the SMTP block rather than asking
+  // for them twice.
+  /** Master switch. Off means nothing connects and nothing is read. */
+  IMAP_ENABLED: "imap.enabled",
+  IMAP_HOST: "imap.host",
+  IMAP_PORT: "imap.port",
+  /** Implicit TLS on 993. Off means STARTTLS on 143, which is rarer and worse. */
+  IMAP_SECURE: "imap.secure",
+  IMAP_USER: "imap.user",
+  IMAP_PASSWORD: "imap.password",
+  /**
+   * What this provider calls the Sent folder — `Sent`, `INBOX.Sent`,
+   * `[Gmail]/Sent Mail`. Blank means look for it, which works on every server
+   * that advertises the `\Sent` special-use flag and on most that do not.
+   */
+  IMAP_SENT_FOLDER: "imap.sentFolder",
+  /**
+   * How many days of mail the very first pass reads. Blank means 14.
+   *
+   * A brand-new connection to a mailbox with nine years in it would otherwise
+   * classify nine years of post, at one model call each, before it read
+   * anything that arrived today.
+   */
+  MAIL_BACKFILL_DAYS: "mail.backfillDays",
+  /**
+   * Whether a model reads inbound mail at all. Off still files everything,
+   * still stops sequences and still suppresses bounces — those are code, not
+   * judgement — it simply routes nothing.
+   */
+  MAIL_TRIAGE: "mail.triage",
+  /**
+   * Whether triage may hand work to agents, or only label it for a person.
+   *
+   * Separate from the switch above because they are different decisions: "read
+   * my post" is one, "and give it to somebody" is another, and a new
+   * deployment should be able to have the first without the second.
+   */
+  MAIL_AUTOROUTE: "mail.autoRoute",
+  /**
+   * The domains and addresses that are *us*, comma-separated. Blank derives
+   * them from the sending address.
+   *
+   * This is the loop guard. Without it a message from the company's own
+   * accounts address is a stranger writing in, and the mail room would file
+   * its own notifications as new enquiries and give them to an agent.
+   */
+  MAIL_OWN_DOMAINS: "mail.ownDomains",
+
   // Hostinger Agentic Mail. The token is the whole configuration: the mailbox
   // it may send from is read back from Hostinger rather than typed in, so
   // connecting is one paste. See lib/hostingerMail.ts.
@@ -377,6 +432,17 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.MAIL_FROM_NAME]: "MAIL_FROM_NAME",
   [SETTING.MAIL_FROM_EMAIL]: "MAIL_FROM_EMAIL",
   [SETTING.MAIL_REPLY_TO]: "MAIL_REPLY_TO",
+  // Inbound. Pinnable from the deploy for the same reason as SMTP: a mailbox
+  // password baked into Railway should not be silently replaceable through a
+  // screen.
+  [SETTING.IMAP_ENABLED]: "IMAP_ENABLED",
+  [SETTING.IMAP_HOST]: "IMAP_HOST",
+  [SETTING.IMAP_PORT]: "IMAP_PORT",
+  [SETTING.IMAP_SECURE]: "IMAP_SECURE",
+  [SETTING.IMAP_USER]: "IMAP_USER",
+  [SETTING.IMAP_PASSWORD]: "IMAP_PASSWORD",
+  [SETTING.IMAP_SENT_FOLDER]: "IMAP_SENT_FOLDER",
+  [SETTING.MAIL_OWN_DOMAINS]: "MAIL_OWN_DOMAINS",
   // Alerting and the developer tools follow the same rule as the rest: the
   // deploy can pin them, the Settings screen can set them, env wins.
   [SETTING.SLACK_WEBHOOK_URL]: "SLACK_WEBHOOK_URL",

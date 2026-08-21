@@ -51,6 +51,7 @@ const navItems: NavItem[] = [
     roles: ["OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"],
     children: [
       { to: "/emails", label: "Email", end: true },
+      { to: "/inbox", label: "Inbox" },
       { to: "/messages", label: "WhatsApp & SMS" },
     ],
   },

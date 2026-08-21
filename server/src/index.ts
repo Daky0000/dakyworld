@@ -14,6 +14,7 @@ import { projectsRouter } from "./routes/projects.js";
 import { invoicesRouter } from "./routes/invoices.js";
 import { carePlansRouter } from "./routes/carePlans.js";
 import { emailsRouter, unsubscribeRouter } from "./routes/emails.js";
+import { inboxRouter } from "./routes/inbox.js";
 import { hubtelWebhook, paystackWebhook } from "./routes/paymentWebhooks.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { slackRouter } from "./routes/slack.js";
@@ -39,6 +40,7 @@ import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { applyColdEmailPlaybook, ensureAgents, narrowSeededAgents, refreshUneditedSeedPrompts } from "./services/agentRegistry.js";
 import { drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
+import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
 import { AnalystError } from "./lib/claude.js";
 import { ApifyError } from "./lib/apify.js";
 import { WhatsAppError } from "./lib/whatsapp.js";
@@ -197,6 +199,8 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/invoices", invoicesRouter);
 app.use("/api/care-plans", carePlansRouter);
 app.use("/api/emails", emailsRouter);
+// The other half of the door. Beside the outbox rather than inside it — see routes/inbox.ts.
+app.use("/api/inbox", inboxRouter);
 app.use("/api/messages", messagesRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/dashboard", dashboardRouter);
@@ -338,6 +342,11 @@ bootstrapOwner()
       void backfillTags()
         .then((added) => added && console.log(`  → Registered ${added} tag(s) already in use`))
         .catch((err) => console.error("Tag backfill failed:", err));
+      // Sits in IMAP IDLE on the inbox so a reply is read in seconds rather
+      // than on the next minute tick. Silent when no mailbox is connected, and
+      // the tick reads the mailbox anyway — this is an optimisation over a
+      // poll that runs regardless, never the only path.
+      void startWatcher().catch((err) => console.error("Mailbox watcher failed to start:", err));
       if (DEV_NO_AUTH_REFUSED) {
         // Said loudly, because a variable that is set and silently ignored is
         // one somebody believes is doing something. It is doing nothing, and
@@ -371,6 +380,10 @@ bootstrapOwner()
       stopping = true;
       console.log(`
 ${signal} — finishing up.`);
+      // The mailbox connection goes first and is not waited on: it holds a
+      // socket the server thinks is logged in, and closing it politely is
+      // worth a moment but never worth one of the few seconds the agents need.
+      void stopWatcher().catch(() => undefined);
       void drainRunningTasks()
         .catch((err) => console.error("Agent drain failed:", err))
         .finally(() => {

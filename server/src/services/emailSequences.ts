@@ -18,10 +18,14 @@ import { composeMessage, isSuppressed, sendMessage } from "./emailSender.js";
  *
  * **Three ways a sequence stops**, and all of them are checked at send time
  * rather than at enrolment: the address is suppressed, the lead has moved out
- * of the pipeline (converted, disqualified, lost), or someone replied. Replies
- * are recorded by hand today — the app sends mail but does not read a mailbox
- * — so `stopOnReply` is enforced through the reply being logged as a
- * communication, which is what the Owner already does after a call.
+ * of the pipeline (converted, disqualified, lost), or someone replied.
+ *
+ * `stopOnReply` is called by three things now: the mail room, when a reply is
+ * read out of the mailbox (`services/mailbox/consequences.ts`); the phone side,
+ * on an inbound WhatsApp or SMS; and a person logging a reply by hand, which is
+ * still how a phone call gets recorded. It was only the third of those until
+ * August 2026, which is why a sequence could go on writing to somebody who had
+ * already answered.
  */
 
 type SequenceWithSteps = EmailSequence & { steps: EmailSequenceStep[] };

@@ -26,6 +26,9 @@ import {
   windowRemainingMinutes,
 } from "../messageSender.js";
 import { enrol, stopOnReply } from "../emailSequences.js";
+import { handOverMessage, inboxSummary, markHandled } from "../mailbox/actions.js";
+import { NEEDS_NO_REPLY } from "../mailbox/router.js";
+import { imapConfigured } from "../../lib/imap.js";
 import { runSource } from "../scraperRunner.js";
 import { estimateCost } from "../captureCost.js";
 import { resolveActor, actorInput, checkForTask, TASK_KINDS, type CaptureTask, type Checked } from "../captureActors.js";
@@ -768,6 +771,110 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     outward: false,
     input: z.object({ leadId: z.string().optional(), clientId: z.string().optional(), email: z.string().email().optional() }),
     run: async (input) => ({ stopped: await stopOnReply(input) }),
+  },
+  // --- The mailbox, read rather than written to -----------------------------
+  //
+  // Every tool above this point writes *out*. These three are how an agent
+  // reaches what arrived: what is in the mailbox, who a message belongs to,
+  // and saying it has been dealt with. None of them touches the mail server —
+  // they read rows that `services/mailbox/` already filed, so an agent can
+  // still work the backlog while the connection is down.
+  {
+    key: "inbox.read",
+    name: "Read the inbox",
+    group: "Communication",
+    purpose:
+      "What has arrived: one message in full, a whole conversation, or everything nobody has dealt with yet. Read this before answering anybody — it is the only place a reply they sent actually is.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({
+      messageId: z.string().optional(),
+      threadId: z.string().optional(),
+      /** Blank returns what is still open, which is the question actually being asked. */
+      status: z.enum(["NEW", "TRIAGED", "ROUTED", "HANDLED", "IGNORED", "FAILED"]).optional(),
+      limit: z.number().int().min(1).max(50).default(10),
+    }),
+    run: async (input) => {
+      if (input.messageId) {
+        const message = await prisma.mailMessage.findUnique({
+          where: { id: input.messageId },
+          include: { thread: { select: { subject: true, counterpartEmail: true, messageCount: true } } },
+        });
+        if (!message) return { found: false, message: null };
+        return { found: true, message: { ...inboxSummary(message), body: message.bodyText, thread: message.thread } };
+      }
+
+      if (input.threadId) {
+        const messages = await prisma.mailMessage.findMany({
+          where: { threadId: input.threadId },
+          orderBy: { sentAt: "asc" },
+          take: input.limit,
+        });
+        return {
+          threadId: input.threadId,
+          messages: messages.map((message) => ({ ...inboxSummary(message), body: message.bodyText.slice(0, 2_000) })),
+        };
+      }
+
+      const messages = await prisma.mailMessage.findMany({
+        where: {
+          direction: "INBOUND",
+          // The same definition of "open" the Inbox screen uses. An agent
+          // asked what is outstanding must not be handed the newsletters.
+          ...(input.status
+            ? { triage: input.status }
+            : { handledAt: null, triage: { not: "IGNORED" as const }, OR: [{ intent: null }, { intent: { notIn: NEEDS_NO_REPLY } }] }),
+        },
+        orderBy: { receivedAt: "desc" },
+        take: input.limit,
+      });
+      const connected = await imapConfigured();
+      return {
+        mailboxConnected: connected,
+        // Said out loud rather than returning a quietly short list: an agent
+        // told "nothing has arrived" when nothing is connected will conclude
+        // the business has no post.
+        note: connected ? null : "No mailbox is connected for reading, so this is only what was read before. Settings → Email.",
+        messages: messages.map(inboxSummary),
+      };
+    },
+  },
+  {
+    key: "inbox.route",
+    name: "Hand a message to somebody",
+    group: "Communication",
+    purpose:
+      "Give one message to the agent whose job it is, with a sentence saying why. Search the roster with findAgent first — handing work to the wrong colleague is worse than leaving it for a person.",
+    scope: "write",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({
+      messageId: z.string().min(1),
+      agentKey: z.string().min(1),
+      why: z.string().min(10).max(500),
+    }),
+    run: async (input, ctx) => handOverMessage({ ...input, by: ctx.agentKey ?? undefined }),
+  },
+  {
+    key: "inbox.handled",
+    name: "Close a message",
+    group: "Communication",
+    purpose:
+      "Say a message has been dealt with, and how. A message nobody closes stays on the Inbox screen for ever, which is deliberate — that screen is the list of what is still owed a reply.",
+    scope: "write",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({
+      messageId: z.string().min(1),
+      note: z.string().min(3).max(500),
+      /** Ignored means deliberately not acted on — a newsletter, a receipt, junk. */
+      ignored: z.boolean().default(false),
+    }),
+    run: async (input) => markHandled(input),
   },
   {
     key: "slack.send",
