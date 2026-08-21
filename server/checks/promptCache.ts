@@ -213,6 +213,74 @@ async function main() {
   );
   check("a short one is left alone", clipToolResult("fine") === "fine");
 
+  // --- The turn the model paused half-way through ---------------------------
+  //
+  // `pause_turn` pushes a lone assistant turn, which puts the user/assistant
+  // alternation out by one and can leave a **thinking block last**. The API
+  // refuses to let a breakpoint sit on one, and it refuses at request time —
+  // so getting this wrong is not a slightly worse bill, it is the agent
+  // failing outright on its next turn.
+  const paused = await fakeAnthropic();
+  process.env.ANTHROPIC_BASE_URL = paused.url;
+  sent.length = 0;
+
+  let pausedTurn = 0;
+  paused.server.removeAllListeners("request");
+  paused.server.on("request", (req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      sent.push(JSON.parse(body || "{}"));
+      const first = pausedTurn === 0;
+      pausedTurn += 1;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "msg_check_paused",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-5",
+          content: first
+            ? [
+                { type: "text", text: "Half way." },
+                { type: "thinking", thinking: "Still working it out.", signature: "sig_check" },
+              ]
+            : [{ type: "text", text: "Done." }],
+          stop_reason: first ? "pause_turn" : "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 50, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        }),
+      );
+    });
+  });
+
+  await runAgentLoop({
+    purpose: "check.promptCache.paused",
+    system: "You are a check. ".repeat(400),
+    prompt: "Pause, then finish.",
+    tools: [
+      {
+        name: "look_up",
+        description: "Looks something up.",
+        inputSchema: { type: "object", properties: { what: { type: "string" } }, required: ["what"] },
+        run: async () => ({ content: "unused" }),
+      },
+    ],
+    effort: "medium",
+  });
+  paused.server.close();
+
+  const afterPause = sent[1];
+  const assistantTurn = afterPause?.messages?.[1];
+  const thinkingBlock = (assistantTurn?.content ?? []).find((block: any) => block.type === "thinking");
+  check("the paused turn is re-sent", Boolean(thinkingBlock), "no thinking block came back round");
+  check("no breakpoint is put on a thinking block", !thinkingBlock?.cache_control, "the API rejects the whole request for this");
+  check(
+    "it lands on the last block that can carry one instead",
+    Boolean((assistantTurn?.content ?? []).find((block: any) => block.type === "text")?.cache_control),
+    "skipping the thinking block must not mean skipping the turn",
+  );
+
   // --- The one-shot writers -------------------------------------------------
   //
   // Half the spend in this app is not the agent loop at all: it is fifty

@@ -207,18 +207,33 @@ export function clipToolResult(content: string, max = TOOL_RESULT_MAX_CHARS): st
  * last process happened to stop would put them in the wrong place on resume.
  */
 function withCacheBreakpoints(messages: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
-  // Turns alternate, so the last message is always the newest user turn and
-  // the one three back is the user turn before it.
+  // Turns alternate, so the last message is the newest user turn and the one
+  // three back is the user turn before it. `pause_turn` is the exception — it
+  // pushes a lone assistant turn and puts the alternation out by one — so this
+  // picks positions and then checks what is actually there rather than
+  // assuming a role.
   const marks = new Set([messages.length - 1, messages.length - 3].filter((index) => index >= 0));
 
   return messages.map((message, index) => {
     if (!marks.has(index)) return message;
     const blocks: Anthropic.Beta.BetaContentBlockParam[] =
       typeof message.content === "string" ? [{ type: "text", text: message.content }] : [...message.content];
-    if (blocks.length === 0) return message;
+
     // A breakpoint goes on the *last* block of the turn, because it marks the
-    // end of the prefix rather than the start of anything.
-    blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: CACHE } as Anthropic.Beta.BetaContentBlockParam;
+    // end of the prefix rather than the start of anything — but **never on a
+    // thinking block**, which the API refuses to let one sit on. That is not
+    // hypothetical: a turn the model paused mid-way is pushed whole, reasoning
+    // included, so a run that went through a server-side tool would 400 on its
+    // very next turn. Failing at request time makes that the whole agent
+    // rather than a slightly worse bill — the same reason the four-breakpoint
+    // limit is guarded.
+    // A plain backward scan rather than `findLastIndex`, which this tsconfig's
+    // lib does not carry.
+    let at = blocks.length - 1;
+    while (at >= 0 && (blocks[at].type === "thinking" || blocks[at].type === "redacted_thinking")) at -= 1;
+    if (at < 0) return message;
+
+    blocks[at] = { ...blocks[at], cache_control: CACHE } as Anthropic.Beta.BetaContentBlockParam;
     return { ...message, content: blocks };
   });
 }
