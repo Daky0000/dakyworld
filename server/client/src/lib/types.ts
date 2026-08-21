@@ -2376,6 +2376,9 @@ export interface RehearsalScenario {
   startAgentName: string;
   startAgentTitle: string | null;
   available: boolean;
+  /** How many drafts starting this would switch on — and put back when it ends. */
+  wouldWake: number;
+  wouldWakeNames: string[];
   unavailableBecause: string | null;
 }
 
@@ -2429,6 +2432,8 @@ export interface RehearsalDetail {
   startedAt: string;
   finishedAt: string | null;
   lead: { id: string; companyName: string | null; website: string | null; leadScore: number; status: string; tags: string[] } | null;
+  /** Agents this run switched on, and puts back when it ends. */
+  woke: string[];
   spend: {
     costUsd: number;
     toolCalls: number;

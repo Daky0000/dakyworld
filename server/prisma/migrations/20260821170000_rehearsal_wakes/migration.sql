@@ -1,0 +1,13 @@
+-- A rehearsal wakes the agents it needs, and puts them back.
+--
+-- Every specialist and most of the board seed as a draft, and a draft picks
+-- nothing up — so the Rehearsal screen opened on five greyed-out workflows and
+-- an instruction to go and switch eleven agents on by hand. That is not a test
+-- of the workforce, it is an errand standing in front of one; and having done
+-- it, the Owner is left with a floor switched on because of a test, quietly
+-- taking real work.
+--
+-- This column is what makes waking them reversible: `{ "dev.web": "DRAFT" }`,
+-- written before the status changes rather than after. An agent that is awake
+-- with no record of who woke it is an agent that stays awake.
+ALTER TABLE "Rehearsal" ADD COLUMN "wokeAgents" JSONB;

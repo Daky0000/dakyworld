@@ -3200,6 +3200,18 @@ model Rehearsal {
   /// so the tree is the run, and there is no second bookkeeping to drift.
   rootTaskId String?
 
+  /// Agents this run switched on, and what each was before: `{ "dev.web": "DRAFT" }`.
+  ///
+  /// Every specialist seeds as a draft and a draft picks nothing up, so a
+  /// rehearsal wakes what it needs — and this is what lets it put them back.
+  /// Written *before* the status change rather than after, because an agent
+  /// that is awake with no record of who woke it is an agent that stays awake,
+  /// and then a test has quietly changed how the business runs.
+  ///
+  /// Emptied by `restoreWakes()`. Anything still here on a RUNNING rehearsal at
+  /// boot belongs to a process that died mid-run — see `restoreOrphanedWakes()`.
+  wokeAgents Json?
+
   /// What the whole tree cost, totalled as it settles. Kept on the row because
   /// teardown deletes the tasks and "what did that cost me" should survive it.
   costUsd       Decimal @default(0) @db.Decimal(10, 6)

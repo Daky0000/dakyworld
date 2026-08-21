@@ -49,6 +49,15 @@ export interface RehearsalView {
   startedAt: Date;
   finishedAt: Date | null;
   lead: { id: string; companyName: string | null; website: string | null; leadScore: number; status: string; tags: string[] } | null;
+  /**
+   * Agents this run switched on and will put back when it ends.
+   *
+   * Shown rather than done quietly. Waking a draft is the one thing a
+   * rehearsal changes outside its own tree, and a person who cannot see it
+   * happen has no way to tell a rehearsal that tidied up after itself from one
+   * that did not.
+   */
+  woke: string[];
   spend: { costUsd: number; toolCalls: number; preparedCalls: number; refusedCalls: number; modelCalls: number; inputTokens: number; outputTokens: number };
   agents: Array<{
     key: string;
@@ -195,6 +204,7 @@ export async function readRehearsal(id: string): Promise<RehearsalView | null> {
     startedAt: rehearsal.startedAt,
     finishedAt: rehearsal.finishedAt,
     lead: rehearsal.lead,
+    woke: Object.keys((rehearsal.wokeAgents ?? {}) as Record<string, string>),
     spend: {
       costUsd: tasks.reduce((total, task) => total + Number(task.costUsd), 0),
       toolCalls: tasks.reduce((total, task) => total + task.toolCalls, 0),

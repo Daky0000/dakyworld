@@ -24,13 +24,20 @@
  *     every count, group and export built on that filter.
  *  5. **Teardown.** It can be thrown away, it refuses to be thrown away
  *     mid-run, and it cannot take a real lead with it.
+ *  6. **Waking.** Most of the roster seeds as a draft and a draft picks nothing
+ *     up, so a rehearsal switches on what it needs. Putting them back is the
+ *     half that matters: an agent left awake by an abandoned test is the floor
+ *     quietly changed, taking real work off the minute tick days later with
+ *     nothing connecting it to the run that did it. A paused agent is never
+ *     woken — that is a decision somebody made.
  *
- * Three of these carry a **negative** beside the positive, which is the half
+ * Every claim carries a **negative** beside the positive, which is the half
  * that catches the mistakes worth catching: an unrestricted agent must still
- * really be allowed to send, an ordinary lead must still enrol, and an ordinary
- * delegation must *not* come out marked as a rehearsal. Without those, a gate
- * that refused everything and a runner that marked everything would both read
- * as a clean pass.
+ * really be allowed to send, a rehearsal must not blind its own agents, an
+ * ordinary lead must still enrol, an ordinary delegation must *not* come out
+ * marked as a rehearsal, a paused agent must stay paused, and teardown must not
+ * be able to delete a real lead. Without those, a gate that refused everything
+ * and a runner that marked everything would both read as a clean pass.
  *
  * Database only. No API key, no network, no Docker beyond Postgres itself.
  *   npx tsx checks/rehearsal.ts
@@ -43,6 +50,7 @@ import { buildWhere as buildLeadWhere } from "../src/routes/leads.js";
 import { tasksIn, teardownRehearsal, RehearsalRefused } from "../src/services/rehearsals/run.js";
 import { SCENARIOS } from "../src/services/rehearsals/scenarios.js";
 import { heldByRehearsal } from "../src/services/rehearsals/policy.js";
+import { reportsUnder, restoreOrphanedWakes, restoreWakes, wakeFor } from "../src/services/rehearsals/wake.js";
 import { workflowTools, type Counters } from "../src/services/agents/runner.js";
 
 const failures: string[] = [];
@@ -344,7 +352,98 @@ async function itCanBeThrownAway() {
   await prisma.lead.delete({ where: { id: realLead.id } });
 }
 
-// --- 6. The catalogue ---------------------------------------------------------
+// --- 6. Waking, and putting back -----------------------------------------------
+
+/**
+ * A rehearsal switches on what it needs and leaves the floor as it found it.
+ *
+ * Two halves, and the second is the one that matters. Waking a draft is
+ * convenience; **failing to put it back** is a test that quietly changed how
+ * the business runs — an agent nobody chose to switch on, taking real work off
+ * the minute tick, days later, with nothing connecting it to the rehearsal that
+ * did it.
+ *
+ * The negatives here are the whole point: a paused agent must stay paused, and
+ * an agent another live rehearsal still needs must not be put back underneath
+ * it.
+ */
+async function itWakesWhatItNeedsAndPutsItBack() {
+  console.log("\nWaking");
+
+  // The chart the harness built: MANAGER -> AGENT, with SIDEWAYS reporting to
+  // nobody. So `reportsUnder` should find the first two and not the third.
+  const under = await reportsUnder(MANAGER_KEY);
+  check("the reporting tree is walked", under.includes(MANAGER_KEY) && under.includes(AGENT_KEY), under.join(", "));
+  check("and stops at the edge of it", !under.includes(SIDEWAYS_KEY), under.join(", "));
+
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "DRAFT" } });
+  await prisma.agent.update({ where: { key: SIDEWAYS_KEY }, data: { status: "PAUSED" } });
+
+  const rehearsal = await prisma.rehearsal.create({
+    data: { website: `https://${MARK}wake.test`, host: `${MARK}wake.test`, scenario: "cold-outreach", status: "RUNNING" },
+  });
+
+  const woke = await wakeFor(rehearsal.id, [AGENT_KEY, SIDEWAYS_KEY, MANAGER_KEY]);
+  check("a draft is woken", woke.woke[AGENT_KEY] === "DRAFT", JSON.stringify(woke.woke));
+  check("an already-active agent is left alone", !(MANAGER_KEY in woke.woke));
+
+  // A person paused that agent on purpose. A test is not a reason to overrule
+  // it, and the refusal has to say so rather than fail silently.
+  check("a paused agent is not woken", !(SIDEWAYS_KEY in woke.woke));
+  check("and the refusal says why", woke.refused.some((entry) => entry.key === SIDEWAYS_KEY && entry.reason.includes("decision you made")));
+  check("the paused agent really is still paused", (await prisma.agent.findUnique({ where: { key: SIDEWAYS_KEY } }))?.status === "PAUSED");
+  check("the woken one really is active", (await prisma.agent.findUnique({ where: { key: AGENT_KEY } }))?.status === "ACTIVE");
+
+  // Written down before the status changed, which is what makes it reversible
+  // after a crash.
+  const recorded = await prisma.rehearsal.findUnique({ where: { id: rehearsal.id }, select: { wokeAgents: true } });
+  check("what was woken is on the record", Boolean((recorded?.wokeAgents as Record<string, string>)?.[AGENT_KEY]));
+
+  // A second live rehearsal holding the same agent. The first to finish must
+  // not put it back underneath the second — the symptom of that appears on the
+  // *other* run, which is the kind nobody reproduces.
+  const other = await prisma.rehearsal.create({
+    data: {
+      website: `https://${MARK}wake2.test`,
+      host: `${MARK}wake2.test`,
+      scenario: "cold-outreach",
+      status: "RUNNING",
+      wokeAgents: { [AGENT_KEY]: "DRAFT" },
+    },
+  });
+  const heldBack = await restoreWakes(rehearsal.id);
+  check("an agent another live run still needs is not put back", !heldBack.includes(AGENT_KEY), heldBack.join(", "));
+  check("and it is still active", (await prisma.agent.findUnique({ where: { key: AGENT_KEY } }))?.status === "ACTIVE");
+
+  await prisma.rehearsal.update({ where: { id: other.id }, data: { status: "SETTLED" } });
+  const restored = await restoreWakes(other.id);
+  check("once nothing needs it, it goes back", restored.includes(AGENT_KEY), restored.join(", "));
+  check("as a draft, not as something else", (await prisma.agent.findUnique({ where: { key: AGENT_KEY } }))?.status === "DRAFT");
+
+  // The crash path: a rehearsal left RUNNING with agents still awake.
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "ACTIVE" } });
+  const orphan = await prisma.rehearsal.create({
+    data: {
+      website: `https://${MARK}wake3.test`,
+      host: `${MARK}wake3.test`,
+      scenario: "cold-outreach",
+      status: "RUNNING",
+      wokeAgents: { [AGENT_KEY]: "DRAFT" },
+    },
+  });
+  const swept = await restoreOrphanedWakes();
+  check("a run killed mid-flight does not leave the floor switched on", swept >= 1, `${swept}`);
+  check("the agent is a draft again", (await prisma.agent.findUnique({ where: { key: AGENT_KEY } }))?.status === "DRAFT");
+  check(
+    "and the abandoned run is marked stopped rather than left running for ever",
+    (await prisma.rehearsal.findUnique({ where: { id: orphan.id } }))?.status === "STOPPED",
+  );
+
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "ACTIVE" } });
+  await prisma.agent.update({ where: { key: SIDEWAYS_KEY }, data: { status: "ACTIVE" } });
+}
+
+// --- 7. The catalogue ---------------------------------------------------------
 
 /**
  * Every workflow still starts with somebody who exists.
@@ -383,6 +482,7 @@ async function main() {
   await nothingRehearsedEntersASequence();
   itStaysOutOfThePipeline();
   await itCanBeThrownAway();
+  await itWakesWhatItNeedsAndPutsItBack();
   await everyScenarioStartsWithSomebody();
 
   await reset();

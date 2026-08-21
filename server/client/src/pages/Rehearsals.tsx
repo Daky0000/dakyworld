@@ -155,20 +155,24 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
         <div className="mt-7">
           <Eyebrow>What to put them through</Eyebrow>
           {/* Every specialist and most of the board seed as a draft, and a
-              draft picks nothing up. It is the single thing most likely to
-              stand between somebody and their first rehearsal, so it is said
-              here with the way out attached rather than left to be worked out
-              five greyed-out cards at a time. */}
+              draft picks nothing up. Rather than five greyed-out cards and an
+              errand, the run switches on what it needs — so what this says is
+              what will happen, not what you have to do first. */}
+          {chosen && chosen.wouldWake > 0 && (
+            <p className="mt-3 rounded-xl border border-blue/25 bg-blue/[.04] px-3 py-2 text-sm text-ink/75">
+              Starting this switches on {chosen.wouldWake} agent{chosen.wouldWake === 1 ? "" : "s"} that {chosen.wouldWake === 1 ? "has" : "have"}{" "}
+              never been switched on
+              {chosen.wouldWakeNames.length > 0 && (
+                <> — {chosen.wouldWakeNames.join(", ")}{chosen.wouldWake > chosen.wouldWakeNames.length ? " and others" : ""}</>
+              )}
+              . They go back to drafts when the run ends. Anyone you have deliberately paused stays paused.
+            </p>
+          )}
           {blocked.length > 0 && (
             <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              {blocked.length === catalogue?.scenarios.length
-                ? "None of these can start yet — every agent they begin with is still a draft."
-                : `${blocked.length} of these cannot start yet — the agent each begins with is still a draft.`}{" "}
-              An agent is a draft until you set it to Active, and a draft picks nothing up.{" "}
-              <a className="font-semibold underline" href="/agents">
-                Open the workforce
-              </a>{" "}
-              and activate {blocked.length === 1 ? blocked[0].startAgentName : "the ones you want to watch"}.
+              {blocked.length === 1
+                ? `“${blocked[0].name}” cannot start: ${blocked[0].unavailableBecause}`
+                : `${blocked.length} of these cannot start — the agent each begins with is paused or retired, and a rehearsal will not undo that.`}
             </p>
           )}
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
@@ -195,7 +199,7 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
           <p className="max-w-xl text-xs leading-relaxed text-muted">
             {chosen
               ? `Starts with ${chosen.startAgentName}. Everything after that is theirs to decide — who to ask, what to look at, who to hand it to. That is the part worth watching.`
-              : "Pick a workflow. Each one starts with a different person and fans out from there."}
+              : "Pick a workflow. Each one starts with a different person and fans out from there, switching on whoever it needs along the way."}
           </p>
           <Button variant="accent" disabled={!ready} onClick={() => start.mutate()}>
             {start.isPending ? "Starting…" : "Start the rehearsal"}
@@ -255,7 +259,10 @@ function ScenarioCard({ scenario, chosen, onChoose }: { scenario: RehearsalScena
         {scenario.reach === "wide" && <Badge tone="warn">wide</Badge>}
       </span>
       <span className="mt-1 block text-xs leading-relaxed text-muted">{scenario.purpose}</span>
-      <span className="mt-2 block font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">starts with {scenario.startAgentName}</span>
+      <span className="mt-2 block font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">
+        starts with {scenario.startAgentName}
+        {scenario.available && scenario.wouldWake > 0 && ` · wakes ${scenario.wouldWake}`}
+      </span>
       {scenario.unavailableBecause && <span className="mt-2 block text-xs text-amber-700">{scenario.unavailableBecause}</span>}
       {chosen && (
         <span className="mt-3 block border-t border-blue/20 pt-2.5">
@@ -345,6 +352,19 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
       />
 
       {notice && <p className="mb-5 rounded-xl border border-line bg-cream px-3 py-2 text-sm text-ink/70">{notice}</p>}
+
+      {/* Waking a draft is the one thing a rehearsal changes outside its own
+          tree, so it is said out loud in both states. While it runs, so nobody
+          is surprised to find an agent switched on; after it ends, so "it put
+          them back" is something you can read rather than trust. */}
+      {run.woke.length > 0 ? (
+        <p className="mb-5 rounded-xl border border-blue/25 bg-blue/[.04] px-3 py-2 text-sm text-ink/70">
+          This run switched on {run.woke.length} agent{run.woke.length === 1 ? "" : "s"} that had never been switched on —{" "}
+          {run.woke.join(", ")}. They go back to drafts when it ends.
+        </p>
+      ) : (
+        !live && <p className="mb-5 text-xs text-muted">Any agents this run switched on have been put back.</p>
+      )}
 
       <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatTile label="Spent" value={`$${run.spend.costUsd.toFixed(3)}`} sub={`${run.spend.modelCalls} model calls`} />

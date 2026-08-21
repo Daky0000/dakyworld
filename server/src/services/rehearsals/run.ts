@@ -5,6 +5,7 @@ import { isBusy, runTask } from "../agents/runner.js";
 import { recordCreated } from "../agents/state.js";
 import { findScenario } from "./scenarios.js";
 export { REHEARSAL_GUARANTEE } from "./policy.js";
+import { reportsUnder, restoreWakes, wakeFor } from "./wake.js";
 
 /**
  * Starting, feeding and tearing down a rehearsal.
@@ -93,11 +94,13 @@ export async function startRehearsal(input: StartInput) {
       `“${scenario.name}” starts with ${scenario.startAgent}, and there is no agent with that key. The roster has changed since this workflow was written.`,
     );
   }
-  if (agent.status !== "ACTIVE") {
-    // Said rather than queued. A rehearsal that sits still because the agent
-    // it starts with is paused looks exactly like a rehearsal that is broken.
+  // A draft is woken below, once there is a rehearsal row to record it against.
+  // Paused and retired are refused, and refused here rather than left to be
+  // discovered: a rehearsal that sits still because the agent it starts with
+  // was switched off looks exactly like a rehearsal that is broken.
+  if (agent.status === "PAUSED" || agent.status === "RETIRED") {
     throw new RehearsalRefused(
-      `“${scenario.name}” starts with ${agent.name}, who is a ${agent.status.toLowerCase()} and will not pick anything up. Set them to Active on the Agents screen, or choose another workflow.`,
+      `“${scenario.name}” starts with ${agent.name}, who is ${agent.status.toLowerCase()}. A rehearsal wakes agents that were never switched on; it does not undo a decision you made. Set them to Active on the Agents screen, or choose another workflow.`,
     );
   }
 
@@ -160,10 +163,21 @@ export async function startRehearsal(input: StartInput) {
     },
   });
 
+  // Wake everyone this run can hand work down to, before anything starts.
+  //
+  // The starting agent plus its whole reporting tree, because `delegate` only
+  // goes down the chart and that is the set a run reaches without guessing.
+  // Sideways hand-offs can reach anybody at all and are woken where they
+  // happen — see `wakeOne`. Every one of these is put back when the run ends.
+  const woken = await wakeFor(rehearsal.id, await reportsUnder(agent.key));
+  if (Object.keys(woken.woke).length > 0) {
+    console.log(`[rehearsal] woke ${Object.keys(woken.woke).length} draft agent(s) for ${rehearsal.id}: ${Object.keys(woken.woke).join(", ")}`);
+  }
+
   // Not awaited: the run is minutes long and belongs to the server.
   void runTask(task.id).catch((err) => console.error(`[rehearsal] ${rehearsal.id} root task died:`, (err as Error).message));
 
-  return rehearsal;
+  return { rehearsal, woke: woken };
 }
 
 /**
@@ -289,6 +303,14 @@ export async function settle(rehearsalId: string, known?: Awaited<ReturnType<typ
       ...(rehearsal.status === "RUNNING" && !moving ? { status: "SETTLED" as const, finishedAt: new Date() } : {}),
     },
   });
+
+  // Nothing left to run, so the floor goes back the way it was found. After the
+  // status write rather than before: `restoreWakes` skips agents that another
+  // running rehearsal still needs, and this one must no longer count as one.
+  if (rehearsal.status === "RUNNING" && !moving) {
+    const put = await restoreWakes(rehearsalId);
+    if (put.length > 0) console.log(`[rehearsal] put ${put.length} agent(s) back after ${rehearsalId}: ${put.join(", ")}`);
+  }
 }
 
 /**
@@ -326,6 +348,9 @@ export async function stopRehearsal(rehearsalId: string, why = "Stopped by the O
     where: { id: rehearsalId },
     data: { status: "STOPPED", finishedAt: new Date(), note: rehearsal.note ? `${rehearsal.note}\n\n${why}` : why },
   });
+  // Stopping is the commonest way a run ends early. An agent left awake by one
+  // that was abandoned is the floor quietly changed by a test.
+  await restoreWakes(rehearsalId);
   return asked;
 }
 
@@ -350,6 +375,11 @@ export async function teardownRehearsal(rehearsalId: string): Promise<{ tasks: n
   if (rehearsal.status === "RUNNING") {
     throw new RehearsalRefused("This one is still running. Stop it first — deleting a rehearsal mid-run would leave a task writing to a record that no longer exists.");
   }
+
+  // Normally already done by settle or by stop. Repeated here because deleting
+  // the row takes the record of what was woken with it, and after that nothing
+  // anywhere knows those agents were switched on by a test.
+  await restoreWakes(rehearsalId);
 
   const tasks = rehearsal.rootTaskId ? await tasksIn(rehearsal.rootTaskId) : [];
   // Deepest first, so a parent is never removed while a child still references it.

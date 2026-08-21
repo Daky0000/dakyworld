@@ -14,6 +14,7 @@ import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { ensureGapReviews, expireStaleHireRequests } from "./agents/hiring.js";
 import { expireStaleRequests } from "./approvals.js";
 import { raiseStandingWork } from "./agents/standingWork.js";
+import { restoreOrphanedWakes } from "./rehearsals/wake.js";
 import { purgeExpiredSessions } from "../lib/session.js";
 
 /**
@@ -234,6 +235,11 @@ export function startScheduler() {
   // lets go — and each carries a checkpoint, so being handed back costs
   // nothing but the seconds since the restart.
   void resumeInterruptedTasks().catch((err) => console.error("[scheduler] agent resume failed:", err));
+  // Agents a rehearsal woke and never got to put back, because the process
+  // holding the run was killed. Left alone, the next tick hands those agents
+  // real work — a test changing how the business runs, days later, with
+  // nothing on screen connecting the two.
+  void restoreOrphanedWakes().catch((err) => console.error("[scheduler] rehearsal wake restore failed:", err));
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
   console.log("  → Scheduler running (lead capture, care plan billing, email, WhatsApp/SMS, agent tasks — checks every minute)");
 }

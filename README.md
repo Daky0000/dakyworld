@@ -1299,13 +1299,26 @@ or a hand-off in its own timeline. *What it produced* is read off the records
 rather than off the timeline, because "the audit team ran" and a review you can
 open are different claims and only the second is evidence.
 
-### If nothing will start
+### It switches the agents on for you
 
-**An agent is a draft until you set it to Active, and a draft picks nothing
-up.** Every specialist ships as a draft on purpose. If a workflow is greyed out,
-the card says which agent is holding it up; open **Agents → Workforce** and set
-them to Active. The one-agent-one-task rule still applies, so a wide run works
-through the floor a task at a time rather than all at once.
+Every specialist and most of the board ship as a **draft**, and a draft picks
+nothing up. You do not have to go and switch them on: **starting a rehearsal
+wakes the agents it needs, and puts them all back when the run ends.** Each
+workflow card says how many it would wake before you press anything, and the run
+itself says which ones it woke while it is going and confirms they were put back
+when it is done.
+
+- It wakes the agent it starts with and everyone under them on the chart, and
+  wakes anyone else the moment an agent hands work sideways to them.
+- **Anyone you have deliberately paused stays paused**, and so does anyone
+  retired. Being a draft means never having been switched on; pausing is a
+  decision you made, and a test is not a reason to overrule it.
+- If the process running a rehearsal is killed mid-run, the next boot puts the
+  agents back and marks that run as stopped — so an abandoned test never leaves
+  the floor switched on.
+
+The one-agent-one-task rule still applies, so a wide run works through the floor
+a task at a time rather than all at once.
 
 ## Deploying
 

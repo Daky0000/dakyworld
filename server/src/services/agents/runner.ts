@@ -19,6 +19,7 @@ import { callModel } from "../../lib/models/call.js";
 import { withRunContext } from "../../lib/runContext.js";
 import { recordCreated, transition } from "./state.js";
 import { heldByRehearsal } from "../rehearsals/policy.js";
+import { wakeOne } from "../rehearsals/wake.js";
 
 /**
  * What actually runs an agent.
@@ -664,6 +665,13 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       if (target.status === "RETIRED" || target.status === "PAUSED") {
         return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work.`, isError: true };
       }
+      // In a rehearsal, a report that was never switched on is woken rather
+      // than left holding a task that will never start, and put back when the
+      // run ends. Without it the most interesting thing a rehearsal can show —
+      // a manager deciding this is somebody else's job — becomes a queued task
+      // and a silent screen. Outside a rehearsal this does nothing at all, and
+      // a draft goes on queueing exactly as it did before.
+      if (task.rehearsal && target.status === "DRAFT") await wakeOne(task.id, target.key);
 
       const child = await prisma.agentTask.create({
         data: {
@@ -791,6 +799,10 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       if (target.status === "RETIRED" || target.status === "PAUSED") {
         return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work. Try findAgent again, or use needSkill if nobody else can.`, isError: true };
       }
+      // Same as `delegate`, and this is the one that needs it most: a hand-off
+      // goes sideways to anybody on the roster, so it is far likelier than a
+      // delegation to land on a specialist nobody has switched on yet.
+      if (task.rehearsal && target.status === "DRAFT") await wakeOne(task.id, target.key);
 
       const child = await prisma.agentTask.create({
         data: {

@@ -5,6 +5,7 @@ import { requireRole } from "../middleware/auth.js";
 import { SCENARIOS } from "../services/rehearsals/scenarios.js";
 import { REHEARSAL_GUARANTEE, RehearsalRefused, nudge, startRehearsal, stopRehearsal, teardownRehearsal } from "../services/rehearsals/run.js";
 import { listRehearsals, readRehearsal } from "../services/rehearsals/view.js";
+import { reportsUnder } from "../services/rehearsals/wake.js";
 
 /**
  * The rehearsal room.
@@ -18,26 +19,32 @@ export const rehearsalsRouter = Router();
 rehearsalsRouter.use(requireRole("OWNER"));
 
 /**
- * The workflows on offer, and what each is for.
+ * The workflows on offer, what each is for, and who each would wake.
  *
- * Every scenario names an agent it starts with, and an agent that has been
- * paused or retired since the workflow was written cannot start anything. So
- * the roster is joined here rather than left for the run to discover: a
- * workflow that would refuse is shown as unavailable with the reason on it,
- * instead of as a button that fails.
+ * Every scenario names an agent it starts with, and most of the roster seeds as
+ * a draft — so the first version of this screen showed five greyed-out cards
+ * and an errand. A rehearsal wakes the drafts it needs and puts them back when
+ * it ends, so the honest thing to show is **who it would switch on**, counted
+ * here rather than discovered afterwards on the Agents screen.
+ *
+ * A paused or retired starting agent is still unavailable, and says so. That
+ * is a decision somebody made, and a test is not a reason to overrule it.
  */
 rehearsalsRouter.get("/scenarios", async (_req, res, next) => {
   try {
-    const agents = await prisma.agent.findMany({
-      where: { key: { in: SCENARIOS.map((scenario) => scenario.startAgent) } },
-      select: { key: true, name: true, title: true, status: true, autonomyLevel: true, dryRun: true, toolkit: true },
-    });
-    const byKey = new Map(agents.map((agent) => [agent.key, agent]));
+    const roster = await prisma.agent.findMany({ select: { key: true, name: true, title: true, status: true, managerKey: true } });
+    const byKey = new Map(roster.map((agent) => [agent.key, agent]));
 
-    res.json({
-      guarantee: REHEARSAL_GUARANTEE,
-      scenarios: SCENARIOS.map((scenario) => {
+    const scenarios = await Promise.all(
+      SCENARIOS.map(async (scenario) => {
         const agent = byKey.get(scenario.startAgent);
+        // The reporting tree under the starting agent — the set `delegate` can
+        // reach. A hand-off can go anywhere and is woken as it happens, so this
+        // is a floor on the count rather than a promise about it.
+        const reachable = agent ? await reportsUnder(agent.key) : [];
+        const wouldWake = reachable.filter((key) => byKey.get(key)?.status === "DRAFT");
+        const blocked = agent && (agent.status === "PAUSED" || agent.status === "RETIRED");
+
         return {
           key: scenario.key,
           name: scenario.name,
@@ -47,15 +54,20 @@ rehearsalsRouter.get("/scenarios", async (_req, res, next) => {
           startAgent: scenario.startAgent,
           startAgentName: agent?.name ?? scenario.startAgent,
           startAgentTitle: agent?.title ?? null,
-          available: agent?.status === "ACTIVE",
+          available: Boolean(agent) && !blocked,
+          /** How many drafts starting this would switch on, and put back afterwards. */
+          wouldWake: wouldWake.length,
+          wouldWakeNames: wouldWake.slice(0, 6).map((key) => byKey.get(key)?.name ?? key),
           unavailableBecause: !agent
             ? `There is no agent called ${scenario.startAgent} any more — the roster has moved on from this workflow.`
-            : agent.status === "ACTIVE"
-              ? null
-              : `${agent.name} is a ${agent.status.toLowerCase()} and will not pick anything up. Set them to Active on the Agents screen.`,
+            : blocked
+              ? `${agent.name} is ${agent.status.toLowerCase()}. A rehearsal wakes agents that were never switched on; it does not undo a decision you made.`
+              : null,
         };
       }),
-    });
+    );
+
+    res.json({ guarantee: REHEARSAL_GUARANTEE, scenarios });
   } catch (err) {
     next(err);
   }
@@ -79,8 +91,15 @@ const startInput = z.object({
 rehearsalsRouter.post("/", async (req, res, next) => {
   try {
     const input = startInput.parse(req.body);
-    const rehearsal = await startRehearsal({ ...input, userId: req.dbUser?.id ?? null });
-    res.status(201).json({ id: rehearsal.id, guarantee: REHEARSAL_GUARANTEE });
+    const { rehearsal, woke } = await startRehearsal({ ...input, userId: req.dbUser?.id ?? null });
+    res.status(201).json({
+      id: rehearsal.id,
+      guarantee: REHEARSAL_GUARANTEE,
+      // What it switched on to make the run possible, so that is something the
+      // Owner reads rather than discovers on the Agents screen afterwards.
+      woke: Object.keys(woke.woke),
+      refusedToWake: woke.refused,
+    });
   } catch (err) {
     if (err instanceof RehearsalRefused) return res.status(400).json({ error: err.message });
     next(err);

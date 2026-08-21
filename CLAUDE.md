@@ -1128,6 +1128,32 @@ open. Reads, writes to our own records, and **spending** all really happen; what
 the run cost is totalled on screen instead. `capture.run` is the one to watch:
 it spends without being outward.
 
+**A rehearsal wakes the agents it needs and puts them back** —
+`rehearsals/wake.ts`. Every specialist and most of the board seed as a **draft**
+and a draft picks nothing up, so the first version of the screen was five
+greyed-out workflows and an errand: switch eleven agents on by hand, and be left
+with a floor switched on because of a test, quietly taking real work. Starting a
+run now wakes the starting agent plus its whole reporting tree (`reportsUnder` —
+the set `delegate` can reach), and `delegate`/`handOff` wake a draft target as
+they reach it, which matters most for hand-offs because those go sideways to
+anybody at all.
+
+- **A draft is woken; a paused agent is not.** Pausing is something a person
+  *did* — it is how the Owner stops an agent's standing work — and a test is not
+  a reason to overrule it. Retired likewise. Both refuse with the reason said.
+- **`Rehearsal.wokeAgents` is written before the status changes**, in the same
+  transaction. An agent awake with no record of who woke it is an agent that
+  stays awake, and then a test has permanently changed how the business runs.
+- **`restoreWakes()` skips agents another RUNNING rehearsal still needs.** Two
+  runs at once will often wake the same specialist, and the first to finish
+  putting it back would stop the second dead — with the symptom appearing on the
+  *other* run.
+- **`restoreOrphanedWakes()` at boot**, beside `resumeInterruptedTasks()`, for a
+  container killed mid-run. It also marks that rehearsal STOPPED rather than
+  leaving it RUNNING for ever.
+- It restores only agents still sitting at ACTIVE, so an agent the Owner has
+  since paused or switched on for good is left alone.
+
 **Reasoning is on the timeline now, for every task and not only these.**
 `AgentStepKind.THOUGHT` existed since the runtime shipped and nothing ever wrote
 one — `runAgentLoop` collected every text block into `narration`, kept it on the
@@ -1139,12 +1165,14 @@ the summary and gets its own FINISHED step.
 The screen's own poll drives the run (`nudge`), which is unusual enough to be
 commented at the route: the minute tick would eventually start every queued task
 in the tree, and six hops at one a minute is five minutes of a still screen that
-reads as a hang. `checks/rehearsal.ts` is the committed half — 35 assertions,
-database only — and three of them are the **negatives** that catch the mistakes
-worth catching: an unrestricted agent must still really be allowed to send, an
-ordinary lead must still enrol, and an ordinary delegation must *not* come out
-marked as a rehearsal. `tmp/rehearsalDrive.ts` drives a whole run against a
-local Anthropic stub.
+reads as a hang. `checks/rehearsal.ts` is the committed half — 51 assertions,
+database only — and every claim in it carries the **negative** that catches the
+mistake worth catching: an unrestricted agent must still really be allowed to
+send, a rehearsal must not blind its own agents, an ordinary lead must still
+enrol, an ordinary delegation must *not* come out marked as a rehearsal, and a
+paused agent must stay paused. `tmp/rehearsalDrive.ts` drives a whole run
+against a local Anthropic stub, starting from a floor where every agent is a
+draft.
 
 **Client** — Vite + React + React Router + TanStack Query, in `server/client/`.
 The server serves the built client from `client/dist` when it exists, and falls
