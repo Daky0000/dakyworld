@@ -1237,6 +1237,76 @@ draws is a connection you make. It goes to ChatGPT when a key is set, and to a
 connected MCP server otherwise; with neither, it refuses with a sentence saying
 which to set up rather than failing obscurely.
 
+## The rehearsal room
+
+**Agents → Rehearsal.** Give it a website, choose a workflow, and watch the
+whole floor work on that business as if it were a real prospect. It is the
+answer to the question you can otherwise only answer by finding out the hard
+way: *what would these agents actually do if I turned them loose?*
+
+Nothing is faked. The same agents read the same prompts, call the same tools
+through the same gate, spend the same money on the same models, and hand work
+to each other by the same rules. Three things differ, and only three:
+
+1. **Nothing can leave the building.** Every call that would reach outside the
+   company — an email, a WhatsApp, a payment, a booking, a page published under
+   somebody's business name — stops at a preview, whatever autonomy the agents
+   are on. They are listed at the bottom of the run under *Prepared, and not
+   carried out*, each with the case the agent made for doing it: why, what it
+   gains, what the risk is. That list is exactly what you would be approving one
+   by one if the run were real.
+2. **The lead is a scratch lead.** The workflow needs one — looking a business
+   up, drafting to them and building them a page all take a lead — so a real row
+   is created and marked. It stays out of the leads list, out of the dashboard's
+   pipeline count, and out of every email sequence.
+3. **You can throw it away.** *Throw it away* deletes the tasks and the scratch
+   lead and everything that hung off them. What it spent stays on the ledger.
+
+**Research, reviews and drafts really run, and really cost money.** That is
+deliberate: a rehearsal that previewed the site audit would be a rehearsal in
+which every agent describes work you cannot open. The cost of the run is on the
+screen for the same reason — it is worth knowing what one prospect costs before
+the workforce is turned loose on four hundred.
+
+### The five workflows
+
+| Workflow | Starts with | What it shows you |
+|---|---|---|
+| **Website to first letter** | Sales Director | Whether anybody looks at the site before writing to them, and which finding the letter leads on |
+| **Four reviewers over the site** | Growth & Content Director | Whether the audit team is reached at all, and what the four reviewers disagree about |
+| **Build them a demo page** | Technical Director | Where the design direction comes from, and whether anything about the business gets invented |
+| **Scope and price the work** | Sales Director | Whether scope is argued from evidence, and what happens when the catalogue has no price for it |
+| **The whole floor** | Chief Executive | How the directors split it up, whether any of it is done twice, and where the chain breaks |
+
+Each one names **one agent to start with** and writes **one brief**, and
+everything after that is the workforce deciding for itself. That is the point:
+a scripted pipeline would prove the script works, which nobody doubts. What is
+in question is whether an agent given a website and a goal reaches the right
+colleague — and this is the only way to watch it happen.
+
+### Reading a run
+
+The timeline is **merged**: every step from every agent, in the order it
+happened, grouped by whoever was speaking. It reads like the transcript of a
+meeting, so a handover looks like a handover. The filters above it narrow to
+one thing at a time — *Reasoning* is what the agents said on the way, *Tools*
+is what they called, *Handovers* is who reached whom. Clicking an agent on the
+left reads only their part.
+
+*Who it went to* is built from what each agent recorded doing, not from a
+separate record — an agent appears under another because it wrote a delegation
+or a hand-off in its own timeline. *What it produced* is read off the records
+rather than off the timeline, because "the audit team ran" and a review you can
+open are different claims and only the second is evidence.
+
+### If nothing will start
+
+**An agent is a draft until you set it to Active, and a draft picks nothing
+up.** Every specialist ships as a draft on purpose. If a workflow is greyed out,
+the card says which agent is holding it up; open **Agents → Workforce** and set
+them to Active. The one-agent-one-task rule still applies, so a wide run works
+through the floor a task at a time rather than all at once.
+
 ## Deploying
 
 Client and server deploy as **one Railway service** on one domain

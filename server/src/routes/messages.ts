@@ -142,6 +142,10 @@ messagesRouter.get("/phone-only", async (req, res, next) => {
       where: {
         OR: [{ contactEmail: null }, { contactEmail: "" }],
         NOT: [{ contactPhone: null }, { contactPhone: "" }],
+        // A rehearsal lead starts with no number at all, and then `leadPrep`
+        // reads one off the business's own homepage — which is exactly how it
+        // would arrive on this list and be texted.
+        rehearsal: false,
         status: status ? (status as never) : undefined,
         groupId,
       },

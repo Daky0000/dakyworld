@@ -68,6 +68,10 @@ const navItems: NavItem[] = [
       // money — the same test the tool gate applies — so it sits behind the
       // Owner with the rest of the workforce.
       { to: "/approvals", label: "Approvals" },
+      // Watching the whole floor work one website at once. It belongs under
+      // Agents rather than beside Leads: the subject is the workforce, and the
+      // website is only what you point it at.
+      { to: "/rehearsals", label: "Rehearsal" },
       { to: "/agents/tools", label: "Tools" },
     ],
   },

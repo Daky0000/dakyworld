@@ -18,6 +18,7 @@ import { recordGap, searchRoster } from "./hiring.js";
 import { callModel } from "../../lib/models/call.js";
 import { withRunContext } from "../../lib/runContext.js";
 import { recordCreated, transition } from "./state.js";
+import { heldByRehearsal } from "../rehearsals/policy.js";
 
 /**
  * What actually runs an agent.
@@ -218,6 +219,34 @@ export async function step(
   }
 }
 
+/**
+ * Removes the THOUGHT step that turned out to be the summary.
+ *
+ * `onText` writes every text block the model produces, which is what makes an
+ * agent's reasoning visible while it is still working. The final block is a
+ * different thing — it is the account of the finished job — and it gets its
+ * own FINISHED step a line later. Without this the last two rows of every
+ * timeline are the same paragraph twice.
+ *
+ * Matched on the exact text rather than on being last, so a task whose closing
+ * words genuinely differ from its final thought keeps both.
+ */
+async function dropTrailingThought(taskId: string, summary: string) {
+  try {
+    const last = await prisma.agentTaskStep.findFirst({
+      where: { taskId },
+      orderBy: { seq: "desc" },
+      select: { id: true, kind: true, message: true },
+    });
+    if (last?.kind === "THOUGHT" && last.message === summary.slice(0, 2000)) {
+      await prisma.agentTaskStep.delete({ where: { id: last.id } });
+    }
+  } catch (err) {
+    // A tidy-up, not a step of the work. Never worth failing a finished task.
+    console.error(`[agent] could not tidy the closing thought on ${taskId}:`, (err as Error).message);
+  }
+}
+
 /** Keeps one enormous tool result from filling the database. */
 function trim(value: unknown): unknown {
   if (value === undefined) return undefined;
@@ -325,7 +354,18 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
       const result = await invokeTool(tool.key, toolInput, {
         agentKey: agent.key,
         userId: null,
-        dryRun: false,
+        // The rehearsal guarantee. `permissionFor` treats the caller's flag as
+        // a floor rather than a default, so an outward call in a rehearsal
+        // stops at a preview no matter what autonomy its agent is on — and
+        // because `delegate` and `handOff` copy `rehearsal` onto the tasks they
+        // create, it holds across a run that fans out to nine agents.
+        //
+        // Narrowed to the outward calls rather than applied to everything, and
+        // `services/rehearsals/policy.ts` is where that line is argued: a
+        // blanket dry run refuses every read (a read has no preview) and
+        // previews away every artefact, which would make a rehearsal a test of
+        // nothing.
+        dryRun: task.rehearsal && heldByRehearsal(tool),
         taskId: task.id,
         rationale,
         // What makes a repeat of this call the same call. Only the runner can
@@ -401,7 +441,7 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
   return [...tools, ...workflowTools(agent, task, counters)];
 }
 
-interface Counters {
+export interface Counters {
   toolCalls: number;
   dryRun: number;
   refused: number;
@@ -445,8 +485,14 @@ function restoreCounters(stored: Record<string, unknown> | undefined): Counters 
  * learnt, and how a manager hands work down. Granting them per-agent would
  * mean an agent could be configured unable to escalate, which is not a
  * configuration anybody should be able to make.
+ *
+ * Exported for `checks/rehearsal.ts`, which drives `delegate` and `handOff`
+ * directly. Nothing about them needs a model, and asserting that a delegated
+ * child inherits its parent's rehearsal flag by *writing that shape in the
+ * harness* would be a check that goes on passing after this function stops
+ * doing it.
  */
-function workflowTools(agent: Agent, task: AgentTask, counters: Counters): AgentTool[] {
+export function workflowTools(agent: Agent, task: AgentTask, counters: Counters): AgentTool[] {
   const escalate: AgentTool = {
     name: "escalate",
     description:
@@ -632,6 +678,9 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
           projectId: task.projectId,
           proposalId: task.proposalId,
           invoiceId: task.invoiceId,
+          // Inherited, always. A rehearsal that could only hold its first agent
+          // would be a rehearsal whose second agent sends the letter.
+          rehearsal: task.rehearsal,
         },
       });
       counters.delegated += 1;
@@ -756,6 +805,9 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
           projectId: task.projectId,
           proposalId: task.proposalId,
           invoiceId: task.invoiceId,
+          // Same reason as `delegate`. Handing work sideways must not be a way
+          // out of a rehearsal.
+          rehearsal: task.rehearsal,
         },
       });
       counters.handedOff += 1;
@@ -1173,6 +1225,23 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           tools,
           effort: effortFor(agent),
           resume: saved?.state ?? null,
+          // What it said on the way, written down as it says it.
+          //
+          // `AgentStepKind.THOUGHT` has existed since the runtime shipped and
+          // nothing ever wrote one. The loop collected every text block into
+          // `narration`, kept it on the checkpoint, and handed it back at the
+          // end inside `result` — so an agent's reasoning existed, was paid
+          // for, and was visible to nobody until after the run was over, if
+          // then. The timeline showed which tools were called and never once
+          // showed *why*, which is the question anybody watching an agent
+          // actually has.
+          //
+          // Written before the tool calls of the same turn, because that is
+          // the order the model produced them: the sentence explaining the
+          // call comes above the call.
+          onText: async (text) => {
+            await step(task.id, "THOUGHT", text);
+          },
           onCheckpoint: async (state) => {
             const held = await saveCheckpoint(task.id, runOwner, state, { ...counters });
             if (!held) lostOwnership = true;
@@ -1210,6 +1279,12 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         // Everything it did was a preview. There is work here, and none of it
         // has taken effect — which is exactly what autonomy 1 is for.
         const needsApproval = counters.dryRun > 0;
+        // The last thing an agent says is its summary, not a thought on the
+        // way — and `onText` has already written it as one. Dropping that
+        // duplicate here rather than not writing it in the first place,
+        // because the loop cannot know which text block will turn out to be
+        // the last one until the turn ends.
+        await dropTrailingThought(task.id, summary);
         await step(task.id, "FINISHED", summary.slice(0, 500));
 
         return finishTask(task.id, needsApproval ? "NEEDS_APPROVAL" : "DONE", {

@@ -60,7 +60,13 @@ const SORTS: Record<string, Prisma.LeadOrderByWithRelationInput> = {
 };
 
 /** Turns the filter bar's query string into a Prisma filter. */
-function buildWhere(query: Record<string, unknown>): Prisma.LeadWhereInput {
+/**
+ * The one filter every list, count, group and export on this screen is built
+ * from. Exported as `buildLeadWhere` so `checks/rehearsal.ts` can assert what
+ * it produces — hiding a rehearsal lead is a claim worth a regression check,
+ * and the alternative is asserting it eight times over eight queries.
+ */
+export function buildWhere(query: Record<string, unknown>): Prisma.LeadWhereInput {
   const str = (key: string) => (typeof query[key] === "string" && query[key] ? (query[key] as string) : undefined);
   const where: Prisma.LeadWhereInput = {};
 
@@ -81,6 +87,15 @@ function buildWhere(query: Record<string, unknown>): Prisma.LeadWhereInput {
 
   const scraperSourceId = str("scraperSourceId");
   if (scraperSourceId) where.scraperSourceId = scraperSourceId;
+
+  // Rehearsal leads are hidden unless asked for. They are real rows — the
+  // workflow under test takes a lead id — but they are not prospects, and one
+  // sitting at the top of the list because it was created five minutes ago is
+  // somebody about to write to a business nobody chose to approach.
+  //
+  // Every count, group and export on this screen is built from this filter, so
+  // this line is the whole exclusion rather than the first of eight.
+  where.rehearsal = str("rehearsal") === "only" ? true : false;
 
   const scraperRunId = str("scraperRunId");
   if (scraperRunId) where.scraperRunId = scraperRunId;

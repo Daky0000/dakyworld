@@ -1668,6 +1668,15 @@ export interface AgentList {
 
 export type AgentTaskStatus = "QUEUED" | "RUNNING" | "NEEDS_APPROVAL" | "BLOCKED" | "DONE" | "FAILED" | "CANCELLED";
 export type AgentTaskOrigin = "OWNER" | "SCHEDULE" | "EVENT" | "AGENT";
+/**
+ * Every kind of step a task's timeline can hold.
+ *
+ * Kept in step with `AgentStepKind` in schema.prisma. Six of these were added
+ * server-side over August and never reached this union, so a CONSULTED or
+ * HANDED_OFF step rendered with the fallback glyph — the two kinds that are
+ * one agent reaching another, which is the most interesting thing a timeline
+ * ever shows, drawn as an anonymous dot.
+ */
 export type AgentStepKind =
   | "STARTED"
   | "THOUGHT"
@@ -1675,10 +1684,16 @@ export type AgentStepKind =
   | "PREPARED"
   | "REFUSED"
   | "DELEGATED"
+  | "CONSULTED"
+  | "HANDED_OFF"
+  | "GAP_RAISED"
   | "REMEMBERED"
+  | "NOTED"
   | "BLOCKED"
   | "FINISHED"
-  | "FAILED";
+  | "FAILED"
+  | "INTERRUPTED"
+  | "RESUMED";
 
 /** How much work an agent has on. Shown on its card, so the roster is live. */
 export interface AgentWorkload {
@@ -2345,4 +2360,117 @@ export interface InboxSuggestion {
   user: string;
   canReusePassword: boolean;
   from: "smtp" | null;
+}
+
+// --- The rehearsal room -----------------------------------------------------
+
+export type RehearsalStatus = "RUNNING" | "SETTLED" | "STOPPED";
+
+export interface RehearsalScenario {
+  key: string;
+  name: string;
+  purpose: string;
+  exercises: string[];
+  reach: "narrow" | "wide";
+  startAgent: string;
+  startAgentName: string;
+  startAgentTitle: string | null;
+  available: boolean;
+  unavailableBecause: string | null;
+}
+
+export interface RehearsalScenarioList {
+  guarantee: string;
+  scenarios: RehearsalScenario[];
+}
+
+export interface RehearsalSummary {
+  id: string;
+  website: string;
+  host: string;
+  businessName: string | null;
+  scenario: string;
+  scenarioName: string;
+  status: RehearsalStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  costUsd: number;
+  taskCount: number;
+  toolCalls: number;
+  preparedCalls: number;
+}
+
+export interface RehearsalStep {
+  id: string;
+  at: string;
+  agentKey: string;
+  agentName: string;
+  taskId: string;
+  taskTitle: string;
+  kind: AgentStepKind;
+  message: string;
+  tool: string | null;
+  ok: boolean | null;
+  dryRun: boolean | null;
+  data: unknown;
+}
+
+export interface RehearsalDetail {
+  id: string;
+  website: string;
+  host: string;
+  businessName: string | null;
+  scenario: string;
+  scenarioName: string;
+  note: string | null;
+  status: RehearsalStatus;
+  /** What it is doing right now, in words. Derived from the tasks, never stored. */
+  movement: string;
+  startedAt: string;
+  finishedAt: string | null;
+  lead: { id: string; companyName: string | null; website: string | null; leadScore: number; status: string; tags: string[] } | null;
+  spend: {
+    costUsd: number;
+    toolCalls: number;
+    preparedCalls: number;
+    refusedCalls: number;
+    modelCalls: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
+  agents: Array<{
+    key: string;
+    name: string;
+    title: string;
+    tasks: Array<{ id: string; title: string; status: AgentTaskStatus; summary: string | null; blockedReason: string | null; error: string | null }>;
+    status: AgentTaskStatus;
+    costUsd: number;
+    toolCalls: number;
+    preparedCalls: number;
+    steps: number;
+  }>;
+  edges: Array<{ from: string; to: string; kind: AgentStepKind; label: string; at: string }>;
+  timeline: RehearsalStep[];
+  prepared: Array<{
+    id: string;
+    agentKey: string;
+    tool: string;
+    wouldDo: string;
+    heldBecause: string | null;
+    status: string;
+    why: string;
+    gain: string;
+    risk: string;
+    input: unknown;
+    createdAt: string;
+  }>;
+  produced: {
+    audits: Array<{ id: string; ranAt: string; overallScore: number; verdict: string; pdfFileId: string | null; markdownFileId: string | null }>;
+    demos: Array<{ id: string; slug: string; title: string; status: string; version: number }>;
+    proposals: Array<{ id: string; title: string; status: string; price: string; currency: string }>;
+    emails: Array<{ id: string; subject: string; status: string; purpose: string; toEmail: string }>;
+    research: { ranAt: string; costUsd: string } | null;
+    notes: number;
+    memories: number;
+  };
 }

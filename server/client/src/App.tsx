@@ -18,6 +18,7 @@ import { Settings } from "./pages/Settings";
 import { Agents } from "./pages/Agents";
 import { Tools } from "./pages/Tools";
 import { Approvals } from "./pages/Approvals";
+import { Rehearsals } from "./pages/Rehearsals";
 import { ClientDetail } from "./pages/ClientDetail";
 
 export default function App() {
@@ -43,6 +44,8 @@ export default function App() {
         <Route path="/agents" element={<Agents />} />
         <Route path="/agents/tools" element={<Tools />} />
         <Route path="/approvals" element={<Approvals />} />
+        <Route path="/rehearsals" element={<Rehearsals />} />
+        <Route path="/rehearsals/:id" element={<Rehearsals />} />
       </Route>
     </Routes>
   );

@@ -1097,11 +1097,60 @@ existed the two disagreed: the route wrote DONE while the letter that task had
 prepared sat PENDING under Approvals. It answers 409 and names them now.
 Deciding the actions is what closes the task.
 
+**The rehearsal room** — `src/services/rehearsals/`, `routes/rehearsals.ts`, the
+`/rehearsals` screen. One real website, put through one real workflow, with
+nothing able to leave the building. It exists because there was no way to answer
+*what would actually happen if I pointed the workforce at this business* short
+of making a real lead and giving a real agent a real task — which works, leaves
+a real lead in the pipeline, and depends on every agent in the chain being at an
+autonomy that cannot send anything.
+
+Nothing is simulated. Same agents, same prompts, same tools through the same
+gate, same money, same delegation rules. Exactly three things differ:
+
+- **`AgentTask.rehearsal`** is passed to `invokeTool` as `dryRun`, and
+  `delegate` and `handOff` copy it onto the tasks they create — so the
+  guarantee holds across a run that fans out to nine agents.
+- **`Lead.rehearsal`** marks the scratch lead: hidden from `buildWhere` in
+  `routes/leads.ts` (and so from every count, group and export built on it),
+  from the dashboard's pipeline count, from the phone-only list, and — the one
+  that matters — **refused by `enrol()`**, which is the only door into an email
+  sequence. That last one is not belt and braces: the scratch lead starts with
+  no address and `leadPrep` fills one in from the business's own homepage.
+- **It can be thrown away**, which is what makes the second one cheap.
+
+**The dry run is narrowed to `outward`, and `services/rehearsals/policy.ts`
+argues why.** A blanket dry run is the obvious first draft and it is wrong
+twice: a read has no `preview`, so `invokeTool` refuses it outright — every
+agent in the run blind, every timeline a wall of refusals — and previewing the
+writes would mean a rehearsal in which every agent describes work nobody can
+open. Reads, writes to our own records, and **spending** all really happen; what
+the run cost is totalled on screen instead. `capture.run` is the one to watch:
+it spends without being outward.
+
+**Reasoning is on the timeline now, for every task and not only these.**
+`AgentStepKind.THOUGHT` existed since the runtime shipped and nothing ever wrote
+one — `runAgentLoop` collected every text block into `narration`, kept it on the
+checkpoint and handed it back after the run, so an agent's reasoning was paid
+for and shown to nobody. `onText` writes it as it happens.
+`dropTrailingThought()` removes the last one, because the final text block is
+the summary and gets its own FINISHED step.
+
+The screen's own poll drives the run (`nudge`), which is unusual enough to be
+commented at the route: the minute tick would eventually start every queued task
+in the tree, and six hops at one a minute is five minutes of a still screen that
+reads as a hang. `checks/rehearsal.ts` is the committed half — 35 assertions,
+database only — and three of them are the **negatives** that catch the mistakes
+worth catching: an unrestricted agent must still really be allowed to send, an
+ordinary lead must still enrol, and an ordinary delegation must *not* come out
+marked as a rehearsal. `tmp/rehearsalDrive.ts` drives a whole run against a
+local Anthropic stub.
+
 **Client** — Vite + React + React Router + TanStack Query, in `server/client/`.
 The server serves the built client from `client/dist` when it exists, and falls
 back to an API-only status page when it doesn't.
 
-**Database** — Prisma, 42 models. `prisma/schema.prisma` is the source of truth.
+**Database** — Prisma, 43 models. `prisma/schema.prisma` is the source of truth.
 
 **Integration keys live encrypted in the database**, not in env vars — the
 `AppSetting` model, keyed by `APP_SECRET`. That is deliberate: adding or

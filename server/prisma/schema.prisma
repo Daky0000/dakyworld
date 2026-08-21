@@ -66,6 +66,7 @@ model User {
   uploadedFiles    StoredFile[]
   agentTasks       AgentTask[]
   handledMail      MailMessage[]
+  rehearsals       Rehearsal[]
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -224,6 +225,21 @@ model Lead {
   socialLinks  Json? // { facebook, instagram, linkedin, twitter }
   tags         String[] @default([])
 
+  /// This lead exists only so a rehearsal has something to work on.
+  ///
+  /// A rehearsal puts a real workflow through a real business's website, and
+  /// the workflow needs a lead — `lead.prepare`, `email.draft` and the demo
+  /// builder all take a lead id, and faking one would be testing something
+  /// other than what runs in production. So the row is real, and this marks it
+  /// as not part of the pipeline.
+  ///
+  /// It is a second line of defence rather than the first. The first is that
+  /// every tool call in a rehearsal is forced to a preview (see
+  /// `AgentTask.rehearsal`), so nothing outward can happen whatever this says.
+  /// This is what keeps a rehearsal out of the counts, out of the leads list,
+  /// and — the one that matters — out of an email sequence.
+  rehearsal Boolean @default(false)
+
   /// The provider's own id (Google place id, profile URL). Kept for re-scraping
   /// the same record; `dedupeKey` is what actually prevents duplicates, since a
   /// business found on Maps and again on its website must collapse into one lead.
@@ -262,7 +278,9 @@ model Lead {
   mailMessages   MailMessage[]
   mailThreads    MailThread[]
 
-  agentTasks AgentTask[]
+  agentTasks   AgentTask[]
+  /// Set when this lead is a rehearsal's scratch record. Deleted with it.
+  rehearsalRun Rehearsal?
 
   @@index([status])
   @@index([groupId])
@@ -2070,6 +2088,20 @@ model AgentTask {
   createdBy   User?           @relation(fields: [createdById], references: [id])
   createdById String?
 
+  /// This task is part of a rehearsal, and nothing it does may leave the building.
+  ///
+  /// Read in one place — the runner's tool wrapper, which passes it as
+  /// `invokeTool`'s `dryRun` — and inherited by every task `delegate` and
+  /// `handOff` create, so a run that fans out to nine agents is nine agents
+  /// that can all only prepare. That is the whole guarantee: the gate every
+  /// call already passes through is the gate that enforces it, rather than a
+  /// list of tools somebody has to remember to keep in step.
+  ///
+  /// It deliberately does not change the prompt, the toolkit, the model or the
+  /// order of anything. A rehearsal that behaved differently from the real
+  /// thing would be testing the rehearsal.
+  rehearsal Boolean @default(false)
+
   /// Set when a manager delegated this to a report.
   parent   AgentTask?  @relation("Delegation", fields: [parentId], references: [id])
   parentId String?
@@ -3092,4 +3124,100 @@ model MailSyncState {
   updatedAt DateTime @updatedAt
 
   @@unique([mailbox, folder])
+}
+
+// ---------------------------------------------------------------------------
+// The rehearsal room
+// ---------------------------------------------------------------------------
+
+/// How far along a rehearsal is.
+///
+/// Deliberately not the same set as `AgentTaskStatus`. A rehearsal is a *tree*
+/// of tasks and the question a person watching it asks is "is anything still
+/// moving", which no single task's status answers — a root that finished ten
+/// minutes ago can have four descendants still working.
+enum RehearsalStatus {
+  /// Something in the tree is running, or queued and about to be picked up.
+  RUNNING
+  /// Nothing left to run: every task in the tree reached an end state.
+  SETTLED
+  /// A person stopped it part-way. What had already run is still here to read.
+  STOPPED
+}
+
+/// One workflow, put through one real website, with nothing able to leave the
+/// building.
+///
+/// This is the answer to a question that had none: *what would actually happen
+/// if I pointed the workforce at this business?* Before it, the only way to
+/// find out was to make a real lead and give a real agent a real task — which
+/// works, and leaves a real lead in the pipeline, and depends on every agent
+/// in the chain being at an autonomy that cannot send anything.
+///
+/// **What makes it a rehearsal rather than a simulation.** Nothing is faked.
+/// The same agents read the same prompts, call the same tools through the same
+/// gate, spend the same money on the same models, and delegate to each other
+/// by the same rules. Three things differ, and only three:
+///
+/// 1. Every task in the tree carries `AgentTask.rehearsal`, which the runner
+///    passes to `invokeTool` as `dryRun` — so every outward or spending call
+///    stops at a preview no matter what autonomy the agent is on.
+/// 2. The lead it works on carries `Lead.rehearsal`, which keeps it out of the
+///    pipeline, the counts and — the one that matters — the email sequences.
+/// 3. It can be torn down. Deleting the rehearsal deletes the scratch lead and
+///    everything that hung off it, which is what makes it safe to run twenty.
+///
+/// Everything else — the reasoning, the order, the arguments between agents,
+/// the refusals — is what would really happen, which is the entire point.
+model Rehearsal {
+  id String @id @default(cuid())
+
+  /// The site the whole run is about, normalised to an absolute URL.
+  website      String
+  /// Its hostname without `www.`, which is the name until research finds a better one.
+  host         String
+  /// What the business is called, when it is known. Filled by research as the run goes.
+  businessName String?
+
+  /// Which workflow was put through it — a key from services/rehearsals/scenarios.ts.
+  ///
+  /// A string rather than an enum: the catalogue of workflows is code that
+  /// changes with the roster, and a migration per scenario would make adding
+  /// one a deployment. A rehearsal whose scenario has since been renamed still
+  /// reads back — it just says so.
+  scenario String
+  /// Anything the person wanted watched, in their own words. Appended to the root brief.
+  note     String?
+
+  status RehearsalStatus @default(RUNNING)
+
+  /// The scratch lead. Optional because a rehearsal outlives its teardown.
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId String? @unique
+
+  /// The task the run starts from. Everything else in it descends from this by
+  /// `AgentTask.parentId`, which is what both `delegate` and `handOff` set —
+  /// so the tree is the run, and there is no second bookkeeping to drift.
+  rootTaskId String?
+
+  /// What the whole tree cost, totalled as it settles. Kept on the row because
+  /// teardown deletes the tasks and "what did that cost me" should survive it.
+  costUsd       Decimal @default(0) @db.Decimal(10, 6)
+  taskCount     Int     @default(0)
+  toolCalls     Int     @default(0)
+  /// How many of those stopped at a preview. In a rehearsal this is every
+  /// outward call there was, and reading it as a fraction of `toolCalls` is
+  /// how you see how much of the workflow needs a person.
+  preparedCalls Int     @default(0)
+
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  createdBy   User?     @relation(fields: [createdById], references: [id])
+  createdById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, startedAt])
+  @@index([createdAt])
 }

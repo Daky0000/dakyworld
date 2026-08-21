@@ -46,18 +46,51 @@ const STATUS_LABEL: Record<AgentTaskStatus, string> = {
   CANCELLED: "cancelled",
 };
 
-/** The glyph and colour for each kind of step. Read down the left of a timeline. */
-const STEP_STYLE: Record<AgentStepKind, { mark: string; tone: string }> = {
+/**
+ * The glyph and colour for each kind of step. Read down the left of a timeline.
+ *
+ * Six kinds were missing until Aug 2026 and fell through to the THOUGHT glyph —
+ * including CONSULTED and HANDED_OFF, which are the two steps where one agent
+ * reaches another. The most interesting line in any timeline was drawn as an
+ * anonymous grey dot.
+ */
+export const STEP_STYLE: Record<AgentStepKind, { mark: string; tone: string }> = {
   STARTED: { mark: "▸", tone: "text-ink/40" },
   THOUGHT: { mark: "·", tone: "text-ink/45" },
   TOOL_CALL: { mark: "•", tone: "text-blue" },
   PREPARED: { mark: "◇", tone: "text-amber-600" },
   REFUSED: { mark: "×", tone: "text-red-600" },
   DELEGATED: { mark: "↳", tone: "text-blue" },
+  CONSULTED: { mark: "?", tone: "text-blue" },
+  HANDED_OFF: { mark: "⇢", tone: "text-blue" },
+  GAP_RAISED: { mark: "◦", tone: "text-amber-600" },
   REMEMBERED: { mark: "✱", tone: "text-ink/50" },
+  NOTED: { mark: "✎", tone: "text-ink/50" },
   BLOCKED: { mark: "!", tone: "text-amber-600" },
   FINISHED: { mark: "✓", tone: "text-emerald-600" },
   FAILED: { mark: "×", tone: "text-red-600" },
+  INTERRUPTED: { mark: "‖", tone: "text-ink/40" },
+  RESUMED: { mark: "▸", tone: "text-ink/40" },
+};
+
+/** Shared with the rehearsal room, which shows the same kinds interleaved across agents. */
+export const STEP_LABEL: Record<AgentStepKind, string> = {
+  STARTED: "started",
+  THOUGHT: "thinking",
+  TOOL_CALL: "used a tool",
+  PREPARED: "prepared, not done",
+  REFUSED: "refused",
+  DELEGATED: "delegated",
+  CONSULTED: "asked a colleague",
+  HANDED_OFF: "handed over",
+  GAP_RAISED: "nobody can do this",
+  REMEMBERED: "remembered",
+  NOTED: "added to the record",
+  BLOCKED: "stopped and asked",
+  FINISHED: "finished",
+  FAILED: "failed",
+  INTERRUPTED: "paused, kept its place",
+  RESUMED: "carried on",
 };
 
 export function AgentWork({ agent }: { agent: AgentDetail }) {

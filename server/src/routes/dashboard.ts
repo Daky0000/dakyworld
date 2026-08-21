@@ -33,7 +33,9 @@ dashboardRouter.get("/", async (_req, res, next) => {
         _sum: { priceAmount: true },
         _count: true,
       }),
-      prisma.lead.groupBy({ by: ["status"], _count: true }),
+      // Rehearsals are not pipeline. Counting them would put a number on this
+      // screen that no amount of selling produced.
+      prisma.lead.groupBy({ by: ["status"], _count: true, where: { rehearsal: false } }),
     ]);
 
     // Retainer health. MRR alone says nothing about whether it is about to

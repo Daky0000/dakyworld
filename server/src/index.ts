@@ -24,6 +24,7 @@ import { usersRouter } from "./routes/users.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
 import { agentsRouter } from "./routes/agents.js";
+import { rehearsalsRouter } from "./routes/rehearsals.js";
 import { captureRouter } from "./routes/capture.js";
 import { toolsRouter } from "./routes/tools.js";
 import { approvalsRouter } from "./routes/approvals.js";
@@ -206,6 +207,9 @@ app.use("/api/users", usersRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/scrapers", scrapersRouter);
 app.use("/api/agents", agentsRouter);
+// One workflow, one real website, nothing able to leave the building. Beside
+// the workforce rather than inside it: it is about all of them at once.
+app.use("/api/rehearsals", rehearsalsRouter);
 app.use("/api/capture", captureRouter);
 app.use("/api/demos", demosRouter);
 app.use("/api/audits", auditsRouter);

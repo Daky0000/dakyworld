@@ -89,6 +89,19 @@ export async function enrol(args: { sequenceId: string; leadId?: string; clientI
   if (!sequence) return { enrolled: false, reason: "No such sequence" };
   if (sequence.steps.length === 0) return { enrolled: false, reason: "That sequence has no steps yet" };
 
+  // A rehearsal's scratch lead is a real row against a real business, and
+  // `leadPrep` fills its contact fields from that business's own homepage. So
+  // by the time a rehearsal has been running ten minutes there is a genuine
+  // address on it, and the one thing that must never happen is a sequence
+  // starting against it. Refused here rather than at each caller: this is the
+  // only door into a sequence, for the tool, the trigger and a person alike.
+  if (args.leadId) {
+    const lead = await prisma.lead.findUnique({ where: { id: args.leadId }, select: { rehearsal: true } });
+    if (lead?.rehearsal) {
+      return { enrolled: false, reason: "That lead belongs to a rehearsal. Nothing in a rehearsal is ever written to." };
+    }
+  }
+
   const context = await resolveContext({ leadId: args.leadId, clientId: args.clientId });
   if (!context.email) return { enrolled: false, reason: `${context.name ?? "This contact"} has no email address` };
   if (await isSuppressed(context.email)) return { enrolled: false, reason: `${context.email} has unsubscribed` };
