@@ -1,5 +1,39 @@
 # docs
 
+## The complete reference
+
+`dakyworld-os-reference.pdf` — every agent, every instruction, every workflow
+and every tool, in one document. Where the master workflow below explains how
+the company runs in prose somebody wrote, this is the reference behind it, and
+**its whole body is generated**: the roster and the ten prompt layers out of
+`services/agentRegistry.ts`, the writing jobs out of `services/writers/`
+(including the shipped doctrine each one runs on today), the clock out of
+`services/scheduler.ts`, and the catalogue — with the arguments each tool takes
+and how many agents hold it — out of `services/tools/catalogue.ts`.
+
+Two checks it performs while building, because both are invisible otherwise:
+a grant naming a tool the catalogue does not have (a dashed chip, and a warning
+callout under the roster), and a tool in nobody's seeded toolkit — which is the
+ordinary consequence of `ensureAgents()` only ever creating, and the list to
+work down when something "cannot be done".
+
+```bash
+# from server/
+npx tsx build-reference-doc.ts        # -> docs/dakyworld-os-reference.html
+
+"C:/Program Files/Google/Chrome/Application/chrome.exe" --headless=new \
+  --disable-gpu --no-pdf-header-footer --virtual-time-budget=30000 \
+  --print-to-pdf="<absolute path>/docs/dakyworld-os-reference.pdf" \
+  "file:///<absolute path>/docs/dakyworld-os-reference.html"
+```
+
+Sixty-two pages, with nine sparse ones (the tails of the four parts and of the
+longer writing briefs) is the expected shape. The agent cards are set at 7.9pt
+on purpose: at the body's own size only one fitted on a page and fifty agents
+cost fifty half-empty pages. Everything else about rebuilding and checking it —
+absolute paths, the embedded fonts, the PyMuPDF page check — is identical to the
+master workflow below.
+
 ## The Agent Master Workflow
 
 `agent-master-workflow.pdf` — the operating standard for the agent workforce.
