@@ -102,9 +102,19 @@ column to the model can never quietly widen an existing response.
   [`src/lib/secrets.ts`](server/src/lib/secrets.ts). Keys are masked in every
   API response and never unmasked. **Rotating `APP_SECRET` makes every stored
   key unreadable.**
-- **Row-level security is on for all 42 tables**
+- **Row-level security is on for all 54 tables**
   ([migration](server/prisma/migrations/20260819180100_row_level_security/migration.sql)).
-  Read that file before reasoning about it — Postgres skips RLS for a table's
+  **It said 42 and meant it, and that was the problem**: enrolling a table is a
+  line in a migration and nothing enforced that a new one got it, so seven
+  tables added after August 19 never did — including `ActionRequest`, which
+  holds the exact validated payload of every outward action an agent has
+  prepared, and `Message`/`MessageThread`, which hold every WhatsApp and SMS
+  conversation with a real person. They were enrolled on 21 August
+  ([migration](server/prisma/migrations/20260821090000_execution_spine/migration.sql)).
+  **Anything that adds a table adds an `ENABLE ROW LEVEL SECURITY` line for it
+  in the same migration.** The count in this sentence is the check: if it does
+  not match `model` in `schema.prisma`, something was missed.
+  Read the original migration before reasoning about any of it — Postgres skips RLS for a table's
   owner, and the app owns every table, so the app is unaffected and *every other
   role reads zero rows*. That covers what actually happens to a small system: a
   read-only role handed to a BI tool, a connection string out of a dashboard, a

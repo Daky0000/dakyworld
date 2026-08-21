@@ -1,4 +1,5 @@
 import { prisma } from "./prisma.js";
+import { attribution } from "./runContext.js";
 
 /**
  * Every model call the app makes, priced and written down.
@@ -17,6 +18,18 @@ import { prisma } from "./prisma.js";
 export interface LedgerEntry {
   /** What asked for it: "email.draft", "content.humanise", "agent.cro". */
   purpose: string;
+  /**
+   * The run this belongs to, when the caller knows.
+   *
+   * Usually it does not, and does not need to: most model calls happen several
+   * frames below anything holding a task id — a writer inside a tool handler
+   * inside an agent's loop — so this falls through to the ambient run context
+   * (`runContext.ts`) that the runner sets once around the whole task. Passing
+   * it explicitly is for the caller that knows better than the ambient one.
+   */
+  taskId?: string | null;
+  agentKey?: string | null;
+  traceId?: string | null;
   /** The model that actually served it, as the API reported it. */
   model: string;
   inputTokens: number;
@@ -33,10 +46,14 @@ export interface LedgerEntry {
 
 export async function recordLlmCall(entry: LedgerEntry): Promise<void> {
   try {
+    const where = attribution({ taskId: entry.taskId, agentKey: entry.agentKey, traceId: entry.traceId });
     await prisma.llmCall.create({
       data: {
         purpose: entry.purpose,
         model: entry.model,
+        taskId: where.taskId,
+        agentKey: where.agentKey,
+        traceId: where.traceId,
         inputTokens: entry.inputTokens,
         outputTokens: entry.outputTokens,
         cacheReadTokens: entry.cacheReadTokens ?? 0,

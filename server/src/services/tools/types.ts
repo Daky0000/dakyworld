@@ -122,6 +122,18 @@ export interface ToolDefinition<I = unknown, O = unknown> {
 
 export interface ToolResult<O = unknown> {
   tool: string;
+  /**
+   * The `ToolCall` row this produced.
+   *
+   * Returned so the caller can join its own record to the audit trail.
+   * `AgentTaskStep.toolCallId` has existed since the runtime shipped, described
+   * in the schema as the link that makes the two records join up, and was never
+   * once written — because nothing handed the id back. This is that.
+   *
+   * Undefined only when the audit write itself failed, which is logged and
+   * deliberately does not fail the work.
+   */
+  callId?: string;
   ok: boolean;
   /** Null on a dry run — nothing was done, so there is nothing to return. */
   output: O | null;
@@ -137,6 +149,11 @@ export interface ToolResult<O = unknown> {
    * what is waiting on whom, rather than reporting the work as finished.
    */
   actionRequestId?: string;
+  /**
+   * True when this is the recorded result of an identical earlier call rather
+   * than a fresh one. Nothing happened this time; the first time, it did.
+   */
+  replayed?: boolean;
   costUsd: number;
   durationMs: number;
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Agent, AgentTask, AgentStepKind } from "@prisma/client";
@@ -15,6 +16,8 @@ import { describeTask, taskSubjects } from "./context.js";
 import { appendNote, renderDossier } from "../context/dossier.js";
 import { recordGap, searchRoster } from "./hiring.js";
 import { callModel } from "../../lib/models/call.js";
+import { withRunContext } from "../../lib/runContext.js";
+import { recordCreated, transition } from "./state.js";
 
 /**
  * What actually runs an agent.
@@ -273,6 +276,28 @@ function withCase(schema: JsonSchema, tool: { outward: boolean; spends: boolean 
 }
 
 /**
+ * What makes a repeat of this exact call the same call.
+ *
+ * Task, tool and a hash of the arguments. Scoped to the task on purpose: within
+ * one run, asking twice for the same send is always a replay — a resumed
+ * half-finished turn, a retried claim — and across runs it may well be a second
+ * letter somebody meant to send.
+ *
+ * The keys are sorted before hashing, because a model does not emit its object
+ * properties in a stable order and two spellings of one payload must not read
+ * as two different calls.
+ */
+function outwardKey(taskId: string, toolKey: string, input: unknown): string {
+  const canonical = JSON.stringify(input, (_k, value) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+      : value,
+  );
+  const digest = createHash("sha256").update(canonical ?? "null").digest("hex").slice(0, 32);
+  return `${taskId}:${toolKey}:${digest}`;
+}
+
+/**
  * The catalogue, narrowed to what this agent has been granted, plus the three
  * tools every agent has because they are how it participates in the workflow
  * rather than things it does to the business.
@@ -303,6 +328,11 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
         dryRun: false,
         taskId: task.id,
         rationale,
+        // What makes a repeat of this call the same call. Only the runner can
+        // say: a resumed run replaying a half-finished turn is a retry, while
+        // the same payload raised by a different task next month is a second
+        // deliberate send. `invokeTool` only acts on it for outward tools.
+        idempotencyKey: outwardKey(task.id, tool.key, toolInput),
       });
       counters.toolCalls += 1;
 
@@ -315,6 +345,7 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
         counters.dryRun += 1;
         await step(task.id, "PREPARED", result.wouldDo ?? `${tool.name} — prepared, not carried out.`, {
           tool: tool.key,
+          toolCallId: result.callId,
           ok: true,
           dryRun: true,
           data: { input },
@@ -334,6 +365,7 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
         counters.refused += 1;
         await step(task.id, "REFUSED", `${tool.name} — ${result.refusedReason}`, {
           tool: tool.key,
+          toolCallId: result.callId,
           ok: false,
           data: { input },
         });
@@ -346,15 +378,21 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
       }
 
       if (!result.ok) {
-        await step(task.id, "TOOL_CALL", `${tool.name} failed — ${result.error}`, { tool: tool.key, ok: false, data: { input } });
+        await step(task.id, "TOOL_CALL", `${tool.name} failed — ${result.error}`, {
+          tool: tool.key,
+          toolCallId: result.callId,
+          ok: false,
+          data: { input },
+        });
         return { content: `That call failed: ${result.error}`, isError: true };
       }
 
-      await step(task.id, "TOOL_CALL", tool.name, {
+      await step(task.id, "TOOL_CALL", result.replayed ? `${tool.name} — already done, not repeated` : tool.name, {
         tool: tool.key,
+        toolCallId: result.callId,
         ok: true,
         dryRun: false,
-        data: { input, output: result.output },
+        data: { input, output: result.output, replayed: result.replayed },
       });
       return { content: JSON.stringify(result.output ?? null).slice(0, 16_000) };
     },
@@ -597,6 +635,10 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
         },
       });
       counters.delegated += 1;
+      await recordCreated(child.id, child.traceId, child.status, {
+        reason: `${agent.name} delegated this to ${target.name}.`,
+        actor: "agent",
+      });
       await step(task.id, "DELEGATED", `To ${target.name}: ${child.title}`, { data: { agentKey: target.key, taskId: child.id } });
       return { content: `Queued for ${target.name}. You are not waiting on it — carry on with your own part.` };
     },
@@ -717,6 +759,10 @@ function workflowTools(agent: Agent, task: AgentTask, counters: Counters): Agent
         },
       });
       counters.handedOff += 1;
+      await recordCreated(child.id, child.traceId, child.status, {
+        reason: `${agent.name} handed this to ${target.name}: ${String(input.why ?? "no reason given")}`,
+        actor: "agent",
+      });
       await step(task.id, "HANDED_OFF", `To ${target.name}: ${child.title} — ${String(input.why ?? "")}`, {
         data: { agentKey: target.key, taskId: child.id, why: input.why },
       });
@@ -1034,20 +1080,19 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
   const runOwner = `${PROCESS_ID}:${(claimCounter += 1)}`;
 
   try {
-    const claimed = await prisma.agentTask.updateMany({
-      where: {
-        id: taskId,
-        // CANCELLED and FAILED are here so that pressing Run on one continues
-        // it rather than being refused — the checkpoint is still there, and
-        // "run this again" almost never means "throw away what it had done".
-        status: { in: ["QUEUED", "BLOCKED", "CANCELLED", "FAILED"] },
-        // The rule, enforced where two processes can both see it. A relation
-        // filter inside the conditional update means the loser of the race
-        // finds out before it starts spending money rather than after.
-        agent: { tasks: { none: { status: "RUNNING" } } },
-      },
+    const claim = await transition(taskId, {
+      to: "RUNNING",
+      reason: "Claimed by the runner",
+      actor: "runner",
+      // CANCELLED and FAILED are here so that pressing Run on one continues
+      // it rather than being refused — the checkpoint is still there, and
+      // "run this again" almost never means "throw away what it had done".
+      expect: ["QUEUED", "BLOCKED", "CANCELLED", "FAILED"],
+      // The rule, enforced where two processes can both see it. A relation
+      // filter inside the conditional update means the loser of the race
+      // finds out before it starts spending money rather than after.
+      guard: { agent: { tasks: { none: { status: "RUNNING" } } } },
       data: {
-        status: "RUNNING",
         startedAt: new Date(),
         heartbeatAt: new Date(),
         runOwner,
@@ -1059,7 +1104,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         blockedReason: null,
       },
     });
-    if (claimed.count === 0) {
+    if (!claim.moved) {
       const current = await prisma.agentTask.findUnique({
         where: { id: taskId },
         select: { status: true, summary: true, agentKey: true },
@@ -1079,127 +1124,136 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
     claimedAgent = task.agentKey;
     busyAgents.add(task.agentKey);
 
-    const agent = await prisma.agent.findUnique({ where: { key: task.agentKey } });
-    if (!agent) return finishTask(task.id, "FAILED", { error: `No agent called ${task.agentKey}.` });
-    if (agent.status === "RETIRED" || agent.status === "PAUSED") {
-      return finishTask(task.id, "BLOCKED", { blockedReason: `${agent.name} is ${agent.status.toLowerCase()} and cannot work.` });
-    }
-
-    const saved = await loadCheckpoint(task.id);
-    const counters: Counters = saved
-      ? restoreCounters(saved.counters)
-      : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
-    // A resume must not carry the escalation that ended the last run, or the
-    // task would go straight back to BLOCKED without doing anything. What the
-    // Owner answered is already in the conversation by this point.
-    counters.escalated = null;
-    const startedFrom = saved?.state.iteration ?? 0;
-
-    if (saved) {
-      await step(task.id, "RESUMED", `${agent.name} picked this up where it left off, ${startedFrom} step(s) in.`, {
-        data: { iteration: startedFrom, toolCalls: counters.toolCalls },
-      });
-    } else {
-      await step(task.id, "STARTED", `${agent.name} picked this up.`);
-    }
-
-    const memories = await recall(agent.key, taskSubjects(task));
-    const [system, tools, brief] = await Promise.all([
-      systemPrompt(agent, memories),
-      toolsFor(agent, task, counters),
-      describeTask(task),
-    ]);
-
-    // Flipped by a checkpoint that finds the row no longer belongs to this run.
-    // The only correct response is to stop touching it.
-    let lostOwnership = false;
-
-    try {
-      const result = await runAgentLoop({
-        purpose: `agent.${agent.key}`,
-        system,
-        prompt: brief,
-        tools,
-        effort: effortFor(agent),
-        resume: saved?.state ?? null,
-        onCheckpoint: async (state) => {
-          const held = await saveCheckpoint(task.id, runOwner, state, { ...counters });
-          if (!held) lostOwnership = true;
-        },
-        shouldStop: async () => {
-          if (shuttingDown || lostOwnership) return true;
-          const row = await prisma.agentTask.findUnique({ where: { id: task.id }, select: { interruptRequested: true } });
-          return Boolean(row?.interruptRequested);
-        },
-      });
-
-      // Stopped on request with its place kept. Not an outcome — an intermission.
-      if (result.stoppedBecause === "interrupted") {
-        return interruptedTask(task.id, runOwner, {
-          costUsd: result.costUsd,
-          toolCalls: counters.toolCalls,
-          dryRunCalls: counters.dryRun,
-          progressed: result.state.iteration > startedFrom,
-        });
+    // Everything from here runs inside the task's own context, so an audit row
+    // written four frames down — a writer inside a tool handler inside the
+    // loop — is attributed to this run without every signature in between
+    // having to carry a task id. It carries attribution only: nothing in it
+    // decides what is allowed.
+    return await withRunContext({ taskId: task.id, traceId: task.traceId, agentKey: task.agentKey }, async () => {
+      const agent = await prisma.agent.findUnique({ where: { key: task.agentKey } });
+      if (!agent) return finishTask(task.id, "FAILED", { error: `No agent called ${task.agentKey}.` });
+      if (agent.status === "RETIRED" || agent.status === "PAUSED") {
+        return finishTask(task.id, "BLOCKED", { blockedReason: `${agent.name} is ${agent.status.toLowerCase()} and cannot work.` });
       }
 
-      const summary = result.text || "Finished, but said nothing about what it did.";
+      const saved = await loadCheckpoint(task.id);
+      const counters: Counters = saved
+        ? restoreCounters(saved.counters)
+        : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
+      // A resume must not carry the escalation that ended the last run, or the
+      // task would go straight back to BLOCKED without doing anything. What the
+      // Owner answered is already in the conversation by this point.
+      counters.escalated = null;
+      const startedFrom = saved?.state.iteration ?? 0;
 
-      // Three ways to finish, and they are genuinely different outcomes.
-      if (counters.escalated) {
-        return finishTask(task.id, "BLOCKED", {
-          summary,
-          blockedReason: counters.escalated,
-          costUsd: result.costUsd,
-          toolCalls: counters.toolCalls,
-          dryRunCalls: counters.dryRun,
+      if (saved) {
+        await step(task.id, "RESUMED", `${agent.name} picked this up where it left off, ${startedFrom} step(s) in.`, {
+          data: { iteration: startedFrom, toolCalls: counters.toolCalls },
         });
+      } else {
+        await step(task.id, "STARTED", `${agent.name} picked this up.`);
       }
 
-      // Everything it did was a preview. There is work here, and none of it
-      // has taken effect — which is exactly what autonomy 1 is for.
-      const needsApproval = counters.dryRun > 0;
-      await step(task.id, "FINISHED", summary.slice(0, 500));
+      const memories = await recall(agent.key, taskSubjects(task));
+      const [system, tools, brief] = await Promise.all([
+        systemPrompt(agent, memories),
+        toolsFor(agent, task, counters),
+        describeTask(task),
+      ]);
 
-      return finishTask(task.id, needsApproval ? "NEEDS_APPROVAL" : "DONE", {
-        summary,
-        result: {
-          narration: result.narration,
-          stoppedBecause: result.stoppedBecause,
-          delegated: counters.delegated,
-          handedOff: counters.handedOff,
-          consulted: counters.consulted,
-          gapsRaised: counters.gapsRaised,
-        },
-        costUsd: result.costUsd,
-        toolCalls: counters.toolCalls,
-        dryRunCalls: counters.dryRun,
-      });
-    } catch (err) {
-      const message = err instanceof AnalystError ? err.message : (err as Error).message;
-      await step(task.id, "FAILED", message);
+      // Flipped by a checkpoint that finds the row no longer belongs to this run.
+      // The only correct response is to stop touching it.
+      let lostOwnership = false;
 
-      // A rate limit is not a broken task — it goes back in the queue unless
-      // it has already failed too many times. Its checkpoint is kept either
-      // way, so the retry continues the conversation rather than repeating it.
-      const retryable = err instanceof AnalystError && err.status === 429;
-      const attempts = task.attempts + 1;
-      if (retryable && attempts < MAX_ATTEMPTS) {
-        await prisma.agentTask.update({
-          where: { id: task.id },
-          data: {
-            status: "QUEUED",
-            scheduledFor: new Date(Date.now() + 5 * 60_000),
-            error: message,
-            runOwner: null,
-            startedAt: null,
+      try {
+        const result = await runAgentLoop({
+          purpose: `agent.${agent.key}`,
+          system,
+          prompt: brief,
+          tools,
+          effort: effortFor(agent),
+          resume: saved?.state ?? null,
+          onCheckpoint: async (state) => {
+            const held = await saveCheckpoint(task.id, runOwner, state, { ...counters });
+            if (!held) lostOwnership = true;
+          },
+          shouldStop: async () => {
+            if (shuttingDown || lostOwnership) return true;
+            const row = await prisma.agentTask.findUnique({ where: { id: task.id }, select: { interruptRequested: true } });
+            return Boolean(row?.interruptRequested);
           },
         });
-        return { status: "QUEUED", summary: null };
-      }
 
-      return finishTask(task.id, "FAILED", { error: message, costUsd: 0, toolCalls: counters.toolCalls });
-    }
+        // Stopped on request with its place kept. Not an outcome — an intermission.
+        if (result.stoppedBecause === "interrupted") {
+          return interruptedTask(task.id, runOwner, {
+            costUsd: result.costUsd,
+            toolCalls: counters.toolCalls,
+            dryRunCalls: counters.dryRun,
+            progressed: result.state.iteration > startedFrom,
+          });
+        }
+
+        const summary = result.text || "Finished, but said nothing about what it did.";
+
+        // Three ways to finish, and they are genuinely different outcomes.
+        if (counters.escalated) {
+          return finishTask(task.id, "BLOCKED", {
+            summary,
+            blockedReason: counters.escalated,
+            costUsd: result.costUsd,
+            toolCalls: counters.toolCalls,
+            dryRunCalls: counters.dryRun,
+          });
+        }
+
+        // Everything it did was a preview. There is work here, and none of it
+        // has taken effect — which is exactly what autonomy 1 is for.
+        const needsApproval = counters.dryRun > 0;
+        await step(task.id, "FINISHED", summary.slice(0, 500));
+
+        return finishTask(task.id, needsApproval ? "NEEDS_APPROVAL" : "DONE", {
+          summary,
+          result: {
+            narration: result.narration,
+            stoppedBecause: result.stoppedBecause,
+            delegated: counters.delegated,
+            handedOff: counters.handedOff,
+            consulted: counters.consulted,
+            gapsRaised: counters.gapsRaised,
+          },
+          costUsd: result.costUsd,
+          toolCalls: counters.toolCalls,
+          dryRunCalls: counters.dryRun,
+        });
+      } catch (err) {
+        const message = err instanceof AnalystError ? err.message : (err as Error).message;
+        await step(task.id, "FAILED", message);
+
+        // A rate limit is not a broken task — it goes back in the queue unless
+        // it has already failed too many times. Its checkpoint is kept either
+        // way, so the retry continues the conversation rather than repeating it.
+        const retryable = err instanceof AnalystError && err.status === 429;
+        const attempts = task.attempts + 1;
+        if (retryable && attempts < MAX_ATTEMPTS) {
+          await transition(task.id, {
+            to: "QUEUED",
+            reason: `Rate-limited by the model provider; waiting five minutes (attempt ${task.attempts}).`,
+            actor: "runner",
+            expect: ["RUNNING"],
+            data: {
+              scheduledFor: new Date(Date.now() + 5 * 60_000),
+              error: message,
+              runOwner: null,
+              startedAt: null,
+            },
+          });
+          return { status: "QUEUED", summary: null };
+        }
+
+        return finishTask(task.id, "FAILED", { error: message, costUsd: 0, toolCalls: counters.toolCalls });
+      }
+    });
   } finally {
     running.delete(taskId);
     if (claimedAgent) busyAgents.delete(claimedAgent);
@@ -1224,10 +1278,15 @@ async function interruptedTask(
   await step(taskId, "INTERRUPTED", "Stopped part-way and kept its place. It carries on from here rather than starting again.");
   // Matched on the owner: a run that was reaped while it was stopping must not
   // drag the task that replaced it back into the queue.
-  await prisma.agentTask.updateMany({
-    where: { id: taskId, runOwner },
+  await transition(taskId, {
+    to: "QUEUED",
+    reason: data.progressed
+      ? "Stopped part-way and kept its place; it had made progress, so the attempt count is reset."
+      : "Stopped part-way and kept its place.",
+    actor: "runner",
+    expect: ["RUNNING"],
+    guard: { runOwner },
     data: {
-      status: "QUEUED",
       runOwner: null,
       startedAt: null,
       interruptRequested: false,
@@ -1251,6 +1310,24 @@ async function interruptedTask(
  */
 const FINISHED_FOR_GOOD: AgentTask["status"][] = ["DONE", "NEEDS_APPROVAL"];
 
+/**
+ * Why a run ended, in a sentence for the history rather than a status name.
+ *
+ * "NEEDS_APPROVAL" on its own does not say whether three letters are waiting or
+ * one lookup was held back, and that is the difference between reading the
+ * queue tonight and reading it on Monday.
+ */
+function endingReason(status: AgentTask["status"], data: { blockedReason?: string; error?: string; dryRunCalls?: number }): string {
+  if (status === "BLOCKED") return data.blockedReason ?? "Stopped and asked for a person.";
+  if (status === "FAILED") return data.error ?? "The run failed.";
+  if (status === "NEEDS_APPROVAL") {
+    const n = data.dryRunCalls ?? 0;
+    return `Prepared ${n} action${n === 1 ? "" : "s"} that need a decision; nothing took effect.`;
+  }
+  if (status === "DONE") return "Finished.";
+  return `Ended as ${status}.`;
+}
+
 async function finishTask(
   taskId: string,
   status: AgentTask["status"],
@@ -1264,12 +1341,32 @@ async function finishTask(
     dryRunCalls?: number;
   },
 ): Promise<RunOutcome> {
+  // What this run actually burned, summed from the ledger.
+  //
+  // The obvious source is the checkpoint, and it is the wrong one twice over.
+  // It is deleted for DONE and NEEDS_APPROVAL — so the only runs whose tokens
+  // were knowable afterwards were the ones that failed — and a run that
+  // finishes without ever needing to save its place does not write one at all,
+  // which is every short task. `LlmCall` carries a `taskId` as of this pass, is
+  // written by every model call whoever made it, and accumulates across
+  // resumes because each run appends its own rows. It is simply the truth.
+  const spent = await prisma.llmCall.aggregate({
+    where: { taskId },
+    _sum: { inputTokens: true, outputTokens: true },
+  });
+
   if (FINISHED_FOR_GOOD.includes(status)) await clearCheckpoint(taskId);
 
-  const task = await prisma.agentTask.update({
-    where: { id: taskId },
+  const moved = await transition(taskId, {
+    to: status,
+    reason: endingReason(status, data),
+    actor: "runner",
+    // Only over a task still running. A run whose task was reaped and requeued
+    // while it was working must not write its outcome over the run that took
+    // over — and it must not throw about it either, because being overtaken is
+    // a normal thing that happens to a slow run, not a fault in this one.
+    expect: ["RUNNING"],
     data: {
-      status,
       finishedAt: new Date(),
       // The row is nobody's now. Left set, a stale owner would make the reaper
       // hesitate and a returning process think it still had the floor.
@@ -1279,12 +1376,20 @@ async function finishTask(
       result: (data.result ?? undefined) as never,
       blockedReason: data.blockedReason ?? null,
       error: data.error ?? null,
+      inputTokens: spent._sum.inputTokens ?? 0,
+      outputTokens: spent._sum.outputTokens ?? 0,
       ...(data.costUsd !== undefined ? { costUsd: data.costUsd.toFixed(6) } : {}),
       ...(data.toolCalls !== undefined ? { toolCalls: data.toolCalls } : {}),
       ...(data.dryRunCalls !== undefined ? { dryRunCalls: data.dryRunCalls } : {}),
     },
   });
-  return { status: task.status, summary: task.summary };
+
+  if (!moved.moved && moved.lostTo && moved.lostTo !== status) {
+    console.warn(`[agent] ${taskId} was already ${moved.lostTo}; not writing ${status} over it.`);
+  }
+
+  const task = await prisma.agentTask.findUnique({ where: { id: taskId }, select: { status: true, summary: true } });
+  return { status: task?.status ?? status, summary: task?.summary ?? null };
 }
 
 // --- The queue --------------------------------------------------------------
@@ -1357,23 +1462,31 @@ async function reapAbandoned(now: Date): Promise<number> {
     // Requeued rather than failed while it still has attempts left: a deploy
     // landing mid-task is the common cause, and the work is still wanted.
     const retryable = task.attempts < MAX_ATTEMPTS;
-    await prisma.agentTask.update({
-      where: { id: task.id },
-      data: retryable
+    await transition(
+      task.id,
+      retryable
         ? {
-            status: "QUEUED",
-            startedAt: null,
-            runOwner: null,
-            interruptRequested: false,
-            error: "Picked up again after the previous run was interrupted.",
+            to: "QUEUED",
+            reason: `Heartbeat quiet and no live process owns it; requeued (attempt ${task.attempts} of ${MAX_ATTEMPTS}).`,
+            actor: "reaper",
+            data: {
+              startedAt: null,
+              runOwner: null,
+              interruptRequested: false,
+              error: "Picked up again after the previous run was interrupted.",
+            },
           }
         : {
-            status: "FAILED",
-            finishedAt: now,
-            runOwner: null,
-            error: `Interrupted ${task.attempts} time(s) without getting any further. Something is stopping this run rather than it failing.`,
+            to: "FAILED",
+            reason: `Interrupted ${task.attempts} time(s) without getting any further.`,
+            actor: "reaper",
+            data: {
+              finishedAt: now,
+              runOwner: null,
+              error: `Interrupted ${task.attempts} time(s) without getting any further. Something is stopping this run rather than it failing.`,
+            },
           },
-    });
+    );
     busyAgents.delete(task.agentKey);
   }
 
@@ -1407,10 +1520,11 @@ export async function resumeInterruptedTasks(): Promise<number> {
         ? `The service restarted mid-run. ${at} step(s) were saved, and this carries on from there.`
         : "The service restarted before this had got anywhere. It starts again from the brief.",
     );
-    await prisma.agentTask.update({
-      where: { id: task.id },
+    await transition(task.id, {
+      to: "QUEUED",
+      reason: "The service restarted while this was running; handed back to the queue.",
+      actor: "boot",
       data: {
-        status: "QUEUED",
         startedAt: null,
         runOwner: null,
         interruptRequested: false,

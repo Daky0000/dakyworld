@@ -5,6 +5,7 @@ import { listAllTools } from "../tools/catalogue.js";
 import { sendSlackBlocks, slackConfigured, updateSlack } from "../../lib/slack.js";
 import { appUrl } from "../emailSender.js";
 import { appendToConversation } from "./checkpoint.js";
+import { recordCreated, transition } from "./state.js";
 
 /**
  * How the workforce grows itself.
@@ -369,6 +370,10 @@ async function ensureReviewTask(gapId: string): Promise<{ taskId: string | null;
       priority: 2,
     },
   });
+  await recordCreated(task.id, task.traceId, task.status, {
+    reason: `${gap.timesRequested} agent(s) asked for somebody who can ${gap.skillNeeded}.`,
+    actor: "hiring",
+  });
 
   await prisma.agentGap.update({ where: { id: gapId }, data: { status: "IN_REVIEW" } });
   return {
@@ -709,10 +714,12 @@ async function nudgeWaitingTask(taskId: string, news: string): Promise<boolean> 
   if (!task || task.status !== "BLOCKED") return false;
 
   await appendToConversation(taskId, news);
-  await prisma.agentTask.update({
-    where: { id: taskId },
+  await transition(taskId, {
+    to: "QUEUED",
+    reason: "The skill it was waiting on has been filled; requeued with the news on its brief.",
+    actor: "hiring",
+    expect: ["BLOCKED"],
     data: {
-      status: "QUEUED",
       brief: `${task.brief}\n\n--- Since you stopped ---\n${news}`.slice(0, 8000),
       blockedReason: null,
       finishedAt: null,

@@ -1,6 +1,7 @@
 import type { AgentSchedule } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { parseScheduleTime, safeZone, zonedDateParts, zonedTimeToUtc } from "../../lib/timezone.js";
+import { recordCreated } from "./state.js";
 
 /**
  * What an agent does without being asked.
@@ -136,13 +137,18 @@ export async function raiseStandingWork(now = new Date()): Promise<number> {
       continue;
     }
 
-    await prisma.agentTask.create({
+    const raisedTask = await prisma.agentTask.create({
       data: {
         agentKey: schedule.agentKey,
         title: schedule.title,
         brief: schedule.brief,
         origin: "SCHEDULE",
       },
+      select: { id: true, traceId: true, status: true },
+    });
+    await recordCreated(raisedTask.id, raisedTask.traceId, raisedTask.status, {
+      reason: `Standing work: "${schedule.title}" came round on its schedule.`,
+      actor: "schedule",
     });
     raised += 1;
     console.log(`[standing] raised "${schedule.title}" for ${schedule.agent.name}`);

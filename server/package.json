@@ -8,6 +8,8 @@
     "build": "npm run build:client && prisma generate && tsc -p tsconfig.json",
     "build:client": "npm --prefix client ci && npm --prefix client run build",
     "build:server": "prisma generate && tsc -p tsconfig.json",
+    "checks": "tsx checks/run.ts",
+    "checks:types": "tsc --noEmit -p tsconfig.checks.json",
     "start": "prisma migrate deploy && node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",

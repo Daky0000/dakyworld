@@ -108,7 +108,7 @@
   <p>Every call lands in <code>ToolCall</code>: which agent, which tool, the arguments, the result, whether it was a dry run, what it cost, how long it took, and — for a refusal — the reason. Nothing an agent does is invisible, including the things it was stopped from doing.</p>
 
   <h3 class="band">Rule 5 · Money is named</h3>
-  <p>A tool that can spend is flagged as such in the catalogue, and that flag is not decoration: it raises the autonomy threshold to 4, records the cost against the call, and is checked against the ceiling in <code>agents.maxCallUsd</code>. Four tools spend today.</p>
+  <p>A tool that can spend is flagged as such in the catalogue, and that flag is not decoration: it raises the autonomy threshold to 4, records the cost against the call, and is recorded against the call. <strong>The ceiling in <code>agents.maxCallUsd</code> is not enforced yet</strong> — the setting exists and nothing reads it. Autonomy 4 is what stands between an agent and a spending tool today. Four tools spend today.</p>
   <div class="tools" style="margin-bottom:5mm">
     <span class="spend">capture.run</span><span class="spend">capture.plan</span><span class="spend">proposal.draft</span><span class="spend">content.draft</span><span class="spend">image.generate</span>
   </div>

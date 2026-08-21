@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { SETTING, getSetting, setSetting } from "./settings.js";
 
 /**
@@ -20,10 +20,22 @@ import { SETTING, getSetting, setSetting } from "./settings.js";
 
 const SIGNATURE_HEADER = "x-dakyworld-signature";
 const TIMESTAMP_HEADER = "x-dakyworld-timestamp";
+/**
+ * A stable id for this delivery, so the receiver can tell a repeat from a
+ * second event.
+ *
+ * We send once and do not retry, which sounds like it makes this unnecessary
+ * and does not: an agent whose run is resumed can reach the same dispatch
+ * again, and the receiver has no other way to tell that from a genuinely new
+ * event carrying the same payload. `invoke.ts` stops the repeat on our side
+ * for an agent that supplied an idempotency key; this is the half that works
+ * for everybody else.
+ */
+const EVENT_ID_HEADER = "x-dakyworld-event-id";
 /** How stale a signed request may be. Stops a captured request being replayed. */
 const MAX_SKEW_MS = 5 * 60_000;
 
-export { SIGNATURE_HEADER, TIMESTAMP_HEADER };
+export { SIGNATURE_HEADER, TIMESTAMP_HEADER, EVENT_ID_HEADER };
 
 /** Reads the shared secret, minting one the first time it is needed. */
 export async function webhookSecret(): Promise<string> {
@@ -103,13 +115,22 @@ export class WebhookError extends Error {
  * a retry loop inside a request handler is how a slow partner takes this app
  * down with it.
  */
-export async function dispatchWebhook(url: string, event: string, payload: unknown): Promise<{ status: number; ok: boolean }> {
+export async function dispatchWebhook(
+  url: string,
+  event: string,
+  payload: unknown,
+  options: { eventId?: string } = {},
+): Promise<{ status: number; ok: boolean; eventId: string }> {
   const target = new URL(url);
   if (target.protocol !== "https:") throw new WebhookError(400, "Webhooks are only sent over https.");
 
   const secret = await webhookSecret();
   const timestamp = String(Date.now());
-  const body = JSON.stringify({ event, sentAt: new Date().toISOString(), data: payload });
+  const eventId = options.eventId ?? randomUUID();
+  // In the body as well as the header: a receiver that logs what it was sent
+  // and a receiver that reads headers are both common, and the id is worthless
+  // to whichever one cannot see it.
+  const body = JSON.stringify({ id: eventId, event, sentAt: new Date().toISOString(), data: payload });
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);
@@ -120,12 +141,13 @@ export async function dispatchWebhook(url: string, event: string, payload: unkno
         "Content-Type": "application/json",
         [SIGNATURE_HEADER]: sign(secret, timestamp, body),
         [TIMESTAMP_HEADER]: timestamp,
+        [EVENT_ID_HEADER]: eventId,
         "User-Agent": "dakyworld-os",
       },
       body,
       signal: controller.signal,
     });
-    return { status: response.status, ok: response.ok };
+    return { status: response.status, ok: response.ok, eventId };
   } catch (err) {
     if ((err as Error).name === "AbortError") throw new WebhookError(504, "The endpoint didn't respond within ten seconds.");
     throw new WebhookError(502, `Could not reach the endpoint: ${(err as Error).message}`);

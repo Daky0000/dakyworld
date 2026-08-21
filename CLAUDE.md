@@ -47,9 +47,21 @@ npm run dev              # vite, http://localhost:5173
 npm run build            # tsc -b && vite build
 ```
 
-**There are no tests and no linter in this repo.** `npx tsc --noEmit` in both
-`server/` and `server/client/` plus a real build is the whole verification
-story — do not claim a change is "tested" on the strength of a passing build.
+**There is no linter in this repo, and `server/checks/` is the only committed
+test suite.** `npm run checks` (from `server/`) runs every file in it against a
+real Postgres, with no API key and no network; `npm run checks:types`
+typechecks them. Everything else is still `npx tsc --noEmit` in both `server/`
+and `server/client/` plus a real build — do not claim a change is "tested" on
+the strength of a passing build.
+
+`checks/` is not `tmp/`. `tmp/` is gitignored and holds the throwaway harness
+written to prove one change worked on one afternoon; several of those are
+excellent and none of them runs again unless somebody remembers it exists.
+A check that belongs in `checks/` is one where a future change breaking it
+would be a real regression, and it must need nothing but a database — a check
+that needs a credential is a check that stops being run.
+`server/checks/README.md` carries the three rules, all learned the hard way in
+`tmp/`.
 For anything visual or document-shaped, render it and look (below).
 
 Local setup, the Docker Postgres line, and `DEV_NO_AUTH` are covered in
@@ -947,6 +959,65 @@ conversation instead of starting one.
 - DONE and NEEDS_APPROVAL clear the checkpoint; BLOCKED, FAILED and CANCELLED
   keep it, which is what makes "Carry on" mean carry on. `pruneCheckpoints()`
   sweeps them after 30 days.
+
+**One id gathers a run** — `traceId` on `AgentTask`, stamped on every
+`ToolCall`, `LlmCall` and `AgentTaskTransition` it causes. Every one of those
+facts was already being written down and none of them joined up: `ToolCall` had
+no `taskId` though `invokeTool` has always been handed one, `LlmCall` had only a
+free-text `purpose`, and `AgentTaskStep.toolCallId` was documented in the schema
+as the link between the timeline and the audit trail and was **never once
+written**, because nothing gave the id back. `invokeTool` returns `callId` now
+and the runner puts it on all four step branches.
+
+**Attribution is ambient, and only attribution** — `lib/runContext.ts`, an
+`AsyncLocalStorage` the runner enters once around the whole task. A writer
+inside a tool handler inside the loop is four frames from anything holding a
+task id, and threading one through forty signatures is forty chances to forget.
+An explicit argument always wins over the store, which is what stops an approval
+executing weeks later from inheriting whatever happens to be running in the same
+process. **Nothing in it decides what is allowed** — the grant is still read
+from the `Agent` row inside `permissionFor`, because ambient state that changes
+permissions is state nobody can review at the call site.
+
+**A task's status has one writer** — `transition()` in `agents/state.ts`. It was
+ten: the claim, the reaper, the interrupt, the boot resume, the rate-limit
+requeue, two routes, the hiring nudge and `finishTask` twice. Each was correct
+alone; together they were a state machine nobody had written down. `ALLOWED`
+declares the legal moves, an undeclared one throws, and every move that happens
+lands in `AgentTaskTransition` with a reason and an actor.
+
+- **Returning `moved: false` is not an error.** Losing a claim race is normal,
+  and so is a slow run finding that the reaper requeued its task — which is why
+  `finishTask` passes `expect: ["RUNNING"]` and warns rather than writing its
+  outcome over the run that took over.
+- **No terminal state reaches another directly.** Rewriting an outcome in place
+  is how a run that never happened comes to read as work that did; going back
+  through QUEUED means the history shows the re-run. `NEEDS_APPROVAL → DONE` is
+  the one exception, because accepting prepared work is a decision about the
+  same run.
+- **Token counts come from the `LlmCall` ledger, not the checkpoint.** The
+  checkpoint is deleted for DONE and NEEDS_APPROVAL, so it could only ever
+  answer for runs that failed — and a task short enough never to save its place
+  does not write one at all.
+
+**An outward tool call can be asked for twice and happen once** —
+`InvokeOptions.idempotencyKey`, derived by the runner as
+`${taskId}:${tool}:${sha256(input)}` with the object keys sorted, because a
+model does not emit them in a stable order. `invokeTool` looks for a
+*successful, non-dry-run* `ToolCall` with that key and returns its recorded
+output rather than running again. Deliberately narrow in three ways: opt-in
+rather than derived in the gate (two identical sends can be two correct sends —
+a monthly reminder is the same payload every month); outward tools only (a
+repeated read must not return a stale answer); and checked *after* the
+permission gate, so a replay whose grant has been revoked is refused like
+anything else. `dispatchWebhook` also carries an `X-Dakyworld-Event-Id` now, for
+the receivers we cannot dedupe for.
+
+**Approving a task will not close it while its actions wait.**
+`POST /agents/tasks/:id/approve` predates the approval queue, and once the queue
+existed the two disagreed: the route wrote DONE while the letter that task had
+prepared sat PENDING under Approvals. It answers 409 and names them now.
+Deciding the actions is what closes the task.
 
 **Client** — Vite + React + React Router + TanStack Query, in `server/client/`.
 The server serves the built client from `client/dist` when it exists, and falls

@@ -1740,9 +1740,22 @@ model LlmCall {
 
   /// What asked for it: "email.draft", "proposal.write", "sheet.analyse".
   purpose String
+
+  /// Which task, agent and trace this call belongs to, when it belongs to one.
+  ///
+  /// `purpose` was the only attribution and it is free text, so spend could be
+  /// grouped by feature and never traced to the run that caused it — a writer
+  /// called three layers inside a tool handler had no way to say whose work it
+  /// was doing. These are filled from the ambient run context
+  /// (lib/runContext.ts) rather than threaded through every call site. Plain
+  /// columns rather than relations: a ledger row has to outlive the task it
+  /// records.
+  taskId   String?
+  agentKey String?
+  traceId  String?
   /// The model that actually served the request, as reported by the API — not
   /// the one requested, which can differ when a refusal falls back.
-  model   String
+  model    String
 
   inputTokens         Int @default(0)
   outputTokens        Int @default(0)
@@ -1764,6 +1777,9 @@ model LlmCall {
 
   @@index([createdAt])
   @@index([purpose, createdAt])
+  @@index([taskId])
+  @@index([traceId])
+  @@index([agentKey, createdAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -1789,6 +1805,29 @@ model ToolCall {
   /// The signed-in user, when a person made or approved the call.
   userId   String?
 
+  /// The task this call was made while working on, and its trace.
+  ///
+  /// `invokeTool` has always been handed a `taskId` and only ever forwarded it
+  /// to the approval queue, so the doc comment on AgentTask claiming that
+  /// "every tool call made while working on one is attributed to it" was not
+  /// true of this table. It is now. Not a relation, deliberately: deleting a
+  /// task must not take its audit trail with it, and must not be blocked by it.
+  taskId  String?
+  traceId String?
+
+  /// What makes a repeat of this exact call the same call.
+  ///
+  /// `${taskId}:${tool}:${sha256(input)}`, set by the runner for outward tools
+  /// only. A resumed run, a retried claim or a redelivered approval can all ask
+  /// for the same send twice; before this the only protection was whatever each
+  /// handler happened to implement for itself, which `email.send` and
+  /// `sequence.enrol` do well and `webhook.dispatch` did not do at all.
+  ///
+  /// Not unique at the database level. A refused or failed call sharing a key
+  /// with a later successful one is a true history, and the guard in
+  /// `invoke.ts` looks for a *successful, non-dry-run* row rather than any row.
+  idempotencyKey String?
+
   input  Json?
   output Json?
 
@@ -1808,6 +1847,9 @@ model ToolCall {
   @@index([createdAt])
   @@index([tool, createdAt])
   @@index([agentKey, createdAt])
+  @@index([taskId])
+  @@index([traceId])
+  @@index([idempotencyKey])
 }
 
 /// Anything another system sends us. Recorded before it is acted on, so a
@@ -1995,6 +2037,16 @@ enum AgentTaskStatus {
 model AgentTask {
   id String @id @default(cuid())
 
+  /// The one id that gathers everything this task caused.
+  ///
+  /// `id` already identifies the row, and deliberately is not reused for this:
+  /// a trace is stamped on records in other tables — `ToolCall`, `LlmCall`,
+  /// `AgentTaskTransition` — that must survive the task being deleted, and a
+  /// foreign key would either block that delete or null the link out. It is
+  /// also what lets a resumed run, a delegated child and the approval that
+  /// carried its work out months later all be read as one thing.
+  traceId String @unique @default(cuid())
+
   agent    Agent  @relation(fields: [agentKey], references: [key], onDelete: Cascade)
   agentKey String
 
@@ -2070,7 +2122,19 @@ model AgentTask {
   /// all preview is a task waiting on an autonomy decision.
   dryRunCalls Int     @default(0)
 
-  steps AgentTaskStep[]
+  /// The tokens this task actually burned, copied off the checkpoint as it
+  /// finishes.
+  ///
+  /// They used to live only on the checkpoint — which is deleted the moment a
+  /// task reaches DONE or NEEDS_APPROVAL, so the only runs whose token cost was
+  /// knowable were the ones that failed. `costUsd` survived and the counts
+  /// behind it did not, which made "why did that cost forty cents" a question
+  /// with no answer for every successful run.
+  inputTokens  Int @default(0)
+  outputTokens Int @default(0)
+
+  steps       AgentTaskStep[]
+  transitions AgentTaskTransition[]
 
   // What the work is about. All optional: a task can be about the company
   // rather than about a record.
@@ -2155,6 +2219,50 @@ model AgentTaskCheckpoint {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Every change of a task's status, and what caused it.
+///
+/// A task's status was written in ten places by direct update — the claim, the
+/// reaper, the interrupt, the boot resume, the rate-limit requeue, two routes
+/// and the hiring nudge — with nothing declaring which moves were legal and
+/// nothing recording the ones that happened. The row only ever showed where a
+/// task *is*, so "this has been QUEUED twice, why" and "who cancelled it" were
+/// unanswerable, and an illegal move like FAILED straight back to DONE was
+/// merely something no code happened to do yet.
+///
+/// Written by `transition()` in services/agents/state.ts, which is now the only
+/// thing that may set a status. The guard is what makes the log complete: a
+/// second writer would be a second history.
+model AgentTaskTransition {
+  id String @id @default(cuid())
+
+  task    AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId  String
+  /// Copied from the task so a trace survives the task being deleted.
+  traceId String?
+
+  /// Null on the very first entry — a task appearing in the queue has no prior
+  /// state, and recording one would be an invention.
+  from AgentTaskStatus?
+  to   AgentTaskStatus
+
+  /// Why, in a sentence somebody can read. "Escalated to a person",
+  /// "Heartbeat quiet for 5 minutes", "Cancelled by Dan".
+  reason String
+
+  /// What made the move: `runner`, `reaper`, `boot`, `owner`, `slack`,
+  /// `schedule`, `approval`. Not an enum — a new caller must not need a
+  /// migration to be able to write its own history.
+  actor   String
+  /// The user, when a person did it.
+  actorId String?
+
+  at DateTime @default(now())
+
+  @@index([taskId, at])
+  @@index([traceId])
+  @@index([to, at])
 }
 
 enum AgentStepKind {

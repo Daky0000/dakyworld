@@ -5,7 +5,9 @@ import { requireRole } from "../middleware/auth.js";
 import { listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
 import { permissionFor } from "../services/tools/invoke.js";
-import { authoredInstruction, composePrompt, isBusy, runTask } from "../services/agents/runner.js";
+import { authoredInstruction, composePrompt, isBusy, runTask, step } from "../services/agents/runner.js";
+import { historyOf, recordCreated, transition } from "../services/agents/state.js";
+
 import { appendOwnerAnswer, clearCheckpoint } from "../services/agents/checkpoint.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
@@ -821,6 +823,11 @@ agentsRouter.post("/:key/tasks", async (req, res, next) => {
       },
       include: taskInclude,
     });
+    await recordCreated(task.id, task.traceId, task.status, {
+      reason: `${req.dbUser?.name ?? "The Owner"} gave this to ${agent.name}.`,
+      actor: "owner",
+      actorId: req.dbUser?.id ?? null,
+    });
 
     // Not awaited: a run takes minutes and the request should not.
     if (input.runNow && agent.status === "ACTIVE" && !input.scheduledFor) {
@@ -861,13 +868,42 @@ agentsRouter.get("/tasks/:id", async (req, res, next) => {
     });
     if (!task) return res.status(404).json({ error: "No such task." });
 
+    // Everything this run caused, gathered by its trace. Each of these facts
+    // was already being written down and none of them could be reached from
+    // the task: ToolCall had no task id, LlmCall had neither, and the step's
+    // own `toolCallId` was declared as the join and never filled in.
+    const [history, toolCalls, modelCalls] = await Promise.all([
+      historyOf(task.id),
+      prisma.toolCall.findMany({
+        where: { OR: [{ taskId: task.id }, { traceId: task.traceId }] },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.llmCall.aggregate({
+        where: { OR: [{ taskId: task.id }, { traceId: task.traceId }] },
+        _sum: { inputTokens: true, outputTokens: true, costUsd: true },
+        _count: true,
+      }),
+    ]);
+
     res.json({
       ...taskSummary(task),
+      traceId: task.traceId,
       brief: task.brief,
       input: task.input,
       result: task.result,
       attempts: task.attempts,
       steps: task.steps,
+      /** Every status this task has been in, and what moved it. */
+      history,
+      /** The audit rows behind the timeline, joined by `AgentTaskStep.toolCallId`. */
+      toolCalls,
+      /** What the model side of this run actually cost, in tokens rather than only in dollars. */
+      spend: {
+        inputTokens: task.inputTokens || (modelCalls._sum.inputTokens ?? 0),
+        outputTokens: task.outputTokens || (modelCalls._sum.outputTokens ?? 0),
+        modelCalls: modelCalls._count,
+        costUsd: task.costUsd,
+      },
       // What a resume would carry on from. Shown because "it will continue
       // where it stopped" is only reassuring if you can see that there is
       // something to continue from.
@@ -982,18 +1018,25 @@ agentsRouter.post("/tasks/:id/cancel", async (req, res, next) => {
     if (!task) return res.status(404).json({ error: "No such task." });
     if (task.status === "RUNNING") {
       await prisma.agentTask.update({ where: { id: task.id }, data: { interruptRequested: true } });
+      // A step rather than a transition, because asking is not yet a move: the
+      // status changes when the loop honours it, and that write records itself.
+      // What would otherwise be lost is who asked.
+      await step(task.id, "NOTED", `${req.dbUser?.name ?? "Somebody"} asked this to stop.`);
       return res.json({
         asked: true,
         message:
           "Asked it to stop. It finishes the step it is on, saves its place, and goes back to the queue — nothing it has already done is lost, and running it again carries on from there.",
       });
     }
-    const updated = await prisma.agentTask.update({
-      where: { id: task.id },
-      data: { status: "CANCELLED", finishedAt: new Date() },
-      include: taskInclude,
+    await transition(task.id, {
+      to: "CANCELLED",
+      reason: "Cancelled by a person.",
+      actor: "owner",
+      actorId: req.dbUser?.id ?? null,
+      data: { finishedAt: new Date() },
     });
-    res.json(taskSummary(updated));
+    const updated = await prisma.agentTask.findUnique({ where: { id: task.id }, include: taskInclude });
+    res.json(taskSummary(updated!));
   } catch (err) {
     next(err);
   }
@@ -1006,6 +1049,13 @@ agentsRouter.post("/tasks/:id/cancel", async (req, res, next) => {
  * previews, and re-running them for real is a decision about the agent's
  * autonomy, not about this one task. Marking it approved says a person read it
  * and is content; raising the agent's level is how you stop being asked.
+ *
+ * **It will not close a task whose prepared actions are still waiting.** This
+ * route predates the approval queue, and once the queue existed the two
+ * disagreed: closing the task here left its letters sitting PENDING under
+ * Approvals while the board said the work was done. Two records of one
+ * decision, one of them wrong. Deciding the actions is the way to close it, and
+ * the refusal names them so it is obvious where to go.
  */
 agentsRouter.post("/tasks/:id/approve", async (req, res, next) => {
   try {
@@ -1014,12 +1064,31 @@ agentsRouter.post("/tasks/:id/approve", async (req, res, next) => {
     if (task.status !== "NEEDS_APPROVAL") {
       return res.status(409).json({ error: "That task is not waiting on approval." });
     }
-    const updated = await prisma.agentTask.update({
-      where: { id: task.id },
-      data: { status: "DONE", finishedAt: task.finishedAt ?? new Date() },
-      include: taskInclude,
+
+    const waiting = await prisma.actionRequest.findMany({
+      where: { taskId: task.id, status: "PENDING" },
+      select: { id: true, wouldDo: true },
     });
-    res.json(taskSummary(updated));
+    if (waiting.length > 0) {
+      return res.status(409).json({
+        error:
+          waiting.length === 1
+            ? "There is still an action from this task waiting for a decision. Decide it under Approvals — that is what carries it out."
+            : `There are still ${waiting.length} actions from this task waiting for a decision. Decide them under Approvals — that is what carries them out.`,
+        pending: waiting,
+      });
+    }
+
+    await transition(task.id, {
+      to: "DONE",
+      reason: "A person read the prepared work and accepted it.",
+      actor: "owner",
+      actorId: req.dbUser?.id ?? null,
+      expect: ["NEEDS_APPROVAL"],
+      data: { finishedAt: task.finishedAt ?? new Date() },
+    });
+    const updated = await prisma.agentTask.findUnique({ where: { id: task.id }, include: taskInclude });
+    res.json(taskSummary(updated!));
   } catch (err) {
     next(err);
   }

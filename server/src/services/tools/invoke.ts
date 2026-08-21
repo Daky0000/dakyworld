@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
+import { attribution } from "../../lib/runContext.js";
 import { SETTING, getSetting } from "../../lib/settings.js";
 import { resolveTool } from "./catalogue.js";
 import { toolReadiness } from "./readiness.js";
@@ -64,6 +65,21 @@ export interface InvokeOptions extends ToolContext {
    * because a person is driving the tool directly.
    */
   approvedRequestId?: string;
+  /**
+   * What makes a repeat of this exact call the same call.
+   *
+   * Set by the runner for outward tools as
+   * `${taskId}:${tool}:${sha256(input)}`. When one is given and a *successful,
+   * non-dry-run* call with the same key is already on record, this returns that
+   * call's recorded output instead of running the tool again.
+   *
+   * Deliberately opt-in rather than derived here. Two identical sends can be
+   * two correct sends — a monthly reminder is the same payload every month —
+   * so the caller is the only thing that knows whether "again" means a retry or
+   * a repeat. What the runner knows, and what this exists for, is that a
+   * resumed run replaying a turn is always a retry.
+   */
+  idempotencyKey?: string;
 }
 
 /**
@@ -120,27 +136,27 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
   const tool = await resolveTool(key);
 
   if (!tool) {
-    await record({ tool: key, options, ok: false, refusedReason: `There is no tool called ${key}.`, durationMs: 0 });
-    return refusal(key, `There is no tool called ${key}.`, 0);
+    const callId = await record({ tool: key, options, ok: false, refusedReason: `There is no tool called ${key}.`, durationMs: 0 });
+    return refusal(key, `There is no tool called ${key}.`, 0, callId);
   }
 
   const readiness = await toolReadiness(tool.requires);
   if (!readiness.ready) {
-    await record({ tool: key, options, ok: false, refusedReason: readiness.reason, durationMs: Date.now() - startedAt });
-    return refusal(key, readiness.reason ?? "That tool isn't configured yet.", Date.now() - startedAt);
+    const callId = await record({ tool: key, options, ok: false, refusedReason: readiness.reason, durationMs: Date.now() - startedAt });
+    return refusal(key, readiness.reason ?? "That tool isn't configured yet.", Date.now() - startedAt, callId);
   }
 
   const permission = await permissionFor(tool, options);
   if (!permission.allowed) {
-    await record({ tool: key, options, ok: false, refusedReason: permission.reason, durationMs: Date.now() - startedAt });
-    return refusal(key, permission.reason ?? "Not permitted.", Date.now() - startedAt);
+    const callId = await record({ tool: key, options, ok: false, refusedReason: permission.reason, durationMs: Date.now() - startedAt });
+    return refusal(key, permission.reason ?? "Not permitted.", Date.now() - startedAt, callId);
   }
 
   const parsed = tool.input.safeParse(rawInput ?? {});
   if (!parsed.success) {
     const detail = parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ");
-    await record({ tool: key, options, ok: false, error: detail, input: rawInput, durationMs: Date.now() - startedAt });
-    return { tool: key, ok: false, output: null, dryRun: false, error: `That input isn't right — ${detail}`, costUsd: 0, durationMs: Date.now() - startedAt };
+    const callId = await record({ tool: key, options, ok: false, error: detail, input: rawInput, durationMs: Date.now() - startedAt });
+    return { tool: key, callId, ok: false, output: null, dryRun: false, error: `That input isn't right — ${detail}`, costUsd: 0, durationMs: Date.now() - startedAt };
   }
 
   const dryRun = permission.mustDryRun;
@@ -151,8 +167,8 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
     // doing it, and must not report success for work that never happened.
     if (!tool.preview) {
       const reason = `${tool.name} can't be previewed, and a dry run must not carry it out.`;
-      await record({ tool: key, options, ok: false, refusedReason: reason, input: parsed.data, durationMs: Date.now() - startedAt });
-      return refusal(key, reason, Date.now() - startedAt);
+      const callId = await record({ tool: key, options, ok: false, refusedReason: reason, input: parsed.data, durationMs: Date.now() - startedAt });
+      return refusal(key, reason, Date.now() - startedAt, callId);
     }
     let wouldDo: string;
     try {
@@ -161,7 +177,7 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
       wouldDo = `Couldn't work out what this would do: ${(err as Error).message}`;
     }
     const durationMs = Date.now() - startedAt;
-    await record({ tool: key, options, ok: true, dryRun: true, input: parsed.data, output: { wouldDo }, durationMs });
+    const callId = await record({ tool: key, options, ok: true, dryRun: true, input: parsed.data, output: { wouldDo }, durationMs });
 
     // A preview that nobody can act on is a description of work that will only
     // ever be done again by hand. Filing it here — with the input as the tool's
@@ -187,6 +203,7 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
 
     return {
       tool: key,
+      callId,
       ok: true,
       output: null,
       dryRun: true,
@@ -198,17 +215,50 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
     };
   }
 
+  // Has this exact call already happened? Only asked for outward tools, and
+  // only when the caller supplied a key — see `idempotencyKey` above for why
+  // the caller rather than this function decides what "the same call" means.
+  //
+  // Checked here rather than before the permission gate on purpose: a replay
+  // that no longer has the grant, or whose integration has been disconnected,
+  // must be refused like any other call. Being a repeat is not a way past the
+  // checks.
+  if (options.idempotencyKey && tool.outward) {
+    const already = await priorCall(options.idempotencyKey);
+    if (already) {
+      const durationMs = Date.now() - startedAt;
+      const callId = await record({
+        tool: key,
+        options,
+        ok: true,
+        input: parsed.data,
+        output: { replayed: true, of: already.id, at: already.createdAt },
+        durationMs,
+      });
+      return {
+        tool: key,
+        callId,
+        ok: true,
+        output: already.output as never,
+        dryRun: false,
+        replayed: true,
+        costUsd: 0,
+        durationMs,
+      };
+    }
+  }
+
   try {
     const output = await tool.run(parsed.data, context);
     const durationMs = Date.now() - startedAt;
     const costUsd = await priceOf(tool, output);
-    await record({ tool: key, options, ok: true, input: parsed.data, output, costUsd, durationMs });
-    return { tool: key, ok: true, output, dryRun: false, costUsd, durationMs };
+    const callId = await record({ tool: key, options, ok: true, input: parsed.data, output, costUsd, durationMs });
+    return { tool: key, callId, ok: true, output, dryRun: false, costUsd, durationMs };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const message = (err as Error).message ?? "The tool failed.";
-    await record({ tool: key, options, ok: false, input: parsed.data, error: message, durationMs });
-    return { tool: key, ok: false, output: null, dryRun: false, error: message, costUsd: 0, durationMs };
+    const callId = await record({ tool: key, options, ok: false, input: parsed.data, error: message, durationMs });
+    return { tool: key, callId, ok: false, output: null, dryRun: false, error: message, costUsd: 0, durationMs };
   }
 }
 
@@ -274,6 +324,24 @@ async function fileActionRequest(entry: {
 }
 
 /**
+ * The earlier call this one would repeat, if there is one.
+ *
+ * Successful and not a dry run, because those are the only ones that had an
+ * effect worth not having twice. A previous refusal, failure or preview sharing
+ * the key is a true part of the history and must not stop the real attempt —
+ * which is exactly the case that matters: a run interrupted after preparing an
+ * email and resumed once its autonomy was raised has a dry-run row with this
+ * key on it, and the letter still needs to go.
+ */
+async function priorCall(idempotencyKey: string) {
+  return prisma.toolCall.findFirst({
+    where: { idempotencyKey, ok: true, dryRun: false },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, output: true, createdAt: true },
+  });
+}
+
+/**
  * What a call cost, where the tool can say. Only capture knows its own price
  * today — an Apify run reports its charge when it finishes, not when it starts
  * — so this records the *estimate* against the call and lets the run record
@@ -286,8 +354,8 @@ async function priceOf(tool: ToolDefinition, output: unknown): Promise<number> {
   return typeof estimate === "number" ? estimate : 0;
 }
 
-function refusal(tool: string, reason: string, durationMs: number): ToolResult {
-  return { tool, ok: false, output: null, dryRun: false, refusedReason: reason, error: reason, costUsd: 0, durationMs };
+function refusal(tool: string, reason: string, durationMs: number, callId?: string): ToolResult {
+  return { tool, callId, ok: false, output: null, dryRun: false, refusedReason: reason, error: reason, costUsd: 0, durationMs };
 }
 
 /** Trims a value so one enormous tool result can't fill the database. */
@@ -299,6 +367,17 @@ function trim(value: unknown): unknown {
   return { truncated: true, preview: json.slice(0, 2000) };
 }
 
+/**
+ * Writes the audit row and hands back its id.
+ *
+ * Returning the id is what lets a caller join its own record to this one —
+ * `AgentTaskStep.toolCallId` was declared and documented as that join from the
+ * day the runtime shipped, and stayed empty because nothing gave the id back.
+ *
+ * Attribution comes from the caller first and the ambient run second
+ * (`lib/runContext.ts`), so a tool driven straight from the API records no task
+ * and one called mid-run records the run that called it.
+ */
 async function record(entry: {
   tool: string;
   options: InvokeOptions;
@@ -310,13 +389,17 @@ async function record(entry: {
   refusedReason?: string | null;
   costUsd?: number;
   durationMs: number;
-}) {
+}): Promise<string | undefined> {
   try {
-    await prisma.toolCall.create({
+    const where = attribution({ taskId: entry.options.taskId, agentKey: entry.options.agentKey });
+    const row = await prisma.toolCall.create({
       data: {
         tool: entry.tool,
         agentKey: entry.options.agentKey,
         userId: entry.options.userId,
+        taskId: where.taskId,
+        traceId: where.traceId,
+        idempotencyKey: entry.options.idempotencyKey ?? null,
         input: trim(entry.input) as never,
         output: trim(entry.output) as never,
         ok: entry.ok,
@@ -326,12 +409,15 @@ async function record(entry: {
         costUsd: entry.costUsd ?? 0,
         durationMs: entry.durationMs,
       },
+      select: { id: true },
     });
+    return row.id;
   } catch (err) {
     // The audit trail failing must not fail the work it was recording, but it
     // is worth shouting about — an agent acting with no record is the thing
     // this table exists to prevent.
     console.error(`[tools] could not record a ${entry.tool} call:`, (err as Error).message);
+    return undefined;
   }
 }
 
