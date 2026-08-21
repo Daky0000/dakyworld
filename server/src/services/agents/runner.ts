@@ -20,6 +20,7 @@ import { withRunContext } from "../../lib/runContext.js";
 import { recordCreated, transition } from "./state.js";
 import { heldByRehearsal } from "../rehearsals/policy.js";
 import { wakeOne } from "../rehearsals/wake.js";
+import { check, scopesForAgent, type BudgetState } from "../budgets.js";
 
 /**
  * What actually runs an agent.
@@ -177,6 +178,27 @@ const WRITES_FOR_OUTSIDE = new Set([
 function effortFor(agent: Agent): "low" | "medium" | "high" {
   if (agent.tier === "BOARD" || agent.tier === "EXECUTIVE") return "high";
   return WRITES_FOR_OUTSIDE.has(agent.key) ? "high" : "medium";
+}
+
+/**
+ * The same answer, with a spend ceiling allowed to talk it down.
+ *
+ * At three quarters of a budget the work carries on and pays the economy rate
+ * for it, which is the whole reason `downgrade` is a separate action from
+ * `pause`: falling off a cliff at the end of the month is worse for this
+ * business than a fortnight of slightly cheaper drafting.
+ *
+ * **Down to `medium`, never to `low`.** `low` is the mail room's setting for
+ * classifying a message that has arrived, and giving it to an agent writing to
+ * a stranger would be a different and worse kind of saving. `medium` is where
+ * the model changes and the thinking budget is still reasonable — which is the
+ * point at which the saving is real and the quality cost is not.
+ */
+async function effortUnderBudget(agent: Agent): Promise<"low" | "medium" | "high"> {
+  const wanted = effortFor(agent);
+  if (wanted !== "high") return wanted;
+  const budget = await check(scopesForAgent(agent.key));
+  return budget.action === "downgrade" || budget.action === "approve" ? "medium" : wanted;
 }
 
 // --- The timeline -----------------------------------------------------------
@@ -1229,13 +1251,18 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       // The only correct response is to stop touching it.
       let lostOwnership = false;
 
+      // Set when this task's own ceiling stopped it, rather than a person. The
+      // two use the same mechanism and must not reach the same ending — see
+      // where this is read, below.
+      let stoppedByBudget: BudgetState | null = null;
+
       try {
         const result = await runAgentLoop({
           purpose: `agent.${agent.key}`,
           system,
           prompt: brief,
           tools,
-          effort: effortFor(agent),
+          effort: await effortUnderBudget(agent),
           resume: saved?.state ?? null,
           // What it said on the way, written down as it says it.
           //
@@ -1260,10 +1287,58 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           },
           shouldStop: async () => {
             if (shuttingDown || lostOwnership) return true;
-            const row = await prisma.agentTask.findUnique({ where: { id: task.id }, select: { interruptRequested: true } });
-            return Boolean(row?.interruptRequested);
+            const row = await prisma.agentTask.findUnique({
+              where: { id: task.id },
+              select: { interruptRequested: true, budgetUsd: true },
+            });
+            if (row?.interruptRequested) return true;
+
+            // This one task's own ceiling. Read here because this is a point
+            // where the conversation is whole — between iterations and between
+            // tool calls — which is the same reason the interrupt is read here
+            // and not wherever it happens to be noticed.
+            //
+            // Null is no ceiling, and **so is zero**: the same call
+            // `Rehearsal.budgetUsd` makes, so that the one person who types 0
+            // on purpose is not silently given the default instead.
+            const ceiling = row?.budgetUsd === null || row?.budgetUsd === undefined ? null : Number(row.budgetUsd.toString());
+            if (ceiling === null || ceiling <= 0) return false;
+
+            const spent = await prisma.llmCall.aggregate({ where: { taskId: task.id }, _sum: { costUsd: true } });
+            const spentUsd = Number((spent._sum.costUsd ?? 0).toString());
+            if (spentUsd < ceiling) return false;
+
+            stoppedByBudget = {
+              scopeType: "GLOBAL",
+              scopeId: task.id,
+              period: "MONTH",
+              spentUsd,
+              softLimitUsd: null,
+              hardLimitUsd: ceiling,
+              fraction: spentUsd / ceiling,
+              action: "pause",
+              note: null,
+            };
+            return true;
           },
         });
+
+        // Its own ceiling stopped it. Deliberately **not** the interrupt ending:
+        // an interrupt returns the task to QUEUED, and a task over budget put
+        // back in the queue is picked up on the next tick, stopped again before
+        // it does anything, and requeued — once a minute, for ever, with
+        // nothing on any screen to say why. BLOCKED keeps the checkpoint just
+        // as an escalation does, so raising the ceiling and pressing Carry on
+        // resumes the conversation rather than starting a new one.
+        if (result.stoppedBecause === "interrupted" && stoppedByBudget) {
+          const ceiling = stoppedByBudget as BudgetState;
+          return finishTask(task.id, "BLOCKED", {
+            blockedReason: `This task has spent $${ceiling.spentUsd.toFixed(2)}, which is at or past the $${(ceiling.hardLimitUsd ?? 0).toFixed(2)} ceiling set on it. Its place is kept — raise the ceiling and carry on, or leave it here.`,
+            costUsd: result.costUsd,
+            toolCalls: counters.toolCalls,
+            dryRunCalls: counters.dryRun,
+          });
+        }
 
         // Stopped on request with its place kept. Not an outcome — an intermission.
         if (result.stoppedBecause === "interrupted") {
@@ -1660,10 +1735,24 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
   // already decided, so the first task seen for an agent is the right one.
   const started: string[] = [];
   const takenThisTick = new Set<string>();
+  let heldByBudget = 0;
   for (const task of due) {
     if (started.length >= capacity) break;
     if (running.has(task.id)) continue;
     if (busyAgents.has(task.agentKey) || takenThisTick.has(task.agentKey)) continue;
+
+    // The cheapest place a ceiling can be enforced, and the safest: nothing has
+    // started, so nothing is half-done. A task held here stays QUEUED with its
+    // place kept and starts on the tick after the ceiling is raised or the
+    // period rolls over — being over budget is the guardrail working, exactly
+    // as being at the concurrency limit is, so neither is an error and neither
+    // changes the task's status.
+    const budget = await check(scopesForAgent(task.agentKey), now);
+    if (budget.action === "pause") {
+      heldByBudget += 1;
+      continue;
+    }
+
     takenThisTick.add(task.agentKey);
     started.push(task.id);
     // Deliberately not awaited: the scheduler tick must not be held open for
@@ -1671,6 +1760,10 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
     void runTask(task.id).catch((err) => console.error(`[agent] task ${task.id} died:`, (err as Error).message));
   }
   if (started.length > 0) console.log(`[agent] started ${started.length} task(s)`);
+  // Said out loud once per tick. A workforce that has quietly stopped looks
+  // exactly like a workforce with nothing to do, and the whole point of a
+  // ceiling somebody can live with is that they can tell when it has bitten.
+  if (heldByBudget > 0) console.log(`[agent] ${heldByBudget} task(s) held: over a spending ceiling`);
   return started.length;
 }
 

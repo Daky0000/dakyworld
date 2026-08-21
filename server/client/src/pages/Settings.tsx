@@ -1368,6 +1368,18 @@ function RouteRow({
     mutationFn: (provider: string) => api.put<AppSettings>(`/settings/models/routes/${route.job}`, { provider }),
     onSuccess: save,
   });
+  const setModel = useMutation({
+    mutationFn: (model: string) => api.put<AppSettings>(`/settings/models/jobs/${route.job}`, { model: model || null }),
+    onSuccess: save,
+  });
+
+  // The models the vendor actually serving this job offers, plus whatever the
+  // Owner has already typed. A stored choice that is not on the vendor's list
+  // is a deliberate one — the list is "worth offering in a dropdown", never the
+  // set of models that exist — so it must not vanish from its own control.
+  const serving = providers.find((provider) => provider.key === route.serving);
+  const offered = [...new Set([...(serving?.models ?? []), ...(route.modelOverride ? [route.modelOverride] : [])])];
+  const tierModel = route.tier === "economy" ? serving?.economyModel : serving?.model;
 
   return (
     <div className="rounded-xl border border-line px-4 py-3">
@@ -1380,27 +1392,59 @@ function RouteRow({
           <p className="mt-1 text-sm text-ink/55">{info?.blurb}</p>
         </div>
 
-        <div className="shrink-0">
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Handled by</label>
-          <select
-            value={route.chosen}
-            onChange={(event) => choose.mutate(event.target.value)}
-            disabled={choose.isPending}
-            className="input mt-1 w-48"
-          >
-            {eligible.map((provider) => (
-              <option key={provider.key} value={provider.key}>
-                {provider.name}
-                {provider.configured ? "" : " (no key yet)"}
+        <div className="flex shrink-0 flex-wrap gap-3">
+          <div>
+            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Handled by</label>
+            <select
+              value={route.chosen}
+              onChange={(event) => choose.mutate(event.target.value)}
+              disabled={choose.isPending}
+              className="input mt-1 w-48"
+            >
+              {eligible.map((provider) => (
+                <option key={provider.key} value={provider.key}>
+                  {provider.name}
+                  {provider.configured ? "" : " (no key yet)"}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* What the job is worth paying for, which is a different question
+              from who does it. Blank is the shipped tier and says which model
+              that is, so choosing nothing is an informed choice rather than a
+              blank box. */}
+          <div>
+            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">On model</label>
+            <select
+              value={route.modelOverride ?? ""}
+              onChange={(event) => setModel.mutate(event.target.value)}
+              disabled={setModel.isPending}
+              className="input mt-1 w-52"
+            >
+              <option value="">
+                {route.tier === "economy" ? "Economy" : "Standard"}
+                {tierModel ? ` — ${tierModel}` : ""}
               </option>
-            ))}
-          </select>
+              {offered.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
       {route.note && <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{route.note}</p>}
-      {route.ready && <p className="mt-2 font-mono text-[11px] text-ink/40">{route.model}</p>}
+      {route.ready && (
+        <p className="mt-2 font-mono text-[11px] text-ink/40">
+          {route.model}
+          {route.tier === "economy" && !route.modelOverride && <span className="ml-2 not-italic text-ink/35">economy tier</span>}
+        </p>
+      )}
       <ErrorNote error={choose.error} />
+      <ErrorNote error={setModel.error} />
     </div>
   );
 }

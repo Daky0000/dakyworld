@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma.js";
 import { attribution } from "../../lib/runContext.js";
 import { SETTING, getSetting } from "../../lib/settings.js";
 import { resolveTool } from "./catalogue.js";
+import { check, scopesForTool } from "../budgets.js";
 import { toolReadiness } from "./readiness.js";
 import type { ToolContext, ToolDefinition, ToolResult } from "./types.js";
 
@@ -106,11 +107,36 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
     return { allowed: false, mustDryRun: false, reason: `${agent.name} hasn't been granted ${tool.key}.` };
   }
 
+  // A spend ceiling the Owner set, and the only check here an approval cannot
+  // lift. Deliberately **only for a tool that spends** — a blanket hold would
+  // stop an agent reading a record, which blinds it without saving a penny and
+  // is the mistake `rehearsals/policy.ts` argues out at length.
+  //
+  // A hard limit refuses outright, before the approval bypass below, for the
+  // same reason readiness and the grant are checked before it: approving a
+  // letter is a decision about the letter, not a decision to go over budget,
+  // and the sentence that comes back says what the ceiling is so it can be
+  // raised and the card approved again.
+  if (tool.spends) {
+    const budget = await check(scopesForTool(tool.key, options.agentKey));
+    if (budget.action === "pause") {
+      return { allowed: false, mustDryRun: false, reason: budget.note ?? "This is over its spending ceiling." };
+    }
+    // At 90% the work is prepared instead — which is the machinery that already
+    // exists for an agent below the spend autonomy level, reused rather than
+    // reinvented. Not applied to an already-approved call, or a card could
+    // never be carried out at all and the queue would fill with re-asks.
+    if (budget.action === "approve" && !options.approvedRequestId) {
+      return { allowed: true, mustDryRun: true, reason: budget.note ?? "Close to a spending ceiling, so this is prepared for a decision." };
+    }
+  }
+
   // A person has already looked at this exact call and said yes. Everything
-  // above still had to pass — the agent exists, is not paused, and still holds
-  // the tool — and it is only the "prepare rather than act" downgrade below
-  // that the approval lifts. Without this the queue could file an action and
-  // never carry one out, which is the state the app was already in.
+  // above still had to pass — the agent exists, is not paused, still holds the
+  // tool, and is not over a hard ceiling — and it is only the "prepare rather
+  // than act" downgrade below that the approval lifts. Without this the queue
+  // could file an action and never carry one out, which is the state the app
+  // was already in.
   if (options.approvedRequestId) return { allowed: true, mustDryRun: false, reason: null };
 
   // The agent's own dry-run flag is a floor, not a default: an Owner asking for

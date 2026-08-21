@@ -180,6 +180,15 @@ toolsRouter.get("/:key/agents", async (req, res, next) => {
             granted: agent.toolkit.includes(tool.key),
             // Granted and still unable to act is a different problem from not
             // granted, and needs a different fix. Both are worth seeing here.
+            //
+            // `allowed` is the third state and was missing. A refusal — a
+            // paused agent, or a scope over its spending ceiling — came back as
+            // `mustDryRun: false` with a sentence explaining why, and the screen
+            // only printed that sentence when `mustDryRun` was true. So an agent
+            // that could not act at all looked entirely able, and the only sign
+            // was the call failing later. A workforce that has quietly stopped
+            // must never look like a workforce with nothing to do.
+            allowed: permission.allowed,
             mustDryRun: permission.mustDryRun,
             permissionNote: permission.reason,
           };

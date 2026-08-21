@@ -100,6 +100,19 @@ export const SETTING = {
    */
   MODEL_ROUTES: "models.routes",
   /**
+   * Which *model* serves which job, as JSON, holding only what has been changed
+   * from the shipped tier: `{"triage":"claude-haiku-4-5"}`.
+   *
+   * Separate from the four per-provider model settings because those answer
+   * "which Gemini" and this answers "how much is this particular job worth
+   * paying for". Reading the post runs once per arriving message and sorting a
+   * pasted prompt has a right answer; neither is worth the rate that writing a
+   * letter to a stranger is. Only what has been changed is stored, for the same
+   * reason as `models.routes` — a stored copy of a default is a default that
+   * silently stops tracking the code.
+   */
+  MODEL_JOB_MODELS: "models.jobModels",
+  /**
    * Per-model rate overrides for the non-Claude vendors, same shape and same
    * reasoning as `anthropic.pricing`.
    */

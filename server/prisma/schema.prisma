@@ -759,6 +759,77 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 }
 
+/// What a scope may spend before the app stops itself.
+///
+/// Lead capture has had a ceiling since the day it could spend money —
+/// `capture.monthlyBudgetUsd`, enforced in `scraperRunner.ts` — and a rehearsal
+/// has had one since it could fan out across nine agents. The four model
+/// vendors had none at all. So the one part of this system that spends without
+/// anybody pressing a button, on a schedule, all night, was the one part with
+/// no ceiling on it, and the only symptom of a runaway was an invoice at the
+/// end of the month with nothing to say which run caused it.
+///
+/// **Usage is not a column here.** It is summed from `LlmCall` and `ToolCall`,
+/// which are already indexed by `createdAt`, `agentKey`, `taskId` and `tool`. A
+/// stored counter would be a second source of truth that drifts the first time
+/// a write fails — and `recordLlmCall` is explicitly allowed to fail silently,
+/// because accounting must never break the work it is accounting for. A ledger
+/// row missing from a report is a gap in a report; a ceiling that has silently
+/// lost count is a ceiling that is not there.
+model Budget {
+  id String @id @default(cuid())
+
+  scopeType BudgetScope
+  /// The agent key, tool key or client id this applies to. Empty for GLOBAL,
+  /// rather than null, so the unique index below actually constrains it —
+  /// Postgres treats every null as distinct, so a nullable scope would allow
+  /// any number of global budgets for one period.
+  scopeId   String       @default("")
+  period    BudgetPeriod
+
+  /// Where the warning starts and where work stops, in USD.
+  ///
+  /// Both optional: a budget with only a soft limit is a line somebody wants to
+  /// watch and not be stopped by, which is a real and common thing to want.
+  /// **Zero is a value, not an absence** — the same call `Rehearsal.budgetUsd`
+  /// makes. Setting a hard limit to zero is the obvious way to stop all spend
+  /// on a scope, and a `> 0` guard would silently read it as "unset".
+  softLimitUsd Decimal? @db.Decimal(10, 2)
+  hardLimitUsd Decimal? @db.Decimal(10, 2)
+
+  /// Off without being deleted, so a ceiling can be lifted for an afternoon and
+  /// put back without retyping it.
+  enabled Boolean @default(true)
+
+  /// Free text for the person who finds this in six months.
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scopeType, scopeId, period])
+  @@index([enabled])
+}
+
+/// What a budget covers.
+///
+/// Deliberately short. Every scope here is one the ledgers can already be
+/// grouped by without a join, which is what makes checking a ceiling cheap
+/// enough to do on the path of the work rather than in a nightly report.
+enum BudgetScope {
+  /// Everything the app spends, models and tools together.
+  GLOBAL
+  /// One agent, by key. Answers "which colleague is expensive".
+  AGENT
+  /// One tool, by catalogue key. Scraping and screenshots are the ones that run away.
+  TOOL
+}
+
+enum BudgetPeriod {
+  DAY
+  MONTH
+}
+
 // ---------------------------------------------------------------------------
 // Proposal & Negotiation
 // ---------------------------------------------------------------------------
@@ -2155,6 +2226,16 @@ model AgentTask {
   /// Why it stopped short. Set only when BLOCKED.
   blockedReason String?
   error         String?
+
+  /// What this one task is allowed to spend before it stops itself, in USD.
+  ///
+  /// The same shape as `Rehearsal.budgetUsd`, and for the same reason: the
+  /// iteration cap limits the *shape* of a run and says nothing about its cost,
+  /// because a turn is not a fixed price and each one re-sends the ones before
+  /// it. Null means no ceiling of its own — the scope budgets still apply — and
+  /// **zero means no ceiling too**, deliberately, so that a `.positive()` guard
+  /// cannot quietly restore a default for the one person who typed 0 on purpose.
+  budgetUsd Decimal? @db.Decimal(10, 2)
 
   /// What the run cost in model tokens, and how much of the tool layer it used.
   costUsd     Decimal @default(0) @db.Decimal(10, 6)

@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { recordLlmCall } from "./llmLedger.js";
 import { SETTING, getSetting } from "./settings.js";
-import { costOf, defaultModel, rateFor } from "./claudePricing.js";
+import { costOf, defaultModel, modelForEffort, rateFor } from "./claudePricing.js";
 
 /**
  * One way to call Claude.
@@ -237,8 +237,21 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
   const apiKey = await analystKey();
   if (!apiKey) throw new AnalystError(503, say("noKey"));
 
-  const model = request.model ?? (await defaultModel());
   const effort = request.effort ?? "medium";
+  // The effort decides the model, not only how hard it thinks.
+  //
+  // This line read `await defaultModel()` for months, so `effort` reached the
+  // API as `output_config.effort` and never once reached the model choice —
+  // every one-shot call in the app ran on the headline model however cheap the
+  // work was. `modelForEffort` already existed and was wired into the agent
+  // loop alone, which made the split look done: an agent turn reading a record
+  // paid Sonnet rates while mail triage, which asks for `low` explicitly and
+  // runs once per *arriving* message, paid Opus rates on every one.
+  //
+  // An explicit `request.model` still wins, which is what keeps the per-job
+  // override in `models/registry.ts` and every caller that names a model
+  // untouched by this.
+  const model = request.model ?? (await modelForEffort(effort));
   const startedAt = Date.now();
 
   // Failures are recorded too, so every exit below goes through this.

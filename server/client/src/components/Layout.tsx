@@ -73,6 +73,11 @@ const navItems: NavItem[] = [
       // website is only what you point it at.
       { to: "/rehearsals", label: "Rehearsal" },
       { to: "/agents/tools", label: "Tools" },
+      // What the floor above costs to run. Under Agents rather than beside the
+      // money screens on purpose: Invoices is what clients owe us, this is what
+      // the workforce spends, and putting them together would invite somebody
+      // to read one as the other.
+      { to: "/costs", label: "Costs" },
     ],
   },
   { to: "/settings", label: "Settings", ownerOnly: true },

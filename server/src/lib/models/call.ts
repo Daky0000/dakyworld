@@ -7,6 +7,7 @@ import {
   PROVIDERS,
   PROVIDER_PRICING,
   imageModel,
+  modelForJob,
   providerKey,
   providerModel,
   requestFee,
@@ -608,6 +609,11 @@ async function attemptProvider<T>(
         prompt: request.prompt,
         schema: request.schema,
         effort: request.effort,
+        // Named rather than left to `callClaude`, so both halves of the model
+        // layer honour one answer. Left unset, the job's tier and the Owner's
+        // per-job choice would apply to the three fetch vendors and silently
+        // not to Claude — which is the vendor most jobs actually fall back to.
+        model: await modelForJob(request.job, "anthropic"),
         maxTokens: request.maxTokens,
         images: request.images,
         messages: request.messages,
@@ -636,7 +642,7 @@ async function attemptProvider<T>(
   const apiKey = await providerKey(serving);
   if (!apiKey) throw new AttemptFailed(new AnalystError(503, say("noKey")), true, "not connected");
 
-  const model = await providerModel(serving);
+  const model = await modelForJob(request.job, serving);
   const startedAt = Date.now();
 
   const fail = async (status: number, message: string) => {

@@ -23,7 +23,9 @@ import {
   describeProviders,
   describeRouting,
   isModelJob,
+  isPricedModel,
   isProviderKey,
+  readJobModels,
   readRoutes,
   type ModelJob,
   type ProviderKey,
@@ -855,6 +857,52 @@ settingsRouter.put("/models/routes/:job", async (req, res, next) => {
 
     if (Object.keys(routes).length === 0) await deleteSetting(SETTING.MODEL_ROUTES);
     else await setSetting(SETTING.MODEL_ROUTES, JSON.stringify(routes));
+
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Which *model* does which job.
+ *
+ * The sibling of the route above, and the answer to a different question: that
+ * one picks the vendor, this one picks how much the job is worth paying for.
+ * Reading the post runs once per arriving message and sorting a pasted prompt
+ * has a right answer — neither is worth the rate a letter to a stranger is —
+ * so both ship on the economy tier and this is how the Owner overrules that.
+ *
+ * A model with no published rate is refused here rather than dropped on read,
+ * for the same reason a bad route is: an unpriced model prices at the most
+ * expensive rate we know of, which is the safe direction for a budget and a
+ * terrible place to discover a typo.
+ */
+settingsRouter.put("/models/jobs/:job", async (req, res, next) => {
+  try {
+    const job = req.params.job;
+    if (!isModelJob(job)) return res.status(404).json({ error: "No such job." });
+
+    const { model } = z.object({ model: z.string().max(80).nullable() }).parse(req.body);
+
+    const chosen: Partial<Record<ModelJob, string>> = { ...(await readJobModels()) };
+    const trimmed = model?.trim();
+    // Blank and null both mean "put it back on the shipped tier". A form that
+    // sends an empty string when somebody clears a field is the normal case,
+    // and storing "" would be a model name nothing can serve.
+    if (!trimmed) {
+      delete chosen[job];
+    } else {
+      if (!isPricedModel(trimmed)) {
+        return res.status(400).json({
+          error: `There is no published rate here for ${trimmed}, so what it costs could not be recorded. Add one under models.pricing first, or choose a listed model.`,
+        });
+      }
+      chosen[job] = trimmed;
+    }
+
+    if (Object.keys(chosen).length === 0) await deleteSetting(SETTING.MODEL_JOB_MODELS);
+    else await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify(chosen));
 
     res.json(await describeAll(req));
   } catch (err) {

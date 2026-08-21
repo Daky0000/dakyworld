@@ -510,6 +510,8 @@ export interface ModelProvider {
   model: string;
   defaultModel: string;
   models: string[];
+  /** The cheap model this vendor offers, used by jobs on the economy tier. */
+  economyModel: string;
   console: string;
   keyHint: string;
   /** The jobs this vendor can be routed to. */
@@ -528,7 +530,12 @@ export interface ModelRoute {
   job: ModelJob;
   chosen: ProviderKey;
   serving: ProviderKey;
+  /** The model that will really serve this job — tier and override applied. */
   model: string;
+  /** What the job costs by default. `economy` jobs ship on the cheap model. */
+  tier: "economy" | "standard";
+  /** The Owner's own model choice for this job, when they have made one. */
+  modelOverride: string | null;
   ready: boolean;
   note: string | null;
 }
@@ -1552,6 +1559,8 @@ export interface AgentDetail extends Agent {
     granted: boolean;
     ready: boolean;
     blockedReason: string | null;
+    /** False when the call would be refused outright, not merely held at a preview. */
+    allowed: boolean;
     mustDryRun: boolean;
     permissionNote: string | null;
   }>;
@@ -1819,6 +1828,8 @@ export interface ToolGrantee {
   department: string;
   status: AgentStatus;
   granted: boolean;
+  /** False when the call would be refused outright, not merely held at a preview. */
+  allowed: boolean;
   mustDryRun: boolean;
   permissionNote: string | null;
 }
@@ -2483,4 +2494,102 @@ export interface RehearsalDetail {
     notes: number;
     memories: number;
   };
+}
+
+// --- What the workforce spends ---------------------------------------------
+
+export interface SpendSummary {
+  windowDays: number;
+  since: string;
+  until: string;
+  modelUsd: number;
+  toolUsd: number;
+  totalUsd: number;
+  modelCalls: number;
+  toolCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** Null when nothing was sent at all — "no cache hits" and "no calls" differ. */
+  cacheHitRate: number | null;
+  failedCalls: number;
+  failedUsd: number;
+  refusedCalls: number;
+  dryRunCalls: number;
+}
+
+export interface SpendRow {
+  key: string;
+  calls: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  failed: number;
+}
+
+export interface DaySpend {
+  day: string;
+  modelUsd: number;
+  toolUsd: number;
+}
+
+export interface Outcome {
+  key: string;
+  label: string;
+  /** What makes one of these count. Shown, because a ratio without it is a rumour. */
+  countedAs: string;
+  count: number;
+  /** Null when nothing of this kind happened in the window. Never rendered as zero. */
+  costEachUsd: number | null;
+}
+
+export interface CostReport {
+  summary: SpendSummary;
+  byPurpose: SpendRow[];
+  byAgent: SpendRow[];
+  byModel: SpendRow[];
+  byTool: SpendRow[];
+  daily: DaySpend[];
+  outcomes: { totalUsd: number; outcomes: Outcome[] };
+}
+
+export interface LlmCallRow {
+  id: string;
+  purpose: string;
+  model: string;
+  agentKey: string | null;
+  taskId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: string;
+  durationMs: number | null;
+  effort: string | null;
+  ok: boolean;
+  error: string | null;
+  createdAt: string;
+}
+
+export type BudgetScope = "GLOBAL" | "AGENT" | "TOOL";
+export type BudgetPeriod = "DAY" | "MONTH";
+export type BudgetAction = "none" | "warn" | "downgrade" | "approve" | "pause";
+
+export interface BudgetRow {
+  id: string;
+  scopeType: BudgetScope;
+  /** Empty for GLOBAL. The agent key or tool key otherwise. */
+  scopeId: string;
+  period: BudgetPeriod;
+  /** Strings, because Prisma serialises Decimal that way. Null means unset. */
+  softLimitUsd: string | null;
+  hardLimitUsd: string | null;
+  enabled: boolean;
+  note: string | null;
+  /** What this scope has spent so far this period. */
+  spentUsd: number;
+  action: BudgetAction;
+  /** Spend ÷ hard limit. Null when there is no hard limit to divide by. */
+  fraction: number | null;
 }

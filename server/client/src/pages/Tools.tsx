@@ -325,9 +325,15 @@ function GrantDrawer({ toolKey, onClose }: { toolKey: string | null; onClose: ()
                     {agent.status !== "ACTIVE" && <Badge tone="muted">{agent.status.toLowerCase()}</Badge>}
                   </span>
                   {/* Granted and still unable to act is a different problem
-                      from not granted, and needs a different fix. */}
-                  {agent.granted && agent.mustDryRun && agent.permissionNote && (
-                    <span className="mt-0.5 block text-xs text-ink/45">{agent.permissionNote}</span>
+                      from not granted, and needs a different fix.
+                      Printed whenever there is a sentence — gated on
+                      `mustDryRun` it stayed silent for an outright refusal,
+                      which is the case somebody most needs to be told about. */}
+                  {agent.granted && agent.permissionNote && (
+                    <span className={`mt-0.5 block text-xs ${agent.allowed ? "text-ink/45" : "text-amber-700"}`}>
+                      {agent.allowed ? "" : "Cannot right now — "}
+                      {agent.permissionNote}
+                    </span>
                   )}
                 </span>
               </label>

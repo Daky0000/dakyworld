@@ -1,5 +1,5 @@
 import { SETTING, getSetting, isEnvManaged } from "../settings.js";
-import { MODEL_DEFAULT, defaultModel, type ModelRate } from "../claudePricing.js";
+import { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, defaultModel, type ModelRate } from "../claudePricing.js";
 
 /**
  * The four model vendors, and which job each one does.
@@ -54,6 +54,21 @@ export type ModelJob =
 
 export const MODEL_JOBS: ModelJob[] = ["text", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision"];
 
+/**
+ * How much a job is worth paying for, before anybody has said otherwise.
+ *
+ * Two tiers rather than five, because two is what the code can actually act on:
+ * `economy` resolves to the cheap model a vendor offers, `standard` to whatever
+ * that vendor's own model setting says. The blueprint's tier 0 — validation,
+ * arithmetic, dates, suppression, state transitions — is not a tier here at all
+ * because none of it reaches a model in the first place.
+ *
+ * **A job with no tier declared is `standard`.** Named that way round on
+ * purpose, the same call `modelForEffort` makes: a job added later and not
+ * thought about should cost too much rather than quietly be done badly.
+ */
+export type ModelTier = "economy" | "standard";
+
 export interface JobDescription {
   job: ModelJob;
   /** A heading. Title case, two words at most. */
@@ -68,6 +83,8 @@ export interface JobDescription {
   blurb: string;
   /** Which vendor it goes to when nobody has said otherwise. */
   fallback: ProviderKey;
+  /** What this job is worth paying for. Absent means `standard`. */
+  tier?: ModelTier;
 }
 
 /**
@@ -99,6 +116,9 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     // the chain is wide and the cost is a rounding error against being wrong.
     defaultProvider: "anthropic",
     fallback: "gemini",
+    // Following a schema, on a job with a right answer, where nothing it
+    // returns is read by a customer.
+    tier: "economy",
   },
   triage: {
     job: "triage",
@@ -114,6 +134,12 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     // everything else there too.
     defaultProvider: "anthropic",
     fallback: "gemini",
+    // The argument above, carried out. Separating the job was only half of it:
+    // for months this still resolved to whichever model the vendor's own
+    // setting named, which on Claude is the headline one — so the cheap-model
+    // promise in that comment was not kept by anything. It is now the default
+    // rather than something the Owner has to go and find.
+    tier: "economy",
   },
   image: {
     job: "image",
@@ -182,6 +208,16 @@ export interface ProviderDefinition {
   keySetting: string;
   modelSetting: string;
   defaultModel: string;
+  /**
+   * The cheap model this vendor offers, for jobs tiered `economy`.
+   *
+   * Every vendor here has one and they are not interchangeable, which is why
+   * this is a property of the vendor rather than one global "cheap model": the
+   * economy tier has to resolve to something the vendor serving the job can
+   * actually be asked for. A vendor with nothing cheaper than its default names
+   * its default, which makes the tier a no-op rather than a broken request.
+   */
+  economyModel: string;
   /** Where the key comes from. */
   console: string;
   /** What the key looks like, as placeholder text. */
@@ -201,6 +237,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keySetting: SETTING.ANTHROPIC_KEY,
     modelSetting: SETTING.ANTHROPIC_MODEL,
     defaultModel: MODEL_DEFAULT,
+    economyModel: MODEL_ECONOMY,
     console: "https://console.anthropic.com/settings/keys",
     keyHint: "sk-ant-…",
     // Deliberately every job it can actually do: it is the floor, and a floor
@@ -227,6 +264,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keySetting: SETTING.OPENAI_KEY,
     modelSetting: SETTING.OPENAI_MODEL,
     defaultModel: "gpt-5.4",
+    economyModel: "gpt-5.4-mini",
     console: "https://platform.openai.com/api-keys",
     keyHint: "sk-proj-…",
     jobs: ["text", "organise", "triage", "image", "html", "vision"],
@@ -240,6 +278,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keySetting: SETTING.GEMINI_KEY,
     modelSetting: SETTING.GEMINI_MODEL,
     defaultModel: "gemini-3.7-flash",
+    economyModel: "gemini-2.5-flash",
     console: "https://aistudio.google.com/apikey",
     keyHint: "AIza…",
     // No image job: Gemini generates pictures through a separate model family
@@ -257,6 +296,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keySetting: SETTING.PERPLEXITY_KEY,
     modelSetting: SETTING.PERPLEXITY_MODEL,
     defaultModel: "sonar",
+    economyModel: "sonar",
     console: "https://www.perplexity.ai/account/api/group",
     keyHint: "pplx-…",
     // It searches the live web on every call, which is what makes it the right
@@ -291,6 +331,68 @@ export async function providerModel(provider: ProviderKey): Promise<string> {
   if (provider === "anthropic") return defaultModel();
   const configured = (await getSetting(PROVIDERS[provider].modelSetting))?.trim();
   return configured || PROVIDERS[provider].defaultModel;
+}
+
+// --- Which model, for which job ---------------------------------------------
+
+/**
+ * The Owner's per-job model choices, holding only what has been changed.
+ *
+ * Validated the same way `readRoutes` is, and dropped rather than clamped for
+ * the same reason: a typo must not become a policy. The extra check here is
+ * that the model has to be one we can *price* — an unknown model falls through
+ * to `FALLBACK` in `claudePricing.ts`, which is deliberately the most expensive
+ * rate we know of, and a budget ceiling reading a guess is the one place a
+ * silent typo costs real money.
+ */
+export async function readJobModels(): Promise<Partial<Record<ModelJob, string>>> {
+  const raw = await getSetting(SETTING.MODEL_JOB_MODELS);
+  if (!raw?.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.warn("[models] models.jobModels is not valid JSON — using the shipped tiers.");
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+  const chosen: Partial<Record<ModelJob, string>> = {};
+  for (const [job, model] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!isModelJob(job)) continue;
+    if (typeof model !== "string" || !model.trim()) continue;
+    chosen[job] = model.trim();
+  }
+  return chosen;
+}
+
+/** True when we hold a published rate for this model, from either table. */
+export function isPricedModel(model: string): boolean {
+  return model in MODEL_PRICING || model in PROVIDER_PRICING;
+}
+
+/**
+ * The model that will serve this job on this vendor.
+ *
+ * Three answers in order: what the Owner set for this job, then the job's tier,
+ * then the vendor's own model setting. The tier is the part that was missing —
+ * `providerModel` answers "which Gemini", which is a different question from
+ * "how much is reading the post worth paying for", and asking only the first
+ * had a thousand mailbox messages a month served by the headline model.
+ *
+ * An override naming a model we cannot price is ignored with a line in the log
+ * rather than honoured. `verifyProviderKey` is where a typed model name is
+ * proved against the vendor; this is a spending guard, and a guard that trusts
+ * a string it cannot price is not one.
+ */
+export async function modelForJob(job: ModelJob, provider: ProviderKey): Promise<string> {
+  const chosen = (await readJobModels())[job];
+  if (chosen) {
+    if (isPricedModel(chosen)) return chosen;
+    console.warn(`[models] ${chosen} is set for ${job} but has no published rate here — using the tier instead. Add it to models.pricing to use it.`);
+  }
+  if ((JOBS[job].tier ?? "standard") === "economy") return PROVIDERS[provider].economyModel;
+  return providerModel(provider);
 }
 
 /** The image model, which is a different model from the same vendor. */
@@ -338,8 +440,12 @@ export interface Routing {
   chosen: ProviderKey;
   /** Who will actually serve it right now. Differs when the chosen one has no key. */
   serving: ProviderKey;
-  /** The model that vendor will use. */
+  /** The model that vendor will use for this job, tier and override applied. */
   model: string;
+  /** What this job costs by default: "economy" or "standard". */
+  tier: ModelTier;
+  /** The Owner's own model choice for this job, when they have made one. */
+  modelOverride: string | null;
   /** True when the chosen vendor is connected and really is serving. */
   ready: boolean;
   /** Why it is falling back, in one sentence, when it is. */
@@ -400,9 +506,11 @@ function couldServe(job: ModelJob): string {
 export async function routeFor(job: ModelJob): Promise<Routing> {
   const routes = await readRoutes();
   const chosen = routes[job] ?? JOBS[job].defaultProvider;
+  const tier = JOBS[job].tier ?? "standard";
+  const modelOverride = (await readJobModels())[job] ?? null;
 
   if (await providerConfigured(chosen)) {
-    return { job, chosen, serving: chosen, model: await providerModel(chosen), ready: true, note: null };
+    return { job, chosen, serving: chosen, tier, modelOverride, model: await modelForJob(job, chosen), ready: true, note: null };
   }
 
   const chosenName = PROVIDERS[chosen].name;
@@ -411,8 +519,10 @@ export async function routeFor(job: ModelJob): Promise<Routing> {
     return {
       job,
       chosen,
+      tier,
+      modelOverride,
       serving: standIn,
-      model: await providerModel(standIn),
+      model: await modelForJob(job, standIn),
       ready: false,
       note: `${chosenName} isn't connected, so ${PROVIDERS[standIn].name} is doing ${JOBS[job].phrase} for now. Add a ${chosenName} key under Settings → AI models.`,
     };
@@ -423,8 +533,10 @@ export async function routeFor(job: ModelJob): Promise<Routing> {
   return {
     job,
     chosen,
+    tier,
+    modelOverride,
     serving: chosen,
-    model: await providerModel(chosen),
+    model: await modelForJob(job, chosen),
     ready: false,
     note: `No model is connected for ${JOBS[job].phrase}. Add a ${couldServe(job)} key under Settings → AI models — any one of them can do this.`,
   };
@@ -490,6 +602,7 @@ export interface ProviderStatus {
   keyPreview: string | null;
   model: string;
   defaultModel: string;
+  economyModel: string;
   models: string[];
   console: string;
   keyHint: string;
@@ -514,6 +627,7 @@ export async function describeProviders(): Promise<ProviderStatus[]> {
         keyPreview: null as string | null,
         model: await providerModel(key),
         defaultModel: definition.defaultModel,
+        economyModel: definition.economyModel,
         models: definition.models,
         console: definition.console,
         keyHint: definition.keyHint,

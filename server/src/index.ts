@@ -27,6 +27,7 @@ import { agentsRouter } from "./routes/agents.js";
 import { rehearsalsRouter } from "./routes/rehearsals.js";
 import { captureRouter } from "./routes/capture.js";
 import { toolsRouter } from "./routes/tools.js";
+import { costsRouter } from "./routes/costs.js";
 import { approvalsRouter } from "./routes/approvals.js";
 import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
@@ -47,6 +48,7 @@ import { ApifyError } from "./lib/apify.js";
 import { WhatsAppError } from "./lib/whatsapp.js";
 import { HubtelError } from "./lib/hubtel.js";
 import { MessagingError } from "./services/messageSender.js";
+import { BudgetExceeded } from "./services/budgets.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -214,6 +216,7 @@ app.use("/api/capture", captureRouter);
 app.use("/api/demos", demosRouter);
 app.use("/api/audits", auditsRouter);
 app.use("/api/tools", toolsRouter);
+app.use("/api/costs", costsRouter);
 app.use("/api/approvals", approvalsRouter);
 app.use("/api/context", contextRouter);
 app.use("/api/mcp", mcpRouter);
@@ -278,6 +281,14 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   // is working exactly as Meta requires.
   if (err instanceof WhatsAppError || err instanceof HubtelError || err instanceof MessagingError) {
     return res.status(err.status).json({ error: err.message, reference });
+  }
+
+  // A spend ceiling is the clearest case of all: it is a number the Owner typed
+  // in, doing exactly what they asked it to. 402 rather than 500, and the
+  // sentence names the scope, what it has spent and what it was allowed —
+  // everything needed to decide between raising it and leaving it alone.
+  if (err instanceof BudgetExceeded) {
+    return res.status(402).json({ error: err.message, budget: err.state, reference });
   }
 
   if (process.env.NODE_ENV === "production") {

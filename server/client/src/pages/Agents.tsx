@@ -540,8 +540,11 @@ function ToolGrants({
                       {tool.granted && !tool.ready && tool.blockedReason && (
                         <span className="mt-1 block text-xs text-amber-700">{tool.blockedReason}</span>
                       )}
-                      {tool.granted && tool.ready && tool.mustDryRun && tool.permissionNote && (
-                        <span className="mt-1 block text-xs text-ink/45">{tool.permissionNote}</span>
+                      {tool.granted && tool.ready && tool.permissionNote && (
+                        <span className={`mt-1 block text-xs ${tool.allowed ? "text-ink/45" : "text-amber-700"}`}>
+                          {tool.allowed ? "" : "Cannot right now — "}
+                          {tool.permissionNote}
+                        </span>
                       )}
                     </span>
                   </label>

@@ -144,6 +144,10 @@ agentsRouter.get("/:key", async (req, res, next) => {
           granted: agent.toolkit.includes(tool.key),
           ready: readiness.ready,
           blockedReason: readiness.reason,
+          // See the note in routes/tools.ts: a refusal is a third state, and
+          // without it a tool an agent cannot call at all renders exactly like
+          // one it can.
+          allowed: permission.allowed,
           mustDryRun: permission.mustDryRun,
           permissionNote: permission.reason,
         };
