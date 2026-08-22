@@ -98,20 +98,25 @@ const SCHEMA = {
  * A second copy of a doctrine is a second doctrine.
  */
 const TEST: Partial<Record<EmailPurpose, string>> = {
-  COLD_OUTREACH: `Cold Email Playbook v3. It works if all of this is true:
+  COLD_OUTREACH: `The current cold outreach doctrine — \`services/outreachDoctrine.ts\`. It works if all of this is true:
 
 - It opens with a greeting on its own line.
-- **The sender is named in the first two lines** — "Daky here from Dakyworld…" or equivalent — *before* the observation. This is required. Do not cut it as throat-clearing: a stranger who cannot tell in one line who is writing has already stopped reading.
-- The observation is something specific about *their* business that could not be said about any other, and it is followed by **what it makes harder for them**, not by what it has already cost them. "People on a phone may find it harder to contact you" passes. "Customers are leaving your website" fails — it states an outcome nobody measured, to the one person who can check it.
+- **It opens on them, not on us.** The first thing after the greeting is the specific thing that was observed about *their* business — not who we are and not what Dakyworld does. Leading with ourselves is the commonest reason a stranger stops reading.
+- **Dakyworld is nevertheless named inside the first three lines**, immediately after the observation. This is required and is checked before the email can be sent. Do not cut it as throat-clearing: an anonymous remark about somebody's website reads as a threat rather than a favour.
+- **The personalisation is load-bearing.** Remove the specific observation and the email should collapse. If it would still read fine, it is a template with a field swapped in.
+- The observation is followed by **what it makes harder for them**, never by what it has already cost them. "People on a phone may find it harder to contact you" passes. "Customers are leaving your website" fails — it states an outcome nobody measured, to the one person who can check it.
+- **"You" and "your" outnumber "I" and "we".** A letter that is mostly about us is a letter about us.
 - One issue only. One ask, and it **offers** something — a screenshot, the exact setting, a short checklist — rather than requesting a meeting or a call.
 - **No price anywhere.** A number belongs in a proposal.
 - No technical vocabulary in the explanation: SPF, DMARC, DNS, robots.txt, metadata, structured data, viewport, TLS and the rest are all out.
 - No private individual is named.
+- Any proof is one of the three true ones — admin cut by 70%+, four-hour response on priority-one security, no data-loss incidents — and only where it fits the issue just described. No client names, no invented figures.
 - 70–120 words. It does not end with a typed name: the app appends the signature.
+- The subject is two to four lowercase words that look like ordinary internal mail, not a pitch and not a question the body repeats.
 
 If the whole email rests on minor housekeeping — missing preview tags, no analytics, a small style point — servesPurpose is false whatever else is right about it, and the concern to raise is that there is no real reason for this business to reply.
 
-Judge servesPurpose hard against that list, and name which item failed. The three that fail most often: no identification in the opening, a consequence stated as a prediction rather than as something made harder, and an ask for a call.`,
+Judge servesPurpose hard against that list, and name which item failed. The three that fail most often: an opening paragraph about Dakyworld rather than about them, a consequence stated as a prediction rather than as something made harder, and an ask for a call.`,
   FOLLOW_UP: "It adds something rather than repeating. It makes saying no easy. It does not say 'circling back' or 'just following up'.",
   MEETING_REQUEST: "It says what the call covers and how long it takes, and it works around them rather than listing our availability.",
   PROPOSAL_COVER: "Two or three sentences. What is attached, the decision it asks for, when we follow up. It does not re-argue the proposal.",
@@ -131,7 +136,7 @@ What you fix:
 - An observation with no consequence attached. You may not invent the consequence, but you may move one that is already in the facts next to the observation it belongs to, and you may cut an observation that has none.
 - Sentences a person would not say out loud. Read each one as though speaking it.
 - Machine tells: "I hope this email finds you well", "I wanted to reach out", "it's not just X, it's Y", a dash in every sentence, a closing paragraph that restates the opening, and any sentence with three ideas in it.
-- **An opening that clears its throat — but one clause naming the sender is not that.** On a cold email "Daky here from Dakyworld" is required and stays. What goes is a *second* sentence about what Dakyworld does, or any introduction that delays the observation past the first two lines. Cutting the identification is the single most damaging edit you can make here, and an earlier version of these instructions caused it.
+- **An opening that clears its throat — but the clause naming the sender is not that.** On a cold email the letter opens on what was observed about *them*, and one short clause naming Dan and Dakyworld follows immediately. Both halves stay. What goes is a *second* sentence about what Dakyworld does, a company introduction, or anything that pushes the observation down the page. **Cutting the identification entirely is the single most damaging edit you can make here** — it is checked before sending and an email without it cannot go out — and an earlier version of these instructions caused exactly that. Moving it ahead of the observation is the opposite mistake and is also wrong.
 - Consultant vocabulary. "Leverage", "solutions", "streamline", "in today's landscape", "seamless" — all out.
 - Length. If a sentence can go without losing a fact, it goes.
 - Two asks where there should be one, or an ask that is bigger than it needs to be.

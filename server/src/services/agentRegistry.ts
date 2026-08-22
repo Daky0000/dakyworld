@@ -13,6 +13,7 @@ import {
   SEARCH_CRAFT,
   SOCIAL_CRAFT,
 } from "./craft.js";
+import { COLD_EMAIL_DOCTRINE, FOLLOW_UP_DOCTRINE } from "./outreachDoctrine.js";
 
 /**
  * The workforce, as an org chart rather than a pile of prompts.
@@ -924,25 +925,13 @@ ${OFFER_CRAFT}`,
         // `lib/emailDrafter.ts` runs on, `coldEmailScenarios.ts` chooses from
         // and `coldEmailChecks.ts` enforces — written here so the agent's
         // *judgement* is Dakyworld's rather than a competent generic writer's.
-        process: `Look at the business first, then decide which of the eighteen scenarios this is. One confirmed issue, one question, and if there is no confirmed issue there is no email.
-
-**Only what was confirmed.** A check that failed, timed out or did not complete is not a finding — "not checked" is not "broken". If their site could not be reached, do not write that they have no website; check again. And keep facts apart from possibilities: state what was observed, then what it may make *harder*. "People on a phone may find it harder to contact you" is the shape. "Customers are leaving your website" is a prediction nobody measured, and the one person who can check it is the one reading it.
-
-**Say who you are in the first two lines.** "Daky here from Dakyworld. I was looking at their address before writing and noticed…" — identification before the observation, then straight into what was seen. No company introduction beyond that clause.
-
-**The playbook guides, it does not dictate.** Its scenarios tell you what a letter has to establish and roughly how small the ask should be. The example subjects and questions in it show the register; they are not sentences to reuse. Write every line from this business's own facts — if the email could be sent unchanged to another company with the same fault, it is not finished.
-
-**Everyday language, always.** Never SPF, DMARC, DNS, robots.txt, Open Graph, LCP, metadata, structured data, viewport, canonical or page source in the explanation. In most first emails the term can be left out completely.
-
-**Never name a private individual** — not the person on the domain account, not a former supplier, not whoever owns the mailbox on the contact page.
-
-**The ask offers something rather than requesting something**: the screenshot, the exact setting, the short checklist. Never a meeting — time is the largest thing you can ask of somebody who has not yet agreed there is a problem. **No price in a first email**; a number belongs in a proposal.
-
-70–120 words. Plain British English, no exclamation marks, signed as Daky. Every message ends with a way to stop hearing from us.
-
-Two guards that are asked about most: a **certificate warning** is written as "a browser may show a warning and visitors may stop at that screen" — never as a same-day or free fix, because the cause is not visible from outside. **Missing email authentication** is written as "the domain does not show which services are allowed to send using your address, which gives receiving systems one less way to check a message is genuine", and it says plainly that this does not mean anything is currently wrong. Never fraud, never impersonation, never fake invoices.
-
-Fact-check anything you assert about their business before it goes in. Being wrong in a first email is worse than not sending one.`,
+        // The playbook that used to live here was removed in Aug 2026 at the
+        // founder's instruction. `COLD_EMAIL_DOCTRINE` is what replaced it and
+        // is the same text the drafter runs on, so the Agents screen and the
+        // letter cannot drift apart — which is the failure that made a prompt
+        // edit change nothing for a month. Editing this agent still takes over
+        // the deliverable, exactly as `services/writers/brief.ts` describes.
+        process: COLD_EMAIL_DOCTRINE,
         output:
           "The message, the observation it is built on and where that observation came from, the subject line, why this angle rather than the other, and anything a person must verify before it is sent.",
       },
@@ -1461,16 +1450,10 @@ ${INTERFACE_CRAFT}`,
         ],
         escalationPolicy:
           "Checks the suppression list before every message and stops dead on a reply, an unsubscribe or a complaint. Never sends — every message is a draft a person approves — and never implies a previous conversation that did not happen.",
-        process: `The sequence is day 0, 3, 8, 14 and 21, and each touch has one job. Keep the same single issue throughout — a follow-up that raises a second problem is a new cold email wearing a thread.
-
-- **Day 3** delivers the evidence the first email offered: the screenshot, the setting, the list. No second sales question with it. "Nothing needed from you — I said I would send it" is the whole message.
-- **Day 8** is a comparable example, and only when the business, the problem *and* the result genuinely compare. If there is no honest comparison, skip this touch rather than invent a reason to write.
-- **Day 14** explains how ongoing support prevents this class of problem — only if they have engaged. If they have not, skipping beats a forced sales message.
-- **Day 21** closes it: say you will not keep writing, hand the finding over so whoever already looks after their site can fix it, and make clear no reply is needed. **Do not sell in the last message.** It is the one people remember, and handing something over for free is what makes them answer six months later.
-
-Then the contact is suppressed. Never move somebody into another campaign after the final message.
-
-Never write "just checking in", "circling back" or "bumping this" — each is an admission there was nothing new to say. Assume busy, not uninterested.`,
+        // Same move as the Cold Lead Writer above: the doctrine the drafter
+        // actually runs on, rather than a second copy that can drift from it.
+        // The day-by-day cadence that used to be written out here is inside it.
+        process: FOLLOW_UP_DOCTRINE,
         output: "Each message, what new thing it adds, when it should go, when the sequence stops, and why.",
       },
 

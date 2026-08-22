@@ -396,26 +396,45 @@ declares an ignore-certificate input, and inventing one would be a key Apify
 silently drops, so `ux.ts` says that in those words rather than blaming a missing
 token.
 
-**The cold email playbook is the authority, and it is v3** —
-[`server/docs/cold-email-playbook.md`](server/docs/cold-email-playbook.md). It
-is the owner's doctrine, and the code implements it rather than the other way
-round; where the two disagree the playbook is right and the code is the bug.
-Four things in it overturn what the drafter used to do, so check before
-"restoring" any of them:
+**The outreach doctrine is the authority** —
+[`server/src/services/outreachDoctrine.ts`](server/src/services/outreachDoctrine.ts).
+It replaced Cold Email Playbook v3 on 22 Aug 2026 at the founder's instruction:
+the playbook was to come out of the cold email agent entirely and be rebuilt
+from the installed skill libraries. `docs/cold-email-playbook.md` is kept as
+history, marked superseded, and **nothing in the code reads it**.
 
-- **The sender identifies himself in the first two lines**, before the
-  observation. The drafter used to be told the opposite — "not who you are" —
-  on the theory that a stranger only cares about themselves. A stranger who
-  cannot tell in one line who is writing has already stopped reading.
-- **Say what it makes harder, never what it has cost.** "People on a phone may
-  find it harder to contact you", not "customers are leaving your website". The
-  second states an outcome nobody measured to the one person who can check it.
-- **No price in a first email**, and **no meeting as the ask.** The ask offers
-  something — the screenshot, the setting, the checklist. Time is the largest
-  thing you can request from somebody who has not yet agreed there is a problem.
-- **No same-day or free promise on a certificate.** The cause is not visible
-  from outside; it may be hosting or a renewal setting. This one is a
-  correction: the sentence was added on 19 Aug and the playbook removed it.
+One file now holds all three outbound doctrines — cold, follow-up and
+WhatsApp/SMS — because they are one system that has to agree with itself, and
+keeping them apart is how the polish stage came to enforce a rule the drafter
+had already dropped. Four things in it **reverse** the playbook, so do not
+"restore" any of them:
+
+- **The letter opens on the reader, not on us.** The playbook opened every
+  email with "Daky here from Dakyworld" *before* the observation. Leading with
+  yourself is the commonest reason a stranger stops reading. Dakyworld is still
+  named inside the first three lines — `coldEmailChecks` blocks a send
+  otherwise — but it comes *after* the thing that was seen.
+- **There are no scenarios.** Eighteen numbered letters produced eighteen
+  recognisable shapes. The writer now picks a framework from the evidence.
+  `coldEmailScenarios.ts` survives as **evidence routing only** — which
+  confirmed finding is strongest, and `chooseScenario()` returning null still
+  means there is no email — but no part of one reaches a model.
+- **Subjects are two to four lowercase words and deliberately boring**, not
+  "six words or fewer, specific". The subject's only job is to get the email
+  opened.
+- **One true proof point belongs in a first email** — 70%+ admin cut, four-hour
+  priority-one response, no data-loss incidents — where it fits the issue just
+  described. The playbook had none.
+
+What survived is the honesty floor, and it survived because it was never
+playbook: only what was confirmed, **what it makes harder rather than what it
+has cost**, no price in a first email, no private individual named, and never
+implying anything physical (Dakyworld is entirely remote).
+
+`tmp/outreachSwap.ts` is the harness. For every rule it asserts the new wording
+is present **and that its opposite is absent**, across the drafter, the phone
+drafter and both agent seeds — the negative half being the one that catches the
+next version of the bug this codebase has already paid for twice.
 
 **A prompt improvement that never reaches the model is not an improvement, and
 the symptom is "nothing changed".** Three ways that happened here, all worth

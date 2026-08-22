@@ -2,7 +2,7 @@ import type { EmailPurpose } from "@prisma/client";
 import { callModel } from "./models/call.js";
 import { MODEL_DEFAULT } from "./claudePricing.js";
 import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
-import { chooseScenario, scenarioForPrompt } from "../services/coldEmailScenarios.js";
+import { COLD_EMAIL_DOCTRINE, EVIDENCE_RULES, FOLLOW_UP_DOCTRINE } from "../services/outreachDoctrine.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { writerSystem } from "../services/writers/brief.js";
 import { emailJobFor } from "../services/writers/registry.js";
@@ -36,7 +36,7 @@ const VOICE = `${BRAND_VOICE}
 For email specifically:
 
 - **Start with a greeting.** "Hi Kwame," on its own line, using their real first name. If no real person's name is known — only a company — use "Hello,". Never invent a name, and never open on a bare sentence with no greeting at all: it reads as a broadcast, because it is how one looks.
-- **The opening says who is writing and what was seen, in that order.** On a cold email that is one clause of identification — "Daky here from Dakyworld" — and then, immediately, something about *them* you could not have said about anybody else. Not what Dakyworld does; not a company introduction. A stranger who cannot tell in one line who is writing has already stopped reading, and an email that identifies itself and then says nothing specific is the same broadcast with a name on it.
+- **The opening is about them, and the identification follows immediately.** On a cold email, open on the thing that was actually seen — something you could not have said about any other business — and name yourself and Dakyworld in the very next breath, inside the first three lines. Not what Dakyworld does; not a company introduction. Leading with ourselves is the commonest reason a stranger stops reading, and an email that never says who is writing is an anonymous remark about somebody's website, which reads as a threat rather than a favour.
 - **Every observation is followed by what it makes harder for them.** "Your site has no X" is half a sentence. The other half is what the reader may notice or what it makes more difficult — a phone visitor having to type the number out by hand, a searcher with less to go on before deciding to click. Not in our vocabulary — "unprofessional", "not best practice" and "makes it look unfinished" are opinions and read as sales. **And not as a prediction:** "customers are leaving your website" states an outcome nobody has measured, and the one person who can check it is the one reading. Say what is harder, not what it has already cost.
 - Short. A cold email is 70–120 words: enough to say who is writing, what was noticed, why it may matter and what happens next, and not a word past that. A client update is under 200. If it needs to be longer, it needs a call instead.
 - One ask, at the end, and make it small. On a **first** email to a stranger the ask offers something rather than requesting something — the screenshot, the exact setting, the short checklist — and never asks for a meeting: time is the biggest thing you can ask of somebody who has not agreed there is a problem yet. A call is what the *second* conversation is for. Never two asks.
@@ -51,7 +51,7 @@ const SCHEMA = {
     subject: {
       type: "string",
       description:
-        "The subject line. Six words or fewer, lower-case except names, no colons-as-branding, and never a question the body then repeats.",
+        "The subject line. Two to four words, lower-case throughout, no punctuation tricks, no company name and no first name. It should look like a note from a colleague about something ordinary — \"your contact page\", \"booking form\" — and never be a question the body then repeats.",
     },
     body: {
       type: "string",
@@ -100,34 +100,14 @@ export interface DraftResult {
 
 /** What each purpose is actually trying to achieve. The model gets one of these, not all fourteen. */
 const PURPOSE_BRIEF: Record<EmailPurpose, string> = {
-  COLD_OUTREACH: `A first approach to somebody who has never heard of Dakyworld. About 70–120 words. Four short paragraphs, in this order, and no others:
-
-1. The greeting. "Hi <first name>," on its own line.
-2. **Who you are and why you are writing, in the first two lines.** "Daky here from Dakyworld. I was looking at <their address> before writing and noticed..." — the sender is named *before* the observation, not after it and not never. A stranger who cannot tell in one line who is writing and why has already decided. No company introduction beyond that clause: one sentence of identification, then straight to what was seen.
-3. The observation and what it makes harder. **State the confirmed fact plainly, then what the reader may notice or what it makes harder — never what it has already cost them.** "People using a phone may find it harder to read the page or contact you" is the shape. "Customers are leaving your website" is a prediction nobody has evidence for, and it is the sentence that gets a reply saying so. One issue only.
-4. The ask. **One question, answerable in one line, and it offers something rather than requesting something**: the screenshot, the exact setting, the short checklist. Not a meeting — a first email does not ask for time. "Would you like me to send the screenshot?" is the shape.
-
-Never list the findings. Never pitch the service catalogue. **No price, ever, in a first email** — a number belongs in a proposal, after they understand the issue and want help, and quoting one now asks them to judge a cost before they have agreed there is a problem.
-
-**Write it for a busy owner, not a developer.** Do not use SPF, DMARC, DKIM, DNS, robots.txt, Open Graph, LCP, TTFB, metadata, structured data, schema, viewport, canonical, TLS or page source. Explain the issue in plain words; in most first emails the term can be left out completely, and where one genuinely helps it comes *after* the plain explanation, never instead of it.
-
-**Never name a private individual** — not the person on the domain account, not a former supplier, not an employee, not whoever owns the mailbox on the contact page. State the business question without identifying anybody.
-
-**The playbook is a guide, not a script.** Where you are shown an example subject or an example question, it is there to show you how short and how plain they should be — not to be copied. Write every sentence out of *this* business's own facts. The test: if this email could be sent unchanged to another company with the same problem, it is not finished, and the reader can tell. Twenty businesses in one scenario must get twenty different letters.
-
-**Separate what was confirmed from what might follow.** A check that failed, timed out or did not complete is not a finding: "not checked" is not "broken". Do not claim anything caused lost sales, fraud or complaints unless the evidence in front of you proves it did.
-
-If the facts carry a line saying THERE IS NO STRONG CASE HERE, do not write the four paragraphs above. Write three sentences at most, say the true good thing about their setup, offer the one small improvement that was actually found, and set confidence low — then say in the rationale that this business is doing fine and may not be worth writing to. That is a more useful answer than a polished email about nothing, and the person reading it can still send it if they disagree.`,
-  FOLLOW_UP: `A follow-up to an email that was not answered. Assume they are busy, not uninterested. Do not guilt them, and never write "just checking in", "circling back" or "bumping this" — each of those is an admission that there was nothing new to say.
-
-**Every follow-up carries something the last one did not.** The sequence runs day 0, 3, 8, 14 and 21, and each touch has its own job:
-
-- **Day 3** delivers the evidence the first email offered — the screenshot, the setting, the list. No second sales question with it: "Nothing needed from you, I said I would send it" is the whole message.
-- **Day 8** is a comparable example, and only when the business, the problem and the result really are comparable. If there is no honest comparison, skip this one rather than inventing a reason to write.
-- **Day 14** explains how ongoing support prevents this class of problem — but only if they have engaged. If they have not, skipping is better than a forced sales message.
-- **Day 21** closes it. Say plainly that you will not keep writing, hand over the finding so they can give it to whoever already looks after their site, and make clear no reply is needed. Do not sell in the last message: it is the one people remember.
-
-Keep the same one issue throughout. A follow-up that raises a second problem is a new cold email wearing a thread.`,
+  // Cold and follow-up are never emitted — each has its own doctrine in the
+  // system prompt (`services/outreachDoctrine.ts`), and a second account of the
+  // same letter here is what makes a model fall back to the generic one. Kept
+  // as one line each so the record is complete and so nothing tempts a future
+  // reader into re-enabling a description that would now contradict the
+  // doctrine.
+  COLD_OUTREACH: `A first approach to somebody who has never heard of Dakyworld. The doctrine in the system prompt governs it completely — do not infer a second shape from this line.`,
+  FOLLOW_UP: `A follow-up to an email that was not answered. The doctrine in the system prompt governs it completely, including which touch in the sequence this is — do not infer a second shape from this line.`,
   MEETING_REQUEST:
     "Asking for a specific conversation. Say what the call would cover, say how long it takes (thirty minutes), and offer to work around them rather than listing your own availability.",
   PROPOSAL_COVER:
@@ -213,14 +193,19 @@ Never propose a new website for a site that mostly works. Fixing what was actual
 
 function buildPrompt(request: DraftRequest): string {
   const { context } = request;
-  // **The cold email's brief is its system prompt now, so it is not repeated
-  // here.** `COLD_DOCTRINE` states the four paragraphs, the length, the ask and
-  // the register in full; emitting `PURPOSE_BRIEF.COLD_OUTREACH` as well would
-  // put two overlapping accounts of one letter in front of the model, and a
-  // model given two does not merge them — it falls back to the generic email it
-  // already knew. That is the exact failure this codebase has already paid for
-  // once, with `angle()` and the scenario.
-  const purposeBrief = request.purpose === "COLD_OUTREACH" ? "" : PURPOSE_BRIEF[request.purpose];
+  // **A letter with its own doctrine does not get a second description of
+  // itself here.** `COLD_EMAIL_DOCTRINE` and `FOLLOW_UP_DOCTRINE` each state
+  // the shape, the length, the ask and the register in full; emitting the
+  // matching `PURPOSE_BRIEF` as well would put two overlapping accounts of one
+  // letter in front of the model, and a model given two does not merge them —
+  // it falls back to the generic email it already knew. That is the exact
+  // failure this codebase has already paid for once, with `angle()` and the
+  // scenario running against each other.
+  //
+  // Follow-up joined cold here in Aug 2026, when it stopped sharing the
+  // general doctrine and got one of its own.
+  const OWN_DOCTRINE: EmailPurpose[] = ["COLD_OUTREACH", "FOLLOW_UP"];
+  const purposeBrief = OWN_DOCTRINE.includes(request.purpose) ? "" : PURPOSE_BRIEF[request.purpose];
 
   const parts = [
     `Purpose: ${request.purpose.replace(/_/g, " ").toLowerCase()}`,
@@ -237,28 +222,18 @@ function buildPrompt(request: DraftRequest): string {
   const greeting = context.variables.first_name && context.variables.first_name !== "there" ? `Hi ${context.variables.first_name},` : "Hello,";
   parts.push("", `Open with this greeting exactly, on its own line: ${greeting}`);
 
-  // The scenario, when the audit found one. Chosen in code from the finding ids
-  // rather than left to the model, because "which of the eighteen letters is
-  // this" is a decision with evidence behind it, and a drafter asked to pick
-  // for itself picks whichever reads most neatly.
+  // The angle, from what was actually observed.
   //
-  // **One or the other, never both.** The scenario and the angle are two
-  // answers to the same question, and when both were emitted they disagreed —
-  // the angle told the drafter to say what a fault costs and to ask for fifteen
-  // minutes, while the rules above forbade both. Contradictory instructions do
-  // not average out; the model falls back to the generic email it already knew,
-  // which is precisely the complaint that led here.
-  const scenario =
-    request.purpose === "COLD_OUTREACH" && context.findingIds?.length
-      ? chooseScenario(context.findingIds, request.scenarioKey ?? null)
-      : null;
-
-  if (scenario) {
-    parts.push("", scenarioForPrompt(scenario));
-  } else {
-    const chosen = angle(context);
-    if (chosen) parts.push("", "The angle for this one:", chosen);
-  }
+  // This used to be a fork: an eighteen-scenario playbook block when the audit
+  // matched one, and the angle below only as a fallback. The playbook was
+  // removed in Aug 2026 — see `services/outreachDoctrine.ts` for what replaced
+  // it and why. The angle is what remains, and it is the better half: it is
+  // derived from this business's own facts rather than from a numbered
+  // template, so two companies with the same fault do not receive the same
+  // letter. Which shape the letter takes is now the writer's decision, made
+  // from the evidence, as the doctrine instructs.
+  const chosen = angle(context);
+  if (chosen) parts.push("", "The angle for this one:", chosen);
 
   if (request.extraFacts?.length) {
     parts.push("", "The sender has added these facts for this email specifically:", request.extraFacts.map((fact) => `- ${fact}`).join("\n"));
@@ -312,91 +287,27 @@ export async function buildColdEmailPrompt(request: DraftRequest): Promise<{ sys
  * Keep the *judgement* here and the *format* in `CONTRACT` below. Anything in
  * this string can be replaced by an edit; nothing in the contract can.
  */
-/** The evidence rules. True of every outbound letter, whatever it is for. */
-const EVIDENCE_RULES = `**Never state a fault you were not given.** Every negative thing this email says about their business must trace to one of the facts you are handed, and those facts carry their own evidence in brackets — a URL, a header, a DNS record. If a fault is not in the list, it was not found, and "not found" is not the same as "not there": you have no idea, and a confident wrong claim about somebody's own business is read as a lie by the one person who knows the truth. A letter saying "your website did not load" to a company whose website loads is not a bad email, it is a false statement about them, and it ends the relationship at the first line.
-
-The list is also the complete account of what was checked. Anything absent from it was not looked at.
-
-Never invent a fact about the recipient. If the facts you were given are thin, write a shorter email; do not fill the space with claims.`;
-
 /**
- * Cold Email Playbook v3, written as the instruction rather than as a summary
- * of one.
- *
- * This *is* the doctrine now, not a pointer at it. It used to be four
- * paragraphs of voice here plus a separate purpose brief in the user message
- * plus a scenario block, and the founder's instruction was that the playbook
- * should be the system prompt rather than background reading a model is
- * expected to infer rules from. So the whole of `docs/cold-email-playbook.md`
- * sections 0 and 1 is stated here as rules, in order of how much damage
- * breaking each one does.
- *
- * **`PURPOSE_BRIEF.COLD_OUTREACH` is deliberately not emitted alongside this**
- * — see `buildPrompt`. Two descriptions of the same letter is the failure mode
- * that produced "I changed the prompt and nothing changed": a model given two
- * overlapping accounts of one task does not merge them, it falls back to the
- * generic email it already knew.
+ * Everything that is not a first approach or a follow-up. Structure comes from
+ * the purpose brief.
  */
-const COLD_DOCTRINE = `You write the first letter from Dakyworld to a business that has never heard of us. One letter, to one company, about one thing somebody actually checked. Every draft is read by a person before it is sent — write the letter they would send, not a template they have to rewrite.
-
-${VOICE}
-
-## The rules, in order of how much damage breaking them does
-
-1. **Only write about what was confirmed.** A check that failed, timed out or did not complete is not a finding. "Not checked" is not "broken". If their site could not be reached, do not write that they have no website.
-
-2. **Keep facts apart from possibilities.** State the confirmed observation, then what it may make *harder*. Never claim it has already cost them sales, customers, money or reputation — nobody measured that, and the one person who could check it is the one reading. "People using a phone may find it harder to read the page or contact you" is the shape. "Customers are leaving your website" is not.
-
-3. **Say who you are in the first two lines, before the observation.** "Daky here from Dakyworld. I was looking at your website before writing and noticed one thing worth your attention." A stranger who cannot tell in one line who is writing has already stopped reading. No company introduction beyond that clause — one sentence of identification, then straight to what was seen.
-
-4. **Everyday language only.** Do not use SPF, DMARC, DKIM, DNS, robots.txt, Open Graph, LCP, TTFB, metadata, structured data, schema, viewport, canonical, TLS or page source in the explanation. Explain the issue in plain words; in most first emails the term can be left out completely, and where one genuinely helps it comes *after* the plain explanation, never instead of it.
-
-5. **Never name a private individual.** Not the person on the domain account, not a former supplier, not an employee, not whoever owns the mailbox on the contact page. State the business question without identifying anybody.
-
-6. **One issue and one question.** Not a list of problems. This is a personal note, not an audit report. Never two asks.
-
-7. **The ask offers something rather than requesting something** — the screenshot, the exact setting, the short checklist. **It is not a meeting and it is not a call**, and it never asks for a slice of their time. Time is the largest thing you can ask of somebody who has not yet agreed there is a problem; a call is what the *second* conversation is for.
-
-8. **No price, ever, in a first email.** A number belongs in a proposal, after they understand the issue and want help. Quoting one now asks them to judge a cost before they have agreed there is a problem.
-
-9. **Every name, number and detail comes from the facts you were given.** Nothing is filled in from memory or pattern.
-
-## The shape of the letter
-
-About 70–120 words. Four short paragraphs, in this order and no others:
-
-1. The greeting, on its own line, exactly as you are given it.
-2. Who you are and why you are writing — the identification clause, then immediately something about *them* that could not have been said about any other business.
-3. The observation and what it makes harder. One issue only. The confirmed fact stated plainly, then what the reader may notice or find more difficult.
-4. The ask. One question, answerable in one line, offering something.
-
-Never list the findings. Never pitch the service catalogue. Never write a closing paragraph that restates the opening.
-
-## Subject and register
-
-Short, specific and honest — six words or fewer, and never disguised as a reply, a system alert or a notification. No exclamation marks. Plain, conversational, the register of one person who looked carefully. Not "touching base", "circling back", "reaching out", "unlock growth", "in today's digital landscape", "leverage", "solutions", "seamless".
-
-## The scenario, when you are given one
-
-You may be handed one of the eighteen playbook scenarios, chosen from the evidence rather than by you. **It is a guide, not a script.** It tells you what this letter has to establish and roughly how small the ask should be. Any example subject or example question in it exists to calibrate the register — it is never a sentence to reuse. Write every line out of *this* business's own facts. The test: if this email could be sent unchanged to another company with the same fault, it is not finished, and the reader can tell. Twenty businesses in one scenario must receive twenty different letters.
-
-**A guard is different from guidance.** Where a scenario states a guard, it is a rule and it binds every time.
-
-## When there is no real case
-
-If the facts carry a line saying THERE IS NO STRONG CASE HERE, do not write the four paragraphs above. Write three sentences at most, say the true good thing about their setup, offer the one small improvement that was actually found, and set confidence low — then say in the rationale that this business is doing fine and may not be worth writing to. That is a more useful answer than a polished email about nothing, and the person reading it can still send it if they disagree.
-
-${EVIDENCE_RULES}`;
-
-/** Everything that is not a first approach. Structure comes from the purpose brief. */
 const GENERAL_EMAIL_DOCTRINE = `You draft outbound email for one specific company. Every draft you produce is read by a person before it is sent — write the email they would send, not a template they have to rewrite.
 
 ${VOICE}
 
 ${EVIDENCE_RULES}`;
 
+/**
+ * Cold and follow-up now live in `services/outreachDoctrine.ts`.
+ *
+ * They were moved out when the eighteen-scenario playbook was removed: the two
+ * of them plus the WhatsApp/SMS doctrine are one system that has to agree with
+ * itself, and keeping them in three different files is how the polish stage
+ * ended up enforcing a rule the drafter had already dropped.
+ */
 const DOCTRINE_BY_JOB: Record<string, string> = {
-  "email.cold": COLD_DOCTRINE,
+  "email.cold": COLD_EMAIL_DOCTRINE,
+  "email.followup": FOLLOW_UP_DOCTRINE,
 };
 
 export function shippedDoctrineFor(job: string): string {

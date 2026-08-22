@@ -93,7 +93,7 @@ const SCHEMA = {
         consequence: {
           type: "string",
           description:
-            "What that makes harder for them, concretely and in people rather than in metrics — 'somebody on a phone has to type the number out by hand', not 'you are losing customers'. State what a person meets, never an outcome nobody measured: this sentence goes into a first email to the one person who can check it, and a prediction there is what gets a reply saying so. See the cold email playbook.",
+            "What that makes harder for them, concretely and in people rather than in metrics — 'somebody on a phone has to type the number out by hand', not 'you are losing customers'. State what a person meets, never an outcome nobody measured: this sentence goes into a first email to the one person who can check it, and a prediction there is what gets a reply saying so. See `services/outreachDoctrine.ts`.",
         },
         ask: {
           type: "string",
@@ -125,7 +125,11 @@ const SCHEMA = {
  * and the drafter dutifully read the old wording back out of the brief.
  *
  * **Anything that writes an instruction another writer will read is part of
- * the playbook surface.** One owner over both is what keeps them in step.
+ * the outreach surface.** One owner over both is what keeps them in step. The
+ * surface is now: this file, `audit/markdown.ts`, `lib/emailDrafter.ts`,
+ * `lib/emailPolish.ts`, `lib/messageDrafter.ts`, and the `outreach.writer` and
+ * `outreach.followup` prompts — all of them downstream of
+ * `services/outreachDoctrine.ts`.
  */
 export const SHIPPED_DOCTRINE = `You are compiling one website review out of four specialists' reports, for a business that has not asked for it and has never heard of us.
 

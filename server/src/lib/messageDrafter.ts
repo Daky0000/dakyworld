@@ -2,7 +2,7 @@ import type { EmailPurpose, MessageChannel } from "@prisma/client";
 import { callModel } from "./models/call.js";
 import { smsCost, toGsm7 } from "./phone.js";
 import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
-import { chooseScenario, scenarioForPrompt } from "../services/coldEmailScenarios.js";
+import { PHONE_MESSAGE_DOCTRINE } from "../services/outreachDoctrine.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { writerSystem } from "../services/writers/brief.js";
 import type { RecipientContext } from "../services/emailContext.js";
@@ -168,15 +168,15 @@ function briefFor(purpose: EmailPurpose): string {
  * channel mechanics below are deliberately *not* in here, because a rewritten
  * voice must not be able to take the segment limit or the opt-out rule with it.
  */
-export const SHIPPED_DOCTRINE = `You write short outbound messages for one specific company, sent to a phone. Every draft is read by a person before it is sent — write the message they would send, not a template they have to rewrite.
-
-${VOICE}
-
-**Never state a fault you were not given.** Every negative thing this message says about their business must trace to one of the facts you are handed. If a fault is not in that list it was not found, and "not found" is not "not there" — you have no idea, and a confident wrong claim about somebody's own business, sent to their personal phone, is read as a lie by the one person who knows the truth.
-
-The list is also the complete account of what was checked. Anything absent from it was not looked at.
-
-Never invent a fact about the recipient. If the facts are thin, write a shorter message; do not fill the space with claims.`;
+/**
+ * The doctrine for a first message to a phone.
+ *
+ * Lives in `services/outreachDoctrine.ts` with the two email doctrines, because
+ * the three are one system that has to agree with itself — keeping them in
+ * separate files is how the polish stage ended up enforcing a rule the drafter
+ * had already dropped.
+ */
+export const SHIPPED_DOCTRINE = PHONE_MESSAGE_DOCTRINE;
 
 /**
  * The mechanics, which no prompt edit can reach.
@@ -225,21 +225,9 @@ function buildPrompt(request: MessageDraftRequest): string {
       : "No first name is known for this person, so do not use one. Open by naming yourself and Dakyworld, then go straight to what you noticed.",
   );
 
-  // One or the other, never both — the scenario and the angle are two answers
-  // to the same question, and a model given both falls back to the generic
-  // message it already knew. See the same note in lib/emailDrafter.ts.
-  const scenario =
-    request.purpose === "COLD_OUTREACH" && context.findingIds?.length
-      ? chooseScenario(context.findingIds, request.scenarioKey ?? null)
-      : null;
-  if (scenario) {
-    parts.push(
-      "",
-      scenarioForPrompt(scenario),
-      "",
-      "That scenario was written for an email. Take the argument and the guard from it, not the length or the shape — this is a message on a phone and the rules above win on both.",
-    );
-  }
+  // The eighteen-scenario playbook was removed in Aug 2026; the doctrine now
+  // decides the angle from the facts it is given, and there is nothing to
+  // inject here. See `services/outreachDoctrine.ts`.
 
   if (request.extraFacts?.length) {
     parts.push("", "The sender has added these facts for this message specifically:", request.extraFacts.map((fact) => `- ${fact}`).join("\n"));

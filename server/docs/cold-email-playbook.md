@@ -1,8 +1,39 @@
-# Cold email playbook (v3)
+# Cold email playbook (v3) — SUPERSEDED, kept as history
 
-The owner's doctrine for outbound prospecting, and where each part of it is
-enforced in the code. **Where this and the code disagree, this is right and the
-code is the bug.**
+> **This is no longer the doctrine and nothing in the code reads it.**
+>
+> On 22 Aug 2026 the founder asked for the playbook to be taken out of the cold
+> email agent entirely and replaced with a system built from the installed
+> skill libraries. That replacement is
+> [`server/src/services/outreachDoctrine.ts`](../src/services/outreachDoctrine.ts),
+> and it is the authority now — for the drafter, the polish, the phone
+> channels and the `outreach.writer` / `outreach.followup` agents alike.
+>
+> **The two disagree on purpose**, so do not "restore" anything from here:
+>
+> | This playbook said | The doctrine says |
+> |---|---|
+> | Identify the sender *before* the observation | Open on the reader's own situation; name Dakyworld immediately after, inside the first three lines |
+> | Eighteen numbered scenarios, chosen from findings | No scenarios — the writer picks a shape from the evidence |
+> | Subject: six words or fewer, specific | Subject: two to four lowercase words, deliberately boring |
+> | No proof in a first email | One of the three true results, where it fits |
+>
+> What survives is the honesty floor, and it survives because it was never
+> playbook: only what was confirmed, what it makes *harder* rather than what it
+> has cost, no price in a first email, no private individual named, and nothing
+> claimed that a check did not establish.
+>
+> The eighteen scenarios still exist in `services/coldEmailScenarios.ts` as
+> **evidence routing** — which confirmed finding is strongest, and whether
+> there is a case at all — but no part of one reaches a model any more.
+>
+> Kept unedited below because it is the record of what the company used to
+> believe and why, and several of its arguments are still good ones.
+
+---
+
+The owner's doctrine for outbound prospecting, and where each part of it was
+enforced in the code.
 
 It supports one-time projects and ongoing support. Every email is a draft for a
 person to approve — nothing here sends.
