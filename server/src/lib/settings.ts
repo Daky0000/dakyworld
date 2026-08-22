@@ -366,6 +366,27 @@ export const SETTING = {
    */
   AGENT_COLD_EMAIL_V3: "agents.coldEmailPlaybookV3",
   /**
+   * The date the outreach doctrine replaced Cold Email Playbook v3 on the two
+   * outreach agents, or blank if it has not been.
+   *
+   * **This is the one pass that deliberately overrides a prompt the Owner has
+   * rewritten**, which every other pass here refuses to do. It exists because
+   * the founder's instruction on 22 Aug 2026 was precisely that: take the
+   * playbook out of the cold email agent, and have the result owe nothing to
+   * it. `outreach.writer` was carrying a hand-edited prompt, so `resolveBrief`
+   * was still writing every cold email from that wording — the new doctrine
+   * would have shipped, deployed and verified while changing nothing at all.
+   */
+  AGENT_OUTREACH_DOCTRINE: "agents.outreachDoctrine",
+  /**
+   * Whatever wording the override above replaced, kept verbatim.
+   *
+   * Overwriting the Owner's own words without keeping them is not a thing this
+   * system should be able to do, even once and even when asked. It is a
+   * setting rather than a file because Railway's filesystem is ephemeral.
+   */
+  AGENT_OUTREACH_PRIOR: "agents.outreachDoctrine.replaced",
+  /**
    * Hard ceiling on what one tool call may spend, in USD. The tool layer
    * refuses anything above it rather than trusting an agent's arithmetic.
    */

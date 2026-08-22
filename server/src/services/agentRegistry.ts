@@ -1707,6 +1707,100 @@ export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[];
 }
 
 /**
+ * Hands the two outreach agents back to the shipped doctrine — **including
+ * over a prompt the Owner has rewritten**, which nothing else here does.
+ *
+ * ## Why this one breaks the contract
+ *
+ * `ensureAgents()` never updates, `refreshUneditedSeedPrompts()` skips anything
+ * with `promptEditedAt`, and `resyncSeeds()` does too. That rule is the whole
+ * safety story of this layer and it is right: an agent the Owner has changed is
+ * theirs.
+ *
+ * On 22 Aug 2026 the founder's instruction was the exact opposite, and only for
+ * these two: take Cold Email Playbook v3 out of the cold email agent entirely,
+ * and let the replacement owe nothing to it. `outreach.writer` was carrying a
+ * hand-edited prompt at the time, and `resolveBrief()` prefers an authored
+ * instruction over the shipped wording — so every cold email was still being
+ * written from the old text. The new doctrine would have been written,
+ * reviewed, deployed and verified against the seed while changing nothing that
+ * reached a single prospect. That failure has a name in this codebase and this
+ * is its fourth appearance: **the prompt being edited is not the prompt being
+ * run.**
+ *
+ * ## What keeps it honest
+ *
+ * - **Once, ever.** Marked by `AGENT_OUTREACH_DOCTRINE`, like every other pass.
+ * - **Two named keys**, never a loop over the roster.
+ * - **The replaced wording is kept verbatim** in `AGENT_OUTREACH_PRIOR` before
+ *   anything is written. Overwriting the Owner's own words without keeping them
+ *   is not a thing this system should be able to do, even once and even when
+ *   asked for.
+ * - **It says so out loud** at boot, naming what it overrode.
+ *
+ * Nothing about autonomy, dry run or the toolkit is touched. This changes what
+ * the two agents are told, and not one thing about what they may reach.
+ */
+export interface OutreachHandback {
+  updated: string[];
+  /** Keys whose own wording was overridden, and therefore preserved. */
+  overrode: string[];
+}
+
+export async function applyOutreachDoctrine(): Promise<OutreachHandback | null> {
+  if ((await getSetting(SETTING.AGENT_OUTREACH_DOCTRINE))?.trim()) return null;
+
+  const keys = ["outreach.writer", "outreach.followup"] as const;
+  const existing = await prisma.agent.findMany({
+    where: { key: { in: [...keys] } },
+    select: { key: true, name: true, prompt: true, promptText: true, promptEditedAt: true },
+  });
+  const seeds = new Map(AGENT_SEEDS.map((seed) => [seed.key, seed]));
+
+  const result: OutreachHandback = { updated: [], overrode: [] };
+  const preserved: Record<string, unknown> = {};
+
+  for (const agent of existing) {
+    const seed = seeds.get(agent.key);
+    if (!seed) continue;
+
+    if (agent.promptEditedAt) {
+      preserved[agent.key] = {
+        replacedAt: new Date().toISOString(),
+        editedAt: agent.promptEditedAt,
+        promptText: agent.promptText,
+        prompt: agent.prompt,
+      };
+      result.overrode.push(agent.key);
+    }
+
+    await prisma.agent.update({
+      where: { key: agent.key },
+      data: {
+        mission: seed.mission,
+        responsibilities: seed.responsibilities,
+        kpis: seed.kpis,
+        skills: seed.skills ?? [],
+        escalationPolicy: seed.escalationPolicy,
+        prompt: seed.prompt as unknown as object,
+        // Both cleared together. `promptText` is the authored prose and
+        // `promptEditedAt` is what `hasBeenAuthored()` reads — leaving either
+        // behind would hand the letter straight back to the old wording.
+        promptText: null,
+        promptEditedAt: null,
+      },
+    });
+    result.updated.push(agent.key);
+  }
+
+  if (Object.keys(preserved).length > 0) {
+    await setSetting(SETTING.AGENT_OUTREACH_PRIOR, JSON.stringify(preserved, null, 2));
+  }
+  await setSetting(SETTING.AGENT_OUTREACH_DOCTRINE, new Date().toISOString());
+  return result;
+}
+
+/**
  * Pushes the Cold Email Playbook v3 wording onto the two agents that write
  * outreach.
  *
