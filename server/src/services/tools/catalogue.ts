@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
+import { PROSE_CRAFT } from "../craft.js";
 import { raisePayment, settleFromProvider } from "../payments.js";
 import { defaultCallingCode, displayPhone, smsCost, toE164, waLink } from "../../lib/phone.js";
 import { draftMessage } from "../../lib/messageDrafter.js";
@@ -134,7 +135,9 @@ How a piece earns its place:
 2. **One piece, one job.** Know what the reader should be able to do at the end that they could not do at the start, and cut everything that does not serve it.
 3. **Concrete beats comprehensive.** One worked example a reader recognises is worth five bullet points covering the field. If you are listing, ask whether the list is doing work or hiding the fact that nothing specific is being said.
 4. **Write to somebody who is busy and not technical.** Explain the thing before naming it, and where the name adds nothing, leave it out.
-5. **No pitch unless the brief asks for one.** A piece that turns into an advertisement in its last paragraph loses the reader it just earned.`;
+5. **No pitch unless the brief asks for one.** A piece that turns into an advertisement in its last paragraph loses the reader it just earned.
+
+${PROSE_CRAFT}`;
 
 /**
  * The invention rule is contract, not doctrine.
@@ -160,7 +163,9 @@ What you change:
 - The passive voice, where the doer matters.
 - Jargon a reader outside the trade would stumble on — either explain it in the sentence or cut it.
 - Sentences carrying three ideas. One idea each.
-- Anything that reads as though a machine wrote it: throat-clearing openings, "it's not just X, it's Y", "in today's fast-paced world", a dash in every sentence, and closing paragraphs that restate the opening.`;
+- Anything that reads as though a machine wrote it: throat-clearing openings, "it's not just X, it's Y", "in today's fast-paced world", a dash in every sentence, and closing paragraphs that restate the opening.
+
+${PROSE_CRAFT}`;
 
 /**
  * What an editor may never do, and where the cuts are declared.
