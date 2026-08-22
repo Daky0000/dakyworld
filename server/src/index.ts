@@ -336,6 +336,22 @@ bootstrapOwner()
           if (refreshed.updated.length) {
             console.log(`  → Updated ${refreshed.updated.length} agent prompt(s) you have not rewritten: ${refreshed.updated.join(", ")}`);
           }
+          // The other half, which was silent and should never have been.
+          //
+          // An agent whose prompt the Owner has rewritten is skipped for ever
+          // after — that is the contract and it is right — but the *absence* of
+          // a name from the line above is the only way anybody could tell, and
+          // nobody reads a boot log for what is missing from it. So a shipped
+          // doctrine can be rewritten, deployed, verified against the seed and
+          // still not be what the agent runs on, with every screen agreeing
+          // that it was. That is this codebase's oldest defect wearing yet
+          // another hat: the prompt being edited is not the prompt being run.
+          if (refreshed.keptAsEdited.length) {
+            console.log(
+              `  → Left alone — your own wording is in charge of ${refreshed.keptAsEdited.length} agent(s): ${refreshed.keptAsEdited.join(", ")}. ` +
+                `A shipped doctrine change does NOT reach these; reset one on the Agents screen to hand it back.`,
+            );
+          }
 
           const narrowed = await narrowSeededAgents();
           if (!narrowed) return;
