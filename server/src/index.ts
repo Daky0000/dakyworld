@@ -337,21 +337,6 @@ bootstrapOwner()
           if (refreshed.updated.length) {
             console.log(`  → Updated ${refreshed.updated.length} agent prompt(s) you have not rewritten: ${refreshed.updated.join(", ")}`);
           }
-          // The one pass that overrides the Owner's own wording, and only on
-          // the two outreach agents. Runs after the refresh above so that what
-          // it hands back is the seed as this deploy states it. See the note on
-          // `applyOutreachDoctrine` for why this one is allowed to.
-          const handback = await applyOutreachDoctrine();
-          if (handback?.updated.length) {
-            console.log(`  → Outreach doctrine applied to ${handback.updated.join(", ")}`);
-          }
-          if (handback?.overrode.length) {
-            console.log(
-              `  → Overrode your own wording on ${handback.overrode.join(", ")} — you asked for the cold email playbook to be removed entirely. ` +
-                `The replaced wording is kept verbatim in the "${SETTING.AGENT_OUTREACH_PRIOR}" setting.`,
-            );
-          }
-
           // The other half, which was silent and should never have been.
           //
           // An agent whose prompt the Owner has rewritten is skipped for ever
@@ -366,6 +351,21 @@ bootstrapOwner()
             console.log(
               `  → Left alone — your own wording is in charge of ${refreshed.keptAsEdited.length} agent(s): ${refreshed.keptAsEdited.join(", ")}. ` +
                 `A shipped doctrine change does NOT reach these; reset one on the Agents screen to hand it back.`,
+            );
+          }
+
+          // The one pass that overrides the Owner's own wording, and only on
+          // the two outreach agents. Runs after the refresh above so that what
+          // it hands back is the seed as this deploy states it. See the note on
+          // `applyOutreachDoctrine` for why this one is allowed to.
+          const handback = await applyOutreachDoctrine();
+          if (handback?.updated.length) {
+            console.log(`  → Outreach doctrine applied to ${handback.updated.join(", ")}`);
+          }
+          if (handback?.overrode.length) {
+            console.log(
+              `  → Overrode your own wording on ${handback.overrode.join(", ")} — you asked for the cold email playbook to be removed entirely. ` +
+                `The replaced wording is kept verbatim in the "${SETTING.AGENT_OUTREACH_PRIOR}" setting.`,
             );
           }
 
