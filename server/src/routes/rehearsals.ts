@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { SCENARIOS } from "../services/rehearsals/scenarios.js";
 import { REHEARSAL_GUARANTEE, RehearsalRefused, nudge, startRehearsal, stopRehearsal, teardownRehearsal } from "../services/rehearsals/run.js";
 import { listRehearsals, readRehearsal } from "../services/rehearsals/view.js";
 import { reportsUnder } from "../services/rehearsals/wake.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * The rehearsal room.
@@ -16,7 +16,14 @@ import { reportsUnder } from "../services/rehearsals/wake.js";
  */
 export const rehearsalsRouter = Router();
 
-rehearsalsRouter.use(requireRole("OWNER"));
+rehearsalsRouter.use(
+  gateBy({
+    view: "agents.rehearsals.view",
+    create: "agents.rehearsals.run",
+    remove: "agents.rehearsals.run",
+  }),
+);
+
 
 /**
  * The workflows on offer, what each is for, and who each would wake.

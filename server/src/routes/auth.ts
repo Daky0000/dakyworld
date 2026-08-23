@@ -15,6 +15,7 @@ import {
 import { issueChallenge, readChallenge } from "../lib/mfaChallenge.js";
 import { consumeRecoveryCode, generateRecoveryCodes, generateTotpSecret, totpUri, verifyTotp } from "../lib/totp.js";
 import { requireAuth } from "../middleware/auth.js";
+import { WITH_ACCESS, effectivePermissions } from "../lib/accessRoles.js";
 import { COMPANY } from "../services/dakyworld.js";
 
 export const authRouter = Router();
@@ -24,9 +25,36 @@ const loginInput = z.object({
   password: z.string().min(1).max(200),
 });
 
-/** What the client gets back about whoever is signed in. Never the row — that carries the hash and the TOTP secret. */
-function publicUser(user: { id: string; name: string; email: string; role: string; totpConfirmedAt: Date | null }) {
-  return { id: user.id, name: user.name, email: user.email, role: user.role, twoFactorEnabled: Boolean(user.totpConfirmedAt) };
+/**
+ * What the client gets back about whoever is signed in. Never the row — that
+ * carries the hash and the TOTP secret.
+ *
+ * `permissions` is the resolved set, and the client draws its entire navigation
+ * from it. Sending the role name alone would push the client into re-deriving
+ * "so what does an Operations & Finance actually see" from a copy of the rules,
+ * which is exactly the duplicated permission table this whole change removed
+ * from `Layout.tsx`.
+ */
+function publicUser(user: {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  totpConfirmedAt: Date | null;
+  extraPermissions: string[];
+  deniedPermissions: string[];
+  accessRole: { id: string; name: string; superAdmin: boolean; permissions: string[] } | null;
+}) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    twoFactorEnabled: Boolean(user.totpConfirmedAt),
+    roleId: user.accessRole?.id ?? null,
+    roleName: user.accessRole?.name ?? null,
+    permissions: [...effectivePermissions(user)].sort(),
+  };
 }
 
 /**
@@ -40,7 +68,7 @@ authRouter.post("/login", loginRateLimit, loginAccountRateLimit, async (req, res
     if (!parsed.success) return res.status(400).json({ error: "Email and password are required" });
 
     const email = parsed.data.email.trim().toLowerCase();
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email }, include: WITH_ACCESS });
     const ok = user?.active ? await verifyPassword(parsed.data.password, user.passwordHash) : false;
 
     if (!ok || !user) {
@@ -92,7 +120,7 @@ authRouter.post("/login/2fa", mfaAttemptLimit, async (req, res, next) => {
     const userId = readChallenge(parsed.data.challenge);
     if (!userId) return res.status(401).json({ error: "That sign-in has expired. Start again." });
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({ where: { id: userId }, include: WITH_ACCESS });
     if (!user?.active || !user.totpConfirmedAt || !user.totpSecret) {
       return res.status(401).json({ error: "That sign-in has expired. Start again." });
     }

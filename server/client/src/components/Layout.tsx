@@ -6,81 +6,76 @@ type NavItem = {
   to: string;
   label: string;
   end?: boolean;
-  ownerOnly?: boolean;
-  roles?: string[];
+  /**
+   * What the API asks for on that screen's own routes. A tab whose permission
+   * this person lacks is not rendered.
+   *
+   * This used to be `ownerOnly?: boolean` plus `roles?: string[]` — a second
+   * copy of the permission model, maintained by hand against twenty
+   * `requireRole` lines on the server, and wrong the moment either side moved.
+   * Now there is one source of truth, the server resolves it, and this is a
+   * lookup rather than a rule.
+   */
+  needs?: string;
   /** Renders as a dropdown. `to` is where the group's own tab goes. */
   children?: NavItem[];
 };
 
 const navItems: NavItem[] = [
-  { to: "/", label: "Dashboard", end: true },
+  { to: "/", label: "Dashboard", end: true, needs: "dashboard.view" },
   // Getting leads in is three screens — the list, the scrapers, the importer —
   // and they were three top-level tabs competing with Proposals and Invoices
   // for the same row. They're one job, so they're one menu.
-  //
-  // Configuring scrapers spends money on Apify, and importing spends Anthropic
-  // credits and reaches into a Google account, so the API restricts both to the
-  // Owner. Hiding those entries keeps the rest of the team out of a 403 while
-  // still leaving them the list itself.
   {
     to: "/leads",
     label: "Leads",
+    needs: "leads.view",
     children: [
-      { to: "/leads", label: "All leads", end: true },
-      { to: "/lead-sources", label: "Capture", ownerOnly: true },
-      { to: "/leads/import", label: "Import", ownerOnly: true },
+      { to: "/leads", label: "All leads", end: true, needs: "leads.view" },
+      { to: "/lead-sources", label: "Capture", needs: "leads.sources" },
+      { to: "/leads/import", label: "Import", needs: "leads.import" },
     ],
   },
-  { to: "/proposals", label: "Proposals" },
-  // Building one spends real money on two models, so it sits with the other
-  // things that do; reading the list does not, hence no role restriction here.
-  { to: "/demos", label: "Demos" },
-  { to: "/projects", label: "Projects" },
-  { to: "/invoices", label: "Invoices" },
-  // Care plans decide what recurring money moves and when, so the API limits
-  // them to the Owner and Finance — same reasoning as Capture and Import.
-  { to: "/care-plans", label: "Retainers", roles: ["OWNER", "OPERATIONS_FINANCE"] },
-  // Writing to a client under the company's name isn't a junior privilege —
-  // the API restricts it the same way, so hiding the tab avoids a 403.
+  { to: "/proposals", label: "Proposals", needs: "proposals.view" },
+  { to: "/demos", label: "Demos", needs: "demos.view" },
+  { to: "/projects", label: "Projects", needs: "projects.view" },
+  { to: "/invoices", label: "Invoices", needs: "invoices.view" },
+  { to: "/care-plans", label: "Retainers", needs: "retainers.view" },
   // Email and the phone channels are one job — reaching somebody — and which
   // one is even possible is decided per lead by whether an address exists. So
   // they are one menu rather than two tabs competing for the same row.
   {
     to: "/emails",
     label: "Outreach",
-    roles: ["OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"],
+    needs: "emails.view",
     children: [
-      { to: "/emails", label: "Email", end: true },
-      { to: "/inbox", label: "Inbox" },
-      { to: "/messages", label: "WhatsApp & SMS" },
+      { to: "/emails", label: "Email", end: true, needs: "emails.view" },
+      { to: "/inbox", label: "Inbox", needs: "inbox.view" },
+      { to: "/messages", label: "WhatsApp & SMS", needs: "messages.view" },
     ],
   },
-  { to: "/clients", label: "Clients" },
-  // Raising an agent's autonomy is the one action here that lets software act
-  // on a client without being asked, so it sits with Settings behind the Owner.
+  { to: "/clients", label: "Clients", needs: "clients.view" },
   {
     to: "/agents",
     label: "Agents",
-    ownerOnly: true,
+    needs: "agents.view",
     children: [
-      { to: "/agents", label: "Workforce", end: true },
-      // Every row in here is either visible outside the company or spends
-      // money — the same test the tool gate applies — so it sits behind the
-      // Owner with the rest of the workforce.
-      { to: "/approvals", label: "Approvals" },
+      { to: "/agents", label: "Workforce", end: true, needs: "agents.view" },
+      { to: "/approvals", label: "Approvals", needs: "agents.approvals.view" },
       // Watching the whole floor work one website at once. It belongs under
       // Agents rather than beside Leads: the subject is the workforce, and the
       // website is only what you point it at.
-      { to: "/rehearsals", label: "Rehearsal" },
-      { to: "/agents/tools", label: "Tools" },
+      { to: "/rehearsals", label: "Rehearsal", needs: "agents.rehearsals.view" },
+      { to: "/agents/tools", label: "Tools", needs: "agents.tools" },
       // What the floor above costs to run. Under Agents rather than beside the
       // money screens on purpose: Invoices is what clients owe us, this is what
       // the workforce spends, and putting them together would invite somebody
       // to read one as the other.
-      { to: "/costs", label: "Costs" },
+      { to: "/costs", label: "Costs", needs: "agents.costs" },
     ],
   },
-  { to: "/settings", label: "Settings", ownerOnly: true },
+  { to: "/team", label: "Team", needs: "team.view" },
+  { to: "/settings", label: "Settings", needs: "settings.view" },
 ];
 
 /**
@@ -148,17 +143,19 @@ function NavGroup({ item }: { item: NavItem }) {
 }
 
 export function Layout() {
-  const { user, logout } = useAuth();
+  const { user, can, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const allowed = (item: NavItem) =>
-    (!item.ownerOnly || user?.role === "OWNER") &&
-    (!item.roles || (user?.role !== undefined && item.roles.includes(user.role)));
-  // Children are gated too, so a Developer sees "All leads" under Leads and
-  // not Capture or Import — the same 403s the API would return.
+  const allowed = (item: NavItem) => !item.needs || can(item.needs);
+  // Children are gated too, so somebody with read-only Leads sees "All leads"
+  // and not Capture or Import — the same 403s the API would return.
+  //
+  // A group whose children are all hidden is dropped rather than left as a
+  // menu that opens onto nothing.
   const visibleNav = navItems
     .filter(allowed)
-    .map((item) => (item.children ? { ...item, children: item.children.filter(allowed) } : item));
+    .map((item) => (item.children ? { ...item, children: item.children.filter(allowed) } : item))
+    .filter((item) => !item.children || item.children.length > 0);
   // Every page except the dashboard is somewhere you arrived from somewhere
   // else, so every one of them gets a way back that doesn't mean hunting for
   // the browser chrome or guessing which nav tab you came in through.
@@ -200,7 +197,7 @@ export function Layout() {
             )}
             <span className="mx-2 h-5 w-px bg-line" aria-hidden />
             <div className="flex items-center gap-3">
-              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/55" title={user?.email}>
+              <span className="max-w-[140px] truncate whitespace-nowrap font-mono text-[10px] uppercase tracking-[.14em] text-ink/55" title={user?.email}>
                 {user?.name}
               </span>
               <button

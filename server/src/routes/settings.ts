@@ -3,7 +3,6 @@ import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { describeNumber, verifyWhatsAppKeys } from "../lib/whatsapp.js";
-import { requireRole } from "../middleware/auth.js";
 import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
 import { maskSecret } from "../lib/secrets.js";
 import { ImapError, imapConfigured, readImapConfig, suggestFromSmtp, verifyImap } from "../lib/imap.js";
@@ -71,6 +70,7 @@ import {
   saveCompanyProfile,
   type BrandSlot,
 } from "../services/systemProfile.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * Everything the Owner configures at runtime, in one place.
@@ -84,8 +84,28 @@ import {
  */
 export const settingsRouter = Router();
 
+settingsRouter.use(
+  gateBy({
+    view: "settings.view",
+    create: "settings.integrations",
+    edit: "settings.integrations",
+    remove: "settings.integrations",
+    routes: [
+      // Order matters here: /hubtel-sms is the SMS provider and /hubtel is the
+      // payment one, so both are anchored rather than left as prefixes.
+      { path: /^\/hubtel-sms$/, permission: "messages.settings" },
+      { path: /^\/(paystack|stripe|hubtel)$/, permission: "settings.payments" },
+      { path: /^\/(whatsapp|sms-callback-token)$/, permission: "messages.settings" },
+      { path: /^\/messaging\//, permission: "messages.settings" },
+      { path: /^\/system\/brand\//, permission: "settings.templates" },
+      { path: /^\/(system|general)$/, permission: "settings.company" },
+      { path: /^\/(models|anthropic)/, permission: "settings.models" },
+      { path: /^\/(apify|capture)/, permission: "leads.sources" },
+    ],
+  }),
+);
+
 // These credentials spend real money and reach outside the company.
-settingsRouter.use(requireRole("OWNER"));
 
 // A logo rides in the JSON body as a data URL, so this one path parses bodies
 // larger than the 100 kB the rest of the API allows. Deliberately after the

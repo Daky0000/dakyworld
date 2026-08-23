@@ -1,7 +1,6 @@
 import express, { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { mailerConfigured } from "../lib/mailer.js";
 import { draftEmail } from "../lib/emailDrafter.js";
 import { preSendCheck } from "../services/coldEmailChecks.js";
@@ -19,6 +18,7 @@ import { companyProfile, type CompanyProfile } from "../services/systemProfile.j
 import { FileStoreError, MAX_UPLOAD_BODY, deleteFile, fileSummary, readFile, storeFile } from "../services/fileStore.js";
 import { LOGO_CID, LOGO_DARK_CID, brandDataUrl } from "../lib/brandAssets.js";
 import { SETTING, getSetting } from "../lib/settings.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * Everything to do with outbound email.
@@ -29,6 +29,28 @@ import { SETTING, getSetting } from "../lib/settings.js";
  * that link in its headers.
  */
 export const emailsRouter = Router();
+
+emailsRouter.use(
+  gateBy({
+    view: "emails.view",
+    // Composing and editing a draft are the same decision; sending is not, which
+    // is the whole reason this module has more than one key.
+    create: "emails.draft",
+    edit: "emails.draft",
+    remove: "emails.delete",
+    routes: [
+      { path: /^\/[^/]+\/send$/, permission: "emails.send" },
+      { path: /^\/sequences/, method: ["POST", "PATCH", "DELETE"], permission: "emails.sequences" },
+      { path: /^\/enrollments\/[^/]+\/stop$/, permission: "emails.sequences" },
+      { path: /^\/templates/, method: ["POST", "PATCH", "DELETE"], permission: "emails.templates" },
+      // The suppression list decides who may be written to at all.
+      { path: /^\/suppression/, method: ["POST", "DELETE"], permission: "emails.send" },
+      { path: /^\/(preview|replied)$/, permission: "emails.view" },
+      { path: /^\/sequences\/preview-slot$/, permission: "emails.view" },
+      { path: /^\/context\/lookup$/, permission: "emails.view" },
+    ],
+  }),
+);
 
 const PURPOSES = [
   "COLD_OUTREACH",
@@ -62,7 +84,6 @@ const attachment = z.union([
 ]);
 
 // Writing to a client under the company's name is not a junior privilege.
-emailsRouter.use(requireRole("OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"));
 
 // An attachment arrives base64-encoded inside the JSON body, so this one path
 // parses bodies far larger than the rest of the API allows. Deliberately after

@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { imapConfigured, readImapConfig } from "../lib/imap.js";
 import { handOverMessage, inboxSummary, markHandled } from "../services/mailbox/actions.js";
 import { retriage } from "../services/mailbox/ingest.js";
@@ -10,6 +9,7 @@ import { NEEDS_NO_REPLY, autoRouteEnabled, destinationFor } from "../services/ma
 import { syncMailbox } from "../services/mailbox/sync.js";
 import { triageEnabled } from "../services/mailbox/triage.js";
 import { watcherStatus } from "../services/mailbox/watcher.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * The Inbox screen.
@@ -26,9 +26,18 @@ import { watcherStatus } from "../services/mailbox/watcher.js";
  */
 export const inboxRouter = Router();
 
+inboxRouter.use(
+  gateBy({
+    view: "inbox.view",
+    // Nothing on this router sends. Answering a message is a send and goes
+    // through the email module, under "Send an email".
+    create: "inbox.assign",
+    routes: [{ path: /^\/sync$/, permission: "inbox.sync" }],
+  }),
+);
+
 // The same three roles as email. What is in the mailbox is at least as
 // sensitive as what leaves it — more so, since a stranger wrote it.
-inboxRouter.use(requireRole("OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"));
 
 const STATUSES = ["NEW", "TRIAGED", "ROUTED", "HANDLED", "IGNORED", "FAILED"] as const;
 

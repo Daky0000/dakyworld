@@ -4,7 +4,8 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
-import { attachUser, bootstrapOwner, requireAuth, scopeClientViewer, DEV_NO_AUTH, DEV_NO_AUTH_REFUSED } from "./middleware/auth.js";
+import { attachUser, bootstrapOwner, requireAuth, scopeExternal, DEV_NO_AUTH, DEV_NO_AUTH_REFUSED } from "./middleware/auth.js";
+import { ensureSystemRoles } from "./lib/accessRoles.js";
 import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
 import { leadsRouter } from "./routes/leads.js";
@@ -21,6 +22,7 @@ import { slackRouter } from "./routes/slack.js";
 import { messagingRouter } from "./routes/messaging.js";
 import { messagesRouter } from "./routes/messages.js";
 import { usersRouter } from "./routes/users.js";
+import { accessRouter } from "./routes/access.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
 import { agentsRouter } from "./routes/agents.js";
@@ -192,8 +194,8 @@ app.use("/api", apiRateLimit);
 app.use(attachUser);
 app.use("/api/auth", authRouter);
 app.use("/api", requireAuth);
-// Signed in is not the same as "belongs in here" — see scopeClientViewer.
-app.use("/api", scopeClientViewer);
+// Signed in is not the same as "belongs in here" — see scopeExternal.
+app.use("/api", scopeExternal);
 
 app.use("/api/clients", clientsRouter);
 app.use("/api/leads", leadsRouter);
@@ -207,6 +209,7 @@ app.use("/api/emails", emailsRouter);
 app.use("/api/inbox", inboxRouter);
 app.use("/api/messages", messagesRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/access", accessRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/scrapers", scrapersRouter);
 app.use("/api/agents", agentsRouter);
@@ -301,7 +304,14 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 // Runs before the port opens, so the first request can't beat the Owner into
 // existence. A failure here shouldn't take the whole API down — the rest of
 // the app works, and the cause is on stdout.
-bootstrapOwner()
+// Roles first, and strictly first: `bootstrapOwner` pins the Owner account to
+// the Owner *role*, and every permission check reads a role off the user row.
+// A boot that opened the port before this would answer the first few requests
+// as though nobody had any access at all — which fails closed, but reads to
+// whoever is holding the browser as a system that has forgotten them.
+ensureSystemRoles()
+  .catch((err) => console.error("Role seed failed:", err))
+  .then(() => bootstrapOwner())
   .catch((err) => console.error("Owner bootstrap failed:", err))
   .finally(() => {
     const server = app.listen(PORT, () => {

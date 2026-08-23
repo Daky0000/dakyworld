@@ -3,6 +3,7 @@ import { z } from "zod";
 import { MemoryRefused } from "../services/agents/memory.js";
 import { appendNote, deleteNote, editNote, gatherEntries, listNotes, parseSubject, renderDossier } from "../services/context/dossier.js";
 import { renderMarkdownPdf } from "../services/markdownPdf.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * A company's history — what happened, as opposed to what an agent concluded.
@@ -17,6 +18,17 @@ import { renderMarkdownPdf } from "../services/markdownPdf.js";
  * and its summary end up disagreeing.
  */
 export const contextRouter = Router();
+
+contextRouter.use(
+  gateBy({
+    // The company dossier is what every agent writes from, so everybody who can
+    // open the app can read it; changing it is a settings decision.
+    view: "dashboard.view",
+    create: "settings.company",
+    edit: "settings.company",
+    remove: "settings.company",
+  }),
+);
 
 const NOTE_KINDS = ["NOTE", "CALL", "MEETING", "REPLY", "DECISION", "OUTCOME", "RISK"] as const;
 

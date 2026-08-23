@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { costReport } from "../services/costs.js";
 import { listBudgets, removeBudget, setBudget } from "../services/budgets.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * What the workforce spends.
@@ -19,7 +19,14 @@ import { listBudgets, removeBudget, setBudget } from "../services/budgets.js";
  */
 export const costsRouter = Router();
 
-costsRouter.use(requireRole("OWNER"));
+costsRouter.use(
+  gateBy({
+    view: "agents.costs",
+    // Reading the bill and deciding the ceiling are different jobs.
+    routes: [{ path: /^\/budgets/, method: ["PUT", "POST", "DELETE"], permission: "agents.budgets" }],
+  }),
+);
+
 
 const windowQuery = z.object({
   days: z.coerce.number().int().min(1).max(365).default(30),

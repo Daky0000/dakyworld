@@ -71,21 +71,52 @@ boot.
 
 ### Who may see what
 
-`requireAuth` closes the door; `requireRole` gates the routes that spend money
-or write to clients. Client-side role checks exist only to hide nav items
-([`client/src/components/Layout.tsx`](server/client/src/components/Layout.tsx)) —
-nothing depends on them.
+`requireAuth` closes the door; a **permission** decides what is behind it.
+Client-side checks exist only to hide nav items and buttons
+([`client/src/components/Layout.tsx`](server/client/src/components/Layout.tsx),
+[`Guard.tsx`](server/client/src/components/Guard.tsx)) — nothing depends on them.
 
-**`CLIENT_VIEWER` is a closed door, not a narrow one.** The role means "somebody
-outside the company", and until Aug 2026 it carried no restriction at all: it
-could be assigned from the Team screen and then read every lead, client, invoice
-and email in the business, because nothing between `requireAuth` and the routers
-ever looked at it. There is no client portal yet and no column tying a user to
-the client they belong to, so there is nothing to scope a view *down to* — and
-the honest position with nothing to scope by is a refusal. `scopeClientViewer`
-in [`src/middleware/auth.ts`](server/src/middleware/auth.ts) allows the account
-to sign in and see itself, and nothing else. Widen it deliberately, per route,
-when the portal exists — never by deleting the check.
+**Access is a set of permissions, resolved per request** (Aug 2026). It used to
+be a six-value enum and `requireRole("OWNER", …)` on twenty routers, which meant
+the permission model existed twice — once on the API and once as a hand-kept
+copy in the client's navigation — and could only be changed by a deploy.
+
+- [`lib/permissions.ts`](server/src/lib/permissions.ts) is the catalogue of
+  every gateable action. It is **code on purpose**: a permission that no route
+  checks is a tick that reads as a restriction and enforces nothing.
+- [`middleware/permissionGate.ts`](server/src/middleware/permissionGate.ts)
+  gates a whole router by HTTP method, with an override list for the actions
+  that are not CRUD. **`view` is demanded on every request**, so a role cannot
+  write into a module it cannot read.
+- Effective access is `(role + extraPermissions) − deniedPermissions`, and
+  **deny wins over both**. The Owner role answers every check without reading
+  the list, which is what makes a lockout impossible and every other role safe
+  to narrow to nothing.
+- **Nobody may grant a permission they do not hold themselves**, and nobody may
+  edit their own access. Without the first, `team.access` and `team.roles` are
+  each equivalent to the whole catalogue: create a role with everything ticked,
+  put yourself on it, done.
+- **A new account with no role has no access at all.** The invite route used to
+  default to `DEVELOPER` — every lead, client, proposal and invoice in the
+  business, chosen by a `.default()` in a Zod schema.
+- Changing somebody's access, or a role's contents, **revokes the sessions**
+  affected. The permissions are already live (they are read off the row on every
+  request); dropping the session is so that a narrowing is not discovered one
+  403 at a time.
+
+**An `external` role is a closed door, not a narrow one.** It means "somebody
+outside the company", and until Aug 2026 the `CLIENT_VIEWER` enum value carried
+no restriction at all: it could be assigned from the Team screen and then read
+every lead, client, invoice and email in the business, because nothing between
+`requireAuth` and the routers ever looked at it. There is no client portal yet
+and no column tying a user to the client they belong to, so there is nothing to
+scope a view *down to* — and the honest position with nothing to scope by is a
+refusal. `scopeExternal` in
+[`src/middleware/auth.ts`](server/src/middleware/auth.ts) allows the account to
+sign in and see itself, and nothing else. It sits **on top of** permissions
+rather than instead of them: an external role with `clients.view` ticked still
+gets nothing. Widen it deliberately, per route, when the portal exists — never
+by deleting the check.
 
 **Never write `include: { user: true }`.** A whole `User` row carries the
 password hash, the TOTP secret and the recovery-code hashes. `GET
@@ -295,9 +326,9 @@ about it are decisions rather than accidents:
   **Do not add a path that lets a message body choose an agent, a tool or a
   recipient.**
 
-The Inbox routes are behind `requireRole("OWNER", "OPERATIONS_FINANCE",
-"PROJECT_MANAGER")` — the same three as the outbox, on the grounds that what a
-stranger wrote to the company is at least as sensitive as what the company sent.
+The Inbox routes are behind the `inbox.view` permission, which the three roles
+that ship with outreach access carry — on the grounds that what a stranger wrote
+to the company is at least as sensitive as what the company sent.
 
 ## The website
 

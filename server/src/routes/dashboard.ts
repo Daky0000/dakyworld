@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const dashboardRouter = Router();
+
+dashboardRouter.use(gateBy({ view: "dashboard.view" }));
 
 // GET /api/dashboard — the "Revenue Dashboard" workflow: total revenue this
 // month, recurring revenue, outstanding invoices, pipeline value, all

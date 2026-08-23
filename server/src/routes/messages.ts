@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { defaultCallingCode, displayPhone, smsCost, toE164, toGsm7, waLink } from "../lib/phone.js";
 import { hubtelSmsConfigured } from "../lib/hubtel.js";
 import { describeNumber, whatsappConfigured, whatsappTemplatesConfigured } from "../lib/whatsapp.js";
@@ -25,6 +24,7 @@ import {
   windowRemainingMinutes,
 } from "../services/messageSender.js";
 import { STARTER_TEMPLATES, checkTemplate, removeTemplate, submitTemplate, syncTemplates, templateNameFrom } from "../services/whatsappTemplates.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * WhatsApp and SMS — the outbox, the conversations, and the templates.
@@ -40,9 +40,27 @@ import { STARTER_TEMPLATES, checkTemplate, removeTemplate, submitTemplate, syncT
  */
 export const messagesRouter = Router();
 
+messagesRouter.use(
+  gateBy({
+    view: "messages.view",
+    create: "messages.draft",
+    edit: "messages.draft",
+    remove: "messages.draft",
+    routes: [
+      { path: /^\/[^/]+\/(send|mark-sent)$/, permission: "messages.send" },
+      { path: /^\/dispatch\/run-now$/, permission: "messages.send" },
+      { path: /^\/draft$/, permission: "messages.draft" },
+      { path: /^\/templates/, method: ["POST", "DELETE"], permission: "messages.settings" },
+      { path: /^\/suppression/, method: ["POST", "DELETE"], permission: "messages.send" },
+      // Pricing a message and marking a thread read are reads with a verb on them.
+      { path: /^\/cost$/, permission: "messages.view" },
+      { path: /^\/threads\/[^/]+\/read$/, permission: "messages.view" },
+    ],
+  }),
+);
+
 // Writing to a stranger's personal phone under the company's name is not a
 // junior privilege — the same three roles as email, for the same reason.
-messagesRouter.use(requireRole("OWNER", "OPERATIONS_FINANCE", "PROJECT_MANAGER"));
 
 const CHANNELS = ["WHATSAPP", "SMS"] as const;
 

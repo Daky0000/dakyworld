@@ -1,8 +1,18 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const clientsRouter = Router();
+
+clientsRouter.use(
+  gateBy({
+    view: "clients.view",
+    create: "clients.create",
+    edit: "clients.edit",
+    remove: "clients.delete",
+  }),
+);
 
 const clientInput = z.object({
   name: z.string().min(1),

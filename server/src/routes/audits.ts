@@ -1,12 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { readFile } from "../services/fileStore.js";
 import { normaliseSiteUrl } from "../services/siteShot.js";
 import { runWebsiteAudit } from "../services/audit/team.js";
 import { auditMarkdown } from "../services/audit/markdown.js";
 import type { WebsiteAuditReport } from "../services/audit/types.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * Website reviews: running them, reading them, and handing over the two files.
@@ -18,12 +18,22 @@ import type { WebsiteAuditReport } from "../services/audit/types.js";
  * behind it at all, which is what a person does when somebody asks "what do you
  * think of my site".
  *
- * **Running one spends money**, so it is `requireRole("OWNER")` like the other
+ * **Running one spends money**, so it needs `leads.audit` like the other
  * two routes that do — a capture and an import. Reading one does not, so it is
  * not.
  */
 
 export const auditsRouter = Router();
+
+auditsRouter.use(
+  gateBy({
+    // Reading a report somebody already paid for is not the same decision as
+    // commissioning one, so the two sit on different keys.
+    view: "leads.view",
+    create: "leads.audit",
+    remove: "leads.audit",
+  }),
+);
 
 const listQuery = z.object({
   leadId: z.string().optional(),
@@ -101,7 +111,7 @@ const runInput = z
  * and it says so rather than pretending otherwise. It is a separate call from preparing a
  * lead so that whoever is watching can see which part is taking the time.
  */
-auditsRouter.post("/run", requireRole("OWNER"), async (req, res, next) => {
+auditsRouter.post("/run", async (req, res, next) => {
   try {
     const input = runInput.parse(req.body ?? {});
 
@@ -165,7 +175,7 @@ auditsRouter.post("/run", requireRole("OWNER"), async (req, res, next) => {
  * because a file owned by a record is not an orphan while the record exists.
  * So this is the only thing that ever cleans them up.
  */
-auditsRouter.delete("/:id", requireRole("OWNER"), async (req, res, next) => {
+auditsRouter.delete("/:id", async (req, res, next) => {
   try {
     const audit = await prisma.websiteAudit.findUnique({
       where: { id: req.params.id },

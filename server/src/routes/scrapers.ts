@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import {
   apifyConfigured,
   displayActorId,
@@ -21,12 +20,14 @@ import { SCRAPER_TEMPLATES } from "../services/scraperTemplates.js";
 import { buildDedupeKey, describeShape, mapRow, scoreLead, type Preset } from "../services/leadMapping.js";
 import { estimateCost } from "../services/captureCost.js";
 import { readCaptureConfig, unknownInputKeys } from "../services/captureConfig.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const scrapersRouter = Router();
 
+scrapersRouter.use(gateBy({ view: "leads.sources", create: "leads.sources", edit: "leads.sources", remove: "leads.sources" }));
+
 // Lead sourcing spends money on Apify and writes straight into the pipeline,
 // so configuring it stays with the Owner.
-scrapersRouter.use(requireRole("OWNER"));
 
 const LEAD_SOURCES = [
   "REFERRAL",

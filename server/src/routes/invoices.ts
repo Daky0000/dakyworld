@@ -6,8 +6,26 @@ import type { InvoiceStatus } from "@prisma/client";
 import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
 import { getStripe } from "../lib/stripe.js";
 import { createNumberedInvoice } from "../services/invoiceNumber.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const invoicesRouter = Router();
+
+invoicesRouter.use(
+  gateBy({
+    view: "invoices.view",
+    create: "invoices.create",
+    edit: "invoices.edit",
+    remove: "invoices.delete",
+    routes: [
+      { path: /^\/[^/]+\/send$/, permission: "invoices.send" },
+      // A payment link is an ask for money that leaves the building exactly like
+      // the invoice does.
+      { path: /^\/[^/]+\/create-payment-link$/, permission: "invoices.send" },
+      { path: /^\/[^/]+\/generate-pdf$/, permission: "invoices.view" },
+      { path: /^\/[^/]+\/mark-paid$/, permission: "invoices.edit" },
+    ],
+  }),
+);
 
 const lineItemInput = z.object({
   description: z.string().min(1),

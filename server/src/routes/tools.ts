@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { summarise, toolStatuses } from "../services/toolRegistry.js";
 import { listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
 import { invokeTool, permissionFor } from "../services/tools/invoke.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * What each tool is for, whether it works, and what it still needs — plus,
@@ -20,7 +20,8 @@ import { invokeTool, permissionFor } from "../services/tools/invoke.js";
  */
 export const toolsRouter = Router();
 
-toolsRouter.use(requireRole("OWNER"));
+toolsRouter.use(gateBy({ view: "agents.tools", create: "agents.tools", edit: "agents.tools", remove: "agents.tools" }));
+
 
 toolsRouter.get("/", async (_req, res, next) => {
   try {

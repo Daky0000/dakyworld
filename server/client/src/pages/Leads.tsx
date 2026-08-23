@@ -112,7 +112,7 @@ function toQuery(filters: Filters): string {
 
 export function Leads() {
   const qc = useQueryClient();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   // Arriving from "view what this run captured" lands here pre-filtered.
   const [filters, setFilters] = useState<Filters>(() => ({
@@ -275,13 +275,16 @@ export function Leads() {
             <Button variant="ghost" size="sm" onClick={() => setColumnsFor(filters.groupId || null)}>
               Columns
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setManagingTags(true)}>
-              Tags
-            </Button>
+            {can("leads.tags") && (
+              <Button variant="ghost" size="sm" onClick={() => setManagingTags(true)}>
+                Tags
+              </Button>
+            )}
             <ExportMenu query={query} count={data?.total ?? 0} />
-            {/* Importing reaches into Google and spends Anthropic credits, so
-                the API restricts it to the Owner — don't offer it to anyone else. */}
-            {user?.role === "OWNER" && (
+            {/* Importing reaches into Google and spends Anthropic credits, and
+                configuring capture spends on Apify. Both are their own
+                permission now, so this asks the same question the API will. */}
+            {can("leads.import") && (
               <Link
                 to="/leads/import"
                 className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
@@ -289,13 +292,17 @@ export function Leads() {
                 Import sheet
               </Link>
             )}
-            <Link
-              to="/lead-sources"
-              className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
-            >
-              Capture leads
-            </Link>
-            <Button onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "New lead"}</Button>
+            {can("leads.sources") && (
+              <Link
+                to="/lead-sources"
+                className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+              >
+                Capture leads
+              </Link>
+            )}
+            {can("leads.create") && (
+              <Button onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "New lead"}</Button>
+            )}
           </div>
         }
       />

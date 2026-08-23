@@ -9,8 +9,26 @@ import { AnalystError } from "../lib/anthropic.js";
 import { writeProposal } from "../lib/proposalWriter.js";
 import { resolveProposalContext } from "../services/proposalContext.js";
 import { auditCompany, sortFindings } from "../services/companyAudit.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const proposalsRouter = Router();
+
+proposalsRouter.use(
+  gateBy({
+    view: "proposals.view",
+    create: "proposals.create",
+    edit: "proposals.edit",
+    remove: "proposals.delete",
+    routes: [
+      { path: /^\/draft$/, permission: "proposals.write" },
+      { path: /^\/[^/]+\/send$/, permission: "proposals.send" },
+      // Rendering a preview is reading, whatever the verb says.
+      { path: /^\/document\/preview\.pdf$/, permission: "proposals.view" },
+      { path: /^\/[^/]+\/generate-pdf$/, permission: "proposals.view" },
+      { path: /^\/[^/]+\/(accept|reject)$/, permission: "proposals.edit" },
+    ],
+  }),
+);
 
 const proposalInput = z.object({
   leadId: z.string().cuid().optional().nullable(),

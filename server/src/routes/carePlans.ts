@@ -12,15 +12,27 @@ import {
   normaliseBillingDay,
   syncCarePlanSchedule,
 } from "../services/carePlanBilling.js";
-import { requireRole } from "../middleware/auth.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const carePlansRouter = Router();
+
+carePlansRouter.use(
+  gateBy({
+    view: "retainers.view",
+    create: "retainers.create",
+    edit: "retainers.edit",
+    remove: "retainers.delete",
+    routes: [
+      { path: /^\/[^/]+\/bill-now$/, permission: "retainers.bill" },
+      { path: /^\/[^/]+\/(churn|pause|resume|reviewed)$/, permission: "retainers.edit" },
+    ],
+  }),
+);
 
 /**
  * Care plans are the recurring half of the business, and every route here
  * either moves money or decides when money moves. Finance and the Owner only.
  */
-carePlansRouter.use(requireRole("OWNER", "OPERATIONS_FINANCE"));
 
 const planInput = z.object({
   clientId: z.string().cuid(),

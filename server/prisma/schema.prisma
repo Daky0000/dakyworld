@@ -17,6 +17,14 @@ datasource db {
 // Team & Permissions
 // ---------------------------------------------------------------------------
 
+/// **No longer decides anything.** Access is `AccessRole` plus the per-person
+/// overrides below, resolved in middleware/auth.ts. This enum survives because
+/// every existing row carries a value, because `OWNER_PASSWORD` bootstrapping
+/// still writes `OWNER`, and because dropping a column from a live database to
+/// save six words is not worth the deploy. It is kept in step with the seeded
+/// role a person holds (see SYSTEM_ROLE_TO_ENUM) and means nothing on its own.
+///
+/// Read it for a label if you must. Never gate on it — `requireRole` is gone.
 enum Role {
   OWNER
   PROJECT_MANAGER
@@ -24,6 +32,53 @@ enum Role {
   DESIGNER
   OPERATIONS_FINANCE
   CLIENT_VIEWER
+}
+
+/// A named set of features, assignable to a person.
+///
+/// Roles are rows rather than an enum because the point of the Access screen is
+/// that the Owner can invent one — "Lead", "Intern", "Contractor" — without a
+/// deploy. What a role may *contain* is still fixed in code: `permissions` holds
+/// keys from lib/permissions.ts, and anything not in that catalogue is dropped
+/// on read, so a stale key can never quietly grant something.
+///
+/// A role created here starts with **no permissions at all**. That is the
+/// deliberate default: naming a role is not the same as deciding what it can
+/// reach, and a role that arrived pre-filled would make every new role a
+/// question of what to take away rather than what to give.
+model AccessRole {
+  id          String  @id @default(cuid())
+  /// Stable slug. Referenced by the seeder, so renaming a system role's display
+  /// name is safe but changing its key is not.
+  key         String  @unique
+  name        String
+  description String?
+
+  /// Seeded by the application on boot. Cannot be deleted, and its key is fixed.
+  /// Its permissions are still editable — except the Owner's, see below.
+  system Boolean @default(false)
+
+  /// Passes every permission check without consulting `permissions`. True for
+  /// exactly one role, Owner. This is what makes a lockout impossible: no
+  /// combination of ticks on this screen can produce a system nobody can
+  /// administer, because the Owner role does not read the ticks.
+  superAdmin Boolean @default(false)
+
+  /// Somebody outside the company. Held to a closed door on every internal
+  /// route regardless of what is ticked, until a client portal exists to scope
+  /// them down to — see `scopeExternal` in middleware/auth.ts.
+  external Boolean @default(false)
+
+  /// Keys from lib/permissions.ts. Unknown keys are ignored on read.
+  permissions String[] @default([])
+
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+
+  @@index([sortOrder])
 }
 
 model User {
@@ -38,6 +93,23 @@ model User {
   hourlyRate          Decimal? @db.Decimal(10, 2)
   weeklyCapacityHours Decimal  @default(0) @db.Decimal(5, 2)
   active              Boolean  @default(true)
+
+  // --- Access (see lib/permissions.ts and middleware/auth.ts) ----------------
+  // Effective permissions are (role's permissions + extra) - denied, with the
+  // Owner role short-circuiting the whole calculation. Null role means no
+  // permissions at all: a pre-provisioned account can sign in and see itself
+  // and nothing more until somebody assigns it one.
+  accessRoleId String?
+  accessRole   AccessRole? @relation(fields: [accessRoleId], references: [id], onDelete: SetNull)
+
+  /// Given to this person on top of their role — the "she also needs Import"
+  /// case, without inventing a role for one person.
+  extraPermissions String[] @default([])
+
+  /// Taken away from this person even though their role carries it. Wins over
+  /// both the role and `extraPermissions`, so a single revocation is never
+  /// silently undone by a later grant.
+  deniedPermissions String[] @default([])
 
   // --- Second factor (see server/src/lib/totp.ts) ---------------------------
   // The shared secret, encrypted at rest with APP_SECRET exactly like every

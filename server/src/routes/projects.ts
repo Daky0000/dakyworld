@@ -2,8 +2,22 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { PUBLIC_USER } from "../lib/userSelect.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const projectsRouter = Router();
+
+projectsRouter.use(
+  gateBy({
+    view: "projects.view",
+    create: "projects.create",
+    edit: "projects.edit",
+    remove: "projects.delete",
+    routes: [
+      { path: /^\/[^/]+\/assignments/, permission: "projects.assign" },
+      { path: /^\/[^/]+\/time-entries$/, permission: "projects.time" },
+    ],
+  }),
+);
 
 const projectInput = z.object({
   clientId: z.string().cuid(),

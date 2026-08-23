@@ -5,7 +5,20 @@ export type CurrentUser = {
   id: string;
   name: string;
   email: string;
+  /** The legacy enum. Kept for display; it decides nothing — see `permissions`. */
   role: string;
+  roleId: string | null;
+  roleName: string | null;
+  /**
+   * Everything this person may do, resolved by the server.
+   *
+   * The client never works this out for itself. Before this the navigation
+   * carried its own copy of the rules — an `ownerOnly` flag and a `roles`
+   * array per tab — which had to be kept in step by hand with twenty
+   * `requireRole` lines on the API, and the symptom of getting it wrong was a
+   * tab that led straight to a 403.
+   */
+  permissions: string[];
   twoFactorEnabled?: boolean;
 };
 
@@ -25,6 +38,14 @@ export function isMfaChallenge(result: LoginResult): result is MfaChallenge {
 type AuthState = {
   user: CurrentUser | null;
   loading: boolean;
+  /**
+   * Whether this person may do one particular thing.
+   *
+   * Hiding a control is a courtesy, not a security boundary — the API refuses
+   * the same call whatever the client renders. What it buys is that nobody is
+   * shown a button that can only ever answer "your role does not include this".
+   */
+  can: (permission: string) => boolean;
   /** Resolves to the signed-in user, or to the challenge that has to be answered first. */
   login: (email: string, password: string) => Promise<LoginResult>;
   completeLogin: (challenge: string, code: string) => Promise<void>;
@@ -79,7 +100,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  return <AuthContext.Provider value={{ user, loading, login, completeLogin, logout }}>{children}</AuthContext.Provider>;
+  const can = useCallback((permission: string) => user?.permissions?.includes(permission) ?? false, [user]);
+
+  return (
+    <AuthContext.Provider value={{ user, loading, can, login, completeLogin, logout }}>{children}</AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthState {

@@ -47,10 +47,14 @@ Cloudinary (file storage, PDF hosting).
   it is. Nothing is ever sent on your behalf. See below.
 - **Revenue Dashboard** — live MRR, outstanding invoices, pipeline value,
   leads-by-status — computed on read, no manual reporting.
-- **Role model** — Owner / Project Manager / Developer / Designer /
-  Operations-Finance / Client Viewer, enforced server-side (`requireRole`).
-  Today, only the Owner-role check on team management is actually wired up
-  as a gate — extend `requireRole(...)` on other routes as the team grows.
+- **Team & Access** — roles you create, and features you hand out one at a
+  time. Six roles ship (Owner, Project Manager, Developer, Designer,
+  Operations & Finance, Client Viewer) carrying exactly the access that existed
+  before roles became editable; you can add "Lead" or anything else, and it
+  starts with nothing ticked. Every feature in the app is a permission the
+  server enforces, and a person can be given or refused any of them
+  individually on top of their role. The Owner role always has everything, so
+  no combination of ticks can lock everybody out.
 
 Not yet built (later phases per the original spec): AI-powered churn/upsell
 insights, Slack notifications, a client-facing portal.
@@ -656,8 +660,8 @@ the source's minimum score are dropped rather than saved.
 timed-out or aborted run has its dataset read and filed like any other, with
 the reason kept alongside the results rather than instead of them.
 
-Actor runs cost money on Apify. The whole feature is Owner-gated server-side
-(`requireRole("OWNER")`), the cost ceiling goes to Apify with the run rather
+Actor runs cost money on Apify. The whole feature needs the `leads.sources`
+permission server-side, the cost ceiling goes to Apify with the run rather
 than being applied to the results afterwards, and the monthly budget stops
 runs starting at all.
 

@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import {
   BUILTIN_FIELDS,
   LEAD_CAPTURE_METHODS,
@@ -19,8 +18,30 @@ import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLea
 import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, prepareLeads, storedPrep } from "../services/leadPrep.js";
 import { demoUrl } from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const leadsRouter = Router();
+
+leadsRouter.use(
+  gateBy({
+    view: "leads.view",
+    create: "leads.create",
+    edit: "leads.edit",
+    remove: "leads.delete",
+    routes: [
+      // Preparing a lead runs research, an audit and two screenshots. It is the
+      // most expensive thing on this router by an order of magnitude, and it was
+      // Owner-only before this for exactly that reason.
+      { path: /^\/prepare-many$/, permission: "leads.prepare" },
+      { path: /^\/[^/]+\/prepare$/, permission: "leads.prepare" },
+      // Tags and custom columns are shared furniture — one person renaming a tag
+      // changes what everybody else's saved filters return.
+      { path: /^\/tags/, method: ["POST", "PATCH", "DELETE"], permission: "leads.tags" },
+      { path: /^\/fields/, method: ["POST", "PUT", "DELETE"], permission: "leads.tags" },
+      { path: /^\/bulk\/delete$/, permission: "leads.delete" },
+    ],
+  }),
+);
 
 /** An export is a file someone waits for — big enough to be useful, bounded enough to finish. */
 const EXPORT_LIMIT = 5000;
@@ -623,6 +644,7 @@ leadsRouter.post("/", async (req, res, next) => {
 leadsRouter.patch("/:id", async (req, res, next) => {
   try {
     const data = leadInput.partial().parse(req.body);
+
     if (data.tags) data.tags = await registerTags(data.tags, { autoCreated: false });
     // A patch of one custom value shouldn't drop the others, so the incoming
     // object is merged over what the lead already holds.
@@ -709,7 +731,7 @@ const prepareManyInput = z.object({
  * — so it answers with what it managed rather than holding a connection open
  * on all-or-nothing terms.
  */
-leadsRouter.post("/prepare-many", requireRole("OWNER"), async (req, res, next) => {
+leadsRouter.post("/prepare-many", async (req, res, next) => {
   try {
     const input = prepareManyInput.parse(req.body);
 

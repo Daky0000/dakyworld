@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { interpret } from "../services/captureIntent.js";
 import type { QuickActorKind } from "../services/scraperTemplates.js";
 import {
@@ -16,6 +15,7 @@ import { runSource } from "../services/scraperRunner.js";
 import { readCaptureConfig } from "../services/captureConfig.js";
 import { estimateCost } from "../services/captureCost.js";
 import { getActorSchema } from "../lib/apify.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * Quick capture: paste a link or say what you want, then confirm.
@@ -26,8 +26,9 @@ import { getActorSchema } from "../lib/apify.js";
  */
 export const captureRouter = Router();
 
+captureRouter.use(gateBy({ view: "leads.sources", create: "leads.sources", edit: "leads.sources", remove: "leads.sources" }));
+
 // Same gate as the scrapers router: starting a run spends real money.
-captureRouter.use(requireRole("OWNER"));
 
 captureRouter.post("/interpret", async (req, res, next) => {
   try {

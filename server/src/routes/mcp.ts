@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { McpError, encryptAuthHeader, handshake } from "../lib/mcp.js";
 import { maskSecret } from "../lib/secrets.js";
 import { refreshServer } from "../services/tools/mcpTools.js";
 import { clearReadinessCache } from "../services/tools/readiness.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * Connected tools — the MCP servers this app has been pointed at.
@@ -24,7 +24,8 @@ import { clearReadinessCache } from "../services/tools/readiness.js";
  */
 export const mcpRouter = Router();
 
-mcpRouter.use(requireRole("OWNER"));
+mcpRouter.use(gateBy({ view: "settings.mcp", create: "settings.mcp", edit: "settings.mcp", remove: "settings.mcp" }));
+
 
 /** Never the credential, only its shape — the same contract every other integration keeps. */
 function describe(server: {

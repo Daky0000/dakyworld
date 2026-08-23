@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { buildDemo, demoUrl, subjectFromLead } from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
 import { companyProfile } from "../services/systemProfile.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * Demos: the pages built for prospects, and the public serving of them.
@@ -23,6 +24,17 @@ import { companyProfile } from "../services/systemProfile.js";
  */
 
 export const demosRouter = Router();
+
+demosRouter.use(
+  gateBy({
+    view: "demos.view",
+    create: "demos.create",
+    // The only thing PATCH changes is the status, and SENT is what puts a page
+    // carrying a stranger's business name in front of them.
+    edit: "demos.publish",
+    remove: "demos.delete",
+  }),
+);
 
 const listQuery = z.object({
   status: z.enum(["DRAFT", "READY", "SENT", "ACCEPTED", "DECLINED", "ARCHIVED"]).optional(),

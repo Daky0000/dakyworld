@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
 import { permissionFor } from "../services/tools/invoke.js";
@@ -29,6 +28,7 @@ import {
   withdrawHire,
 } from "../services/agents/hiring.js";
 import { slackConfigured } from "../lib/slack.js";
+import { gateBy, registerEnforced } from "../middleware/permissionGate.js";
 
 /**
  * The workforce.
@@ -56,7 +56,31 @@ import { slackConfigured } from "../lib/slack.js";
  */
 export const agentsRouter = Router();
 
-agentsRouter.use(requireRole("OWNER"));
+registerEnforced("agents.autonomy");
+
+agentsRouter.use(
+  gateBy({
+    view: "agents.view",
+    create: "agents.hire",
+    edit: "agents.edit",
+    remove: "agents.edit",
+    routes: [
+      // Running work is where the money goes, and it is a different decision from
+      // rewriting what an agent is told.
+      { path: /^\/[^/]+\/tasks$/, method: "POST", permission: "agents.run" },
+      { path: /^\/tasks\/[^/]+\/(run|approve|cancel)$/, permission: "agents.run" },
+      { path: /^\/memory/, method: ["POST", "PATCH", "DELETE"], permission: "agents.memory" },
+      { path: /^\/[^/]+\/memory/, method: ["POST", "PATCH", "DELETE"], permission: "agents.memory" },
+      { path: /^\/hiring/, method: ["POST", "PUT"], permission: "agents.hire" },
+      { path: /^\/[^/]+\/prompt\//, permission: "agents.edit" },
+      { path: /^\/[^/]+\/writes\//, permission: "agents.edit" },
+      { path: /^\/[^/]+\/schedules/, permission: "agents.edit" },
+      { path: /^\/schedules\//, permission: "agents.edit" },
+      { path: /^\/[^/]+\/feedback$/, permission: "agents.edit" },
+    ],
+  }),
+);
+
 const DEPARTMENTS = [
   "EXECUTIVE",
   "REVENUE",
@@ -230,6 +254,16 @@ agentsRouter.patch("/:key", async (req, res, next) => {
     const input = patchInput.parse(req.body);
     const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
     if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    // Autonomy and dry run decide whether software may act on a client without
+    // being asked. That is the single most consequential field on this router
+    // and it arrives on the same PATCH as a typo fix in a mission statement, so
+    // the gate above cannot tell them apart and this asks separately.
+    if ((input.autonomyLevel !== undefined || input.dryRun !== undefined) && !req.can?.("agents.autonomy")) {
+      return res
+        .status(403)
+        .json({ error: 'Your role does not include "Set autonomy". Ask an Owner to add it on Team & Access.' });
+    }
 
     // Rewriting a seeded agent is allowed and recorded. `ensureAgents()` only
     // ever creates, so an edit made here survives every future deploy — the

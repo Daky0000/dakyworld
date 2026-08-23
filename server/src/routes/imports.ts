@@ -2,7 +2,6 @@ import express, { Router } from "express";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { AnalystError, analystConfigured, analyzeGrids } from "../lib/anthropic.js";
 import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from "../lib/google.js";
 import { handleGoogleCallback } from "./settings.js";
@@ -10,12 +9,14 @@ import { detectTables, normalizePlan, type ImportPlan } from "../services/sheetP
 import { SpreadsheetError, isSpreadsheetName, listWorkbookSheets, parseWorkbook, type SheetGrid } from "../services/spreadsheet.js";
 import { buildPreviews, commitPlan } from "../services/leadImport.js";
 import { assertSpreadsheetBytes, FileTypeError } from "../lib/fileType.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 export const importsRouter = Router();
 
+importsRouter.use(gateBy({ view: "leads.import", create: "leads.import", edit: "leads.import", remove: "leads.import" }));
+
 // Imports create groups, spend Anthropic credits and reach into a Google
 // account — Owner-only, like the other integration surfaces.
-importsRouter.use(requireRole("OWNER"));
 
 // An uploaded workbook rides in the JSON body as base64, so these routes parse
 // bodies far larger than the rest of the API allows. Deliberately after the

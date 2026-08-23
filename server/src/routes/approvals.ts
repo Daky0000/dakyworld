@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireRole } from "../middleware/auth.js";
 import { ApprovalRefused, approve, countPending, decline, freshPreview, listRequests } from "../services/approvals.js";
 import { settleApprovalCard } from "../services/approvalCards.js";
+import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * The queue of things agents have prepared and cannot carry out alone.
@@ -20,7 +20,13 @@ import { settleApprovalCard } from "../services/approvalCards.js";
  */
 export const approvalsRouter = Router();
 
-approvalsRouter.use(requireRole("OWNER"));
+approvalsRouter.use(
+  gateBy({
+    view: "agents.approvals.view",
+    create: "agents.approvals.decide",
+  }),
+);
+
 
 approvalsRouter.get("/", async (req, res, next) => {
   try {
