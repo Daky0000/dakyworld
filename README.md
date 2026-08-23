@@ -50,8 +50,9 @@ Cloudinary (file storage, PDF hosting).
 - **Team & Access** — roles you create, and features you hand out one at a
   time. Six roles ship (Owner, Project Manager, Developer, Designer,
   Operations & Finance, Client Viewer) carrying exactly the access that existed
-  before roles became editable; you can add "Lead" or anything else, and it
-  starts with nothing ticked. Every feature in the app is a permission the
+  before roles became editable, plus a **Lead** role that arrives with every
+  lead feature already ticked and is yours to narrow, rename or delete. A role
+  you create yourself starts with nothing ticked. Every feature in the app is a permission the
   server enforces, and a person can be given or refused any of them
   individually on top of their role. The Owner role always has everything, so
   no combination of ticks can lock everybody out.

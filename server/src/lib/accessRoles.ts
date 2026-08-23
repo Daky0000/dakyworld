@@ -1,6 +1,14 @@
 import type { AccessRole, User } from "@prisma/client";
 import { prisma } from "./prisma.js";
-import { ALL_PERMISSION_KEYS, ENUM_TO_SYSTEM_ROLE, SYSTEM_ROLES, knownPermissions } from "./permissions.js";
+import {
+  ALL_PERMISSION_KEYS,
+  ENUM_TO_SYSTEM_ROLE,
+  STARTER_ROLES,
+  SYSTEM_ROLES,
+  knownPermissions,
+  type SystemRoleSeed,
+} from "./permissions.js";
+import { SETTING, getSetting, setSetting } from "./settings.js";
 
 /** A user row with the role attached — what every permission decision is made from. */
 export type UserWithAccess = User & { accessRole: AccessRole | null };
@@ -116,6 +124,65 @@ export async function ensureSystemRoles(): Promise<void> {
     linked += 1;
   }
   if (linked) console.log(`  → ${linked} account${linked === 1 ? "" : "s"} placed on their matching role`);
+}
+
+/**
+ * Creates the starter roles, once, on the first boot that has them.
+ *
+ * The marker is the whole design. A starter role is an ordinary editable row —
+ * that is what makes it useful — so it can be renamed, narrowed to nothing, or
+ * deleted outright. A seeder that only checked "does a role with this key
+ * exist" would put a deleted one back on the very next deploy, and keep doing
+ * it, with nothing anywhere to explain why a role somebody removed on Tuesday
+ * is present again on Wednesday. Recording that the pass has *run* rather than
+ * inspecting its results is what makes deletion mean deletion.
+ *
+ * The consequence to know: adding a role to `STARTER_ROLES` later will not
+ * appear on an existing database. That is deliberate and is the same trade
+ * `ensureAgents()` makes — the alternative is a deploy that writes into a
+ * permission model somebody has been curating by hand. Pass a new `marker` if a
+ * second batch is ever genuinely wanted.
+ *
+ * Both inputs are arguments rather than constants for that reason, and because
+ * it is the only way `checks/access.ts` can exercise this at all: driving the
+ * real list would mean deleting and recreating the real `Lead` role, so a check
+ * run on a system where somebody had narrowed it would silently reset it to the
+ * shipped ticks. A check that quietly widens people's access is a worse defect
+ * than anything it is there to catch.
+ */
+export async function ensureStarterRoles(
+  seeds: readonly SystemRoleSeed[] = STARTER_ROLES,
+  marker: string = SETTING.ACCESS_STARTER_ROLES,
+): Promise<void> {
+  if (await getSetting(marker)) return;
+
+  let created = 0;
+  for (const seed of seeds) {
+    // A key somebody has already used for their own role is theirs. Skipping is
+    // right rather than renaming around it: two roles called Lead, one of them
+    // not the one they built, is worse than no starter role at all.
+    const existing = await prisma.accessRole.findUnique({ where: { key: seed.key }, select: { id: true } });
+    if (existing) continue;
+
+    await prisma.accessRole.create({
+      data: {
+        key: seed.key,
+        name: seed.name,
+        description: seed.description,
+        // Not a system role. It is a head start, not furniture — it can be
+        // renamed, retitled and deleted like anything else on the screen.
+        system: false,
+        superAdmin: false,
+        external: false,
+        sortOrder: seed.sortOrder,
+        permissions: knownPermissions(seed.permissions),
+      },
+    });
+    created += 1;
+  }
+
+  await setSetting(marker, new Date().toISOString());
+  if (created) console.log(`  \u2192 Seeded ${created} starter role(s): ${seeds.map((r) => r.name).join(", ")}`);
 }
 
 /** The Owner role, which the bootstrap account is pinned to. */

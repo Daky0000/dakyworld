@@ -38,11 +38,14 @@ import { prisma } from "../src/lib/prisma.js";
 import {
   ALL_PERMISSION_KEYS,
   PERMISSION_MODULES,
+  STARTER_ROLES,
   SYSTEM_ROLES,
   isPermissionKey,
   knownPermissions,
+  moduleKeys,
 } from "../src/lib/permissions.js";
-import { effectivePermissions, ensureSystemRoles, userCan } from "../src/lib/accessRoles.js";
+import { effectivePermissions, ensureStarterRoles, ensureSystemRoles, userCan } from "../src/lib/accessRoles.js";
+import { setSetting } from "../src/lib/settings.js";
 import { ENFORCED_PERMISSIONS, gateBy } from "../src/middleware/permissionGate.js";
 
 // Importing the routers is what populates ENFORCED_PERMISSIONS — the gates
@@ -90,10 +93,11 @@ function ok(name: string, condition: boolean, detail?: string) {
 
 const EMAIL = "check-access@dakyworld.local";
 const ROLE_KEY = "check-access-role";
+const STARTER_KEY = "check-access-starter";
 
 async function reset({ recreate }: { recreate: boolean }) {
   await prisma.user.deleteMany({ where: { email: EMAIL } });
-  await prisma.accessRole.deleteMany({ where: { key: ROLE_KEY } });
+  await prisma.accessRole.deleteMany({ where: { key: { in: [ROLE_KEY, STARTER_KEY] } } });
   if (recreate) {
     await prisma.accessRole.create({
       data: { key: ROLE_KEY, name: "Check Role", permissions: ["leads.view", "leads.edit"] },
@@ -129,6 +133,27 @@ async function main() {
   );
 
   ok("unknown keys are dropped on read", knownPermissions(["leads.view", "leads.telepathy"]).join() === "leads.view");
+
+  // The Lead role's definition is "every lead feature", so it is derived from
+  // the module rather than listed. This asserts the derivation actually holds —
+  // a lead permission added later must be in the role without anybody
+  // remembering, which is the entire reason it is written that way.
+  const leadSeed = STARTER_ROLES.find((r) => r.key === "lead")!;
+  const leadModule = moduleKeys("leads");
+  ok(
+    "the Lead starter role carries every permission in the Leads module",
+    leadModule.every((key) => leadSeed.permissions.includes(key)),
+    leadModule.filter((key) => !leadSeed.permissions.includes(key)).join(", "),
+  );
+  ok(
+    "and carries nothing from another module except the dashboard",
+    leadSeed.permissions.every((key) => key.startsWith("leads.") || key === "dashboard.view"),
+    leadSeed.permissions.filter((key) => !key.startsWith("leads.") && key !== "dashboard.view").join(", "),
+  );
+  ok(
+    "including the four that spend money",
+    ["leads.prepare", "leads.import", "leads.sources", "leads.audit"].every((key) => leadSeed.permissions.includes(key)),
+  );
 
   // -------------------------------------------------------------------------
   console.log("\nThe shipped roles reproduce the access that existed before this");
@@ -177,6 +202,61 @@ async function main() {
     where: { key: "developer" },
     data: { permissions: SYSTEM_ROLES.find((r) => r.key === "developer")!.permissions },
   });
+
+  // -------------------------------------------------------------------------
+  console.log("\nStarter roles are a head start, not furniture");
+
+  // Driven with a throwaway seed and a throwaway marker, never the real ones.
+  // Exercising the shipped list would mean deleting and recreating the real
+  // `Lead` row, so running this on a system where somebody had narrowed that
+  // role would silently reset it to the shipped ticks — a check that widens
+  // people's access is a worse defect than anything it is here to catch. What
+  // the *real* seed contains is asserted above, against the data, with no
+  // database involved.
+  const STARTER_MARKER = "access.checkStarterRoles";
+  const starterSeed = [
+    { key: STARTER_KEY, name: "Check Starter", description: "seeded by checks/access.ts", permissions: moduleKeys("leads"), sortOrder: 900 },
+  ];
+
+  await prisma.accessRole.deleteMany({ where: { key: STARTER_KEY } });
+  await setSetting(STARTER_MARKER, "");
+  await ensureStarterRoles(starterSeed, STARTER_MARKER);
+
+  const seeded = await prisma.accessRole.findUnique({ where: { key: STARTER_KEY } });
+  ok("a starter role is created", Boolean(seeded));
+  ok(
+    "with every permission its seed named",
+    moduleKeys("leads").every((key) => seeded!.permissions.includes(key)),
+    moduleKeys("leads").filter((key) => !seeded!.permissions.includes(key)).join(", "),
+  );
+  ok("and is editable — not a system role", seeded!.system === false);
+  ok("and is not an Owner by accident", seeded!.superAdmin === false);
+  ok("and is not marked as outside the company", seeded!.external === false);
+
+  // The one that matters most. A starter role can be deleted, and a seeder that
+  // checked for its absence rather than recording that it had run would put it
+  // back on every boot for ever, with nothing to explain why a role somebody
+  // removed on Tuesday is present again on Wednesday.
+  await prisma.accessRole.delete({ where: { id: seeded!.id } });
+  await ensureStarterRoles(starterSeed, STARTER_MARKER);
+  ok(
+    "a starter role somebody deleted stays deleted",
+    (await prisma.accessRole.findUnique({ where: { key: STARTER_KEY } })) === null,
+  );
+
+  // And a role the Owner has since narrowed or renamed is never widened back.
+  await setSetting(STARTER_MARKER, "");
+  await ensureStarterRoles(starterSeed, STARTER_MARKER);
+  const recreated = (await prisma.accessRole.findUnique({ where: { key: STARTER_KEY } }))!;
+  await prisma.accessRole.update({
+    where: { id: recreated.id },
+    data: { permissions: ["leads.view"], name: "Renamed by hand" },
+  });
+  await setSetting(STARTER_MARKER, "");
+  await ensureStarterRoles(starterSeed, STARTER_MARKER);
+  const afterEdit = (await prisma.accessRole.findUnique({ where: { key: STARTER_KEY } }))!;
+  ok("an edited starter role keeps its permissions", afterEdit.permissions.join() === "leads.view");
+  ok("and keeps the name it was given", afterEdit.name === "Renamed by hand");
 
   // -------------------------------------------------------------------------
   console.log("\nResolving one person's access");

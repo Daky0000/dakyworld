@@ -1458,6 +1458,20 @@ called them.**
   defaulted people to `DEVELOPER`, which on the day this shipped meant every
   lead, client, proposal and invoice in the business, chosen by a `.default()`
   in a Zod schema.
+- **`STARTER_ROLES` is the exception, and a different category from
+  `SYSTEM_ROLES`.** A system role is furniture — undeletable, fixed name,
+  referred to by key in this codebase. A starter role is a *head start*: an
+  ordinary editable row that arrives with sensible ticks on it and can then be
+  renamed, narrowed or thrown away. `Lead` is the one, and its permission list
+  is **derived from `moduleKeys("leads")` rather than written out**, so a lead
+  permission added in six months is in the role whose entire definition is "all
+  of them" without anybody remembering. Seeded once behind
+  `SETTING.ACCESS_STARTER_ROLES`: checking whether the row is *absent* instead
+  would resurrect a deleted role on every boot, for ever, with nothing on any
+  screen to explain it. `ensureStarterRoles()` takes the seed list and the
+  marker as arguments because that is the only way `checks/access.ts` can
+  exercise it without deleting and recreating the real `Lead` row — a check that
+  quietly widens somebody's access is worse than anything it catches.
 - **Nobody may grant what they do not hold**, and nobody edits their own access.
   Without the first, `team.access` is equivalent to every permission in the
   catalogue.
@@ -1471,7 +1485,7 @@ called them.**
   route). `checks/access.ts` fails if a catalogue key is never gated, or if a
   gate names a key that cannot be granted.
 
-`checks/access.ts` is the committed half (44 assertions, database only).
+`checks/access.ts` is the committed half (55 assertions, database only).
 `tmp/accessOverHttp.ts` is the one that cannot be faked: it signs a real person
 on a narrow role in over real HTTP and asserts the 403s, because a gate that is
 registered but never mounted compiles, unit-tests green and lets everything

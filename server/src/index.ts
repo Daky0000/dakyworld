@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { attachUser, bootstrapOwner, requireAuth, scopeExternal, DEV_NO_AUTH, DEV_NO_AUTH_REFUSED } from "./middleware/auth.js";
-import { ensureSystemRoles } from "./lib/accessRoles.js";
+import { ensureStarterRoles, ensureSystemRoles } from "./lib/accessRoles.js";
 import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
 import { leadsRouter } from "./routes/leads.js";
@@ -310,6 +310,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 // as though nobody had any access at all — which fails closed, but reads to
 // whoever is holding the browser as a system that has forgotten them.
 ensureSystemRoles()
+  .then(() => ensureStarterRoles())
   .catch((err) => console.error("Role seed failed:", err))
   .then(() => bootstrapOwner())
   .catch((err) => console.error("Owner bootstrap failed:", err))

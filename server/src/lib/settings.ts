@@ -357,6 +357,16 @@ export const SETTING = {
    * than a policy of overwriting the Owner's agents on every deploy — see
    * narrowSeededAgents() in services/agentRegistry.ts.
    */
+  /**
+   * The date the starter roles were seeded, or blank if they have not been.
+   *
+   * Same mechanism as the two agent passes below, for the same reason and with
+   * one extra: a starter role is an ordinary editable row, so it can be
+   * renamed, narrowed or deleted. Without this marker, deleting one would be
+   * undone by the next boot — the seeder would find it absent and helpfully put
+   * it back, for ever, with nothing on any screen to explain the resurrection.
+   */
+  ACCESS_STARTER_ROLES: "access.starterRoles",
   AGENT_ONE_JOB_PASS: "agents.oneJobPass",
   /**
    * The date the Cold Email Playbook v3 wording was pushed to the two outreach

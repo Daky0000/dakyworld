@@ -425,3 +425,48 @@ export const SYSTEM_ROLE_TO_ENUM: Record<string, string> = {
 export const ENUM_TO_SYSTEM_ROLE: Record<string, string> = Object.fromEntries(
   Object.entries(SYSTEM_ROLE_TO_ENUM).map(([key, value]) => [value, key]),
 );
+
+/**
+ * Roles that are created once, on the first boot that has this code, and then
+ * belong entirely to whoever runs the system.
+ *
+ * The difference from `SYSTEM_ROLES` is the whole point of the category. A
+ * system role is furniture: it cannot be deleted, it keeps its shipped name,
+ * and it is referred to by key in this codebase. A starter role is a **head
+ * start** — an ordinary row that happens to arrive with sensible ticks already
+ * on it, which can then be renamed, narrowed, widened or thrown away like any
+ * role somebody typed in themselves.
+ *
+ * This is not a contradiction of the rule that a role created on the Access
+ * screen starts empty. That rule exists because naming a role is not the same
+ * as deciding what it can reach, and nobody has decided yet at the moment the
+ * name is typed. Here somebody *has* decided, in this file, deliberately.
+ *
+ * Seeded once and never re-applied — see `SETTING.ACCESS_STARTER_ROLES`.
+ * Deleting a starter role has to mean deleted.
+ */
+export const STARTER_ROLES: SystemRoleSeed[] = [
+  {
+    key: "lead",
+    name: "Lead",
+    description:
+      "Runs the lead pipeline end to end — finding them, importing them, preparing them and auditing their sites. Includes the four features that spend money on leads.",
+    /**
+     * Every permission in the Leads module, read from the catalogue rather than
+     * listed here.
+     *
+     * Listing them would be a second copy of the module that has to be
+     * remembered: a lead permission added in six months would appear on the
+     * Access screen, be enforced by the gate, and silently *not* be part of the
+     * role whose entire definition is "all of them". Deriving it means the role
+     * means what its description says on the day somebody reads it.
+     *
+     * `dashboard.view` joins them because the dashboard is mostly a read-out of
+     * this person's own work — pipeline value and leads by status — and a role
+     * that lands on a screen it cannot open makes a poor first impression.
+     * Untick it if you disagree; nothing else depends on it.
+     */
+    permissions: [...moduleKeys("leads"), "dashboard.view"],
+    sortOrder: 35,
+  },
+];
