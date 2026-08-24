@@ -35,6 +35,8 @@ export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "op
 export type ModelJob =
   /** Prose. Emails, proposals, ad copy, briefs — anything a person reads. */
   | "text"
+  /** Reading an imported spreadsheet of leads into tables and columns. */
+  | "spreadsheet"
   /** Sorting a written instruction into the sections an agent prompt is made of. */
   | "organise"
   /** Reading a message that arrived and saying what it is and whose it is. */
@@ -52,7 +54,7 @@ export type ModelJob =
   /** Looking at a picture and saying what is in it — a screenshot of a page, mostly. */
   | "vision";
 
-export const MODEL_JOBS: ModelJob[] = ["text", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision"];
+export const MODEL_JOBS: ModelJob[] = ["text", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision"];
 
 /**
  * How much a job is worth paying for, before anybody has said otherwise.
@@ -103,6 +105,23 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     blurb: "Every piece of prose the system produces — proposal copy, email drafts, ad concepts, page copy, cold outreach.",
     defaultProvider: "openrouter",
     fallback: "anthropic",
+  },
+  spreadsheet: {
+    job: "spreadsheet",
+    name: "Reading sheets",
+    phrase: "reading a spreadsheet",
+    blurb:
+      "Reads an imported spreadsheet of leads — where every table starts and stops, what each column means, which columns don't fit — and returns the plan a person reviews before anything is written.",
+    // ox-alpha first like everything else. This was the one judgement job in
+    // the system still hard-wired to Claude through its own private call path,
+    // which made it the one model nobody could change. It is a routing
+    // decision like any other now: ox-alpha by default, Claude standing in
+    // behind it, both changeable from the Settings screen.
+    defaultProvider: "openrouter",
+    fallback: "anthropic",
+    // No economy tier on purpose. Getting a table boundary wrong costs the
+    // Owner an afternoon of cleanup, and a sheet is analysed once per file,
+    // not once per row — this is not the place to save thinking.
   },
   organise: {
     job: "organise",
@@ -261,7 +280,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // it would work, because the chain is now what runs when the first choice
     // fails and a candidate that cannot do the work is a wasted attempt with
     // a confusing error at the end of it.
-    jobs: ["text", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
+    jobs: ["text", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
     models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
   },
   openai: {
@@ -275,7 +294,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     economyModel: "gpt-5.4-mini",
     console: "https://platform.openai.com/api-keys",
     keyHint: "sk-proj-…",
-    jobs: ["text", "organise", "triage", "image", "html", "vision"],
+    jobs: ["text", "spreadsheet", "organise", "triage", "image", "html", "vision"],
     models: ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini"],
   },
   gemini: {
@@ -293,7 +312,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // this app doesn't wire up, and offering a route that silently can't serve
     // is worse than not offering it. It does read pictures, though, which is a
     // different model family it does wire up — so `vision` is on the list.
-    jobs: ["text", "organise", "triage", "html", "vision"],
+    jobs: ["text", "spreadsheet", "organise", "triage", "html", "vision"],
     models: ["gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
   },
   perplexity: {
@@ -335,7 +354,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // to prevent. Everything else is chat completions, which OpenRouter
     // speaks for any model on it; if ox-alpha turns out not to read pictures,
     // a vision call fails over to the next vendor that can.
-    jobs: ["text", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
+    jobs: ["text", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
     // The shipped id. If OpenRouter lists the model under a different slug,
     // paste that instead — the field takes anything, and verifying the key
     // checks the id against OpenRouter's own catalogue before saving.

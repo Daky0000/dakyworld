@@ -2,7 +2,7 @@ import express, { Router } from "express";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { AnalystError, analystConfigured, analyzeGrids } from "../lib/anthropic.js";
+import { AnalystError, analyzeGrids } from "../lib/anthropic.js";
 import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from "../lib/google.js";
 import { handleGoogleCallback } from "./settings.js";
 import { detectTables, normalizePlan, type ImportPlan } from "../services/sheetPlan.js";
@@ -167,18 +167,22 @@ importsRouter.post("/analyze", async (req, res, next) => {
     let analyzedBy = "rules";
     let warning: string | null = null;
 
-    if (input.useAi && (await analystConfigured())) {
+    if (input.useAi) {
       try {
         const analysis = await analyzeGrids(grids, hints);
         plan = analysis.plan;
         analyzedBy = analysis.model;
+        // Say when somebody other than the first choice read the sheet — an
+        // ox-alpha key missing and Claude covering is work done by a stand-in,
+        // which the Owner should know rather than discover on the bill.
+        warning = analysis.note;
       } catch (err) {
         // A failed analyst call is a degraded import, not a failed one — the
-        // pattern rules still produced something the Owner can correct.
+        // pattern rules still produced something the Owner can correct. The
+        // error already names what to do: no model connected for reading
+        // sheets, a rate limit, a refusal.
         warning = err instanceof AnalystError ? err.message : "The AI analyst couldn't be reached; used pattern rules instead.";
       }
-    } else if (input.useAi) {
-      warning = "No Anthropic API key is set, so the sheet was mapped with pattern rules. Add a key for messier files.";
     }
 
     const normalized = normalizePlan(plan, grids);

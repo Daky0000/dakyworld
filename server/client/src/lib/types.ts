@@ -492,10 +492,20 @@ export interface HostingerMailStatus {
 /** Everything the Owner configures at runtime — see the Settings page. */
 // --- AI models -------------------------------------------------------------
 
-export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity";
+export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "openrouter";
 
 /** What is being asked for, in the app's own words rather than a vendor's. */
-export type ModelJob = "text" | "image" | "html" | "factcheck" | "humanise";
+export type ModelJob =
+  | "text"
+  | "spreadsheet"
+  | "organise"
+  | "triage"
+  | "image"
+  | "html"
+  | "factcheck"
+  | "research"
+  | "humanise"
+  | "vision";
 
 export interface ModelProvider {
   key: ProviderKey;
@@ -610,7 +620,16 @@ export interface AppSettings {
     /** Which pre-defined actor runs which kind of capture. */
     tasks: CaptureTaskInfo[];
   };
-  analyst: { configured: boolean; envManaged: boolean; key: string | null; model: string };
+  analyst: {
+    configured: boolean;
+    envManaged: boolean;
+    key: string | null;
+    /**
+     * Who reads an imported sheet right now — ox-alpha by default, Claude
+     * standing in behind it. Same shape as a row on the AI models screen.
+     */
+    reading: ModelRoute;
+  };
   models: ModelSettings;
   google: {
     configured: boolean;

@@ -13,7 +13,7 @@ import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
 import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
 import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from "../services/captureActors.js";
 import { isValidTimezone } from "../services/scheduler.js";
-import { AnalystError, ANALYST_MODEL, verifyKey } from "../lib/anthropic.js";
+import { AnalystError, verifyKey } from "../lib/anthropic.js";
 import {
   JOBS,
   MODEL_JOBS,
@@ -26,6 +26,7 @@ import {
   isProviderKey,
   readJobModels,
   readRoutes,
+  routeFor,
   type ModelJob,
   type ProviderKey,
 } from "../lib/models/registry.js";
@@ -199,7 +200,11 @@ async function describeAll(req: Request) {
       configured: Boolean(anthropicKey),
       envManaged: isEnvManaged(SETTING.ANTHROPIC_KEY),
       key: anthropicKey ? maskSecret(anthropicKey) : null,
-      model: ANALYST_MODEL,
+      // Who reads an imported sheet right now: ox-alpha by default, Claude
+      // standing in behind it, both changeable under AI models like every
+      // other job. Sent whole so the panel can name the model actually doing
+      // the reading and say why, when it is a stand-in.
+      reading: await routeFor("spreadsheet"),
     },
     google: {
       configured: await googleConfigured(),

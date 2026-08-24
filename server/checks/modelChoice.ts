@@ -121,6 +121,7 @@ async function main() {
   const reset = async () => {
     await deleteSetting(SETTING.MODEL_JOB_MODELS);
     await deleteSetting(SETTING.MODEL_ROUTES);
+    await deleteSetting(SETTING.ANTHROPIC_MODEL);
   };
   await reset();
 
@@ -219,6 +220,48 @@ async function main() {
   const served = await prisma.llmCall.findFirst({ where: { purpose: "check.modelChoice.fallback" }, select: { model: true } });
   check("the ledger records who answered, not who was asked", served?.model === "claude-haiku-4-5", `recorded ${served?.model}`);
   check("...and the request really did ask for the other one", sent.at(-1)?.model === MODEL_DEFAULT, `sent ${sent.at(-1)?.model}`);
+
+  console.log("\nThe sheet analyst's own model");
+  const { analyzeGrids } = await import("../src/lib/anthropic.js");
+  const { routeFor } = await import("../src/lib/models/registry.js");
+
+  // ox-alpha is the shipped answer for reading sheets, same as for writing
+  // them. This environment holds no OpenRouter key, so what actually serves
+  // right now is the stand-in — exactly the state a deployment with only a
+  // Claude key is in.
+  const route = await routeFor("spreadsheet");
+  check("reading sheets ships routed to ox-alpha", route.chosen === "openrouter");
+  // A stand-in is not "ready": ready means the chosen vendor is the one
+  // serving, and the note is what says who is covering instead.
+  check("with only a Claude key the stand-in serves it", route.serving === "anthropic" && !route.ready);
+
+  // With nobody else connected the stand-in follows Claude's own model rather
+  // than a frozen copy of the shipped default.
+  await setSetting(SETTING.ANTHROPIC_MODEL, "claude-sonnet-5");
+  check("the stand-in follows Claude's own model", (await routeFor("spreadsheet")).model === "claude-sonnet-5");
+
+  // And the Owner can still pick the model for this one job from the Settings
+  // screen, the same way as every other job.
+  await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({ spreadsheet: "claude-haiku-4-5" }));
+  check("the Owner's per-job override wins", (await routeFor("spreadsheet")).model === "claude-haiku-4-5");
+
+  // It reaches the wire — asserted on the request body, never on the helper.
+  // A perfectly correct resolution that analyzeGrids ignores is precisely the
+  // defect class this file exists for.
+  //
+  // The ledger rows this call writes are cleaned up by id below: purpose
+  // "sheet.analyse" is a real production purpose, so deleting every row with
+  // it would erase genuine history from a database that has any.
+  const knownSheetRows = new Set(
+    (await prisma.llmCall.findMany({ where: { purpose: "sheet.analyse" }, select: { id: true } })).map((row) => row.id),
+  );
+  const analysis = await analyzeGrids([{ name: "Leads", rows: [["Name"], ["Kofi"]], totalRows: 2, truncated: false }], []);
+  check("analyzeGrids sends the override to the wire", lastModel() === "claude-haiku-4-5");
+  check("a call served by the fallback says so", analysis.note !== null && analysis.note.includes("ox-alpha"));
+
+  await prisma.llmCall.deleteMany({
+    where: { purpose: "sheet.analyse", id: { notIn: [...knownSheetRows] } },
+  });
 
   // Rule 3: everything this check created, gone — including the settings it
   // expected to be ignored. The delete is the last thing that happens.

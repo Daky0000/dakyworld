@@ -105,7 +105,10 @@ export function Settings() {
     if (!data) return "idle";
     switch (id) {
       case "analyst":
-        return data.analyst.configured ? "ok" : "idle";
+        // Green when something can actually read sheets right now; amber when
+        // a stand-in is covering because ox-alpha isn't connected; idle when
+        // no model can do it at all.
+        return data.analyst.reading.ready ? "ok" : data.analyst.reading.serving !== data.analyst.reading.chosen ? "warn" : "idle";
       // Green only when every job is served by the vendor chosen for it.
       // Amber while something is falling back — the work still happens, but not
       // where the Owner asked for it.
@@ -1194,6 +1197,8 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
   });
 
   const analyst = settings.analyst;
+  /** What the Owner calls whoever serves a job — "ox-alpha", not "openrouter". */
+  const providerName = (key: string) => settings.models.providers.find((provider) => provider.key === key)?.name ?? key;
 
   return (
     <Panel
@@ -1217,10 +1222,12 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
         )
       }
       state={
-        analyst.configured ? (
+        analyst.reading.ready ? (
           <Connected>
             <span className="font-mono text-xs text-ink/50">{analyst.key}</span>
-            <span className="text-xs text-ink/40">{analyst.model}</span>
+            <span className="text-xs text-ink/40">
+              Sheets read by {providerName(analyst.reading.serving)} · {analyst.reading.model}
+            </span>
             {!analyst.envManaged && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
                 Remove key
@@ -1228,7 +1235,7 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
             )}
           </Connected>
         ) : (
-          <NotConnected>Imports fall back to pattern-rule mapping.</NotConnected>
+          <NotConnected>No model can read sheets yet — imports are mapped by pattern rules.</NotConnected>
         )
       }
     >
@@ -1261,6 +1268,16 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
           </form>
         )
       )}
+      {/* Who reads sheets is a routing decision like any other now, owned on
+          the AI models screen alongside every other job. This names where the
+          choice lives rather than keeping a second control for it. */}
+      {analyst.reading.note && (
+        <p className="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{analyst.reading.note}</p>
+      )}
+      <p className="mt-4 max-w-2xl text-xs text-ink/45">
+        Who reads sheets, and on which model, is chosen under <span className="font-mono text-[11px]">Settings → AI models → Reading sheets</span>.
+        This key stays as the floor everything falls back to.
+      </p>
       <ErrorNote error={connect.error ?? remove.error} />
     </Panel>
   );

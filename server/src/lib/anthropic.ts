@@ -16,8 +16,7 @@
  * services/sheetPlan.ts, which handle a tidy sheet fine.
  */
 
-import { callClaude } from "./claude.js";
-import { MODEL_DEFAULT } from "./claudePricing.js";
+import { callModel } from "./models/call.js";
 import { BUILTIN_FIELDS, LEAD_SOURCES, LEAD_STATUSES } from "../services/leadFields.js";
 import { LEAD_FIELD_TYPES } from "../services/leadFields.js";
 import type { ImportPlan } from "../services/sheetPlan.js";
@@ -29,10 +28,6 @@ import type { PlanTable } from "../services/sheetPlan.js";
 // features share them. Re-exported because five call sites import them from
 // here and the paths aren't worth churning.
 export { AnalystError, analystKey, analystConfigured, verifyKey } from "./claude.js";
-
-/** Opus is the right tier here: getting the table boundaries wrong costs the
- *  Owner an afternoon of cleanup, and a sheet is analysed once, not per row. */
-export const ANALYST_MODEL = MODEL_DEFAULT;
 
 // --- The output contract ---------------------------------------------------
 
@@ -159,20 +154,26 @@ Return the plan.`;
 
 export interface AnalysisResult {
   plan: ImportPlan;
+  /** Who answered, in their own words — "ox-alpha", "claude-opus-5". */
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Set when somebody other than the first choice read the sheet, and why. */
+  note: string | null;
 }
 
 /**
- * Sends the grids to Claude and returns the plan it produces. Throws
- * AnalystError on anything the caller should show the Owner — a missing key, a
- * refusal, a response that didn't parse — so the import route can fall back to
- * the pattern rules with an explanation rather than failing outright.
+ * Sends the grids to whoever serves the `spreadsheet` job — ox-alpha by
+ * default, Claude standing in behind it — and returns the plan produced.
+ * Throws AnalystError on anything the caller should show the Owner — no model
+ * connected, a refusal, a response that didn't parse — so the import route can
+ * fall back to the pattern rules with an explanation rather than failing
+ * outright.
  */
 export async function analyzeGrids(grids: SheetGrid[], hints: PlanTable[]): Promise<AnalysisResult> {
-  const { data, model, inputTokens, outputTokens } = await callClaude<ImportPlan>({
+  const result = await callModel<ImportPlan>({
     purpose: "sheet.analyse",
+    job: "spreadsheet",
     system: SYSTEM_PROMPT,
     prompt: () => userPrompt(grids, hints),
     schema: PLAN_SCHEMA as unknown as Record<string, unknown>,
@@ -181,9 +182,8 @@ export async function analyzeGrids(grids: SheetGrid[], hints: PlanTable[]): Prom
     effort: "high",
     maxTokens: 16000,
     messages: {
-      noKey: "No Anthropic API key is set. Add one under Lead capture → Connections to use the AI analyst.",
-      auth: "Anthropic rejected the API key. Check it under Lead capture → Connections.",
-      rate: "Anthropic is rate-limiting this key. Try the import again in a minute.",
+      noKey: "No model is connected for reading sheets. Add an ox-alpha, Claude or Gemini key under Settings → AI models.",
+      rate: "The model provider is rate-limiting this key. Try the import again in a minute.",
       refusal: "The analyst declined to read this file. Check the review screen and map the columns by hand.",
       empty: "The analyst returned nothing. Try again, or map the columns by hand.",
       truncated: "This file is too large for the analyst to plan in one pass. Import fewer sheets at a time, or map the columns by hand.",
@@ -191,5 +191,11 @@ export async function analyzeGrids(grids: SheetGrid[], hints: PlanTable[]): Prom
     },
   });
 
-  return { plan: data, model, inputTokens, outputTokens };
+  return {
+    plan: result.data,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    note: result.fallbackNote,
+  };
 }

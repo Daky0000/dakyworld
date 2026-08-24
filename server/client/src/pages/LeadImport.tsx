@@ -241,8 +241,8 @@ function Connections({ connections }: { connections?: AppSettings }) {
         <span className="font-mono text-[11px] uppercase tracking-[.14em] text-ink/60">Connections</span>
 
         <span className="flex items-center gap-2 text-sm">
-          <StatusDot tone={analyst?.configured ? "ok" : "idle"} />
-          {analyst?.configured ? (
+          <StatusDot tone={analyst?.reading.ready ? "ok" : "idle"} />
+          {analyst?.reading.ready ? (
             <span className="text-ink/70">AI analyst on</span>
           ) : (
             <span className="text-ink/50">No AI analyst — sheets are mapped by pattern rules</span>
@@ -399,7 +399,7 @@ function SourceStep({
           <label className="flex items-center gap-2 text-sm text-ink/70">
             <input type="checkbox" checked={useAi} onChange={(event) => onUseAi(event.target.checked)} className="h-3.5 w-3.5 accent-blue" />
             Let the AI analyst read it
-            {!connections?.analyst.configured && <span className="text-xs text-ink/40">(no API key set — pattern rules will be used)</span>}
+            {!connections?.analyst.reading.ready && <span className="text-xs text-ink/40">(no model connected — pattern rules will be used)</span>}
           </label>
           <span className="flex-1" />
           <Button onClick={onAnalyze} disabled={busy || (chosenSheets.length === 0 && sheets.length > 0)}>
