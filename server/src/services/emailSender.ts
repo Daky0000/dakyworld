@@ -2,7 +2,8 @@ import type { EmailMessage } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { MailerError, sendMail, type Attachment } from "../lib/mailer.js";
 import { SETTING, getSetting } from "../lib/settings.js";
-import { renderInvoicePdf, renderProposalPdf } from "./pdf.js";
+import { renderProposalPdf } from "./pdf.js";
+import { renderInvoicePdfFor } from "./invoicePdf.js";
 import { readFile } from "./fileStore.js";
 import { renderEmail } from "./emailRender.js";
 import { resolveContext } from "./emailContext.js";
@@ -67,23 +68,12 @@ export async function resolveAttachments(stored: StoredAttachment[]): Promise<At
     }
 
     if ("kind" in entry && entry.kind === "invoice") {
-      const invoice = await prisma.invoice.findUnique({ where: { id: entry.invoiceId }, include: { client: true, lineItems: true } });
-      if (!invoice) continue;
-      const pdf = await renderInvoicePdf({
-        invoiceNumber: invoice.invoiceNumber,
-        clientName: invoice.client.name,
-        currency: invoice.currency,
-        issueDate: invoice.issueDate,
-        dueDate: invoice.dueDate,
-        amountTotal: invoice.amountTotal.toString(),
-        lineItems: invoice.lineItems.map((item) => ({
-          description: item.description,
-          quantity: item.quantity.toString(),
-          unitPrice: item.unitPrice.toString(),
-          amount: item.amount.toString(),
-        })),
-      });
-      resolved.push({ filename: `${invoice.invoiceNumber}.pdf`, content: pdf, contentType: "application/pdf" });
+      // The same branded document "Generate PDF" produces — one template, see
+      // services/invoicePdf.ts. Rendered here rather than stored, so what the
+      // client receives is the invoice as it stands when the email leaves.
+      const rendered = await renderInvoicePdfFor(entry.invoiceId);
+      if (!rendered) continue;
+      resolved.push({ filename: rendered.filename, content: rendered.pdf, contentType: "application/pdf" });
       continue;
     }
 
@@ -264,6 +254,20 @@ export async function composeMessage(args: {
     includeUnsubscribe: COLD_PURPOSES.has(args.purpose),
   });
 
+  // An email written about an invoice carries the invoice, and one written
+  // about a proposal carries the proposal — whoever wrote it and however it
+  // was asked for. The link fields decide what the message is *about*; this is
+  // what makes the document actually leave with it, so "attach the PDF" is
+  // never a step somebody can forget. An attachment the caller listed
+  // themselves is left exactly as they listed it.
+  const attachments = [...(args.attachments ?? [])];
+  if (args.invoiceId && !attachments.some((entry) => (entry as { kind?: string }).kind === "invoice" && (entry as { invoiceId?: string }).invoiceId === args.invoiceId)) {
+    attachments.push({ kind: "invoice", invoiceId: args.invoiceId });
+  }
+  if (args.proposalId && !attachments.some((entry) => (entry as { kind?: string }).kind === "proposal" && (entry as { proposalId?: string }).proposalId === args.proposalId)) {
+    attachments.push({ kind: "proposal", proposalId: args.proposalId });
+  }
+
   return prisma.emailMessage.create({
     data: {
       subject: rendered.subject,
@@ -278,7 +282,7 @@ export async function composeMessage(args: {
       kind: args.kind,
       purpose: args.purpose,
       scheduledFor: args.scheduledFor ?? null,
-      attachments: (args.attachments ?? []) as never,
+      attachments: attachments as never,
       leadId: args.leadId ?? null,
       clientId: args.clientId ?? null,
       projectId: args.projectId ?? null,

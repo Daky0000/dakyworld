@@ -84,7 +84,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
   const hasRecipient = Boolean(recipient.leadId || recipient.clientId || recipient.toEmail);
 
   // Reset the whole panel whenever it is opened on something new.
-  const key = `${target?.leadId ?? ""}|${target?.clientId ?? ""}|${target?.toEmail ?? ""}|${target?.message?.id ?? ""}`;
+  const key = `${target?.leadId ?? ""}|${target?.clientId ?? ""}|${target?.toEmail ?? ""}|${target?.message?.id ?? ""}|${target?.invoiceId ?? ""}|${target?.proposalId ?? ""}`;
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   useEffect(() => {
     if (!open || key === loadedKey) return;
@@ -93,7 +93,17 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
     setBody(target?.message?.bodyText ?? "");
     setPurpose(target?.message?.purpose ?? target?.purpose ?? "CUSTOM");
     setToEmail(target?.message?.toEmail ?? target?.toEmail ?? "");
-    setAttachments(target?.message?.attachments ?? target?.attachments ?? []);
+    // An email opened on an invoice (or a proposal) starts with that document
+    // attached — the chip is the visible half of the guarantee the server
+    // enforces at send, and seeing it is why nobody wonders whether the PDF
+    // will be there.
+    setAttachments(
+      target?.message?.attachments ??
+        target?.attachments ?? [
+          ...(target?.invoiceId ? [{ kind: "invoice" as const, invoiceId: target.invoiceId }] : []),
+          ...(target?.proposalId ? [{ kind: "proposal" as const, proposalId: target.proposalId }] : []),
+        ],
+    );
     setBrief("");
     setNotice(null);
     setRationale(null);
@@ -133,6 +143,21 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
   useEffect(() => {
     if (context?.email && !toEmail) setToEmail(context.email);
   }, [context, toEmail]);
+
+  // Choosing "Send an invoice" — or a payment reminder — attaches the invoice
+  // this composer was opened on, even when the panel was opened bare and the
+  // purpose was picked afterwards. Removing the chip is still allowed: the
+  // owner may be writing about the invoice without sending the document.
+  useEffect(() => {
+    if (purpose !== "INVOICE_DELIVERY" && purpose !== "INVOICE_REMINDER") return;
+    const invoiceId = target?.invoiceId;
+    if (!invoiceId) return;
+    setAttachments((current) =>
+      current.some((entry) => "invoiceId" in entry && entry.invoiceId === invoiceId)
+        ? current
+        : [...current, { kind: "invoice", invoiceId }],
+    );
+  }, [purpose, target?.invoiceId]);
 
   const draft = useMutation({
     mutationFn: () =>

@@ -1,8 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { renderInvoicePdf, type InvoiceStamp } from "../services/pdf.js";
-import type { InvoiceStatus } from "@prisma/client";
+import { renderInvoicePdfFor } from "../services/invoicePdf.js";
 import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
 import { getStripe } from "../lib/stripe.js";
 import { createNumberedInvoice } from "../services/invoiceNumber.js";
@@ -101,67 +100,24 @@ invoicesRouter.post("/", async (req, res, next) => {
   }
 });
 
-/** A client address is stored as one field; the letterhead wants it as lines. */
-function addressLines(address: string | null): string[] {
-  if (!address) return [];
-  return address
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-/**
- * The stored status, as the client should read it on the document.
- *
- * Two translations. `VIEWED` is a fact about our tracking, not about the
- * client's obligation, so it prints as SENT. And a `SENT` invoice whose due
- * date has passed *is* overdue whether or not a job has got round to
- * restatusing the row — the printed document should never be gentler than the
- * calendar.
- */
-function invoiceStamp(status: InvoiceStatus, dueDate: Date): InvoiceStamp {
-  if (status === "PAID" || status === "DRAFT" || status === "OVERDUE") return status;
-  return dueDate.getTime() < Date.now() ? "OVERDUE" : "SENT";
-}
-
 invoicesRouter.post("/:id/generate-pdf", async (req, res, next) => {
   try {
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: req.params.id },
-      include: { client: true, lineItems: true, project: true, carePlan: true },
-    });
+    const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, select: { id: true, invoiceNumber: true } });
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
-    const pdf = await renderInvoicePdf({
-      invoiceNumber: invoice.invoiceNumber,
-      clientName: invoice.client.name,
-      clientCompany: invoice.client.company,
-      clientAddressLines: addressLines(invoice.client.address),
-      clientEmail: invoice.client.email,
-      clientPhone: invoice.client.phone,
-      currency: invoice.currency,
-      issueDate: invoice.issueDate,
-      dueDate: invoice.dueDate,
-      paidDate: invoice.paidAt,
-      status: invoiceStamp(invoice.status, invoice.dueDate),
-      reference: invoice.project?.name ?? (invoice.carePlan ? `${invoice.carePlan.tier} care plan` : null),
-      paymentTerms: invoice.client.creditTerms,
-      amountTotal: invoice.amountTotal.toString(),
-      lineItems: invoice.lineItems.map((li) => ({
-        description: li.description,
-        quantity: li.quantity.toString(),
-        unitPrice: li.unitPrice.toString(),
-        amount: li.amount.toString(),
-      })),
-    });
+    // The one branded template — see services/invoicePdf.ts. The email
+    // attachment path renders through the same function, so a client can never
+    // be sent a PDF that looks different from the one downloaded here.
+    const rendered = await renderInvoicePdfFor(req.params.id);
+    if (!rendered) return res.status(404).json({ error: "Invoice not found" });
 
     if (!(await cloudinaryConfigured())) {
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename="${invoice.invoiceNumber}.pdf"`);
-      return res.send(pdf);
+      return res.send(rendered.pdf);
     }
 
-    const url = await uploadBuffer(pdf, invoice.invoiceNumber, "dakyworld-os/invoices");
+    const url = await uploadBuffer(rendered.pdf, invoice.invoiceNumber, "dakyworld-os/invoices");
     const updated = await prisma.invoice.update({ where: { id: invoice.id }, data: { pdfUrl: url } });
     res.json(updated);
   } catch (err) {
