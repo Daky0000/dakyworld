@@ -2593,3 +2593,108 @@ export interface BudgetRow {
   /** Spend ÷ hard limit. Null when there is no hard limit to divide by. */
   fraction: number | null;
 }
+
+// --- Website editor ---------------------------------------------------------
+
+export type SiteSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  publicUrl: string;
+  /** `owner/name`, or null when nothing has been connected to publish to. */
+  repo: string | null;
+  branch: string;
+  client: { id: string; name: string } | null;
+  pageCount: number;
+  draftCount: number;
+};
+
+export type SitePageStatus = "LIVE" | "HIDDEN";
+
+export type SitePageRow = {
+  id: string;
+  title: string;
+  path: string;
+  filePath: string;
+  status: SitePageStatus;
+  url: string;
+  hasDraft: boolean;
+  draftSavedAt: string | null;
+  draftSavedBy: { id: string; name: string } | null;
+  lastPublishedAt: string | null;
+};
+
+export type FieldKind = "text" | "richtext" | "link" | "image";
+
+/** One thing on a page somebody can change. Offsets stay on the server. */
+export type SiteFieldRow = {
+  id: string;
+  kind: FieldKind;
+  label: string;
+  tag: string;
+  value: string;
+  preview: string;
+  href?: string;
+  alt?: string;
+  note?: string;
+  decorative?: boolean;
+};
+
+export type SiteSectionRow = {
+  id: string;
+  label: string;
+  kind: "meta" | "header" | "section" | "footer";
+  fields: SiteFieldRow[];
+};
+
+/** What the editor sends back: only the parts of a field that changed. */
+export type FieldEdit = { value?: string; href?: string; alt?: string };
+
+export type SitePageDetail = {
+  site: { id: string; name: string; publicUrl: string; repo: string | null };
+  page: {
+    id: string;
+    title: string;
+    path: string;
+    filePath: string;
+    status: SitePageStatus;
+    url: string;
+    lastPublishedAt: string | null;
+  };
+  /** Which of the two sources answered — the repository, or the live site. */
+  readFrom: "repository" | "live site";
+  sections: SiteSectionRow[];
+  draft: {
+    values: Record<string, FieldEdit>;
+    savedAt: string | null;
+    savedBy: { id: string; name: string } | null;
+  };
+  problems: FieldProblem[];
+};
+
+export type FieldProblem = { id: string; label: string; reason: string };
+
+export type DraftSaveResult = {
+  savedAt: string | null;
+  changed: number;
+  unknown: string[];
+  problems: FieldProblem[];
+};
+
+export type PublishResult = {
+  version: number;
+  changed: number;
+  commit: { sha: string; url: string };
+  url: string;
+  note: string;
+};
+
+export type SitePageVersionRow = {
+  id: string;
+  number: number;
+  commitSha: string | null;
+  commitUrl: string | null;
+  createdAt: string;
+  changed: number;
+  publishedBy: { id: string; name: string } | null;
+};

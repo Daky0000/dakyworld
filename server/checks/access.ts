@@ -73,6 +73,7 @@ import "../src/routes/approvals.js";
 import "../src/routes/rehearsals.js";
 import "../src/routes/context.js";
 import "../src/routes/agents.js";
+import "../src/routes/website.js";
 import "../src/routes/settings.js";
 import "../src/routes/dashboard.js";
 import "../src/routes/users.js";

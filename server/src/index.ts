@@ -33,6 +33,7 @@ import { costsRouter } from "./routes/costs.js";
 import { approvalsRouter } from "./routes/approvals.js";
 import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
+import { websiteRouter } from "./routes/website.js";
 import { apiRateLimit, forceHttps, securityHeaders, webhookRateLimit } from "./middleware/security.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
@@ -52,6 +53,8 @@ import { WhatsAppError } from "./lib/whatsapp.js";
 import { HubtelError } from "./lib/hubtel.js";
 import { MessagingError } from "./services/messageSender.js";
 import { BudgetExceeded } from "./services/budgets.js";
+import { WebsiteError } from "./services/website/site.js";
+import { ensureDakyworldSite } from "./services/website/ensureSite.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -224,6 +227,10 @@ app.use("/api/costs", costsRouter);
 app.use("/api/approvals", approvalsRouter);
 app.use("/api/context", contextRouter);
 app.use("/api/mcp", mcpRouter);
+// The client-facing websites this system publishes. Beside the delivery
+// modules rather than under Settings: editing a page is somebody's daily work,
+// not a configuration screen.
+app.use("/api/website", websiteRouter);
 app.use("/api/settings", settingsRouter);
 
 if (!hasBuiltClient) {
@@ -291,6 +298,15 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   // in, doing exactly what they asked it to. 402 rather than 500, and the
   // sentence names the scope, what it has spent and what it was allowed —
   // everything needed to decide between raising it and leaving it alone.
+  // The website editor's refusals are all configuration or a page that moved
+  // under a draft — "add the repository to the writable list", "reopen the page
+  // and look at it as it is now". Every one of them is a sentence somebody
+  // composed for the person reading it, and rendered as "Something went wrong."
+  // it would send them looking for a bug in an editor that is working.
+  if (err instanceof WebsiteError) {
+    return res.status(err.status).json({ error: err.message, reference });
+  }
+
   if (err instanceof BudgetExceeded) {
     return res.status(402).json({ error: err.message, budget: err.state, reference });
   }
@@ -324,6 +340,11 @@ ensureSystemRoles()
       // The letters that ship with the app, copied in once so they can be
       // edited. Failing here must not take the API down.
       void ensureBuiltinTemplates().catch((err) => console.error("Template seed failed:", err));
+      // The company's own website, so the editor opens onto something. Pages are
+      // discovered rather than seeded — see services/website/ensureSite.ts.
+      void ensureDakyworldSite()
+        .then((created) => created && console.log("  → Added dakyworld.com to the website editor"))
+        .catch((err) => console.error("Website seed failed:", err));
       // Adds agents that don't exist yet; never overwrites one the Owner has changed.
       void ensureAgents()
         .then(async (added) => {

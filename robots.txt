@@ -6,4 +6,8 @@ Allow: /
 # are duplicate copy and must never compete with the real pages in an index.
 Disallow: /website-drafts/
 
+# The way in to the website editor. Not secret — it holds nothing but a link to
+# the sign-in — but it is not a page anybody should reach from a search result.
+Disallow: /admin
+
 Sitemap: https://dakyworld.com/sitemap.xml

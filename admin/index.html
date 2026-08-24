@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#08101f">
+<meta name="robots" content="noindex, nofollow">
+<title>Admin — Dakyworld</title>
+
+<!--
+  dakyworld.com/admin — the door into the website editor.
+
+  This page hands you to Dakyworld OS and does not ask for a password itself,
+  and that is deliberate rather than a shortcut. This site is static files on
+  GitHub Pages: there is no server here to check a password against, so a login
+  form on this page would have to post your credentials to another origin. That
+  is the exact shape of a phishing page, password managers refuse to fill it,
+  and it would have taught the one person who uses it that typing the Dakyworld
+  password into a page that is not the sign-in page is normal.
+
+  So the sign-in happens where the session lives — os.dakyworld.com — and lands
+  on the website editor. See DOMAINS.md for which host serves what.
+
+  It does not redirect on its own. A page that bounces you onward also bounces
+  you onward when you press the back button to get out of it, and a door you
+  cannot walk back through is worse than a door you have to open.
+-->
+
+<link rel="icon" href="/assets/brand/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/assets/brand/favicon-32-dark.png" sizes="32x32" type="image/png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="/assets/brand/favicon-180.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --ink: #08101F;
+    --blue: #3157FF;
+    --blue-light: #6490FF;
+    --lime: #B8FF3D;
+    --cream: #F4F5F0;
+    --muted: #69758A;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    background: var(--ink);
+    color: var(--cream);
+    font-family: "DM Sans", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* The same arc the site's hero uses, at a fraction of the strength — enough
+     that this reads as part of Dakyworld and not as a redirect stub. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: -40% 20% auto 20%;
+    height: 70vh;
+    background: radial-gradient(ellipse at 50% 100%, rgba(49, 87, 255, .28), transparent 70%);
+    pointer-events: none;
+  }
+  .card {
+    position: relative;
+    width: 100%;
+    max-width: 460px;
+    border: 1px solid rgba(244, 245, 240, .12);
+    border-radius: 20px;
+    background: rgba(244, 245, 240, .03);
+    padding: 44px 40px;
+    text-align: center;
+  }
+  .lockup { width: 148px; height: auto; margin: 0 auto 28px; display: block; }
+  h1 {
+    font-family: "Space Grotesk", system-ui, sans-serif;
+    font-size: 24px;
+    letter-spacing: -.02em;
+    margin: 0 0 10px;
+  }
+  p { margin: 0 0 8px; font-size: 14px; line-height: 1.6; color: rgba(244, 245, 240, .68); }
+  .go {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 26px;
+    padding: 12px 22px;
+    border-radius: 999px;
+    background: var(--lime);
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+  .go:hover { transform: translateY(-1px); box-shadow: 0 12px 30px rgba(184, 255, 61, .26); }
+  .back { display: inline-block; margin-top: 22px; font-size: 12px; color: var(--muted); text-decoration: none; }
+  .back:hover { color: var(--cream); }
+  .where { margin-top: 22px; font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+  .where b { color: rgba(244, 245, 240, .8); font-weight: 500; }
+  @media (prefers-reduced-motion: reduce) {
+    .go { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <img class="lockup" src="/assets/brand/dakyworld-lockup-on-dark.png" alt="Dakyworld">
+    <h1>Admin</h1>
+    <p>Sign in to edit the Dakyworld website.</p>
+    <p>Once you are in, choose <b style="color:rgba(244,245,240,.9);font-weight:600">Edit website</b> and pick the page you want to change.</p>
+
+    <a class="go" href="https://os.dakyworld.com/website">Continue to sign in <span aria-hidden="true">→</span></a>
+
+    <p class="where">The sign-in lives at <b>os.dakyworld.com</b>.</p>
+
+    <a class="back" href="/">← Back to dakyworld.com</a>
+  </main>
+
+</body>
+</html>

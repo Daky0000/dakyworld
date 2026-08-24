@@ -506,8 +506,8 @@ for (const page of PAGES) {
 }
 
 // robots.txt — one Sitemap line is what actually gets the sitemap found; the
-// rest is politeness. Nothing is disallowed because nothing here is private:
-// the whole site is thirteen pages meant to be read.
+// rest is politeness. Almost nothing is disallowed, because almost nothing here
+// is private: the site is thirteen pages meant to be read.
 const robots = `# ${ORIGIN}
 User-agent: *
 Allow: /
@@ -515,6 +515,10 @@ Allow: /
 # Superseded homepage explorations. Served so old links do not break, but they
 # are duplicate copy and must never compete with the real pages in an index.
 Disallow: /website-drafts/
+
+# The way in to the website editor. Not secret — it holds nothing but a link to
+# the sign-in — but it is not a page anybody should reach from a search result.
+Disallow: /admin
 
 Sitemap: ${ORIGIN}/sitemap.xml
 `;

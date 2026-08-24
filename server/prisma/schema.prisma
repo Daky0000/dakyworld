@@ -139,6 +139,8 @@ model User {
   agentTasks       AgentTask[]
   handledMail      MailMessage[]
   rehearsals       Rehearsal[]
+  sitePageDrafts   SitePage[]          @relation("SitePageDrafts")
+  sitePageVersions SitePageVersion[]   @relation("SitePageVersions")
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -197,6 +199,7 @@ model Client {
   agentTasks     AgentTask[]
   mailMessages   MailMessage[]
   mailThreads    MailThread[]
+  sites          Site[]
 }
 
 model Contact {
@@ -3394,4 +3397,127 @@ model Rehearsal {
 
   @@index([status, startedAt])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Website editing
+// ---------------------------------------------------------------------------
+
+/// One website this system can edit.
+///
+/// Dakyworld's own is the first, and the model is deliberately not shaped around
+/// it being the only one: a client's site is another row, with its own repository
+/// and its own pages, and nothing here knows the difference.
+///
+/// **The repository is the source of truth, not this database.** The pages are
+/// hand-built HTML that a developer keeps working on, and a copy of them here
+/// would be stale the first time somebody pushes a commit. So a page's current
+/// HTML is fetched — from GitHub where a token is configured, from the live site
+/// otherwise — and only the *edits* live here, as values against the fields the
+/// page turns out to have. See services/website/regions.ts for why that is the
+/// shape rather than a block tree.
+model Site {
+  id   String @id @default(cuid())
+  name String
+  /// Identifies it in URLs and in the API. `dakyworld` for the company's own.
+  slug String @unique
+
+  /// Where the published site is served, with no trailing slash.
+  publicUrl String
+
+  /// The repository holding the HTML, and the branch a publish commits to.
+  /// Publishing is impossible without these — the editor says so rather than
+  /// pretending a draft went live.
+  repoOwner  String?
+  repoName   String?
+  repoBranch String  @default("main")
+  /// Folder inside the repository the pages sit in. Empty means the root, which
+  /// is where GitHub Pages serves this one from.
+  repoPath   String  @default("")
+
+  /// A client's site rather than Dakyworld's own, when set.
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId String?
+
+  pages SitePage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum SitePageStatus {
+  LIVE
+  /// Still in the repository, deliberately kept out of the editor's page list.
+  HIDDEN
+}
+
+/// One page of a site: one file in the repository, one address on the web.
+model SitePage {
+  id     String @id @default(cuid())
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String
+
+  /// How it reads in the page list. Taken from the page's own `<title>` when it
+  /// is first discovered, and editable afterwards.
+  title    String
+  /// The public path, leading slash, no extension: `/about`, and `/` for home.
+  path     String
+  /// The file in the repository: `about.html`.
+  filePath String
+
+  status    SitePageStatus @default(LIVE)
+  sortOrder Int            @default(0)
+
+  /// Unpublished edits, as `{ fieldId: { value, href, alt, original } }`.
+  ///
+  /// Values only — never a copy of the page. `original` is what the field said
+  /// when the edit was made, and it is what stops a month-old draft writing a
+  /// heading into an element that has since moved. Null once published.
+  draft          Json?
+  draftSavedAt   DateTime?
+  draftSavedBy   User?     @relation("SitePageDrafts", fields: [draftSavedById], references: [id], onDelete: SetNull)
+  draftSavedById String?
+
+  versions SitePageVersion[]
+
+  lastPublishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, path])
+  @@unique([siteId, filePath])
+  @@index([siteId, sortOrder])
+}
+
+/// What was published, exactly, and by whom.
+///
+/// Immutable: a publish writes a new row rather than changing the last one. The
+/// whole HTML is kept rather than a diff, because the point of the record is to
+/// be able to put a page back without needing anything else to still be true —
+/// not the repository's history, not the parser, not the field ids.
+model SitePageVersion {
+  id     String   @id @default(cuid())
+  page   SitePage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId String
+
+  /// 1, 2, 3 … within the page.
+  number Int
+
+  /// The complete file as it was written to the repository.
+  html   String
+  /// The field values that produced it, for showing what changed.
+  values Json?
+
+  /// The commit this became, when the publish reached GitHub.
+  commitSha String?
+  commitUrl String?
+
+  publishedBy   User?   @relation("SitePageVersions", fields: [publishedById], references: [id], onDelete: SetNull)
+  publishedById String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([pageId, number])
+  @@index([pageId, createdAt])
 }

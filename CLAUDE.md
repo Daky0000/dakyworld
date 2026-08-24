@@ -1366,7 +1366,7 @@ agent must still really spend, and a read must never be held.
 The server serves the built client from `client/dist` when it exists, and falls
 back to an API-only status page when it doesn't.
 
-**Database** — Prisma, 59 models. `prisma/schema.prisma` is the source of truth.
+**Database** — Prisma, 62 models. `prisma/schema.prisma` is the source of truth.
 
 **Integration keys live encrypted in the database**, not in env vars — the
 `AppSetting` model, keyed by `APP_SECRET`. That is deliberate: adding or
@@ -1521,6 +1521,86 @@ or the webhook intake. Four rules from it that are easy to undo by accident:
   saying exactly what to do about it, and the Owner was shown "Something went
   wrong." The client now appends the log reference to that sentence so the
   useless version is at least traceable.
+
+## The website editor
+
+`src/services/website/`, `routes/website.ts`, the `/website` screen, and
+`admin/index.html` at the repository root. Lets a non-technical person change
+the words, links and pictures on a page of dakyworld.com and publish it, without
+touching HTML and without waiting for a developer. The same module is what would
+carry a client's site: `Site` has a `clientId` and nothing in it is shaped around
+Dakyworld being the only row.
+
+**The editable-region model, not the block model.** Pages become a list of
+fields — headings, paragraphs, list items, link labels and destinations, image
+sources and alt text — grouped by the section they sit in, with each section
+named after its own heading. Adding, removing and reordering sections is
+deliberately **not** offered: that needs a component library that knows how to
+render a new section, and rebuilding this homepage's arches, orbs and count-up
+figures as generic blocks would be a redesign wearing a migration's clothes.
+
+```
+GitHub (or the live site)  →  parse.ts     offsets for every element
+                              regions.ts   fields, grouped into sections
+                              sanitize.ts  what a client may put back
+   SitePage.draft ──────────→ applyValues  splice the original bytes
+                              publishPage  one commit → Pages rebuilds
+```
+
+- **Nothing is re-serialised.** `parse.ts` exists to answer one question — which
+  bytes may be replaced — and an edit is a splice at recorded offsets. Every
+  ordinary parser gives you *a* document back rather than *the* document, and the
+  diff on a publish would be the whole file instead of the heading that changed.
+  `checks/website.ts` holds it to that against every real page in this repo.
+- **The repository is the source of truth; only the edits live here.** A draft is
+  `{ fieldId: { value, original } }` — never a copy of the page — so a developer
+  goes on editing these files underneath. Ids are positional, which is why
+  `original` exists: a draft written against a heading that has since moved
+  **refuses to publish and says so** rather than writing itself into whatever now
+  sits at that position.
+- **Read from GitHub when a token is configured, from the live site when not.**
+  The second is the honest fallback rather than a blank screen. **Writing has one
+  route**, and publishing without a token that can write says so — it does not
+  save a draft and call it published. The repository must also be on the writable
+  list under Settings → Developer; that list denies by default.
+- **What a build script owns is not offered.** Everything between a `BEGIN`/`END`
+  comment pair is excluded, keyed on the convention rather than the two block
+  names, so the generated `<head>` metadata and the visible breadcrumbs cannot be
+  edited into something `npm run site` silently reverts a week later. The title
+  and description sit *outside* the markers and are editable, and carry a note
+  saying their generated link-preview copies need `npm run site` afterwards.
+- **The preview needs three things and is wrong without any one of them** —
+  `previewDocument()`. A `<base>`, because the HTML is served from the OS's
+  origin where the site's CSS does not exist. The page's own CSP widened so
+  `'self'` includes the website, sent **as a header**: a `<meta>` policy can only
+  narrow what a header already allows, so the app's own header went on forbidding
+  the site's stylesheet however the tag was rewritten, and the preview rendered
+  as unstyled black text. And `form-action 'none'` plus `frame-ancestors 'self'`,
+  because a preview of the contact page must not send a real enquiry. Analytics
+  hosts are stripped from the policy so an afternoon of editing does not appear
+  in the owner's own traffic.
+- **Stripping a tag is not the same as removing the code.** `sanitize.ts`
+  unwraps unknown elements and keeps their words, which is right for a pasted
+  `<div>` around a sentence and nonsense for `<script>`: the parser never reads
+  into one, so "its children" is the raw source, and a heading cheerfully
+  displayed the words `alert(1)` to every visitor. `CODE_ELEMENTS` are dropped
+  whole.
+- **`class` and `data-*` survive sanitising on purpose.** The homepage figures
+  are a `<strong class="count-up" data-target="70">`, and dropping the attributes
+  would freeze the number at zero.
+- **Pages are discovered, never seeded.** From the repository tree where a token
+  exists, from `sitemap.xml` otherwise — and **a file the sitemap does not list
+  arrives hidden**, which is how the plan document and the 404 stay out of a
+  client's page list without anybody naming them in code.
+- `dakyworld.com/admin` is a static page that hands you to
+  `os.dakyworld.com/website`. It does **not** ask for a password: Pages has no
+  server to check one against, so a form there would post credentials to another
+  origin, which is the shape of a phishing page. It does not redirect on its own
+  either — a page that bounces you onward bounces you onward when you press back.
+
+Built from `reusable_website_editor_system_plan.pdf` (23 Aug 2026), whose block
+model was deliberately not followed for this site; the plan lists converting an
+existing hard-coded website as a non-goal for version one, and this is why.
 
 ## The website's metadata is generated
 

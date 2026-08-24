@@ -23,6 +23,8 @@ import { Costs } from "./pages/Costs";
 import { Approvals } from "./pages/Approvals";
 import { Rehearsals } from "./pages/Rehearsals";
 import { ClientDetail } from "./pages/ClientDetail";
+import { Website } from "./pages/Website";
+import { WebsiteEditor } from "./pages/WebsiteEditor";
 
 /**
  * Every screen carries the permission its own API routes ask for.
@@ -58,6 +60,8 @@ export default function App() {
         <Route path="/messages" element={<Guard needs="messages.view"><Messages /></Guard>} />
         <Route path="/clients" element={<Guard needs="clients.view"><Clients /></Guard>} />
         <Route path="/clients/:id" element={<Guard needs="clients.view"><ClientDetail /></Guard>} />
+        <Route path="/website" element={<Guard needs="website.view"><Website /></Guard>} />
+        <Route path="/website/pages/:pageId" element={<Guard needs="website.view"><WebsiteEditor /></Guard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />
         <Route path="/settings" element={<Guard needs="settings.view"><Settings /></Guard>} />
         <Route path="/agents" element={<Guard needs="agents.view"><Agents /></Guard>} />

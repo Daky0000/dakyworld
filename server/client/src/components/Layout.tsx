@@ -55,6 +55,10 @@ const navItems: NavItem[] = [
     ],
   },
   { to: "/clients", label: "Clients", needs: "clients.view" },
+  // Top level rather than under Settings: changing the words on a page is
+  // somebody's ordinary work, and a client who has been given this and
+  // nothing else should land on it without hunting.
+  { to: "/website", label: "Edit website", needs: "website.view" },
   {
     to: "/agents",
     label: "Agents",

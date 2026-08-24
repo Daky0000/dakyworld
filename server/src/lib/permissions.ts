@@ -121,6 +121,21 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     ],
   },
   {
+    key: "website",
+    label: "Edit website",
+    description: "The words, pictures and links on the websites this system publishes.",
+    permissions: [
+      { key: "website.view", label: "See the website", description: "Open a site, read its pages and preview unpublished edits." },
+      { key: "website.edit", label: "Edit a page", description: "Change the copy, links and images on a page and save it as a draft." },
+      // Publishing is the only action here that a stranger ever sees, and it
+      // changes a page on a domain the company's name is on. It is separable
+      // from editing on purpose: somebody can be trusted to write the words
+      // without being the person who decides they go live.
+      { key: "website.publish", label: "Publish a page", description: "Commit a page to its repository and put the change on the public site.", external: true },
+      { key: "website.manage", label: "Manage sites and pages", description: "Connect a repository, rescan for pages, and decide which pages are editable." },
+    ],
+  },
+  {
     key: "invoices",
     label: "Invoices",
     description: "What clients are asked to pay.",
