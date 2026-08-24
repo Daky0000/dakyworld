@@ -895,6 +895,7 @@ deploy stays the source of truth wherever you chose to make it one.
 | AI models — ChatGPT | https://platform.openai.com/api-keys | `OPENAI_API_KEY`, `OPENAI_MODEL` |
 | AI models — Gemini | https://aistudio.google.com/apikey | `GEMINI_API_KEY`, `GEMINI_MODEL` |
 | AI models — Perplexity | https://www.perplexity.ai/account/api/group | `PERPLEXITY_API_KEY`, `PERPLEXITY_MODEL` |
+| AI models — OpenRouter (ox-alpha) | https://openrouter.ai/settings/keys | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
 | Google Drive | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` *(only behind a proxy that rewrites the host)* |
 | Payments (Stripe) | https://dashboard.stripe.com/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
@@ -937,20 +938,41 @@ request host), and Google matches it character for character.
 ### Which model does what
 
 Under **Settings → AI models** every job the system asks a model for is listed
-with the model chosen for it:
+with the model chosen for it. **ox-alpha, through one OpenRouter key, is the
+default for every job except drawing pictures:**
 
 | Job | Goes to | What it covers |
 |---|---|---|
-| Writing | Gemini | Every piece of prose — proposal copy, email drafts, ad concepts, page copy, cold outreach |
-| Images | ChatGPT | Pictures for ads, social posts and mock-ups |
-| Web pages | ChatGPT | Complete HTML pages on the brand design system |
-| Fact-checking | Perplexity | Checks a draft's claims against live sources |
-| Plain English | Perplexity | Rewrites a draft to sound like a person wrote it |
+| Writing | ox-alpha (OpenRouter) | Every piece of prose — proposal copy, email drafts, ad concepts, page copy, cold outreach |
+| Sorting a prompt | ox-alpha (OpenRouter) | Filing a pasted instruction under the headings an agent prompt is made of |
+| Reading the post | ox-alpha (OpenRouter) | What an arriving email is, and whose job it is |
+| Web pages | ox-alpha (OpenRouter) | Complete HTML pages on the brand design system |
+| Research | ox-alpha (OpenRouter) | Who a prospect actually is, filling the blanks a scrape left behind |
+| Fact-checking | ox-alpha (OpenRouter) | Whether a draft's claims still hold |
+| Plain English | ox-alpha (OpenRouter) | Rewrites a draft to sound like a person wrote it |
+| Looking | ox-alpha (OpenRouter) | What a first-time visitor sees in a screenshot of their page |
+| Images | ChatGPT | Pictures for ads, social posts and mock-ups — the one job this app can only ask ChatGPT for |
 
-**You do not have to fill any of it in for the system to work.** Every job
-falls back to Claude while the model picked for it has no key, and the screen
-says which jobs are falling back rather than pretending they are configured.
-Paste one key and that job moves onto its own model; nothing else changes.
+**One key is the whole configuration.** Paste an OpenRouter key into Settings →
+AI models and everything above moves onto ox-alpha; nothing else needs setting.
+The key is checked against OpenRouter before it is stored, and the model id is
+checked against OpenRouter's own catalogue at the same moment — if `ox-alpha`
+is listed there under a different slug, the screen says so and names the
+closest ids rather than saving a route that would quietly fail over forever.
+
+**When ox-alpha isn't connected, or a call through it fails**, the job moves
+down the same chain as ever — the declared fallback first, then every other
+vendor that can actually do the work — and what came back says who answered.
+No key at all and nothing changes from how the system has always behaved.
+
+Two honest caveats. **Research and fact-checking answered by ox-alpha are not
+searched against the live web** — the result says so plainly, naming who
+checked and against what, and Perplexity stays one step down those chains for
+when live sources matter more than the default does; put it back on either job
+with one dropdown. And **ox-alpha prices at the dearest rate we know of in the
+spend ledger until its real rate is added** to `models.pricing` or the pricing
+table — an unpriced model reading as free is how a budget ceiling gets
+bypassed, so the safe direction is taken until the true number is known.
 
 Each key is checked against its provider before it is stored, so a typo fails
 on the screen. Every call is priced and written to the spend ledger whichever

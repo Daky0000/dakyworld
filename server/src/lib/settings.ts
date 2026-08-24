@@ -80,9 +80,9 @@ export const SETTING = {
    * See lib/claudePricing.ts.
    */
   ANTHROPIC_PRICING: "anthropic.pricing",
-  // The other three model vendors. One key each is the whole configuration:
+  // The other four model vendors. One key each is the whole configuration:
   // which job goes to which vendor has a shipped default, and every job falls
-  // back to Claude while its key is missing. See lib/models/registry.ts.
+  // back through the chain while its key is missing. See lib/models/registry.ts.
   /** ChatGPT — images and complete web pages. */
   OPENAI_KEY: "openai.apiKey",
   OPENAI_MODEL: "openai.model",
@@ -94,6 +94,13 @@ export const SETTING = {
   /** Perplexity — fact-checking against live sources, and plain-English rewrites. */
   PERPLEXITY_KEY: "perplexity.apiKey",
   PERPLEXITY_MODEL: "perplexity.model",
+  /**
+   * OpenRouter — one key that reaches **ox-alpha**, the default for every job
+   * it can do. When it is not connected, or a call through it fails, the job
+   * moves down the same chain as ever. See lib/models/registry.ts.
+   */
+  OPENROUTER_KEY: "openrouter.apiKey",
+  OPENROUTER_MODEL: "openrouter.model",
   /**
    * Which vendor serves which job, as JSON, holding only what has been changed
    * from the shipped routing: `{"text":"anthropic"}`.
@@ -457,6 +464,8 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.GEMINI_MODEL]: "GEMINI_MODEL",
   [SETTING.PERPLEXITY_KEY]: "PERPLEXITY_API_KEY",
   [SETTING.PERPLEXITY_MODEL]: "PERPLEXITY_MODEL",
+  [SETTING.OPENROUTER_KEY]: "OPENROUTER_API_KEY",
+  [SETTING.OPENROUTER_MODEL]: "OPENROUTER_MODEL",
   [SETTING.GOOGLE_CLIENT_ID]: "GOOGLE_CLIENT_ID",
   [SETTING.GOOGLE_CLIENT_SECRET]: "GOOGLE_CLIENT_SECRET",
   [SETTING.GOOGLE_REFRESH_TOKEN]: "GOOGLE_REFRESH_TOKEN",

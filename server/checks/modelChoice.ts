@@ -104,11 +104,12 @@ async function main() {
   // value assigned afterwards is one nothing sees.
   process.env.ANTHROPIC_BASE_URL = url;
   process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
-  // The three other vendors must stay unconnected, or the routing chain reaches
+  // The four other vendors must stay unconnected, or the routing chain reaches
   // one of them and this check is asserting on the wrong wire.
   delete process.env.OPENAI_API_KEY;
   delete process.env.GEMINI_API_KEY;
   delete process.env.PERPLEXITY_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 
   const { callClaude } = await import("../src/lib/claude.js");
   const { callModel } = await import("../src/lib/models/call.js");

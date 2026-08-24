@@ -107,14 +107,24 @@ as descriptions; nothing in one is ever executed.
 
 **Models are chosen by job, never by vendor** — `src/lib/models/`. A caller
 says `callModel({ job: "text" })` and the routing decides who serves it:
-Gemini writes, ChatGPT draws, builds pages and looks at pictures, Perplexity
-researches companies, checks facts against live sources and rewrites drafts
-into plain English. **A job whose chosen vendor has no key falls through a
-chain: the declared fallback first, then every other vendor that can actually
-do that job**, so nothing waits on a credential and each key the Owner pastes
-moves one job onto its chosen model. `registry.ts` holds the vendors, the
-shipped routing, the published rates and `standInsFor()`; `call.ts` holds one
-adapter per vendor.
+**ox-alpha through OpenRouter is the shipped default for every job except
+images**, ChatGPT draws, and Perplexity researches companies, checks facts
+against live sources and rewrites drafts into plain English when it is asked
+for by name. **A job whose chosen vendor has no key — or whose call fails
+mid-flight — falls through a chain: the declared fallback first, then every
+other vendor that can actually do that job**, so nothing waits on a credential
+and each key the Owner pastes moves one job onto its chosen model.
+`registry.ts` holds the vendors, the shipped routing, the published rates and
+`standInsFor()`; `call.ts` holds one adapter per vendor.
+
+Two things about the OpenRouter half: **the model id is verified against
+OpenRouter's own catalogue at key-save time** (`verifyProviderKey` reads
+`GET /models`, free and authenticated), so a slug that isn't listed fails on
+the screen with the closest matches named rather than becoming a month of
+calls that quietly failed over; and **ox-alpha has no published rate in either
+pricing table**, so it prices at the dearest known rate in the ledger until
+one is added — the safe direction for a ceiling, worth remembering before
+concluding the budget is being spent too fast.
 
 **The chain is not decoration — a two-step fallback had a hole in it.** `vision`
 is routed to ChatGPT and fell back to Claude only, so a deployment holding a
@@ -127,9 +137,9 @@ and the sentence names all of them. A vendor that *cannot* do the job is never
 in the chain, so Perplexity is never asked to look at a screenshot however many
 keys are missing.
 
-Three things that will bite:
+Four things that will bite:
 
-- The three new vendors are spoken to over `fetch`, not SDKs. Anthropic keeps
+- The four new vendors are spoken to over `fetch`, not SDKs. Anthropic keeps
   its SDK because the agent loop needs tool use and thinking blocks.
 - **Gemini rejects `additionalProperties` outright** rather than ignoring it,
   so `forGemini()` strips it on the way out. The schema the caller wrote is

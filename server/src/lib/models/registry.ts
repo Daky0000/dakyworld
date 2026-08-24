@@ -2,10 +2,10 @@ import { SETTING, getSetting, isEnvManaged } from "../settings.js";
 import { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, defaultModel, type ModelRate } from "../claudePricing.js";
 
 /**
- * The four model vendors, and which job each one does.
+ * The five model vendors, and which job each one does.
  *
  * Until now every model call in this app went to Claude, which was right when
- * there was one thing to ask a model. There are four now, and they are not the
+ * there was one thing to ask a model. There are five now, and they are not the
  * same job: writing prose, drawing a picture, building a page, and checking
  * whether a sentence is still true in the world. A single vendor answers all
  * four and is best at none of them.
@@ -23,7 +23,7 @@ import { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, defaultModel, type ModelRa
  */
 
 /** The vendors. `anthropic` is the floor everything falls back to. */
-export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity";
+export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "openrouter";
 
 /**
  * What is being asked for, in the app's own words rather than a vendor's.
@@ -90,9 +90,10 @@ export interface JobDescription {
 /**
  * The shipped routing.
  *
- * These are the Owner's choices, written down: Gemini writes, ChatGPT draws
- * and builds pages, Perplexity checks facts and rewrites for a human reader.
- * Each falls back to Claude while its key is missing.
+ * These are the Owner's choices, written down: **ox-alpha through OpenRouter
+ * serves every job it can do**, ChatGPT draws the pictures, and each job moves
+ * down its chain when ox-alpha isn't connected or a call through it fails —
+ * the declared fallback first, then every other vendor that can do the work.
  */
 export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: ProviderKey }> = {
   text: {
@@ -100,7 +101,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Writing",
     phrase: "writing",
     blurb: "Every piece of prose the system produces — proposal copy, email drafts, ad concepts, page copy, cold outreach.",
-    defaultProvider: "gemini",
+    defaultProvider: "openrouter",
     fallback: "anthropic",
   },
   organise: {
@@ -109,13 +110,13 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "sorting a prompt into sections",
     blurb:
       "Reading a written instruction and filing it under the ten headings an agent prompt is made of — so a pasted playbook becomes a prompt rather than a wall of text.",
-    // Claude rather than the writing model. This job is comprehension and
+    // ox-alpha first like everything else. This job is comprehension and
     // filing, not prose: nothing it returns is read by a customer, and the
     // failure that matters is a paragraph put under the wrong heading or
     // quietly reworded. Every vendor that can follow a schema can do it, so
     // the chain is wide and the cost is a rounding error against being wrong.
-    defaultProvider: "anthropic",
-    fallback: "gemini",
+    defaultProvider: "openrouter",
+    fallback: "anthropic",
     // Following a schema, on a job with a right answer, where nothing it
     // returns is read by a customer.
     tier: "economy",
@@ -132,7 +133,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     // mailbox is a thousand calls a month, and separating it is what lets the
     // Owner put it on a cheap model from the Settings screen without moving
     // everything else there too.
-    defaultProvider: "anthropic",
+    defaultProvider: "openrouter",
     fallback: "gemini",
     // The argument above, carried out. Separating the job was only half of it:
     // for months this still resolved to whichever model the vendor's own
@@ -158,7 +159,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Web pages",
     phrase: "building web pages",
     blurb: "Complete HTML pages on the brand design system — the thing a developer opens and edits.",
-    defaultProvider: "openai",
+    defaultProvider: "openrouter",
     fallback: "anthropic",
   },
   factcheck: {
@@ -166,7 +167,12 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Fact-checking",
     phrase: "fact-checking",
     blurb: "Checks a draft's claims against live sources, so nothing goes out that stopped being true last year.",
-    defaultProvider: "perplexity",
+    // ox-alpha carries the job by default, per the Owner's call. It does not
+    // search the live web, so an answer it gives reports itself as checked
+    // against no live source — the tool result says who checked and against
+    // what, and Perplexity stays one step down the chain for when that
+    // distinction matters more than the default does.
+    defaultProvider: "openrouter",
     fallback: "anthropic",
   },
   research: {
@@ -175,7 +181,9 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "researching a company",
     blurb:
       "Finds out who a prospect actually is — trade, address, reputation, who runs it — from live sources, and fills the blanks a scrape left behind.",
-    defaultProvider: "perplexity",
+    // Same reasoning as factcheck above: ox-alpha by default, and the result
+    // records honestly whether what came back was searched for or remembered.
+    defaultProvider: "openrouter",
     fallback: "anthropic",
   },
   humanise: {
@@ -183,7 +191,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Plain English",
     phrase: "plain-English rewrites",
     blurb: "Rewrites a draft to sound like a person wrote it and to be understood on one reading.",
-    defaultProvider: "perplexity",
+    defaultProvider: "openrouter",
     fallback: "anthropic",
   },
   vision: {
@@ -192,7 +200,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "looking at a page",
     blurb:
       "Reads a screenshot of a prospect's homepage and says what a first-time visitor actually sees — the half of a site audit that markup cannot answer.",
-    defaultProvider: "openai",
+    defaultProvider: "openrouter",
     fallback: "anthropic",
   },
 };
@@ -303,6 +311,35 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // answer for "is this still true" and the wrong one for drawing a picture.
     jobs: ["text", "triage", "factcheck", "research", "humanise"],
     models: ["sonar", "sonar-pro", "sonar-reasoning-pro"],
+  },
+  openrouter: {
+    key: "openrouter",
+    // The Owner calls it by the model, not by the shop it came from — the same
+    // reason ChatGPT is not called "OpenAI" here.
+    name: "ox-alpha",
+    vendor: "OpenRouter",
+    purpose:
+      "The default for every job it can do — one key covers writing, sorting, triage, pages, research, fact-checking, plain English and looking at a page.",
+    keySetting: SETTING.OPENROUTER_KEY,
+    modelSetting: SETTING.OPENROUTER_MODEL,
+    defaultModel: "ox-alpha",
+    // Nothing cheaper names its default, which makes the economy tier a no-op
+    // here rather than a broken request.
+    economyModel: "ox-alpha",
+    console: "https://openrouter.ai/settings/keys",
+    keyHint: "sk-or-…",
+    // Every job except `image`. Drawing a picture goes through an images API
+    // this app only wires up for ChatGPT (`generateImage` refuses anything
+    // else), so listing `image` here would put a route in the dropdown that
+    // looks saved and never once serves — the exact thing the routing exists
+    // to prevent. Everything else is chat completions, which OpenRouter
+    // speaks for any model on it; if ox-alpha turns out not to read pictures,
+    // a vision call fails over to the next vendor that can.
+    jobs: ["text", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
+    // The shipped id. If OpenRouter lists the model under a different slug,
+    // paste that instead — the field takes anything, and verifying the key
+    // checks the id against OpenRouter's own catalogue before saving.
+    models: ["ox-alpha"],
   },
 };
 

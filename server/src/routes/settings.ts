@@ -806,8 +806,11 @@ settingsRouter.put("/models/:provider", async (req, res, next) => {
       // Checked against the vendor before it is stored, the same way the Apify
       // token and the Anthropic key are: a key that fails on first use is a
       // support conversation, and one refused at the moment it is pasted is a
-      // typo fixed in ten seconds.
-      await verifyProviderKey(provider, input.key.trim());
+      // typo fixed in ten seconds. The model field rides along when the form
+      // sent one — OpenRouter verifies its id against its own catalogue, and
+      // checking the stored value instead would miss a slug corrected in this
+      // same submit.
+      await verifyProviderKey(provider, input.key.trim(), input.model?.trim() ?? undefined);
       await setSetting(definition.keySetting, input.key.trim(), { secret: true });
     }
 

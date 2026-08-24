@@ -45,6 +45,7 @@ const BASE = {
   openai: process.env.OPENAI_BASE_URL?.replace(/\/$/, "") || "https://api.openai.com/v1",
   gemini: process.env.GEMINI_BASE_URL?.replace(/\/$/, "") || "https://generativelanguage.googleapis.com/v1beta",
   perplexity: process.env.PERPLEXITY_BASE_URL?.replace(/\/$/, "") || "https://api.perplexity.ai",
+  openrouter: process.env.OPENROUTER_BASE_URL?.replace(/\/$/, "") || "https://openrouter.ai/api/v1",
 };
 
 /** Long enough for a page of HTML, short enough that a hung vendor doesn't hold a task open. */
@@ -484,6 +485,59 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
   };
 }
 
+// --- OpenRouter -------------------------------------------------------------
+
+/**
+ * OpenRouter speaks the OpenAI chat-completions shape, so this is `callOpenAI`
+ * with a different base URL and two small differences that matter.
+ *
+ * **`max_tokens`, not `max_completion_tokens`.** OpenRouter normalises to the
+ * older field name across every model it fronts; sending the newer one is
+ * accepted by some models and ignored by others, which is a silent way for a
+ * page build to come back cut in half.
+ *
+ * **The schema rides along in case strict mode doesn't.** OpenRouter passes
+ * `response_format` through to whatever model serves the request, and not every
+ * model on it compiles a strict JSON schema — some ignore it and answer in
+ * prose. The caller's instruction to return JSON is already in the system
+ * prompt, so those replies still parse; the ones that don't are caught by the
+ * same fence-stripping and failover every other vendor gets.
+ */
+async function callOpenRouter(apiKey: string, model: string, request: ModelRequest): Promise<Completion> {
+  const body = await post(
+    `${BASE.openrouter}/chat/completions`,
+    {
+      authorization: `Bearer ${apiKey}`,
+      // Optional attribution headers OpenRouter asks for; they change nothing
+      // about the call itself.
+      "x-title": "Dakyworld OS",
+    },
+    {
+      model,
+      max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
+      messages: [
+        { role: "system", content: request.system },
+        { role: "user", content: openAiContent(request) },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "result", strict: true, schema: forStructuredOutput(request.schema) },
+      },
+    },
+    "OpenRouter",
+  );
+
+  const choice = (body.choices as { message?: { content?: string }; finish_reason?: string }[] | undefined)?.[0];
+  const usage = (body.usage ?? {}) as { prompt_tokens?: number; completion_tokens?: number };
+  return {
+    text: choice?.message?.content ?? "",
+    inputTokens: usage.prompt_tokens ?? 0,
+    outputTokens: usage.completion_tokens ?? 0,
+    sources: [],
+    truncated: choice?.finish_reason === "length",
+  };
+}
+
 // --- The one entry point ----------------------------------------------------
 
 /**
@@ -667,7 +721,9 @@ async function attemptProvider<T>(
         ? await callOpenAI(apiKey, model, request)
         : serving === "gemini"
           ? await callGemini(apiKey, model, request)
-          : await callPerplexity(apiKey, model, request);
+          : serving === "perplexity"
+            ? await callPerplexity(apiKey, model, request)
+            : await callOpenRouter(apiKey, model, request);
   } catch (err) {
     if (err instanceof ProviderError) {
       const kind = err.failure.kind;
@@ -683,7 +739,7 @@ async function attemptProvider<T>(
           ? say("rate")
           : kind === "auth"
             ? describeRejection(serving, err.failure.status, err.failure.detail)
-            : err.failure.detail;
+            : withVendorHint(serving, err.failure.status, err.failure.detail);
       throw await fail(err.failure.status, message);
     }
     throw await fail(502, `${PROVIDERS[serving].name} failed: ${(err as Error).message}`);
@@ -739,6 +795,22 @@ async function attemptProvider<T>(
     sources: completion.sources,
     fallbackNote: null,
   };
+}
+
+/**
+ * Adds the one vendor-specific note worth carrying on a mid-run failure.
+ *
+ * OpenRouter is prepaid and answers **402** when the account is out of
+ * credits — which arrives here as an ordinary failure whose raw sentence
+ * ("Insufficient credits") reads like a bug in the app rather than a balance
+ * hitting zero at 6am inside a sequence. The same trap Perplexity's 401 was,
+ * one status code over.
+ */
+function withVendorHint(provider: ProviderKey, status: number, detail: string): string {
+  if (provider === "openrouter" && status === 402) {
+    return `${detail} OpenRouter is prepaid: this means the account is out of credits, not that anything is broken — top up at openrouter.ai/credits.`;
+  }
+  return detail;
 }
 
 /**
@@ -866,7 +938,7 @@ export async function generateImage(request: ImageRequest): Promise<ImageResult>
  * support conversation; one that is refused at the moment it is pasted is a
  * typo the Owner fixes in ten seconds.
  */
-export async function verifyProviderKey(provider: ProviderKey, apiKey: string): Promise<{ model: string }> {
+export async function verifyProviderKey(provider: ProviderKey, apiKey: string, modelChoice?: string): Promise<{ model: string }> {
   const definition = PROVIDERS[provider];
   const model = definition.defaultModel;
 
@@ -876,6 +948,34 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string): 
   }
 
   try {
+    if (provider === "openrouter") {
+      // The model list is free and authenticated, so it proves the key without
+      // spending anything — and it carries every id the account can ask for,
+      // which makes it the one place a wrong model slug can be caught before
+      // it becomes a month of calls that quietly failed over to somebody else.
+      const response = await fetch(`${BASE.openrouter}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
+      if (!response.ok) throw new ProviderError({ status: response.status, kind: "auth", detail: await response.text() });
+
+      // The id being saved with the key, when the form sent one — checking the
+      // stored value instead would miss a slug corrected in the same submit.
+      const wanted = (modelChoice?.trim() || (await providerModel(provider)) || model).trim();
+      const payload = (await response.json().catch(() => null)) as { data?: { id?: unknown }[] } | null;
+      const ids = (payload?.data ?? []).map((entry) => (typeof entry?.id === "string" ? entry.id : "")).filter(Boolean);
+      if (ids.length > 0 && !ids.includes(wanted)) {
+        const matches = ids.filter((id) => id.toLowerCase().includes(wanted.toLowerCase())).slice(0, 5);
+        throw new AnalystError(
+          400,
+          [
+            `That key works, but OpenRouter has no model called “${wanted}”.`,
+            matches.length > 0 ? `Closest ids on OpenRouter: ${matches.join(", ")}.` : null,
+            "Find the exact id at openrouter.ai/models and put it in the model field, then save again.",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      }
+      return { model: wanted };
+    }
     if (provider === "openai") {
       // The model list is the cheapest authenticated call there is — no tokens,
       // no charge, and it fails on exactly the thing being checked.
