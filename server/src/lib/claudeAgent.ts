@@ -1,7 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { recordLlmCall } from "./llmLedger.js";
 import { AnalystError, analystKey, type Effort } from "./claude.js";
-import { costOf, modelForEffort, rateFor } from "./claudePricing.js";
+import { costOf, modelForEffort, type ModelRate } from "./claudePricing.js";
+import { PROVIDER_PRICING, providerConfigured, providerKey, providerModel, requestFee } from "./models/registry.js";
+import { rateForModel } from "./models/call.js";
 
 /**
  * The agent loop.
@@ -248,6 +250,273 @@ function rejectedTheBeta(err: unknown): boolean {
 }
 
 
+// --- The OpenRouter wire ----------------------------------------------------
+
+/**
+ * An agent turn over OpenRouter, translated at the edge.
+ *
+ * The loop's whole internal state — messages, checkpoints, tool calls — is
+ * Anthropic-shaped, because that is the shape it was born in and the shape
+ * every checkpoint already saved is in. Rather than a second loop with a
+ * second state format (two loops drift, and a checkpoint written by one is
+ * unreadable by the other), this translates at the wire: Anthropic blocks go
+ * out as OpenAI chat messages, and what comes back comes back as Anthropic
+ * blocks. A run can start on one vendor and finish on another without
+ * anything between the two caring.
+ *
+ * Three things are deliberately dropped on this wire:
+ *
+ * - **Cache breakpoints.** OpenRouter exposes no equivalent, so marking
+ *   nothing costs nothing.
+ * - **Thinking blocks.** ox-alpha reasons server-side and returns only the
+ *   answer, so they never enter the conversation here — and a conversation
+ *   resumed from Claude carries them harmlessly, because they are skipped
+ *   rather than sent.
+ * - **`output_config.effort`.** Not an OpenAI parameter. The effort travels
+ *   instead as `reasoning_effort`, mapped onto what ox-alpha accepts (it
+ *   offers low/high/max, not our medium): low stays low, medium steps up to
+ *   high, and everything above rides at max. Named explicitly because the
+ *   model's own default is **max** — leaving it unset would put headline-depth
+ *   reasoning under every economy run.
+ */
+
+type AgentVendor = "openrouter" | "anthropic";
+
+/**
+ * The OpenRouter root, honouring `OPENROUTER_BASE_URL` — the same answer
+ * `BASE.openrouter` gives in models/call.ts, restated here because the loop
+ * speaks its own wire rather than going through that file's adapters. If the
+ * two ever disagree, one of them is wrong; the env var is the shared truth.
+ */
+const OPENROUTER_BASE = process.env.OPENROUTER_BASE_URL?.replace(/\/$/, "") || "https://openrouter.ai/api/v1";
+
+/** Key-level refusals: wrong key, out of credits, banned account. */
+const REFUSED_STATUSES = [401, 402, 403];
+
+/**
+ * How long a refused ox-alpha key sits out.
+ *
+ * Long enough that the resumes a failed run leaves behind start on Claude
+ * instead of each paying one wasted call into the same refusal; short enough
+ * that topping the account up is noticed without a redeploy. The same shape
+ * as `fallbacksAvailable` above, with a clock on it.
+ */
+const OPENROUTER_COOLDOWN_MS = 15 * 60 * 1000;
+let openRouterRefusedUntil = 0;
+
+/** As generous as the Anthropic SDK's own default for a non-streaming turn. */
+const TURN_TIMEOUT_MS = 600_000;
+
+/**
+ * One finished model turn, in the loop's own vocabulary.
+ *
+ * Both wires produce this, so everything after the call — narration, tool
+ * handling, pricing, checkpoints — is written once against it.
+ */
+interface WireTurn {
+  model: string;
+  // The SDK's own union, null included. Anything this loop does not
+  // specifically handle falls through to the tool-use check and ends the run
+  // as finished when there is nothing to call — which is the honest reading of
+  // a stop reason nobody has heard of yet.
+  stop_reason: Anthropic.Beta.BetaStopReason | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number | null;
+    cache_creation_input_tokens?: number | null;
+  };
+  content: Anthropic.Beta.BetaContentBlockParam[];
+}
+
+/** Our effort word onto ox-alpha's three. See the block comment above. */
+export function reasoningEffortFor(effort: Effort): "low" | "high" | "max" {
+  if (effort === "low") return "low";
+  if (effort === "medium") return "high";
+  return "max";
+}
+
+/**
+ * The conversation as OpenAI chat messages.
+ *
+ * Tool calls ride on the assistant turn that asked for them (`tool_calls`),
+ * and each result comes back as its own `tool` message keyed by the id it
+ * answers — that pairing is how the wire knows which answer goes with which
+ * call, and getting it wrong is how a model ends up reading another call's
+ * answer as its own.
+ */
+function toOpenAiMessages(system: string, messages: Anthropic.Beta.BetaMessageParam[]): Record<string, unknown>[] {
+  const wire: Record<string, unknown>[] = [{ role: "system", content: system }];
+
+  for (const message of messages) {
+    if (typeof message.content === "string") {
+      wire.push({ role: message.role, content: message.content });
+      continue;
+    }
+
+    const text = message.content
+      .filter((block): block is Anthropic.Beta.BetaTextBlockParam => block.type === "text")
+      .map((block) => block.text)
+      .join("\n\n")
+      .trim();
+    const toolUses = message.content.filter((block): block is Anthropic.Beta.BetaToolUseBlockParam => block.type === "tool_use");
+    const toolResults = message.content.filter((block): block is Anthropic.Beta.BetaToolResultBlockParam => block.type === "tool_result");
+
+    if (message.role === "assistant") {
+      // A turn carrying only thinking blocks says nothing on this wire — skip
+      // it rather than sending an assistant message with nothing in it, which
+      // some providers refuse outright.
+      if (!text && toolUses.length === 0) continue;
+      wire.push({
+        role: "assistant",
+        ...(text ? { content: text } : {}),
+        ...(toolUses.length > 0
+          ? {
+              tool_calls: toolUses.map((block) => ({
+                id: block.id,
+                type: "function",
+                function: { name: block.name, arguments: JSON.stringify(block.input ?? {}) },
+              })),
+            }
+          : {}),
+      });
+      continue;
+    }
+
+    for (const result of toolResults) {
+      wire.push({
+        role: "tool",
+        tool_call_id: result.tool_use_id,
+        content: typeof result.content === "string" ? result.content : JSON.stringify(result.content),
+      });
+    }
+    if (text) wire.push({ role: "user", content: text });
+  }
+
+  return wire;
+}
+
+class OpenRouterError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OpenRouterError";
+  }
+}
+
+/**
+ * One turn, out and back.
+ *
+ * Errors are left typed rather than mapped here: whether a refusal means
+ * "fall back to Claude" or "lose the run" is the caller's decision, and it
+ * depends on what else is connected.
+ */
+async function openRouterTurn(args: {
+  apiKey: string;
+  model: string;
+  system: string;
+  messages: Anthropic.Beta.BetaMessageParam[];
+  tools: AgentTool[];
+  effort: Effort;
+}): Promise<WireTurn> {
+  const body: Record<string, unknown> = {
+    model: args.model,
+    max_tokens: MAX_TOKENS,
+    messages: toOpenAiMessages(args.system, args.messages),
+    reasoning_effort: reasoningEffortFor(args.effort),
+  };
+  if (args.tools.length > 0) {
+    body.tools = args.tools.map((tool) => ({
+      type: "function",
+      function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
+    }));
+  }
+
+  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.apiKey}`,
+      "content-type": "application/json",
+      // Optional attribution OpenRouter asks for; changes nothing about the call.
+      "x-title": "Dakyworld OS",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(TURN_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => "")).slice(0, 500);
+    // The prepaid trap, said where it bites: a 402 mid-run reads like a bug
+    // when it is a balance.
+    const hint =
+      response.status === 402
+        ? " OpenRouter is prepaid: this means the account is out of credits, not that anything is broken — top up at openrouter.ai/credits."
+        : "";
+    throw new OpenRouterError(response.status, `${detail}${hint}`);
+  }
+
+  const payload = (await response.json().catch(() => null)) as {
+    model?: unknown;
+    choices?: { finish_reason?: unknown; message?: { content?: unknown; tool_calls?: { id?: unknown; function?: { name?: unknown; arguments?: unknown } }[] } }[];
+    usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+  } | null;
+
+  const choice = payload?.choices?.[0];
+  const message = choice?.message;
+  const content: Anthropic.Beta.BetaContentBlockParam[] = [];
+
+  if (typeof message?.content === "string" && message.content.trim()) {
+    content.push({ type: "text", text: message.content });
+  }
+  for (const call of message?.tool_calls ?? []) {
+    let parsed: unknown = {};
+    if (typeof call.function?.arguments === "string" && call.function.arguments.trim()) {
+      try {
+        parsed = JSON.parse(call.function.arguments);
+      } catch {
+        parsed = {};
+      }
+    }
+    content.push({
+      type: "tool_use",
+      id: typeof call.id === "string" && call.id ? call.id : `call_${Math.random().toString(36).slice(2)}`,
+      name: typeof call.function?.name === "string" ? call.function.name : "",
+      input: (parsed ?? {}) as Record<string, unknown>,
+    });
+  }
+
+  const wantsTools = content.some((block) => block.type === "tool_use");
+  const finish = typeof choice?.finish_reason === "string" ? choice.finish_reason : "";
+  return {
+    model: typeof payload?.model === "string" && payload.model ? payload.model : args.model,
+    stop_reason: finish === "length" ? "max_tokens" : wantsTools ? "tool_use" : "end_turn",
+    usage: {
+      input_tokens: typeof payload?.usage?.prompt_tokens === "number" ? payload.usage.prompt_tokens : 0,
+      output_tokens: typeof payload?.usage?.completion_tokens === "number" ? payload.usage.completion_tokens : 0,
+    },
+    content,
+  };
+}
+
+/** Which model serves an agent turn on this vendor — the Owner's choice, else the shipped default. */
+async function modelForVendor(vendor: AgentVendor, effort: Effort): Promise<string> {
+  // Claude keeps the effort split: a sub-agent checking a link is not billed
+  // at a director's rate. ox-alpha prices every effort the same today, so a
+  // split there would be a no-op — the decision that matters is the vendor.
+  return vendor === "openrouter" ? providerModel("openrouter") : modelForEffort(effort);
+}
+
+/** The rate for whichever model answered, from whichever table knows it, plus any per-request fee. */
+async function priceOf(model: string): Promise<{ rate: ModelRate; fee: number }> {
+  return {
+    rate: model in PROVIDER_PRICING ? PROVIDER_PRICING[model] : await rateForModel(model),
+    fee: requestFee(model),
+  };
+}
+
+
 export interface AgentRunRequest {
   /** Cost attribution: the agent key, so spend per agent is answerable. */
   purpose: string;
@@ -294,17 +563,29 @@ export interface AgentRunRequest {
  * because the first run's tokens were already billed by the first run.
  */
 export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunResult> {
-  const apiKey = await analystKey();
-  if (!apiKey) {
-    throw new AnalystError(503, "No Anthropic API key is set. Add one under Settings → AI analyst before an agent can work.");
-  }
-
-  const client = new Anthropic({ apiKey });
   const effort = request.effort ?? "medium";
+
+  // Who runs this conversation. **ox-alpha first** — an agent turn is a job
+  // like any other, and the shipped default serves every job it can do — with
+  // Claude as the floor, exactly as everywhere else in the model layer. A
+  // vendor whose key was refused recently sits its cooldown out rather than
+  // costing every resume behind this one a wasted call against a dead balance.
+  const candidates: AgentVendor[] = [];
+  if ((await providerConfigured("openrouter")) && Date.now() >= openRouterRefusedUntil) candidates.push("openrouter");
+  if (await providerConfigured("anthropic")) candidates.push("anthropic");
+  if (candidates.length === 0) {
+    throw new AnalystError(
+      503,
+      "No model is connected for running agents. Add an ox-alpha (OpenRouter) key or a Claude key under Settings → AI models — either one can do this.",
+    );
+  }
+  let serving: AgentVendor = candidates[0];
   // Chosen from the effort rather than fixed, so a sub-agent checking a link
   // is not billed at the rate of a director deciding what to say to a
-  // stranger. See `modelForEffort`.
-  const model = await modelForEffort(effort);
+  // stranger. See `modelForVendor`.
+  const model = await modelForVendor(serving, effort);
+
+  let client: Anthropic | null = null;
   const startedAt = Date.now();
 
   const byName = new Map(request.tools.map((tool) => [tool.name, tool]));
@@ -425,49 +706,93 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     if (pendingAssistant) {
       assistantContent = pendingAssistant;
     } else {
-      const send = (withFallbacks: boolean) =>
-        client.beta.messages.create({
-          model,
-          max_tokens: MAX_TOKENS,
-          system,
-          // Opus 5 thinks by default; asked for explicitly so the setting is
-          // visible here rather than inherited. Summarised, because the
-          // reasoning is worth showing on a task somebody is watching.
-          thinking: { type: "adaptive", display: "summarized" },
-          output_config: { effort },
-          tools: definitions,
-          messages: withCacheBreakpoints(messages),
-          ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
-        });
+      let response: WireTurn;
 
-      let response: Anthropic.Beta.BetaMessage;
-      try {
+      if (serving === "openrouter") {
         try {
-          response = await send(fallbacksAvailable);
+          response = await openRouterTurn({
+            apiKey: (await providerKey("openrouter")) ?? "",
+            model: await modelForVendor("openrouter", effort),
+            system: request.system,
+            messages,
+            tools: request.tools,
+            effort,
+          });
         } catch (err) {
-          if (!fallbacksAvailable || !rejectedTheBeta(err)) throw err;
-          // One wasted request, once per process, then never again.
-          fallbacksAvailable = false;
-          console.warn(`[agent] server-side fallbacks unavailable on this key: ${(err as Error).message}`);
-          response = await send(false);
+          // A key-level refusal — wrong key, out of credits — is not a reason
+          // to lose the run when the floor is connected. Nothing has been
+          // spent yet, so the same turn is retried on Claude, and ox-alpha
+          // sits out its cooldown so the resumes behind this one start there
+          // instead of each paying one call into the same refusal.
+          if (err instanceof OpenRouterError && REFUSED_STATUSES.includes(err.status) && candidates.includes("anthropic")) {
+            openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
+            console.warn(`[agent] ox-alpha refused the key (${(err as Error).message}) — Claude takes the rest of this run.`);
+            serving = "anthropic";
+            continue;
+          }
+          const message =
+            err instanceof OpenRouterError && err.status === 429
+              ? "OpenRouter is rate-limiting this key. The task will be picked up again."
+              : `Could not reach OpenRouter: ${(err as Error).message}`;
+          // The conversation up to here is intact and worth keeping: a rate
+          // limit is a task that resumes in five minutes, not one that starts
+          // again.
+          await checkpoint();
+          await finish(false, message);
+          throw new AnalystError(err instanceof OpenRouterError && err.status === 429 ? 429 : 502, message);
         }
-      } catch (err) {
-        const message =
-          err instanceof Anthropic.AuthenticationError
-            ? "Anthropic rejected the API key. Check it under Settings → AI analyst."
-            : err instanceof Anthropic.RateLimitError
-              ? "Anthropic is rate-limiting this key. The task will be picked up again."
-              : `Could not reach Anthropic: ${(err as Error).message}`;
-        // The conversation up to here is intact and worth keeping: a rate limit
-        // is a task that resumes in five minutes, not one that starts again.
-        await checkpoint();
-        await finish(false, message);
-        throw new AnalystError(err instanceof Anthropic.RateLimitError ? 429 : 502, message);
+      } else {
+        if (!client) {
+          const apiKey = await analystKey();
+          if (!apiKey) {
+            throw new AnalystError(503, "No Anthropic API key is set. Add one under Settings → AI models before an agent can work.");
+          }
+          client = new Anthropic({ apiKey });
+        }
+        const anth = client;
+        const send = (withFallbacks: boolean) =>
+          anth.beta.messages.create({
+            model,
+            max_tokens: MAX_TOKENS,
+            system,
+            // Opus 5 thinks by default; asked for explicitly so the setting is
+            // visible here rather than inherited. Summarised, because the
+            // reasoning is worth showing on a task somebody is watching.
+            thinking: { type: "adaptive", display: "summarized" },
+            output_config: { effort },
+            tools: definitions,
+            messages: withCacheBreakpoints(messages),
+            ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
+          });
+
+        try {
+          try {
+            response = await send(fallbacksAvailable);
+          } catch (err) {
+            if (!fallbacksAvailable || !rejectedTheBeta(err)) throw err;
+            // One wasted request, once per process, then never again.
+            fallbacksAvailable = false;
+            console.warn(`[agent] server-side fallbacks unavailable on this key: ${(err as Error).message}`);
+            response = await send(false);
+          }
+        } catch (err) {
+          const message =
+            err instanceof Anthropic.AuthenticationError
+              ? "Anthropic rejected the API key. Check it under Settings → AI models."
+              : err instanceof Anthropic.RateLimitError
+                ? "Anthropic is rate-limiting this key. The task will be picked up again."
+                : `Could not reach Anthropic: ${(err as Error).message}`;
+          // The conversation up to here is intact and worth keeping: a rate limit
+          // is a task that resumes in five minutes, not one that starts again.
+          await checkpoint();
+          await finish(false, message);
+          throw new AnalystError(err instanceof Anthropic.RateLimitError ? 429 : 502, message);
+        }
       }
 
       // Priced before the answer is judged: everything from here has been paid for.
       servedBy = response.model;
-      const rate = await rateFor(response.model);
+      const { rate, fee } = await priceOf(response.model);
       const usage = {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
@@ -478,7 +803,9 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       runOutputTokens += usage.outputTokens;
       runCacheReadTokens += usage.cacheReadTokens;
       runCacheCreationTokens += usage.cacheCreationTokens;
-      const turnCost = costOf(rate, usage);
+      // The per-request fee rides along for the vendors that charge one; zero
+      // everywhere else.
+      const turnCost = costOf(rate, usage) + fee;
       runCostUsd += turnCost;
       inputTokens += usage.inputTokens;
       outputTokens += usage.outputTokens;
