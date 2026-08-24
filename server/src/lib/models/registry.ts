@@ -322,10 +322,10 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
       "The default for every job it can do — one key covers writing, sorting, triage, pages, research, fact-checking, plain English and looking at a page.",
     keySetting: SETTING.OPENROUTER_KEY,
     modelSetting: SETTING.OPENROUTER_MODEL,
-    defaultModel: "ox-alpha",
+    defaultModel: "stealth/ox-alpha",
     // Nothing cheaper names its default, which makes the economy tier a no-op
     // here rather than a broken request.
-    economyModel: "ox-alpha",
+    economyModel: "stealth/ox-alpha",
     console: "https://openrouter.ai/settings/keys",
     keyHint: "sk-or-…",
     // Every job except `image`. Drawing a picture goes through an images API
@@ -339,7 +339,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // The shipped id. If OpenRouter lists the model under a different slug,
     // paste that instead — the field takes anything, and verifying the key
     // checks the id against OpenRouter's own catalogue before saving.
-    models: ["ox-alpha"],
+    models: ["stealth/ox-alpha"],
   },
 };
 
