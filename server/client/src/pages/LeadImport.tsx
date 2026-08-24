@@ -544,6 +544,23 @@ function ReviewStep({
       {analysis.warning && <Note tone="warn">{analysis.warning}</Note>}
       {plan.summary && <p className="mb-6 border-l-2 border-blue/60 bg-white px-4 py-3 text-sm text-ink/70">{plan.summary}</p>}
 
+      {/*
+        Said rather than done quietly. A boundary the analyst got wrong is the
+        one thing on this screen worth checking before importing — it is where
+        a lead goes missing or gets written into two groups — and a plan
+        silently corrected is a plan nobody checks.
+      */}
+      {analysis.repairs && analysis.repairs.length > 0 && (
+        <Note tone="warn">
+          <span className="font-medium">Corrected before review.</span> Check these boundaries against your file:
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {analysis.repairs.map((repair) => (
+              <li key={repair}>{repair}</li>
+            ))}
+          </ul>
+        </Note>
+      )}
+
       <div className="space-y-6">
         {plan.tables.map((table, index) => (
           <TableCard

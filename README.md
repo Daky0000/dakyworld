@@ -944,6 +944,7 @@ default for every job except drawing pictures:**
 | Job | Goes to | What it covers |
 |---|---|---|
 | Writing | ox-alpha (OpenRouter) | Every piece of prose — proposal copy, email drafts, ad concepts, page copy, cold outreach |
+| Reading sheets | ox-alpha (OpenRouter) | An imported spreadsheet of leads — where every table starts and stops and what each column means |
 | Sorting a prompt | ox-alpha (OpenRouter) | Filing a pasted instruction under the headings an agent prompt is made of |
 | Reading the post | ox-alpha (OpenRouter) | What an arriving email is, and whose job it is |
 | Web pages | ox-alpha (OpenRouter) | Complete HTML pages on the brand design system |
@@ -968,6 +969,16 @@ closest ids rather than saving a route that would quietly fail over forever.
 down the same chain as ever — the declared fallback first, then every other
 vendor that can actually do the work — and what came back says who answered.
 No key at all and nothing changes from how the system has always behaved.
+
+**A lead import is checked before you see it.** Reading a spreadsheet is a
+routed job like any other now, which means the model doing it may be one that
+has never read one of your files. So the plan that comes back is checked
+against the sheet rather than trusted: a table split at a blank row is joined
+back together, two tables claiming the same rows are separated so nobody is
+imported twice, and a table where nothing was mapped as the lead's name has a
+name found for it instead of arriving as an empty group. **Every correction is
+listed at the top of the review screen** — these are exactly the boundaries
+worth checking against your file before you press Import.
 
 Two honest caveats. **Research and fact-checking answered by ox-alpha are not
 searched against the live web** — the result says so plainly, naming who

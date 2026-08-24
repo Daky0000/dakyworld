@@ -523,6 +523,45 @@ export function extractRows(grid: SheetGrid, table: PlanTable): { rows: Extracte
   return { rows, skipped };
 }
 
+/**
+ * How much a column reads like a column of names.
+ *
+ * Only ever used to rescue a table nothing named — see `normalizePlan`. It is
+ * a preference between bad options, not a classifier: a number, an address, a
+ * date or a one-word status is not a name, and anything left over is better
+ * than dropping every row in the table.
+ */
+function nameishness(samples: string[]): number {
+  const values = samples.filter(Boolean);
+  if (!values.length) return 0;
+  const nameish = values.filter(
+    (value) =>
+      /[a-z]/i.test(value) &&
+      !/^-?[\d,. ]+$/.test(value) &&
+      !/^[^\s@]+@[^\s@]+$/.test(value) &&
+      !/^https?:\/\/|^www\./i.test(value) &&
+      !/^[+()\d][\d\s()\-.]{6,}$/.test(value) &&
+      value.length <= 80,
+  );
+  return nameish.length / values.length;
+}
+
+/** The least-bad column to call a lead by, when the plan named none. */
+function bestNameColumn(columns: PlanColumn[], grid: SheetGrid, firstDataRow: number, lastDataRow: number): PlanColumn | undefined {
+  const candidates = columns.filter((column) => column.field === "custom");
+  if (!candidates.length) return undefined;
+
+  const rows = grid.rows.slice(firstDataRow, Math.min(lastDataRow, grid.rows.length - 1) + 1).slice(0, 40);
+  let best: { column: PlanColumn; score: number } | null = null;
+  for (const column of candidates) {
+    const score = nameishness(rows.map((row) => row[column.index] ?? ""));
+    // Strictly greater, so a tie keeps the leftmost — which is where a name
+    // usually is once the row numbers have been excluded.
+    if (!best || score > best.score) best = { column, score };
+  }
+  return best && best.score > 0 ? best.column : candidates[0];
+}
+
 // --- Validation ------------------------------------------------------------
 
 const VALID_FIELDS = new Set([...BUILTIN_FIELDS.filter((field) => field.writable).map((field) => field.key), "custom", "ignore"]);
@@ -586,6 +625,29 @@ export function normalizePlan(plan: ImportPlan, grids: SheetGrid[]): ImportPlan 
         const company = columns.find((column) => column.field === "companyName");
         // Every lead needs a name; a company sheet's company column is its name.
         if (company) columns.unshift({ ...company, field: "contactName", label: "Name" });
+        else {
+          // Nothing here is a name, so `extractRows` would drop **every row in
+          // this table** and the Owner would see a group with nothing in it and
+          // no reason given. `buildTable` has always rescued this case; the
+          // analyst's own plans went through here instead and did not, so a
+          // table the model mapped entirely to custom columns — the exact shape
+          // a fragment left behind when it lost the header above it — arrived
+          // as an empty group beside two full ones.
+          //
+          // Chosen by looking at the cells, not by taking the first column
+          // going. The leftmost column of a lead sheet is very often S/N, and
+          // a rescue that grabs it names four leads "1", "2", "4" and "5" —
+          // technically saved, and useless to the person who then has to work
+          // out who they are. `nameishness` reads the rows the table actually
+          // covers and prefers the one that looks like names.
+          const candidate = bestNameColumn(columns, grid, firstDataRow, lastDataRow);
+          if (candidate) {
+            candidate.field = "contactName";
+            candidate.label = "Name";
+            candidate.type = "TEXT";
+            delete candidate.key;
+          }
+        }
       }
       // Show columns in the sheet's own left-to-right order. The sort is
       // stable, so the name column above stays ahead of the company column it
@@ -612,4 +674,184 @@ export function normalizePlan(plan: ImportPlan, grids: SheetGrid[]): ImportPlan 
     .filter((table): table is PlanTable => table !== null && table.columns.length > 0);
 
   return { tables, summary: (plan.summary ?? "").slice(0, 2000) };
+}
+
+// --- Repairing an analyst's plan -------------------------------------------
+
+/**
+ * The ways a model gets a plan structurally wrong, undone in code.
+ *
+ * `normalizePlan` clamps a plan to something that *can* be run — real indices,
+ * known field targets, unique keys. It says nothing about whether the plan
+ * makes sense, and it was the only thing standing between the analyst and the
+ * pipeline. That was survivable while one model read every sheet and read them
+ * well. It stopped being survivable the moment reading sheets became a routed
+ * job like any other, because the honest position on a routed job is that the
+ * next model to serve it is one nobody here has tried.
+ *
+ * So the boundaries the prompt asks for are checked against the grid rather
+ * than trusted, and the two mistakes it warns about loudest are repaired:
+ *
+ * - **A table split at a blank row.** The prompt calls this "the most damaging
+ *   mistake available to you" and it is not overstating it. The fragment sits
+ *   below the header, so it has no header, so every column in it is unnamed,
+ *   so nothing in it is a name — and `extractRows` drops a row it cannot name.
+ *   The Owner gets an empty group with no reason given, beside a full group
+ *   that stops halfway down their file. Two of five leads, gone quietly. That
+ *   is the shape of "it doesn't group them properly".
+ * - **Two tables claiming the same rows.** The opposite failure and the worse
+ *   one, because it does not look like a failure: the same business is written
+ *   into two groups, scored twice, and written to twice.
+ *
+ * Every repair is **reported**, never silent. A plan quietly corrected is a
+ * plan nobody checks, and the review screen exists precisely so that somebody
+ * looks before anything is written.
+ *
+ * Deliberately not run on a plan that came back *from* the review screen. A
+ * person who splits a table there has decided to split it, and an "obvious"
+ * correction that undoes what somebody just did by hand is the worst thing
+ * this function could do.
+ */
+export interface PlanRepair {
+  plan: ImportPlan;
+  /** One sentence per repair, for the summary the Owner reads. */
+  repairs: string[];
+}
+
+/** Blank rows only — a gap with anything in it belongs to somebody. */
+function gapIsBlank(grid: SheetGrid, from: number, to: number): boolean {
+  for (let index = from; index <= to; index += 1) {
+    if (filledCount(grid.rows[index] ?? [])) return false;
+  }
+  return true;
+}
+
+/**
+ * The signature of one table cut in half, as opposed to two real tables.
+ *
+ * A genuine second table announces itself — its own header row, or a banner
+ * the analyst read as a different title. A fragment has neither: it sits a
+ * blank row or two below the first, has no header of its own, and fills the
+ * same columns. All three have to hold, because merging two real tables is as
+ * damaging as splitting one.
+ */
+function isContinuationOf(grid: SheetGrid, earlier: PlanTable, later: PlanTable): boolean {
+  if (later.headerRow !== null) return false;
+  const gap = later.firstDataRow - earlier.lastDataRow - 1;
+  if (gap < 0 || gap > MAX_GAP_ROWS) return false;
+  if (gap > 0 && !gapIsBlank(grid, earlier.lastDataRow + 1, later.firstDataRow - 1)) return false;
+  const earlierColumns = footprint(grid, earlier.firstDataRow, earlier.lastDataRow);
+  const laterColumns = footprint(grid, later.firstDataRow, later.lastDataRow);
+  return columnOverlap(earlierColumns, laterColumns) >= 0.8;
+}
+
+/** How many non-blank rows in a range no table covers. */
+function uncoveredRows(grid: SheetGrid, range: { firstDataRow: number; lastDataRow: number }, covered: PlanTable[]): number {
+  let count = 0;
+  for (let row = Math.max(0, range.firstDataRow); row <= Math.min(range.lastDataRow, grid.rows.length - 1); row += 1) {
+    if (!filledCount(grid.rows[row] ?? [])) continue;
+    if (covered.some((table) => row >= table.firstDataRow && row <= table.lastDataRow)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/** Below this, an uncovered row is a totals line or a note to self, not a lost lead. */
+const UNCOVERED_ROWS_WORTH_SAYING = 3;
+
+/**
+ * Runs the repairs over an analyst's plan and says what it changed.
+ *
+ * Normalised on the way in so the repairs can trust the indices, and again on
+ * the way out so a merged table's columns are re-deduped and its column range
+ * recomputed against what it now covers.
+ *
+ * `hints` is the pattern rules' own reading of the same file. It is not a
+ * second opinion to average with — it is the only independent evidence there
+ * is about where the data actually sits, and it is used for exactly one thing:
+ * noticing rows the analyst left out of every table.
+ */
+export function repairPlan(plan: ImportPlan, grids: SheetGrid[], hints: PlanTable[] = []): PlanRepair {
+  const byName = new Map(grids.map((grid) => [grid.name, grid]));
+  const repairs: string[] = [];
+  const kept: PlanTable[] = [];
+
+  const normalized = normalizePlan(plan, grids);
+
+  // Per sheet, in the order the rows appear — every rule below is about a
+  // table and the one above it, which is meaningless in any other order.
+  const sheets = new Map<string, PlanTable[]>();
+  for (const table of normalized.tables) {
+    const list = sheets.get(table.sheet) ?? [];
+    list.push(table);
+    sheets.set(table.sheet, list);
+  }
+
+  for (const [sheet, tables] of sheets) {
+    const grid = byName.get(sheet);
+    if (!grid) {
+      kept.push(...tables);
+      continue;
+    }
+
+    tables.sort((a, b) => a.firstDataRow - b.firstDataRow || a.lastDataRow - b.lastDataRow);
+    const merged: PlanTable[] = [];
+
+    for (const table of tables) {
+      const previous = merged[merged.length - 1];
+
+      // A header row counted as data is an off-by-one that costs a row:
+      // `isNoiseRow` catches the repeated header and reports it as skipped,
+      // which reads to the Owner as a lead that was thrown away.
+      if (table.headerRow !== null && table.headerRow >= table.firstDataRow && table.headerRow <= table.lastDataRow) {
+        repairs.push(`"${table.title}" counted its own header row as data — started it at row ${table.headerRow + 1} instead.`);
+        table.firstDataRow = table.headerRow + 1;
+      }
+
+      if (previous && isContinuationOf(grid, previous, table)) {
+        repairs.push(
+          `"${table.title}" was "${previous.title}" split at a blank row — joined back together as rows ${previous.firstDataRow}-${table.lastDataRow}.`,
+        );
+        previous.lastDataRow = Math.max(previous.lastDataRow, table.lastDataRow);
+        continue;
+      }
+
+      if (previous && table.firstDataRow <= previous.lastDataRow) {
+        const from = previous.lastDataRow + 1;
+        if (from > table.lastDataRow) {
+          repairs.push(`"${table.title}" covered rows "${previous.title}" already had — dropped rather than import the same leads twice.`);
+          continue;
+        }
+        repairs.push(`"${table.title}" overlapped "${previous.title}" — started it at row ${from} so no lead is imported twice.`);
+        table.firstDataRow = from;
+      }
+
+      if (table.firstDataRow > table.lastDataRow) {
+        repairs.push(`"${table.title}" had no rows left in it and was dropped.`);
+        continue;
+      }
+
+      merged.push(table);
+    }
+
+    // What the rules read as leads and the analyst put in no table at all.
+    // Said, never acted on: the rules are wrong about a messy file often
+    // enough that silently re-adding their rows would be the analyst's job
+    // undone by the thing it was brought in to beat.
+    for (const hint of hints.filter((entry) => entry.sheet === sheet)) {
+      const missed = uncoveredRows(grid, hint, merged);
+      if (missed >= UNCOVERED_ROWS_WORTH_SAYING) {
+        repairs.push(
+          `${missed} rows between ${hint.firstDataRow} and ${hint.lastDataRow} on "${sheet}" are in no table — check the boundaries before importing.`,
+        );
+      }
+    }
+
+    kept.push(...merged);
+  }
+
+  const summary = repairs.length
+    ? `${normalized.summary}\n\nCorrected before review: ${repairs.join(" ")}`.trim()
+    : normalized.summary;
+  return { plan: normalizePlan({ tables: kept, summary }, grids), repairs };
 }

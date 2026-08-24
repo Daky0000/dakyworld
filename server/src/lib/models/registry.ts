@@ -1,4 +1,5 @@
 import { SETTING, getSetting, isEnvManaged } from "../settings.js";
+import type { Effort } from "../claude.js";
 import { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, defaultModel, type ModelRate } from "../claudePricing.js";
 
 /**
@@ -370,6 +371,62 @@ export function isProviderKey(value: unknown): value is ProviderKey {
 
 export function isModelJob(value: unknown): value is ModelJob {
   return typeof value === "string" && (MODEL_JOBS as string[]).includes(value);
+}
+
+// --- How hard ox-alpha thinks -----------------------------------------------
+
+/**
+ * Our effort word onto ox-alpha's three.
+ *
+ * A vendor fact, so it lives with the other vendor facts rather than inside
+ * whichever caller happened to need it first. It was written for the agent
+ * loop and stayed there, which meant the *other* half of the model layer —
+ * every one-shot `callModel` — put nothing on the wire at all and every routed
+ * job ran at **ox-alpha's own default, which is max**. Triage asks for `low`
+ * in so many words, runs once per arriving message, and was paying
+ * headline-depth reasoning on every one of them.
+ *
+ * Exactly the bug `checks/modelChoice.ts` exists for, one field over: nothing
+ * breaks, every answer is correct, and the only symptom is the bill.
+ *
+ * ox-alpha offers low/high/max, not our medium — so medium steps up to high,
+ * and everything above rides at max.
+ */
+export function reasoningEffortFor(effort: Effort): "low" | "high" | "max" {
+  if (effort === "low") return "low";
+  if (effort === "medium") return "high";
+  return "max";
+}
+
+/**
+ * Room for the thinking, on top of room for the answer.
+ *
+ * On an OpenAI-shaped wire `max_tokens` caps **reasoning plus reply**, the
+ * same trap Anthropic's does — but nothing here was leaving any slack for it.
+ * The sheet analyst asks for 16,000 tokens because a plan describing forty
+ * columns across three tables is genuinely long, and at max effort ox-alpha
+ * can spend that much before it writes a character. What comes back then is
+ * `finish_reason: "length"` with an empty message, which this layer correctly
+ * reads as "produced nothing usable" and hands to the next vendor — so the
+ * Owner pays for a reasoning run, waits for it, and gets somebody else's
+ * answer, or the pattern rules.
+ *
+ * So the caller's number keeps meaning what it says — the size of the
+ * *answer* — and the thinking is budgeted on top of it here, by the effort we
+ * just asked for.
+ */
+const REASONING_HEADROOM: Record<"low" | "high" | "max", number> = { low: 2_000, high: 8_000, max: 16_000 };
+
+/**
+ * A ceiling, because `max_tokens` above what a model can actually emit is a
+ * 400 on some of them rather than a clamp. 32,000 is twice the agent loop's
+ * own budget and inside what every frontier model on OpenRouter accepts.
+ */
+const OPENROUTER_MAX_TOKENS = 32_000;
+
+/** The wire's `max_tokens`: the answer the caller asked for, plus the thinking. */
+export function tokensWithReasoning(answerTokens: number, effort: Effort): number {
+  return Math.min(answerTokens + REASONING_HEADROOM[reasoningEffortFor(effort)], OPENROUTER_MAX_TOKENS);
 }
 
 // --- Keys and models --------------------------------------------------------

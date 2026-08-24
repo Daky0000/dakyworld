@@ -8,12 +8,20 @@
  * that Excel helpfully turned into 2.56742E+11. A person can see all of that in
  * two seconds; a fixed parser can't see any of it.
  *
- * So the grid goes to Claude, which returns a plan: every table it found, where
- * each one starts and stops, and what each column means. The plan is data, not
- * an action — it comes back to the Owner for review before a lead is written.
+ * So the grid goes to whoever serves the `spreadsheet` job — ox-alpha by
+ * default — and what comes back is a plan: every table it found, where each
+ * one starts and stops, and what each column means. The plan is data, not an
+ * action; it goes to the Owner for review before a lead is written.
  *
- * With no API key the caller falls back to the pattern rules in
- * services/sheetPlan.ts, which handle a tidy sheet fine.
+ * **The plan is checked against the grid before anybody sees it.** Reading a
+ * sheet became a routed job in Aug 2026, and the honest position on a routed
+ * job is that the next model to serve it is one nobody here has tried — so
+ * `repairPlan` in services/sheetPlan.ts undoes the two structural mistakes
+ * this prompt warns about loudest, and says in the summary what it changed.
+ *
+ * With no model connected the caller falls back to the pattern rules in
+ * services/sheetPlan.ts, which handle a tidy sheet fine — and, on a sheet with
+ * a blank row in the middle of a table, better than a plan nobody checked.
  */
 
 import { callModel } from "./models/call.js";
@@ -134,8 +142,9 @@ What matters:
 4. **Keep every column.** Map to a built-in field where one genuinely fits; otherwise set field to "custom" and give it a clear label — that keeps the column instead of losing it. Only two things earn "ignore": row-number columns (S/N, #, No.) and columns that are entirely empty.
 5. **One built-in field per table.** If a table has two phone columns, the first is contactPhone and the second is custom (label it "Alternate phone"). The same goes for a second email or a second address.
 6. **Unlabelled columns still mean something.** A column with no header whose cells read "Switched off", "No answer", "Wrong number" is a call-outcome column: label it from its contents and mark it custom.
-7. **Every lead needs a name.** For a table of companies, the company-name column is both companyName and the lead's name — map it to contactName, and add a second column entry with the same index mapped to companyName if the table also carries a contact person.
-8. If a block is clearly not leads — a legend, a summary, a pivot of counts — leave it out and say so in the summary.`;
+7. **Every table needs exactly one contactName column, and this is not advisory.** A row that cannot be named is dropped on import, so a table with no contactName in it imports as an empty group — every lead in it lost, silently. For a table of companies the company-name column is both: map it to contactName, and add a second column entry with the same index mapped to companyName where the table also carries a contact person.
+8. **No two tables may claim the same row.** Ranges never overlap, and a row belongs to exactly one table. Reporting one table twice, or reporting a whole table and then part of it again, writes the same business into two groups — it is scored twice and written to twice.
+9. If a block is clearly not leads — a legend, a summary, a pivot of counts — leave it out and say so in the summary.`;
 
 function userPrompt(grids: SheetGrid[], hints: PlanTable[]): string {
   const sheets = grids.map(renderGrid).join("\n\n");

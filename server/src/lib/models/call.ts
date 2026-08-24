@@ -10,9 +10,11 @@ import {
   modelForJob,
   providerKey,
   providerModel,
+  reasoningEffortFor,
   requestFee,
   routeFor,
   serveChain,
+  tokensWithReasoning,
   type ModelJob,
   type ProviderKey,
 } from "./registry.js";
@@ -348,10 +350,10 @@ async function callOpenAI(apiKey: string, model: string, request: ModelRequest):
     "OpenAI",
   );
 
-  const choice = (body.choices as { message?: { content?: string }; finish_reason?: string }[] | undefined)?.[0];
+  const choice = (body.choices as { message?: unknown; finish_reason?: string }[] | undefined)?.[0];
   const usage = (body.usage ?? {}) as { prompt_tokens?: number; completion_tokens?: number };
   return {
-    text: choice?.message?.content ?? "",
+    text: assistantText(choice?.message),
     inputTokens: usage.prompt_tokens ?? 0,
     outputTokens: usage.completion_tokens ?? 0,
     sources: [],
@@ -373,6 +375,32 @@ function openAiContent(request: ModelRequest): unknown {
     })),
     { type: "text", text: request.prompt() },
   ];
+}
+
+/**
+ * The assistant's words, whatever shape they arrived in.
+ *
+ * A plain string is what the chat-completions spec says and what ChatGPT
+ * always sends. OpenRouter fronts arbitrary models and some of them answer
+ * with the parts array instead, which used to reach `completion.text.trim()`
+ * as an array and throw a `TypeError` — an uncaught one, so it skipped every
+ * failover path below and surfaced to the Owner as "Something went wrong"
+ * about a spreadsheet they were looking at.
+ *
+ * A reasoning model's own thinking is deliberately not read here even when the
+ * vendor returns it. It is not the answer, and a schema-shaped reply parsed out
+ * of a train of thought is a guess wearing the API's clothes.
+ */
+function assistantText(message: unknown): string {
+  if (typeof message !== "object" || message === null) return "";
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part === "string" ? part : typeof (part as { text?: unknown })?.text === "string" ? (part as { text: string }).text : ""))
+      .join("");
+  }
+  return "";
 }
 
 // --- Gemini -----------------------------------------------------------------
@@ -502,8 +530,25 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
  * prose. The caller's instruction to return JSON is already in the system
  * prompt, so those replies still parse; the ones that don't are caught by the
  * same fence-stripping and failover every other vendor gets.
+ *
+ * **The effort travels as `reasoning_effort`, and the budget makes room for
+ * it.** Both were missing here, and both were invisible. `effort` is not an
+ * OpenAI parameter, so every routed job — triage included, which asks for
+ * `low` in so many words and runs once per *arriving* message — rode at
+ * ox-alpha's own default of max. And `max_tokens` caps reasoning *plus* reply
+ * on this wire, so the sheet analyst's 16,000 could be spent thinking before a
+ * character of the plan was written, and what came back was an empty message
+ * with `finish_reason: "length"` — read here, correctly, as "produced nothing
+ * usable" and handed to the next vendor. The Owner paid for the reasoning,
+ * waited for it, and got Claude's answer or the pattern rules.
+ *
+ * See `reasoningEffortFor` and `tokensWithReasoning` in registry.ts.
  */
 async function callOpenRouter(apiKey: string, model: string, request: ModelRequest): Promise<Completion> {
+  // The same default `callClaude` applies when a caller names no effort, so a
+  // job moving between vendors does not quietly change how hard it is thought
+  // about.
+  const effort = request.effort ?? "medium";
   const body = await post(
     `${BASE.openrouter}/chat/completions`,
     {
@@ -514,11 +559,12 @@ async function callOpenRouter(apiKey: string, model: string, request: ModelReque
     },
     {
       model,
-      max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
+      max_tokens: tokensWithReasoning(request.maxTokens ?? DEFAULT_MAX_TOKENS, effort),
       messages: [
         { role: "system", content: request.system },
         { role: "user", content: openAiContent(request) },
       ],
+      reasoning_effort: reasoningEffortFor(effort),
       response_format: {
         type: "json_schema",
         json_schema: { name: "result", strict: true, schema: forStructuredOutput(request.schema) },
@@ -527,10 +573,10 @@ async function callOpenRouter(apiKey: string, model: string, request: ModelReque
     "OpenRouter",
   );
 
-  const choice = (body.choices as { message?: { content?: string }; finish_reason?: string }[] | undefined)?.[0];
+  const choice = (body.choices as { message?: unknown; finish_reason?: string }[] | undefined)?.[0];
   const usage = (body.usage ?? {}) as { prompt_tokens?: number; completion_tokens?: number };
   return {
-    text: choice?.message?.content ?? "",
+    text: assistantText(choice?.message),
     inputTokens: usage.prompt_tokens ?? 0,
     outputTokens: usage.completion_tokens ?? 0,
     sources: [],

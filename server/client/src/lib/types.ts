@@ -436,6 +436,13 @@ export interface AnalyzeResponse {
   previews: TablePreview[];
   sheets: { name: string; rows: number; columns: number }[];
   warning: string | null;
+  /**
+   * Boundaries the analyst got structurally wrong and the server put right
+   * before anybody saw the plan — a table split at a blank row rejoined, two
+   * tables claiming the same rows separated. Also on the end of `plan.summary`;
+   * carried separately so this can be a list rather than a paragraph.
+   */
+  repairs?: string[];
 }
 
 export type ProxyMode = "NONE" | "AUTO" | "DATACENTER" | "RESIDENTIAL";

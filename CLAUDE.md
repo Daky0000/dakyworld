@@ -137,10 +137,34 @@ and the sentence names all of them. A vendor that *cannot* do the job is never
 in the chain, so Perplexity is never asked to look at a screenshot however many
 keys are missing.
 
+**The OpenRouter wire carries two things it silently did not.** `effort` is not
+an OpenAI parameter, so for as long as `callModel` existed it put *nothing* on
+that wire and every routed job ran at **ox-alpha's own default, which is max** —
+triage included, which asks for `low` in so many words and runs once per
+*arriving* message. `reasoningEffortFor()` had been written for the agent loop
+and lived inside it; it is a vendor fact and lives in `registry.ts` now, and
+both halves of the model layer read it. And **`max_tokens` caps reasoning plus
+reply on that wire**, exactly as Anthropic's does, so a caller's budget sized
+for the answer was being spent thinking: the sheet analyst asks for 16,000
+because a plan describing forty columns is genuinely long, and what came back
+was an empty message with `finish_reason: "length"` — read correctly as
+"produced nothing usable" and handed to the next vendor. The Owner paid for the
+reasoning, waited for it, and got Claude's answer. `tokensWithReasoning()`
+budgets the thinking on top of the answer, capped at 32,000. Same shape of bug
+as the missing prompt cache: nothing breaks, every answer is correct, and the
+only symptom is the bill and a slower import.
+
 Four things that will bite:
 
 - The four new vendors are spoken to over `fetch`, not SDKs. Anthropic keeps
   its SDK because the agent loop needs tool use and thinking blocks.
+- **A chat-completions `content` is not reliably a string.** OpenRouter fronts
+  arbitrary models and some answer with the parts array; that used to reach
+  `.trim()` as an array and throw an *uncaught* `TypeError`, skipping every
+  failover path below it and surfacing as "Something went wrong" about a
+  spreadsheet the Owner was looking at. `assistantText()` normalises both
+  shapes. A reasoning model's own thinking is deliberately not read even where
+  the vendor returns it — it is not the answer.
 - **Gemini rejects `additionalProperties` outright** rather than ignoring it,
   so `forGemini()` strips it on the way out. The schema the caller wrote is
   untouched — it is a translation, not an edit.
@@ -1381,6 +1405,46 @@ which is the safe direction for a ceiling and a terrible place to find a typo.
 **A job with no tier declared is `standard`** — named that way round so a job
 added later and not thought about costs too much rather than quietly being done
 badly.
+
+**Reading a lead sheet is a routed job, so its plan is checked rather than
+trusted** — `services/sheetPlan.ts` → `repairPlan()`. `normalizePlan` clamps a
+plan to something that *can* be run — real indices, known field targets, unique
+keys — and says nothing about whether it makes sense, and it was the only thing
+between the analyst and the pipeline. That was survivable while one model read
+every sheet and read them well; the honest position on a routed job is that the
+next model to serve it is one nobody here has tried. Three repairs, and every
+one of them is **reported** at the top of the review screen rather than done
+quietly:
+
+- **A table split at a blank row is joined back up.** The prompt calls this
+  "the most damaging mistake available to you" and it is not overstating it:
+  the fragment sits below the header, so it has no header, so every column in
+  it is unnamed, so nothing in it is a name — and `extractRows` drops a row it
+  cannot name. The Owner gets an empty group beside a full one that stops
+  halfway down their file. Two of five leads, gone quietly.
+- **Two tables claiming the same rows are separated.** The opposite failure and
+  the worse one, because it does not look like a failure: the same business
+  written into two groups, scored twice, written to twice.
+- **A table where nothing was mapped as the name gets one anyway.**
+  `buildTable` has always rescued this; the analyst's plans went through
+  `normalizePlan` instead and did not, so a whole table could import as an
+  empty group. Chosen by reading the cells (`nameishness`), not by taking the
+  first column going — the leftmost column of a lead sheet is very often S/N,
+  and four leads called "1", "2", "4" and "5" are saved in the same sense that
+  a shredded document is filed.
+
+**A plan that came back *from* the review screen is never repaired.** A person
+who splits a table there has decided to split it, and an "obvious" correction
+that undoes what somebody just did by hand is the worst thing this could do.
+The other negative that matters as much: two genuinely different tables must
+not be merged, so a continuation is only recognised when the later block has no
+header of its own, sits at most two *blank* rows below, and fills the same
+columns.
+
+`checks/sheetAnalyst.ts` (39) is the committed half — it drives the real
+`analyzeGrids` against a fake OpenRouter and a fake Anthropic and asserts on the
+request body, then runs the repairs over a sheet shaped like the one the prompt
+describes.
 
 `checks/modelChoice.ts` (18), `checks/costs.ts` (32) and `checks/budgets.ts` (33)
 are the committed halves. The first asserts on **what went over the wire** against

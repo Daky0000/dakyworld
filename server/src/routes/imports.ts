@@ -5,7 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import { AnalystError, analyzeGrids } from "../lib/anthropic.js";
 import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from "../lib/google.js";
 import { handleGoogleCallback } from "./settings.js";
-import { detectTables, normalizePlan, type ImportPlan } from "../services/sheetPlan.js";
+import { detectTables, normalizePlan, repairPlan, type ImportPlan } from "../services/sheetPlan.js";
 import { SpreadsheetError, isSpreadsheetName, listWorkbookSheets, parseWorkbook, type SheetGrid } from "../services/spreadsheet.js";
 import { buildPreviews, commitPlan } from "../services/leadImport.js";
 import { assertSpreadsheetBytes, FileTypeError } from "../lib/fileType.js";
@@ -166,11 +166,13 @@ importsRouter.post("/analyze", async (req, res, next) => {
     let plan: ImportPlan = { tables: hints, summary: "" };
     let analyzedBy = "rules";
     let warning: string | null = null;
+    let fromAnalyst = false;
 
     if (input.useAi) {
       try {
         const analysis = await analyzeGrids(grids, hints);
         plan = analysis.plan;
+        fromAnalyst = true;
         analyzedBy = analysis.model;
         // Say when somebody other than the first choice read the sheet — an
         // ox-alpha key missing and Claude covering is work done by a stand-in,
@@ -185,7 +187,13 @@ importsRouter.post("/analyze", async (req, res, next) => {
       }
     }
 
-    const normalized = normalizePlan(plan, grids);
+    // Only the analyst's plan is repaired. The pattern rules already merge
+    // their own blocks and cannot overlap themselves, and a plan that came
+    // back from the review screen carries decisions a person made — see
+    // `repairPlan`.
+    const { plan: normalized, repairs } = fromAnalyst
+      ? repairPlan(plan, grids, hints)
+      : { plan: normalizePlan(plan, grids), repairs: [] as string[] };
     const saved = await prisma.leadImport.update({
       where: { id: record.id },
       data: {
@@ -204,6 +212,10 @@ importsRouter.post("/analyze", async (req, res, next) => {
       previews: buildPreviews(grids, normalized),
       sheets: grids.map((grid) => ({ name: grid.name, rows: grid.rows.length, columns: grid.rows[0]?.length ?? 0 })),
       warning,
+      // Also on the end of the summary, which is what the review screen prints.
+      // Carried separately so a client can show them as their own list without
+      // parsing prose back out of a paragraph.
+      repairs,
     });
   } catch (err) {
     if (record) {

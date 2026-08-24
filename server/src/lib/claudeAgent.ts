@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { recordLlmCall } from "./llmLedger.js";
 import { AnalystError, analystKey, type Effort } from "./claude.js";
 import { costOf, modelForEffort, type ModelRate } from "./claudePricing.js";
-import { PROVIDER_PRICING, providerConfigured, providerKey, providerModel, requestFee } from "./models/registry.js";
+import { PROVIDER_PRICING, providerConfigured, providerKey, providerModel, reasoningEffortFor, requestFee } from "./models/registry.js";
 import { rateForModel } from "./models/call.js";
 
 /**
@@ -333,12 +333,15 @@ interface WireTurn {
   content: Anthropic.Beta.BetaContentBlockParam[];
 }
 
-/** Our effort word onto ox-alpha's three. See the block comment above. */
-export function reasoningEffortFor(effort: Effort): "low" | "high" | "max" {
-  if (effort === "low") return "low";
-  if (effort === "medium") return "high";
-  return "max";
-}
+/**
+ * Our effort word onto ox-alpha's three. See the block comment above.
+ *
+ * It lives in `models/registry.ts` with the other vendor facts now, because
+ * the one-shot half of the model layer needs the same answer and was sending
+ * nothing at all — re-exported here so this loop and its check keep reading it
+ * from the file that speaks the wire.
+ */
+export { reasoningEffortFor };
 
 /**
  * The conversation as OpenAI chat messages.
