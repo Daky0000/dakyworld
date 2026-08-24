@@ -1,22 +1,20 @@
 import express, { Router } from "express";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { AnalystError, analyzeGrids } from "../lib/anthropic.js";
+import { attachUser } from "../middleware/auth.js";
+import { AnalystError, analystConfigured, analyzeGrids } from "../lib/anthropic.js";
 import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from "../lib/google.js";
-import { handleGoogleCallback } from "./settings.js";
-import { detectTables, normalizePlan, repairPlan, type ImportPlan } from "../services/sheetPlan.js";
-import { SpreadsheetError, isSpreadsheetName, listWorkbookSheets, parseWorkbook, type SheetGrid } from "../services/spreadsheet.js";
-import { buildPreviews, commitPlan } from "../services/leadImport.js";
-import { assertSpreadsheetBytes, FileTypeError } from "../lib/fileType.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import { handleGoogleCallback } from "./settings.js";
+import { detectTables, normalizePlan, type ImportPlan } from "../services/sheetPlan.js";
+import { SpreadsheetError, isSpreadsheetName, listWorkbookSheets, parseWorkbook, type SheetGrid } from "../services/spreadsheet.js";
+import { buildPreviews, commitPlan, loadCheckpoint } from "../services/leadImport.js";
 
 export const importsRouter = Router();
 
+importsRouter.use(attachUser);
 importsRouter.use(gateBy({ view: "leads.import", create: "leads.import", edit: "leads.import", remove: "leads.import" }));
-
-// Imports create groups, spend Anthropic credits and reach into a Google
-// account — Owner-only, like the other integration surfaces.
 
 // An uploaded workbook rides in the JSON body as base64, so these routes parse
 // bodies far larger than the rest of the API allows. Deliberately after the
@@ -50,7 +48,7 @@ function cacheGrids(importId: string, grids: SheetGrid[]) {
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-function decodeUpload(dataBase64: string, fileName: string): Buffer {
+function decodeUpload(dataBase64: string): Buffer {
   // Accepts a bare base64 string or a data: URL, since both are one line of
   // client code away and neither is worth failing over.
   const payload = dataBase64.includes(",") && dataBase64.startsWith("data:") ? dataBase64.slice(dataBase64.indexOf(",") + 1) : dataBase64;
@@ -58,19 +56,6 @@ function decodeUpload(dataBase64: string, fileName: string): Buffer {
   if (!buffer.length) throw new SpreadsheetError("That file came through empty.");
   if (buffer.length > MAX_UPLOAD_BYTES) {
     throw new SpreadsheetError("That file is over 20 MB. Split it, or import it from Google Drive instead.");
-  }
-  // The extension was checked by the caller; this checks that the bytes agree
-  // with it, and that an .xlsx is not a decompression bomb wearing the name of
-  // a spreadsheet. Both parsers behind this are handed a whole Buffer, so the
-  // only place to refuse one is before it is opened.
-  try {
-    assertSpreadsheetBytes(buffer, fileName);
-  } catch (err) {
-    // Re-thrown as this router's own error so it reaches the user as the 400 it
-    // is. Left as a FileTypeError it would fall through to the central handler
-    // and arrive as "Something went wrong", about a file the user can see.
-    if (err instanceof FileTypeError) throw new SpreadsheetError(err.message);
-    throw err;
   }
   return buffer;
 }
@@ -106,7 +91,7 @@ importsRouter.post("/sheets", async (req, res, next) => {
     if (!isSpreadsheetName(fileName)) {
       return res.status(400).json({ error: "Upload an .xlsx, .csv or .tsv file." });
     }
-    res.json({ sheets: await listWorkbookSheets(decodeUpload(dataBase64, fileName), fileName) });
+    res.json({ sheets: await listWorkbookSheets(decodeUpload(dataBase64), fileName) });
   } catch (err) {
     if (err instanceof SpreadsheetError) return res.status(err.status).json({ error: err.message });
     next(err);
@@ -132,7 +117,7 @@ async function loadGrids(input: z.infer<typeof analyzeInput>): Promise<{ grids: 
     throw new SpreadsheetError("Send a file to import, or pick one from Google Drive.");
   }
   if (!isSpreadsheetName(input.fileName)) throw new SpreadsheetError("Upload an .xlsx, .csv or .tsv file.");
-  const grids = await parseWorkbook(decodeUpload(input.dataBase64, input.fileName), input.fileName, input.sheetNames);
+  const grids = await parseWorkbook(decodeUpload(input.dataBase64), input.fileName, input.sheetNames);
   return { grids, fileName: input.fileName };
 }
 
@@ -166,34 +151,22 @@ importsRouter.post("/analyze", async (req, res, next) => {
     let plan: ImportPlan = { tables: hints, summary: "" };
     let analyzedBy = "rules";
     let warning: string | null = null;
-    let fromAnalyst = false;
 
-    if (input.useAi) {
+    if (input.useAi && (await analystConfigured())) {
       try {
         const analysis = await analyzeGrids(grids, hints);
         plan = analysis.plan;
-        fromAnalyst = true;
         analyzedBy = analysis.model;
-        // Say when somebody other than the first choice read the sheet — an
-        // ox-alpha key missing and Claude covering is work done by a stand-in,
-        // which the Owner should know rather than discover on the bill.
-        warning = analysis.note;
       } catch (err) {
         // A failed analyst call is a degraded import, not a failed one — the
-        // pattern rules still produced something the Owner can correct. The
-        // error already names what to do: no model connected for reading
-        // sheets, a rate limit, a refusal.
+        // pattern rules still produced something the Owner can correct.
         warning = err instanceof AnalystError ? err.message : "The AI analyst couldn't be reached; used pattern rules instead.";
       }
+    } else if (input.useAi) {
+      warning = "No Anthropic API key is set, so the sheet was mapped with pattern rules. Add a key for messier files.";
     }
 
-    // Only the analyst's plan is repaired. The pattern rules already merge
-    // their own blocks and cannot overlap themselves, and a plan that came
-    // back from the review screen carries decisions a person made — see
-    // `repairPlan`.
-    const { plan: normalized, repairs } = fromAnalyst
-      ? repairPlan(plan, grids, hints)
-      : { plan: normalizePlan(plan, grids), repairs: [] as string[] };
+    const normalized = normalizePlan(plan, grids);
     const saved = await prisma.leadImport.update({
       where: { id: record.id },
       data: {
@@ -212,10 +185,6 @@ importsRouter.post("/analyze", async (req, res, next) => {
       previews: buildPreviews(grids, normalized),
       sheets: grids.map((grid) => ({ name: grid.name, rows: grid.rows.length, columns: grid.rows[0]?.length ?? 0 })),
       warning,
-      // Also on the end of the summary, which is what the review screen prints.
-      // Carried separately so a client can show them as their own list without
-      // parsing prose back out of a paragraph.
-      repairs,
     });
   } catch (err) {
     if (record) {
@@ -260,7 +229,7 @@ async function grabGrids(importId: string, fallback: { dataBase64?: string; file
   if (!fallback.dataBase64 || !name) {
     throw new SpreadsheetError("The uploaded file is no longer in memory. Upload it again to finish the import.");
   }
-  const grids = await parseWorkbook(decodeUpload(fallback.dataBase64, name), name, record.sheetNames);
+  const grids = await parseWorkbook(decodeUpload(fallback.dataBase64), name, record.sheetNames);
   cacheGrids(importId, grids);
   return grids;
 }
@@ -291,6 +260,12 @@ importsRouter.post("/:id/commit", async (req, res, next) => {
     const input = planInput.parse(req.body);
     const record = await prisma.leadImport.findUnique({ where: { id: req.params.id } });
     if (!record) return res.status(404).json({ error: "Import not found" });
+
+    let checkpoint = null;
+    if (record.status === "IMPORTING" && record.commitState) {
+      checkpoint = record.commitState as unknown as Awaited<ReturnType<typeof import("../services/leadImport.js")["loadCheckpoint"]>>;
+    }
+
     if (record.status === "IMPORTED") {
       return res.status(409).json({ error: "This import has already been run. Start a new one to import the file again." });
     }
@@ -301,16 +276,21 @@ importsRouter.post("/:id/commit", async (req, res, next) => {
       return res.status(400).json({ error: "No tables are ticked for import." });
     }
 
-    const result = await commitPlan(record.id, grids, normalized);
+    const { commitPlan } = await import("../services/leadImport.js");
+    const result = await commitPlan(record.id, grids, normalized, checkpoint ?? undefined);
+    const importedAt = result.status === "IMPORTED" ? new Date() : null;
     const saved = await prisma.leadImport.update({
       where: { id: record.id },
       data: {
-        status: "IMPORTED",
+        status: result.status,
         plan: normalized as unknown as Prisma.InputJsonValue,
         groupsCreated: result.groupsCreated,
         leadsCreated: result.leadsCreated,
         leadsUpdated: result.leadsUpdated,
         rowsSkipped: result.rowsSkipped,
+        importedAt: importedAt ?? undefined,
+        commitState: result.status === "IMPORTED" ? Prisma.JsonNull : undefined,
+        error: result.status === "IMPORTING" ? null : undefined,
       },
       include: { groups: { include: { _count: { select: { leads: true } } } } },
     });

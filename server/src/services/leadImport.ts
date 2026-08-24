@@ -9,13 +9,12 @@
  * what loses the data.
  */
 
-import type { LeadCaptureMethod, Prisma } from "@prisma/client";
+import type { LeadCaptureMethod, LeadGroup, Prisma } from "@prisma/client";
 import { enrolNewLeads } from "./emailSequences.js";
 import { prisma } from "../lib/prisma.js";
 import { builtinField, isBuiltinKey } from "./leadFields.js";
 import { extractRows, type ImportPlan, type PlanTable } from "./sheetPlan.js";
 import type { SheetGrid } from "./spreadsheet.js";
-import { normaliseTags, registerTags } from "./leadTags.js";
 
 // --- Preview ---------------------------------------------------------------
 
@@ -188,6 +187,7 @@ function fieldsForTable(table: PlanTable): Prisma.LeadFieldCreateManyInput[] {
 // --- Commit ----------------------------------------------------------------
 
 export interface CommitResult {
+  status: "IMPORTING" | "IMPORTED";
   groupsCreated: number;
   leadsCreated: number;
   leadsUpdated: number;
@@ -195,7 +195,40 @@ export interface CommitResult {
   groups: { id: string; name: string; leads: number }[];
 }
 
+export interface ImportCheckpoint {
+  tableIndex: number;
+  chunkIndex: number;
+  currentGroupId: string | null;
+  result: {
+    groupsCreated: number;
+    leadsCreated: number;
+    leadsUpdated: number;
+    rowsSkipped: number;
+    groups: { id: string; name: string; leads: number }[];
+  };
+  startedAt: string;
+}
+
 const CHUNK = 200;
+
+export async function loadCheckpoint(importId: string): Promise<ImportCheckpoint | null> {
+  const record = await prisma.leadImport.findUnique({
+    where: { id: importId },
+    select: { commitState: true, status: true },
+  });
+  if (!record?.commitState || record.status !== "IMPORTING") return null;
+  return record.commitState as unknown as ImportCheckpoint;
+}
+
+async function saveCheckpoint(importId: string, checkpoint: ImportCheckpoint) {
+  await prisma.leadImport.update({
+    where: { id: importId },
+    data: {
+      status: "IMPORTING",
+      commitState: checkpoint as unknown as Prisma.InputJsonValue,
+    },
+  });
+}
 
 /**
  * The tag these rows will carry on the Leads page. A native Google Sheet is
@@ -218,40 +251,80 @@ async function captureMethodFor(importId: string): Promise<LeadCaptureMethod> {
  * its rows; rows whose identity already exists are refreshed rather than
  * duplicated, and only where the sheet actually has a value — an import must
  * never blank out a field somebody filled in by hand.
+ *
+ * Long worksheets are processed in checkpoints so a timeout or error can be
+ * resumed from where it stopped rather than re-doing everything.
  */
-export async function commitPlan(importId: string, grids: SheetGrid[], plan: ImportPlan): Promise<CommitResult> {
+export async function commitPlan(importId: string, grids: SheetGrid[], plan: ImportPlan, existingCheckpoint?: ImportCheckpoint): Promise<CommitResult> {
   const byName = new Map(grids.map((grid) => [grid.name, grid]));
-  const result: CommitResult = { groupsCreated: 0, leadsCreated: 0, leadsUpdated: 0, rowsSkipped: 0, groups: [] };
-  // createMany can't return ids, so the leads this import actually created are
-  // found afterwards by the groups it wrote into and the moment it started.
-  const startedAt = new Date();
+  const result: CommitResult = {
+    status: "IMPORTING",
+    groupsCreated: existingCheckpoint?.result.groupsCreated ?? 0,
+    leadsCreated: existingCheckpoint?.result.leadsCreated ?? 0,
+    leadsUpdated: existingCheckpoint?.result.leadsUpdated ?? 0,
+    rowsSkipped: existingCheckpoint?.result.rowsSkipped ?? 0,
+    groups: existingCheckpoint?.result.groups ?? [],
+  };
+  const startedAt = new Date(existingCheckpoint?.startedAt ?? Date.now());
   const captureMethod = await captureMethodFor(importId);
 
-  for (const table of plan.tables) {
+  const tables = plan.tables.filter((table) => table.include !== false);
+  const startTableIndex = existingCheckpoint?.tableIndex ?? 0;
+
+  for (let t = startTableIndex; t < tables.length; t++) {
+    const table = tables[t];
     if (table.include === false) continue;
     const grid = byName.get(table.sheet) ?? (grids.length === 1 ? grids[0] : undefined);
     if (!grid) continue;
 
     const { rows, skipped } = extractRows(grid, table);
     result.rowsSkipped += skipped;
-    if (!rows.length) continue;
+    if (!rows.length) {
+      await saveCheckpoint(importId, {
+        tableIndex: t + 1,
+        chunkIndex: 0,
+        currentGroupId: null,
+        result: { ...result, groups: [...result.groups] },
+        startedAt: startedAt.toISOString(),
+      });
+      continue;
+    }
 
-    const group = await prisma.leadGroup.create({
-      data: {
-        name: table.title.slice(0, 80),
-        slug: await uniqueSlug(table.title),
-        description: table.notes?.slice(0, 300) || null,
-        autoCreated: true,
-        sourceLabel: `${table.sheet}!${table.firstDataRow + 1}-${table.lastDataRow + 1}`,
-        leadImportId: importId,
-      },
-    });
-    result.groupsCreated += 1;
+    let group: LeadGroup;
+    const existingGroupId = existingCheckpoint?.currentGroupId;
+    if (existingGroupId) {
+      group = await prisma.leadGroup.findUnique({ where: { id: existingGroupId } }) ?? (() => { throw new Error(`Group ${existingGroupId} missing`); })();
+    } else {
+      try {
+        group = await prisma.leadGroup.create({
+          data: {
+            name: table.title.slice(0, 80),
+            slug: await uniqueSlug(table.title),
+            description: table.notes?.slice(0, 300) || null,
+            autoCreated: true,
+            sourceLabel: `${table.sheet}!${table.firstDataRow + 1}-${table.lastDataRow + 1}`,
+            leadImportId: importId,
+          },
+        });
+        result.groupsCreated += 1;
+      } catch (err) {
+        if ((err as Prisma.PrismaClientKnownRequestError)?.code === "P2002") {
+          group = await prisma.leadGroup.findFirst({ where: { leadImportId: importId, name: table.title.slice(0, 80) } }) ??
+                  await prisma.leadGroup.findFirst({ where: { slug: await uniqueSlug(table.title) } }) ??
+                  (() => { throw err; })();
+        } else {
+          throw err;
+        }
+      }
+    }
 
-    const fields = fieldsForTable(table).map((field) => ({ ...field, groupId: group.id }));
-    if (fields.length) await prisma.leadField.createMany({ data: fields });
+    const wasTableProcessed = (existingCheckpoint?.tableIndex ?? 0) > t ||
+      (existingCheckpoint?.tableIndex === t && (existingCheckpoint?.chunkIndex ?? 0) > 0);
+    if (!wasTableProcessed) {
+      const fields = fieldsForTable(table).map((field) => ({ ...field, groupId: group.id }));
+      if (fields.length) await prisma.leadField.createMany({ data: fields });
+    }
 
-    // Two rows in the same sheet can share an identity; keep the first.
     const seen = new Set<string>();
     const prepared = rows
       .map((row) => ({ ...row, dedupeKey: dedupeKeyFor(row.lead) }))
@@ -265,83 +338,103 @@ export async function commitPlan(importId: string, grids: SheetGrid[], plan: Imp
         return true;
       });
 
-    const keys = prepared.map((row) => row.dedupeKey).filter((key): key is string => Boolean(key));
-    const existing = keys.length
-      ? await prisma.lead.findMany({
-          where: { dedupeKey: { in: keys } },
-          select: { id: true, dedupeKey: true, customFields: true, groupId: true },
-        })
-      : [];
+    const startChunk = (existingCheckpoint?.tableIndex === t) ? (existingCheckpoint?.chunkIndex ?? 0) : 0;
+
+    for (let offset = startChunk; offset < prepared.length; offset += CHUNK) {
+      const batch = prepared.slice(offset, offset + CHUNK);
+      const keys = batch.map((row) => row.dedupeKey).filter((key): key is string => Boolean(key));
+
+    const existing: { id: string; dedupeKey: string; customFields: unknown; groupId: string | null }[] = [];
+    for (let k = 0; k < keys.length; k += CHUNK) {
+      const keyBatch = keys.slice(k, k + CHUNK);
+      const found = await prisma.lead.findMany({
+        where: { dedupeKey: { in: keyBatch } },
+        select: { id: true, dedupeKey: true, customFields: true, groupId: true },
+      });
+      existing.push(...(found as typeof existing));
+    }
     const existingByKey = new Map(existing.map((lead) => [lead.dedupeKey as string, lead]));
 
-    const toCreate: Prisma.LeadCreateManyInput[] = [];
+      const toCreate: Prisma.LeadCreateManyInput[] = [];
+      const toUpdate: { where: { id: string }; data: Prisma.LeadUncheckedUpdateInput }[] = [];
 
-    // A "Tags" column arrives as whatever the sheet spelled it. Registered
-    // once for the whole table rather than per row, so a 400-row import is one
-    // round trip instead of 400 — and stored as slugs, which is what every
-    // other tag writer stores. See services/leadTags.ts.
-    await registerTags(prepared.flatMap((row) => (Array.isArray(row.lead.tags) ? (row.lead.tags as string[]) : [])));
+      for (const row of batch) {
+        const scalars = row.lead as Prisma.LeadUncheckedCreateInput & Record<string, unknown>;
+        const base = {
+          ...scalars,
+          contactName: String(row.lead.contactName),
+          source: (row.lead.source as Prisma.LeadCreateManyInput["source"]) ?? (table.leadSource as Prisma.LeadCreateManyInput["source"]),
+          status: (row.lead.status as Prisma.LeadCreateManyInput["status"]) ?? (table.status as Prisma.LeadCreateManyInput["status"]),
+          leadScore: typeof row.lead.leadScore === "number" ? row.lead.leadScore : scoreRow(row.lead),
+          captureMethod,
+          groupId: group.id,
+          dedupeKey: row.dedupeKey,
+          customFields: Object.keys(row.custom).length ? (row.custom as Prisma.InputJsonValue) : undefined,
+          enrichment: { importId, sheet: table.sheet, row: row.rowIndex + 1, raw: row.raw } as Prisma.InputJsonValue,
+        };
 
-    for (const row of prepared) {
-      const scalars = row.lead as Prisma.LeadUncheckedCreateInput & Record<string, unknown>;
-      if (Array.isArray(scalars.tags)) scalars.tags = normaliseTags(scalars.tags as string[]);
-      const base = {
-        ...scalars,
-        contactName: String(row.lead.contactName),
-        source: (row.lead.source as Prisma.LeadCreateManyInput["source"]) ?? (table.leadSource as Prisma.LeadCreateManyInput["source"]),
-        status: (row.lead.status as Prisma.LeadCreateManyInput["status"]) ?? (table.status as Prisma.LeadCreateManyInput["status"]),
-        leadScore: typeof row.lead.leadScore === "number" ? row.lead.leadScore : scoreRow(row.lead),
-        // Set on create only. A lead that arrived on a sheet and is later
-        // found again by a scrape still arrived on a sheet.
-        captureMethod,
-        groupId: group.id,
-        dedupeKey: row.dedupeKey,
-        customFields: Object.keys(row.custom).length ? (row.custom as Prisma.InputJsonValue) : undefined,
-        enrichment: { importId, sheet: table.sheet, row: row.rowIndex + 1, raw: row.raw } as Prisma.InputJsonValue,
-      } satisfies Prisma.LeadCreateManyInput;
+        const match = row.dedupeKey ? existingByKey.get(row.dedupeKey) : undefined;
+        if (!match) {
+          toCreate.push(base);
+          continue;
+        }
 
-      const match = row.dedupeKey ? existingByKey.get(row.dedupeKey) : undefined;
-      if (!match) {
-        toCreate.push(base);
-        continue;
+        const update: Prisma.LeadUncheckedUpdateInput = {};
+        for (const [key, value] of Object.entries(scalars)) {
+          if (value === null || value === undefined || value === "") continue;
+          if (key === "contactName" && !value) continue;
+          (update as Record<string, unknown>)[key] = value;
+        }
+        if (Object.keys(row.custom).length) {
+          const previous = (match.customFields as Record<string, unknown> | null) ?? {};
+          update.customFields = { ...previous, ...row.custom } as Prisma.InputJsonValue;
+        }
+        if (!match.groupId) update.groupId = group.id;
+
+        toUpdate.push({ where: { id: match.id }, data: update });
+        result.leadsUpdated += 1;
       }
 
-      // Refresh, don't overwrite: only fields the sheet actually filled in,
-      // and custom values merged on top of whatever the lead already carried.
-      const update: Prisma.LeadUncheckedUpdateInput = {};
-      for (const [key, value] of Object.entries(scalars)) {
-        if (value === null || value === undefined || value === "") continue;
-        if (key === "contactName" && !value) continue;
-        (update as Record<string, unknown>)[key] = value;
+      for (let c = 0; c < toCreate.length; c += CHUNK) {
+        const createBatch = toCreate.slice(c, c + CHUNK);
+        const created = await prisma.lead.createMany({ data: createBatch, skipDuplicates: true });
+        result.leadsCreated += created.count;
       }
-      if (Object.keys(row.custom).length) {
-        const previous = (match.customFields as Record<string, unknown> | null) ?? {};
-        update.customFields = { ...previous, ...row.custom } as Prisma.InputJsonValue;
+
+      for (let u = 0; u < toUpdate.length; u += 50) {
+        const updateBatch = toUpdate.slice(u, u + 50);
+        await Promise.all(updateBatch.map((op) => prisma.lead.update(op)));
       }
-      if (!match.groupId) update.groupId = group.id;
 
-      await prisma.lead.update({ where: { id: match.id }, data: update });
-      result.leadsUpdated += 1;
-    }
-
-    for (let offset = 0; offset < toCreate.length; offset += CHUNK) {
-      const batch = toCreate.slice(offset, offset + CHUNK);
-      // skipDuplicates covers a dedupeKey another import created in between.
-      const created = await prisma.lead.createMany({ data: batch, skipDuplicates: true });
-      result.leadsCreated += created.count;
+      await saveCheckpoint(importId, {
+        tableIndex: t,
+        chunkIndex: offset + CHUNK,
+        currentGroupId: group.id,
+        result: { ...result, groups: [...result.groups] },
+        startedAt: startedAt.toISOString(),
+      });
     }
 
     result.groups.push({ id: group.id, name: group.name, leads: prepared.length });
+
+    await saveCheckpoint(importId, {
+      tableIndex: t + 1,
+      chunkIndex: 0,
+      currentGroupId: null,
+      result: { ...result, groups: [...result.groups] },
+      startedAt: startedAt.toISOString(),
+    });
   }
 
-  // Anything new goes to whichever email sequences are watching for it.
   if (result.leadsCreated > 0) {
+    const allGroupIds = result.groups.map((group) => group.id);
     const created = await prisma.lead.findMany({
-      where: { groupId: { in: result.groups.map((group) => group.id) }, createdAt: { gte: startedAt } },
+      where: { groupId: { in: allGroupIds }, createdAt: { gte: startedAt } },
       select: { id: true },
     });
     await enrolNewLeads(created.map((lead) => lead.id));
   }
 
+  result.status = "IMPORTED";
   return result;
 }

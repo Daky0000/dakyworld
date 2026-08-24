@@ -113,16 +113,20 @@ export function LeadImport() {
 
   const commit = useMutation({
     mutationFn: () =>
-      api.post<{ result: { groups: { id: string; name: string; leads: number }[]; leadsCreated: number; leadsUpdated: number } }>(
+      api.post<{ result: { status: string; groups: { id: string; name: string; leads: number }[]; leadsCreated: number; leadsUpdated: number; rowsSkipped: number }; import: typeof analysis extends { import: infer I } ? I : never }>(
         `/imports/${analysis?.import.id}/commit`,
         { plan, dataBase64: upload?.dataBase64, fileName: upload?.name },
       ),
     onSuccess: (response) => {
-      setDone({ groups: response.result.groups, created: response.result.leadsCreated, updated: response.result.leadsUpdated });
-      void qc.invalidateQueries({ queryKey: ["imports"] });
-      void qc.invalidateQueries({ queryKey: ["leads"] });
-      void qc.invalidateQueries({ queryKey: ["lead-stats"] });
-      void qc.invalidateQueries({ queryKey: ["lead-fields"] });
+      if (response.result.status === "IMPORTING") {
+        setAnalysis((prev) => (prev ? { ...prev, import: response.import } : null));
+      } else {
+        setDone({ groups: response.result.groups, created: response.result.leadsCreated, updated: response.result.leadsUpdated });
+        void qc.invalidateQueries({ queryKey: ["imports"] });
+        void qc.invalidateQueries({ queryKey: ["leads"] });
+        void qc.invalidateQueries({ queryKey: ["lead-stats"] });
+        void qc.invalidateQueries({ queryKey: ["lead-fields"] });
+      }
     },
   });
 
@@ -241,8 +245,8 @@ function Connections({ connections }: { connections?: AppSettings }) {
         <span className="font-mono text-[11px] uppercase tracking-[.14em] text-ink/60">Connections</span>
 
         <span className="flex items-center gap-2 text-sm">
-          <StatusDot tone={analyst?.reading.ready ? "ok" : "idle"} />
-          {analyst?.reading.ready ? (
+          <StatusDot tone={analyst?.configured ? "ok" : "idle"} />
+          {analyst?.configured ? (
             <span className="text-ink/70">AI analyst on</span>
           ) : (
             <span className="text-ink/50">No AI analyst — sheets are mapped by pattern rules</span>
@@ -399,7 +403,7 @@ function SourceStep({
           <label className="flex items-center gap-2 text-sm text-ink/70">
             <input type="checkbox" checked={useAi} onChange={(event) => onUseAi(event.target.checked)} className="h-3.5 w-3.5 accent-blue" />
             Let the AI analyst read it
-            {!connections?.analyst.reading.ready && <span className="text-xs text-ink/40">(no model connected — pattern rules will be used)</span>}
+            {!connections?.analyst.configured && <span className="text-xs text-ink/40">(no API key set — pattern rules will be used)</span>}
           </label>
           <span className="flex-1" />
           <Button onClick={onAnalyze} disabled={busy || (chosenSheets.length === 0 && sheets.length > 0)}>
@@ -527,6 +531,7 @@ function ReviewStep({
 }) {
   const { data: fieldSet } = useLeadFields(null);
   const included = plan.tables.filter((table) => table.include !== false);
+  const importing = analysis.import.status === "IMPORTING";
 
   const updateTable = (index: number, patch: Partial<PlanTable>) => {
     onPlan({ ...plan, tables: plan.tables.map((table, position) => (position === index ? { ...table, ...patch } : table)) });
@@ -534,6 +539,14 @@ function ReviewStep({
 
   return (
     <section className="mb-10">
+      {importing && (
+        <div className="mb-4 rounded-2xl border border-blue/30 bg-blue/5 px-4 py-3">
+          <p className="text-sm font-mono uppercase tracking-[.12em] text-blue">
+            Importing… {analysis.import.leadsCreated} created, {analysis.import.leadsUpdated} updated so far
+          </p>
+        </div>
+      )}
+
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Tables found" value={plan.tables.length} sub={`${included.length} ticked for import`} />
         <StatTile label="Leads to create" value={totalRows} sub="Existing ones are refreshed, not duplicated" />
@@ -543,23 +556,6 @@ function ReviewStep({
 
       {analysis.warning && <Note tone="warn">{analysis.warning}</Note>}
       {plan.summary && <p className="mb-6 border-l-2 border-blue/60 bg-white px-4 py-3 text-sm text-ink/70">{plan.summary}</p>}
-
-      {/*
-        Said rather than done quietly. A boundary the analyst got wrong is the
-        one thing on this screen worth checking before importing — it is where
-        a lead goes missing or gets written into two groups — and a plan
-        silently corrected is a plan nobody checks.
-      */}
-      {analysis.repairs && analysis.repairs.length > 0 && (
-        <Note tone="warn">
-          <span className="font-medium">Corrected before review.</span> Check these boundaries against your file:
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            {analysis.repairs.map((repair) => (
-              <li key={repair}>{repair}</li>
-            ))}
-          </ul>
-        </Note>
-      )}
 
       <div className="space-y-6">
         {plan.tables.map((table, index) => (
@@ -594,7 +590,7 @@ function ReviewStep({
           disabled={committing || !included.length}
           className="bg-cream px-4 py-2 font-mono text-[11px] uppercase tracking-[.12em] text-ink transition hover:bg-white disabled:opacity-50"
         >
-          {committing ? "Importing…" : "Import into leads"}
+          {committing ? (importing ? "Resuming…" : "Importing…") : (importing ? "Resume import" : "Import into leads")}
         </button>
       </div>
     </section>
