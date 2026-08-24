@@ -18,6 +18,7 @@ import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLea
 import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, prepareLeads, storedPrep } from "../services/leadPrep.js";
 import { demoUrl } from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
+import { leadIdsMatchingCustomFields, searchClauses } from "../services/leadSearch.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
 export const leadsRouter = Router();
@@ -87,7 +88,7 @@ const SORTS: Record<string, Prisma.LeadOrderByWithRelationInput> = {
  * it produces — hiding a rehearsal lead is a claim worth a regression check,
  * and the alternative is asserting it eight times over eight queries.
  */
-export function buildWhere(query: Record<string, unknown>): Prisma.LeadWhereInput {
+export function buildWhere(query: Record<string, unknown>, customIds: string[] = []): Prisma.LeadWhereInput {
   const str = (key: string) => (typeof query[key] === "string" && query[key] ? (query[key] as string) : undefined);
   const where: Prisma.LeadWhereInput = {};
 
@@ -143,26 +144,34 @@ export function buildWhere(query: Record<string, unknown>): Prisma.LeadWhereInpu
   const tags = normaliseTags(str("tags")?.split(","));
   if (tags.length > 0) where.tags = str("tagMatch") === "all" ? { hasEvery: tags } : { hasSome: tags };
 
+  // Searching reaches every list, and inside each list every column it has of
+  // its own — see services/leadSearch.ts. `customIds` is the one arm that
+  // needs a round trip, so it is resolved by `leadWhere` and passed in.
   const q = str("q");
-  if (q) {
-    where.OR = [
-      { contactName: { contains: q, mode: "insensitive" } },
-      { companyName: { contains: q, mode: "insensitive" } },
-      { contactEmail: { contains: q, mode: "insensitive" } },
-      { contactPhone: { contains: q, mode: "insensitive" } },
-      { city: { contains: q, mode: "insensitive" } },
-      { category: { contains: q, mode: "insensitive" } },
-      { address: { contains: q, mode: "insensitive" } },
-    ];
-  }
+  if (q) where.OR = searchClauses(q, customIds);
 
   return where;
+}
+
+/**
+ * `buildWhere` with the custom-column arm of the search resolved.
+ *
+ * Every route on this screen goes through here rather than calling
+ * `buildWhere` directly, so that "search finds it" means the same thing in the
+ * table, the counters, the grouped view and the export. A search that reaches
+ * a column in the list view and not in the export is worse than one that
+ * reaches it nowhere: it looks like the lead was deleted.
+ */
+async function leadWhere(query: Record<string, unknown>): Promise<Prisma.LeadWhereInput> {
+  const q = typeof query.q === "string" ? query.q.trim() : "";
+  const customIds = q ? await leadIdsMatchingCustomFields(q) : [];
+  return buildWhere(query, customIds);
 }
 
 // GET /api/leads — filtered, sorted, paged.
 leadsRouter.get("/", async (req, res, next) => {
   try {
-    const where = buildWhere(req.query as Record<string, unknown>);
+    const where = await leadWhere(req.query as Record<string, unknown>);
     const sort = SORTS[String(req.query.sort ?? "newest")] ?? SORTS.newest;
     const take = Math.min(Number(req.query.take) || 300, 1000);
     const skip = Number(req.query.skip) || 0;
@@ -195,7 +204,7 @@ leadsRouter.get("/", async (req, res, next) => {
  */
 leadsRouter.get("/stats", async (req, res, next) => {
   try {
-    const where = buildWhere(req.query as Record<string, unknown>);
+    const where = await leadWhere(req.query as Record<string, unknown>);
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60_000);
 
     const [byStatus, bySource, byMethod, byCity, byCategory, totals, reachable, newThisWeek, groups] = await Promise.all([
@@ -207,7 +216,12 @@ leadsRouter.get("/stats", async (req, res, next) => {
       prisma.lead.groupBy({ by: ["city"], _count: true, where, orderBy: { _count: { city: "desc" } }, take: 25 }),
       prisma.lead.groupBy({ by: ["category"], _count: true, where, orderBy: { _count: { category: "desc" } }, take: 25 }),
       prisma.lead.aggregate({ where, _count: true, _avg: { leadScore: true }, _sum: { estimatedDealSize: true } }),
-      prisma.lead.count({ where: { ...where, OR: [{ contactEmail: { not: null } }, { contactPhone: { not: null } }] } }),
+      // `AND`, not a second `OR`. A search puts its own OR list on `where`, and
+      // spreading a second one replaces it — so this counted every reachable
+      // lead in the database while the tile beside it counted the search.
+      prisma.lead.count({
+        where: { AND: [where, { OR: [{ contactEmail: { not: null } }, { contactPhone: { not: null } }] }] },
+      }),
       prisma.lead.count({ where: { ...where, createdAt: { gte: weekAgo } } }),
       prisma.leadGroup.findMany({
         orderBy: { createdAt: "desc" },
@@ -227,6 +241,128 @@ leadsRouter.get("/stats", async (req, res, next) => {
       cities: byCity.filter((row) => row.city),
       categories: byCategory.filter((row) => row.category),
       groups,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/leads/grouped — the leads page, as lists rather than as one list.
+ *
+ * The page used to fetch a flat page of leads and bucket them in the browser,
+ * which meant the lists you were shown were whatever fell inside the first 300
+ * rows by date. A list of 400 showed 300 of itself and said "300"; the list
+ * below it — older, and just as real — did not appear at all. The header count
+ * on a block was a count of *what had been fetched*, which is the kind of
+ * number people plan an outreach batch against.
+ *
+ * So the grouping happens here, where the counts are real:
+ *
+ *   - `total` is that list's true match count under the current filters, not
+ *     the number of rows in `leads`.
+ *   - `leads` is the first `perGroup` of them in the requested sort order, so
+ *     a big list opens as a preview and "see all" filters to it.
+ *   - Every list that matches is present, however far down the file it sits.
+ *
+ * **Searching spans every list**, and stays grouped while doing it: the answer
+ * to "where is this business" is more useful as "in these two lists" than as a
+ * flat run of rows with no home. Lists with no match drop out, so what is left
+ * is the answer. Filters are applied per list rather than to a page of rows —
+ * see `leadWhere`, which is what makes a search reach a list's own columns.
+ */
+leadsRouter.get("/grouped", async (req, res, next) => {
+  try {
+    const query = req.query as Record<string, unknown>;
+    const where = await leadWhere(query);
+    const sort = SORTS[String(query.sort ?? "newest")] ?? SORTS.newest;
+    // Enough of a list to judge it by; the whole list is one click away.
+    const perGroup = Math.min(Math.max(Number(query.perGroup) || 25, 1), 200);
+    const take = Math.min(Number(query.takeGroups) || 25, 100);
+    const skip = Number(query.skipGroups) || 0;
+
+    // Two passes for the counts, so every block's header is the truth about the
+    // whole list rather than about the rows that happened to be fetched. How
+    // many carry an address is the second number, because "84 businesses" and
+    // "18 of them you can write to" size an outreach batch very differently,
+    // and counting it over a 25-row preview would answer neither.
+    //
+    // `AND` rather than a second `OR`: `where` already carries the search's own
+    // OR list, and setting another would silently replace it.
+    const [counted, reachable] = await Promise.all([
+      prisma.lead.groupBy({ by: ["groupId"], where, _count: { _all: true }, _max: { createdAt: true } }),
+      prisma.lead.groupBy({
+        by: ["groupId"],
+        where: { AND: [where, { contactEmail: { not: null } }] },
+        _count: { _all: true },
+      }),
+    ]);
+
+    // Lists the Owner can see but that nothing matches. Shown only when
+    // nothing is filtered — an empty list is furniture worth keeping in view,
+    // but under a search it is noise standing between you and the answer.
+    const filtering = Object.keys(where).some((key) => key !== "rehearsal");
+    const empties = filtering
+      ? []
+      : (await prisma.leadGroup.findMany({ select: { id: true } }))
+          .filter((group) => !counted.some((row) => row.groupId === group.id))
+          .map((group) => ({ groupId: group.id, _count: { _all: 0 }, _max: { createdAt: null } }));
+
+    const rows = [...counted, ...empties].sort((a, b) => {
+      // Ungrouped last: it is a leftover, not a list somebody made.
+      if (a.groupId === null) return 1;
+      if (b.groupId === null) return -1;
+      // Otherwise the list something arrived in most recently comes first,
+      // which is where you look after a scrape or an import finishes.
+      return (b._max.createdAt?.getTime() ?? 0) - (a._max.createdAt?.getTime() ?? 0);
+    });
+
+    const page = rows.slice(skip, skip + take);
+    const ids = page.map((row) => row.groupId).filter((id): id is string => id !== null);
+    const groups = await prisma.leadGroup.findMany({ where: { id: { in: ids } } });
+    const byId = new Map(groups.map((group) => [group.id, group]));
+
+    const blocks = await Promise.all(
+      page.map(async (row) => {
+        const group = row.groupId ? byId.get(row.groupId) : undefined;
+        const leads = row._count._all
+          ? await prisma.lead.findMany({
+              where: { ...where, groupId: row.groupId },
+              orderBy: sort,
+              take: perGroup,
+              include: {
+                client: { select: { id: true, name: true } },
+                group: { select: { id: true, name: true } },
+                scraperSource: { select: { id: true, name: true } },
+                proposals: { select: { id: true, status: true } },
+              },
+            })
+          : [];
+
+        return {
+          // "none" rather than null, so the block has a React key and the
+          // "see all" link can round-trip through `?groupId=none`.
+          id: row.groupId ?? "none",
+          name: group?.name ?? (row.groupId ? "Deleted list" : "Ungrouped"),
+          slug: group?.slug ?? null,
+          description: group?.description ?? null,
+          tags: group?.tags ?? [],
+          autoCreated: group?.autoCreated ?? false,
+          sourceLabel: group?.sourceLabel ?? null,
+          createdAt: group?.createdAt ?? null,
+          total: row._count._all,
+          withEmail: reachable.find((entry) => entry.groupId === row.groupId)?._count._all ?? 0,
+          leads,
+        };
+      }),
+    );
+
+    res.json({
+      groups: blocks,
+      totalGroups: rows.length,
+      totalLeads: rows.reduce((sum, row) => sum + row._count._all, 0),
+      perGroup,
+      skipGroups: skip,
     });
   } catch (err) {
     next(err);
@@ -402,7 +538,7 @@ leadsRouter.get("/export", async (req, res, next) => {
       return res.status(400).json({ error: "format must be xlsx or pdf" });
     }
 
-    const where = buildWhere(req.query as Record<string, unknown>);
+    const where = await leadWhere(req.query as Record<string, unknown>);
     const sort = SORTS[String(req.query.sort ?? "newest")] ?? SORTS.newest;
     const leads = await prisma.lead.findMany({ where, orderBy: sort, take: EXPORT_LIMIT, include: { group: true } });
 

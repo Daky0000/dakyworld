@@ -168,7 +168,10 @@ captureRouter.post("/run", async (req, res, next) => {
             input: actorInput(actor, values) as object,
             preset: actor.preset,
             leadSource: actor.leadSource,
-            groupName: `${label ?? "Quick capture"} · {{date}}`,
+            // No date in it: a paste labelled the same way tomorrow belongs in
+            // the same list as today's, and an ad-hoc source is thrown away
+            // after the run so it can never pin one of its own.
+            groupName: `${label ?? "Quick capture"}`,
             adhoc: true,
             enabled: true,
             scheduleEnabled: false,

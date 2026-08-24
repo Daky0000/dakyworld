@@ -560,8 +560,10 @@ model LeadGroup {
   leadImport   LeadImport? @relation(fields: [leadImportId], references: [id])
   leadImportId String?
 
-  leads  Lead[]
-  fields LeadField[]
+  leads   Lead[]
+  fields  LeadField[]
+  /// The capture sources that fill this list — see `ScraperSource.leadGroupId`.
+  sources ScraperSource[]
 
   @@index([leadImportId])
 }
@@ -751,6 +753,24 @@ model ScraperSource {
   leadSource LeadSource @default(GOOGLE_MAPS)
   groupName  String? // supports {{name}} and {{date}}
 
+  /// The list this source fills, pinned after the first run.
+  ///
+  /// Every shipped template used to end its group name in `{{date}}`, so a
+  /// source that ran every morning opened a *new* list every morning —
+  /// "Healthcare · 2026-08-24", "Healthcare · 2026-08-25" — and the leads
+  /// page filled up with dated slivers of what is really one audience. Which
+  /// run a lead came from was never the thing a date-stamped list was needed
+  /// for: `Lead.scraperRunId` already answers that, and the leads page already
+  /// filters by it.
+  ///
+  /// So a source now keeps one list. It is resolved once — adopting a list
+  /// that already carries the name before creating one — and pinned here, so
+  /// later runs land in the same place even if somebody renames the list.
+  /// Null means the next run will resolve it. `onDelete: SetNull`, so deleting
+  /// a list makes the next run open a fresh one instead of failing.
+  leadGroup   LeadGroup? @relation(fields: [leadGroupId], references: [id], onDelete: SetNull)
+  leadGroupId String?
+
   enabled      Boolean @default(true)
   maxItems     Int     @default(100)
   /// Leads scoring below this are dropped instead of saved — the noise filter.
@@ -777,6 +797,7 @@ model ScraperSource {
   leads Lead[]
 
   @@index([enabled, scheduleEnabled])
+  @@index([leadGroupId])
 }
 
 model ScraperRun {

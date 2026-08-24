@@ -78,8 +78,17 @@ export function applyInputTemplate(input: unknown, now = new Date(), extra: Reco
   return walk(input);
 }
 
+/**
+ * The name of the list a source fills.
+ *
+ * `{{date}}` and `{{month}}` still work — an Owner who genuinely wants a list
+ * per day can ask for one — but nothing ships with them any more, and the
+ * default is the source's own name. A dated default meant a source could never
+ * add to a list, only ever open one: see `resolveGroup`. Note that once a
+ * source is pinned to a list, the pin wins and the tokens stop mattering.
+ */
 export function renderGroupName(template: string | null, source: ScraperSource, now = new Date()): string {
-  const base = template?.trim() || `${source.name} — {{date}}`;
+  const base = template?.trim() || source.name;
   return base
     .replace(/\{\{\s*name\s*\}\}/gi, source.name)
     .replace(/\{\{\s*date\s*\}\}/gi, now.toISOString().slice(0, 10))
@@ -575,10 +584,54 @@ export async function ingestItems(
   return stats;
 }
 
-async function resolveGroup(source: ScraperSource): Promise<string> {
+/**
+ * The list this run's leads go into: the one this source already fills, else
+ * one that already carries the name, else a new one.
+ *
+ * A source used to open a *new* list on every run, because every shipped
+ * template ended its group name in `{{date}}` — so running the healthcare
+ * capture each morning produced "Healthcare · 2026-08-24", then
+ * "Healthcare · 2026-08-25", and the leads page filled with dated slivers of
+ * what is really one audience. Nobody wanted a list per run: which run a lead
+ * came from is `Lead.scraperRunId`, and the leads page already filters by it.
+ * What people want from a list is the audience — "everyone in Accra with no
+ * website" — which only exists if the same list is added to.
+ *
+ * Three steps, in falling order of what the Owner has actually decided:
+ *
+ *   1. **The list this source is pinned to.** Set on the first run, and
+ *      re-pointable from the Lead capture screen. It wins even if the source
+ *      or the list has since been renamed, because a renamed list is still the
+ *      list somebody has been working.
+ *   2. **A list already carrying this name.** How a source adopts a list made
+ *      by hand, or by an earlier version of itself — including a list an
+ *      import created. Adoption, not creation: the leads already in it stay,
+ *      and so do its columns.
+ *   3. **A new list**, only when neither of those found one.
+ *
+ * The pin is written back on every run rather than only on the first, so a
+ * source whose list was deleted quietly re-pins to whatever it lands in next
+ * instead of resolving by name forever.
+ */
+export async function resolveGroup(source: ScraperSource): Promise<string> {
+  if (source.leadGroupId) {
+    const pinned = await prisma.leadGroup.findUnique({ where: { id: source.leadGroupId }, select: { id: true } });
+    if (pinned) return pinned.id;
+    // The list was deleted. Fall through and resolve a fresh one rather than
+    // failing the run — the leads are already scraped and paid for.
+  }
+
   const name = renderGroupName(source.groupName, source);
   const slug = slugify(name);
+  const groupId = await adoptOrCreateGroup(name, slug, source);
+  await pinGroup(source.id, groupId);
+  return groupId;
+}
+
+async function adoptOrCreateGroup(name: string, slug: string, source: ScraperSource): Promise<string> {
   try {
+    // `update: {}` is the adoption: a list that already carries this name is
+    // used as it stands, name, description, tags and columns untouched.
     const group = await prisma.leadGroup.upsert({
       where: { slug },
       update: {},
@@ -593,6 +646,21 @@ async function resolveGroup(source: ScraperSource): Promise<string> {
       if (existing) return existing.id;
     }
     throw err;
+  }
+}
+
+/**
+ * Remembers the list, so the next run adds to it rather than resolving again.
+ *
+ * Never allowed to fail a run. The leads are already written by the time this
+ * matters, and a source that fails to remember its list is a source that opens
+ * a second one next time — annoying, not lost work.
+ */
+async function pinGroup(sourceId: string, groupId: string): Promise<void> {
+  try {
+    await prisma.scraperSource.update({ where: { id: sourceId }, data: { leadGroupId: groupId } });
+  } catch {
+    /* An ad-hoc source deleted mid-run; the leads are still filed correctly. */
   }
 }
 

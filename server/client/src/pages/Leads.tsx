@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { Lead, LeadFieldDef, LeadGroup, LeadStats } from "../lib/types";
+import type { GroupedLeads, Lead, LeadFieldDef, LeadGroupBlock, LeadStats } from "../lib/types";
 import { LeadDrawer } from "../components/LeadDrawer";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
 import { MessageComposer, type MessageTarget } from "../components/MessageComposer";
@@ -52,6 +52,16 @@ const GROUP_BY = [
 ] as const;
 
 type GroupBy = (typeof GROUP_BY)[number]["value"];
+
+/**
+ * How many rows a list opens with.
+ *
+ * Enough to judge a capture by — who is in it, how reachable they are, whether
+ * the scrape found the right kind of business — and few enough that six lists
+ * are still one screen. The rest of a list is one click away, and the block
+ * header always says how many there really are.
+ */
+const PER_GROUP = 25;
 
 interface Filters {
   q: string;
@@ -147,9 +157,36 @@ export function Leads() {
 
   const query = toQuery(filters);
 
+  /**
+   * Lists are grouped by the server, everything else in the browser.
+   *
+   * Bucketing a flat page of rows was only ever right when there were fewer
+   * leads than fit in one: a list of 400 rendered as a block of 300 with "300"
+   * in its header, and the list underneath it did not appear at all. Grouping
+   * by *list* is the case where each block is a real thing with a real count,
+   * so it asks for lists rather than rows. The other groupings — status, city,
+   * category — are views over the same page and stay where they were.
+   */
+  const grouping = groupBy === "group";
+
   const { data, isLoading } = useQuery({
     queryKey: ["leads", query],
     queryFn: () => api.get<{ items: Lead[]; total: number }>(`/leads?${query}`),
+    enabled: !grouping,
+  });
+  /**
+   * A list opened on its own is not previewed.
+   *
+   * Filtering to one list is what "open this list" does, and answering that
+   * with the same 25 rows would make the link a lie. 200 is the server's
+   * ceiling; past it the block says how many it is showing.
+   */
+  const perGroup = filters.groupId ? 200 : PER_GROUP;
+
+  const { data: grouped, isLoading: loadingGroups } = useQuery({
+    queryKey: ["leads-grouped", query, perGroup],
+    queryFn: () => api.get<GroupedLeads>(`/leads/grouped?${query}&perGroup=${perGroup}`),
+    enabled: grouping,
   });
   const { data: stats } = useQuery({
     queryKey: ["lead-stats", query],
@@ -162,6 +199,7 @@ export function Leads() {
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["leads"] });
+    void qc.invalidateQueries({ queryKey: ["leads-grouped"] });
     void qc.invalidateQueries({ queryKey: ["lead-stats"] });
   };
 
@@ -226,12 +264,35 @@ export function Leads() {
     onError: (err: Error) => setLookedResult(err.message),
   });
 
-  const leads = data?.items ?? [];
-  // Searching is a question about every lead you have, not about one list, so
-  // the answer comes back as one ranked set rather than re-bucketed by list.
-  const searching = filters.q.trim().length > 0;
-  const effectiveGroupBy: GroupBy = searching && groupBy === "group" ? "none" : groupBy;
-  const grouped = useMemo(() => groupLeads(leads, effectiveGroupBy), [leads, effectiveGroupBy]);
+  // What is on screen, whichever way it was fetched. Under "List" that is the
+  // preview of each list; otherwise it is the page of rows being bucketed.
+  const leads = grouping ? (grouped?.groups ?? []).flatMap((group) => group.leads) : (data?.items ?? []);
+  const matching = grouping ? (grouped?.totalLeads ?? 0) : (data?.total ?? 0);
+
+  /**
+   * Searching keeps the lists rather than dissolving them.
+   *
+   * It used to flatten to one ranked run of rows, on the reasoning that a
+   * search is a question about everything. The first half of that is right and
+   * the conclusion does not follow: "which of my lists is this business in" is
+   * most of what somebody is asking, and a flat run of rows is the one answer
+   * that cannot say. Lists with no match drop out on the server, so what is
+   * left *is* the answer — and the search reaches every list's own columns,
+   * which is what makes dropping the rest safe.
+   */
+  const blocks: RenderGroup[] = useMemo(
+    () =>
+      grouping
+        ? (grouped?.groups ?? []).map((group) => ({
+            key: group.id,
+            label: group.name,
+            leads: group.leads,
+            total: group.total,
+            list: group,
+          }))
+        : groupLeads(leads, groupBy),
+    [grouping, grouped, leads, groupBy],
+  );
   const activeFilterCount =
     (filters.q ? 1 : 0) +
     filters.status.length +
@@ -280,7 +341,7 @@ export function Leads() {
                 Tags
               </Button>
             )}
-            <ExportMenu query={query} count={data?.total ?? 0} />
+            <ExportMenu query={query} count={matching} />
             {/* Importing reaches into Google and spends Anthropic credits, and
                 configuring capture spends on Apify. Both are their own
                 permission now, so this asks the same question the API will. */}
@@ -334,7 +395,7 @@ export function Leads() {
         onGroupBy={setGroupBy}
         onChange={setFilters}
         activeFilterCount={activeFilterCount}
-        resultCount={data?.total ?? 0}
+        resultCount={matching}
       />
 
       {managingTags && <TagManager onClose={() => setManagingTags(false)} />}
@@ -376,9 +437,9 @@ export function Leads() {
 
       {/* The columns arrive on their own request, so wait for them too rather
           than flashing a table with no columns in it. */}
-      {isLoading || !fieldSet ? (
+      {(grouping ? loadingGroups : isLoading) || !fieldSet ? (
         <div className="text-sm text-ink/50">Loading…</div>
-      ) : leads.length === 0 ? (
+      ) : blocks.length === 0 ? (
         <EmptyState
           message={
             activeFilterCount > 0
@@ -402,19 +463,16 @@ export function Leads() {
         />
       ) : (
         <div className="space-y-6">
-          {grouped.map((group) => (
-            <LeadGroupBlock
-              key={group.key}
-              label={group.label}
-              leads={group.leads}
-              // Grouping by capture batch is the one view where each block can
+          {blocks.map((block) => (
+            <LeadListBlock
+              key={block.key}
+              label={block.label}
+              leads={block.leads}
+              total={block.total ?? block.leads.length}
+              // Grouping by list is the one view where each block can
               // legitimately have its own columns, so each block asks for them.
-              groupId={effectiveGroupBy === "group" && group.key !== "none" ? group.key : null}
-              // The row itself, so the header can show and edit the list's own
-              // tags. Only present when the blocks *are* lists.
-              group={
-                effectiveGroupBy === "group" ? (stats?.groups.find((entry) => entry.id === group.key) ?? null) : null
-              }
+              groupId={grouping && block.key !== "none" ? block.key : null}
+              list={block.list ?? null}
               fallbackColumns={columns}
               selected={selected}
               onToggle={toggleSelected}
@@ -424,14 +482,25 @@ export function Leads() {
               savingId={updateLead.isPending ? updateLead.variables?.id : undefined}
               saveError={updateLead.error}
               onEditColumns={setColumnsFor}
-              showGroupHeader={effectiveGroupBy !== "none"}
+              showGroupHeader={groupBy !== "none"}
+              // Opening a list is a filter, not a second screen: the columns,
+              // the tags and every bulk action are already here.
+              onOpenList={grouping && block.key !== "none" ? () => setFilters({ ...filters, groupId: block.key }) : undefined}
             />
           ))}
-          {data && data.total > leads.length && (
-            <p className="text-center text-xs text-ink/40">
-              Showing the first {leads.length} of {data.total}. Narrow the filters to see the rest.
-            </p>
-          )}
+          {grouping
+            ? grouped &&
+              grouped.totalGroups > grouped.groups.length && (
+                <p className="text-center text-xs text-ink/40">
+                  Showing {grouped.groups.length} of {grouped.totalGroups} lists. Narrow the filters to see the rest.
+                </p>
+              )
+            : data &&
+              data.total > leads.length && (
+                <p className="text-center text-xs text-ink/40">
+                  Showing the first {leads.length} of {data.total}. Narrow the filters to see the rest.
+                </p>
+              )}
         </div>
       )}
 
@@ -499,7 +568,17 @@ function ExportMenu({ query, count }: { query: string; count: number }) {
 interface RenderGroup {
   key: string;
   label: string;
+  /** What is rendered — a preview under "List", the whole bucket otherwise. */
   leads: Lead[];
+  /**
+   * Every lead in this block that matches, which is not the same number as
+   * `leads.length` when the block is a list bigger than one preview. The whole
+   * point of the grouped endpoint: a header count that is the truth about the
+   * list rather than about what was fetched.
+   */
+  total?: number;
+  /** The list itself, when the block is one. Carries its tags. */
+  list?: LeadGroupBlock;
 }
 
 function groupLeads(leads: Lead[], groupBy: GroupBy): RenderGroup[] {
@@ -548,11 +627,12 @@ function groupLeads(leads: Lead[], groupBy: GroupBy): RenderGroup[] {
   return groups.sort((a, b) => b.leads.length - a.leads.length);
 }
 
-function LeadGroupBlock({
+function LeadListBlock({
   label,
   leads,
+  total,
   groupId,
-  group,
+  list,
   fallbackColumns,
   selected,
   onToggle,
@@ -563,13 +643,17 @@ function LeadGroupBlock({
   saveError,
   onEditColumns,
   showGroupHeader,
+  onOpenList,
 }: {
   label: string;
+  /** What is rendered. A preview of the list, when the list is a long one. */
   leads: Lead[];
-  /** Set only when this block is one capture batch, which may own its columns. */
+  /** Every matching lead in this block — see `RenderGroup.total`. */
+  total: number;
+  /** Set only when this block is one list, which may own its columns. */
   groupId: string | null;
   /** The list itself, when this block is one. Carries its tags. */
-  group: LeadGroup | null;
+  list: LeadGroupBlock | null;
   fallbackColumns: LeadFieldDef[];
   selected: Set<string>;
   onToggle: (id: string) => void;
@@ -582,6 +666,8 @@ function LeadGroupBlock({
   /** Opens the column editor for whichever set this block is rendering. */
   onEditColumns: (groupId: string | null) => void;
   showGroupHeader: boolean;
+  /** Filters the whole screen to this list. Absent when the block isn't one. */
+  onOpenList?: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -592,7 +678,14 @@ function LeadGroupBlock({
   const columns = groupId && ownFields?.scope === "group" ? visibleFields(ownFields) : fallbackColumns;
   const ids = leads.map((lead) => lead.id);
   const allSelected = ids.every((id) => selected.has(id));
-  const withEmail = leads.filter((lead) => lead.contactEmail).length;
+  // Counted over the whole list by the server where there is one, because
+  // counting a 25-row preview would answer a different question from the one
+  // the header appears to be answering. Falls back to the rows in hand for the
+  // groupings that are still bucketed in the browser.
+  const withEmail = list?.withEmail ?? leads.filter((lead) => lead.contactEmail).length;
+  // A list longer than its preview. Every number below has to say which of the
+  // two it is about, or the header quietly reports the preview as the list.
+  const previewing = total > leads.length;
 
   const startEditing = (lead: Lead) => {
     setEditingId(lead.id);
@@ -619,16 +712,23 @@ function LeadGroupBlock({
             {label}
           </button>
           <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">
-            {leads.length} · {withEmail} with email
+            {total} · {withEmail} with email
+            {previewing && ` · showing ${leads.length}`}
           </span>
-          {group && <GroupTags group={group} />}
+          {list && <GroupTags group={list} />}
           <span className="h-px flex-1 bg-ink/10" />
+          {previewing && onOpenList && (
+            <button type="button" onClick={onOpenList} className="font-mono text-[10px] uppercase tracking-[.14em] text-blue">
+              Open this list
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onToggleAll(ids, !allSelected)}
+            title={previewing ? "Selects the rows shown here — open the list to select the rest" : undefined}
             className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40 transition hover:text-ink"
           >
-            {allSelected ? "Deselect" : "Select all"}
+            {allSelected ? "Deselect" : previewing ? `Select these ${leads.length}` : "Select all"}
           </button>
         </header>
       )}
@@ -737,6 +837,16 @@ function LeadGroupBlock({
               })}
             </tbody>
           </table>
+          {previewing && (
+            <p className="border-t border-ink/5 px-4 py-3 text-center text-xs text-ink/40">
+              {leads.length} of {total} in this list.{" "}
+              {onOpenList && (
+                <button type="button" onClick={onOpenList} className="text-blue hover:underline">
+                  Open the list
+                </button>
+              )}
+            </p>
+          )}
         </div>
       )}
     </section>
@@ -754,7 +864,7 @@ function LeadGroupBlock({
  * contact until March"). Merging the two would mean tagging a batch put the
  * label on two hundred businesses it is not true of.
  */
-function GroupTags({ group }: { group: LeadGroup }) {
+function GroupTags({ group }: { group: { id: string; tags: string[] } }) {
   const qc = useQueryClient();
   const lookup = useTagLookup();
   const [editing, setEditing] = useState(false);
@@ -837,7 +947,9 @@ function FilterBar({
         <input
           value={filters.q}
           onChange={(event) => set({ q: event.target.value })}
-          placeholder="Search name, company, email, city…"
+          // Says what it actually reaches now: every list, and inside each
+          // list the columns that list has of its own.
+          placeholder="Search every list — name, company, email, place, or any column…"
           className="min-w-[16rem] flex-1 border border-ink/15 px-3 py-1.5 text-sm outline-none transition focus:border-ink/50"
         />
         <select value={filters.source} onChange={(event) => set({ source: event.target.value })} className="filter-select">

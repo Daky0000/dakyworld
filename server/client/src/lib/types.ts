@@ -25,6 +25,40 @@ export interface LeadGroup {
   _count?: { leads: number };
 }
 
+/**
+ * One list as the leads screen renders it — `GET /api/leads/grouped`.
+ *
+ * `total` is the list's true match count under the current filters; `leads` is
+ * only the preview the server was asked for. The two are deliberately separate
+ * because the page used to conflate them: it bucketed a flat page of rows in
+ * the browser, so a block's header counted what had been fetched rather than
+ * what was in the list.
+ */
+export interface LeadGroupBlock {
+  /** A real group id, or "none" for the leads that are in no list. */
+  id: string;
+  name: string;
+  slug: string | null;
+  description: string | null;
+  tags: string[];
+  autoCreated: boolean;
+  sourceLabel: string | null;
+  createdAt: string | null;
+  /** Every lead in this list that matches, not just the ones below. */
+  total: number;
+  /** How many of those carry an email address. Counted over the list, not the preview. */
+  withEmail: number;
+  leads: Lead[];
+}
+
+export interface GroupedLeads {
+  groups: LeadGroupBlock[];
+  totalGroups: number;
+  totalLeads: number;
+  perGroup: number;
+  skipGroups: number;
+}
+
 // --- Tags ------------------------------------------------------------------
 
 /** The palette. Lime is missing on purpose — it is the action colour. */
@@ -272,6 +306,14 @@ export interface ScraperSource {
   preset: "AUTO" | "GOOGLE_MAPS" | "GENERIC_CONTACT" | "CUSTOM";
   leadSource: string;
   groupName?: string | null;
+  /**
+   * The list this source fills, once it has filled one.
+   *
+   * A source used to open a new list on every run, because every shipped
+   * batch name ended in `{{date}}`. Null means the next run resolves one — it
+   * adopts a list already carrying `groupName` before creating one.
+   */
+  leadGroupId?: string | null;
   enabled: boolean;
   maxItems: number;
   minScore: number;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { MappingPreview, ScraperSource } from "../lib/types";
+import type { LeadGroup, MappingPreview, ScraperSource } from "../lib/types";
 import { Badge, Button, Drawer, Field, Toggle } from "./ui";
 
 const PRESETS = [
@@ -38,7 +38,10 @@ export const BLANK_SOURCE: SourceDraft = {
   fieldMap: null,
   preset: "AUTO",
   leadSource: "GOOGLE_MAPS",
-  groupName: "{{name}} — {{date}}",
+  // No date in it. A dated name means a source can only ever *open* a list,
+  // never add to one — which is what it did for months.
+  groupName: "{{name}}",
+  leadGroupId: null,
   enabled: true,
   maxItems: 100,
   minScore: 30,
@@ -58,6 +61,12 @@ export const BLANK_SOURCE: SourceDraft = {
 export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; onClose: () => void }) {
   const qc = useQueryClient();
   const [form, setForm] = useState<SourceDraft>(draft ?? BLANK_SOURCE);
+  // Every list, so a source can be pointed at one somebody already works —
+  // two sources feeding one audience is the normal case, not an edge one.
+  const { data: groups } = useQuery({
+    queryKey: ["lead-groups"],
+    queryFn: () => api.get<LeadGroup[]>("/leads/groups"),
+  });
   const [inputText, setInputText] = useState("{}");
   const [fieldMapText, setFieldMapText] = useState("");
   const [preview, setPreview] = useState<MappingPreview | null>(null);
@@ -79,6 +88,7 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
         ...form,
         description: form.description || null,
         groupName: form.groupName || null,
+        leadGroupId: form.leadGroupId || null,
         input: JSON.parse(inputText),
         fieldMap: fieldMapText.trim() ? JSON.parse(fieldMapText) : null,
       };
@@ -201,12 +211,36 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
                 ))}
               </select>
             </Field>
-            <Field label="Batch name" hint="Where captured leads are grouped. {{name}} and {{date}} are substituted." full>
-              <input
-                value={form.groupName ?? ""}
-                onChange={(event) => setForm({ ...form, groupName: event.target.value })}
-                className="input"
-              />
+            <Field
+              label="Add leads to"
+              hint={
+                form.leadGroupId
+                  ? "Every run adds to this list. Set it back to “by name” to let the name below decide again."
+                  : "The first run adopts a list with this name, or opens one, and every run after adds to it. {{name}} and {{date}} are substituted — a date means a new list every run."
+              }
+              full
+            >
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <select
+                  value={form.leadGroupId ?? ""}
+                  onChange={(event) => setForm({ ...form, leadGroupId: event.target.value || null })}
+                  className="input sm:w-64"
+                >
+                  <option value="">A list named below</option>
+                  {(groups ?? []).map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name} ({group._count?.leads ?? 0})
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={form.groupName ?? ""}
+                  onChange={(event) => setForm({ ...form, groupName: event.target.value })}
+                  disabled={Boolean(form.leadGroupId)}
+                  placeholder="{{name}}"
+                  className="input flex-1 disabled:opacity-40"
+                />
+              </div>
             </Field>
           </div>
 

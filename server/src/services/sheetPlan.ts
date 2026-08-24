@@ -133,17 +133,142 @@ function guessType(header: string, samples: string[]): LeadFieldType {
 }
 
 /**
- * A name for a column whose header cell is empty, read off its contents.
- * Deliberately one rule rather than a taxonomy: a column of free text is the
- * common case — "Switched off", "No answer", "Waiting on us to send proposals"
- * — and "Notes" beats "Column F" by a distance. Anything else keeps the column
- * letter, which at least says where to look in the file.
+ * A name for a column nothing named, read off what is actually in it.
+ *
+ * "Column F" is not a name. It is what the file calls the position, and it
+ * tells the Owner nothing about the column they are being asked to approve —
+ * so an unnamed column of email addresses arrived on the review screen as
+ * "Column F", was mapped to a custom column because a blank header matches no
+ * rule, and the leads it created had no `contactEmail` at all. Reachable
+ * businesses, filed as unreachable, because a header cell was empty.
+ *
+ * So the cells are read instead, and they answer both questions at once: what
+ * to call the column, and — where the contents are unmistakable — which Lead
+ * field it belongs in.
+ *
+ * Ordered by how certain the reading is. Only the first three suggest a
+ * `field`: an address with an @ in it is an email address whatever the column
+ * is called, and the same is true of a phone number and a URL. Everything
+ * below is a *name* only, because a column of dates could be a follow-up date
+ * or a date added and nothing in the cells says which.
+ *
+ * Returns null when the column says nothing about itself — too few values, or
+ * a mix with no shape — and the column letter stands, which at least says
+ * where to look in the file.
  */
-function labelFromContents(samples: string[]): string | null {
-  const values = samples.filter(Boolean);
+export interface ColumnReading {
+  label: string;
+  /** A Lead scalar, when the contents can only be that. */
+  field?: string;
+  type: LeadFieldType;
+}
+
+/** Values that carry no information: placeholders people type for "nothing". */
+const BLANKS = /^(n\/?a|none|nil|-+|—|\?+|tbd|unknown|null)$/i;
+
+/** `2026-01-04`, `04/01/2026`, `4-1-26` — the written dates that read as phone numbers. */
+const DATE_SHAPE = /^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})$/;
+
+/** Social profile links are not a website. `website` is where the business lives. */
+const SOCIAL_HOSTS: { pattern: RegExp; label: string }[] = [
+  { pattern: /(^|\.)facebook\.com$|(^|\.)fb\.com$/i, label: "Facebook" },
+  { pattern: /(^|\.)instagram\.com$/i, label: "Instagram" },
+  { pattern: /(^|\.)linkedin\.com$/i, label: "LinkedIn" },
+  { pattern: /(^|\.)(twitter|x)\.com$/i, label: "Twitter" },
+  { pattern: /(^|\.)tiktok\.com$/i, label: "TikTok" },
+  { pattern: /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i, label: "YouTube" },
+  { pattern: /(^|\.)wa\.me$|(^|\.)whatsapp\.com$/i, label: "WhatsApp" },
+  { pattern: /(^|\.)maps\.google\.|(^|\.)goo\.gl$/i, label: "Maps link" },
+];
+
+function hostOf(value: string): string | null {
+  try {
+    return new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** Title case for a label built out of the cells themselves. */
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+export function readColumn(samples: string[]): ColumnReading | null {
+  const values = samples.map((value) => value.trim()).filter((value) => value !== "" && !BLANKS.test(value));
+  // One value is an anecdote. Two of the same shape is a column.
   if (values.length < 2) return null;
+  const ratio = (test: (value: string) => boolean) => values.filter(test).length / values.length;
+
+  // --- Unmistakable: the contents are the field ----------------------------
+
+  if (ratio((value) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) > 0.6) {
+    return { label: "Email", field: "contactEmail", type: "EMAIL" };
+  }
+
+  if (ratio((value) => /^(https?:\/\/|www\.)/i.test(value)) > 0.6) {
+    // A column of Facebook pages is a Facebook column, not a website column —
+    // and mapping it to `website` would tell the audit to go and read a login
+    // page. Named after the host it actually points at.
+    const hosts = values.map(hostOf).filter((host): host is string => host !== null);
+    for (const social of SOCIAL_HOSTS) {
+      if (hosts.filter((host) => social.pattern.test(host)).length / Math.max(1, hosts.length) > 0.6) {
+        return { label: social.label, type: "URL" };
+      }
+    }
+    return { label: "Website", field: "website", type: "URL" };
+  }
+
+  // Digits, spacing and the punctuation people put in phone numbers — and
+  // enough digits that a price can't pass for one. A date is excluded by
+  // shape rather than by digit count: "2026-01-04" is ten characters of digits
+  // and separators, which is also a perfectly good description of 0244 987
+  // 654, and a column of follow-up dates read as phone numbers would have been
+  // mapped straight onto `contactPhone`.
+  if (
+    ratio(
+      (value) =>
+        /^[+(]?[\d][\d\s()\-.]{7,}$/.test(value) && value.replace(/\D/g, "").length >= 8 && !DATE_SHAPE.test(value),
+    ) > 0.6
+  ) {
+    return { label: "Phone", field: "contactPhone", type: "PHONE" };
+  }
+
+  // --- A name only: the shape is clear, the meaning isn't ------------------
+
+  if (ratio((value) => /^(yes|no|y|n|true|false|done|not done)$/i.test(value)) > 0.7) {
+    return { label: "Yes / no", type: "BOOLEAN" };
+  }
+
+  if (ratio((value) => /^(gh₵|₵|\$|€|£|ngn|usd|ghs|eur|gbp)\s?[\d,.]+$|^[\d,.]+\s?(ghs|usd|ngn|eur|gbp|cedis?)$/i.test(value)) > 0.6) {
+    return { label: "Amount", type: "CURRENCY" };
+  }
+
+  if (ratio((value) => !Number.isNaN(Date.parse(value)) && /\d{4}|\/|-/.test(value) && !/^-?[\d,. ]+$/.test(value)) > 0.7) {
+    return { label: "Date", type: "DATE" };
+  }
+
+  if (ratio((value) => /^-?[\d,. ]+$/.test(value)) > 0.7) {
+    return { label: "Number", type: "NUMBER" };
+  }
+
   const averageLength = values.reduce((total, value) => total + value.length, 0) / values.length;
-  return averageLength >= 18 ? "Notes" : null;
+  // Free text: "Switched off", "No answer", "Waiting on us to send proposals".
+  // The commonest unnamed column there is, and "Notes" beats "Column F" by a
+  // distance.
+  if (averageLength >= 18) return { label: "Notes", type: "LONG_TEXT" };
+
+  // A handful of short values repeating is somebody's own vocabulary — a
+  // stage, a channel, a yes/no with more than two answers. Nothing here knows
+  // what to *call* that, so the column is named after what is in it and the
+  // Owner corrects it on the review screen if it reads oddly. Still far better
+  // than a column letter: "Sent / Pending" says what the column is for.
+  const distinct = [...new Set(values.map((value) => value.toLowerCase()))];
+  if (values.length >= 4 && distinct.length <= 3 && distinct.every((value) => value.length <= 14)) {
+    return { label: distinct.map(titleCase).join(" / ").slice(0, 60), type: "SELECT" };
+  }
+
+  return null;
 }
 
 /** Spreadsheet column letters, so an unlabelled column is still nameable. */
@@ -302,15 +427,24 @@ function buildTable(
   const planColumns: PlanColumn[] = columns.map((column) => {
     const header = headerRow !== null ? grid.rows[headerRow][column] ?? "" : "";
     const samples = dataRows.slice(0, 40).map((row) => row[column] ?? "");
+    // Nothing named this column, so read what is in it — see `readColumn`.
+    const reading = header ? null : readColumn(samples);
     let field = guessField(header);
+    // A blank header matches no rule and lands in `custom`, which is how a
+    // column of email addresses used to become a custom column on a lead with
+    // no email address. The cells decide when the header says nothing.
+    if (!header && reading?.field) field = reading.field;
 
     // One Lead scalar, one column. A second "Phone" is a real column of its
     // own, not an overwrite of the first.
     if (field !== "ignore" && field !== "custom" && claimed.has(field)) field = "custom";
     if (field !== "ignore" && field !== "custom") claimed.add(field);
 
-    const label = header || labelFromContents(samples) || `Column ${columnLetter(column)}`;
-    const type = field !== "custom" && field !== "ignore" ? (builtinField(field)?.type ?? "TEXT") : guessType(header, samples);
+    const label = header || reading?.label || `Column ${columnLetter(column)}`;
+    const type =
+      field !== "custom" && field !== "ignore"
+        ? (builtinField(field)?.type ?? "TEXT")
+        : (reading?.type ?? guessType(header, samples));
 
     return {
       index: column,
@@ -590,16 +724,28 @@ export function normalizePlan(plan: ImportPlan, grids: SheetGrid[]): ImportPlan 
 
       const claimed = new Set<string>();
       const keys = new Set<string>();
+      // The rows this table covers, for columns nobody named. Every plan comes
+      // through here — the analyst's, the rules', and the one the review
+      // screen sends back — and only this one had no way to look at the cells.
+      const sampleRows = grid.rows.slice(firstDataRow, lastDataRow + 1).slice(0, 40);
       const columns = (table.columns ?? [])
         .filter((column) => Number.isInteger(column.index) && column.index >= 0 && column.index < width)
         .map((column): PlanColumn => {
+          const header = (column.header ?? "").trim();
+          const named = (column.label ?? "").trim();
+          // Only when *nothing* has named it. A label the analyst wrote or the
+          // Owner typed is a decision, and reading the cells over the top of
+          // one would undo work somebody just did by hand.
+          const reading = header || named ? null : readColumn(sampleRows.map((row) => row[column.index] ?? ""));
+
           let field = VALID_FIELDS.has(column.field) ? column.field : "custom";
+          if (field === "custom" && reading?.field && VALID_FIELDS.has(reading.field)) field = reading.field;
           if (field !== "custom" && field !== "ignore") {
             if (claimed.has(field)) field = "custom";
             else claimed.add(field);
           }
 
-          const label = (column.label || column.header || `Column ${columnLetter(column.index)}`).trim().slice(0, 60);
+          const label = (named || header || reading?.label || `Column ${columnLetter(column.index)}`).trim().slice(0, 60);
           let key: string | undefined;
           if (field === "custom") {
             key = slugifyKey(column.key || label);
@@ -609,14 +755,19 @@ export function normalizePlan(plan: ImportPlan, grids: SheetGrid[]): ImportPlan 
             keys.add(key);
           }
 
+          const chosen = (["TEXT", "LONG_TEXT", "NUMBER", "CURRENCY", "DATE", "BOOLEAN", "EMAIL", "PHONE", "URL", "SELECT"] as const).includes(
+            column.type,
+          )
+            ? column.type
+            : "TEXT";
           const type =
             field !== "custom" && field !== "ignore"
               ? (builtinField(field)?.type ?? "TEXT")
-              : ((["TEXT", "LONG_TEXT", "NUMBER", "CURRENCY", "DATE", "BOOLEAN", "EMAIL", "PHONE", "URL", "SELECT"] as const).includes(
-                    column.type,
-                  )
-                  ? column.type
-                  : "TEXT");
+              // TEXT on an unnamed column is the default nobody chose, so the
+              // reading wins over it; any other type was somebody's decision.
+              : reading && chosen === "TEXT"
+                ? reading.type
+                : chosen;
 
           return { index: column.index, header: column.header ?? "", label, field, key, type };
         });

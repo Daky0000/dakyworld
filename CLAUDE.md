@@ -1527,6 +1527,75 @@ finds and rewrites the arrays. Skipping the second half leaves a tag showing a
 count of zero while a lead visibly carries it, and filtering by it returning
 nothing. Both were true the first time it ran.
 
+**A lead belongs to a list, and the list is the unit** — `routes/leads.ts`
+(`GET /grouped`), `services/leadSearch.ts`, `resolveGroup()` in
+`services/scraperRunner.ts`. Grouping was already the leads screen's default
+and was doing none of the three things that word implies. Four defects, one
+shape:
+
+- **A list was whatever fell in the first page.** `GET /api/leads` returned up
+  to 300 rows by date and the *browser* bucketed them, so a list of 400
+  rendered as a block of 300 with "300" in its header and the older list under
+  it did not appear at all. The number in a block header is what somebody sizes
+  an outreach batch against. `GET /leads/grouped` groups where the counts are:
+  `total` and `withEmail` are the whole list under the current filters, `leads`
+  is only the preview that was asked for, and the two are separate fields
+  because conflating them is the bug. Filtering to one list asks for 200 rather
+  than 25, or "open this list" would answer with the same rows.
+- **Search reached seven Lead scalars.** A list's own columns live in
+  `Lead.customFields` — that is the whole point of an imported list keeping its
+  columns — so typing a value *visible on the screen* returned nothing.
+  `leadSearch.ts` adds the list's name and every custom column of every list,
+  the latter through a raw `jsonb_each_text` scan because Prisma's JSON filters
+  need a `path` and the keys differ per list. **Values only**: matching keys
+  too would make a search for "notes" return every lead in every list with a
+  Notes column. One asymmetry is written down rather than papered over — that
+  arm escapes `%`, and Prisma's `contains` cannot, so a bare `%` is a wildcard
+  in the scalar half.
+- **Searching dissolved the lists.** It flattened to one ranked run of rows on
+  the reasoning that a search is a question about everything. True, and the
+  conclusion does not follow: "which list is this business in" is most of what
+  is being asked. Lists with no match drop out server-side, so what is left is
+  the answer.
+- **A scrape could never add to a list, only open one.** Every shipped template
+  ended its group name in `{{date}}`, so the daily healthcare capture produced
+  "Healthcare · 2026-08-24", then "Healthcare · 2026-08-25". Nobody wanted a
+  list per run — `Lead.scraperRunId` already answers which run, and the leads
+  page already filters by it — and an audience only exists if the same list is
+  added to. `ScraperSource.leadGroupId` pins the list a source fills: the pin
+  first, then **adoption** of a list already carrying the name, then a new one.
+  The pin wins over the name, so renaming a list does not fork it, and adoption
+  is `update: {}` — a source landing in somebody's existing list must not
+  rename it, re-tag it or touch what is in it. `{{date}}` still works for
+  somebody who genuinely wants a list per day; nothing ships with it.
+
+**A column nobody named is named from what is in it** — `readColumn()` in
+`services/sheetPlan.ts`. "Column F" is what the file calls a position, not a
+name, and a blank header matches no header rule — so an unnamed column of email
+addresses was mapped to `custom` and the leads it created had **no
+`contactEmail` at all**. Reachable businesses filed as unreachable because a
+header cell was empty. The cells answer both questions: what to call the column
+and, where the contents can only be one thing, which Lead field it belongs in.
+
+- **Only the first three suggest a field.** An address with an @ in it is an
+  email address whatever the column is called; a column of dates could be a
+  follow-up date or a date added and nothing in the cells says which.
+- **A column of Facebook pages is not a website column.** It is named after the
+  host it points at, and mapping it to `website` would send the audit to read a
+  login page.
+- **A date is excluded from the phone rule by shape.** "2026-01-04" is ten
+  characters of digits and separators, which also describes 0244 987 654 — so a
+  column of follow-up dates read as phone numbers and went onto `contactPhone`.
+- **A column somebody named is never renamed from its contents**, in either
+  direction. The review screen exists so a person can decide, and reading the
+  cells over the top of that undoes what they just did. Wired into `buildTable`
+  *and* `normalizePlan`, because every plan goes through the second one — the
+  analyst's, the rules' and the one the review screen sends back — and only
+  that path had no way to look at the cells.
+
+`checks/leadGroups.ts` (41) is the committed half, database only, and half of
+it is the negatives above.
+
 **Lead capture prices itself from Apify at run time.** `lib/apify.getActorPricing`
 reads an actor's published rates (a public endpoint — it works before a token
 is connected) and `services/captureCost.ts` turns an input into a count of

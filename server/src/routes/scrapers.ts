@@ -56,6 +56,13 @@ const sourceInput = z.object({
   preset: z.enum(["AUTO", "GOOGLE_MAPS", "GENERIC_CONTACT", "CUSTOM"]).default("AUTO"),
   leadSource: z.enum(LEAD_SOURCES).default("GOOGLE_MAPS"),
   groupName: z.string().max(120).optional().nullable(),
+  /**
+   * The list this source adds to. Null hands the choice back to the runner,
+   * which adopts a list carrying `groupName` or opens one — see
+   * `resolveGroup` in services/scraperRunner.ts. Set it to point a source at a
+   * list that already exists, which is how two sources feed one audience.
+   */
+  leadGroupId: z.string().cuid().nullable().optional(),
   enabled: z.boolean().default(true),
   // Left optional on purpose: anything the form doesn't send falls back to the
   // capture defaults in Settings, so those are a real default rather than a
@@ -287,6 +294,10 @@ scrapersRouter.patch("/sources/:id", async (req, res, next) => {
       where: { id: req.params.id },
       data: {
         ...data,
+        // Explicit null means "unpin, and resolve a list by name next run".
+        // The spread would send `null` as a value either way; this is here to
+        // say that clearing it is a supported thing to do, not an accident.
+        leadGroupId: data.leadGroupId === undefined ? undefined : data.leadGroupId,
         actorId: data.actorId ? normalizeStoredActorId(data.actorId) : undefined,
         input: data.input === undefined ? undefined : (data.input as Prisma.InputJsonValue),
         fieldMap: data.fieldMap === undefined ? undefined : ((data.fieldMap ?? Prisma.DbNull) as Prisma.InputJsonValue),
