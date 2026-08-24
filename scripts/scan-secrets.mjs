@@ -50,7 +50,7 @@ const ALLOWED = [
   /postgres(?:ql)?:\/\/postgres:postgres@/,
   /postgres(?:ql)?:\/\/user:password@/,
   /postgres(?:ql)?:\/\/[^\s:@"']+:(?:password|changeme|your[-_]?password|xxx+|\.\.\.)@/i,
-  /sk-ant-(?:api03-)?(?:xxx|your|example|placeholder|\.\.\.)/i,
+  /sk-ant-(?:api03-)?(?:xxx|your|example|placeholder|check|not-a-real|\.\.\.)/i,
   /sk-(?:xxx|your|example|placeholder|\.\.\.)/i,
 ];
 
