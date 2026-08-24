@@ -137,7 +137,37 @@ and the sentence names all of them. A vendor that *cannot* do the job is never
 in the chain, so Perplexity is never asked to look at a screenshot however many
 keys are missing.
 
-**The OpenRouter wire carries two things it silently did not.** `effort` is not
+**The schema is sent as a schema, or said in words — never neither.** The
+largest of the ox-alpha defects and the one that made the analyst look like it
+had simply got worse. On OpenRouter, `response_format` in a model's
+`supported_parameters` means it takes `{"type":"json_object"}`;
+**`structured_outputs` is the one that means the schema is compiled and
+enforced**, and 332 of the 416 models listed on 24 Aug 2026 declare it.
+**`stealth/ox-alpha` is one of the 84 that do not** — so OpenRouter drops a
+`json_schema` sent to it. That would be harmless if the prompt described the
+answer, and *not one caller in this app does*: every one of them describes it
+entirely in the schema — field names, enums, sentinels, and a `description` per
+field carrying the real instruction. The sheet analyst's prompt says "return a
+plan" and never says what a plan looks like, because `headerRow`,
+`firstDataRow`, the `-1` sentinel and the list of valid field targets all live
+in the schema. So the shipped default model was being asked for a plan with no
+description of one anywhere in the request; it guessed at the field names, and
+`normalizePlan` dropped what it could not recognise.
+
+`openRouterCompilesSchemas()` reads the model's own declaration from the same
+free catalogue endpoint `verifyProviderKey` already uses, cached for six hours,
+and the answer decides: a model that compiles schemas gets the strict one and
+nothing else, one that does not gets `json_object` plus `schemaContract()`
+written into its system prompt. **A failed lookup returns `null` and does
+both** — guessing wrong in that direction costs tokens, and the other direction
+silently un-enforces a schema. `readJson()` also takes a second attempt at a
+reply with a sentence of preamble around the object, which is what a model
+*asked* for JSON rather than held to it routinely sends; it slices the
+outermost braces and parses them, and never repairs malformed JSON, because
+guessing what a truncated object meant is how a plan arrives with boundaries
+nobody chose.
+
+**The OpenRouter wire carries two more things it silently did not.** `effort` is not
 an OpenAI parameter, so for as long as `callModel` existed it put *nothing* on
 that wire and every routed job ran at **ox-alpha's own default, which is max** —
 triage included, which asks for `low` in so many words and runs once per

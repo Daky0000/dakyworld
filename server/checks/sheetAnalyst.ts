@@ -56,7 +56,7 @@ function check(name: string, condition: boolean, detail?: string) {
 }
 
 function httpServer(
-  handle: (body: any, send: (status: number, payload: unknown) => void) => void,
+  handle: (body: any, send: (status: number, payload: unknown) => void, path: string) => void,
 ): Promise<{ server: Server; url: string }> {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
@@ -72,7 +72,7 @@ function httpServer(
         handle(parsed, (status, payload) => {
           res.writeHead(status, { "content-type": "application/json" });
           res.end(JSON.stringify(payload));
-        });
+        }, req.url ?? "");
       });
     });
     server.listen(0, "127.0.0.1", () => {
@@ -169,10 +169,24 @@ async function main() {
   const orBodies: any[] = [];
   /** When set, the OpenRouter stub answers as a run that hit the token cap. */
   let orTruncates = false;
+  /** When set, it answers with a sentence of preamble around the JSON. */
+  let orAddsPreamble = false;
   /** When set, it answers with the parts array rather than a plain string. */
   let orAnswersInParts = false;
 
-  const or = await httpServer((body, send) => {
+  const or = await httpServer((body, send, path) => {
+    // OpenRouter's own catalogue, which is where "does this model compile a
+    // JSON schema" is answered. `response_format` and `structured_outputs` are
+    // two different declarations and the difference is the whole point: the
+    // real stealth/ox-alpha declares the first and not the second.
+    if (path.includes("/models")) {
+      return send(200, {
+        data: [
+          { id: "stealth/ox-alpha", supported_parameters: ["max_tokens", "reasoning_effort", "response_format", "tools"] },
+          { id: "vendor/strict-one", supported_parameters: ["max_tokens", "response_format", "structured_outputs"] },
+        ],
+      });
+    }
     orBodies.push(body);
     send(200, {
       id: "chatcmpl_check_sheet",
@@ -186,7 +200,13 @@ async function main() {
             role: "assistant",
             content: orTruncates
               ? ""
-              : orAnswersInParts
+              : orAddsPreamble
+                ? `Here is the plan you asked for.
+
+${JSON.stringify({ summary: "wrapped in prose", tables: [PEOPLE] })}
+
+Let me know if you would like it changed.`
+                : orAnswersInParts
                 ? [{ type: "text", text: JSON.stringify({ summary: "answered in parts", tables: [PEOPLE, COMPANIES] }) }]
                 : JSON.stringify({ summary: "one table of people, one of companies", tables: [PEOPLE, COMPANIES] }),
           },
@@ -281,11 +301,35 @@ async function main() {
     typeof sent?.max_tokens === "number" && sent.max_tokens > 16_000,
     String(sent?.max_tokens),
   );
-  check("the schema is sent strict", sent?.response_format?.json_schema?.strict === true);
+  // The defect that made the analyst look like it had simply got worse.
+  // ox-alpha declares `response_format` and NOT `structured_outputs`, so
+  // OpenRouter drops a `json_schema` sent to it — and every caller in this app
+  // describes its answer entirely in the schema. The sheet analyst's system
+  // prompt says "return a plan" and never says what a plan looks like, so the
+  // model was being asked for one with no description of it in the request.
+  const systemSent = sent?.messages?.[0]?.content ?? "";
+  check("a model that cannot compile a schema is asked for plain JSON", sent?.response_format?.type === "json_object", String(sent?.response_format?.type));
+  check("...and the shape is written into the prompt instead", systemSent.includes("The shape of your answer"));
+  check("...naming the fields the plan is made of", systemSent.includes("firstDataRow") && systemSent.includes("lastDataRow"));
+  check("...and the field targets it may map a column to", systemSent.includes("contactName"));
   check(
-    "and carries no keyword structured outputs refuse",
-    !JSON.stringify(sent?.response_format?.schema ?? sent?.response_format?.json_schema?.schema ?? {}).includes("maxItems"),
+    "the schema still carries no keyword structured outputs refuse",
+    !systemSent.includes("maxItems") && !JSON.stringify(sent?.response_format?.json_schema?.schema ?? {}).includes("maxItems"),
   );
+
+  // The negative: a model that *does* declare structured outputs keeps the
+  // strict schema and is not made to read a copy of it in its prompt. A fix
+  // that taxed every model for one model's limitation would be a regression
+  // wearing a repair's clothes.
+  console.log("");
+  console.log("A model that does compile schemas");
+  const { setSetting } = await import("../src/lib/settings.js");
+  await setSetting(SETTING.OPENROUTER_MODEL, "vendor/strict-one");
+  await analyzeGrids([GRID as any], hints);
+  const strictSent = orBodies.at(-1);
+  check("keeps the strict JSON schema", strictSent?.response_format?.json_schema?.strict === true, String(strictSent?.response_format?.type));
+  check("...and is not sent the shape a second time in its prompt", !String(strictSent?.messages?.[0]?.content ?? "").includes("The shape of your answer"));
+  await setSetting(SETTING.OPENROUTER_MODEL, "stealth/ox-alpha");
 
   // The negative that pays for the whole mapping: an economy job must not ride
   // at the headline model's reasoning depth just because nobody said otherwise.
@@ -324,6 +368,18 @@ async function main() {
   orAnswersInParts = false;
   check("the plan is still read", inParts.plan.tables.length === 2, `${inParts.plan.tables.length} tables`);
   check("...on ox-alpha, without falling through to the stand-in", inParts.note === null, String(inParts.note));
+
+  // A model told to return JSON rather than held to it answers with a sentence
+  // of preamble often enough to matter. Rejecting that costs a second vendor
+  // the whole job and puts "the analyst's plan could not be read" in front of
+  // the Owner.
+  console.log("");
+  console.log("When the JSON arrives wrapped in a sentence");
+  orAddsPreamble = true;
+  const wrapped = await analyzeGrids([GRID as any], hints);
+  orAddsPreamble = false;
+  check("the plan is still read", wrapped.plan.tables.length === 1, `${wrapped.plan.tables.length} tables`);
+  check("...on ox-alpha, without paying a second vendor to redo it", wrapped.note === null, String(wrapped.note));
 
   // --- The plan ------------------------------------------------------------
 

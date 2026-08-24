@@ -970,6 +970,17 @@ down the same chain as ever — the declared fallback first, then every other
 vendor that can actually do the work — and what came back says who answered.
 No key at all and nothing changes from how the system has always behaved.
 
+**ox-alpha does not enforce JSON schemas, so the shape is written into its
+prompt.** Models on OpenRouter declare separately whether they take "some JSON"
+and whether they compile a schema and hold the answer to it; ox-alpha declares
+the first and not the second, and every job in this app describes what it wants
+*in its schema* — the field names, the allowed values, the instruction on each
+field. Left alone that meant ox-alpha being asked for a plan with no
+description of one anywhere in the request. The app now reads each model's own
+declaration from OpenRouter and adapts: a model that enforces schemas gets the
+schema, one that does not gets the shape spelled out in words instead. Nothing
+to configure.
+
 **A lead import is checked before you see it.** Reading a spreadsheet is a
 routed job like any other now, which means the model doing it may be one that
 has never read one of your files. So the plan that comes back is checked

@@ -516,6 +516,92 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
 // --- OpenRouter -------------------------------------------------------------
 
 /**
+ * Which models on OpenRouter actually compile a strict JSON schema.
+ *
+ * OpenRouter's catalogue declares this per model, and the distinction is not
+ * cosmetic: `response_format` in a model's `supported_parameters` means it
+ * takes `{"type":"json_object"}` — *some* JSON — while `structured_outputs`
+ * is the one that means the schema is compiled and enforced. 332 of the 416
+ * models listed on 24 Aug 2026 declare the second. **`stealth/ox-alpha` is one
+ * of the 84 that do not**, which is the whole reason this exists.
+ *
+ * Read from the same free, authenticated endpoint `verifyProviderKey` already
+ * uses, cached for the process, and **`null` when it cannot be answered** —
+ * a failed lookup must not downgrade a model that would have enforced the
+ * schema perfectly well.
+ */
+const compilesSchemas = new Map<string, boolean>();
+let catalogueReadAt = 0;
+const CATALOGUE_TTL_MS = 6 * 60 * 60_000;
+
+async function openRouterCompilesSchemas(apiKey: string, model: string): Promise<boolean | null> {
+  if (catalogueReadAt && Date.now() - catalogueReadAt > CATALOGUE_TTL_MS) {
+    compilesSchemas.clear();
+    catalogueReadAt = 0;
+  }
+  const cached = compilesSchemas.get(model);
+  if (cached !== undefined) return cached;
+  if (catalogueReadAt) return null; // Catalogue is fresh and simply doesn't list it.
+
+  try {
+    const response = await fetch(`${BASE.openrouter}/models`, {
+      headers: { authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { data?: { id?: unknown; supported_parameters?: unknown }[] };
+    const entries = payload?.data ?? [];
+    if (!entries.length) return null;
+    for (const entry of entries) {
+      if (typeof entry?.id !== "string") continue;
+      compilesSchemas.set(entry.id, Array.isArray(entry.supported_parameters) && entry.supported_parameters.includes("structured_outputs"));
+    }
+    catalogueReadAt = Date.now();
+    return compilesSchemas.get(model) ?? null;
+  } catch {
+    // A catalogue we could not read tells us nothing about the model.
+    return null;
+  }
+}
+
+/**
+ * The answer's shape, said in the prompt rather than only in the request.
+ *
+ * Every caller in this app describes what it wants **entirely in its JSON
+ * schema** — the field names, the enums, the sentinels, and a `description` on
+ * each field carrying the real instruction. The sheet analyst is the clearest
+ * case: its system prompt says "return a plan" and never once says what a plan
+ * looks like, because `headerRow`, `firstDataRow`, the -1 sentinel and the list
+ * of valid field targets all live in the schema.
+ *
+ * That is exactly right when the schema is compiled into a grammar, and it is
+ * nothing at all when it is dropped on the floor — which is what OpenRouter
+ * does with `json_schema` for a model that has not declared
+ * `structured_outputs`. The model is then asked for "a plan" with no
+ * description of one anywhere in the request, and it guesses at the field
+ * names. `normalizePlan` drops what it cannot recognise, and the Owner sees an
+ * analyst that has got worse for no visible reason.
+ *
+ * So where the schema will not be enforced, it is stated. Compact rather than
+ * indented — a model reads minified JSON Schema perfectly well and the
+ * descriptions are the expensive half either way.
+ */
+function schemaContract(schema: unknown): string {
+  return [
+    "",
+    "---",
+    "",
+    "# The shape of your answer",
+    "",
+    "Reply with a single JSON object and nothing else: no sentence before it, no sentence after it, no markdown fence.",
+    "",
+    "It must match this JSON Schema exactly — every required field present, every enum value one of the strings listed, no field invented and none left out. Each field's `description` is an instruction about what belongs in it.",
+    "",
+    JSON.stringify(schema),
+  ].join("\n");
+}
+
+/**
  * OpenRouter speaks the OpenAI chat-completions shape, so this is `callOpenAI`
  * with a different base URL and two small differences that matter.
  *
@@ -524,12 +610,24 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
  * accepted by some models and ignored by others, which is a silent way for a
  * page build to come back cut in half.
  *
- * **The schema rides along in case strict mode doesn't.** OpenRouter passes
- * `response_format` through to whatever model serves the request, and not every
- * model on it compiles a strict JSON schema — some ignore it and answer in
- * prose. The caller's instruction to return JSON is already in the system
- * prompt, so those replies still parse; the ones that don't are caught by the
- * same fence-stripping and failover every other vendor gets.
+ * **The schema is sent as a schema, or said in words — never neither.** This
+ * comment used to claim the schema "rides along in case strict mode doesn't",
+ * on the grounds that "the caller's instruction to return JSON is already in
+ * the system prompt". That was false, and it was the whole bug: not one caller
+ * in this app describes its answer in the system prompt, because every one of
+ * them describes it in the schema — field names, enums, sentinels, and a
+ * `description` per field carrying the actual instruction. OpenRouter drops
+ * `json_schema` for a model that has not declared `structured_outputs`, and
+ * **ox-alpha has not**, so the shipped default model was being asked for "a
+ * plan" with no description of one anywhere in the request. It guessed at the
+ * field names; `normalizePlan` dropped what it could not recognise; and the
+ * analyst looked like it had simply got worse.
+ *
+ * So the model's own declared capability decides: a model that compiles
+ * schemas gets the strict one and nothing else, and a model that does not gets
+ * `json_object` plus the schema written into the prompt. When the catalogue
+ * cannot be read we do both, because guessing wrong in that direction only
+ * costs tokens.
  *
  * **The effort travels as `reasoning_effort`, and the budget makes room for
  * it.** Both were missing here, and both were invisible. `effort` is not an
@@ -549,6 +647,12 @@ async function callOpenRouter(apiKey: string, model: string, request: ModelReque
   // job moving between vendors does not quietly change how hard it is thought
   // about.
   const effort = request.effort ?? "medium";
+  const schema = forStructuredOutput(request.schema);
+
+  // true: it compiles the schema. false: it will be dropped. null: unknown.
+  const compiles = await openRouterCompilesSchemas(apiKey, model);
+  const system = compiles === true ? request.system : `${request.system}\n${schemaContract(schema)}`;
+
   const body = await post(
     `${BASE.openrouter}/chat/completions`,
     {
@@ -561,14 +665,18 @@ async function callOpenRouter(apiKey: string, model: string, request: ModelReque
       model,
       max_tokens: tokensWithReasoning(request.maxTokens ?? DEFAULT_MAX_TOKENS, effort),
       messages: [
-        { role: "system", content: request.system },
+        { role: "system", content: system },
         { role: "user", content: openAiContent(request) },
       ],
       reasoning_effort: reasoningEffortFor(effort),
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "result", strict: true, schema: forStructuredOutput(request.schema) },
-      },
+      response_format:
+        compiles === false
+          ? // Asking a model that cannot compile a schema for a strict one is at
+            // best ignored and at worst a refusal from a provider honouring
+            // `require_parameters`. Plain JSON mode is what it can actually do,
+            // and the shape is in the prompt above.
+            { type: "json_object" }
+          : { type: "json_schema", json_schema: { name: "result", strict: true, schema } },
     },
     "OpenRouter",
   );
@@ -823,12 +931,9 @@ async function attemptProvider<T>(
   if (completion.truncated) throw await rejected(502, say("truncated"));
   if (!completion.text.trim()) throw await rejected(502, say("empty"));
 
-  let data: T;
-  try {
-    data = JSON.parse(stripFence(completion.text)) as T;
-  } catch {
-    throw await rejected(502, say("parse"));
-  }
+  const parsed = readJson<T>(completion.text);
+  if (parsed === undefined) throw await rejected(502, say("parse"));
+  const data = parsed;
 
   await spent(true);
   return {
@@ -873,6 +978,40 @@ function stripFence(text: string): string {
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/```\s*$/, "")
     .trim();
+}
+
+/**
+ * The object out of a reply, however it was wrapped. `undefined` when there
+ * isn't one.
+ *
+ * Two attempts, in order of trust. The plain parse is what a vendor enforcing
+ * a schema always gives. The second is for a model that was *asked* for JSON
+ * rather than held to it — which is now a supported case rather than an
+ * accident, because ox-alpha does not compile schemas — and which answers with
+ * a sentence of preamble often enough to be worth six lines here. The
+ * alternative is a rejected reply, a second vendor paid to redo the work, and
+ * "the analyst's plan could not be read" put in front of the Owner.
+ *
+ * Deliberately not a repair: it slices out the outermost braces and parses
+ * them, so malformed JSON still fails. Guessing at what a truncated object
+ * meant is how a plan arrives with boundaries nobody chose.
+ */
+function readJson<T>(text: string): T | undefined {
+  const body = stripFence(text);
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    /* fall through to the second attempt */
+  }
+
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  if (start < 0 || end <= start) return undefined;
+  try {
+    return JSON.parse(body.slice(start, end + 1)) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 // --- Images -----------------------------------------------------------------
