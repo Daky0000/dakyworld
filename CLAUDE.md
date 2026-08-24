@@ -856,6 +856,24 @@ only the tools its `toolkit` grants, and turns a manual tool-use loop
 (`lib/claudeAgent.ts`) until the agent finishes or escalates. Every call still
 goes through `invokeTool`, so the gate is unchanged.
 
+**An agent turn is a job like any other, and it routes like one.** The loop
+itself picks its vendor: ox-alpha through OpenRouter first, Claude the floor,
+and a rehearsal dies no more on an empty Anthropic balance while ox-alpha sits
+connected. A **key-level refusal** (401/402/403) hands the run to Claude
+mid-flight — nothing has been spent yet, so the same turn is retried there —
+and puts ox-alpha on a 15-minute cooldown so the resumes behind it start on
+Claude instead of each paying one call into the same refusal. Rate limits and
+timeouts still throw and requeue, exactly as before. The loop's internal state
+stays Anthropic-shaped throughout: `openRouterTurn()` translates at the wire
+(Anthropic blocks out as OpenAI chat messages, tool results back keyed by call
+id), so a checkpoint written by one vendor resumes on the other, and the effort
+travels as `reasoning_effort` mapped onto what ox-alpha accepts — low stays
+low, medium steps up to high, high rides at max, because the model's own
+default is max and leaving it unset would put headline-depth reasoning under
+every economy run. `checks/agentLoopOpenRouter.ts` drives the real loop against
+a fake OpenRouter and pins the wire shape, the checkpoint shape and the
+handover.
+
 **Check `result.dryRun` before `result.refusedReason`.** A dry run carries a
 `refusedReason` too — it is the sentence explaining *why* the call was
 downgraded — so checking the refusal first files prepared work as refused,

@@ -955,6 +955,10 @@ default for every job except drawing pictures:**
 
 **One key is the whole configuration.** Paste an OpenRouter key into Settings →
 AI models and everything above moves onto ox-alpha; nothing else needs setting.
+**That includes the agents themselves** — an agent turn runs on ox-alpha when
+it is connected and falls back to Claude when it is not or when OpenRouter
+refuses the key mid-run, so rehearsals and task runs no longer need an
+Anthropic balance while ox-alpha is connected.
 The key is checked against OpenRouter before it is stored, and the model id is
 checked against OpenRouter's own catalogue at the same moment — if `ox-alpha`
 is listed there under a different slug, the screen says so and names the
