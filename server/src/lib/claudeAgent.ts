@@ -285,10 +285,14 @@ type AgentVendor = "openrouter" | "anthropic";
 /**
  * The OpenRouter root, honouring `OPENROUTER_BASE_URL` — the same answer
  * `BASE.openrouter` gives in models/call.ts, restated here because the loop
- * speaks its own wire rather than going through that file's adapters. If the
- * two ever disagree, one of them is wrong; the env var is the shared truth.
+ * speaks its own wire rather than going through that file's adapters. Read
+ * per call rather than captured at import, so a check can repoint it between
+ * runs; if the two ever disagree, one of them is wrong, and the env var is
+ * the shared truth.
  */
-const OPENROUTER_BASE = process.env.OPENROUTER_BASE_URL?.replace(/\/$/, "") || "https://openrouter.ai/api/v1";
+function openRouterBase(): string {
+  return process.env.OPENROUTER_BASE_URL?.replace(/\/$/, "") || "https://openrouter.ai/api/v1";
+}
 
 /** Key-level refusals: wrong key, out of credits, banned account. */
 const REFUSED_STATUSES = [401, 402, 403];
@@ -434,7 +438,7 @@ async function openRouterTurn(args: {
     }));
   }
 
-  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+  const response = await fetch(`${openRouterBase()}/chat/completions`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${args.apiKey}`,
