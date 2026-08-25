@@ -19,7 +19,7 @@ import {
   useLeadFields,
   visibleFields,
 } from "../components/LeadColumns";
-import { Button, Card, EmptyState, Field, Money, PageHeader, StatTile } from "../components/ui";
+import { Button, Card, EmptyState, Field, Modal, Money, PageHeader, RelativeTime, StatTile } from "../components/ui";
 import { TagChip, TagManager, TagPicker, useLeadTags, useTagLookup } from "../components/LeadTags";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
@@ -149,6 +149,20 @@ export function Leads() {
       (params) => {
         if (id) params.set("lead", id);
         else params.delete("lead");
+        return params;
+      },
+      { replace: true },
+    );
+  };
+
+  // And so does the open list, for the same reason: "look at this list" is a
+  // thing somebody says to somebody else, and it should be a link.
+  const openList = searchParams.get("list");
+  const setOpenList = (id: string | null) => {
+    setSearchParams(
+      (params) => {
+        if (id) params.set("list", id);
+        else params.delete("list");
         return params;
       },
       { replace: true },
@@ -293,6 +307,10 @@ export function Leads() {
         : groupLeads(leads, groupBy),
     [grouping, grouped, leads, groupBy],
   );
+  // Looked up rather than stored: the blocks are refetched constantly, and a
+  // copy taken when the popup opened would go stale the moment a row is edited.
+  const openBlock = openList === null ? null : (blocks.find((block) => block.key === openList) ?? null);
+
   const activeFilterCount =
     (filters.q ? 1 : 0) +
     filters.status.length +
@@ -463,7 +481,23 @@ export function Leads() {
         />
       ) : (
         <div className="space-y-6">
-          {blocks.map((block) => (
+          {/*
+            Grouping by list is the one view where a block is a real thing with
+            a name, a size and its own columns, so it gets the card. Every other
+            grouping is a bucket the browser made up out of the rows in hand —
+            there is nothing to open, so those stay as tables.
+          */}
+          {grouping ? (
+            <LeadListCards
+              blocks={blocks}
+              selected={selected}
+              onOpenList={(block) => setOpenList(block.key)}
+              onFilterToList={(id) => setFilters({ ...filters, groupId: id })}
+              onEditColumns={setColumnsFor}
+              onToggleAll={toggleMany}
+            />
+          ) : (
+            blocks.map((block) => (
             <LeadListBlock
               key={block.key}
               label={block.label}
@@ -487,7 +521,8 @@ export function Leads() {
               // the tags and every bulk action are already here.
               onOpenList={grouping && block.key !== "none" ? () => setFilters({ ...filters, groupId: block.key }) : undefined}
             />
-          ))}
+            ))
+          )}
           {grouping
             ? grouped &&
               grouped.totalGroups > grouped.groups.length && (
@@ -503,6 +538,85 @@ export function Leads() {
               )}
         </div>
       )}
+
+      {/*
+        Opening a list is a popup rather than a second screen, because
+        everything that makes it useful is already on this one: the columns,
+        the tags, the selection and every bulk action underneath it.
+      */}
+      <Modal
+        open={openList !== null}
+        onClose={() => setOpenList(null)}
+        size="full"
+        title={openBlock?.label ?? "List"}
+        subtitle={
+          openBlock && (
+            <span className="flex flex-wrap items-center gap-2">
+              <span>
+                {(openBlock.total ?? openBlock.leads.length).toLocaleString()} leads ·{" "}
+                {(openBlock.list?.withEmail ?? openBlock.leads.filter((lead) => lead.contactEmail).length).toLocaleString()} with email
+              </span>
+              {openBlock.list?.sourceLabel && <span className="text-ink/40">· {openBlock.list.sourceLabel}</span>}
+              {/* Only when there are some. The picker's own empty state reads
+                  "+ tag list", which in a subtitle looks like a broken label. */}
+              {openBlock.list && openBlock.list.tags.length > 0 && <GroupTags group={openBlock.list} />}
+            </span>
+          )
+        }
+        footer={
+          openBlock && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">
+                {openBlock.leads.length < (openBlock.total ?? 0)
+                  ? `Showing the first ${openBlock.leads.length} of ${openBlock.total}`
+                  : `All ${openBlock.leads.length} shown`}
+              </span>
+              <span className="flex gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setColumnsFor(openBlock.key === "none" ? null : openBlock.key)}>
+                  Edit columns
+                </Button>
+                {openBlock.key !== "none" && (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      // Filtering the page to this list is how you reach the
+                      // rows past the preview, and the bulk bar with them.
+                      setFilters({ ...filters, groupId: openBlock.key });
+                      setOpenList(null);
+                    }}
+                  >
+                    Work the whole list
+                  </Button>
+                )}
+              </span>
+            </div>
+          )
+        }
+      >
+        {openBlock && (
+          <LeadListBlock
+            label={openBlock.label}
+            leads={openBlock.leads}
+            total={openBlock.total ?? openBlock.leads.length}
+            groupId={openBlock.key !== "none" ? openBlock.key : null}
+            list={openBlock.list ?? null}
+            fallbackColumns={columns}
+            selected={selected}
+            onToggle={toggleSelected}
+            onToggleAll={toggleMany}
+            onOpen={(id) => {
+              // One panel at a time: a lead drawer over a list popup is a maze.
+              setOpenList(null);
+              setOpenLeadId(id);
+            }}
+            onSave={(id, body) => updateLead.mutate({ id, body })}
+            savingId={updateLead.isPending ? updateLead.variables?.id : undefined}
+            saveError={updateLead.error}
+            onEditColumns={setColumnsFor}
+            showGroupHeader={false}
+          />
+        )}
+      </Modal>
 
       <LeadDrawer
         leadId={openLeadId}
@@ -625,6 +739,217 @@ function groupLeads(leads: Lead[], groupBy: GroupBy): RenderGroup[] {
     return groups.sort((a, b) => STATUSES.indexOf(a.key) - STATUSES.indexOf(b.key));
   }
   return groups.sort((a, b) => b.leads.length - a.leads.length);
+}
+
+/**
+ * The lists, as a list.
+ *
+ * Every list used to render its whole table inline, one under another. With
+ * four lists that is a page; with thirty-nine — which is what one workbook
+ * import produces — it is a mile of scrolling in which no two lists can be
+ * compared, because they are never on screen together. So the lists became
+ * rows: name, size, how many can actually be contacted, tags, where they came
+ * from. Opening one is a popup with the table in it.
+ *
+ * Grouped by when the list arrived, because that is the question actually
+ * being asked of a screen full of lists — "what came in today" — and because
+ * a flat run of thirty-nine rows has the same problem as a flat run of
+ * thirty-nine tables, just shorter.
+ */
+function LeadListCards({
+  blocks,
+  selected,
+  onOpenList,
+  onFilterToList,
+  onEditColumns,
+  onToggleAll,
+}: {
+  blocks: RenderGroup[];
+  selected: Set<string>;
+  onOpenList: (block: RenderGroup) => void;
+  onFilterToList: (id: string) => void;
+  onEditColumns: (groupId: string | null) => void;
+  onToggleAll: (ids: string[], select: boolean) => void;
+}) {
+  const sections = useMemo(() => groupListsByPeriod(blocks), [blocks]);
+
+  return (
+    <div className="space-y-8">
+      {sections.map((section) => (
+        <section key={section.label}>
+          <div className="mb-3 flex items-baseline gap-3">
+            <h3 className="font-display text-lg tracking-[-.02em]">{section.label}</h3>
+            <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">
+              {section.blocks.length} {section.blocks.length === 1 ? "list" : "lists"} ·{" "}
+              {section.blocks.reduce((sum, block) => sum + (block.total ?? block.leads.length), 0).toLocaleString()} leads
+            </span>
+            <span className="h-px flex-1 bg-ink/10" />
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-line bg-white">
+            {section.blocks.map((block) => {
+              const total = block.total ?? block.leads.length;
+              const withEmail = block.list?.withEmail ?? block.leads.filter((lead) => lead.contactEmail).length;
+              // The number that decides whether a list is worth an afternoon:
+              // a list you cannot contact is not a list, however long it is.
+              const reachable = total ? Math.round((withEmail / total) * 100) : 0;
+              const chosen = block.leads.filter((lead) => selected.has(lead.id)).length;
+
+              return (
+                <div
+                  key={block.key}
+                  className="group flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-ink/5 px-4 py-4 transition last:border-0 hover:bg-cream/60 sm:flex-nowrap"
+                >
+                  {/* Size first, the way the reference puts the document first:
+                      it is the thing you scan down the column for. */}
+                  <button
+                    type="button"
+                    onClick={() => onOpenList(block)}
+                    className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center rounded-xl border border-line py-2 transition group-hover:border-ink/25"
+                  >
+                    <span className="font-display text-lg leading-none tracking-[-.02em]">{total.toLocaleString()}</span>
+                    <span className="mt-0.5 font-mono text-[9px] uppercase tracking-[.12em] text-ink/40">leads</span>
+                  </button>
+
+                  <button type="button" onClick={() => onOpenList(block)} className="min-w-0 flex-1 text-left">
+                    <span className="block truncate font-medium">{block.label}</span>
+                    <span className="mt-0.5 block truncate font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+                      {block.list?.sourceLabel ?? (block.key === "none" ? "not in a list" : "added by hand")}
+                      {block.list?.createdAt && <> · {new Date(block.list.createdAt).toLocaleDateString()}</>}
+                    </span>
+                  </button>
+
+                  {block.list && block.list.tags.length > 0 && (
+                    <div className="hidden shrink-0 lg:block">
+                      <GroupTags group={block.list} />
+                    </div>
+                  )}
+
+                  <div className="hidden w-28 shrink-0 text-right md:block">
+                    <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+                      {block.list?.createdAt ? <RelativeTime value={block.list.createdAt} /> : "—"}
+                    </span>
+                  </div>
+
+                  {/* Lime is the positive-status colour and nothing else, so it
+                      appears here only when a list really is ready to work. */}
+                  {/* Lime is the positive-status colour and is meant to be
+                      1–5% of a surface, so it is a 3rem bar and only at the top
+                      band — a page of lists all reading "good" in full lime is
+                      the rule broken fifteen times over. */}
+                  <div className="w-32 shrink-0 text-right">
+                    <span className="block font-mono text-[11px] tracking-[.06em] text-ink/70">
+                      {withEmail.toLocaleString()} with email
+                    </span>
+                    <span className="mt-1 flex items-center justify-end gap-1.5">
+                      <span className="h-1 w-12 overflow-hidden rounded-full bg-ink/10">
+                        <span
+                          className={`block h-full ${reachable >= 80 ? "bg-lime" : reachable >= 25 ? "bg-blue" : "bg-ink/25"}`}
+                          style={{ width: `${Math.max(2, reachable)}%` }}
+                        />
+                      </span>
+                      <span className="font-mono text-[9px] uppercase tracking-[.1em] text-ink/40">{reachable}%</span>
+                    </span>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    {chosen > 0 && (
+                      <span className="rounded-full bg-blue/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-blue">
+                        {chosen} picked
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onOpenList(block)}
+                      className="rounded-full bg-ink px-4 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-cream transition hover:bg-ink/85"
+                    >
+                      Open
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onToggleAll(block.leads.map((lead) => lead.id), true)}
+                      title={`Select the ${block.leads.length} shown from this list`}
+                      aria-label={`Select leads from ${block.label}`}
+                      className="rounded-full border border-line px-2.5 py-2 font-mono text-[10px] text-ink/40 transition hover:border-ink/30 hover:text-ink"
+                    >
+                      ✓
+                    </button>
+                    {block.key !== "none" && (
+                      <button
+                        type="button"
+                        onClick={() => onFilterToList(block.key)}
+                        title="Filter the whole screen to this list"
+                        aria-label={`Filter to ${block.label}`}
+                        className="rounded-full border border-line px-2.5 py-2 font-mono text-[10px] text-ink/40 transition hover:border-ink/30 hover:text-ink"
+                      >
+                        ⌖
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onEditColumns(block.key === "none" ? null : block.key)}
+                      title="Edit this list's columns"
+                      aria-label={`Edit columns for ${block.label}`}
+                      className="rounded-full border border-line px-2.5 py-2 font-mono text-[10px] text-ink/40 transition hover:border-ink/30 hover:text-ink"
+                    >
+                      ⚙
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Lists under the day, week or month they arrived.
+ *
+ * A list with no date — the "not in a list" bucket, and anything grouped in the
+ * browser — sits under "Lists" at the top rather than being dropped or filed
+ * under an invented date.
+ */
+function groupListsByPeriod(blocks: RenderGroup[]): { label: string; blocks: RenderGroup[] }[] {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dayMs = 86_400_000;
+
+  const sections = new Map<string, RenderGroup[]>();
+  const order: string[] = [];
+  const push = (label: string, block: RenderGroup) => {
+    if (!sections.has(label)) {
+      sections.set(label, []);
+      order.push(label);
+    }
+    sections.get(label)!.push(block);
+  };
+
+  for (const block of blocks) {
+    const created = block.list?.createdAt ? new Date(block.list.createdAt).getTime() : null;
+    if (created === null || Number.isNaN(created)) {
+      push("Lists", block);
+      continue;
+    }
+    if (created >= startOfToday) push("Today", block);
+    else if (created >= startOfToday - dayMs) push("Yesterday", block);
+    else if (created >= startOfToday - 6 * dayMs) push("Earlier this week", block);
+    else push(new Date(created).toLocaleDateString(undefined, { month: "long", year: "numeric" }), block);
+  }
+
+  // Newest first inside a section, biggest first where there are no dates.
+  for (const [, group] of sections) {
+    group.sort((a, b) => {
+      const at = a.list?.createdAt ? Date.parse(a.list.createdAt) : 0;
+      const bt = b.list?.createdAt ? Date.parse(b.list.createdAt) : 0;
+      if (at !== bt) return bt - at;
+      return (b.total ?? b.leads.length) - (a.total ?? a.leads.length);
+    });
+  }
+
+  return order.map((label) => ({ label, blocks: sections.get(label)! }));
 }
 
 function LeadListBlock({

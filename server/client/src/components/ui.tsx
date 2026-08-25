@@ -299,6 +299,78 @@ export function Drawer({
   );
 }
 
+/**
+ * A centred panel, for the things a side drawer is the wrong shape for.
+ *
+ * `Drawer` is right for one record — a lead, a run — because it is tall and
+ * narrow and the page behind it stays legible. A table is neither: a list of
+ * leads with its own columns needs the width, and reading it in a 36rem column
+ * is the reason lists were rendered inline down the page in the first place.
+ */
+export function Modal({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  size = "wide",
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  size?: "wide" | "full";
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+      <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} aria-hidden />
+      <div
+        className={`relative flex w-full flex-col overflow-hidden rounded-2xl border border-ink/10 bg-cream shadow-2xl ${
+          size === "full" ? "max-w-[92rem]" : "max-w-6xl"
+        }`}
+        role="dialog"
+        aria-modal="true"
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-line bg-white px-6 py-4">
+          <div className="min-w-0">
+            <h2 className="truncate font-display text-xl tracking-[-.03em]">{title}</h2>
+            {subtitle && <div className="mt-0.5 text-xs text-muted">{subtitle}</div>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 rounded-full border border-line px-3 py-1 text-[11px] font-bold text-muted transition hover:border-ink/40 hover:text-ink"
+          >
+            Close
+          </button>
+        </header>
+        {/* Capped rather than full-height: a modal as tall as the window with a
+            short table in it reads as a broken page. */}
+        <div className="max-h-[70vh] flex-1 overflow-auto px-6 py-5">{children}</div>
+        {footer && <footer className="border-t border-line bg-white px-6 py-4">{footer}</footer>}
+      </div>
+    </div>
+  );
+}
+
 /** Status pill shared by leads, runs and sources. */
 export function StatusDot({ tone }: { tone: "live" | "ok" | "warn" | "bad" | "idle" }) {
   const colour = {
