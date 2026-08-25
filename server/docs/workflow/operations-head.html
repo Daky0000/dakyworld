@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How the Workforce Runs</title>
+<!-- The brand faces are embedded rather than linked. Chrome's print path
+     finished before a linked webfont arrived and the first PDF shipped with
+     Segoe UI in every heading; a PDF is the artefact, not a view of one. -->
+__FONTS__
+<style>
+/* --------------------------------------------------------------------------
+   Dakyworld brand design system. Token values match assets/site.css,
+   server/client/tailwind.config.js and server/src/services/letterhead.ts.
+
+   Lime is a mark and an action colour only — roughly 1-5% of a surface, never
+   type on white. On light surfaces the accent is blue.
+   -------------------------------------------------------------------------- */
+:root {
+  --ink: #08101F;
+  --navy: #0B0A16;
+  --blue: #3157FF;
+  --blue-light: #6490FF;
+  --cyan: #6FE4FF;
+  --lime: #B8FF3D;
+  --cream: #F4F5F0;
+  --muted: #69758A;
+  --line: #DFE4EB;
+  --paper: #FFFFFF;
+
+  --display: "Space Grotesk", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --body: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@page { size: A4; margin: 16mm 14mm 18mm; }
+@page :first { margin: 0; }
+
+* { box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  margin: 0;
+  font-family: var(--body);
+  font-size: 9.6pt;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+h1, h2, h3, h4 { font-family: var(--display); font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+p { margin: 0 0 7pt; }
+strong { font-weight: 700; }
+code, .mono { font-family: var(--mono); font-size: 8.4pt; }
+a { color: var(--blue); text-decoration: none; }
+
+/* --- Cover ---------------------------------------------------------------- */
+.cover {
+  page-break-after: always;
+  background: var(--ink);
+  color: var(--cream);
+  padding: 30mm 20mm 20mm;
+  min-height: 298mm;
+  display: flex;
+  flex-direction: column;
+}
+.cover img.lockup { width: 62mm; display: block; }
+.cover .rule { display: flex; margin: 12mm 0 0; }
+.cover .rule i { display: block; height: 3px; }
+.cover .rule i:first-child { width: 18mm; background: var(--lime); }
+.cover .rule i:last-child { flex: 1; background: rgba(244,245,240,.16); }
+.cover h1 { font-size: 34pt; line-height: 1.06; margin-top: 14mm; max-width: 130mm; }
+.cover .contents {
+  margin-top: auto; padding-top: 10mm;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8mm;
+  font-size: 8.4pt; line-height: 1.7; color: rgba(244,245,240,.6);
+}
+.cover .contents .col { display: flex; flex-direction: column; }
+.cover .contents b {
+  font-family: var(--mono); font-size: 7pt; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--lime); font-weight: 500; margin-bottom: 2.5mm;
+}
+.cover .sub { font-size: 12pt; color: rgba(244,245,240,.72); margin-top: 6mm; max-width: 118mm; line-height: 1.5; }
+.cover .meta {
+  margin-top: 10mm; padding-top: 6mm; border-top: 1px solid rgba(244,245,240,.14);
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm;
+  font-family: var(--mono); font-size: 7.6pt; letter-spacing: .08em; text-transform: uppercase;
+  color: rgba(244,245,240,.5);
+}
+.cover .meta b { display: block; color: var(--cream); font-weight: 500; margin-top: 2mm; letter-spacing: .04em; }
+
+/* --- Structure ------------------------------------------------------------ */
+/* Stages flow into one another. Forcing a break before each cost thirteen
+   half-empty pages in a document meant to be read at a desk, not framed. The
+   real boundaries below still break, and no heading is ever orphaned. */
+.stage { margin-top: 9mm; }
+.stage.newpage { page-break-before: always; margin-top: 0; }
+.stage-head {
+  border-top: 3px solid var(--ink); padding-top: 4mm; margin-bottom: 6mm;
+  page-break-after: avoid; break-after: avoid-page;
+}
+.stage-head .no {
+  font-family: var(--mono); font-size: 7.6pt; letter-spacing: .16em; text-transform: uppercase; color: var(--blue);
+}
+.stage-head h2 { font-size: 20pt; margin-top: 1.5mm; }
+.stage-head .lede { color: var(--muted); font-size: 10pt; margin-top: 2.5mm; max-width: 155mm; }
+
+h3.band {
+  font-size: 8pt; font-family: var(--mono); font-weight: 500; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 2mm; margin: 8mm 0 4mm;
+  page-break-after: avoid; break-after: avoid-page;
+}
+/* A step or a callout split across a page break is unreadable; a forty-row
+   reference table that refuses to split wastes a whole page. Different rules. */
+.step, .callout, .lane, .ladder { page-break-inside: avoid; }
+tr, .fl-row { page-break-inside: avoid; }
+
+/* --- Step card ------------------------------------------------------------ */
+.step {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  padding: 4mm 5mm;
+  margin-bottom: 4mm;
+  background: var(--paper);
+}
+.step.auto { border-left-color: var(--lime); }
+.step.gate { border-left-color: var(--ink); }
+.step > header { display: flex; align-items: baseline; gap: 3mm; margin-bottom: 2.5mm; }
+.step .id {
+  font-family: var(--mono); font-size: 8pt; font-weight: 500; color: var(--blue);
+  letter-spacing: .04em; white-space: nowrap;
+}
+.step.auto .id { color: #4E7A00; }
+.step.gate .id { color: var(--ink); }
+.step h4 { font-size: 11.5pt; flex: 1; }
+.step .who {
+  font-family: var(--mono); font-size: 7.4pt; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); white-space: nowrap;
+}
+.step dl { display: grid; grid-template-columns: 26mm 1fr; gap: 1.2mm 4mm; margin: 0; }
+.step dt {
+  font-family: var(--mono); font-size: 7.2pt; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); padding-top: .6mm;
+}
+.step dd { margin: 0; }
+.step dd.stop { color: #9A3412; }
+
+/* Tool chips — the exact catalogue keys, so a step is auditable against code. */
+.tools { display: flex; flex-wrap: wrap; gap: 1.5mm; }
+.tools span {
+  font-family: var(--mono); font-size: 7.4pt;
+  border: 1px solid var(--line); background: var(--cream);
+  padding: .4mm 1.6mm; border-radius: 2px; white-space: nowrap;
+}
+.tools span.spend { border-color: #F0C77E; background: #FEF6E7; }
+.tools span.out { border-color: var(--blue-light); background: #EEF2FF; }
+.tools span.none { border-style: dashed; color: var(--muted); background: transparent; }
+
+/* --- Tables --------------------------------------------------------------- */
+table { width: 100%; border-collapse: collapse; margin: 0 0 5mm; font-size: 8.6pt; }
+th {
+  text-align: left; font-family: var(--mono); font-weight: 500; font-size: 7.2pt;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--ink); padding: 0 3mm 1.8mm 0; vertical-align: bottom;
+}
+td { padding: 1.8mm 3mm 1.8mm 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+td:last-child, th:last-child { padding-right: 0; }
+tr.total td { border-bottom: none; font-weight: 700; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --- Callouts ------------------------------------------------------------- */
+.callout { border: 1px solid var(--line); border-left: 3px solid var(--ink); padding: 3.5mm 4.5mm; margin: 0 0 5mm; background: var(--cream); }
+.callout h4 { font-size: 9.5pt; margin-bottom: 1.5mm; }
+.callout p:last-child { margin-bottom: 0; }
+.callout.warn { border-left-color: #B45309; background: #FEF6E7; }
+.callout.warn h4 { color: #92400E; }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
+.three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+
+/* --- Autonomy ladder ------------------------------------------------------ */
+.ladder { border: 1px solid var(--line); margin-bottom: 5mm; }
+.ladder .rung { display: grid; grid-template-columns: 8mm 26mm 1fr; gap: 4mm; padding: 2.6mm 4mm; border-bottom: 1px solid var(--line); align-items: baseline; }
+.ladder .rung:last-child { border-bottom: none; }
+.ladder .rung .lvl { font-family: var(--display); font-size: 13pt; font-weight: 700; color: var(--blue); }
+.ladder .rung .nm { font-weight: 700; font-size: 9.4pt; }
+.ladder .rung.seed { background: var(--cream); }
+.ladder .rung.locked .lvl { color: var(--muted); }
+.ladder .rung.locked { color: var(--muted); }
+
+/* --- Legend --------------------------------------------------------------- */
+.legend { display: flex; gap: 6mm; flex-wrap: wrap; font-size: 8.2pt; color: var(--muted); margin-bottom: 5mm; }
+.legend i { display: inline-block; width: 3px; height: 9pt; vertical-align: -1pt; margin-right: 1.5mm; }
+
+
+/* --- Additions for the operations document -------------------------------- */
+
+/* Stat row on the cover-facing summary and at the head of a part. */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4mm; margin: 0 0 6mm; }
+.stats .s { border: 1px solid var(--line); border-top: 3px solid var(--blue); padding: 3mm 3.5mm; }
+.stats .s b { display: block; font-family: var(--display); font-size: 19pt; line-height: 1; }
+.stats .s span { display: block; font-family: var(--mono); font-size: 6.8pt; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-top: 2mm; }
+.stats .s i { display: block; font-style: normal; font-size: 7.6pt; color: var(--muted); margin-top: 1.5mm; line-height: 1.35; }
+
+/* A numbered sequence — the loop, the boot order, an hour of a day. */
+.seq { border: 1px solid var(--line); margin: 0 0 5mm; page-break-inside: auto; }
+.seq .r { display: grid; grid-template-columns: 9mm 1fr; gap: 4mm; padding: 2.8mm 4mm; border-bottom: 1px solid var(--line); page-break-inside: avoid; }
+.seq .r:last-child { border-bottom: none; }
+.seq .r:nth-child(even) { background: var(--cream); }
+.seq .n { font-family: var(--mono); font-size: 8pt; color: var(--blue); padding-top: .4mm; }
+.seq .t { font-weight: 700; font-size: 9.6pt; }
+.seq .d { font-size: 8.4pt; color: var(--muted); margin-top: .8mm; line-height: 1.45; }
+.seq .d code, .seq .t code { font-size: 7.8pt; }
+.seq .r.stop { background: #FEF6E7; }
+.seq .r.stop .n { color: #B45309; }
+
+/* The clock — one row per job on the tick. */
+.tick { border: 1px solid var(--line); margin: 0 0 5mm; }
+.tick .h, .tick .r { display: grid; grid-template-columns: 40mm 1fr 34mm; gap: 4mm; padding: 2.4mm 4mm; }
+.tick .h { border-bottom: 1px solid var(--ink); font-family: var(--mono); font-size: 6.8pt; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.tick .r { border-bottom: 1px solid var(--line); page-break-inside: avoid; }
+.tick .r:last-child { border-bottom: none; }
+.tick .r b { font-size: 9.2pt; }
+.tick .r .k { font-family: var(--mono); font-size: 6.8pt; color: var(--muted); display: block; margin-top: .4mm; }
+.tick .r .w { font-size: 8.3pt; line-height: 1.45; }
+.tick .r .f { font-size: 7.6pt; color: var(--muted); border-left: 2px solid var(--lime); padding-left: 3mm; line-height: 1.4; }
+
+/* A left-to-right chain of stages, for the mail room and the capture path. */
+.chain { display: grid; gap: 0; border: 1px solid var(--line); margin: 0 0 5mm; page-break-inside: avoid; }
+.chain .c { display: grid; grid-template-columns: 34mm 1fr; gap: 4mm; padding: 2.6mm 4mm; border-bottom: 1px solid var(--line); }
+.chain .c:last-child { border-bottom: none; }
+.chain .c b { font-size: 9pt; }
+.chain .c .file { font-family: var(--mono); font-size: 6.8pt; color: var(--muted); display: block; margin-top: .4mm; }
+.chain .c p { margin: 0; font-size: 8.3pt; line-height: 1.45; }
+.chain .c.model { background: #EEF2FF; }
+.chain .c.code { background: var(--cream); }
+
+/* Key/value strip for a state, an end state, a setting. */
+.kv { display: grid; grid-template-columns: 34mm 1fr; gap: 1.4mm 4mm; margin: 0 0 5mm; }
+.kv dt { font-family: var(--mono); font-size: 7.4pt; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-top: .5mm; }
+.kv dd { margin: 0; font-size: 8.8pt; }
+
+/* Small inline state badge. */
+.badge { font-family: var(--mono); font-size: 7.4pt; border: 1px solid var(--line); background: var(--cream); padding: .4mm 1.6mm; border-radius: 2px; white-space: nowrap; }
+.badge.ok { border-color: #A3D77A; background: #F2FBE8; }
+.badge.hold { border-color: var(--blue-light); background: #EEF2FF; }
+.badge.bad { border-color: #F0C77E; background: #FEF6E7; }
+
+/* Part divider page. */
+.part { page-break-before: always; page-break-after: always; background: var(--ink); color: var(--cream); padding: 60mm 20mm 20mm; min-height: 262mm; display: flex; flex-direction: column; }
+.part .no { font-family: var(--mono); font-size: 8pt; letter-spacing: .18em; text-transform: uppercase; color: var(--lime); }
+.part h2 { font-size: 30pt; line-height: 1.08; margin-top: 6mm; max-width: 130mm; color: var(--cream); }
+.part .lede { font-size: 11.5pt; color: rgba(244,245,240,.72); margin-top: 8mm; max-width: 128mm; line-height: 1.55; }
+.part .in { margin-top: auto; padding-top: 8mm; border-top: 1px solid rgba(244,245,240,.14); font-size: 8.6pt; color: rgba(244,245,240,.6); line-height: 1.8; }
+.part .in b { font-family: var(--mono); font-size: 7pt; letter-spacing: .14em; text-transform: uppercase; color: var(--lime); font-weight: 500; display: block; margin-bottom: 2.5mm; }
+
+/* Tighter table variant for long reference appendices. */
+table.tight td, table.tight th { padding-top: 1.3mm; padding-bottom: 1.3mm; }
+</style>
+</head>
+<body>

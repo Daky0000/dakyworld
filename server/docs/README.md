@@ -1,5 +1,45 @@
 # docs
 
+## How the workforce runs
+
+`agent-operations.pdf` — the operating picture of the agent system. Where the
+master workflow below describes the *business* flow and the reference prints
+every instruction in full, this one describes the **machine**: what an agent is,
+what it may call, what happens between a task being raised and a person reading
+the result, and everything that runs on the clock without anybody asking.
+
+Six parts and two appendices — the employee record and the ten prompt layers,
+the catalogue and the six checks every tool call passes, one task turn by turn
+with its checkpoints and end states, the nine jobs on the minute tick, every
+process end to end (capture, the mail room, approvals, hiring, rehearsals,
+budgets, model routing, who writes what), and one ordinary day with all of it
+switched on.
+
+Every number in it is read out of the code at build time — the roster, the
+catalogue, the writer registry and the model jobs. **One check it performs while
+building**, because it is invisible otherwise: the tools sitting in nobody's
+seeded toolkit are counted and named in a warning under Appendix B. That is the
+ordinary consequence of `ensureAgents()` only ever creating, and it is the list
+to work down the day an agent reports that something cannot be done. It found
+eleven on 25 Aug 2026, `email.send` among them.
+
+```bash
+# from server/
+npx tsx build-operations-doc.ts       # -> docs/agent-operations.html
+
+"C:/Program Files/Google/Chrome/Application/chrome.exe" --headless=new \
+  --disable-gpu --no-pdf-header-footer --virtual-time-budget=30000 \
+  --print-to-pdf="<absolute path>/docs/agent-operations.pdf" \
+  "file:///<absolute path>/docs/agent-operations.html"
+```
+
+Forty-seven pages with five sparse ones (the tails of 01, 04, 05 and the two
+appendices) is the expected shape. The prose lives in
+`workflow/operations-body.html` and the styling in `workflow/operations-head.html`,
+which is the master workflow's head plus the components this document adds.
+Everything else about rebuilding and checking it — absolute paths, the embedded
+fonts, the PyMuPDF page check — is identical to the master workflow below.
+
 ## The complete reference
 
 `dakyworld-os-reference.pdf` — every agent, every instruction, every workflow
