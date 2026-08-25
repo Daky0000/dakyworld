@@ -5,6 +5,7 @@ import { api, ApiError, apiUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
+import { StylePanel } from "../components/StylePanel";
 
 /**
  * One page, as a list of things that can be changed.
@@ -27,6 +28,23 @@ const DEVICES = [
 ] as const;
 
 type Device = (typeof DEVICES)[number]["key"];
+
+/**
+ * Three ways to work on a page, and they answer different questions.
+ *
+ * **Visual** is point at the thing you mean. **List** is the form — every
+ * field on the page under the section it belongs to, which is the only view
+ * that can answer "did I miss anything" and the only one that reaches a field
+ * with nothing visible to click (the page title, the description). **Preview**
+ * is the page as it will be, with no editor furniture on it at all.
+ */
+type Mode = "visual" | "edit" | "preview";
+
+const MODES: { key: Mode; label: string }[] = [
+  { key: "visual", label: "Visual" },
+  { key: "edit", label: "List" },
+  { key: "preview", label: "Preview" },
+];
 
 const INPUT =
   "w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue focus:ring-2 focus:ring-blue/20";
@@ -83,6 +101,7 @@ function FieldRow({
   publicUrl,
   onChange,
   readOnly,
+  bare,
 }: {
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
@@ -90,6 +109,8 @@ function FieldRow({
   publicUrl: string;
   onChange: (next: FieldEdit) => void;
   readOnly: boolean;
+  /** Inside the visual panel, where the card's own border and title are noise. */
+  bare?: boolean;
 }) {
   const value = edit?.value ?? field.value;
   const href = edit?.href ?? field.href ?? "";
@@ -106,11 +127,24 @@ function FieldRow({
   }, [field.kind, value, publicUrl]);
 
   return (
-    <div className={`rounded-2xl border p-4 ${problem ? "border-amber-300 bg-amber-50/40" : changed ? "border-blue/40 bg-blue/[.02]" : "border-line bg-white"}`}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="text-[11px] font-bold uppercase tracking-[.1em] text-muted">{field.label}</span>
-        {changed && <Badge tone="warn">Changed</Badge>}
-      </div>
+    <div
+      className={
+        bare
+          ? ""
+          : `rounded-2xl border p-4 ${problem ? "border-amber-300 bg-amber-50/40" : changed ? "border-blue/40 bg-blue/[.02]" : "border-line bg-white"}`
+      }
+    >
+      {!bare && (
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <span className="text-[11px] font-bold uppercase tracking-[.1em] text-muted">{field.label}</span>
+          {changed && <Badge tone="warn">Changed</Badge>}
+        </div>
+      )}
+      {bare && changed && (
+        <div className="mb-2">
+          <Badge tone="warn">Changed</Badge>
+        </div>
+      )}
 
       {field.kind === "richtext" && (
         <RichText html={value} onChange={(next) => onChange({ ...edit, value: next })} />
@@ -192,6 +226,196 @@ function FieldRow({
   );
 }
 
+/**
+ * Point at the thing you mean.
+ *
+ * The preview already renders the page with the unpublished draft in it; all
+ * this adds is that the server marks every editable element on the way out
+ * (`?pick=1`), the frame posts up which one was clicked, and the panel beside
+ * it edits that one. No drag and drop, nothing moves, nothing is added or
+ * deleted — the file is somebody's hand-written HTML and the whole module is a
+ * splice at recorded offsets. What changes is only ever what a person selected.
+ *
+ * The ids come from the server's own parse rather than being worked out in the
+ * browser, because they are positional; a second implementation on this side
+ * would have to agree with the first for ever, and the day it stopped agreeing
+ * an edit would land in the wrong element.
+ */
+function VisualEditor({
+  pageId,
+  previewToken,
+  device,
+  onDevice,
+  frame,
+  fields,
+  picked,
+  pickedId,
+  onPick,
+  edits,
+  problems,
+  publicUrl,
+  readOnly,
+  loadToken,
+  onChange,
+}: {
+  pageId: string;
+  previewToken: number;
+  device: Device;
+  onDevice: (device: Device) => void;
+  frame: React.MutableRefObject<HTMLIFrameElement | null>;
+  fields: SiteFieldRow[];
+  picked: SiteFieldRow | null;
+  pickedId: string | null;
+  onPick: (id: string | null) => void;
+  edits: Record<string, FieldEdit>;
+  problems: Map<string, string>;
+  publicUrl: string;
+  readOnly: boolean;
+  loadToken: number;
+  onChange: (fieldId: string, next: FieldEdit) => void;
+}) {
+  // The frame is same-origin but talked to by message anyway: it is the only
+  // channel that keeps working if the preview is ever served from the site's
+  // own origin instead, which is where this is heading for client sites.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { source?: string; type?: string; id?: string | null };
+      if (data?.source !== "dakyworld-preview") return;
+      if (data.type === "select") onPick(data.id ?? null);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [onPick]);
+
+  const tell = (id: string | null) => {
+    frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", type: "select", id }, "*");
+  };
+
+  const edit = pickedId ? (edits[pickedId] ?? {}) : {};
+  const style = edit.style ?? picked?.style ?? "";
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+      <div>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {DEVICES.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => onDevice(option.key)}
+              className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] ${
+                device === option.key ? "border-ink bg-ink text-cream" : "border-ink/20 text-ink/60 hover:border-ink/40"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+          <span className="ml-1 text-xs text-muted">
+            {picked ? `Editing the ${picked.label.toLowerCase()}.` : "Click anything on the page to edit it."}
+          </span>
+        </div>
+
+        <div className="flex justify-center overflow-hidden rounded-2xl border border-line bg-cream p-4">
+          <iframe
+            ref={frame}
+            key={`${previewToken}-${device}`}
+            title="Page"
+            src={apiUrl(`/website/pages/${pageId}/preview?pick=1&v=${previewToken}`)}
+            style={{ width: DEVICES.find((option) => option.key === device)!.width }}
+            className="h-[72vh] rounded-xl border border-line bg-white"
+          />
+        </div>
+      </div>
+
+      <aside className="xl:sticky xl:top-6 xl:self-start">
+        <div className="rounded-2xl border border-line bg-white p-4">
+          {!picked ? (
+            <div className="py-6 text-center">
+              <p className="text-sm font-semibold text-ink">Nothing selected</p>
+              <p className="mt-1 text-xs text-muted">
+                Click a heading, a paragraph, a button or a picture in the page. Its words and its look appear here.
+              </p>
+              <p className="mt-4 text-[11px] text-muted">
+                {fields.length} editable {fields.length === 1 ? "thing" : "things"} on this page.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="mb-3 flex items-start justify-between gap-2 border-b border-line pb-3">
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{picked.tag}</div>
+                  <h3 className="truncate font-display text-base tracking-[-.02em]">{picked.label}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPick(null);
+                    tell(null);
+                  }}
+                  className="shrink-0 text-[11px] text-muted transition hover:text-ink"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <FieldRow
+                key={`${loadToken}:${picked.id}`}
+                field={picked}
+                edit={edits[picked.id]}
+                problem={problems.get(picked.id)}
+                publicUrl={publicUrl}
+                readOnly={readOnly}
+                onChange={(next) => onChange(picked.id, next)}
+                bare
+              />
+
+              <div className="mt-4 border-t border-line pt-4">
+                <div className="mb-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Look</div>
+                <StylePanel
+                  style={style}
+                  readOnly={readOnly}
+                  onChange={(next) => onChange(picked.id, { ...edits[picked.id], style: next })}
+                  onReset={() => onChange(picked.id, { ...edits[picked.id], style: "" })}
+                />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* The list of everything, so a field with nothing visible to click —
+            and anything scrolled far off screen — is still reachable. */}
+        <details className="mt-3 rounded-2xl border border-line bg-white p-4">
+          <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-[.1em] text-muted">
+            Everything on this page
+          </summary>
+          <ul className="mt-3 max-h-72 space-y-0.5 overflow-y-auto">
+            {fields.map((field) => (
+              <li key={field.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPick(field.id);
+                    tell(field.id);
+                  }}
+                  className={`flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-xs ${
+                    field.id === pickedId ? "bg-ink text-cream" : "text-ink hover:bg-ink/[.04]"
+                  }`}
+                >
+                  <span className={`shrink-0 font-mono text-[9px] uppercase ${field.id === pickedId ? "text-cream/60" : "text-muted"}`}>
+                    {field.tag}
+                  </span>
+                  <span className="truncate">{field.preview || field.label}</span>
+                  {edits[field.id] && <span className="ml-auto shrink-0 text-[9px]">●</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      </aside>
+    </div>
+  );
+}
+
 export function WebsiteEditor() {
   const { pageId = "" } = useParams();
   const qc = useQueryClient();
@@ -199,7 +423,10 @@ export function WebsiteEditor() {
 
   const [edits, setEdits] = useState<Record<string, FieldEdit>>({});
   const [sectionId, setSectionId] = useState<string | null>(null);
-  const [mode, setMode] = useState<"edit" | "preview">("edit");
+  const [mode, setMode] = useState<Mode>("visual");
+  /** The field the person clicked in the preview. */
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const frame = useRef<HTMLIFrameElement | null>(null);
   const [device, setDevice] = useState<Device>("desktop");
   const [previewToken, setPreviewToken] = useState(0);
   const [published, setPublished] = useState<PublishResult | null>(null);
@@ -310,6 +537,8 @@ export function WebsiteEditor() {
 
   const { sections, site } = page.data;
   const section = sections.find((candidate) => candidate.id === sectionId) ?? sections[0] ?? null;
+  const allFields = sections.flatMap((candidate) => candidate.fields);
+  const picked = pickedId ? (allFields.find((field) => field.id === pickedId) ?? null) : null;
   const changedCount = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length;
   const canPublish = can("website.publish");
   const readOnly = !can("website.edit");
@@ -344,18 +573,22 @@ export function WebsiteEditor() {
         <div className="flex flex-wrap items-center gap-2">
           <span className={`text-xs ${dirty.current || changedCount > 0 ? "text-ink" : "text-muted"}`}>{status}</span>
           <div className="flex overflow-hidden rounded-full border border-line">
-            {(["edit", "preview"] as const).map((value) => (
+            {MODES.map((option) => (
               <button
-                key={value}
+                key={option.key}
                 type="button"
                 onClick={() => {
-                  if (value === "preview" && dirty.current) saveNow(edits);
+                  // The frame renders the *saved* draft, so anything typed has
+                  // to be written before switching to a view that shows it.
+                  if (option.key !== "edit" && dirty.current) saveNow(edits);
                   setPreviewToken((token) => token + 1);
-                  setMode(value);
+                  setMode(option.key);
                 }}
-                className={`px-3 py-1.5 text-[11px] font-semibold ${mode === value ? "bg-ink text-cream" : "text-muted hover:text-ink"}`}
+                className={`px-3 py-1.5 text-[11px] font-semibold ${
+                  mode === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"
+                }`}
               >
-                {value === "edit" ? "Edit" : "Preview"}
+                {option.label}
               </button>
             ))}
           </div>
@@ -398,7 +631,25 @@ export function WebsiteEditor() {
 
       {failure && <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900">{failure}</div>}
 
-      {mode === "preview" ? (
+      {mode === "visual" ? (
+        <VisualEditor
+          pageId={pageId}
+          previewToken={previewToken}
+          device={device}
+          onDevice={setDevice}
+          frame={frame}
+          fields={allFields}
+          picked={picked}
+          pickedId={pickedId}
+          onPick={setPickedId}
+          edits={edits}
+          problems={problems}
+          publicUrl={site.publicUrl}
+          readOnly={readOnly}
+          loadToken={loadToken}
+          onChange={change}
+        />
+      ) : mode === "preview" ? (
         <div>
           <div className="mb-3 flex items-center gap-2">
             {DEVICES.map((option) => (

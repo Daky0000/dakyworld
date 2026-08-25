@@ -1,5 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { commitFiles, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError } from "../../lib/github.js";
 import type { Site, SitePage } from "@prisma/client";
+import type { SiteField } from "./regions.js";
 
 /**
  * Where a page's HTML comes from, and where an edited one goes.
@@ -283,7 +285,7 @@ export type PreviewDocument = {
  * allow the editor to frame it at all, and `form-action` is forced to `'none'`
  * because a preview of the contact page must not be able to send a real enquiry.
  */
-export function previewDocument(html: string, baseUrl: string): PreviewDocument {
+export function previewDocument(html: string, baseUrl: string, editable?: SiteField[]): PreviewDocument {
   const origin = baseUrl.replace(/\/+$/, "");
   const declared = /<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*content="([^"]*)"/i.exec(html)?.[1];
 
@@ -296,11 +298,15 @@ export function previewDocument(html: string, baseUrl: string): PreviewDocument 
     .concat(["frame-ancestors 'self'", "form-action 'none'"])
     .join("; ");
 
+  // Marking the elements happens on the original offsets, before anything else
+  // is spliced in — every one of those inserts would move them.
+  const marked = editable?.length ? markEditable(html, editable) : html;
+
   const base = `<base href="${origin}/">`;
-  const headOpen = /<head[^>]*>/i.exec(html);
+  const headOpen = /<head[^>]*>/i.exec(marked);
   const withBase = headOpen
-    ? html.slice(0, headOpen.index + headOpen[0].length) + base + html.slice(headOpen.index + headOpen[0].length)
-    : base + html;
+    ? marked.slice(0, headOpen.index + headOpen[0].length) + base + marked.slice(headOpen.index + headOpen[0].length)
+    : base + marked;
 
   // The tag in the page is rewritten too. It cannot loosen the header, but a
   // stale `'self'` left in it would narrow the result back down to the app's
@@ -310,5 +316,102 @@ export function previewDocument(html: string, baseUrl: string): PreviewDocument 
     (_whole, before: string, _old: string, after: string) => `${before}${policy}${after}`,
   );
 
-  return { html: out, csp: policy };
+  if (!editable?.length) return { html: out, csp: policy };
+
+  // The picker is a script and a stylesheet the page did not ask for, so the
+  // policy has to name them. A nonce rather than 'unsafe-inline': the page's
+  // own inline scripts stay forbidden, and only this one runs.
+  const nonce = randomBytes(16).toString("base64");
+  const withPicker = out.replace(/<\/body>/i, `${pickerAssets(nonce)}</body>`);
+  const picking = policy
+    .split(";")
+    .map((directive) => directive.trim())
+    .map((directive) =>
+      /^script-src\b/i.test(directive)
+        ? `${directive} 'nonce-${nonce}'`
+        : /^style-src\b/i.test(directive)
+          ? `${directive} 'nonce-${nonce}'`
+          : directive,
+    )
+    .join("; ");
+
+  return { html: withPicker === out ? out + pickerAssets(nonce) : withPicker, csp: picking };
+}
+
+/**
+ * Names every editable element in the page, so a click in the preview can say
+ * which field it landed on.
+ *
+ * Written as a splice at the offsets the parse already recorded rather than
+ * matched in the browser: the ids are positional, and anything that recomputed
+ * them on the other side of the frame would be a second implementation of
+ * `readPage` that has to agree with the first for ever.
+ */
+function markEditable(html: string, fields: SiteField[]): string {
+  const marks = fields
+    .filter((field) => field.attrInsert !== undefined)
+    .map((field) => ({ at: field.attrInsert as number, id: field.id }))
+    // Backwards, so each insert leaves the earlier offsets valid.
+    .sort((a, b) => b.at - a.at);
+
+  let out = html;
+  for (const mark of marks) {
+    out = `${out.slice(0, mark.at)} data-dw-field="${mark.id.replace(/"/g, "&quot;")}"${out.slice(mark.at)}`;
+  }
+  return out;
+}
+
+/**
+ * Click-to-select, and nothing else.
+ *
+ * Deliberately about sixty lines with no library behind it. What a person wants
+ * from a visual editor is to point at the thing they mean; the drag-and-drop
+ * layout builders that word usually implies need a component model the page
+ * does not have, and would turn a hand-written site into something only the
+ * builder can open.
+ *
+ * Navigation is stopped for the same reason `form-action` is `'none'`: a click
+ * on a link in a preview should select the link, not leave the page.
+ */
+function pickerAssets(nonce: string): string {
+  return `
+<style nonce="${nonce}">
+  [data-dw-field] { cursor: pointer; }
+  [data-dw-field]:hover { outline: 2px dashed rgba(49,87,255,.55); outline-offset: 2px; }
+  [data-dw-selected] { outline: 2px solid #3157FF !important; outline-offset: 2px; background: rgba(49,87,255,.06); }
+</style>
+<script nonce="${nonce}">
+(function () {
+  var selected = null;
+  function mark(el) {
+    if (selected) selected.removeAttribute("data-dw-selected");
+    selected = el;
+    if (el) el.setAttribute("data-dw-selected", "");
+  }
+  document.addEventListener(
+    "click",
+    function (event) {
+      var el = event.target && event.target.closest ? event.target.closest("[data-dw-field]") : null;
+      // A click on nothing in particular clears the selection rather than
+      // leaving the panel describing something the eye has moved on from.
+      event.preventDefault();
+      event.stopPropagation();
+      mark(el);
+      parent.postMessage({ source: "dakyworld-preview", type: "select", id: el ? el.getAttribute("data-dw-field") : null }, "*");
+    },
+    true,
+  );
+  // Typing in the panel scrolls the page to what is being typed about.
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (data.source !== "dakyworld-editor") return;
+    if (data.type === "select") {
+      var el = data.id ? document.querySelector('[data-dw-field="' + String(data.id).replace(/"/g, '') + '"]') : null;
+      mark(el);
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  });
+  parent.postMessage({ source: "dakyworld-preview", type: "ready" }, "*");
+})();
+</script>`;
 }

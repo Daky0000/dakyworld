@@ -2735,6 +2735,8 @@ export type SiteFieldRow = {
   alt?: string;
   note?: string;
   decorative?: boolean;
+  /** The element's own inline style, when it has one. */
+  style?: string;
 };
 
 export type SiteSectionRow = {
@@ -2745,7 +2747,7 @@ export type SiteSectionRow = {
 };
 
 /** What the editor sends back: only the parts of a field that changed. */
-export type FieldEdit = { value?: string; href?: string; alt?: string };
+export type FieldEdit = { value?: string; href?: string; alt?: string; style?: string };
 
 export type SitePageDetail = {
   site: { id: string; name: string; publicUrl: string; repo: string | null };

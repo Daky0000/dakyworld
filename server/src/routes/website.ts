@@ -4,7 +4,7 @@ import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { gateBy } from "../middleware/permissionGate.js";
-import { applyValues, readPage, type FieldValue, type SiteField } from "../services/website/regions.js";
+import { applyValues, readPage, safeStyle, type FieldValue, type SiteField } from "../services/website/regions.js";
 import { checkLink, sanitizePlain, sanitizeRich } from "../services/website/sanitize.js";
 import { discoverPages, pageSource, pageUrl, previewDocument, publishPage, siteRepo, WebsiteError } from "../services/website/site.js";
 
@@ -55,6 +55,10 @@ function publicField(field: SiteField) {
     ...(field.href !== undefined ? { href: field.href } : {}),
     ...(field.alt !== undefined ? { alt: field.alt } : {}),
     ...(field.decorative !== undefined ? { decorative: field.decorative } : {}),
+    // The offsets stay on the server. Everything else about a field is the
+    // editor's business; where it sits in the file is not, and sending them
+    // would invite a second implementation of the splice in the browser.
+    ...(field.style !== undefined ? { style: field.style } : {}),
   };
 }
 
@@ -275,7 +279,7 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
       })),
       draft: {
         values: Object.fromEntries(
-          Object.entries(values).map(([id, edit]) => [id, { value: edit.value, href: edit.href, alt: edit.alt }]),
+          Object.entries(values).map(([id, edit]) => [id, { value: edit.value, href: edit.href, alt: edit.alt, style: edit.style }]),
         ),
         savedAt: page.draftSavedAt,
         savedBy: saver,
@@ -293,6 +297,7 @@ const draftBody = z.object({
       value: z.string().max(20_000).optional(),
       href: z.string().max(2_000).optional(),
       alt: z.string().max(500).optional(),
+      style: z.string().max(2_000).optional(),
     }),
   ),
 });
@@ -334,9 +339,13 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
       }
       if (edit.href !== undefined && edit.href.trim() !== (field.href ?? "")) next.href = edit.href.trim();
       if (edit.alt !== undefined && edit.alt !== (field.alt ?? "")) next.alt = edit.alt;
+      // Cleaned on the way *in* as well as on the way out. The draft outlives
+      // the session that wrote it, so what is stored has to be safe on its own.
+      if (edit.style !== undefined && safeStyle(edit.style) !== (field.style ?? "")) next.style = safeStyle(edit.style);
 
       if (Object.keys(next).length === 0) continue;
       next.original = field.value;
+      if (field.style !== undefined) next.originalStyle = field.style;
       if (field.href !== undefined) next.originalHref = field.href;
       if (field.alt !== undefined) next.originalAlt = field.alt;
       values[id] = next;
@@ -389,7 +398,11 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
     const { page, site } = await loadPage(req.params.pageId);
     const source = await pageSource(site, page);
     const applied = applyValues(source.html, draftValues(page));
-    const document = previewDocument(applied.html, site.publicUrl);
+    // `?pick=1` is the visual editor asking for a preview it can click on. The
+    // plain preview stays exactly as it was — it is what "Preview" means, and a
+    // page covered in selection outlines is not a preview of anything.
+    const picking = req.query.pick === "1";
+    const document = previewDocument(applied.html, site.publicUrl, picking ? readPage(applied.html).fields : undefined);
     res
       .type("html")
       .set("Cache-Control", "no-store")
@@ -540,10 +553,12 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/restore", async (req, res
       const next: FieldValue = { original: field.value };
       if (field.href !== undefined) next.originalHref = field.href;
       if (field.alt !== undefined) next.originalAlt = field.alt;
+      if (field.style !== undefined) next.originalStyle = field.style;
       if (edit.value !== undefined && edit.value !== field.value) next.value = edit.value;
       if (edit.href !== undefined && edit.href !== field.href) next.href = edit.href;
       if (edit.alt !== undefined && edit.alt !== field.alt) next.alt = edit.alt;
-      if (next.value === undefined && next.href === undefined && next.alt === undefined) continue;
+      if (edit.style !== undefined && edit.style !== field.style) next.style = edit.style;
+      if (next.value === undefined && next.href === undefined && next.alt === undefined && next.style === undefined) continue;
       values[id] = next;
     }
 

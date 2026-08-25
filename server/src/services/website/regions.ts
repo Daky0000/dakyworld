@@ -54,12 +54,21 @@ export type SiteField = {
   note?: string;
   /** Whether the image is marked decorative — an alt attribute that is present and empty. */
   decorative?: boolean;
+  /** The element's own inline style, when it has one. */
+  style?: string;
   content?: Span;
   hrefSpan?: Span;
   srcSpan?: Span;
   altSpan?: Span;
+  styleSpan?: Span;
   /** Where to insert an alt attribute on an image that has none. */
   altInsertAt?: number;
+  /**
+   * Just past the tag name — where a `style` or a `data-` attribute goes on an
+   * element that has none. It is also what lets the visual editor mark every
+   * editable element in the preview without re-parsing it in the browser.
+   */
+  attrInsert?: number;
 };
 
 export type SiteSection = {
@@ -82,6 +91,17 @@ export type FieldValue = {
   href?: string;
   alt?: string;
   /**
+   * The element's inline `style` attribute, as one declaration string.
+   *
+   * Style is written here rather than into a stylesheet on purpose. The whole
+   * module is a splice at recorded offsets into somebody's hand-written page —
+   * a rule added to `assets/site.css` would apply to every page at once and to
+   * elements nobody was editing, which is not what "make this heading bigger"
+   * means. An inline style changes exactly the element that was selected, and
+   * a developer reading the diff can see precisely what happened.
+   */
+  style?: string;
+  /**
    * What the page said when this edit was made.
    *
    * Ids are positional, so a developer who inserts a section between two edits
@@ -96,6 +116,7 @@ export type FieldValue = {
   original?: string;
   originalHref?: string;
   originalAlt?: string;
+  originalStyle?: string;
 };
 
 /** Elements that never hold editable copy. */
@@ -205,6 +226,16 @@ function plain(html: string): string {
   return decodeEntities(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
+/** Where an element's inline style lives, and where one would go if it had none. */
+function styleOf(element: ElementNode): Pick<SiteField, "style" | "styleSpan" | "attrInsert"> {
+  const style = attrNode(element, "style");
+  return {
+    style: style?.value,
+    styleSpan: style ? { start: style.valueStart, end: style.valueEnd } : undefined,
+    attrInsert: element.attrInsert,
+  };
+}
+
 function textField(source: string, element: ElementNode, id: string): SiteField | null {
   const span = contentSpan(source, element);
   if (!span) return null;
@@ -218,6 +249,7 @@ function textField(source: string, element: ElementNode, id: string): SiteField 
     value,
     preview: firstLine(plain(value)),
     content: span,
+    ...styleOf(element),
   };
 }
 
@@ -237,6 +269,7 @@ function linkField(source: string, element: ElementNode, id: string): SiteField 
     href: href?.value ?? "",
     content: span ?? undefined,
     hrefSpan: href ? { start: href.valueStart, end: href.valueEnd } : undefined,
+    ...styleOf(element),
   };
 }
 
@@ -256,6 +289,7 @@ function imageField(element: ElementNode, id: string): SiteField | null {
     srcSpan: { start: src.valueStart, end: src.valueEnd },
     altSpan: alt ? { start: alt.valueStart, end: alt.valueEnd } : undefined,
     altInsertAt: alt ? undefined : element.attrInsert,
+    ...styleOf(element),
   };
 }
 
@@ -494,6 +528,38 @@ function attrEscape(value: string): string {
   return value.replace(/&/g, "&amp;").replace(new RegExp(String.fromCharCode(34), "g"), "&quot;").replace(/</g, "&lt;");
 }
 
+/**
+ * A style attribute, cut down to declarations that cannot do anything but style.
+ *
+ * The editor only ever sends declarations it built itself from its own
+ * controls, so this is not what stops the editor misbehaving — it is what stops
+ * a *draft* misbehaving. A draft is stored JSON that outlives the session that
+ * wrote it, and this value is spliced into a page that is then published to the
+ * public internet, so it is treated as untrusted on the way out like everything
+ * else in `sanitize.ts`.
+ *
+ * `url(` goes because it loads a remote thing from a page with a strict CSP,
+ * `expression(` because old IE ran it, and anything with a quote, angle bracket
+ * or semicolon-escape in it because that is how you leave the attribute.
+ */
+const STYLE_PROPERTY = /^[a-z-]{2,40}$/;
+const STYLE_FORBIDDEN = /url\s*\(|expression\s*\(|javascript:|[<>"'`\\]/i;
+
+export function safeStyle(style: string): string {
+  return style
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter(Boolean)
+    .filter((declaration) => {
+      const colon = declaration.indexOf(":");
+      if (colon < 1) return false;
+      const property = declaration.slice(0, colon).trim().toLowerCase();
+      const value = declaration.slice(colon + 1).trim();
+      return STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= 120 && !STYLE_FORBIDDEN.test(declaration);
+    })
+    .join("; ");
+}
+
 export type ApplyResult = {
   html: string;
   /** Ids that were written. */
@@ -532,7 +598,8 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
     const moved =
       (edit.original !== undefined && edit.original !== field.value) ||
       (edit.originalHref !== undefined && edit.originalHref !== (field.href ?? "")) ||
-      (edit.originalAlt !== undefined && edit.originalAlt !== (field.alt ?? ""));
+      (edit.originalAlt !== undefined && edit.originalAlt !== (field.alt ?? "")) ||
+      (edit.originalStyle !== undefined && edit.originalStyle !== (field.style ?? ""));
     if (moved) {
       conflicts.push({ id, expected: edit.original ?? edit.originalHref ?? edit.originalAlt ?? "", found: field.value });
       continue;
@@ -560,6 +627,19 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
         edits.push({ insertAt: field.altInsertAt, text: ` alt="${attrEscape(edit.alt)}"` });
       }
       touched = true;
+    }
+    if (edit.style !== undefined && edit.style !== (field.style ?? "")) {
+      const declarations = safeStyle(edit.style);
+      if (field.styleSpan) {
+        // An emptied style still leaves `style=""` behind rather than removing
+        // the attribute: the span is what the next edit is written against, and
+        // deleting it would move every offset after it.
+        edits.push({ span: field.styleSpan, text: attrEscape(declarations) });
+        touched = true;
+      } else if (declarations && field.attrInsert !== undefined) {
+        edits.push({ insertAt: field.attrInsert, text: ` style="${attrEscape(declarations)}"` });
+        touched = true;
+      }
     }
     if (touched) changed.push(id);
   }
