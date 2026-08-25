@@ -8,7 +8,14 @@ import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from
 import { gateBy } from "../middleware/permissionGate.js";
 import { handleGoogleCallback } from "./settings.js";
 import { detectTables, normalizePlan, type ImportPlan } from "../services/sheetPlan.js";
-import { SpreadsheetError, isSpreadsheetName, listWorkbookSheets, parseWorkbook, type SheetGrid } from "../services/spreadsheet.js";
+import {
+  MAX_ROWS_PER_SHEET,
+  SpreadsheetError,
+  isSpreadsheetName,
+  listWorkbookSheets,
+  parseWorkbook,
+  type SheetGrid,
+} from "../services/spreadsheet.js";
 import { buildPreviews, commitPlan, loadCheckpoint } from "../services/leadImport.js";
 
 export const importsRouter = Router();
@@ -31,18 +38,37 @@ importsRouter.get("/google/callback", handleGoogleCallback);
  * isn't re-read on every edit of the plan. Losing the cache is harmless: the
  * commit route re-reads from Drive, or from the file the client still holds.
  */
-const gridCache = new Map<string, { grids: SheetGrid[]; at: number }>();
+const gridCache = new Map<string, { grids: SheetGrid[]; at: number; cells: number }>();
 const GRID_CACHE_TTL_MS = 60 * 60_000;
-const GRID_CACHE_MAX = 8;
+
+/**
+ * What the cache may hold, counted in cells rather than in files.
+ *
+ * Eight entries is a number only until somebody imports eight large workbooks:
+ * a full 5,000 × 60 grid is around 40 MB of strings, so the old ceiling was
+ * "keep a third of a gigabyte for an hour" written as an 8. Counting cells
+ * means one big file evicts as much as it costs and a dozen small ones still
+ * all fit.
+ */
+const GRID_CACHE_MAX_CELLS = 1_200_000;
+
+function countCells(grids: SheetGrid[]): number {
+  return grids.reduce((total, grid) => total + grid.rows.length * (grid.rows[0]?.length ?? 0), 0);
+}
 
 function cacheGrids(importId: string, grids: SheetGrid[]) {
-  gridCache.set(importId, { grids, at: Date.now() });
+  gridCache.set(importId, { grids, at: Date.now(), cells: countCells(grids) });
   for (const [key, entry] of gridCache) {
     if (Date.now() - entry.at > GRID_CACHE_TTL_MS) gridCache.delete(key);
   }
-  while (gridCache.size > GRID_CACHE_MAX) {
-    const oldest = [...gridCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
-    gridCache.delete(oldest[0]);
+
+  // Oldest first, and never the one just cached — the next request is for it.
+  let held = [...gridCache.values()].reduce((total, entry) => total + entry.cells, 0);
+  const byAge = [...gridCache.entries()].sort((a, b) => a[1].at - b[1].at);
+  for (const [key, entry] of byAge) {
+    if (held <= GRID_CACHE_MAX_CELLS || key === importId) continue;
+    gridCache.delete(key);
+    held -= entry.cells;
   }
 }
 
@@ -164,6 +190,19 @@ importsRouter.post("/analyze", async (req, res, next) => {
       }
     } else if (input.useAi) {
       warning = "No Anthropic API key is set, so the sheet was mapped with pattern rules. Add a key for messier files.";
+    }
+
+    // A sheet longer than the cap used to be trimmed in silence: 20,000 rows
+    // in, 5,000 imported, nothing said. Rows nobody was told about are rows
+    // nobody goes looking for, so this is said first and said plainly.
+    const trimmed = grids.filter((grid) => grid.truncated);
+    if (trimmed.length) {
+      const detail = trimmed
+        .map((grid) => `"${grid.name}" (${grid.totalRows.toLocaleString()} rows, first ${MAX_ROWS_PER_SHEET.toLocaleString()} read)`)
+        .join(", ");
+      warning = [`Only part of this file was read — ${detail}. Split the rest into another file and import it after this one.`, warning]
+        .filter(Boolean)
+        .join(" ");
     }
 
     const normalized = normalizePlan(plan, grids);
