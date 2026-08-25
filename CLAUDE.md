@@ -1476,6 +1476,41 @@ columns.
 request body, then runs the repairs over a sheet shaped like the one the prompt
 describes.
 
+**And `repairPlan` had never once been called.** It is the paragraph above,
+46 assertions of it, and until Aug 2026 no route reached it: `/analyze` went
+straight to `normalizePlan`, which clamps indices and asks no questions. The
+protection existed, was tested, was documented here, and was not wired in.
+It runs on the analyse path only — a plan coming back from the review screen is
+still left alone, for the reason stated above.
+
+**A workbook is read one tab per request** — `services/sheetSource.ts`,
+`POST /imports/analyze`. It used to be one request for the whole file: every
+tab read and held at once, and all of them in a single analyst prompt. On a
+real 39-tab workbook that is a third of a million cells and ~100,000 tokens,
+and what came back was `502` with no way to tell whether any of it had run.
+
+The first call opens the import and names the tabs without reading any of them;
+each call after it reads exactly one and returns *that tab's* tables. Four
+things get fixed rather than one: nothing is held but the tab being read, the
+analyst sees one sheet and reads it better than it read thirty-nine, no request
+is long enough to be cut off, and the screen gets a count that moves. A tab
+that fails stops the run and keeps the ones behind it — "Carry on from <tab>"
+resumes at the one that broke.
+
+- **`GridSource` replaced `SheetGrid[]` everywhere it mattered.** It holds one
+  grid — ask for the next and the previous is dropped — and `each()` serves a
+  whole plan in a single pass while still holding one. Preview went from 18.5s
+  to 3.3s on 39 tabs that way. `commitPlan`, `normalizePlanFrom` and
+  `buildPreviewsFrom` all take one.
+- **The cache holds the file, not the parse.** 20 MB of bytes rather than a
+  third of a million cells, so the browser sends the workbook once instead of
+  attaching it to all 39 calls.
+- **Re-reading a tab replaces its tables rather than appending them.** A retry
+  after a dropped connection would otherwise double that one group, silently,
+  and only that one.
+- `checks/bulkImport.ts` (16) is the committed half. The assertion that matters
+  most is that reading tab by tab produces the plan reading them together does.
+
 `checks/modelChoice.ts` (18), `checks/costs.ts` (32) and `checks/budgets.ts` (33)
 are the committed halves. The first asserts on **what went over the wire** against
 a fake Anthropic, because a correct `modelForJob()` that nothing calls is
@@ -1789,6 +1824,39 @@ GitHub (or the live site)  →  parse.ts     offsets for every element
   origin, which is the shape of a phishing page. It does not redirect on its own
   either — a page that bounces you onward bounces you onward when you press back.
 
+**Three modes, and Visual is the one people use.** *List* is the form — every
+field under its section, the only view that can answer "did I miss anything"
+and the only one that reaches a field with nothing visible to click (the title,
+the description). *Preview* is the page with no editor furniture on it at all.
+*Visual* renders the real page and you click the thing you want to change.
+
+- **No drag and drop, and nothing moves.** What that phrase usually means is a
+  layout builder with a component model; this site has none, and turning
+  somebody's hand-written HTML into something only the builder can open is the
+  opposite of the point. Selection, words, and look — nothing else.
+- **The server marks the elements, the browser does not find them.**
+  `previewDocument(html, url, fields)` inserts `data-dw-field` at each field's
+  `attrInsert` under `?pick=1`; the frame posts up which one was clicked. The
+  ids are positional, so working them out on the other side of the frame would
+  be a second `readPage` that has to agree with the first for ever.
+- **The picker's script and styles carry a nonce the response's CSP names**, so
+  the page's own inline scripts stay forbidden and only this one runs. Clicks
+  are swallowed rather than followed, for the same reason `form-action` is
+  `'none'`.
+- **A style is an inline `style` on the element that was selected**, never a
+  rule in a stylesheet — a rule applies to every page at once and to elements
+  nobody was editing. Anything the panel has no control for is left as the
+  developer wrote it and named on screen, so it is visible that it survived.
+- **`safeStyle` filters what is stored as well as what is written.** Nothing in
+  the panel can produce a bad declaration, so it is not the editor this guards
+  against: a draft is stored JSON that outlives its session and is spliced into
+  a public page. `url(` goes because it fetches from a page with a strict CSP,
+  `expression(` because old IE ran it, and anything with a quote or an angle
+  bracket in it because that is how you leave an attribute.
+- `checks/websiteVisual.ts` (165) runs against every real page here: marking 203
+  elements changes no field's value and lands no mark outside a tag, and a style
+  edit is still a one-line diff in a 474-line file.
+
 Built from `reusable_website_editor_system_plan.pdf` (23 Aug 2026), whose block
 model was deliberately not followed for this site; the plan lists converting an
 existing hard-coded website as a non-goal for version one, and this is why.
@@ -1880,6 +1948,22 @@ substitute, so headings come out serif. The files are still correct — do not
 
 ## Gotchas that cost real time
 
+- **ExcelJS is read by streaming, and both halves of that bite.**
+  `workbook.xlsx.load()` builds the entire file as an object model — a 4.5 MB
+  workbook peaked at ~600 MB resident and never gave it back, and the wizard
+  pays for it twice (tab list, then analyse), which is how a large sheet took
+  the service down mid-request. `parseWorkbook` streams. Two traps in the
+  replacement: **`styles: "cache"` is not optional** (a date is a number plus a
+  number format that lives in the styles part — ignore it and every date column
+  comes back as `46023`), and **every worksheet must be drained, wanted or
+  not**. ExcelJS buffers each sheet to a temp file and opens a read stream per
+  sheet on the way back; skipping one deletes the file and leaves the
+  descriptor. Reading one tab out of 39 leaked 38, and a bulk import died
+  partway through the commit with `EMFILE: too many open files` naming a file in
+  `node_modules`. The reader also **races on workbooks small enough for every
+  zip entry to land in one tick** — an 8 KB file with hyperlinks failed 14 times
+  in 20, a 560 KB one with sixteen thousand failed none — so it retries three
+  times and then falls back to loading the workbook whole.
 - **`prisma generate` fails with `EPERM … query_engine-windows.dll.node`**
   whenever a node process still has the Prisma client loaded — a dev server
   left running from an earlier session counts. Find it with
