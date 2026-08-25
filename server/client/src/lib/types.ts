@@ -473,18 +473,46 @@ export interface LeadImportRecord {
   groups?: { id: string; name: string; _count?: { leads: number } }[];
 }
 
+/** How far through the tabs an import has got. */
+export interface AnalyzeProgress {
+  total: number;
+  done: string[];
+  /** Still to read, in the order they will be read — the next one is first. */
+  remaining: string[];
+  finished: boolean;
+}
+
+/**
+ * One tab's worth of analysis.
+ *
+ * A workbook is read a tab at a time: the first call opens the import and
+ * names the tabs without reading any of them, and each call after it reads
+ * exactly one. So this is a *delta* — the tables found on `sheet` — and the
+ * screen accumulates them. Handing back the whole plan every time is what made
+ * a 39-tab file impossible.
+ */
+export interface AnalyzeStep {
+  import: LeadImportRecord;
+  /** Null on the opening call, which reads nothing. */
+  sheet: string | null;
+  tables: PlanTable[];
+  previews: TablePreview[];
+  /** Boundaries the analyst got structurally wrong and the server put right. */
+  repairs: string[];
+  /** Who read this tab — "rules", or the model that answered. */
+  analyzedBy: string | null;
+  /** Anything the Owner needs to know about this tab, in their own words. */
+  warnings: string[];
+  progress: AnalyzeProgress;
+}
+
+/** The whole reading of a file, assembled from the steps above. */
 export interface AnalyzeResponse {
   import: LeadImportRecord;
   plan: ImportPlan;
   previews: TablePreview[];
   sheets: { name: string; rows: number; columns: number }[];
   warning: string | null;
-  /**
-   * Boundaries the analyst got structurally wrong and the server put right
-   * before anybody saw the plan — a table split at a blank row rejoined, two
-   * tables claiming the same rows separated. Also on the end of `plan.summary`;
-   * carried separately so this can be a list rather than a paragraph.
-   */
   repairs?: string[];
 }
 

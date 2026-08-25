@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type {
   AnalyzeResponse,
+  AnalyzeStep,
   DriveFile,
   AppSettings,
   ImportPlan,
@@ -48,6 +49,30 @@ interface Upload {
 }
 
 /**
+ * A workbook part-read.
+ *
+ * Everything the tabs read so far have produced, kept outside the finished
+ * analysis so a run that stops halfway is not the same thing as a run that
+ * failed. `remaining` is what "Carry on" picks up from.
+ */
+interface Reading {
+  importId: string;
+  record: LeadImportRecord | null;
+  tables: PlanTable[];
+  previews: TablePreview[];
+  warnings: string[];
+  repairs: string[];
+  /** "rules", and every model that answered — a 39-tab file can use both. */
+  readers: string[];
+  done: string[];
+  remaining: string[];
+  /** The tab being read right now, or a sentence while the file is opening. */
+  current: string | null;
+  error: string | null;
+  stopped: boolean;
+}
+
+/**
  * Importing a lead sheet.
  *
  * The hard part of a lead sheet is never the parsing — it's that the file holds
@@ -64,6 +89,8 @@ export function LeadImport() {
   const [chosenSheets, setChosenSheets] = useState<string[]>([]);
   const [useAi, setUseAi] = useState(true);
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
+  const [reading, setReading] = useState<Reading | null>(null);
+  const stopReading = useRef(false);
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [previews, setPreviews] = useState<TablePreview[]>([]);
   const [done, setDone] = useState<{ groups: { id: string; name: string; leads: number }[]; created: number; updated: number } | null>(
@@ -79,24 +106,134 @@ export function LeadImport() {
     queryFn: () => api.get<LeadImportRecord[]>("/imports"),
   });
 
-  const analyze = useMutation({
-    mutationFn: () =>
-      api.post<AnalyzeResponse>("/imports/analyze", {
-        source: driveFile ? "GOOGLE_SHEET" : "UPLOAD",
-        fileName: upload?.name,
-        dataBase64: upload?.dataBase64,
-        driveFileId: driveFile?.id,
-        sheetNames: chosenSheets.length ? chosenSheets : undefined,
-        useAi,
-      }),
-    onSuccess: (result) => {
-      setAnalysis(result);
-      setPlan(result.plan);
-      setPreviews(result.previews);
-      setDone(null);
-      void qc.invalidateQueries({ queryKey: ["imports"] });
-    },
-  });
+  /**
+   * Reads the workbook a tab at a time.
+   *
+   * One request per tab, run in sequence, because the alternative is what this
+   * replaced: every tab read at once, all of them in a single prompt, and a
+   * request heavy enough that a real 39-tab file came back as "The server
+   * didn't answer (502)" with nothing to show for the wait. A tab at a time is
+   * slower to finish and is the only version that finishes at all — and it is
+   * the version where you can watch it happen.
+   *
+   * Everything read so far is kept. A tab that fails stops the run and leaves
+   * the ones behind it intact, so "Carry on" resumes at the tab that broke
+   * rather than starting the file again.
+   */
+  const runAnalysis = async (resumeFrom?: { importId: string; remaining: string[]; carried: Reading }) => {
+    stopReading.current = false;
+
+    /**
+     * The server keeps the uploaded file for the length of the run, so the
+     * tab-by-tab calls carry nothing but a name. Attaching a 27 MB body to all
+     * 39 of them would upload the workbook thirty-nine times and make the
+     * server decode it thirty-nine times — for a file it already has. It is
+     * re-sent only when the server says it no longer has it, which happens
+     * when the process restarted underneath us.
+     */
+    const readSheet = async (importId: string, sheet: string): Promise<AnalyzeStep> => {
+      try {
+        return await api.post<AnalyzeStep>("/imports/analyze", { importId, sheet, useAi });
+      } catch (err) {
+        const lost = err instanceof Error && err.message.includes("no longer on the server");
+        if (!lost || !upload) throw err;
+        return api.post<AnalyzeStep>("/imports/analyze", {
+          importId,
+          sheet,
+          useAi,
+          dataBase64: upload.dataBase64,
+          fileName: upload.name,
+        });
+      }
+    };
+
+    let state: Reading =
+      resumeFrom?.carried ??
+      { importId: "", record: null, tables: [], previews: [], warnings: [], repairs: [], readers: [], done: [], remaining: [], current: null, error: null, stopped: false };
+
+    const publish = (next: Reading) => {
+      state = next;
+      setReading(next);
+    };
+
+    try {
+      let importId = resumeFrom?.importId ?? "";
+      let remaining = resumeFrom?.remaining ?? [];
+
+      if (!importId) {
+        setAnalysis(null);
+        setPlan(null);
+        setPreviews([]);
+        setDone(null);
+        publish({ ...state, current: "Opening the file…" });
+
+        const opened = await api.post<AnalyzeStep>("/imports/analyze", {
+          source: driveFile ? "GOOGLE_SHEET" : "UPLOAD",
+          fileName: upload?.name,
+          dataBase64: upload?.dataBase64,
+          driveFileId: driveFile?.id,
+          sheetNames: chosenSheets.length ? chosenSheets : undefined,
+          useAi,
+        });
+        importId = opened.import.id;
+        remaining = opened.progress.remaining;
+        publish({
+          ...state,
+          importId,
+          record: opened.import,
+          remaining,
+          done: [],
+          current: remaining[0] ?? null,
+        });
+      }
+
+      for (const sheet of remaining) {
+        if (stopReading.current) {
+          publish({ ...state, current: null, stopped: true });
+          return;
+        }
+        publish({ ...state, current: sheet });
+
+        const step = await readSheet(importId, sheet);
+
+        publish({
+          ...state,
+          record: step.import,
+          tables: [...state.tables.filter((table) => table.sheet !== sheet), ...step.tables],
+          previews: [...state.previews.filter((preview) => !step.previews.some((p) => p.tableId === preview.tableId) && !step.tables.some((t) => t.id === preview.tableId)), ...step.previews],
+          warnings: [...state.warnings, ...step.warnings],
+          repairs: [...state.repairs, ...step.repairs],
+          readers: step.analyzedBy && !state.readers.includes(step.analyzedBy) ? [...state.readers, step.analyzedBy] : state.readers,
+          done: step.progress.done,
+          remaining: step.progress.remaining,
+          current: step.progress.remaining[0] ?? null,
+        });
+      }
+
+      finish(state);
+    } catch (err) {
+      publish({ ...state, current: null, error: err instanceof Error ? err.message : "That tab could not be read." });
+    }
+  };
+
+  /** Everything read becomes the plan the review screen edits. */
+  const finish = (state: Reading) => {
+    const record = state.record;
+    if (!record) return;
+    const assembled: AnalyzeResponse = {
+      import: { ...record, analyzedBy: state.readers.join(", ") || record.analyzedBy },
+      plan: { tables: state.tables, summary: "" },
+      previews: state.previews,
+      sheets: state.done.map((name) => ({ name, rows: 0, columns: 0 })),
+      warning: state.warnings.length ? state.warnings.join(" ") : null,
+      repairs: state.repairs,
+    };
+    setAnalysis(assembled);
+    setPlan(assembled.plan);
+    setPreviews(assembled.previews);
+    setReading(null);
+    void qc.invalidateQueries({ queryKey: ["imports"] });
+  };
 
   const recheck = useMutation({
     mutationFn: () =>
@@ -139,7 +276,8 @@ export function LeadImport() {
     setPlan(null);
     setPreviews([]);
     setDone(null);
-    analyze.reset();
+    setReading(null);
+    stopReading.current = true;
     commit.reset();
   };
 
@@ -183,8 +321,7 @@ export function LeadImport() {
             sheets={sheets}
             chosenSheets={chosenSheets}
             useAi={useAi}
-            busy={analyze.isPending}
-            error={analyze.error}
+            busy={!!reading}
             onUpload={(next, tabs) => {
               setUpload(next);
               setDriveFile(null);
@@ -203,8 +340,21 @@ export function LeadImport() {
             }}
             onSheets={setChosenSheets}
             onUseAi={setUseAi}
-            onAnalyze={() => analyze.mutate()}
+            onAnalyze={() => void runAnalysis()}
           />
+
+          {reading && (
+            <ReadingProgress
+              reading={reading}
+              onStop={() => {
+                stopReading.current = true;
+              }}
+              onCarryOn={() =>
+                void runAnalysis({ importId: reading.importId, remaining: reading.remaining, carried: { ...reading, error: null, stopped: false } })
+              }
+              onKeepWhatWeHave={() => finish(reading)}
+            />
+          )}
 
           {analysis && plan && (
             <ReviewStep
@@ -284,7 +434,6 @@ function SourceStep({
   chosenSheets,
   useAi,
   busy,
-  error,
   onUpload,
   onDrive,
   onSheets,
@@ -298,7 +447,6 @@ function SourceStep({
   chosenSheets: string[];
   useAi: boolean;
   busy: boolean;
-  error: unknown;
   onUpload: (upload: Upload, sheets: string[]) => void;
   onDrive: (file: DriveFile, sheets: string[]) => void;
   onSheets: (sheets: string[]) => void;
@@ -412,7 +560,116 @@ function SourceStep({
         </div>
       )}
 
-      {error instanceof Error && <Note tone="bad">{error.message}</Note>}
+    </Card>
+  );
+}
+
+/**
+ * A workbook being read, one tab at a time.
+ *
+ * The reason this screen exists at all: a 39-tab file takes a while, and a
+ * button that says "Reading the sheet…" for four minutes and then fails is
+ * indistinguishable from a broken app. The count moves, the tab being read is
+ * named, and every tab already read is money in the bank — a failure on tab 12
+ * offers to carry on from 12, or to keep the 11 and go to the review screen.
+ */
+function ReadingProgress({
+  reading,
+  onStop,
+  onCarryOn,
+  onKeepWhatWeHave,
+}: {
+  reading: Reading;
+  onStop: () => void;
+  onCarryOn: () => void;
+  onKeepWhatWeHave: () => void;
+}) {
+  const total = Math.max(1, reading.done.length + reading.remaining.length);
+  const complete = reading.done.length;
+  const halted = reading.error !== null || reading.stopped;
+  const rows = reading.previews.reduce((sum, preview) => sum + preview.rowCount, 0);
+
+  return (
+    <Card className="mb-8">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
+        <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">
+          {halted ? "Stopped" : "Reading the workbook"}
+        </h3>
+        <span className="font-mono text-[11px] uppercase tracking-[.12em] text-ink/50">
+          {complete} of {total} tabs · {reading.tables.length} {reading.tables.length === 1 ? "table" : "tables"} ·{" "}
+          {rows.toLocaleString()} rows
+        </span>
+      </div>
+
+      <div className="h-1.5 w-full overflow-hidden bg-ink/10">
+        <div
+          className={`h-full transition-all duration-500 ${halted ? "bg-amber-500" : "bg-blue"}`}
+          style={{ width: `${Math.round((complete / total) * 100)}%` }}
+        />
+      </div>
+
+      <p className="mt-3 text-sm text-ink/70">
+        {reading.error ? (
+          <span className="text-red-600">{reading.error}</span>
+        ) : reading.stopped ? (
+          <>Stopped after {complete} of {total} tabs. Nothing has been written to the pipeline.</>
+        ) : reading.current ? (
+          <>
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue" />{" "}
+            Reading <strong>{reading.current}</strong>
+            {reading.remaining.length > 1 && <span className="text-ink/40"> · {reading.remaining.length - 1} to go</span>}
+          </>
+        ) : (
+          "Finishing…"
+        )}
+      </p>
+
+      {/* Every tab that has already been read, so it is obvious what is safe. */}
+      {(reading.done.length > 0 || reading.remaining.length > 0) && (
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {reading.done.map((name) => (
+            <span key={name} className="bg-blue/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-blue">
+              ✓ {name}
+            </span>
+          ))}
+          {reading.remaining.map((name) => (
+            <span
+              key={name}
+              className={`px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] ${
+                name === reading.current ? "bg-ink text-cream" : "bg-ink/5 text-ink/40"
+              }`}
+            >
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {reading.warnings.length > 0 && (
+        <ul className="mt-4 space-y-1 border-t border-ink/10 pt-3 text-xs text-ink/60">
+          {[...new Set(reading.warnings)].slice(0, 6).map((warning) => (
+            <li key={warning}>· {warning}</li>
+          ))}
+          {new Set(reading.warnings).size > 6 && <li className="text-ink/40">· and {new Set(reading.warnings).size - 6} more</li>}
+        </ul>
+      )}
+
+      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-ink/10 pt-4">
+        {halted ? (
+          <>
+            {reading.remaining.length > 0 && <Button onClick={onCarryOn}>Carry on from {reading.remaining[0]}</Button>}
+            {reading.tables.length > 0 && (
+              <Button variant="secondary" onClick={onKeepWhatWeHave}>
+                Review the {reading.done.length} {reading.done.length === 1 ? "tab" : "tabs"} already read
+              </Button>
+            )}
+          </>
+        ) : (
+          <Button variant="ghost" onClick={onStop}>
+            Stop after this tab
+          </Button>
+        )}
+      </div>
     </Card>
   );
 }

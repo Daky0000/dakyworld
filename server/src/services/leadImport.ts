@@ -13,8 +13,9 @@ import type { LeadCaptureMethod, LeadGroup, Prisma } from "@prisma/client";
 import { enrolNewLeads } from "./emailSequences.js";
 import { prisma } from "../lib/prisma.js";
 import { builtinField, isBuiltinKey } from "./leadFields.js";
-import { extractRows, type ImportPlan, type PlanTable } from "./sheetPlan.js";
+import { extractRows, normalizePlan, type ImportPlan, type PlanTable } from "./sheetPlan.js";
 import type { SheetGrid } from "./spreadsheet.js";
+import type { GridSource } from "./sheetSource.js";
 
 // --- Preview ---------------------------------------------------------------
 
@@ -74,6 +75,52 @@ export function buildPreviews(grids: SheetGrid[], plan: ImportPlan, sampleSize =
       reachable: rows.filter((row) => row.lead.contactEmail || row.lead.contactPhone).length,
     };
   });
+}
+
+/**
+ * The same previews, from a source that reads one tab at a time.
+ *
+ * Tables are gathered by the sheet they sit on and each sheet is read once, so
+ * a 39-tab workbook costs 39 sequential reads rather than 39 grids held at
+ * once. Order is preserved — the review screen lists tables in plan order, and
+ * a preview list that came back sorted by tab would silently re-order it.
+ */
+export async function buildPreviewsFrom(source: GridSource, plan: ImportPlan, sampleSize = 6): Promise<TablePreview[]> {
+  const previews = new Map<string, TablePreview>();
+
+  await source.each([...new Set(plan.tables.map((table) => table.sheet))], (grid) => {
+    const tables = plan.tables.filter((table) => table.sheet === grid.name);
+    buildPreviews([grid], { ...plan, tables }, sampleSize).forEach((preview) => previews.set(preview.tableId, preview));
+  });
+
+  return plan.tables.map(
+    (table) =>
+      previews.get(table.id) ?? { tableId: table.id, columns: [], sample: [], rowCount: 0, skipped: 0, reachable: 0 },
+  );
+}
+
+/**
+ * A plan clamped to the file, a sheet at a time.
+ *
+ * `normalizePlan` needs the grid to clamp row indices, name unnamed columns
+ * from their cells and rescue a table with no name column in it. Handing it one
+ * sheet at a time gives the same answer as handing it all of them — every
+ * decision it makes is inside a single table — and it is the reason a workbook
+ * with forty tabs never has to be in memory at once.
+ */
+export async function normalizePlanFrom(source: GridSource, plan: ImportPlan): Promise<ImportPlan> {
+  const kept: PlanTable[] = [];
+
+  await source.each([...new Set(plan.tables.map((table) => table.sheet))], (grid) => {
+    const tables = plan.tables.filter((table) => table.sheet === grid.name);
+    kept.push(...normalizePlan({ ...plan, tables }, [grid]).tables);
+  });
+
+  // Back into the order the plan had them, so the review screen does not
+  // rearrange itself every time somebody edits a column.
+  const order = new Map(plan.tables.map((table, index) => [table.id, index]));
+  kept.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  return { ...plan, tables: kept };
 }
 
 // --- Scoring and de-duplication -------------------------------------------
@@ -255,8 +302,12 @@ async function captureMethodFor(importId: string): Promise<LeadCaptureMethod> {
  * Long worksheets are processed in checkpoints so a timeout or error can be
  * resumed from where it stopped rather than re-doing everything.
  */
-export async function commitPlan(importId: string, grids: SheetGrid[], plan: ImportPlan, existingCheckpoint?: ImportCheckpoint): Promise<CommitResult> {
-  const byName = new Map(grids.map((grid) => [grid.name, grid]));
+export async function commitPlan(
+  importId: string,
+  source: GridSource,
+  plan: ImportPlan,
+  existingCheckpoint?: ImportCheckpoint,
+): Promise<CommitResult> {
   const result: CommitResult = {
     status: "IMPORTING",
     groupsCreated: existingCheckpoint?.result.groupsCreated ?? 0,
@@ -274,7 +325,10 @@ export async function commitPlan(importId: string, grids: SheetGrid[], plan: Imp
   for (let t = startTableIndex; t < tables.length; t++) {
     const table = tables[t];
     if (table.include === false) continue;
-    const grid = byName.get(table.sheet) ?? (grids.length === 1 ? grids[0] : undefined);
+    // Asked for by name rather than looked up in a list: the source holds one
+    // sheet, so a plan whose tables run in sheet order reads each tab exactly
+    // once and a workbook of forty is never in memory whole.
+    const grid = await source.get(table.sheet);
     if (!grid) continue;
 
     const { rows, skipped } = extractRows(grid, table);

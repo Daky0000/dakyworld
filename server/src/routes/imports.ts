@@ -7,7 +7,7 @@ import { AnalystError, analystConfigured, analyzeGrids } from "../lib/anthropic.
 import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from "../lib/google.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { handleGoogleCallback } from "./settings.js";
-import { detectTables, normalizePlan, type ImportPlan } from "../services/sheetPlan.js";
+import { detectTables, normalizePlan, repairPlan, type ImportPlan, type PlanTable } from "../services/sheetPlan.js";
 import {
   MAX_ROWS_PER_SHEET,
   SpreadsheetError,
@@ -16,7 +16,8 @@ import {
   parseWorkbook,
   type SheetGrid,
 } from "../services/spreadsheet.js";
-import { buildPreviews, commitPlan, loadCheckpoint } from "../services/leadImport.js";
+import { buildPreviews, buildPreviewsFrom, commitPlan, loadCheckpoint, normalizePlanFrom, type TablePreview } from "../services/leadImport.js";
+import { sourceFromDrive, sourceFromUpload, type GridSource } from "../services/sheetSource.js";
 
 export const importsRouter = Router();
 
@@ -34,41 +35,34 @@ importsRouter.use(express.json({ limit: "28mb" }));
 importsRouter.get("/google/callback", handleGoogleCallback);
 
 /**
- * Parsed sheets, kept between "analyse" and "commit" so a 3,000-row workbook
- * isn't re-read on every edit of the plan. Losing the cache is harmless: the
- * commit route re-reads from Drive, or from the file the client still holds.
- */
-const gridCache = new Map<string, { grids: SheetGrid[]; at: number; cells: number }>();
-const GRID_CACHE_TTL_MS = 60 * 60_000;
-
-/**
- * What the cache may hold, counted in cells rather than in files.
+ * The uploaded file, kept for the length of an analysis.
  *
- * Eight entries is a number only until somebody imports eight large workbooks:
- * a full 5,000 × 60 grid is around 40 MB of strings, so the old ceiling was
- * "keep a third of a gigabyte for an hour" written as an 8. Counting cells
- * means one big file evicts as much as it costs and a dozen small ones still
- * all fit.
+ * What used to be cached here was the *parsed* workbook — every tab of it, as
+ * grids. That is the thing a 39-tab file cannot afford: a third of a million
+ * cells held between one request and the next, per import. The file itself is
+ * at most 20 MB and reading one tab out of it is cheap, so what is kept is the
+ * bytes, and each request reads only the tab it needs.
+ *
+ * Losing this is harmless in every direction: the browser still holds the file
+ * and re-sends it, and a Drive import re-reads from Drive.
  */
-const GRID_CACHE_MAX_CELLS = 1_200_000;
+const fileCache = new Map<string, { buffer: Buffer; fileName: string; at: number }>();
+const FILE_CACHE_TTL_MS = 60 * 60_000;
+/** Three 20 MB workbooks at once is the most this will hold on to. */
+const FILE_CACHE_MAX_BYTES = 60 * 1024 * 1024;
 
-function countCells(grids: SheetGrid[]): number {
-  return grids.reduce((total, grid) => total + grid.rows.length * (grid.rows[0]?.length ?? 0), 0);
-}
-
-function cacheGrids(importId: string, grids: SheetGrid[]) {
-  gridCache.set(importId, { grids, at: Date.now(), cells: countCells(grids) });
-  for (const [key, entry] of gridCache) {
-    if (Date.now() - entry.at > GRID_CACHE_TTL_MS) gridCache.delete(key);
+function cacheFile(importId: string, buffer: Buffer, fileName: string) {
+  fileCache.set(importId, { buffer, fileName, at: Date.now() });
+  for (const [key, entry] of fileCache) {
+    if (Date.now() - entry.at > FILE_CACHE_TTL_MS) fileCache.delete(key);
   }
 
   // Oldest first, and never the one just cached — the next request is for it.
-  let held = [...gridCache.values()].reduce((total, entry) => total + entry.cells, 0);
-  const byAge = [...gridCache.entries()].sort((a, b) => a[1].at - b[1].at);
-  for (const [key, entry] of byAge) {
-    if (held <= GRID_CACHE_MAX_CELLS || key === importId) continue;
-    gridCache.delete(key);
-    held -= entry.cells;
+  let held = [...fileCache.values()].reduce((total, entry) => total + entry.buffer.length, 0);
+  for (const [key, entry] of [...fileCache.entries()].sort((a, b) => a[1].at - b[1].at)) {
+    if (held <= FILE_CACHE_MAX_BYTES || key === importId) continue;
+    fileCache.delete(key);
+    held -= entry.buffer.length;
   }
 }
 
@@ -124,106 +118,238 @@ importsRouter.post("/sheets", async (req, res, next) => {
   }
 });
 
+/**
+ * Analysing is one tab per request, and the request says which.
+ *
+ * It used to be one request for the whole workbook: read every tab, hand all
+ * of them to the analyst in a single prompt, answer with the finished plan.
+ * On a real file that is 39 tabs, a third of a million cells held at once and
+ * a prompt around 100,000 tokens — a request long enough and heavy enough that
+ * what came back was "The server didn't answer (502)", with no way to tell
+ * whether it had done any of the work.
+ *
+ * Splitting it fixes four things rather than one: nothing is held but the tab
+ * being read, the analyst sees one sheet and reads it better than it read
+ * thirty-nine, no single request is long enough to be cut off, and the person
+ * watching gets a count that moves.
+ */
 const analyzeInput = z.object({
   source: z.enum(["UPLOAD", "GOOGLE_SHEET", "GOOGLE_DRIVE_FILE"]).default("UPLOAD"),
   fileName: z.string().optional(),
   dataBase64: z.string().optional(),
   driveFileId: z.string().optional(),
+  /** The tabs to read, in the order they will be read. */
   sheetNames: z.array(z.string()).optional(),
-  /** False maps the sheet with the pattern rules only — no Anthropic call. */
+  /** False maps the sheet with the pattern rules only — no model call. */
   useAi: z.boolean().default(true),
+  /**
+   * Set on every call after the first: which import this belongs to, and which
+   * of its tabs to read now. Absent on the first, which opens the import and
+   * reads nothing.
+   */
+  importId: z.string().optional(),
+  sheet: z.string().optional(),
 });
 
-async function loadGrids(input: z.infer<typeof analyzeInput>): Promise<{ grids: SheetGrid[]; fileName: string }> {
-  if (input.driveFileId) {
-    const { file, grids } = await readGrids(input.driveFileId, input.sheetNames);
-    return { grids, fileName: file.name };
+type AnalyzeInput = z.infer<typeof analyzeInput>;
+
+/** The file, from the cache if it is still there and from the caller if not. */
+function sourceFor(record: { id: string; driveFileId: string | null; fileName: string | null }, input: AnalyzeInput): GridSource {
+  if (record.driveFileId) return sourceFromDrive(record.driveFileId);
+
+  const cached = fileCache.get(record.id);
+  if (cached) {
+    cached.at = Date.now();
+    return sourceFromUpload(cached.buffer, cached.fileName);
   }
-  if (!input.dataBase64 || !input.fileName) {
-    throw new SpreadsheetError("Send a file to import, or pick one from Google Drive.");
+
+  const name = input.fileName ?? record.fileName;
+  if (!input.dataBase64 || !name) {
+    throw new SpreadsheetError("The uploaded file is no longer on the server. Choose it again to carry on.");
   }
-  if (!isSpreadsheetName(input.fileName)) throw new SpreadsheetError("Upload an .xlsx, .csv or .tsv file.");
-  const grids = await parseWorkbook(decodeUpload(input.dataBase64), input.fileName, input.sheetNames);
-  return { grids, fileName: input.fileName };
+  const buffer = decodeUpload(input.dataBase64);
+  cacheFile(record.id, buffer, name);
+  return sourceFromUpload(buffer, name);
+}
+
+/** Which tabs are done, which are left, and what that is out of. */
+function progressOf(record: { sheetNames: string[]; plan: unknown }) {
+  const plan = (record.plan ?? { tables: [] }) as ImportPlan;
+  const read = new Set((plan.tables ?? []).map((table) => table.sheet));
+  const done = record.sheetNames.filter((name) => read.has(name));
+  // Order matters: the client reads the next name off the front of this.
+  const remaining = record.sheetNames.filter((name) => !read.has(name));
+  return { total: record.sheetNames.length, done, remaining, finished: remaining.length === 0 };
 }
 
 /**
- * POST /api/imports/analyze — reads the file and returns a plan to review.
+ * POST /api/imports/analyze — opens an import, then reads one tab per call.
  *
- * Nothing is written to the pipeline here. The analyst's reading of the file,
- * a preview of the rows it would create, and the record of the attempt are all
- * that come back; the Owner approves it at /commit.
+ * Nothing is written to the pipeline here. The reading of the file, a preview
+ * of the rows it would create, and the record of the attempt are all that come
+ * back; the Owner approves it at /commit.
  */
 importsRouter.post("/analyze", async (req, res, next) => {
   let record: { id: string } | null = null;
   try {
     const input = analyzeInput.parse(req.body);
-    const { grids, fileName } = await loadGrids(input);
-    if (!grids.length) return res.status(400).json({ error: "That file has no readable rows." });
 
-    record = await prisma.leadImport.create({
-      data: {
-        source: input.driveFileId ? "GOOGLE_SHEET" : "UPLOAD",
-        status: "ANALYZING",
-        fileName,
-        driveFileId: input.driveFileId ?? null,
-        sheetNames: grids.map((grid) => grid.name),
-      },
-      select: { id: true },
-    });
-    cacheGrids(record.id, grids);
-
-    const hints = detectTables(grids);
-    let plan: ImportPlan = { tables: hints, summary: "" };
-    let analyzedBy = "rules";
-    let warning: string | null = null;
-
-    if (input.useAi && (await analystConfigured())) {
-      try {
-        const analysis = await analyzeGrids(grids, hints);
-        plan = analysis.plan;
-        analyzedBy = analysis.model;
-      } catch (err) {
-        // A failed analyst call is a degraded import, not a failed one — the
-        // pattern rules still produced something the Owner can correct.
-        warning = err instanceof AnalystError ? err.message : "The AI analyst couldn't be reached; used pattern rules instead.";
+    // --- Opening an import: name the tabs, keep the file, read nothing ------
+    if (!input.importId) {
+      if (!input.driveFileId) {
+        if (!input.dataBase64 || !input.fileName) {
+          throw new SpreadsheetError("Send a file to import, or pick one from Google Drive.");
+        }
+        if (!isSpreadsheetName(input.fileName)) throw new SpreadsheetError("Upload an .xlsx, .csv or .tsv file.");
       }
-    } else if (input.useAi) {
-      warning = "No Anthropic API key is set, so the sheet was mapped with pattern rules. Add a key for messier files.";
+
+      const buffer = input.driveFileId ? null : decodeUpload(input.dataBase64 as string);
+      const opening = buffer ? sourceFromUpload(buffer, input.fileName as string) : sourceFromDrive(input.driveFileId as string);
+
+      const available = await opening.names();
+      const chosen = input.sheetNames?.length ? input.sheetNames.filter((name) => available.includes(name)) : available;
+      if (!chosen.length) return res.status(400).json({ error: "That file has no readable tabs." });
+
+      const fileName = await opening.fileName();
+      opening.release();
+
+      const opened = await prisma.leadImport.create({
+        data: {
+          source: input.driveFileId ? "GOOGLE_SHEET" : "UPLOAD",
+          status: "ANALYZING",
+          fileName,
+          driveFileId: input.driveFileId ?? null,
+          sheetNames: chosen,
+          plan: { tables: [], summary: "" } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      record = opened;
+      if (buffer) cacheFile(opened.id, buffer, fileName);
+
+      return res.status(201).json({
+        import: opened,
+        sheet: null,
+        tables: [],
+        previews: [],
+        repairs: [],
+        analyzedBy: null,
+        warnings: [],
+        progress: progressOf(opened),
+      });
     }
 
-    // A sheet longer than the cap used to be trimmed in silence: 20,000 rows
-    // in, 5,000 imported, nothing said. Rows nobody was told about are rows
-    // nobody goes looking for, so this is said first and said plainly.
-    const trimmed = grids.filter((grid) => grid.truncated);
-    if (trimmed.length) {
-      const detail = trimmed
-        .map((grid) => `"${grid.name}" (${grid.totalRows.toLocaleString()} rows, first ${MAX_ROWS_PER_SHEET.toLocaleString()} read)`)
-        .join(", ");
-      warning = [`Only part of this file was read — ${detail}. Split the rest into another file and import it after this one.`, warning]
-        .filter(Boolean)
-        .join(" ");
+    // --- Reading one tab ----------------------------------------------------
+    const existing = await prisma.leadImport.findUnique({ where: { id: input.importId } });
+    if (!existing) return res.status(404).json({ error: "That import no longer exists. Start again." });
+    record = existing;
+
+    const sheet = input.sheet ?? progressOf(existing).remaining[0];
+    if (!sheet) return res.status(400).json({ error: "Every tab in this file has already been read." });
+    if (!existing.sheetNames.includes(sheet)) {
+      return res.status(400).json({ error: `"${sheet}" is not one of the tabs being imported.` });
     }
 
-    const normalized = normalizePlan(plan, grids);
+    const source = sourceFor(existing, input);
+    let grid: SheetGrid | undefined;
+    try {
+      grid = await source.get(sheet);
+    } finally {
+      // Held only for the length of this request; the file itself stays cached.
+      source.release();
+    }
+
+    const warnings: string[] = [];
+    let tables: PlanTable[] = [];
+    let previews: TablePreview[] = [];
+    let analyzedBy = "rules";
+    let repairs: string[] = [];
+
+    if (!grid || !grid.rows.length) {
+      warnings.push(`"${sheet}" has no readable rows, so nothing was taken from it.`);
+    } else {
+      const hints = detectTables([grid]);
+      let plan: ImportPlan = { tables: hints, summary: "" };
+
+      if (input.useAi && (await analystConfigured())) {
+        try {
+          const analysis = await analyzeGrids([grid], hints);
+          plan = analysis.plan;
+          analyzedBy = analysis.model;
+        } catch (err) {
+          // A failed analyst call is a degraded tab, not a failed import — the
+          // pattern rules still produced something the Owner can correct, and
+          // the other tabs are unaffected by it.
+          // Deliberately not prefixed with the tab name. A key that is refused
+          // is refused for all 39 of them, and 39 copies of one sentence with a
+          // different tab in front of each is a wall nobody reads — the screen
+          // dedupes what it is given, so this has to be the same string twice.
+          warnings.push(
+            err instanceof AnalystError ? err.message : "The AI analyst couldn't be reached, so pattern rules were used instead.",
+          );
+        }
+      } else if (input.useAi) {
+        warnings.push("No model is connected, so tabs are being mapped with pattern rules. Add a key for messier files.");
+      }
+
+      // A sheet longer than the cap used to be trimmed in silence: 20,000 rows
+      // in, 5,000 imported, nothing said. Rows nobody was told about are rows
+      // nobody goes looking for.
+      if (grid.truncated) {
+        warnings.push(
+          `Only part of "${grid.name}" was read — ${grid.totalRows.toLocaleString()} rows, first ${MAX_ROWS_PER_SHEET.toLocaleString()} taken. Split the rest into another file.`,
+        );
+      }
+
+      // `repairPlan` rather than `normalizePlan`, and this is the difference
+      // between a plan that *can* be run and one that makes sense. It undoes
+      // the two structural mistakes an analyst makes — a table split at a
+      // blank row, two tables claiming the same rows — and until now nothing
+      // outside the checks had ever called it: the route went straight to
+      // `normalizePlan`, which clamps indices and asks no questions. The
+      // failure that reaches a person is quiet. A fragment below the split has
+      // no header, so none of its columns are named, so nothing in it is a
+      // name, so every row in it is dropped: an empty group beside a full one
+      // that stops halfway down their file.
+      //
+      // Only here. A plan coming back from the review screen goes through
+      // `normalizePlan` as before, because a person who split a table there
+      // decided to split it.
+      const repaired = repairPlan(plan, [grid], hints);
+      tables = repaired.plan.tables;
+      repairs = repaired.repairs;
+      previews = buildPreviews([grid], repaired.plan);
+    }
+
+    // Replacing this tab's tables rather than appending them keeps a re-read of
+    // the same tab from doubling it — which a retry after a dropped connection
+    // would otherwise do, silently, and only to that one tab.
+    const heldPlan = (existing.plan ?? { tables: [], summary: "" }) as unknown as ImportPlan;
+    const mergedTables = [...(heldPlan.tables ?? []).filter((table) => table.sheet !== sheet), ...tables];
+    const mergedPlan: ImportPlan = { ...heldPlan, tables: mergedTables };
+
+    const after = progressOf({ sheetNames: existing.sheetNames, plan: mergedPlan });
+    const readers = [...new Set([...(existing.analyzedBy ?? "").split(", ").filter(Boolean), analyzedBy])];
+
     const saved = await prisma.leadImport.update({
-      where: { id: record.id },
+      where: { id: existing.id },
       data: {
-        status: normalized.tables.length ? "READY" : "FAILED",
-        plan: normalized as unknown as Prisma.InputJsonValue,
-        analyzedBy,
-        notes: normalized.summary || null,
-        tablesFound: normalized.tables.length,
-        error: normalized.tables.length ? null : "No lead tables were found in this file.",
+        status: after.finished ? (mergedTables.length ? "READY" : "FAILED") : "ANALYZING",
+        plan: mergedPlan as unknown as Prisma.InputJsonValue,
+        analyzedBy: readers.join(", ").slice(0, 200),
+        tablesFound: mergedTables.length,
+        error: after.finished && !mergedTables.length ? "No lead tables were found in this file." : null,
       },
     });
 
-    res.status(201).json({
+    return res.json({
       import: saved,
-      plan: normalized,
-      previews: buildPreviews(grids, normalized),
-      sheets: grids.map((grid) => ({ name: grid.name, rows: grid.rows.length, columns: grid.rows[0]?.length ?? 0 })),
-      warning,
+      sheet,
+      tables,
+      previews,
+      repairs,
+      analyzedBy,
+      warnings,
+      progress: after,
     });
   } catch (err) {
     if (record) {
@@ -247,45 +373,36 @@ const planInput = z.object({
   fileName: z.string().optional(),
 });
 
-/** The grids for an import: from cache, from Drive, or from the file the client still has. */
-async function grabGrids(importId: string, fallback: { dataBase64?: string; fileName?: string }): Promise<SheetGrid[]> {
-  const cached = gridCache.get(importId);
-  if (cached) {
-    cached.at = Date.now();
-    return cached.grids;
-  }
-
+/**
+ * The file behind an import: from the cache, from Drive, or from the copy the
+ * browser still holds. One tab is read at a time out of whichever it is.
+ */
+async function grabSource(importId: string, fallback: { dataBase64?: string; fileName?: string }): Promise<GridSource> {
   const record = await prisma.leadImport.findUnique({ where: { id: importId } });
   if (!record) throw new SpreadsheetError("That import no longer exists. Start again.");
-
-  if (record.driveFileId) {
-    const { grids } = await readGrids(record.driveFileId, record.sheetNames);
-    cacheGrids(importId, grids);
-    return grids;
-  }
-
-  const name = fallback.fileName ?? record.fileName;
-  if (!fallback.dataBase64 || !name) {
-    throw new SpreadsheetError("The uploaded file is no longer in memory. Upload it again to finish the import.");
-  }
-  const grids = await parseWorkbook(decodeUpload(fallback.dataBase64), name, record.sheetNames);
-  cacheGrids(importId, grids);
-  return grids;
+  return sourceFor(record, { ...fallback, source: "UPLOAD", useAi: false });
 }
 
 // POST /api/imports/:id/preview — re-run an edited plan without writing anything.
 importsRouter.post("/:id/preview", async (req, res, next) => {
   try {
     const input = planInput.parse(req.body);
-    const grids = await grabGrids(req.params.id, input);
-    const normalized = normalizePlan(input.plan as ImportPlan, grids);
+    const source = await grabSource(req.params.id, input);
+    let normalized: ImportPlan;
+    let previews: TablePreview[];
+    try {
+      normalized = await normalizePlanFrom(source, input.plan as ImportPlan);
+      previews = await buildPreviewsFrom(source, normalized);
+    } finally {
+      source.release();
+    }
 
     await prisma.leadImport.update({
       where: { id: req.params.id },
       data: { plan: normalized as unknown as Prisma.InputJsonValue, tablesFound: normalized.tables.length },
     });
 
-    res.json({ plan: normalized, previews: buildPreviews(grids, normalized) });
+    res.json({ plan: normalized, previews });
   } catch (err) {
     if (err instanceof SpreadsheetError) return res.status(err.status).json({ error: err.message });
     if (err instanceof GoogleError) return res.status(err.status).json({ error: err.message });
@@ -309,14 +426,20 @@ importsRouter.post("/:id/commit", async (req, res, next) => {
       return res.status(409).json({ error: "This import has already been run. Start a new one to import the file again." });
     }
 
-    const grids = await grabGrids(req.params.id, input);
-    const normalized = normalizePlan(input.plan as ImportPlan, grids);
+    const source = await grabSource(req.params.id, input);
+    const normalized = await normalizePlanFrom(source, input.plan as ImportPlan);
     if (!normalized.tables.some((table) => table.include !== false)) {
+      source.release();
       return res.status(400).json({ error: "No tables are ticked for import." });
     }
 
     const { commitPlan } = await import("../services/leadImport.js");
-    const result = await commitPlan(record.id, grids, normalized, checkpoint ?? undefined);
+    let result: Awaited<ReturnType<typeof commitPlan>>;
+    try {
+      result = await commitPlan(record.id, source, normalized, checkpoint ?? undefined);
+    } finally {
+      source.release();
+    }
     const importedAt = result.status === "IMPORTED" ? new Date() : null;
     const saved = await prisma.leadImport.update({
       where: { id: record.id },
@@ -373,7 +496,7 @@ importsRouter.get("/:id", async (req, res, next) => {
 // Deleting the record keeps the leads — they belong to the pipeline now.
 importsRouter.delete("/:id", async (req, res, next) => {
   try {
-    gridCache.delete(req.params.id);
+    fileCache.delete(req.params.id);
     await prisma.leadGroup.updateMany({ where: { leadImportId: req.params.id }, data: { leadImportId: null } });
     await prisma.leadImport.delete({ where: { id: req.params.id } });
     res.status(204).send();

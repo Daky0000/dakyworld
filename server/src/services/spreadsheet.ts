@@ -214,22 +214,39 @@ function sheetName(worksheet: unknown, index: number): string {
 }
 
 /**
+ * What a caller does with each sheet as it comes off the stream.
+ *
+ * Returning grids as an array is what a caller wants and is exactly what a
+ * 39-tab workbook cannot afford, so the sheets are handed over one at a time
+ * and the caller decides what to keep. A visitor that keeps nothing costs one
+ * grid of memory for a workbook of any size.
+ */
+export type SheetVisitor = (grid: SheetGrid) => void | Promise<void>;
+
+/**
  * Reading the sheets a caller asked for, one row at a time.
  *
- * Everything about the shape of this is dictated by what the table detector
- * downstream reads, so none of it is rearrangeable for tidiness.
+ * **Every worksheet is iterated, including the ones nobody asked for**, and
+ * that is not tidiness. ExcelJS buffers each worksheet to a temp file when it
+ * reaches it before the workbook part (which is every worksheet, in a workbook
+ * ExcelJS itself wrote), then opens a read stream per sheet on the way back
+ * through. Skipping one leaves that stream open: the temp file is deleted and
+ * the descriptor is not. Reading one tab out of a 39-tab file leaked 38 of
+ * them, and a bulk import — analyse, preview, commit, 39 tabs each — died
+ * partway through the commit with `EMFILE: too many open files`, blaming a
+ * file in node_modules. Draining what we do not want is what closes it.
+ *
+ * Everything else about the shape of this is dictated by what the table
+ * detector downstream reads, so none of it is rearrangeable either.
  */
-async function streamGrids(buffer: Buffer, wanted: Set<string> | null): Promise<SheetGrid[]> {
+async function streamEach(buffer: Buffer, wanted: Set<string> | null, visit: SheetVisitor): Promise<void> {
   const reader = new ExcelJS.stream.xlsx.WorkbookReader(Readable.from(buffer), READER_OPTIONS);
-  const grids: SheetGrid[] = [];
   let index = 0;
 
   for await (const worksheet of reader) {
     const name = sheetName(worksheet, index);
     index += 1;
-    // Leaving a sheet un-iterated is how it gets skipped: the workbook
-    // iterator drains what we didn't read on its way to the next one.
-    if (wanted && !wanted.has(name)) continue;
+    const keep = !wanted || wanted.has(name);
 
     const rows: string[][] = [];
     let sourceRows = 0;
@@ -239,7 +256,7 @@ async function streamGrids(buffer: Buffer, wanted: Set<string> | null): Promise<
       // Past the cap we keep counting and stop keeping. The count is what
       // tells the Owner rows were left behind; the rows themselves are what
       // would put the file back in memory whole.
-      if (row.number > MAX_ROWS_PER_SHEET) continue;
+      if (!keep || row.number > MAX_ROWS_PER_SHEET) continue;
 
       // A blank row is never emitted, and blank rows are exactly what the
       // table detector reads to find where one table ends and the next
@@ -253,15 +270,14 @@ async function streamGrids(buffer: Buffer, wanted: Set<string> | null): Promise<
       rows.push(cells);
     }
 
+    if (!keep) continue;
     const grid = toGrid(name, rows, sourceRows);
-    if (grid.rows.length) grids.push(grid);
+    if (grid.rows.length) await visit(grid);
   }
-
-  return grids;
 }
 
 /** The whole workbook in memory — correct at any price, and the price is the reason it is second. */
-async function loadGrids(buffer: Buffer, wanted: Set<string> | null): Promise<SheetGrid[]> {
+async function loadEach(buffer: Buffer, wanted: Set<string> | null, visit: SheetVisitor): Promise<void> {
   const workbook = new ExcelJS.Workbook();
   // ExcelJS types this as its own vendored Buffer shape; a Node Buffer is what it actually reads.
   await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
@@ -286,7 +302,10 @@ async function loadGrids(buffer: Buffer, wanted: Set<string> | null): Promise<Sh
     if (grid.rows.length) grids.push(grid);
   });
 
-  return grids;
+  // `eachSheet` is synchronous, so the visiting happens after it rather than
+  // inside it. This path already holds the whole workbook, which is the reason
+  // it is the fallback and not the road.
+  for (const grid of grids) await visit(grid);
 }
 
 /**
@@ -308,19 +327,51 @@ async function loadGrids(buffer: Buffer, wanted: Set<string> | null): Promise<Sh
  */
 const STREAM_ATTEMPTS = 3;
 
-async function readWorkbook(buffer: Buffer, wanted: Set<string> | null): Promise<SheetGrid[]> {
+/**
+ * Hands every wanted sheet to `visit`, one at a time, in one pass of the file.
+ *
+ * A retry starts the pass again from the top, so a visitor that keeps things
+ * has to be told the run is starting over. `onRestart` is that: the callers
+ * that accumulate clear what they have.
+ */
+export async function readWorkbookEach(
+  buffer: Buffer,
+  filename: string,
+  sheetNames: string[] | undefined,
+  visit: SheetVisitor,
+  onRestart?: () => void,
+): Promise<void> {
+  if (/\.xls$/i.test(filename)) {
+    throw new SpreadsheetError("Old .xls files can't be read. Open it in Excel or Sheets and save it as .xlsx or .csv.");
+  }
+
+  if (isCsvName(filename)) {
+    const { rows, sourceRows } = parseCsvCapped(buffer.toString("utf8"));
+    const grid = toGrid(filename.replace(/\.[^.]+$/, ""), rows, sourceRows);
+    // A CSV is one sheet whatever the caller asked it to be called.
+    if (grid.rows.length) await visit(grid);
+    return;
+  }
+
+  const wanted = sheetNames?.length ? new Set(sheetNames) : null;
+
   for (let attempt = 1; attempt <= STREAM_ATTEMPTS; attempt += 1) {
     try {
-      return await streamGrids(buffer, wanted);
+      return await streamEach(buffer, wanted, visit);
     } catch (err) {
-      if (attempt < STREAM_ATTEMPTS) continue;
+      if (attempt < STREAM_ATTEMPTS) {
+        onRestart?.();
+        continue;
+      }
       console.warn(`[spreadsheet] streaming read failed ${STREAM_ATTEMPTS}x, loading the workbook whole: ${(err as Error).message}`);
     }
   }
 
   try {
-    return await loadGrids(buffer, wanted);
+    onRestart?.();
+    return await loadEach(buffer, wanted, visit);
   } catch (err) {
+    if (err instanceof SpreadsheetError) throw err;
     // Both readers refused it, so this really is the file rather than the race.
     throw new SpreadsheetError(`That file couldn't be read as a spreadsheet: ${(err as Error).message}`);
   }
@@ -331,17 +382,19 @@ async function readWorkbook(buffer: Buffer, wanted: Set<string> | null): Promise
  * readable here — saying so is more useful than a parser error.
  */
 export async function parseWorkbook(buffer: Buffer, filename: string, sheetNames?: string[]): Promise<SheetGrid[]> {
-  if (/\.xls$/i.test(filename)) {
-    throw new SpreadsheetError("Old .xls files can't be read. Open it in Excel or Sheets and save it as .xlsx or .csv.");
-  }
-
-  if (isCsvName(filename)) {
-    const { rows, sourceRows } = parseCsvCapped(buffer.toString("utf8"));
-    const grid = toGrid(filename.replace(/\.[^.]+$/, ""), rows, sourceRows);
-    return grid.rows.length ? [grid] : [];
-  }
-
-  return readWorkbook(buffer, sheetNames?.length ? new Set(sheetNames) : null);
+  let grids: SheetGrid[] = [];
+  await readWorkbookEach(
+    buffer,
+    filename,
+    sheetNames,
+    (grid) => {
+      grids.push(grid);
+    },
+    () => {
+      grids = [];
+    },
+  );
+  return grids;
 }
 
 /**
@@ -358,7 +411,14 @@ export async function listWorkbookSheets(buffer: Buffer, filename: string): Prom
     try {
       const reader = new ExcelJS.stream.xlsx.WorkbookReader(Readable.from(buffer), { ...READER_OPTIONS, sharedStrings: "ignore" });
       const names: string[] = [];
-      for await (const worksheet of reader) names.push(sheetName(worksheet, names.length));
+      for await (const worksheet of reader) {
+        names.push(sheetName(worksheet, names.length));
+        // Nothing here wants a single cell, and every sheet still has to be
+        // read to the end: an un-iterated worksheet leaves a file descriptor
+        // open behind it. See `streamEach` — this is the same trap, and
+        // listing the tabs is the call that runs first on every import.
+        for await (const row of worksheet) void row.number;
+      }
       return names;
     } catch {
       if (attempt < STREAM_ATTEMPTS) continue;
