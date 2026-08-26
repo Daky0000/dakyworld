@@ -798,6 +798,14 @@ agentsRouter.get("/:key/tasks", async (req, res, next) => {
     const inState = (...states: string[]) => rows.filter((task) => states.includes(task.status));
 
     res.json({
+      // The same sentence the POST above returns when work is given to an
+      // agent nobody has switched on — said here too, because a task raised by
+      // a schedule, an event or a colleague never passed through that route
+      // and this screen is where somebody goes to ask why nothing happened.
+      note:
+        agent.status !== "ACTIVE" && inState("QUEUED").length > 0
+          ? `${agent.name} is a ${agent.status.toLowerCase()}, so nothing queued here will start until you set it to Active.`
+          : null,
       // Running first, because it is the only one that is changing while you look.
       running: inState("RUNNING"),
       queued: inState("QUEUED"),

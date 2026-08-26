@@ -43,7 +43,7 @@ import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
-import { applyColdEmailPlaybook, applyOutreachDoctrine, ensureAgents, narrowSeededAgents, refreshUneditedSeedPrompts } from "./services/agentRegistry.js";
+import { applyColdEmailPlaybook, applyOutreachDoctrine, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts } from "./services/agentRegistry.js";
 import { drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
@@ -353,6 +353,23 @@ ensureSystemRoles()
           // and this narrows the ones they were carved out of. Runs once ever.
           // The Cold Email Playbook v3 wording, onto the two agents that
           // write outreach. Runs once; skips a prompt the Owner has rewritten.
+          // The toolkits, before any of the wording passes. `ensureAgents()`
+          // only ever creates, so a tool added to a seed after that agent
+          // already existed never joined its grant — and the grant is checked
+          // before the autonomy level and before the approval bypass, so the
+          // agent could not prepare it either. Additive only; nothing here
+          // ever revokes.
+          const reach = await reconcileSeedToolkits();
+          for (const grant of reach.granted) {
+            console.log(`  → Granted ${grant.name} ${grant.tools.join(", ")}`);
+          }
+          if (reach.granted.length && reach.firstRun) {
+            console.log(
+              `  → Those grants are a one-off catch-up on tools their seeds already named. ` +
+                `If you unticked one of them deliberately, untick it again — it will not be offered a second time.`,
+            );
+          }
+
           const playbook = await applyColdEmailPlaybook();
           if (playbook?.updated.length) {
             console.log(`  → Cold Email Playbook v3 applied to ${playbook.updated.join(", ")}`);
@@ -398,6 +415,24 @@ ensureSystemRoles()
             console.log(
               `  → Overrode your own wording on ${handback.overrode.join(", ")} — you asked for the cold email playbook to be removed entirely. ` +
                 `The replaced wording is kept verbatim in the "${SETTING.AGENT_OUTREACH_PRIOR}" setting.`,
+            );
+          }
+
+          // Work that exists and cannot start. `runDueTasks()` only picks up
+          // a task whose agent is ACTIVE, and every agent seeds as a draft —
+          // so a queue against one is real work waiting on a switch nobody
+          // knows to flip. Said at boot because "why did nothing happen last
+          // night" should be answerable from the log.
+          const stalled = await prisma.agentTask.groupBy({
+            by: ["agentKey"],
+            where: { status: "QUEUED", agent: { status: { not: "ACTIVE" } } },
+            _count: true,
+          });
+          if (stalled.length > 0) {
+            const total = stalled.reduce((sum, row) => sum + row._count, 0);
+            console.log(
+              `  → ${total} queued task(s) belong to ${stalled.length} agent(s) that are not Active and will not start: ` +
+                `${stalled.map((row) => row.agentKey).join(", ")}. Activate them on the Agents screen, or cancel the work.`,
             );
           }
 

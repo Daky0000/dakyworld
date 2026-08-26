@@ -50,7 +50,7 @@ import { PROVIDERS, routeFor } from "../../lib/models/registry.js";
 import { BRAND, VOICE, catalogueForPrompt } from "../dakyworld.js";
 import { writerSystem } from "../writers/brief.js";
 import { allMcpTools, callOn, imageProvider, mcpTools } from "./mcpTools.js";
-import { companyProfile } from "../systemProfile.js";
+import { companyProfile, contactBlock } from "../systemProfile.js";
 // Circular with services/agents/hiring.ts, which imports listAllTools from
 // here. Safe because every reference in both directions is inside a function
 // body rather than at module scope — see the note at the top of hiring.ts.
@@ -181,6 +181,92 @@ const CONTENT_PLAIN_CONTRACT = `What you never change:
 - A claim you think is wrong — that is somebody else's job. Say so in \`changes\` and leave the sentence alone.
 
 British spelling. No exclamation marks. Nothing you cut goes unmentioned: anything you dropped goes in \`removed\` so a person can put it back.`;
+
+/**
+ * The five below were the last model-written outputs in this system that no
+ * agent owned.
+ *
+ * Each was a template literal inside its own tool handler: no screen displayed
+ * it, no edit could reach it, and editing the Graphic Designer's card changed
+ * nothing about the design briefs it produced. That is the defect
+ * `services/writers/registry.ts` exists to close, and these five were simply
+ * still outside it — so they are split here the same way everything else is,
+ * doctrine from contract, and given an owner in the registry.
+ */
+
+/** The shipped doctrine for `content.factcheck`, overridable by `content.writer`. */
+export const FACTCHECK_DOCTRINE = `You check business copy against what is true right now.
+
+Pull out every checkable claim — a statistic, a price, a date, a product name, a standard, a regulation, a company fact — and judge each one against sources you can actually cite.
+
+Judge the claim as written, not a more defensible version of it. Opinions, offers and statements about the writer's own business are not checkable facts — leave them out rather than guessing.`;
+
+/**
+ * The verdicts and the sourcing rule are contract, not doctrine.
+ *
+ * `status` is the field a person reads before deciding whether to publish, and
+ * "UNSUPPORTED is not the same as false" is the distinction that stops a check
+ * being quoted as evidence of a lie. A doctrine edit that blurred either would
+ * turn a cautious report into a confident wrong one.
+ */
+const FACTCHECK_CONTRACT = `Four verdicts and no others:
+- CONFIRMED: a source says this, and the source is current.
+- OUTDATED: it was true and is not any more. Say what it is now.
+- UNSUPPORTED: no source says it either way. This is not the same as false, and you must not report it as false.
+- WRONG: a source contradicts it.
+
+Never mark something CONFIRMED without a source you actually read. An unsourced confirmation is worse than no check at all, because somebody will publish on the strength of it.`;
+
+/** The shipped doctrine for `design.brief`, overridable by `design.graphic`. */
+export const DESIGN_BRIEF_DOCTRINE = `You write design briefs. A brief is instructions for a designer, not a description of a finished thing.
+
+The brand design system, which every brief must work inside:
+- Ink #08101F, Navy #0B0A16, Blue #3157FF, Blue-light #6490FF, Cyan #6FE4FF, Lime #B8FF3D, Cream #F4F5F0, Muted #69758A, Line #DFE4EB.
+- Space Grotesk for display, DM Sans for body.
+- Lime is a mark colour and an action colour only, roughly 1-5% of a surface. It is never type on white. On a light surface the accent is blue.
+- Blue is structure, selection and emphasis.`;
+
+/**
+ * Set-ready copy and real dimensions are contract.
+ *
+ * `copy` and `sizes` are the two fields a designer works straight from. A brief
+ * that describes the copy instead of writing it, or that says "standard social
+ * sizes", is a brief somebody has to do again.
+ */
+const DESIGN_BRIEF_CONTRACT = `Write copy that could be set as-is. Never invent a client result, a statistic or a claim. Give real pixel dimensions for every placement you are given, and say what is in the safe area.`;
+
+/** The shipped doctrine for `video.plan`, overridable by `video.editor`. */
+export const VIDEO_PLAN_DOCTRINE = `You plan video edits.
+
+An edit plan is instructions to an editor with a timeline open. On-screen text is set in Space Grotesk; keep it to a handful of words per card. Lime is a mark colour, never a text colour on a light frame.`;
+
+const VIDEO_PLAN_CONTRACT = `Give real second counts that add up to the target duration. Never invent a client result or a statistic — if a number would help and you were not given one, say what to ask for.`;
+
+/** The shipped doctrine for `ad.concept`, overridable by `ads.designer`. */
+export const AD_CONCEPT_DOCTRINE = `You write paid-social advertising.
+
+Each concept is a genuinely different angle, not a rewording of the last one — two variants of one idea test nothing. No exclamation marks, no emoji, no "in today's fast-paced world".`;
+
+const AD_CONCEPT_CONTRACT = `Respect the platform's character limits and say what they are. Never invent a client, a result or a statistic; anything you cannot evidence goes in \`claimsToCheck\` rather than in the copy.`;
+
+/** The shipped doctrine for `web.page`, overridable by `dev.web`. */
+export const WEB_PAGE_DOCTRINE = `You build web pages.
+
+- The brand system: Ink #08101F, Navy #0B0A16, Blue #3157FF, Blue-light #6490FF, Cyan #6FE4FF, Lime #B8FF3D, Cream #F4F5F0, Muted #69758A, Line #DFE4EB. Space Grotesk for display, DM Sans for body.
+- Lime is a mark and an action colour only, roughly 1-5% of the surface, and never type on white. Blue is structure and emphasis.
+- Responsive with real breakpoints. Semantic HTML, one h1, alt text on every image, visible focus states, and contrast that passes AA.
+- Real copy in Dakyworld's voice, not lorem ipsum.`;
+
+/**
+ * What the page has to *be* rather than how it should look.
+ *
+ * A developer opens this file and ships it. "One complete document" and "no
+ * external scripts" are what make that possible at all, and a rewritten
+ * doctrine that dropped either would produce a fragment nobody can use.
+ */
+const WEB_PAGE_CONTRACT = `Output one complete HTML document, from <!doctype html> to </html>.
+- Self-contained: all CSS in one <style> block, no frameworks, no external scripts. Google Fonts is the one allowed external link.
+- Never invent a client, a result or a statistic. Only quote a price that is in the catalogue above.`;
 
 export const TOOLS: ToolDefinition<any, any>[] = [
   // --- Pipeline -------------------------------------------------------------
@@ -1875,20 +1961,12 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       }>({
         purpose: "content.factcheck",
         job: "factcheck",
-        system: `You check business copy against what is true right now. Today is ${new Date().toISOString().slice(0, 10)}.
-
-Pull out every checkable claim — a statistic, a price, a date, a product name, a standard, a regulation, a company fact — and judge each one against sources you can actually cite.
-
-Four verdicts and no others:
-- CONFIRMED: a source says this, and the source is current.
-- OUTDATED: it was true and is not any more. Say what it is now.
-- UNSUPPORTED: no source says it either way. This is not the same as false, and you must not report it as false.
-- WRONG: a source contradicts it.
-
-Rules:
-- Never mark something CONFIRMED without a source you actually read. An unsourced confirmation is worse than no check at all, because somebody will publish on the strength of it.
-- Judge the claim as written, not a more defensible version of it.
-- Opinions, offers and statements about the writer's own business are not checkable facts. Leave them out rather than guessing.`,
+        system: await writerSystem("content.factcheck", FACTCHECK_DOCTRINE, {
+          // Today's date is live state, not writing. A doctrine edit that
+          // dropped it would have every claim checked against an unknown year.
+          facts: [`Today is ${new Date().toISOString().slice(0, 10)}.`],
+          contract: FACTCHECK_CONTRACT,
+        }),
         prompt: () => [input.subject ? `What this is about: ${input.subject}` : "", "The draft:", input.text].filter(Boolean).join("\n\n"),
         schema: {
           type: "object",
@@ -2093,19 +2171,10 @@ Rules:
         avoid: string[];
       }>({
         purpose: "design.brief",
-        system: `You write design briefs for ${profile.displayName}, an outsourced IT company. A brief is instructions for a designer, not a description of a finished thing.
-
-${BRAND}
-
-${VOICE}
-
-The brand design system, which every brief must work inside:
-- Ink #08101F, Navy #0B0A16, Blue #3157FF, Blue-light #6490FF, Cyan #6FE4FF, Lime #B8FF3D, Cream #F4F5F0, Muted #69758A, Line #DFE4EB.
-- Space Grotesk for display, DM Sans for body.
-- Lime is a mark colour and an action colour only, roughly 1-5% of a surface. It is never type on white. On a light surface the accent is blue.
-- Blue is structure, selection and emphasis.
-
-Write copy that could be set as-is. Never invent a client result, a statistic or a claim. Give real pixel dimensions for every placement you are given, and say what is in the safe area.`,
+        system: await writerSystem("design.brief", DESIGN_BRIEF_DOCTRINE, {
+          facts: [BRAND, VOICE, contactBlock(profile)],
+          contract: DESIGN_BRIEF_CONTRACT,
+        }),
         prompt: () =>
           [
             `Design: ${input.what}`,
@@ -2184,13 +2253,10 @@ Write copy that could be set as-is. Never invent a client result, a statistic or
         thumbnailIdea: string;
       }>({
         purpose: "video.plan",
-        system: `You plan video edits for ${profile.displayName}.
-
-${BRAND}
-
-${VOICE}
-
-An edit plan is instructions to an editor with a timeline open. Give real second counts that add up to the target duration. On-screen text is set in Space Grotesk; keep it to a handful of words per card. Lime is a mark colour, never a text colour on a light frame. Never invent a client result or a statistic — if a number would help and you were not given one, say what to ask for.`,
+        system: await writerSystem("video.plan", VIDEO_PLAN_DOCTRINE, {
+          facts: [BRAND, VOICE, contactBlock(profile)],
+          contract: VIDEO_PLAN_CONTRACT,
+        }),
         prompt: () =>
           [
             `Objective: ${input.objective}`,
@@ -2271,15 +2337,10 @@ An edit plan is instructions to an editor with a timeline open. Give real second
         claimsToCheck: string[];
       }>({
         purpose: "ad.concept",
-        system: `You write paid-social advertising for ${profile.displayName}.
-
-${BRAND}
-
-${VOICE}
-
-${catalogueForPrompt()}
-
-Each concept is a genuinely different angle, not a rewording of the last one — two variants of one idea test nothing. Respect the platform's character limits and say what they are. Never invent a client, a result or a statistic; anything you cannot evidence goes in claimsToCheck instead of in the copy. No exclamation marks, no emoji, no "in today's fast-paced world".`,
+        system: await writerSystem("ad.concept", AD_CONCEPT_DOCTRINE, {
+          facts: [BRAND, VOICE, catalogueForPrompt(), contactBlock(profile)],
+          contract: AD_CONCEPT_CONTRACT,
+        }),
         prompt: () =>
           [
             `Offer: ${input.offer}`,
@@ -2349,21 +2410,10 @@ Each concept is a genuinely different angle, not a rewording of the last one —
       const result = await callModel<{ html: string; sections: string[]; notes: string[] }>({
         purpose: "web.page",
         job: "html",
-        system: `You build web pages for ${profile.displayName}.
-
-${BRAND}
-
-${VOICE}
-
-${catalogueForPrompt()}
-
-Output one complete HTML document. Rules it must follow:
-- Self-contained: all CSS in one <style> block, no frameworks, no external scripts. Google Fonts is the one allowed external link.
-- The brand system: Ink #08101F, Navy #0B0A16, Blue #3157FF, Blue-light #6490FF, Cyan #6FE4FF, Lime #B8FF3D, Cream #F4F5F0, Muted #69758A, Line #DFE4EB. Space Grotesk for display, DM Sans for body.
-- Lime is a mark and an action colour only, roughly 1-5% of the surface, and never type on white. Blue is structure and emphasis.
-- Responsive with real breakpoints. Semantic HTML, one h1, alt text on every image, visible focus states, and contrast that passes AA.
-- Real copy in Dakyworld's voice, not lorem ipsum. Never invent a client, a result or a statistic. Only quote a price that is in the catalogue above.
-- The company's own contact details are: ${profile.email}, ${profile.phone}, ${profile.web}, ${profile.location}.`,
+        system: await writerSystem("web.page", WEB_PAGE_DOCTRINE, {
+          facts: [BRAND, VOICE, catalogueForPrompt(), contactBlock(profile)],
+          contract: WEB_PAGE_CONTRACT,
+        }),
         prompt: () =>
           [
             `Page: ${input.page}`,

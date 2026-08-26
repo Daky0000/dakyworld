@@ -180,6 +180,53 @@ export const WRITER_JOBS: WriterJob[] = [
     outward: false,
   },
   {
+    key: "design.brief",
+    label: "Design brief",
+    agentKey: "design.graphic",
+    where: "services/tools/catalogue.ts",
+    what: "The brief a designer works from: what it has to achieve, the words that appear on it, and the sizes.",
+    // Not outward on its own — a brief is read by whoever makes the artwork.
+    // What it governs reaches a client one step later, through the thing that
+    // gets made from it.
+    outward: false,
+  },
+  {
+    key: "video.plan",
+    label: "Video edit plan",
+    agentKey: "video.editor",
+    where: "services/tools/catalogue.ts",
+    what: "The structure, shot list, on-screen text and per-platform cuts an editor works to.",
+    outward: false,
+  },
+  {
+    key: "ad.concept",
+    label: "Ad concept",
+    agentKey: "ads.designer",
+    where: "services/tools/catalogue.ts",
+    what: "The hook, the copy and the call to action on paid social — the words a stranger reads about Dakyworld.",
+    outward: true,
+  },
+  {
+    key: "web.page",
+    label: "Web page",
+    agentKey: "dev.web",
+    where: "services/tools/catalogue.ts",
+    what: "A complete page on the brand design system, the thing a developer opens and edits rather than starts from nothing.",
+    outward: true,
+  },
+  {
+    key: "content.factcheck",
+    label: "Fact check",
+    agentKey: "content.writer",
+    where: "services/tools/catalogue.ts",
+    // The writer owns the check on its own work on purpose. The alternative
+    // read — that a checker should be independent of the writer — is about
+    // people, and this is one prompt either way: what matters is that whoever
+    // sets the standard for a claim also sets the standard for evidencing it.
+    what: "How a draft's claims are judged before it ships: what counts as a source, and what may be called confirmed.",
+    outward: false,
+  },
+  {
     key: "homepage.look",
     label: "Homepage read",
     agentKey: "review.look",

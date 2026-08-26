@@ -354,6 +354,25 @@ function outwardKey(taskId: string, toolKey: string, input: unknown): string {
  * tools every agent has because they are how it participates in the workflow
  * rather than things it does to the business.
  */
+/**
+ * The sentence a hand-off owes the agent making it when the target is a draft.
+ *
+ * `runDueTasks()` only starts tasks for an ACTIVE agent, so a child task
+ * queued against a DRAFT one is real work that will never begin. Three of the
+ * four task origins already say so — the Owner route returns a note, the mail
+ * room refuses a draft as a destination outright, and standing work skips it
+ * on purpose. Delegation and hand-off were the pair that said nothing, which
+ * made this the one way work could disappear without anybody being told.
+ *
+ * Deliberately still queued rather than refused: lining work up before its
+ * agent is switched on is exactly what a DRAFT queue is for. The defect was
+ * only ever the silence.
+ */
+function draftWarning(target: { name: string; status: string }, rehearsal: boolean): string {
+  if (rehearsal || target.status !== "DRAFT") return "";
+  return ` Note: ${target.name} is still a draft, so nothing will start on this until somebody activates them — say so in your summary.`;
+}
+
 async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Promise<AgentTool[]> {
   const catalogue = await listAllTools();
   const granted = catalogue.filter((tool) => agent.toolkit.includes(tool.key));
@@ -719,7 +738,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
         actor: "agent",
       });
       await step(task.id, "DELEGATED", `To ${target.name}: ${child.title}`, { data: { agentKey: target.key, taskId: child.id } });
-      return { content: `Queued for ${target.name}. You are not waiting on it — carry on with your own part.` };
+      return { content: `Queued for ${target.name}. You are not waiting on it — carry on with your own part.${draftWarning(target, task.rehearsal)}` };
     },
   };
 
@@ -852,7 +871,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       await step(task.id, "HANDED_OFF", `To ${target.name}: ${child.title} — ${String(input.why ?? "")}`, {
         data: { agentKey: target.key, taskId: child.id, why: input.why },
       });
-      return { content: `Queued for ${target.name}. You are not waiting on it — finish your own part and say in your summary that this went to them.` };
+      return { content: `Queued for ${target.name}. You are not waiting on it — finish your own part and say in your summary that this went to them.${draftWarning(target, task.rehearsal)}` };
     },
   };
 

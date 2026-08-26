@@ -141,7 +141,14 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
 
   // The agent's own dry-run flag is a floor, not a default: an Owner asking for
   // a real run cannot switch it off from the call site.
-  if (agent.dryRun && (tool.outward || tool.spends || tool.scope === "write")) {
+  //
+  // `scope === "send"` is in here as well as `outward`, and it is not
+  // redundant. `slack.send` is the one tool in the catalogue that sends
+  // something without being outward — it goes to our own team rather than to a
+  // client — so it fell through all three tests and would have posted for real
+  // from an agent whose card says dry run. A tool whose scope is "send" is
+  // doing the thing by definition; that is the whole of the test.
+  if (agent.dryRun && (tool.outward || tool.spends || tool.scope === "write" || tool.scope === "send")) {
     return { allowed: true, mustDryRun: true, reason: `${agent.name} is in dry run, so this is prepared rather than done.` };
   }
   if (tool.spends && agent.autonomyLevel < SPEND_LEVEL) {

@@ -404,6 +404,22 @@ export const SETTING = {
    */
   AGENT_OUTREACH_PRIOR: "agents.outreachDoctrine.replaced",
   /**
+   * Every tool that has ever been offered to an agent, as {agentKey: [toolKey]}.
+   *
+   * `ensureAgents()` only ever creates, so a tool added to a seed after that
+   * agent already exists never joins its grant — which is how eleven tools,
+   * `email.send` among them, came to sit in nobody's toolkit while every
+   * screen listed them.
+   *
+   * This is the record that lets `reconcileSeedToolkits()` fix that without
+   * becoming the thing it replaces. Deliberately not another one-off marker:
+   * a marker per improvement only lands if somebody remembers to add one, and
+   * the ones nobody remembers are invisible. An offered-set maintains itself —
+   * a tool added to a seed next month arrives on the next deploy, and a grant
+   * the Owner unticks after being offered it is never offered again.
+   */
+  AGENT_TOOLKIT_OFFERED: "agents.toolkitOffered",
+  /**
    * Hard ceiling on what one tool call may spend, in USD. The tool layer
    * refuses anything above it rather than trusting an agent's arithmetic.
    */

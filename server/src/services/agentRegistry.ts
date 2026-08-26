@@ -194,7 +194,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     mission: "Keep the agency machine running: processes, handoffs, capacity and SLAs.",
     responsibilities: ["Assignments", "Handoffs", "Capacity alerts", "Process improvement"],
     kpis: ["On-time milestones", "Blocked task age", "Utilisation", "Rework rate"],
-    toolkit: ["projects.read", "tasks.write", "time.read", "calendar.read"],
+    toolkit: ["projects.read", "tasks.write", "time.read", "calendar.read", "slack.send"],
     escalationPolicy: "Surfaces delays early with an impact assessment and a recovery plan.",
     prompt: layers({
       role: "You are the Dakyworld COO.",
@@ -221,7 +221,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     // `invoice.draft`.
     responsibilities: ["Cash report", "AR aging", "Margin alerts"],
     kpis: ["Days sales outstanding", "MRR", "Gross margin", "Overdue receivables"],
-    toolkit: ["finance.read", "careplan.read", "analytics.read"],
+    toolkit: ["finance.read", "careplan.read", "analytics.read", "payment.status"],
     escalationPolicy: "Never charges a client without a validated billing rule and an approval state.",
     prompt: layers({
       role: "You are the Dakyworld CFO.",
@@ -346,7 +346,7 @@ ${SERVICE_CRAFT}`,
     mission: "Stop bad automation becoming bad business.",
     responsibilities: ["Risk ratings", "Approval gates", "QA reports", "Incident escalation"],
     kpis: ["High-risk actions blocked", "Policy violations", "Escaped defects"],
-    toolkit: ["company.audit", "security.scan", "integrations.read"],
+    toolkit: ["company.audit", "security.scan", "integrations.read", "slack.send"],
     escalationPolicy: "May block any action. Never weakens a control to make a task succeed.",
     prompt: layers({
       role: "You are the Dakyworld Risk and QA Director.",
@@ -498,7 +498,7 @@ ${MONEY_CRAFT}`,
     [
       "email.sequencer", "Outbound Communications Manager", "REVENUE", "cro",
       "Run the outbound sequences: who is enrolled, what goes next, and when a sequence stops.",
-      ["email.draft", "sequence.enrol", "sequence.stop"],
+      ["email.draft", "email.send", "sequence.enrol", "sequence.stop"],
       "Stop immediately on reply, unsubscribe or complaint. Respect send windows.",
       `Check suppression before every enrolment, not once at the top of a batch. A reply stops the sequence the moment it arrives — a follow-up sent after somebody answered is the single most damaging thing this workflow can do, because it proves nobody was reading. Respect the send window in the recipient's timezone, not ours. When a touch has nothing new to add, skip it rather than send it.
 
@@ -508,7 +508,7 @@ ${DELIVERABILITY_CRAFT}`,
     [
       "client.notifier", "Client Communications Agent", "CLIENT", "cco",
       "Tell each client what is happening on their project, before they have to ask.",
-      ["email.draft", "client.read", "projects.read"],
+      ["email.draft", "email.send", "client.read", "projects.read"],
       "Never expose internal notes, costs, credentials or another client's data.",
       `Write what changed for them, not what we did. A week with no visible progress is still worth a sentence saying so — silence is what a client reads as trouble, and an honest quiet week costs far less than being chased. Never promise a date the project record does not support, and never let a client learn about a slip from anybody but us.
 
@@ -602,7 +602,28 @@ ${BUILD_CRAFT}`,
           "Interface motion that explains rather than decorates",
         ],
         kpis: ["Pages shipped", "Lighthouse scores", "Accessibility defects", "Defects found after handover"],
-        toolkit: ["web.page", "demo.build", "demo.read", "github.read", "github.issue", "security.scan", "company.audit", "site.look", "audit.website", "audit.read", "projects.read", "tasks.write"],
+        // The four repository tools. This agent's job is "build and fix the
+        // pages Dakyworld ships" and it could not read the code it maintains.
+        // `code.merge` deploys this repository to production, which is why it
+        // is `outward` and why this is the only agent that holds it.
+        toolkit: [
+          "web.page",
+          "demo.build",
+          "demo.read",
+          "github.read",
+          "github.issue",
+          "repo.read",
+          "repo.create",
+          "code.propose",
+          "code.merge",
+          "security.scan",
+          "company.audit",
+          "site.look",
+          "audit.website",
+          "audit.read",
+          "projects.read",
+          "tasks.write",
+        ],
         escalationPolicy:
           "Never touches production without a rollback plan. Anything that changes price, scope, a client's DNS or a live site's availability goes to the CTO first.",
         process: `Read what exists before writing anything. Reuse the brand design system's tokens and components rather than inventing a variant. State the change, its blast radius, the rollback and the check that proves it worked.
@@ -627,7 +648,10 @@ ${MOTION_CRAFT}`,
           "Error handling and retries",
         ],
         kpis: ["Manual steps removed", "Automations live", "Failed runs", "Hours saved per month"],
-        toolkit: ["webhooks.read", "webhook.dispatch", "integrations.read", "github.read", "projects.read", "tasks.write"],
+        // `repo.read` and `code.propose`: a pull request changes nothing that
+        // is running, so it is held by the dry-run flag rather than by the
+        // outward gate. Merging is somebody else's decision and this one cannot.
+        toolkit: ["webhooks.read", "webhook.dispatch", "integrations.read", "github.read", "repo.read", "code.propose", "projects.read", "tasks.write"],
         escalationPolicy:
           "Never logs a secret. Anything writing to a client's system, moving money, or sending on a client's behalf is prepared and approved, never run unasked.",
         process: `Map the current path step by step before proposing a new one. Say which steps disappear and which merely move. Every integration names its failure mode and what happens to a record when it fires.
@@ -831,7 +855,7 @@ ${INTERFACE_CRAFT}`,
           "Reading a scan without overstating it",
         ],
         kpis: ["Confirmed findings", "False positives", "Time to remediation", "Findings a client disputes"],
-        toolkit: ["audit.website", "audit.read", "security.scan", "company.audit", "github.issue"],
+        toolkit: ["audit.website", "audit.read", "security.scan", "company.audit", "github.issue", "repo.read"],
         escalationPolicy:
           "Never probes, never tries a login, never touches anything on somebody else's system. Never reports a vulnerability it has not evidence for — a fabricated security finding about a stranger's business is an accusation, not a mistake.",
         process:
@@ -1072,7 +1096,20 @@ ${PROSPECT_CRAFT}`,
           "Reconciling an invoice against the project record",
         ],
         kpis: ["Invoices raised", "Queried invoices", "Days from delivery to invoice", "Corrections after issue"],
-        toolkit: ["invoice.draft", "document.render", "client.read", "projects.read", "time.read", "careplan.read"],
+        toolkit: [
+          "invoice.draft",
+          "document.render",
+          "client.read",
+          "projects.read",
+          "time.read",
+          "careplan.read",
+          // An invoice with no way to pay it is a letter asking somebody to
+          // work out how. `payment.status` is read-only and is how this one
+          // knows an invoice is settled without being told.
+          "payment.link",
+          "payment.momo",
+          "payment.status",
+        ],
         escalationPolicy:
           "Never invents a line, a rate or a quantity, and never bills for work the project record does not show as delivered. Anything outside the agreed scope is prepared and escalated, never issued.",
         process: `Work from the record: the scope, the milestones marked done, the hours logged, the plan's included allowance. Every line names what it is for in the client's own words. Where the record is ambiguous, say which line is uncertain rather than rounding it into the total.
@@ -1101,7 +1138,23 @@ ${MONEY_CRAFT}`,
         // already agreed to pay is expected, gets read, and is the one message
         // on this channel nobody resents. It is outward and spends money, so
         // every call still goes through the approval queue.
-        toolkit: ["finance.read", "client.read", "email.draft", "email.polish", "message.reach", "message.draft", "sms.send"],
+        // `sms.send` was here and `email.send` was not, which made the letter
+        // the one channel this agent could not finish. The payment tools are
+        // the other half: chasing somebody without handing them a way to pay is
+        // the reason a chase has to be repeated.
+        toolkit: [
+          "finance.read",
+          "client.read",
+          "email.draft",
+          "email.polish",
+          "email.send",
+          "payment.link",
+          "payment.momo",
+          "payment.status",
+          "message.reach",
+          "message.draft",
+          "sms.send",
+        ],
         escalationPolicy:
           "Never threatens, never implies legal action, and never offers a discount or a payment plan on its own authority. A dispute about the work itself is not a collections matter and goes to the person who owns the account.",
         process: `Check the invoice is right before chasing it — half of late payments are queries nobody answered. Then escalate in order: a reminder, a call request, a note to the account owner. Every message says what is owed, for what, and how to pay it, in three sentences.
@@ -1283,7 +1336,7 @@ ${OFFER_CRAFT}`,
           "Showing the arithmetic behind every figure",
         ],
         kpis: ["Forecast accuracy", "Runway warning given in weeks", "Variance explained", "Forecasts revised late"],
-        toolkit: ["finance.read", "careplan.read", "analytics.read", "crm.read"],
+        toolkit: ["finance.read", "careplan.read", "analytics.read", "crm.read", "payment.status"],
         escalationPolicy:
           "Never presents a single number as certainty and never forecasts revenue from an opportunity nobody has spoken to. A runway shorter than three months is escalated the day it is seen.",
         process: `Forecast the recurring part first, because it is the part that is nearly knowable, then the pipeline with its weighting stated. Always show the last forecast against what actually happened — a forecast nobody scores is a guess with a chart on it.
@@ -1490,9 +1543,15 @@ ${INTERFACE_CRAFT}`,
           "message.reach",
           "message.draft",
           "whatsapp.link",
+          // The one the day-to-day actually turns on: a prospect replies, this
+          // writer prepares the answer, and until it holds this the approval
+          // card cannot even be filed — the grant is checked before the
+          // autonomy level and before the approval bypass. At level 1 with dry
+          // run on it still only ever prepares.
+          "email.send",
         ],
         escalationPolicy:
-          "Checks the suppression list before every message and stops dead on a reply, an unsubscribe or a complaint. Never sends — every message is a draft a person approves — and never implies a previous conversation that did not happen.",
+          "Checks the suppression list before every message and stops dead on a reply, an unsubscribe or a complaint. Never sends one nobody has approved — every message is prepared and a person decides — and never implies a previous conversation that did not happen.",
         // Same move as the Cold Lead Writer above: the doctrine the drafter
         // actually runs on, rather than a second copy that can drift from it.
         // The day-by-day cadence that used to be written out here is inside it.
@@ -1597,12 +1656,12 @@ const NARROWED = [
  * decision to untick it is made by a person looking at the Agents screen.
  */
 const NARROWED_TOOLKIT: Record<string, string[]> = {
-  cfo: ["finance.read", "careplan.read", "analytics.read"],
+  cfo: ["finance.read", "careplan.read", "analytics.read", "payment.status"],
   "lead.orchestrator": ["lead.read", "lead.update", "audit.read"],
   "commercial.ops": ["proposal.draft", "document.render"],
   "careplan.manager": ["careplan.read", "invoice.draft", "time.read"],
-  "email.sequencer": ["email.draft", "sequence.enrol", "sequence.stop"],
-  "client.notifier": ["email.draft", "client.read", "projects.read"],
+  "email.sequencer": ["email.draft", "email.send", "sequence.enrol", "sequence.stop"],
+  "client.notifier": ["email.draft", "email.send", "client.read", "projects.read"],
   "design.ux": ["audit.read", "demo.read", "design.brief", "lead.read"],
 };
 
@@ -1705,6 +1764,100 @@ export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[];
 
   return { updated, keptAsEdited };
 }
+
+/**
+ * Grants an agent any tool its seed names that it has never been offered.
+ *
+ * ## The gap this closes
+ *
+ * `ensureAgents()` only ever creates, and `refreshUneditedSeedPrompts()` reads
+ * nothing but wording. So a tool added to a seed after that agent already
+ * exists never joins its grant — and the grant is checked in `invoke.ts`
+ * *before* the autonomy level and *before* the approval bypass. An agent that
+ * does not hold a tool cannot call it, cannot prepare it, and cannot have a
+ * card approved for it. Eleven tools had reached that state, `email.send`
+ * among them: the workforce could draft a letter and nothing on any screen
+ * could send it.
+ *
+ * ## Once per agent per tool, ever
+ *
+ * Additive only. **Nothing here revokes anything** — that rule is unchanged
+ * and it is the same one `narrowSeededAgents()` keeps, because a revoked grant
+ * is invisible until the day something cannot be done.
+ *
+ * The offered-set in `AGENT_TOOLKIT_OFFERED` is what stops this becoming a
+ * deploy that re-grants for ever. A tool is offered once; if the Owner unticks
+ * it afterwards it stays unticked, because it is already in the set. The
+ * comment on `refreshUneditedSeedPrompts()` argues at length against a marker
+ * per improvement, and this is the shape that avoids one: a tool added to a
+ * seed next month lands on the next boot with no new bookkeeping.
+ *
+ * ## The consequence to say out loud
+ *
+ * The first run has an empty set, so it grants every seed tool every agent is
+ * currently missing — including one the Owner may have unticked before this
+ * existed. That is why the caller prints every grant by name rather than a
+ * count. Untick it again and it will not come back.
+ *
+ * Autonomy, dry run and status are never read and never written here.
+ */
+export interface ToolkitReconciliation {
+  granted: { key: string; name: string; tools: string[] }[];
+  /** True the first time this ever ran, when the offered-set was empty. */
+  firstRun: boolean;
+}
+
+export async function reconcileSeedToolkits(): Promise<ToolkitReconciliation> {
+  const raw = (await getSetting(SETTING.AGENT_TOOLKIT_OFFERED))?.trim();
+  let offered: Record<string, string[]> = {};
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      // A hand-edited setting must not take the workforce's toolkits with it.
+      // An unreadable record is treated as no record, which re-offers rather
+      // than revokes — the safe direction for a file whose whole job is to add.
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        for (const [key, tools] of Object.entries(parsed as Record<string, unknown>)) {
+          if (Array.isArray(tools)) offered[key] = tools.filter((tool): tool is string => typeof tool === "string");
+        }
+      }
+    } catch {
+      offered = {};
+    }
+  }
+
+  const existing = await prisma.agent.findMany({ select: { key: true, name: true, toolkit: true } });
+  const seeds = new Map(AGENT_SEEDS.map((seed) => [seed.key, seed]));
+
+  const result: ToolkitReconciliation = { granted: [], firstRun: !raw };
+
+  for (const agent of existing) {
+    const seed = seeds.get(agent.key);
+    // Agents the Agent Creator hired have no seed. Their toolkit is whatever
+    // the approved design asked for and there is nothing here to reconcile it
+    // against.
+    if (!seed) continue;
+
+    const already = new Set([...agent.toolkit, ...(offered[agent.key] ?? [])]);
+    const missing = seed.toolkit.filter((tool) => !already.has(tool));
+
+    if (missing.length > 0) {
+      await prisma.agent.update({
+        where: { key: agent.key },
+        data: { toolkit: [...agent.toolkit, ...missing] },
+      });
+      result.granted.push({ key: agent.key, name: agent.name, tools: missing });
+    }
+
+    // Recorded whether or not anything was granted, so a tool the Owner has
+    // already unticked is not offered a second time on the next boot.
+    offered[agent.key] = [...new Set([...(offered[agent.key] ?? []), ...seed.toolkit])];
+  }
+
+  await setSetting(SETTING.AGENT_TOOLKIT_OFFERED, JSON.stringify(offered));
+  return result;
+}
+
 
 /**
  * Hands the two outreach agents back to the shipped doctrine — **including

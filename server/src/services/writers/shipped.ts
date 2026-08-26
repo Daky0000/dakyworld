@@ -38,6 +38,11 @@ const LOADERS: Record<string, () => Promise<string>> = {
   "lead.research": async () => (await import("../leadResearch.js")).SHIPPED_DOCTRINE,
   "homepage.look": async () => (await import("../homepageLook.js")).SHIPPED_DOCTRINE,
   "mail.triage": async () => (await import("../mailbox/triage.js")).SHIPPED_DOCTRINE,
+  "design.brief": async () => (await import("../tools/catalogue.js")).DESIGN_BRIEF_DOCTRINE,
+  "video.plan": async () => (await import("../tools/catalogue.js")).VIDEO_PLAN_DOCTRINE,
+  "ad.concept": async () => (await import("../tools/catalogue.js")).AD_CONCEPT_DOCTRINE,
+  "web.page": async () => (await import("../tools/catalogue.js")).WEB_PAGE_DOCTRINE,
+  "content.factcheck": async () => (await import("../tools/catalogue.js")).FACTCHECK_DOCTRINE,
 };
 
 /** The shipped wording for a job, or empty when nothing claims it. */
