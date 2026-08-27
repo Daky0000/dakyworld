@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError } from "../../lib/github.js";
 import type { Site, SitePage } from "@prisma/client";
 import type { SiteField } from "./regions.js";
+import { invalidateSource, readCache, sourceKey, writeCache } from "./sourceCache.js";
 
 /**
  * Where a page's HTML comes from, and where an edited one goes.
@@ -73,12 +74,31 @@ async function fetchLive(url: string): Promise<string> {
   }
 }
 
-/** The page as it stands right now, before any unpublished edits. */
-export async function pageSource(site: Site, page: SitePage): Promise<PageSource> {
+/**
+ * The page as it stands right now, before any unpublished edits.
+ *
+ * `fresh` bypasses the cache and is **required** of anything that is about to
+ * decide whether the page has moved under a draft. See `sourceCache.ts`: a
+ * conflict check answered from a copy taken ninety seconds ago is not a conflict
+ * check. Everything else — listing fields, rendering a preview, stamping an
+ * autosave — is welcome to a slightly old page, because the worst it can produce
+ * is a conflict that the publish path then catches properly.
+ */
+export async function pageSource(site: Site, page: SitePage, options: { fresh?: boolean } = {}): Promise<PageSource> {
   const repo = siteRepo(site);
+  const key = sourceKey({ siteId: site.id, repo, branch: site.repoBranch, filePath: page.filePath });
+  if (!options.fresh) {
+    const cached = readCache(key);
+    if (cached) return cached;
+  }
+
   if (repo && (await githubConfigured())) {
     const html = await readFile(repo, repoFilePath(site, page), site.repoBranch).catch(() => null);
-    if (html !== null) return { html, from: "repository" };
+    if (html !== null) {
+      const source: PageSource = { html, from: "repository" };
+      writeCache(key, source);
+      return source;
+    }
     // A configured repository that does not have the file is worth saying out
     // loud rather than silently falling back to a live page that might be a
     // cached copy of something already deleted.
@@ -87,7 +107,9 @@ export async function pageSource(site: Site, page: SitePage): Promise<PageSource
       `${repoFilePath(site, page)} is not in ${repo} on branch ${site.repoBranch}. It may have been renamed — remove the page here, or rescan the site.`,
     );
   }
-  return { html: await fetchLive(pageUrl(site, page)), from: "live site" };
+  const live: PageSource = { html: await fetchLive(pageUrl(site, page)), from: "live site" };
+  writeCache(key, live);
+  return live;
 }
 
 /** `about.html` → `/about`, `index.html` → `/`. The site serves extensionless paths. */
@@ -215,12 +237,18 @@ export async function publishPage(input: {
   }
 
   try {
-    return await commitFiles({
+    const commit = await commitFiles({
       repo,
       branch: input.site.repoBranch,
       message: input.message,
       files: [{ path: repoFilePath(input.site, input.page), content: input.html }],
     });
+    // Here rather than at the call site, so that a second publisher — a rollback,
+    // a site-wide publish, an agent — cannot forget it. Until this runs, every
+    // read is answering from the version before the commit, and the reload meant
+    // to confirm the publish shows the page unchanged.
+    invalidateSource(input.site.id, input.page.filePath);
+    return commit;
   } catch (err) {
     if (err instanceof GitHubNotConfiguredError) {
       throw new WebsiteError(

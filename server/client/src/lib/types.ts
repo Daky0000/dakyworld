@@ -2765,6 +2765,11 @@ export type SitePageDetail = {
   sections: SiteSectionRow[];
   draft: {
     values: Record<string, FieldEdit>;
+    /**
+     * The number every save has to quote back. See the server's draft route:
+     * without it a second editor's save silently overwrites the first's.
+     */
+    revision: number;
     savedAt: string | null;
     savedBy: { id: string; name: string } | null;
   };
@@ -2775,14 +2780,52 @@ export type FieldProblem = { id: string; label: string; reason: string };
 
 export type DraftSaveResult = {
   savedAt: string | null;
+  /** The revision after this save. The editor holds it and quotes it on the next one. */
+  revision: number;
   changed: number;
   unknown: string[];
   problems: FieldProblem[];
 };
 
+/**
+ * A 409 from the draft route: somebody else saved while this editor was open.
+ *
+ * Nothing has been overwritten either way — this is the material for the choice,
+ * not a report of a loss.
+ */
+export type DraftConflict = {
+  error: string;
+  revision: number;
+  savedAt: string | null;
+  savedBy: { id: string; name: string } | null;
+  fields: Array<{
+    id: string;
+    label: string;
+    kind: FieldKind;
+    yours: FieldEdit | null;
+    theirs: FieldEdit | null;
+    /** Both changed it and disagreed. The only rows that actually need a decision. */
+    contested: boolean;
+  }>;
+};
+
+/** One line of "Main heading: 'Build once' → 'Built to last'". */
+export type FieldChangeSummary = {
+  id: string;
+  label: string;
+  kind: FieldKind;
+  part: "words" | "destination" | "picture" | "description" | "styling";
+  from: string;
+  to: string;
+};
+
+export type ChangeCategories = { text: boolean; links: boolean; images: boolean; styles: boolean; seo: boolean };
+
 export type PublishResult = {
   version: number;
   changed: number;
+  summary: FieldChangeSummary[];
+  touched: ChangeCategories;
   commit: { sha: string; url: string };
   url: string;
   note: string;
@@ -2795,5 +2838,45 @@ export type SitePageVersionRow = {
   commitUrl: string | null;
   createdAt: string;
   changed: number;
+  summary: FieldChangeSummary[];
+  touched: ChangeCategories;
   publishedBy: { id: string; name: string } | null;
+};
+
+/** What rolling back to a version would actually do, asked before the button is offered. */
+export type RollbackDiff = {
+  version: { id: string; number: number; createdAt: string; publishedBy: { id: string; name: string } | null; commitUrl: string | null };
+  /** The page is already exactly this version. Nothing to do. */
+  identical: boolean;
+  differenceCount: number;
+  differences: Array<{ id: string; label: string; now: string; after: string }>;
+  /** Differs in markup, reads exactly the same. Counted, never listed. */
+  invisibleCount: number;
+  summary: FieldChangeSummary[];
+  readFrom: "repository" | "live site";
+  warning: string;
+};
+
+/** The Website Builder's front page. All of it is counted in the database. */
+export type WebsiteOverviewData = {
+  counts: {
+    sites: number;
+    pages: number;
+    /** Pages carrying unpublished changes. */
+    drafts: number;
+    /** Files the site's own sitemap does not list — an archive, the 404. */
+    hidden: number;
+    /** Sites with no repository, which therefore cannot publish. */
+    unconnected: number;
+  };
+  recent: Array<{
+    id: string;
+    number: number;
+    createdAt: string;
+    commitUrl: string | null;
+    publishedBy: { id: string; name: string } | null;
+    page: { id: string; title: string; path: string };
+    site: { id: string; name: string };
+    changed: number;
+  }>;
 };

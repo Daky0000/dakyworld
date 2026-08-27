@@ -3500,6 +3500,16 @@ model SitePage {
   /// when the edit was made, and it is what stops a month-old draft writing a
   /// heading into an element that has since moved. Null once published.
   draft          Json?
+  /// Bumped on every draft write, and never reset — not even by a publish that
+  /// clears the draft.
+  ///
+  /// It is what makes a save an *exchange* rather than a shout: the editor sends
+  /// back the revision it was last shown, and a save carrying a stale one is
+  /// refused with what the other person wrote, instead of writing over an hour of
+  /// somebody else's work while both screens go on looking correct. Monotonic on
+  /// purpose — resetting it on publish would make the first save afterwards
+  /// collide with a screen still holding the old number.
+  draftRevision  Int       @default(0)
   draftSavedAt   DateTime?
   draftSavedBy   User?     @relation("SitePageDrafts", fields: [draftSavedById], references: [id], onDelete: SetNull)
   draftSavedById String?

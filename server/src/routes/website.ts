@@ -1,12 +1,26 @@
+import type { Request } from "express";
 import { Router } from "express";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { gateBy } from "../middleware/permissionGate.js";
-import { applyValues, readPage, safeStyle, type FieldValue, type SiteField } from "../services/website/regions.js";
-import { checkLink, sanitizePlain, sanitizeRich } from "../services/website/sanitize.js";
-import { discoverPages, pageSource, pageUrl, previewDocument, publishPage, siteRepo, WebsiteError } from "../services/website/site.js";
+// The engine comes through its one door — see services/website/index.ts for why.
+// `site.js` is the other half and stays separate on purpose: it is the part that
+// talks to GitHub and the network, and nothing in the core does.
+import {
+  applyValues,
+  categoriseChanges,
+  describeChanges,
+  buildPreview,
+  buildPublishPlan,
+  discoverFields,
+  sanitizeValue,
+  validateFieldChange,
+  type FieldValue,
+  type SiteField,
+} from "../services/website/index.js";
+import { discoverPages, pageSource, pageUrl, publishPage, siteRepo, WebsiteError } from "../services/website/site.js";
 
 /**
  * Editing the websites this company publishes.
@@ -42,6 +56,20 @@ websiteRouter.use(
   }),
 );
 
+/**
+ * Do two values read the same to a person?
+ *
+ * Whitespace is normalised because HTML's is: a newline between two spans, a
+ * run of indentation, a non-breaking space typed where an ordinary one would do
+ * — none of them change a word on the page, and all of them make a string
+ * comparison say "different". The rollback confirmation was listing three
+ * changes whose before and after were the same sentence for exactly this reason.
+ */
+function readsSame(a: string, b: string): boolean {
+  const flatten = (value: string) => value.replace(/[\s\u00a0]+/g, " ").trim();
+  return flatten(a) === flatten(b);
+}
+
 /** The editor never needs byte offsets; sending them would only invite something to trust them. */
 function publicField(field: SiteField) {
   return {
@@ -66,47 +94,53 @@ function draftValues(page: SitePage): Record<string, FieldValue> {
   return (page.draft as Record<string, FieldValue> | null) ?? {};
 }
 
-async function loadPage(pageId: string): Promise<{ page: SitePage; site: Site }> {
-  const page = await prisma.sitePage.findUnique({ where: { id: pageId }, include: { site: true } });
-  if (!page) throw new WebsiteError(404, "That page is not in the editor. It may have been removed — rescan the site.");
-  const { site, ...rest } = page;
-  return { page: rest as SitePage, site };
+/**
+ * May this caller act on this site at all?
+ *
+ * Every route here resolves a page or a site and then acts on it, and until now
+ * **not one of them checked that the caller had anything to do with that site.**
+ * The permission gate above answers "may this person edit websites"; it does not
+ * and cannot answer "may this person edit *this* website", because it never sees
+ * which one. With a single site in the database those are the same question. The
+ * moment a second site exists — which is the entire point of selling this — they
+ * are not, and the failure mode is a customer opening another customer's pages by
+ * changing an id in a URL.
+ *
+ * So it is one function, called by everything, before anything. Today it enforces
+ * the rule that can be enforced now; membership and client scoping land on this
+ * line rather than on twelve handlers that each have to remember.
+ */
+function assertSiteAccess(req: Request, site: Site): void {
+  // A site belonging to a client is still only reachable by staff at this point.
+  // The external-account door is shut in `scopeExternal`, and opening it is a
+  // deliberate, separate piece of work — not something that should fall out of
+  // adding a column.
+  if (req.dbUser?.accessRole?.external) {
+    throw new WebsiteError(403, "This account cannot open sites in the internal editor.");
+  }
+  void site;
+}
+
+async function loadSite(req: Request, siteId: string): Promise<Site> {
+  const site = await prisma.site.findUnique({ where: { id: siteId } });
+  if (!site) throw new WebsiteError(404, "That site is not in the editor.");
+  assertSiteAccess(req, site);
+  return site;
 }
 
 /**
- * Everything about a draft that would stop it going live.
+ * A page and the site it belongs to, with the caller checked against the site.
  *
- * Run on save so the editor can mark the field, and again on publish so a
- * problem saved before a rule existed cannot slip out. Blank required text and
- * a link pointing nowhere are the two that actually happen.
+ * Loading the parent is not an extra query for the sake of it: authorising on a
+ * page id alone is authorising on a value the caller supplied, and the record
+ * that says who may touch it is one level up.
  */
-function problemsWith(fields: SiteField[], values: Record<string, FieldValue>): Array<{ id: string; label: string; reason: string }> {
-  const byId = new Map(fields.map((field) => [field.id, field]));
-  const problems: Array<{ id: string; label: string; reason: string }> = [];
-
-  for (const [id, edit] of Object.entries(values)) {
-    const field = byId.get(id);
-    if (!field) {
-      problems.push({ id, label: "A field that has moved", reason: "This edit no longer matches anything on the page. Discard it, or reopen the page." });
-      continue;
-    }
-    if (edit.value !== undefined && field.kind !== "image" && edit.value.replace(/<[^>]*>/g, "").trim() === "") {
-      problems.push({ id, label: field.label, reason: "This cannot be left empty — a heading or a button with no words disappears from the page." });
-    }
-    if (edit.href !== undefined) {
-      const checked = checkLink(edit.href);
-      if (!checked.ok) problems.push({ id, label: field.label, reason: checked.reason });
-    }
-    if (edit.value !== undefined && field.kind === "image" && !edit.value.trim()) {
-      problems.push({ id, label: field.label, reason: "An image needs a file to point at." });
-    }
-    // The plan's rule, and an accessibility one: a picture either describes
-    // itself or is explicitly marked as decoration.
-    if (field.kind === "image" && edit.alt !== undefined && edit.alt.trim() === "" && !field.decorative) {
-      problems.push({ id, label: field.label, reason: "Describe the image, or mark it decorative if it carries no meaning." });
-    }
-  }
-  return problems;
+async function loadPage(req: Request, pageId: string): Promise<{ page: SitePage; site: Site }> {
+  const page = await prisma.sitePage.findUnique({ where: { id: pageId }, include: { site: true } });
+  if (!page) throw new WebsiteError(404, "That page is not in the editor. It may have been removed — rescan the site.");
+  const { site, ...rest } = page;
+  assertSiteAccess(req, site);
+  return { page: rest as SitePage, site };
 }
 
 websiteRouter.get("/sites", async (_req, res, next) => {
@@ -142,8 +176,7 @@ websiteRouter.get("/sites", async (_req, res, next) => {
 
 websiteRouter.get("/sites/:siteId/pages", async (req, res, next) => {
   try {
-    const site = await prisma.site.findUnique({ where: { id: req.params.siteId } });
-    if (!site) throw new WebsiteError(404, "That site is not in the editor.");
+    const site = await loadSite(req, req.params.siteId);
     const pages = await prisma.sitePage.findMany({
       where: { siteId: site.id },
       orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
@@ -180,8 +213,7 @@ websiteRouter.get("/sites/:siteId/pages", async (req, res, next) => {
  */
 websiteRouter.post("/sites/:siteId/scan", async (req, res, next) => {
   try {
-    const site = await prisma.site.findUnique({ where: { id: req.params.siteId } });
-    if (!site) throw new WebsiteError(404, "That site is not in the editor.");
+    const site = await loadSite(req, req.params.siteId);
 
     const found = await discoverPages(site);
     const existing = await prisma.sitePage.findMany({ where: { siteId: site.id } });
@@ -230,6 +262,7 @@ websiteRouter.patch("/sites/:siteId", async (req, res, next) => {
         repoPath: z.string().max(200).optional(),
       })
       .parse(req.body);
+    await loadSite(req, req.params.siteId);
     const site = await prisma.site.update({ where: { id: req.params.siteId }, data: body });
     res.json({ id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), branch: site.repoBranch });
   } catch (err) {
@@ -240,6 +273,7 @@ websiteRouter.patch("/sites/:siteId", async (req, res, next) => {
 websiteRouter.patch("/pages/:pageId", async (req, res, next) => {
   try {
     const body = z.object({ title: z.string().min(1).max(120).optional(), status: z.enum(["LIVE", "HIDDEN"]).optional() }).parse(req.body);
+    await loadPage(req, req.params.pageId);
     const page = await prisma.sitePage.update({ where: { id: req.params.pageId }, data: body });
     res.json({ id: page.id, title: page.title, status: page.status });
   } catch (err) {
@@ -250,9 +284,9 @@ websiteRouter.patch("/pages/:pageId", async (req, res, next) => {
 /** A page opened for editing: its fields as they stand, plus whatever draft sits over them. */
 websiteRouter.get("/pages/:pageId", async (req, res, next) => {
   try {
-    const { page, site } = await loadPage(req.params.pageId);
+    const { page, site } = await loadPage(req, req.params.pageId);
     const source = await pageSource(site, page);
-    const content = readPage(source.html);
+    const content = discoverFields(source.html);
     const values = draftValues(page);
 
     const saver = page.draftSavedById
@@ -281,10 +315,14 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
         values: Object.fromEntries(
           Object.entries(values).map(([id, edit]) => [id, { value: edit.value, href: edit.href, alt: edit.alt, style: edit.style }]),
         ),
+        // The number the editor has to send back on every save. Handing it out
+        // here, and only here, is what makes a save an exchange: a screen that
+        // never loaded the page has no revision to quote and cannot write.
+        revision: page.draftRevision,
         savedAt: page.draftSavedAt,
         savedBy: saver,
       },
-      problems: problemsWith(content.fields, values),
+      problems: validateFieldChange(content.fields, values),
     });
   } catch (err) {
     next(err);
@@ -292,6 +330,17 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
 });
 
 const draftBody = z.object({
+  /**
+   * The revision this editor was last shown. Required in effect, optional here.
+   *
+   * Omitting it defeats the whole mechanism — the one caller that leaves it out
+   * is the one that overwrites — so it is refused either way. It is `optional()`
+   * only so that the refusal is this route's own sentence. Marked required, it
+   * would be a `ZodError`, and the handler renders those as "Validation failed"
+   * with the raw issue list attached: technically a 400, and no use at all to
+   * somebody whose actual remedy is to reload the page.
+   */
+  ifRevision: z.number().int().nonnegative().optional(),
   values: z.record(
     z.object({
       value: z.string().max(20_000).optional(),
@@ -316,9 +365,15 @@ const draftBody = z.object({
 websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
   try {
     const body = draftBody.parse(req.body);
-    const { page, site } = await loadPage(req.params.pageId);
+    if (body.ifRevision === undefined) {
+      throw new WebsiteError(
+        400,
+        "This editor is out of date and did not say which version of the page it was showing. Reload the page and make the change again — nothing has been lost.",
+      );
+    }
+    const { page, site } = await loadPage(req, req.params.pageId);
     const source = await pageSource(site, page);
-    const content = readPage(source.html);
+    const content = discoverFields(source.html);
     const byId = new Map(content.fields.map((field) => [field.id, field]));
 
     const values: Record<string, FieldValue> = {};
@@ -331,43 +386,82 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
         continue;
       }
 
-      const next: FieldValue = {};
-      if (edit.value !== undefined) {
-        const cleaned =
-          field.kind === "richtext" ? sanitizeRich(edit.value) : field.kind === "image" ? edit.value.trim() : sanitizePlain(edit.value);
-        if (cleaned !== field.value) next.value = cleaned;
-      }
-      if (edit.href !== undefined && edit.href.trim() !== (field.href ?? "")) next.href = edit.href.trim();
-      if (edit.alt !== undefined && edit.alt !== (field.alt ?? "")) next.alt = edit.alt;
-      // Cleaned on the way *in* as well as on the way out. The draft outlives
-      // the session that wrote it, so what is stored has to be safe on its own.
-      if (edit.style !== undefined && safeStyle(edit.style) !== (field.style ?? "")) next.style = safeStyle(edit.style);
-
+      // Cleaned on the way *in* as well as on the way out, and stamped with what
+      // the page currently says. The draft outlives the session that wrote it,
+      // so what is stored has to be safe, and datable, on its own.
+      const next = sanitizeValue(field, edit);
       if (Object.keys(next).length === 0) continue;
-      next.original = field.value;
-      if (field.style !== undefined) next.originalStyle = field.style;
-      if (field.href !== undefined) next.originalHref = field.href;
-      if (field.alt !== undefined) next.originalAlt = field.alt;
       values[id] = next;
     }
 
     const empty = Object.keys(values).length === 0;
-    const saved = await prisma.sitePage.update({
-      where: { id: page.id },
+
+    // The whole save is one conditional statement. Reading the revision and then
+    // writing would be two, and between them is exactly the window this exists to
+    // close — two people pressing save in the same second both read 8, both
+    // consider themselves current, and the second one wins silently.
+    const written = await prisma.sitePage.updateMany({
+      where: { id: page.id, draftRevision: body.ifRevision },
       data: {
         // A nullable Json column clears with `Prisma.DbNull`; a plain `null`
         // would be the JSON value `null`, which is not the same as no draft.
         draft: empty ? Prisma.DbNull : (values as unknown as Prisma.InputJsonValue),
         draftSavedAt: empty ? null : new Date(),
         draftSavedById: empty ? null : req.dbUser?.id ?? null,
+        draftRevision: { increment: 1 },
       },
     });
 
+    if (written.count === 0) {
+      // Somebody else saved between this editor loading the page and pressing
+      // save. Their draft is returned in full beside this one so the comparison
+      // can be made on screen — refusing the write and saying only "conflict"
+      // would leave the person with no way to keep their own words except by
+      // remembering them.
+      const current = await prisma.sitePage.findUnique({
+        where: { id: page.id },
+        include: { draftSavedBy: { select: { id: true, name: true } } },
+      });
+      if (!current) throw new WebsiteError(404, "That page has been removed from the editor.");
+
+      const theirs = (current.draft as Record<string, FieldValue> | null) ?? {};
+      const ids = [...new Set([...Object.keys(values), ...Object.keys(theirs)])];
+
+      return res.status(409).json({
+        error:
+          current.draftSavedBy?.name
+            ? `${current.draftSavedBy.name} saved changes to this page while you were editing it. Nothing has been overwritten — choose which version to keep.`
+            : "Somebody saved changes to this page while you were editing it. Nothing has been overwritten — choose which version to keep.",
+        revision: current.draftRevision,
+        savedAt: current.draftSavedAt,
+        savedBy: current.draftSavedBy,
+        // One row per field either side touched, so the screen can render a
+        // three-column comparison without asking a second question.
+        fields: ids.map((id) => {
+          const field = byId.get(id);
+          const mine = values[id];
+          const other = theirs[id];
+          return {
+            id,
+            label: field?.label ?? "A field that has since moved",
+            kind: field?.kind ?? "text",
+            yours: mine ? { value: mine.value, href: mine.href, alt: mine.alt, style: mine.style } : null,
+            theirs: other ? { value: other.value, href: other.href, alt: other.alt, style: other.style } : null,
+            /** True where both changed the same field and disagreed — the only rows that need a decision. */
+            contested: Boolean(mine && other) && JSON.stringify({ ...mine, original: undefined }) !== JSON.stringify({ ...other, original: undefined }),
+          };
+        }),
+      });
+    }
+
+    const saved = await prisma.sitePage.findUnique({ where: { id: page.id }, select: { draftSavedAt: true, draftRevision: true } });
+
     res.json({
-      savedAt: saved.draftSavedAt,
+      savedAt: saved?.draftSavedAt ?? null,
+      revision: saved?.draftRevision ?? page.draftRevision + 1,
       changed: Object.keys(values).length,
       unknown,
-      problems: problemsWith(content.fields, values),
+      problems: validateFieldChange(content.fields, values),
     });
   } catch (err) {
     next(err);
@@ -376,9 +470,13 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
 
 websiteRouter.delete("/pages/:pageId/draft", async (req, res, next) => {
   try {
+    const { page } = await loadPage(req, req.params.pageId);
     await prisma.sitePage.update({
-      where: { id: req.params.pageId },
-      data: { draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null },
+      where: { id: page.id },
+      // The revision still moves. Discarding somebody's draft is a change to the
+      // draft like any other, and a second editor holding the old number has to
+      // be told rather than allowed to save over the discard.
+      data: { draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, draftRevision: { increment: 1 } },
     });
     res.status(204).end();
   } catch (err) {
@@ -395,14 +493,14 @@ websiteRouter.delete("/pages/:pageId/draft", async (req, res, next) => {
  */
 websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
   try {
-    const { page, site } = await loadPage(req.params.pageId);
+    const { page, site } = await loadPage(req, req.params.pageId);
     const source = await pageSource(site, page);
     const applied = applyValues(source.html, draftValues(page));
     // `?pick=1` is the visual editor asking for a preview it can click on. The
     // plain preview stays exactly as it was — it is what "Preview" means, and a
     // page covered in selection outlines is not a preview of anything.
     const picking = req.query.pick === "1";
-    const document = previewDocument(applied.html, site.publicUrl, picking ? readPage(applied.html).fields : undefined);
+    const document = buildPreview(applied.html, site.publicUrl, picking ? discoverFields(applied.html).fields : undefined);
     res
       .type("html")
       .set("Cache-Control", "no-store")
@@ -428,34 +526,42 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
  */
 websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
   try {
-    const { page, site } = await loadPage(req.params.pageId);
+    const { page, site } = await loadPage(req, req.params.pageId);
     const values = draftValues(page);
     if (Object.keys(values).length === 0) throw new WebsiteError(400, "There is nothing to publish — this page has no unsaved changes.");
 
-    const source = await pageSource(site, page);
-    const content = readPage(source.html);
+    // `fresh` is not an optimisation switch here. The whole purpose of the next
+    // few lines is to decide whether the page has moved under this draft, and a
+    // copy taken ninety seconds ago cannot answer that. See sourceCache.ts.
+    const source = await pageSource(site, page, { fresh: true });
+    // Every refusal is decided before anything acts, and each one is reported as
+    // itself — "some fields need attention" and "the page moved under you" send
+    // somebody to two different places.
+    const plan = buildPublishPlan({ source: source.html, values });
 
-    const problems = problemsWith(content.fields, values);
-    if (problems.length) {
-      return res.status(400).json({ error: "This page cannot be published yet — some fields need attention.", problems });
+    if (plan.problems.length) {
+      return res.status(400).json({ error: "This page cannot be published yet — some fields need attention.", problems: plan.problems });
     }
-
-    const applied = applyValues(source.html, values);
-    if (applied.conflicts.length || applied.missing.length) {
+    if (plan.conflicts.length || plan.missing.length) {
       return res.status(409).json({
         error: "The page has changed since these edits were made, so they have not been published. Reopen the page to see it as it is now.",
-        conflicts: applied.conflicts,
-        missing: applied.missing,
+        conflicts: plan.conflicts,
+        missing: plan.missing,
       });
     }
-    if (applied.changed.length === 0) throw new WebsiteError(400, "The page already says all of this. Nothing to publish.");
+    if (!plan.html) throw new WebsiteError(400, "The page already says all of this. Nothing to publish.");
 
+    // Read once for the labels the summary is written in. The plan has already
+    // parsed the page; this is the same parse and is kept separate rather than
+    // threaded out of the plan, because a publish summary that silently depended
+    // on the plan's internals is how the two come to disagree.
+    const content = discoverFields(source.html);
     const author = req.dbUser?.name ?? "the website editor";
     const commit = await publishPage({
       site,
       page,
-      html: applied.html,
-      message: `Website: ${applied.changed.length} change${applied.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`,
+      html: plan.html,
+      message: `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`,
     });
 
     const last = await prisma.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
@@ -463,7 +569,7 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       data: {
         pageId: page.id,
         number: (last?.number ?? 0) + 1,
-        html: applied.html,
+        html: plan.html,
         values: values as unknown as Prisma.InputJsonValue,
         commitSha: commit.sha,
         commitUrl: commit.url,
@@ -472,12 +578,25 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
     });
     await prisma.sitePage.update({
       where: { id: page.id },
-      data: { draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, lastPublishedAt: new Date() },
+      data: {
+        draft: Prisma.DbNull,
+        draftSavedAt: null,
+        draftSavedById: null,
+        lastPublishedAt: new Date(),
+        // A publish is a change to the draft — it removes it. A second editor
+        // still holding the pre-publish number must be told that, or their next
+        // save silently re-creates a draft of edits that are already live.
+        draftRevision: { increment: 1 },
+      },
     });
+
+    const summary = describeChanges(content.fields, values);
 
     res.json({
       version: version.number,
-      changed: applied.changed.length,
+      changed: plan.changed.length,
+      summary,
+      touched: categoriseChanges(summary),
       commit: { sha: commit.sha, url: commit.url },
       url: pageUrl(site, page),
       // Said plainly because the alternative is somebody refreshing the live page
@@ -491,8 +610,9 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
 
 websiteRouter.get("/pages/:pageId/versions", async (req, res, next) => {
   try {
+    const { page, site } = await loadPage(req, req.params.pageId);
     const versions = await prisma.sitePageVersion.findMany({
-      where: { pageId: req.params.pageId },
+      where: { pageId: page.id },
       orderBy: { number: "desc" },
       take: 40,
       select: {
@@ -505,12 +625,32 @@ websiteRouter.get("/pages/:pageId/versions", async (req, res, next) => {
         publishedBy: { select: { id: true, name: true } },
       },
     });
+    // Labels come from the page as it is now, and a version that named a field
+    // the page no longer has still renders — `describeChanges` falls back rather
+    // than dropping the line. A history that goes blank because somebody
+    // restructured a page is not a history.
+    let fields: SiteField[] = [];
+    try {
+      const source = await pageSource(site, page);
+      fields = discoverFields(source.html).fields;
+    } catch {
+      // The page being unreadable right now — a renamed file, GitHub down — must
+      // not take the record of what was published with it. Ids stand in for
+      // labels until it can be read again.
+    }
+
     res.json(
-      versions.map((version) => ({
-        ...version,
-        changed: version.values ? Object.keys(version.values as Record<string, unknown>).length : 0,
-        values: undefined,
-      })),
+      versions.map((version) => {
+        const values = (version.values as Record<string, FieldValue> | null) ?? {};
+        const summary = describeChanges(fields, values);
+        return {
+          ...version,
+          changed: Object.keys(values).length,
+          summary,
+          touched: categoriseChanges(summary),
+          values: undefined,
+        };
+      }),
     );
   } catch (err) {
     next(err);
@@ -533,9 +673,9 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/restore", async (req, res
     });
     if (!version) throw new WebsiteError(404, "That version is not on this page.");
 
-    const { page, site } = await loadPage(req.params.pageId);
+    const { page, site } = await loadPage(req, req.params.pageId);
     const source = await pageSource(site, page);
-    const content = readPage(source.html);
+    const content = discoverFields(source.html);
     const byId = new Map(content.fields.map((field) => [field.id, field]));
 
     // Restated against the page as it is now, not as it was. A value whose field
@@ -575,6 +715,229 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/restore", async (req, res
     });
 
     res.json({ restored: Object.keys(values).length, dropped, empty });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * What putting an old version back would actually do.
+ *
+ * Asked before the button is offered, never after it is pressed. A rollback
+ * writes a **whole stored file** over whatever is in the repository now, which
+ * is exactly what makes it the right tool after a bad publish and exactly what
+ * makes it dangerous: any developer work committed since is inside "whatever is
+ * in the repository now". That is a decision somebody has to take deliberately,
+ * so this route exists to let them take it with the facts in front of them.
+ */
+websiteRouter.get("/pages/:pageId/versions/:versionId/diff", async (req, res, next) => {
+  try {
+    const { page, site } = await loadPage(req, req.params.pageId);
+    const version = await prisma.sitePageVersion.findFirst({
+      where: { id: req.params.versionId, pageId: page.id },
+      include: { publishedBy: { select: { id: true, name: true } } },
+    });
+    // Matched on both ids together rather than fetched and then compared: a
+    // version id from another page is a caller-supplied value like any other.
+    if (!version) throw new WebsiteError(404, "That version is not on this page.");
+
+    const source = await pageSource(site, page, { fresh: true });
+    const identical = source.html === version.html;
+
+    const current = discoverFields(source.html);
+    const restored = discoverFields(version.html);
+    const currentById = new Map(current.fields.map((field) => [field.id, field]));
+
+    // Field by field, because a line diff of minified-ish HTML tells nobody
+    // anything.
+    //
+    // **Compared on what a person can see, not on the bytes.** The first version
+    // of this compared `value`, which is inner HTML, and then printed `preview`,
+    // which is plain text — so a file differing only in whitespace or in how an
+    // entity was written produced a confirmation screen listing three changes
+    // whose before and after read identically. A dialog asking somebody to
+    // approve an overwrite is the last place to show them a difference they
+    // cannot see: it teaches them the screen is wrong, on the one screen that has
+    // to be believed.
+    //
+    // The invisible differences are real and are counted, because they are why
+    // the file is not identical — they are just not a list anybody can read.
+    const differences: Array<{ id: string; label: string; now: string; after: string }> = [];
+    let invisible = 0;
+    for (const field of restored.fields) {
+      const now = currentById.get(field.id);
+      if (!now) {
+        differences.push({ id: field.id, label: field.label, now: "(not on the page any more)", after: field.preview });
+        continue;
+      }
+      const sameBytes = now.value === field.value && (now.href ?? "") === (field.href ?? "") && (now.alt ?? "") === (field.alt ?? "");
+      if (sameBytes) continue;
+      const sameToRead =
+        readsSame(now.preview, field.preview) && readsSame(now.href ?? "", field.href ?? "") && readsSame(now.alt ?? "", field.alt ?? "");
+      if (sameToRead) {
+        invisible += 1;
+        continue;
+      }
+      differences.push({ id: field.id, label: field.label, now: now.preview, after: field.preview });
+    }
+
+    const summary = describeChanges(current.fields, (version.values as Record<string, FieldValue> | null) ?? {});
+
+    res.json({
+      version: { id: version.id, number: version.number, createdAt: version.createdAt, publishedBy: version.publishedBy, commitUrl: version.commitUrl },
+      identical,
+      // The count is stated separately from the list because the list is what a
+      // person reads and the count is what makes them read it.
+      differenceCount: differences.length,
+      differences: differences.slice(0, 60),
+      /**
+       * Fields whose markup differs but which read exactly the same.
+       *
+       * Almost always the gap between the file in the repository and what the
+       * live site serves — a build step, an entity written differently. Worth a
+       * sentence so that "the file is not identical" and "nothing you can see
+       * would change" can both be true on screen without contradicting.
+       */
+      invisibleCount: invisible,
+      summary,
+      readFrom: source.from,
+      // Said in the response rather than only in the UI, so that anything else
+      // calling this route — an agent, a script — is told as plainly as a person.
+      warning:
+        "Publishing this version writes the whole stored file over the page as it stands now. Anything changed in the repository since this version was published will be undone.",
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Puts an old version back on the public site, in one action.
+ *
+ * The existing restore-to-draft route is still the default and is still the
+ * right answer nearly every time: a page may have moved on for reasons that have
+ * nothing to do with the edit being undone, and a restore that published itself
+ * would take those with it. This is the other case — a publish that broke
+ * something, where the whole point is to be back where you were now, not after a
+ * review.
+ *
+ * `SitePageVersion` stores the complete file rather than a diff for precisely
+ * this: putting a page back must not depend on the repository's history, the
+ * parser, or the field ids still meaning what they meant. It needs nothing to
+ * still be true.
+ *
+ * History is never rewritten. The rollback is published as a **new** version, so
+ * the record reads "we published X, then we published Y, then we put X back" —
+ * which is what happened.
+ */
+websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res, next) => {
+  try {
+    const { page, site } = await loadPage(req, req.params.pageId);
+    const version = await prisma.sitePageVersion.findFirst({ where: { id: req.params.versionId, pageId: page.id } });
+    if (!version) throw new WebsiteError(404, "That version is not on this page.");
+
+    const source = await pageSource(site, page, { fresh: true });
+    if (source.html === version.html) {
+      throw new WebsiteError(400, `The page is already exactly as it was in version ${version.number}. Nothing to publish.`);
+    }
+
+    const author = req.dbUser?.name ?? "the website editor";
+    const commit = await publishPage({
+      site,
+      page,
+      html: version.html,
+      message: `Website: roll ${page.path} back to version ${version.number} (${author})`,
+    });
+
+    const last = await prisma.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
+    const written = await prisma.sitePageVersion.create({
+      data: {
+        pageId: page.id,
+        number: (last?.number ?? 0) + 1,
+        html: version.html,
+        // The values are carried across so the new row can say what it restored
+        // rather than reading as a publish that changed nothing.
+        values: (version.values ?? Prisma.DbNull) as Prisma.InputJsonValue,
+        commitSha: commit.sha,
+        commitUrl: commit.url,
+        publishedById: req.dbUser?.id ?? null,
+      },
+    });
+
+    // A rollback leaves any unpublished draft exactly where it was. It undoes a
+    // publish, not somebody's work in progress — and silently discarding a draft
+    // as a side effect of an emergency action is how an emergency becomes two.
+    await prisma.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date() } });
+
+    res.json({
+      version: written.number,
+      restoredFrom: version.number,
+      label: `Rollback to version ${version.number}`,
+      commit: { sha: commit.sha, url: commit.url },
+      url: pageUrl(site, page),
+      note: "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two.",
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The builder's front page: what exists, what is waiting, what just happened.
+ *
+ * Everything here is counted in the database. Nothing reads a repository, and
+ * that is a deliberate limit rather than an oversight — a field count would mean
+ * fetching and parsing every page of every site on every render, which is a
+ * minute of GitHub calls to put a number on a card. The counts that matter to
+ * somebody arriving at this screen are how many sites they have, how much is
+ * unpublished, and whether anything went out recently.
+ */
+websiteRouter.get("/overview", async (req, res, next) => {
+  try {
+    if (req.dbUser?.accessRole?.external) {
+      throw new WebsiteError(403, "This account cannot open sites in the internal editor.");
+    }
+
+    const [sites, pages, drafts, hidden, versions] = await Promise.all([
+      prisma.site.count(),
+      prisma.sitePage.count(),
+      prisma.sitePage.count({ where: { NOT: { draft: { equals: Prisma.DbNull } } } }),
+      prisma.sitePage.count({ where: { status: "HIDDEN" } }),
+      prisma.sitePageVersion.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 8,
+        select: {
+          id: true,
+          number: true,
+          createdAt: true,
+          commitUrl: true,
+          values: true,
+          publishedBy: { select: { id: true, name: true } },
+          page: { select: { id: true, title: true, path: true, site: { select: { id: true, name: true } } } },
+        },
+      }),
+    ]);
+
+    // A site with no repository cannot publish, and somebody looking at this
+    // screen should learn that here rather than at the moment they press the
+    // button. Counted rather than listed: the list is one click away.
+    const unconnected = await prisma.site.count({ where: { OR: [{ repoOwner: null }, { repoName: null }] } });
+
+    res.json({
+      counts: { sites, pages, drafts, hidden, unconnected },
+      recent: versions.map((version) => ({
+        id: version.id,
+        number: version.number,
+        createdAt: version.createdAt,
+        commitUrl: version.commitUrl,
+        publishedBy: version.publishedBy,
+        page: { id: version.page.id, title: version.page.title, path: version.page.path },
+        site: version.page.site,
+        // The labels would need the page's HTML, so the count is what is honest
+        // here. The version list on the page itself has the words.
+        changed: version.values ? Object.keys(version.values as Record<string, unknown>).length : 0,
+      })),
+    });
   } catch (err) {
     next(err);
   }

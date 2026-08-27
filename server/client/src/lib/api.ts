@@ -2,9 +2,21 @@ const BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /**
+   * The whole refused body, not only its sentence.
+   *
+   * Some refusals are a conversation rather than a full stop. A draft save that
+   * loses a race answers 409 with both versions of every field somebody has to
+   * choose between; a publish that finds the page has moved answers with which
+   * fields moved. Reducing those to `error` throws away the only part the person
+   * can act on, and the screen is then obliged to say "there was a conflict" and
+   * leave them to work out the rest.
+   */
+  body: unknown;
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -81,7 +93,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const body: { error?: unknown; reference?: unknown } = await res.json().catch(() => ({}));
     // A 401 on /auth/me is just "not logged in yet" — the provider handles it.
     if (res.status === 401 && path !== "/auth/me") onUnauthorized?.();
-    throw new ApiError(res.status, failureMessage(body, res));
+    throw new ApiError(res.status, failureMessage(body, res), body);
   }
 
   if (res.status === 204) return undefined as T;
@@ -105,7 +117,7 @@ export async function postForBlob(path: string, body: unknown): Promise<Blob> {
   });
   if (!res.ok) {
     const detail: { error?: unknown; reference?: unknown } = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, failureMessage(detail, res));
+    throw new ApiError(res.status, failureMessage(detail, res), detail);
   }
   return res.blob();
 }

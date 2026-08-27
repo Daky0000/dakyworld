@@ -55,10 +55,16 @@ const navItems: NavItem[] = [
     ],
   },
   { to: "/clients", label: "Clients", needs: "clients.view" },
-  // Top level rather than under Settings: changing the words on a page is
-  // somebody's ordinary work, and a client who has been given this and
-  // nothing else should land on it without hunting.
-  { to: "/website", label: "Edit website", needs: "website.view" },
+  // "Products" rather than "Website Builder" at this level, and it is not a
+  // flourish: the builder is the first thing this company has built to sell
+  // rather than to use, and the next one needs a shelf to go on. Under it, the
+  // builder carries its own sub-navigation — see components/WebsiteLayout.tsx.
+  {
+    to: "/website",
+    label: "Products",
+    needs: "website.view",
+    children: [{ to: "/website", label: "Website Builder", needs: "website.view" }],
+  },
   {
     to: "/agents",
     label: "Agents",

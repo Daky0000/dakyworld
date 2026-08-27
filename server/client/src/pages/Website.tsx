@@ -58,7 +58,7 @@ export function Website() {
   if (!current) {
     return (
       <div>
-        <PageHeader title="Edit website" subtitle="The websites this system can publish to." />
+        <PageHeader title="Sites" subtitle="The websites this builder can publish to." />
         <EmptyState message="No website has been added yet." />
       </div>
     );
@@ -72,7 +72,7 @@ export function Website() {
   return (
     <div>
       <PageHeader
-        title="Edit website"
+        title="Sites"
         eyebrow={current.name}
         subtitle={`Choose a page and change its words, links and pictures. ${
           current.repo ? "Publishing commits the page and the live site rebuilds." : "No repository is connected, so pages can be edited but not published."

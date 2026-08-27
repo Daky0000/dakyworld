@@ -19,6 +19,8 @@
  *  5. Nothing a build script owns is offered as editable — and excluding those
  *     blocks has not accidentally swallowed the page around them.
  *  6. Nothing a client can type reaches a page as anything but words.
+ *  7. Malformed markup is survived, not corrupted — asserted against a corpus,
+ *     because the pages here are well formed and a customer's may not be.
  *
  * No database, no network, no key.
  *   npx tsx checks/website.ts
@@ -26,8 +28,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyValues, readPage } from "../src/services/website/regions.js";
-import { checkLink, sanitizePlain, sanitizeRich } from "../src/services/website/sanitize.js";
+import { applyValues, checkLink, discoverFields, sanitizePlain, sanitizeRich } from "../src/services/website/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** The website lives at the repository root, beside `server/`. See CLAUDE.md. */
@@ -49,7 +50,7 @@ check("the repository has pages to read", pages.length > 0);
 let totalFields = 0;
 for (const file of pages) {
   const source = readFileSync(join(siteRoot, file), "utf8");
-  const page = readPage(source);
+  const page = discoverFields(source);
   totalFields += page.fields.length;
 
   // 1. Nothing in, nothing out.
@@ -87,7 +88,7 @@ for (const file of pages) {
     check(`${file}: ${field.id} reports itself changed`, result.changed.includes(field.id));
     check(`${file}: ${field.id} raises no conflict`, result.conflicts.length === 0);
 
-    const after = readPage(result.html);
+    const after = discoverFields(result.html);
     const moved = after.fields.find((candidate) => candidate.id === field.id);
     check(`${file}: ${field.id} still exists after the edit`, Boolean(moved));
     check(`${file}: ${field.id} holds what was written`, moved?.value === marker, `found ${JSON.stringify(moved?.value)}`);
@@ -201,6 +202,98 @@ for (const [href, expected] of LINKS) {
 
 // A plain-text field is not a way in either.
 check("plain text never carries markup", !sanitizePlain("<b>x</b>").includes("<b>"));
+
+// --- 7. Malformed markup ---------------------------------------------------
+//
+// The site in this repository is hand-written and correct. The pages this is
+// about to be sold to edit belong to somebody else, and "somebody else's HTML"
+// includes every one of these. The bar is not that a field is found — most of
+// these should yield few or none. The bar is that the parser never throws, and
+// that an edit written back either lands inside the element it was read from or
+// does not happen at all. Corrupting a stranger's page is the failure that
+// cannot be walked back, and it is the one a byte-splicing editor is uniquely
+// able to commit.
+let malformedFields = 0;
+let malformedWrites = 0;
+
+const MALFORMED: Array<[string, string]> = [
+  ["unclosed heading", "<body><section><h1>Hello<p>World</p></section></body>"],
+  ["unclosed everything", "<body><section><div><h1>Hello"],
+  ["stray close tag", "<body><section></div><h1>Hello</h1></section></body>"],
+  ["nested quotes in an attribute", `<body><section><h1 class="a'b" title='c"d'>Hi</h1></section></body>`],
+  ["unquoted attribute", "<body><section><h1 class=hero data-x=1>Hi</h1></section></body>"],
+  ["duplicate attributes", `<body><section><h1 class="a" class="b" style="color:red" style="color:blue">Hi</h1></section></body>`],
+  ["comment containing a tag", "<body><section><!-- <h1>not real</h1> --><h1>Real</h1></section></body>"],
+  ["comment that never closes", "<body><section><!-- <h1>Hi</h1></section></body>"],
+  ["inline svg with text in it", `<body><section><svg viewBox="0 0 1 1"><text>svg words</text></svg><h1>Hi</h1></section></body>`],
+  ["script holding markup", "<body><section><script>var a = '</h1><h1>';</script><h1>Hi</h1></section></body>"],
+  ["style holding braces", "<body><section><style>h1{content:'<b>'}</style><h1>Hi</h1></section></body>"],
+  ["entity soup", "<body><section><h1>&amp;&nbsp;&#x27;&notreal;&</h1></section></body>"],
+  ["a tag name that is not one", "<body><section><h1>Hi</h1><123>x</123></section></body>"],
+  ["angle brackets as words", "<body><section><p>5 < 6 and 7 > 2</p></section></body>"],
+  ["self-closing where it should not be", "<body><section><h1 />Hi<h2/>There</section></body>"],
+  ["attribute broken across lines", `<body><section><h1\n  class="a\n  b">Hi</h1></section></body>`],
+  ["empty document", ""],
+  ["no body at all", "<h1>Hi</h1>"],
+  ["deeply nested", `<body><section>${"<div>".repeat(60)}<h1>Hi</h1>${"</div>".repeat(60)}</section></body>`],
+];
+
+for (const [name, html] of MALFORMED) {
+  let content: ReturnType<typeof discoverFields> | null = null;
+  try {
+    content = discoverFields(html);
+  } catch (err) {
+    check(`malformed: ${name} is read without throwing`, false, String(err));
+    continue;
+  }
+  check(`malformed: ${name} is read without throwing`, true);
+  malformedFields += content.fields.length;
+
+  // Every offset must still lie inside the document it came from. One past the
+  // end is the exact shape of the bug that writes into the wrong position.
+  for (const field of content.fields) {
+    const span = field.content;
+    if (!span) continue;
+    check(
+      `malformed: ${name} keeps ${field.id} inside the document`,
+      span.start >= 0 && span.end <= html.length && span.start <= span.end,
+      `span ${span.start}..${span.end} of ${html.length}`,
+    );
+  }
+
+  // Writing back exactly what is already there must reproduce the input. If any
+  // offset is wrong this is where it shows, on a document nobody curated.
+  let applied: ReturnType<typeof applyValues> | null = null;
+  const identity = Object.fromEntries(content.fields.map((field) => [field.id, { value: field.value, original: field.value }]));
+  try {
+    applied = applyValues(html, identity);
+  } catch (err) {
+    check(`malformed: ${name} survives a no-op write`, false, String(err));
+    continue;
+  }
+  check(`malformed: ${name} survives a no-op write`, applied.html === html, "a no-op edit changed the document");
+
+  // And a real edit must land between tags rather than inside one. The marker is
+  // deliberately a word that would be visible as broken markup if it landed in
+  // the middle of an attribute.
+  const first = content.fields.find((field) => field.content && field.kind !== "image");
+  if (!first) continue;
+  const written = applyValues(html, { [first.id]: { value: "DAKYMARK", original: first.value } });
+  const at = written.html.indexOf("DAKYMARK");
+  if (at < 0) continue;
+  const before = written.html.slice(0, at);
+  check(`malformed: ${name} writes between tags, not inside one`, before.lastIndexOf(">") > before.lastIndexOf("<"), `landed at ${at}`);
+  malformedWrites += 1;
+}
+
+// A corpus that finds no fields asserts nothing, and would go on passing for
+// ever after a change that made the parser give up on the first oddity. These
+// two numbers are the difference between "the fuzz cases pass" and "the fuzz
+// cases ran".
+check("malformed corpus actually produced fields to test", malformedFields >= 12, `only ${malformedFields}`);
+check("malformed corpus actually wrote to most cases", malformedWrites >= MALFORMED.length - 4, `only ${malformedWrites} of ${MALFORMED.length}`);
+console.log(`  malformed corpus: ${MALFORMED.length} documents, ${malformedFields} fields, ${malformedWrites} written to`);
+
 
 console.log(`\n${pages.length} page(s), ${totalFields} editable fields`);
 if (failures) {

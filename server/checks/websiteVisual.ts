@@ -44,8 +44,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyValues, readPage, safeStyle } from "../src/services/website/regions.js";
-import { previewDocument } from "../src/services/website/site.js";
+import { applyValues, buildPreview, discoverFields, safeStyle } from "../src/services/website/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const siteRoot = join(here, "..", "..");
@@ -68,9 +67,9 @@ const pages = readdirSync(siteRoot)
 console.log("\nWhat the preview's own policy allows");
 {
   const home = readFileSync(join(siteRoot, "index.html"), "utf8");
-  const fields = readPage(home).fields;
-  const picking = previewDocument(home, "https://dakyworld.com", fields).csp;
-  const plain = previewDocument(home, "https://dakyworld.com").csp;
+  const fields = discoverFields(home).fields;
+  const picking = buildPreview(home, "https://dakyworld.com", fields).csp;
+  const plain = buildPreview(home, "https://dakyworld.com").csp;
 
   const styleSrc = picking.split(";").map((d) => d.trim()).find((d) => /^style-src\b/i.test(d)) ?? "";
   const styleAttr = picking.split(";").map((d) => d.trim()).find((d) => /^style-src-attr\b/i.test(d)) ?? "";
@@ -90,8 +89,8 @@ console.log("\nWhat the preview's own policy allows");
 console.log("\nMarking every editable element");
 for (const name of pages) {
   const html = readFileSync(join(siteRoot, name), "utf8");
-  const content = readPage(html);
-  const marked = previewDocument(html, "https://dakyworld.com", content.fields);
+  const content = discoverFields(html);
+  const marked = buildPreview(html, "https://dakyworld.com", content.fields);
 
   // Whitespace-prefixed: that is how a mark is inserted into a tag. The
   // picker's own script mentions the attribute too, as `[data-dw-field="`.
@@ -105,20 +104,20 @@ for (const name of pages) {
   check(`${name}: no mark landed outside a tag`, !stray);
 
   // And the page still reads the same afterwards: same fields, same values.
-  const after = readPage(marked.html.replace(/<base [^>]*>/i, ""));
+  const after = discoverFields(marked.html.replace(/<base [^>]*>/i, ""));
   const sameIds = after.fields.map((f) => f.id).join(",") === content.fields.map((f) => f.id).join(",");
   check(`${name}: the marked page still has the same fields`, sameIds);
   const sameValues = content.fields.every((field) => after.fields.find((f) => f.id === field.id)?.value === field.value);
   check(`${name}: and the same values`, sameValues);
 
-  check(`${name}: the picker is only added when asked for`, !previewDocument(html, "https://dakyworld.com").html.includes("data-dw-field"));
+  check(`${name}: the picker is only added when asked for`, !buildPreview(html, "https://dakyworld.com").html.includes("data-dw-field"));
   check(`${name}: the picker's script carries a nonce the policy names`, /nonce="([^"]+)"/.test(marked.html) && marked.csp.includes("'nonce-"));
 }
 
 console.log("Styling one element");
 for (const name of pages) {
   const html = readFileSync(join(siteRoot, name), "utf8");
-  const content = readPage(html);
+  const content = discoverFields(html);
   const target = content.fields.find((field) => field.kind !== "image" && field.attrInsert !== undefined);
   if (!target) continue;
 
@@ -127,7 +126,7 @@ for (const name of pages) {
   });
   check(`${name}: the style is written`, applied.changed.includes(target.id), JSON.stringify(applied.conflicts).slice(0, 200));
 
-  const after = readPage(applied.html);
+  const after = discoverFields(applied.html);
   const styled = after.fields.find((field) => field.id === target.id);
   check(`${name}: onto the element it was aimed at`, styled?.style === "color: #3157FF; font-size: 40px", styled?.style);
   check(`${name}: and nothing else on the page moved`, after.fields.every((field) => field.id === target.id || field.value === content.fields.find((f) => f.id === field.id)?.value));
@@ -139,7 +138,7 @@ for (const name of pages) {
 console.log("Keeping what the developer wrote");
 {
   const html = `<div><h1 style="font-size:clamp(40px,5vw,70px);letter-spacing:-.03em">Hello</h1></div>`;
-  const content = readPage(html);
+  const content = discoverFields(html);
   const heading = content.fields.find((field) => field.tag === "h1")!;
   check("an existing style is read off the element", heading.style === "font-size:clamp(40px,5vw,70px);letter-spacing:-.03em", heading.style);
 
@@ -148,14 +147,14 @@ console.log("Keeping what the developer wrote");
   // it was given round-trips.
   const kept = "letter-spacing:-.03em; color: #3157FF";
   const applied = applyValues(html, { [heading.id]: { style: kept, originalStyle: heading.style } });
-  const after = readPage(applied.html).fields.find((field) => field.tag === "h1");
+  const after = discoverFields(applied.html).fields.find((field) => field.tag === "h1");
   check("what the editor sends back is what is written", after?.style === kept, after?.style);
 }
 
 console.log("Refusing a stale style");
 {
   const html = `<div><h1 style="color:red">Hello</h1></div>`;
-  const content = readPage(html);
+  const content = discoverFields(html);
   const heading = content.fields.find((field) => field.tag === "h1")!;
   const applied = applyValues(html, { [heading.id]: { style: "color: blue", originalStyle: "color:green" } });
   check("a style written against a page that has moved is refused", applied.conflicts.length === 1 && applied.changed.length === 0);
@@ -182,7 +181,7 @@ for (const [label, input, expected] of styleCases) {
 // And the whole way through: a hostile draft cannot become an attribute escape.
 {
   const html = `<div><h1>Hello</h1></div>`;
-  const content = readPage(html);
+  const content = discoverFields(html);
   const heading = content.fields.find((field) => field.tag === "h1")!;
   const applied = applyValues(html, { [heading.id]: { style: 'color: red" onmouseover="alert(1)', original: heading.value } });
   check("a hostile style never becomes markup", !applied.html.includes("onmouseover"), applied.html);

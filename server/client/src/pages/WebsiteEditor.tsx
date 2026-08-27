@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError, apiUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
+import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { StylePanel } from "../components/StylePanel";
+import { WebsiteVersions } from "../components/WebsiteVersions";
 
 /**
  * One page of the website, open at full size, with everything about the thing
@@ -299,6 +300,127 @@ function LayerList({
   );
 }
 
+/** One side of a contested field, as words rather than as markup. */
+function sideText(edit: FieldEdit | null): string {
+  if (!edit) return "left as it was";
+  const parts: string[] = [];
+  if (edit.value !== undefined) parts.push(edit.value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "(nothing)");
+  if (edit.href !== undefined) parts.push(`links to ${edit.href || "(nowhere)"}`);
+  if (edit.alt !== undefined) parts.push(`described as "${edit.alt}"`);
+  if (edit.style !== undefined) parts.push("styled differently");
+  return parts.join(" · ") || "left as it was";
+}
+
+/**
+ * Somebody else saved first — both versions, and a choice per field.
+ *
+ * Deliberately not a "your changes were lost" notice, because they were not:
+ * the refused save changed nothing on the server, and the words are still in
+ * this browser. It is also deliberately not an automatic merge. Two people
+ * rewrote the same heading; a machine picking one of them and saying nothing is
+ * how a client's approved copy quietly reverts to a draft nobody signed off.
+ *
+ * Fields only one person touched are not a decision and are not presented as
+ * one — they are kept, both of them, and counted in a line at the bottom.
+ */
+function ConflictDialog({
+  conflict,
+  onKeep,
+  onCancel,
+}: {
+  conflict: DraftConflict;
+  onKeep: (choices: Record<string, "yours" | "theirs">) => void;
+  onCancel: () => void;
+}) {
+  const contested = conflict.fields.filter((field) => field.contested);
+  const uncontested = conflict.fields.length - contested.length;
+  const [choices, setChoices] = useState<Record<string, "yours" | "theirs">>(() =>
+    Object.fromEntries(contested.map((field) => [field.id, "yours" as const])),
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6">
+      <div className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-xl">
+        <div className="flex-none border-b border-line px-6 py-4">
+          <h2 className="font-display text-base tracking-[-.02em]">Somebody else saved this page</h2>
+          <p className="mt-1 text-xs text-muted">{conflict.error}</p>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {contested.length === 0 ? (
+            <p className="text-sm text-ink">
+              You both changed different parts of the page, so nothing has to be decided — keeping both is safe.
+            </p>
+          ) : (
+            <>
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-[11px] uppercase tracking-[.1em] text-muted">
+                  {contested.length} field{contested.length === 1 ? "" : "s"} you both changed
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setChoices(Object.fromEntries(contested.map((field) => [field.id, "yours" as const])))}
+                  className="ml-auto text-[11px] text-muted underline-offset-2 hover:text-ink hover:underline"
+                >
+                  Keep all mine
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChoices(Object.fromEntries(contested.map((field) => [field.id, "theirs" as const])))}
+                  className="text-[11px] text-muted underline-offset-2 hover:text-ink hover:underline"
+                >
+                  Keep all theirs
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {contested.map((field) => (
+                  <div key={field.id} className="rounded-xl border border-line p-3">
+                    <div className="mb-2 text-[11px] font-bold uppercase tracking-[.08em] text-muted">{field.label}</div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {(["yours", "theirs"] as const).map((side) => (
+                        <button
+                          key={side}
+                          type="button"
+                          onClick={() => setChoices((current) => ({ ...current, [field.id]: side }))}
+                          className={`rounded-lg border p-2.5 text-left text-xs transition ${
+                            choices[field.id] === side ? "border-blue bg-blue/[.06] text-ink" : "border-line text-muted hover:border-ink/30"
+                          }`}
+                        >
+                          <div className="mb-1 text-[10px] uppercase tracking-[.1em]">
+                            {side === "yours" ? "Yours" : conflict.savedBy?.name ?? "Theirs"}
+                          </div>
+                          <div className="break-words">{sideText(side === "yours" ? field.yours : field.theirs)}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {uncontested > 0 && (
+            <p className="mt-4 text-xs text-muted">
+              {uncontested} other change{uncontested === 1 ? "" : "s"} only one of you made. {uncontested === 1 ? "It is" : "They are"} kept
+              either way.
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-none items-center justify-end gap-2 border-t border-line px-6 py-3">
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            Leave it for now
+          </Button>
+          <Button size="sm" onClick={() => onKeep(choices)}>
+            Save this version
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function WebsiteEditor() {
   const { pageId = "" } = useParams();
   const qc = useQueryClient();
@@ -340,6 +462,18 @@ export function WebsiteEditor() {
   const dirty = useRef(false);
   /** An edit the frame cannot be told about — a link's destination, a picture. */
   const needsReload = useRef(false);
+  /**
+   * The draft revision this editor was last shown, quoted on every save.
+   *
+   * A ref rather than state because it is read inside the save mutation, which
+   * must see the newest value and must not be rebuilt each time it changes — a
+   * save closing over a stale revision would refuse its own previous save.
+   */
+  const revision = useRef(0);
+  /** Somebody else saved first. Their version and this one, side by side. */
+  const [conflict, setConflict] = useState<DraftConflict | null>(null);
+  /** The publishing history, and the two ways back out of a bad publish. */
+  const [showVersions, setShowVersions] = useState(false);
 
   // Refetching on focus is what used to hand the effect below a fresh copy of
   // the draft in the middle of somebody typing. The guard on that effect is the
@@ -568,6 +702,7 @@ export function WebsiteEditor() {
     // this flag before they reload, so the resets that should happen still do.
     if (dirty.current) return;
     setEdits(page.data.draft.values);
+    revision.current = page.data.draft.revision;
     setLoadToken((token) => token + 1);
     dirty.current = false;
     history.current = { list: [JSON.stringify(page.data.draft.values)], index: 0 };
@@ -576,13 +711,26 @@ export function WebsiteEditor() {
   }, [page.data]);
 
   const save = useMutation({
-    mutationFn: (values: Record<string, FieldEdit>) => api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, { values }),
+    mutationFn: (values: Record<string, FieldEdit>) =>
+      api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, { ifRevision: revision.current, values }),
     onError: (err) => {
+      // A 409 is not a failure to report and move past — it is a choice to put
+      // in front of somebody, with both versions in the body. Everything else is
+      // the red bar as before.
+      if (err instanceof ApiError && err.status === 409 && err.body && typeof err.body === "object" && "fields" in err.body) {
+        setConflict(err.body as DraftConflict);
+        // Deliberately left dirty. Until the choice is made these words exist
+        // only in this browser, and anything that treats them as saved — the
+        // autosave timer, the effect that reseeds from the server — would throw
+        // them away while the dialog was still open.
+        return;
+      }
       setFailure(err instanceof ApiError ? err.message : "Those changes could not be saved.");
     },
     onSuccess: (result) => {
       setFailure(null);
       dirty.current = false;
+      revision.current = result.revision;
       // A field the server does not know is a draft written against a page that
       // has since moved. Silence here reads as "saved" and it is not.
       if (result.unknown?.length) {
@@ -607,17 +755,54 @@ export function WebsiteEditor() {
     [save],
   );
 
+  /**
+   * Takes the decision made in the dialog and saves it as one draft.
+   *
+   * The revision quoted is **theirs** — the one the server answered the refusal
+   * with. That is the whole shape of the exchange: this editor has now seen what
+   * the other person wrote, so it is current again and allowed to write. Quoting
+   * the old number would refuse the resolution for the same reason it refused
+   * the save, for ever.
+   */
+  const resolveConflict = useCallback(
+    (choices: Record<string, "yours" | "theirs">) => {
+      if (!conflict) return;
+      const merged: Record<string, FieldEdit> = {};
+      for (const field of conflict.fields) {
+        // A field only one side touched is not a decision; both are kept.
+        const side = field.contested ? choices[field.id] ?? "yours" : field.yours ? "yours" : "theirs";
+        const chosen = side === "yours" ? field.yours : field.theirs;
+        if (chosen) merged[field.id] = chosen;
+      }
+      revision.current = conflict.revision;
+      setConflict(null);
+      setEdits(merged);
+      // Remounts the uncontrolled inputs and reloads the frame: after a merge
+      // the panel and the page can both be showing words nobody chose.
+      setLoadToken((token) => token + 1);
+      setPreviewToken((token) => token + 1);
+      commitHistory(merged);
+      saveNow(merged);
+    },
+    [conflict, commitHistory, saveNow],
+  );
+
   // Autosave. Long enough not to write on every keystroke, short enough that
   // leaving the screen almost never loses anything — and the guard below covers
   // the case where it does.
   useEffect(() => {
     if (!dirty.current) return;
+    // Not while somebody is deciding whose version to keep. `saveNow` changes
+    // identity every time the mutation changes state, so this effect re-runs on
+    // its own after each refusal — without this guard an open dialog would sit
+    // there firing a save, and being refused, once a second.
+    if (conflict) return;
     // When the frame cannot be pushed to, the save is the only thing that will
     // ever show somebody their own change, so it stops being a background
     // convenience and becomes the thing they are waiting for.
     const timer = setTimeout(() => saveNow(edits), liveBlind || needsReload.current ? 500 : 1200);
     return () => clearTimeout(timer);
-  }, [edits, saveNow, liveBlind]);
+  }, [edits, saveNow, liveBlind, conflict]);
 
   useEffect(() => {
     const onLeave = (event: BeforeUnloadEvent) => {
@@ -772,9 +957,37 @@ export function WebsiteEditor() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {showVersions && (
+        <WebsiteVersions
+          pageId={pageId}
+          onClose={() => setShowVersions(false)}
+          onRestored={() => {
+            // A restore writes a draft on the server, and this editor is holding
+            // its own copy plus a revision that has just moved. Clearing `dirty`
+            // is what lets the seeding effect take the server's version — without
+            // it the refetch is ignored and the restore appears to have done
+            // nothing at all.
+            dirty.current = false;
+            setPublished(null);
+            void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+            setPreviewToken((token) => token + 1);
+          }}
+        />
+      )}
+      {conflict && (
+        <ConflictDialog
+          conflict={conflict}
+          onKeep={resolveConflict}
+          // "Leave it for now" keeps the words in the browser and the draft
+          // unsaved, which is honest — the alternative is a dialog that can only
+          // be escaped by making a decision, and somebody who wants to go and
+          // ask a colleague first has nowhere to go.
+          onCancel={() => setConflict(null)}
+        />
+      )}
       {/* ------------------------------------------------------------ bar */}
       <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-white px-4 py-2.5">
-        <Link to="/website" className="shrink-0 text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
+        <Link to="/website/sites" className="shrink-0 text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
           ← All pages
         </Link>
         <div className="min-w-0">
@@ -878,6 +1091,9 @@ export function WebsiteEditor() {
             ))}
           </div>
 
+          <Button variant="ghost" size="sm" onClick={() => setShowVersions(true)}>
+            Versions
+          </Button>
           {changedCount > 0 && !readOnly && (
             <Button variant="ghost" size="sm" onClick={() => discard.mutate()} disabled={discard.isPending}>
               Discard
@@ -906,6 +1122,25 @@ export function WebsiteEditor() {
               <p className="font-semibold text-ink">
                 Published — version {published.version}, {published.changed} change{published.changed === 1 ? "" : "s"}.
               </p>
+              {/* What went out, in words. A count on its own is not something
+                  anybody can check, and this is the last moment before it is
+                  only recoverable from the version list. */}
+              {published.summary.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5 text-xs text-muted">
+                  {published.summary.slice(0, 5).map((entry, index) => (
+                    <li key={`${entry.id}-${entry.part}-${index}`} className="break-words">
+                      {entry.label}: “{entry.from}” → “{entry.to}”
+                    </li>
+                  ))}
+                  {published.summary.length > 5 && <li className="text-ink/50">and {published.summary.length - 5} more</li>}
+                </ul>
+              )}
+              {published.touched.seo && (
+                <p className="mt-1.5 text-xs text-amber-800">
+                  This changed the page title or its search-result description. The generated link-preview copies need{" "}
+                  <code className="font-mono">npm run site</code> in the repository to match.
+                </p>
+              )}
               <p className="mt-1 text-xs text-muted">{published.note}</p>
               <p className="mt-1 text-xs text-muted">
                 This screen reads the page back from the published site, so it goes on showing the old words until that rebuild

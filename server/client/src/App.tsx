@@ -25,6 +25,8 @@ import { Rehearsals } from "./pages/Rehearsals";
 import { ClientDetail } from "./pages/ClientDetail";
 import { Website } from "./pages/Website";
 import { WebsiteEditor } from "./pages/WebsiteEditor";
+import { WebsiteLayout } from "./components/WebsiteLayout";
+import { WebsiteOverview } from "./pages/WebsiteOverview";
 
 /**
  * Every screen carries the permission its own API routes ask for.
@@ -60,7 +62,12 @@ export default function App() {
         <Route path="/messages" element={<Guard needs="messages.view"><Messages /></Guard>} />
         <Route path="/clients" element={<Guard needs="clients.view"><Clients /></Guard>} />
         <Route path="/clients/:id" element={<Guard needs="clients.view"><ClientDetail /></Guard>} />
-        <Route path="/website" element={<Guard needs="website.view"><Website /></Guard>} />
+        {/* The builder's management screens share a sub-navigation strip; the
+            editor deliberately does not, because it takes the whole window. */}
+        <Route path="/website" element={<Guard needs="website.view"><WebsiteLayout /></Guard>}>
+          <Route index element={<WebsiteOverview />} />
+          <Route path="sites" element={<Website />} />
+        </Route>
         <Route path="/website/pages/:pageId" element={<Guard needs="website.view"><WebsiteEditor /></Guard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />
         <Route path="/settings" element={<Guard needs="settings.view"><Settings /></Guard>} />
