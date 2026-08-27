@@ -342,10 +342,14 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
       "The default for every job it can do — one key covers writing, sorting, triage, pages, research, fact-checking, plain English and looking at a page.",
     keySetting: SETTING.OPENROUTER_KEY,
     modelSetting: SETTING.OPENROUTER_MODEL,
-    defaultModel: "stealth/ox-alpha",
+    // ox-alpha was a stealth listing, and on 26 Aug 2026 OpenRouter retired the
+    // slug with a 404 whose body named what it had been all along: ZAI's
+    // GLM-5.3 Flash. Same model, real name. A stealth id is a rented one and
+    // this is the second thing to check when every job stops at once.
+    defaultModel: "z-ai/glm-5.3-flash",
     // Nothing cheaper names its default, which makes the economy tier a no-op
     // here rather than a broken request.
-    economyModel: "stealth/ox-alpha",
+    economyModel: "z-ai/glm-5.3-flash",
     console: "https://openrouter.ai/settings/keys",
     keyHint: "sk-or-…",
     // Every job except `image`. Drawing a picture goes through an images API
@@ -359,7 +363,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // The shipped id. If OpenRouter lists the model under a different slug,
     // paste that instead — the field takes anything, and verifying the key
     // checks the id against OpenRouter's own catalogue before saving.
-    models: ["stealth/ox-alpha"],
+    models: ["z-ai/glm-5.3-flash"],
   },
 };
 
@@ -373,10 +377,10 @@ export function isModelJob(value: unknown): value is ModelJob {
   return typeof value === "string" && (MODEL_JOBS as string[]).includes(value);
 }
 
-// --- How hard ox-alpha thinks -----------------------------------------------
+// --- How hard the OpenRouter model thinks -----------------------------------
 
 /**
- * Our effort word onto ox-alpha's three.
+ * Our effort word onto the three the OpenRouter default takes.
  *
  * A vendor fact, so it lives with the other vendor facts rather than inside
  * whichever caller happened to need it first. It was written for the agent
@@ -389,8 +393,15 @@ export function isModelJob(value: unknown): value is ModelJob {
  * Exactly the bug `checks/modelChoice.ts` exists for, one field over: nothing
  * breaks, every answer is correct, and the only symptom is the bill.
  *
- * ox-alpha offers low/high/max, not our medium — so medium steps up to high,
+ * ox-alpha offered low/high/max, not our medium — so medium steps up to high,
  * and everything above rides at max.
+ *
+ * **`max` is ox-alpha's word, not an OpenAI-standard one** (that scale is
+ * low/medium/high). It survived the move to `z-ai/glm-5.3-flash` untouched
+ * because changing it would change what every job costs and how well it
+ * thinks, on a guess about a model nobody has measured here yet. If high-effort
+ * work starts coming back 400, this is the line — and the agent loop now falls
+ * to Claude rather than dying while somebody works that out.
  */
 export function reasoningEffortFor(effort: Effort): "low" | "high" | "max" {
   if (effort === "low") return "low";

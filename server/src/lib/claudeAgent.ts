@@ -294,8 +294,32 @@ function openRouterBase(): string {
   return process.env.OPENROUTER_BASE_URL?.replace(/\/$/, "") || "https://openrouter.ai/api/v1";
 }
 
-/** Key-level refusals: wrong key, out of credits, banned account. */
-const REFUSED_STATUSES = [401, 402, 403];
+/**
+ * The statuses that mean this vendor cannot serve this request at all.
+ *
+ * 401/402/403 are key-level — wrong key, out of credits, banned account.
+ * **404 is the model**: a slug that OpenRouter no longer lists, which is how a
+ * stealth listing ends. It belongs here for exactly the same reason the others
+ * do — the vendor has told us nothing about the request, nothing has been
+ * spent, and the floor underneath can do the work. Leaving it out cost a live
+ * Chief Executive task on 26 Aug 2026: the run died on the first turn with the
+ * whole conversation intact and Claude connected and unasked.
+ *
+ * 400 is here for the same reason `callModel` treats it as "refused the request
+ * shape": a parameter one model will not take is routine for the next. This
+ * matters more than it looks after a model swap — `reasoningEffortFor` sends
+ * ox-alpha's own `max`, which is not an OpenAI-standard effort, so a
+ * replacement model that rejects it would have taken every high-effort task
+ * down with it. It costs at most one extra call, and the sentence that comes
+ * back then names both vendors instead of one.
+ *
+ * What is deliberately **not** here: 429, which has its own message and resumes
+ * rather than quietly moving the bill to Anthropic on every rate limit; and a
+ * content refusal, which in this loop comes back as an ordinary answer rather
+ * than an error, and which must never be routed around — asking a second model
+ * until one says yes is shopping for a yes.
+ */
+const CANNOT_SERVE_STATUSES = [400, 401, 402, 403, 404];
 
 /**
  * How long a refused ox-alpha key sits out.
@@ -307,6 +331,19 @@ const REFUSED_STATUSES = [401, 402, 403];
  */
 const OPENROUTER_COOLDOWN_MS = 15 * 60 * 1000;
 let openRouterRefusedUntil = 0;
+
+/**
+ * Clears the cooldown. For checks only.
+ *
+ * The cooldown is the right behaviour and the reason it exists is sound — a
+ * queue of resumes must not each pay a call into the same wall. It is also the
+ * thing that makes a second failover scenario in one process a test of
+ * nothing: the vendor is skipped before the failure being tested can happen,
+ * and the assertion passes for the wrong reason.
+ */
+export function clearOpenRouterCooldown(): void {
+  openRouterRefusedUntil = 0;
+}
 
 /** As generous as the Anthropic SDK's own default for a non-streaming turn. */
 const TURN_TIMEOUT_MS = 600_000;
@@ -726,21 +763,25 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
             effort,
           });
         } catch (err) {
-          // A key-level refusal — wrong key, out of credits — is not a reason
-          // to lose the run when the floor is connected. Nothing has been
-          // spent yet, so the same turn is retried on Claude, and ox-alpha
-          // sits out its cooldown so the resumes behind this one start there
-          // instead of each paying one call into the same refusal.
-          if (err instanceof OpenRouterError && REFUSED_STATUSES.includes(err.status) && candidates.includes("anthropic")) {
+          // A vendor that cannot serve this at all — wrong key, out of
+          // credits, or a model it no longer lists — is not a reason to lose
+          // the run when the floor is connected. Nothing has been spent yet,
+          // so the same turn is retried on Claude, and ox-alpha sits out its
+          // cooldown so the resumes behind this one start there instead of
+          // each paying one call into the same wall.
+          if (err instanceof OpenRouterError && CANNOT_SERVE_STATUSES.includes(err.status) && candidates.includes("anthropic")) {
             openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
-            console.warn(`[agent] ox-alpha refused the key (${(err as Error).message}) — Claude takes the rest of this run.`);
+            console.warn(`[agent] ox-alpha could not serve this (${(err as Error).message}) — Claude takes the rest of this run.`);
             serving = "anthropic";
             continue;
           }
           const message =
             err instanceof OpenRouterError && err.status === 429
               ? "OpenRouter is rate-limiting this key. The task will be picked up again."
-              : `Could not reach OpenRouter: ${(err as Error).message}`;
+              : err instanceof OpenRouterError && err.status === 404
+                ? `OpenRouter does not have the model “${await modelForVendor("openrouter", effort)}”. ` +
+                  `Change it under Settings → AI models, or connect Anthropic so work carries on when a model is retired.`
+                : `Could not reach OpenRouter: ${(err as Error).message}`;
           // The conversation up to here is intact and worth keeping: a rate
           // limit is a task that resumes in five minutes, not one that starts
           // again.

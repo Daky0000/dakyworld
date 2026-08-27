@@ -522,8 +522,11 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
  * cosmetic: `response_format` in a model's `supported_parameters` means it
  * takes `{"type":"json_object"}` — *some* JSON — while `structured_outputs`
  * is the one that means the schema is compiled and enforced. 332 of the 416
- * models listed on 24 Aug 2026 declare the second. **`stealth/ox-alpha` is one
- * of the 84 that do not**, which is the whole reason this exists.
+ * models listed on 24 Aug 2026 declare the second. **The shipped default was
+ * one of the 84 that do not**, which is the whole reason this exists. It is
+ * asked per model rather than hard-coded, so a model swap — `stealth/ox-alpha`
+ * became `z-ai/glm-5.3-flash` when OpenRouter retired the stealth slug — is
+ * answered correctly by the next catalogue read rather than by editing this.
  *
  * Read from the same free, authenticated endpoint `verifyProviderKey` already
  * uses, cached for the process, and **`null` when it cannot be answered** —
@@ -618,8 +621,8 @@ function schemaContract(schema: unknown): string {
  * them describes it in the schema — field names, enums, sentinels, and a
  * `description` per field carrying the actual instruction. OpenRouter drops
  * `json_schema` for a model that has not declared `structured_outputs`, and
- * **ox-alpha has not**, so the shipped default model was being asked for "a
- * plan" with no description of one anywhere in the request. It guessed at the
+ * **the shipped default had not**, so it was being asked for "a plan" with no
+ * description of one anywhere in the request. It guessed at the
  * field names; `normalizePlan` dropped what it could not recognise; and the
  * analyst looked like it had simply got worse.
  *

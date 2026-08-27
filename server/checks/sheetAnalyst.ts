@@ -41,6 +41,23 @@
  */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { PROVIDERS } from "../src/lib/models/registry.js";
+
+/**
+ * Whatever the OpenRouter default is today, read rather than typed.
+ *
+ * This check used to name `stealth/ox-alpha` in seven places. OpenRouter
+ * retired that stealth listing without notice on 26 Aug 2026 and the check
+ * failed on the swap itself — not on anything being wrong — which teaches
+ * whoever sees it to edit the assertion rather than read it.
+ *
+ * What is under test here is the *code path*, not the model: the stub
+ * catalogue below declares this id with `response_format` and without
+ * `structured_outputs`, and the question is what this app then puts on the
+ * wire. What the real model declares is read from OpenRouter's live catalogue
+ * at run time and is none of this file's business.
+ */
+const SHIPPED = PROVIDERS.openrouter.defaultModel;
 
 const failures: string[] = [];
 let passed = 0;
@@ -177,12 +194,14 @@ async function main() {
   const or = await httpServer((body, send, path) => {
     // OpenRouter's own catalogue, which is where "does this model compile a
     // JSON schema" is answered. `response_format` and `structured_outputs` are
-    // two different declarations and the difference is the whole point: the
-    // real stealth/ox-alpha declares the first and not the second.
+    // two different declarations and the difference is the whole point. The
+    // shipped id is stubbed as declaring the first and not the second — which
+    // is what `stealth/ox-alpha` really did, and what this half of the code
+    // exists to handle whichever model is in the seat.
     if (path.includes("/models")) {
       return send(200, {
         data: [
-          { id: "stealth/ox-alpha", supported_parameters: ["max_tokens", "reasoning_effort", "response_format", "tools"] },
+          { id: SHIPPED, supported_parameters: ["max_tokens", "reasoning_effort", "response_format", "tools"] },
           { id: "vendor/strict-one", supported_parameters: ["max_tokens", "response_format", "structured_outputs"] },
         ],
       });
@@ -191,7 +210,7 @@ async function main() {
     send(200, {
       id: "chatcmpl_check_sheet",
       object: "chat.completion",
-      model: "stealth/ox-alpha",
+      model: SHIPPED,
       choices: [
         {
           index: 0,
@@ -292,7 +311,7 @@ Let me know if you would like it changed.`
   const analysis = await analyzeGrids([GRID as any], hints);
   const sent = orBodies.at(-1);
 
-  check("ox-alpha served it, under its shipped slug", sent?.model === "stealth/ox-alpha", String(sent?.model));
+  check("ox-alpha served it, under its shipped slug", sent?.model === SHIPPED, String(sent?.model));
   check("it was not quietly handed to the stand-in", analysis.note === null, String(analysis.note));
   check("the effort reaches the wire at all", typeof sent?.reasoning_effort === "string", JSON.stringify(sent?.reasoning_effort));
   check("reading a sheet is asked for at max, not left to the default", sent?.reasoning_effort === "max", String(sent?.reasoning_effort));
@@ -329,7 +348,7 @@ Let me know if you would like it changed.`
   const strictSent = orBodies.at(-1);
   check("keeps the strict JSON schema", strictSent?.response_format?.json_schema?.strict === true, String(strictSent?.response_format?.type));
   check("...and is not sent the shape a second time in its prompt", !String(strictSent?.messages?.[0]?.content ?? "").includes("The shape of your answer"));
-  await setSetting(SETTING.OPENROUTER_MODEL, "stealth/ox-alpha");
+  await setSetting(SETTING.OPENROUTER_MODEL, SHIPPED);
 
   // The negative that pays for the whole mapping: an economy job must not ride
   // at the headline model's reasoning depth just because nobody said otherwise.

@@ -154,7 +154,8 @@ let seenInput: Record<string, unknown> | null = null;
 async function main() {
   const { prisma } = await import("../src/lib/prisma.js");
   const { clearSettingsCache, SETTING } = await import("../src/lib/settings.js");
-  const { runAgentLoop, reasoningEffortFor } = await import("../src/lib/claudeAgent.js");
+  const { runAgentLoop, reasoningEffortFor, clearOpenRouterCooldown } = await import("../src/lib/claudeAgent.js");
+  const { PROVIDERS } = await import("../src/lib/models/registry.js");
 
   // --- Isolation ---------------------------------------------------------------
   //
@@ -221,7 +222,11 @@ async function main() {
   const [first, second] = orBodies;
 
   // --- The wire shape --------------------------------------------------------
-  check("the shipped slug is what goes out", first?.model === "stealth/ox-alpha", String(first?.model));
+  // Read from the registry rather than pinned to a slug. The stealth listing
+  // this shipped on was retired without notice on 26 Aug 2026, and a check that
+  // hard-codes the model fails on the swap itself rather than on anything being
+  // wrong — which trains somebody to edit the assertion instead of reading it.
+  check("the shipped slug is what goes out", first?.model === PROVIDERS.openrouter.defaultModel, String(first?.model));
   check("the effort rides as reasoning_effort", first?.reasoning_effort === "high", String(first?.reasoning_effort));
   check("the token ceiling travels as max_tokens", first?.max_tokens === 16_000, String(first?.max_tokens));
   check(
@@ -322,6 +327,46 @@ async function main() {
   check("the cooldown skipped the refused vendor entirely", refusedBodies.length === before, `${refusedBodies.length - before} extra call(s) into a dead balance`);
   check("and the run still finished on Claude", again.stoppedBecause === "finished" && again.model.startsWith("claude"), `${again.stoppedBecause} / ${again.model}`);
 
+  // --- Scenario D: a model OpenRouter no longer lists ------------------------
+  //
+  // The one that actually happened. On 26 Aug 2026 OpenRouter retired the
+  // `stealth/ox-alpha` slug and answered 404 with a body naming its
+  // replacement. 404 was not in the loop's failover list — only the key-level
+  // 401/402/403 were — so a live Chief Executive task died on its first turn
+  // with the whole conversation intact and Claude connected and unasked. A
+  // model that no longer exists tells us nothing about the request, which is
+  // the same thing a drained balance tells us.
+  const goneBodies: unknown[] = [];
+  const goneServer = await httpServer((_body, send) => {
+    goneBodies.push(_body);
+    send(404, "Thank you for participating in the Stealth Ox Alpha testing period. This model was ZAI\u2019s GLM-5.3 Flash.");
+  });
+
+  process.env.OPENROUTER_BASE_URL = goneServer.url;
+  clearSettingsCache();
+  // Scenario C left ox-alpha inside its cooldown, which would skip the vendor
+  // before the 404 could be reached and make this a test of nothing.
+  clearOpenRouterCooldown();
+
+  const anthBefore = anthBodies.length;
+  const retired = await runAgentLoop({
+    purpose: "check.agentLoop.retiredModel",
+    system: "You are a check.",
+    prompt: "Look something up, then say you are done.",
+    tools: [lookUpTool],
+    effort: "medium",
+  });
+
+  check("the retired model was tried once", goneBodies.length === 1, String(goneBodies.length));
+  check(
+    "a 404 hands the run to Claude rather than killing it",
+    retired.stoppedBecause === "finished" && retired.model.startsWith("claude"),
+    `${retired.stoppedBecause} / ${retired.model}`,
+  );
+  check("and Claude actually served the turns", anthBodies.length > anthBefore, `${anthBodies.length - anthBefore} turn(s)`);
+  check("the work still got done", retired.text === "Done.", retired.text);
+
+  goneServer.server.close();
   orServer.server.close();
   anthServer.server.close();
   refusedServer.server.close();
