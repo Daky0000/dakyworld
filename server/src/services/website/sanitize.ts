@@ -127,7 +127,15 @@ function render(source: string, element: ElementNode, depth: number): string {
 
   const attrs: string[] = [];
   for (const attribute of element.attrs) {
-    const permitted = ALLOWED_ATTRS["*"]!.has(attribute.name) || ALLOWED_ATTRS[element.tag]?.has(attribute.name) || attribute.name.startsWith("data-");
+    // `data-*` survives on purpose — the homepage figures are a
+    // `<strong class="count-up" data-target="70">`. `data-dw-*` is the one
+    // exception: those are the visual editor's own marks, injected into the
+    // preview, and a value typed in the browser comes back with them on its
+    // children. They are never part of anybody's page.
+    const permitted =
+      ALLOWED_ATTRS["*"]!.has(attribute.name) ||
+      ALLOWED_ATTRS[element.tag]?.has(attribute.name) ||
+      (attribute.name.startsWith("data-") && !attribute.name.startsWith("data-dw-"));
     if (!permitted) continue;
     if (attribute.name === "href") {
       const checked = checkLink(attribute.value);

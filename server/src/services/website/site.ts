@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { commitFiles, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError } from "../../lib/github.js";
+import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError } from "../../lib/github.js";
 import type { Site, SitePage } from "@prisma/client";
 import type { SiteField } from "./regions.js";
 
@@ -234,6 +234,37 @@ export async function publishPage(input: {
         `${repo} is not on the list of repositories this system may write to. Add it under Settings → Developer, then publish again.`,
       );
     }
+    // Everything else GitHub refuses is a setting on the token or the
+    // repository, and every one of them is fixable by the person reading it.
+    // Left as a raw GitHubError they arrive as "Something went wrong", which
+    // sends somebody hunting for a bug that is not there.
+    if (err instanceof GitHubError) {
+      if (err.status === 401) {
+        throw new WebsiteError(
+          403,
+          "GitHub rejected the access token — it has expired or been revoked. Create a new one and paste it under Settings → Developer.",
+        );
+      }
+      if (err.status === 403) {
+        throw new WebsiteError(
+          403,
+          `The GitHub token cannot write to ${repo}. Give it Contents: write on that repository — a fine-grained token must also list ${repo} among the repositories it can reach — then publish again.`,
+        );
+      }
+      if (err.status === 404) {
+        throw new WebsiteError(
+          404,
+          `GitHub cannot find ${repo} on branch ${input.site.repoBranch}, or the token cannot see it. Check the repository and branch on the site's settings, and that the token has access to it.`,
+        );
+      }
+      if (err.status === 409 || err.status === 422) {
+        throw new WebsiteError(
+          409,
+          `GitHub would not accept the commit to ${input.site.repoBranch}: ${err.message}. A branch protection rule is the usual cause.`,
+        );
+      }
+      throw new WebsiteError(502, `GitHub would not accept the publish: ${err.message}`);
+    }
     throw err;
   }
 }
@@ -419,9 +450,22 @@ function pickerAssets(nonce: string): string {
     var kind = el.getAttribute("data-dw-kind");
     return kind === "text" || kind === "richtext" || kind === "link";
   }
+  // Never the element's own innerHTML: it carries the attributes this script
+  // put on its children, and a data-* attribute survives sanitising on purpose
+  // (the homepage figures are data-target). Handing them back would commit the
+  // editor's scaffolding into the published page.
+  var OURS = ["data-dw-field", "data-dw-kind", "data-dw-shown", "data-dw-selected", "data-dw-editing"];
+  function words(el) {
+    var copy = el.cloneNode(true);
+    var marked = copy.querySelectorAll("[" + OURS.join("],[") + "]");
+    for (var i = 0; i < marked.length; i++) {
+      for (var j = 0; j < OURS.length; j++) marked[i].removeAttribute(OURS[j]);
+    }
+    return copy.innerHTML;
+  }
   function push(final) {
     if (!editing) return;
-    post({ type: "text", id: editing.getAttribute("data-dw-field"), html: editing.innerHTML, final: !!final });
+    post({ type: "text", id: editing.getAttribute("data-dw-field"), html: words(editing), final: !!final });
   }
   function startEdit(el) {
     if (!el || !typeable(el) || editing === el) return;
@@ -514,16 +558,22 @@ function pickerAssets(nonce: string): string {
       }
     }
   }
+  var swept = false;
   function sweep() {
+    if (swept) return;
+    swept = true;
     var height = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
     var step = Math.max(240, Math.round(window.innerHeight * 0.8));
+    // Put the page back where it was, not at the top: by the time this runs the
+    // editor may already have scrolled to something that was clicked.
+    var was = window.scrollY || 0;
     var at = 0;
     (function next() {
       window.scrollTo(0, at);
       at += step;
       if (at < height + step) window.requestAnimationFrame(next);
       else {
-        window.scrollTo(0, 0);
+        window.scrollTo(0, was);
         window.setTimeout(force, 80);
       }
     })();
@@ -538,6 +588,7 @@ function pickerAssets(nonce: string): string {
     if (data.type === "select") {
       stopEdit();
       var el = find(data.id);
+      if (!el && data.id) post({ type: "absent", id: data.id, want: "select" });
       mark(el);
       if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
     } else if (data.type === "edit") {
@@ -549,14 +600,15 @@ function pickerAssets(nonce: string): string {
       // The whole inline style, because that is what the panel edits — including
       // the declarations it has no control for, which ride through untouched.
       var styled = find(data.id);
-      if (styled) {
-        if (data.style) styled.setAttribute("style", String(data.style));
-        else styled.removeAttribute("style");
-      }
+      // Nothing to write it on: say so, rather than letting the change vanish.
+      if (!styled) { post({ type: "absent", id: data.id, want: "style" }); return; }
+      if (data.style) styled.setAttribute("style", String(data.style));
+      else styled.removeAttribute("style");
     } else if (data.type === "text") {
       var written = find(data.id);
+      if (!written) { post({ type: "absent", id: data.id, want: "text" }); return; }
       // Never while it is being typed into: that would move the caret.
-      if (written && written !== editing) written.innerHTML = String(data.html == null ? "" : data.html);
+      if (written !== editing) written.innerHTML = String(data.html == null ? "" : data.html);
     }
   });
   post({ type: "ready" });

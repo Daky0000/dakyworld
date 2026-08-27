@@ -1853,6 +1853,23 @@ reach the page title, a picture's description, or a heading three screens down.
   moving. The frame is reloaded only for an edit that cannot be pushed — a
   link's destination, a picture — which is what `needsReload` tracks. Reloading
   on every autosave, as it used to, threw away the scroll position and the caret.
+- **Eleven of the homepage's 203 fields have no element to push at**: the page
+  title and description by design, and nine whose `attrInsert` the parse never
+  recorded. The frame answers `absent` for those and the editor falls back to
+  `needsReload`, because a push that lands nowhere and says nothing is
+  indistinguishable from an editor that is broken.
+- **The page query must not refetch on window focus.** Clicking into the frame
+  and back out again focuses the app window; a refetch there handed the effect
+  that seeds `edits` a fresh copy of the saved draft in the middle of somebody
+  typing, and their unsaved words went back to what the server last knew. The
+  effect also refuses to run while `dirty.current` is set. This is what "I did
+  not see the changes I was making" turned out to be.
+- **The picker never hands back an element's own `innerHTML`.** It carries the
+  `data-dw-*` this script put on the children, and `data-*` survives sanitising
+  on purpose (`data-target` drives the count-up figures), so those marks were
+  being stored in drafts and would have been committed into the live page.
+  `words()` clones and strips them, and `sanitize.ts` drops `data-dw-*`
+  independently so a draft written before that fix cannot carry them either.
 - **The page is swept once so it can be clicked.** A site whose sections fade in
   on scroll shows almost nothing in a frame that has never been scrolled, and
   nobody can click a heading they cannot see. Under `?pick=1` the picker scrolls
@@ -1891,6 +1908,15 @@ reach the page title, a picture's description, or a heading three screens down.
 - **`padding` shorthand is expanded on the way in and written as longhands.**
   A developer's `padding: 4px 8px` and the panel's four sides would otherwise
   fight, and the shorthand would win.
+- **A refusal from GitHub is a setting, and settings say what to do.**
+  `publishPage` translated only "no token" and "repo not on the writable list";
+  a token that exists but cannot write raised a bare `GitHubError`, which the
+  central handler renders as the flat "Something went wrong." Every status
+  GitHub can answer with is now a sentence naming what to change — 401 the token
+  has expired, 403 it needs Contents: write on that repository, 404 the
+  repository or branch is wrong or invisible to it, 409/422 a branch protection
+  rule. See the note on error classes in the error handler: deciding which of the two kinds a
+  new error class is, is not optional.
 - **`safeStyle` filters what is stored as well as what is written.** Nothing in
   the panel can produce a bad declaration, so it is not the editor this guards
   against: a draft is stored JSON that outlives its session and is spliced into

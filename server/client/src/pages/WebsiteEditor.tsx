@@ -324,9 +324,15 @@ export function WebsiteEditor() {
   /** An edit the frame cannot be told about — a link's destination, a picture. */
   const needsReload = useRef(false);
 
+  // Clicking into the page and back out again focuses this window, and a
+  // refetch on focus would hand the effect below a fresh copy of the draft in
+  // the middle of somebody typing. The editor already reloads the page when it
+  // needs to — after a publish, a discard, or an undo.
   const page = useQuery({
     queryKey: ["website", "page", pageId],
     queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`),
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   /* ------------------------------------------------------------- history */
@@ -419,6 +425,12 @@ export function WebsiteEditor() {
       } else if (data.type === "editing") {
         setTypingId(data.id ?? null);
         if (!data.id) setFrameEdit((token) => token + 1);
+      } else if (data.type === "absent") {
+        // The frame has no element for that field — the page title and
+        // description have none by design, and a handful of others were never
+        // given an insertion point by the parse. Nothing can be pushed there,
+        // so fall back to reloading the frame once the draft is saved.
+        if (data.id && !data.id.startsWith("meta.")) needsReload.current = true;
       } else if (data.type === "text" && data.id) {
         const id = data.id;
         setEdits((current) => {
@@ -440,6 +452,9 @@ export function WebsiteEditor() {
   // whenever the page is loaded — including after a publish, which clears it.
   useEffect(() => {
     if (!page.data) return;
+    // Never over the top of unsaved work. Publish, discard and undo all clear
+    // this flag before they reload, so the resets that should happen still do.
+    if (dirty.current) return;
     setEdits(page.data.draft.values);
     setLoadToken((token) => token + 1);
     dirty.current = false;
@@ -450,8 +465,19 @@ export function WebsiteEditor() {
 
   const save = useMutation({
     mutationFn: (values: Record<string, FieldEdit>) => api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, { values }),
-    onSuccess: () => {
+    onError: (err) => {
+      setFailure(err instanceof ApiError ? err.message : "Those changes could not be saved.");
+    },
+    onSuccess: (result) => {
+      setFailure(null);
       dirty.current = false;
+      // A field the server does not know is a draft written against a page that
+      // has since moved. Silence here reads as "saved" and it is not.
+      if (result.unknown?.length) {
+        setFailure(
+          `${result.unknown.length} change${result.unknown.length === 1 ? "" : "s"} could not be saved because that part of the page has moved. Reopen the page to see it as it is now.`,
+        );
+      }
       // Only when something changed that the frame could not be told about —
       // reloading it would throw away the scroll position and the caret.
       if (needsReload.current) {
