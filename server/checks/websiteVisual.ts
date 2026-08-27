@@ -28,6 +28,15 @@
  *  4. A stale style refuses, exactly as a stale heading does.
  *  5. `safeStyle` keeps what styles and drops what does anything else. A draft
  *     outlives the session that wrote it and is spliced into a public page.
+ *  6. **The preview's own policy still permits a `style=""` attribute.** This one
+ *     is here because it broke in production and nothing caught it: a nonce
+ *     anywhere in `style-src` makes a browser ignore `'unsafe-inline'` in that
+ *     directive, and `'unsafe-inline'` is what allows style attributes. Nonceing
+ *     the picker's stylesheet therefore switched off every inline style in the
+ *     preview — the one thing the visual editor writes. The element kept its
+ *     attribute, the browser dropped the declarations, and a heading set to
+ *     align left simply did not move. Asserting the attribute is set is not
+ *     enough; the policy that decides whether it does anything is the claim.
  *
  * No database, no network, no key.
  *   npx tsx checks/websiteVisual.ts
@@ -55,6 +64,28 @@ function check(name: string, condition: boolean, detail?: string) {
 const pages = readdirSync(siteRoot)
   .filter((name) => name.endsWith(".html"))
   .sort();
+
+console.log("\nWhat the preview's own policy allows");
+{
+  const home = readFileSync(join(siteRoot, "index.html"), "utf8");
+  const fields = readPage(home).fields;
+  const picking = previewDocument(home, "https://dakyworld.com", fields).csp;
+  const plain = previewDocument(home, "https://dakyworld.com").csp;
+
+  const styleSrc = picking.split(";").map((d) => d.trim()).find((d) => /^style-src\b/i.test(d)) ?? "";
+  const styleAttr = picking.split(";").map((d) => d.trim()).find((d) => /^style-src-attr\b/i.test(d)) ?? "";
+  const nonced = /'nonce-/.test(styleSrc);
+
+  check(
+    "a style attribute is allowed in the preview the editor writes into",
+    !nonced || /'unsafe-inline'/.test(styleAttr),
+    `style-src carries a nonce, which makes 'unsafe-inline' in it inert, and style-src-attr does not put attributes back: ${styleAttr || "(absent)"}`,
+  );
+  check("the picker's own stylesheet still runs on its nonce", /'nonce-/.test(styleSrc));
+  check("the plain preview is not given a nonce at all", !/'nonce-/.test(plain), plain);
+  check("nothing is framed but the editor", /frame-ancestors 'self'/.test(picking));
+  check("and a preview of the contact page cannot send anything", /form-action 'none'/.test(picking));
+}
 
 console.log("\nMarking every editable element");
 for (const name of pages) {

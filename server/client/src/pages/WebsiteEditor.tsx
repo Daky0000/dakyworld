@@ -309,6 +309,9 @@ export function WebsiteEditor() {
   const [mode, setMode] = useState<Mode>("visual");
   /** The field the person clicked in the preview. */
   const [pickedId, setPickedId] = useState<string | null>(null);
+  /** The same, readable from listeners that must not be re-registered. */
+  const pickedRef = useRef<string | null>(null);
+  pickedRef.current = pickedId;
   /** The field being typed into, on the page itself. */
   const [typingId, setTypingId] = useState<string | null>(null);
   /** Fields the frame has no element for, so nothing can be shown live. */
@@ -397,11 +400,75 @@ export function WebsiteEditor() {
     frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", ...message }, "*");
   }, []);
 
-  // A push the frame never answers means the live channel is not working. One
-  // unanswered push is enough to stop relying on it.
+  /**
+   * Write into the page directly.
+   *
+   * The frame is same-origin, so this does not need a message at all — and a
+   * message is the part that was going wrong. A `postMessage` can be dropped by
+   * things outside this codebase; setting an attribute on a node the editor is
+   * holding cannot. So the direct write is the way this works, and the message
+   * stays as the fallback for the day a preview is served from the site's own
+   * origin and `contentDocument` is null.
+   *
+   * Returns what happened, because the three answers need different things:
+   * written, no element to write on, or no reachable document.
+   */
+  const writeInFrame = useCallback((kind: "style" | "text" | "select", id: string | null, value?: string): "written" | "absent" | "unreachable" => {
+    let doc: Document | null = null;
+    try {
+      doc = frame.current?.contentDocument ?? null;
+    } catch {
+      doc = null; // cross-origin one day
+    }
+    if (!doc || !doc.body) return "unreachable";
+
+    if (kind === "select") {
+      const was = doc.querySelector("[data-dw-selected]");
+      if (was) was.removeAttribute("data-dw-selected");
+      if (!id) return "written";
+      const el = doc.querySelector(`[data-dw-field="${id.replace(/"/g, "")}"]`);
+      if (!el) return "absent";
+      el.setAttribute("data-dw-selected", "");
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      return "written";
+    }
+
+    if (!id) return "absent";
+    const el = doc.querySelector(`[data-dw-field="${id.replace(/"/g, "")}"]`);
+    if (!el) return "absent";
+
+    if (kind === "style") {
+      if (value) el.setAttribute("style", value);
+      else el.removeAttribute("style");
+      return "written";
+    }
+    // Never over the top of the caret: the page is editable in place.
+    if (!el.hasAttribute("data-dw-editing")) el.innerHTML = value ?? "";
+    return "written";
+  }, []);
+
+  /**
+   * Show a change on the page now, and know whether that worked.
+   *
+   * The direct write settles it in the same tick. Only when the document is out
+   * of reach does this fall back to a message and wait to be told — and a push
+   * that goes unanswered means the live channel is not working, so the editor
+   * says so and starts leaning on the reload instead.
+   */
   const push = useCallback(
-    (message: Record<string, unknown>) => {
-      tell(message);
+    (kind: "style" | "text", id: string, value: string) => {
+      const result = writeInFrame(kind, id, value);
+      if (result === "written") {
+        awaiting.current = 0;
+        setLiveBlind(false);
+        return;
+      }
+      if (result === "absent") {
+        needsReload.current = true;
+        setAbsentIds((current) => (current.has(id) ? current : new Set(current).add(id)));
+        return;
+      }
+      tell(kind === "style" ? { type: "style", id, style: value } : { type: "text", id, html: value });
       awaiting.current += 1;
       const at = awaiting.current;
       window.setTimeout(() => {
@@ -410,15 +477,15 @@ export function WebsiteEditor() {
         setLiveBlind(true);
       }, 900);
     },
-    [tell],
+    [tell, writeInFrame],
   );
 
   const pick = useCallback(
     (id: string | null) => {
       setPickedId(id);
-      tell({ type: "select", id });
+      if (writeInFrame("select", id) === "unreachable") tell({ type: "select", id });
     },
-    [tell],
+    [tell, writeInFrame],
   );
 
   const change = useCallback(
@@ -429,8 +496,8 @@ export function WebsiteEditor() {
       // Push what the frame can show straight into it, so the page changes
       // while the slider is still moving rather than after the next save.
       if (!options?.fromFrame) {
-        if (next.style !== undefined) push({ type: "style", id: fieldId, style: next.style });
-        if (next.value !== undefined) push({ type: "text", id: fieldId, html: next.value });
+        if (next.style !== undefined) push("style", fieldId, next.style);
+        if (next.value !== undefined) push("text", fieldId, next.value);
       }
       setEdits((current) => {
         const updated = { ...current, [fieldId]: next };
@@ -456,7 +523,11 @@ export function WebsiteEditor() {
         awaiting.current = 0;
         setLiveBlind(false);
       } else if (data.type === "ready") {
+        // A reloaded frame carries the saved draft but no selection, and the
+        // outline is how somebody knows which thing the panel is talking about.
         awaiting.current = 0;
+        setLiveBlind(false);
+        window.setTimeout(() => writeInFrame("select", pickedRef.current), 0);
       } else if (data.type === "editing") {
         setTypingId(data.id ?? null);
         if (!data.id) setFrameEdit((token) => token + 1);
@@ -485,7 +556,7 @@ export function WebsiteEditor() {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [commitHistory]);
+  }, [commitHistory, writeInFrame]);
 
   /* --------------------------------------------------------- server state */
 
@@ -544,7 +615,7 @@ export function WebsiteEditor() {
     // When the frame cannot be pushed to, the save is the only thing that will
     // ever show somebody their own change, so it stops being a background
     // convenience and becomes the thing they are waiting for.
-    const timer = setTimeout(() => saveNow(edits), liveBlind ? 600 : 1200);
+    const timer = setTimeout(() => saveNow(edits), liveBlind || needsReload.current ? 500 : 1200);
     return () => clearTimeout(timer);
   }, [edits, saveNow, liveBlind]);
 

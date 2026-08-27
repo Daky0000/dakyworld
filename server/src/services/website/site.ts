@@ -354,17 +354,29 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   // own inline scripts stay forbidden, and only this one runs.
   const nonce = randomBytes(16).toString("base64");
   const withPicker = out.replace(/<\/body>/i, `${pickerAssets(nonce)}</body>`);
-  const picking = policy
-    .split(";")
-    .map((directive) => directive.trim())
-    .map((directive) =>
-      /^script-src\b/i.test(directive)
-        ? `${directive} 'nonce-${nonce}'`
-        : /^style-src\b/i.test(directive)
+  const picking =
+    policy
+      .split(";")
+      .map((directive) => directive.trim())
+      .map((directive) =>
+        /^script-src\b/i.test(directive)
           ? `${directive} 'nonce-${nonce}'`
-          : directive,
-    )
-    .join("; ");
+          : /^style-src\b/i.test(directive)
+            ? `${directive} 'nonce-${nonce}'`
+            : directive,
+      )
+      .join("; ") +
+    // A nonce anywhere in `style-src` makes the browser ignore 'unsafe-inline'
+    // in it — and 'unsafe-inline' is what permits a `style=""` attribute. So
+    // nonce-ing the picker's own stylesheet quietly switched off every inline
+    // style in the page, which is the one thing this editor writes. The element
+    // kept the attribute and the browser threw the declarations away: a heading
+    // set to align left simply did not move, with nothing on screen to say why.
+    //
+    // `style-src-attr` is the directive that governs attributes on their own.
+    // Naming it puts them back without loosening `<style>` elements, which stay
+    // nonce-only.
+    "; style-src-attr 'unsafe-inline'";
 
   return { html: withPicker === out ? out + pickerAssets(nonce) : withPicker, csp: picking };
 }

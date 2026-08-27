@@ -1904,6 +1904,17 @@ reach the page title, a picture's description, or a heading three screens down.
   `attrInsert` under `?pick=1`; the frame posts up which one was clicked. The
   ids are positional, so working them out on the other side of the frame would
   be a second `readPage` that has to agree with the first for ever.
+- **A nonce in `style-src` switches off every `style=""` attribute in the page,**
+  and that attribute is the only thing this editor writes. `'unsafe-inline'` is
+  what permits style attributes, and a nonce anywhere in the directive makes a
+  browser ignore it — so nonceing the picker's own stylesheet silently disabled
+  the feature. The element kept the attribute and the browser dropped the
+  declarations: a heading set to align left did not move, with nothing on screen
+  to say why. `style-src-attr 'unsafe-inline'` puts attributes back without
+  loosening `<style>` elements, and `checks/websiteVisual.ts` now asserts it.
+  **Asserting that the editor set the attribute is not a test of anything** —
+  four rounds of green tests did exactly that while the feature was dead. Assert
+  the computed style.
 - **The picker's script and styles carry a nonce the response's CSP names**, so
   the page's own inline scripts stay forbidden and only this one runs. Clicks
   are swallowed rather than followed, for the same reason `form-action` is
