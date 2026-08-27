@@ -313,6 +313,18 @@ export function WebsiteEditor() {
   const [typingId, setTypingId] = useState<string | null>(null);
   /** Fields the frame has no element for, so nothing can be shown live. */
   const [absentIds, setAbsentIds] = useState<Set<string>>(new Set());
+  /**
+   * True once a push has gone unanswered.
+   *
+   * Everything here rests on the frame acting on what it is sent, and there is
+   * no way to prove from this side that it did. So the frame acknowledges, and
+   * a push with no acknowledgement means the live channel is not working —
+   * whatever the reason. The editor stops pretending it is: it says so, and
+   * falls back to reloading the frame after each save, which is slower but
+   * always right.
+   */
+  const [liveBlind, setLiveBlind] = useState(false);
+  const awaiting = useRef(0);
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [device, setDevice] = useState<Device>("desktop");
   const [previewToken, setPreviewToken] = useState(0);
@@ -385,6 +397,22 @@ export function WebsiteEditor() {
     frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", ...message }, "*");
   }, []);
 
+  // A push the frame never answers means the live channel is not working. One
+  // unanswered push is enough to stop relying on it.
+  const push = useCallback(
+    (message: Record<string, unknown>) => {
+      tell(message);
+      awaiting.current += 1;
+      const at = awaiting.current;
+      window.setTimeout(() => {
+        if (awaiting.current !== at) return; // something was acknowledged since
+        needsReload.current = true;
+        setLiveBlind(true);
+      }, 900);
+    },
+    [tell],
+  );
+
   const pick = useCallback(
     (id: string | null) => {
       setPickedId(id);
@@ -401,8 +429,8 @@ export function WebsiteEditor() {
       // Push what the frame can show straight into it, so the page changes
       // while the slider is still moving rather than after the next save.
       if (!options?.fromFrame) {
-        if (next.style !== undefined) tell({ type: "style", id: fieldId, style: next.style });
-        if (next.value !== undefined) tell({ type: "text", id: fieldId, html: next.value });
+        if (next.style !== undefined) push({ type: "style", id: fieldId, style: next.style });
+        if (next.value !== undefined) push({ type: "text", id: fieldId, html: next.value });
       }
       setEdits((current) => {
         const updated = { ...current, [fieldId]: next };
@@ -410,7 +438,7 @@ export function WebsiteEditor() {
         return updated;
       });
     },
-    [commitHistory, tell],
+    [commitHistory, push],
   );
 
   // The frame talks back: which element was clicked, which one is being typed
@@ -423,6 +451,12 @@ export function WebsiteEditor() {
       if (data?.source !== "dakyworld-preview") return;
       if (data.type === "select") {
         setPickedId(data.id ?? null);
+      } else if (data.type === "applied") {
+        // The channel is alive after all.
+        awaiting.current = 0;
+        setLiveBlind(false);
+      } else if (data.type === "ready") {
+        awaiting.current = 0;
       } else if (data.type === "editing") {
         setTypingId(data.id ?? null);
         if (!data.id) setFrameEdit((token) => token + 1);
@@ -507,9 +541,12 @@ export function WebsiteEditor() {
   // the case where it does.
   useEffect(() => {
     if (!dirty.current) return;
-    const timer = setTimeout(() => saveNow(edits), 1200);
+    // When the frame cannot be pushed to, the save is the only thing that will
+    // ever show somebody their own change, so it stops being a background
+    // convenience and becomes the thing they are waiting for.
+    const timer = setTimeout(() => saveNow(edits), liveBlind ? 600 : 1200);
     return () => clearTimeout(timer);
-  }, [edits, saveNow]);
+  }, [edits, saveNow, liveBlind]);
 
   useEffect(() => {
     const onLeave = (event: BeforeUnloadEvent) => {
@@ -832,6 +869,13 @@ export function WebsiteEditor() {
                 </button>
               )}
             </div>
+
+            {liveBlind && (
+              <p className="flex-none border-b border-line bg-amber-50 px-4 py-2 text-[11px] leading-relaxed text-amber-900">
+                The page beside this is not keeping up as you type. Your changes are being saved — it will catch up a moment
+                after each one.
+              </p>
+            )}
 
             <LayerList sections={sections} edits={edits} problems={problems} pickedId={pickedId} onPick={pick} />
 

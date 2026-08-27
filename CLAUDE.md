@@ -1870,6 +1870,15 @@ reach the page title, a picture's description, or a heading three screens down.
   minute or two to rebuild.** Until it has, a publish that worked looks exactly
   like one that did nothing. The banner says so, the page query is re-invalidated
   at 20s, 45s and 90s, and the circular arrow in the bar looks again on demand.
+- **The frame acknowledges every push, and silence is a fact.** A push that was
+  applied and a push that never arrived look identical from this side, and one
+  of them leaves somebody typing into a page that never changes — which is
+  exactly how it was reported. The frame answers `applied`; a push with no
+  answer inside 900ms sets `liveBlind`, which says so in the panel, sets
+  `needsReload`, and shortens the autosave to 600ms so the reload becomes the
+  thing that shows somebody their own change. It is slower than the live push
+  and it is always right, which is the correct trade when the fast path has
+  stopped working for a reason nobody has found yet.
 - **A push the frame cannot land is said out loud.** An `absent` reply marks the
   field in the panel — "not on the page itself" for the title and description,
   "appears once the draft saves" for the rest — because an edit that changes

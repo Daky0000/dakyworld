@@ -604,14 +604,19 @@ function pickerAssets(nonce: string): string {
       if (!styled) { post({ type: "absent", id: data.id, want: "style" }); return; }
       if (data.style) styled.setAttribute("style", String(data.style));
       else styled.removeAttribute("style");
+      post({ type: "applied", id: data.id, want: "style" });
     } else if (data.type === "text") {
       var written = find(data.id);
       if (!written) { post({ type: "absent", id: data.id, want: "text" }); return; }
       // Never while it is being typed into: that would move the caret.
       if (written !== editing) written.innerHTML = String(data.html == null ? "" : data.html);
+      post({ type: "applied", id: data.id, want: "text" });
     }
   });
+  // Announced after the listener above exists, and again on load, because an
+  // editor that pushed before this point would have pushed into nothing.
   post({ type: "ready" });
+  if (document.readyState !== "complete") window.addEventListener("load", function () { post({ type: "ready" }); });
 })();
 </script>`;
 }
