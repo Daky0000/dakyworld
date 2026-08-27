@@ -3,18 +3,32 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError, apiUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SitePageDetail } from "../lib/types";
+import type { DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { StylePanel } from "../components/StylePanel";
 
 /**
- * One page, as a list of things that can be changed.
+ * One page of the website, open at full size, with everything about the thing
+ * you clicked on the left.
  *
  * The design of the page is not editable here and that is the point. What a
  * client gets is every heading, paragraph, button, link and picture with a plain
  * label on it — "Main heading", not "h1" — grouped under the section it appears
  * in, with the section named after its own heading. Nobody has to know what a
  * `<div>` is, and nobody can break the layout by editing one.
+ *
+ * Three things make it feel like editing the page rather than filling in a form
+ * about the page, and all three are worth keeping:
+ *
+ *  1. **The page fills the screen.** Not a card in a column — the editor takes
+ *     the whole window under the header, and the panel sits beside it.
+ *  2. **You type on the page.** Double click any words and the caret is in
+ *     them, at the real size, in the real typeface. The boxes in the panel are
+ *     the way to reach a field with nothing visible to click — the page title,
+ *     a picture's description — not the main way in.
+ *  3. **Changes show while you make them.** Text and style are pushed straight
+ *     into the frame, so a colour changes while the slider is still moving. The
+ *     frame only reloads for the few edits that cannot be pushed.
  *
  * Saving and publishing are deliberately two different actions. Saving is
  * private and automatic; publishing commits the page and changes what the world
@@ -34,9 +48,8 @@ type Device = (typeof DEVICES)[number]["key"];
  *
  * **Visual** is point at the thing you mean. **List** is the form — every
  * field on the page under the section it belongs to, which is the only view
- * that can answer "did I miss anything" and the only one that reaches a field
- * with nothing visible to click (the page title, the description). **Preview**
- * is the page as it will be, with no editor furniture on it at all.
+ * that can answer "did I miss anything". **Preview** is the page as it will be,
+ * with no editor furniture on it at all.
  */
 type Mode = "visual" | "edit" | "preview";
 
@@ -48,6 +61,9 @@ const MODES: { key: Mode; label: string }[] = [
 
 const INPUT =
   "w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue focus:ring-2 focus:ring-blue/20";
+
+/** Fields whose value the frame can push and be pushed; everything else reloads. */
+const LIVE_KEYS = new Set(["value", "style"]);
 
 /**
  * A field with formatting inside it.
@@ -146,9 +162,7 @@ function FieldRow({
         </div>
       )}
 
-      {field.kind === "richtext" && (
-        <RichText html={value} onChange={(next) => onChange({ ...edit, value: next })} />
-      )}
+      {field.kind === "richtext" && <RichText html={value} onChange={(next) => onChange({ ...edit, value: next })} />}
 
       {field.kind === "text" && (
         <textarea
@@ -161,7 +175,7 @@ function FieldRow({
       )}
 
       {field.kind === "link" && (
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className={`grid gap-2 ${bare ? "" : "sm:grid-cols-2"}`}>
           <label className="block">
             <span className="mb-1 block text-xs text-muted">Words on the link</span>
             <input
@@ -185,7 +199,7 @@ function FieldRow({
       )}
 
       {field.kind === "image" && (
-        <div className="flex flex-wrap items-start gap-4">
+        <div className={`flex flex-wrap items-start gap-4 ${bare ? "flex-col" : ""}`}>
           {imageSrc && (
             <img
               src={imageSrc}
@@ -194,7 +208,7 @@ function FieldRow({
               onError={(event) => ((event.target as HTMLImageElement).style.visibility = "hidden")}
             />
           )}
-          <div className="min-w-[240px] flex-1 space-y-2">
+          <div className={`space-y-2 ${bare ? "w-full" : "min-w-[240px] flex-1"}`}>
             <label className="block">
               <span className="mb-1 block text-xs text-muted">Picture file</span>
               <input
@@ -205,9 +219,7 @@ function FieldRow({
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs text-muted">
-                Description, for somebody who cannot see it
-              </span>
+              <span className="mb-1 block text-xs text-muted">Description, for somebody who cannot see it</span>
               <input
                 className={INPUT}
                 value={alt}
@@ -227,191 +239,62 @@ function FieldRow({
 }
 
 /**
- * Point at the thing you mean.
+ * Everything on the page, in the order it appears on it.
  *
- * The preview already renders the page with the unpublished draft in it; all
- * this adds is that the server marks every editable element on the way out
- * (`?pick=1`), the frame posts up which one was clicked, and the panel beside
- * it edits that one. No drag and drop, nothing moves, nothing is added or
- * deleted — the file is somebody's hand-written HTML and the whole module is a
- * splice at recorded offsets. What changes is only ever what a person selected.
- *
- * The ids come from the server's own parse rather than being worked out in the
- * browser, because they are positional; a second implementation on this side
- * would have to agree with the first for ever, and the day it stopped agreeing
- * an edit would land in the wrong element.
+ * The visual editor can only reach what is visible; this is how you get to the
+ * page title, a picture's description, or a heading that is three screens down.
+ * It is also the only place that can answer "have I missed anything", which is
+ * why the edited marks are on it.
  */
-function VisualEditor({
-  pageId,
-  previewToken,
-  device,
-  onDevice,
-  frame,
-  fields,
-  picked,
-  pickedId,
-  onPick,
+function LayerList({
+  sections,
   edits,
   problems,
-  publicUrl,
-  readOnly,
-  loadToken,
-  onChange,
+  pickedId,
+  onPick,
 }: {
-  pageId: string;
-  previewToken: number;
-  device: Device;
-  onDevice: (device: Device) => void;
-  frame: React.MutableRefObject<HTMLIFrameElement | null>;
-  fields: SiteFieldRow[];
-  picked: SiteFieldRow | null;
-  pickedId: string | null;
-  onPick: (id: string | null) => void;
+  sections: SiteSectionRow[];
   edits: Record<string, FieldEdit>;
   problems: Map<string, string>;
-  publicUrl: string;
-  readOnly: boolean;
-  loadToken: number;
-  onChange: (fieldId: string, next: FieldEdit) => void;
+  pickedId: string | null;
+  onPick: (id: string) => void;
 }) {
-  // The frame is same-origin but talked to by message anyway: it is the only
-  // channel that keeps working if the preview is ever served from the site's
-  // own origin instead, which is where this is heading for client sites.
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data as { source?: string; type?: string; id?: string | null };
-      if (data?.source !== "dakyworld-preview") return;
-      if (data.type === "select") onPick(data.id ?? null);
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [onPick]);
-
-  const tell = (id: string | null) => {
-    frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", type: "select", id }, "*");
-  };
-
-  const edit = pickedId ? (edits[pickedId] ?? {}) : {};
-  const style = edit.style ?? picked?.style ?? "";
-
   return (
-    <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
-      <div>
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          {DEVICES.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              onClick={() => onDevice(option.key)}
-              className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] ${
-                device === option.key ? "border-ink bg-ink text-cream" : "border-ink/20 text-ink/60 hover:border-ink/40"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-          <span className="ml-1 text-xs text-muted">
-            {picked ? `Editing the ${picked.label.toLowerCase()}.` : "Click anything on the page to edit it."}
-          </span>
-        </div>
-
-        <div className="flex justify-center overflow-hidden rounded-2xl border border-line bg-cream p-4">
-          <iframe
-            ref={frame}
-            key={`${previewToken}-${device}`}
-            title="Page"
-            src={apiUrl(`/website/pages/${pageId}/preview?pick=1&v=${previewToken}`)}
-            style={{ width: DEVICES.find((option) => option.key === device)!.width }}
-            className="h-[72vh] rounded-xl border border-line bg-white"
-          />
-        </div>
-      </div>
-
-      <aside className="xl:sticky xl:top-6 xl:self-start">
-        <div className="rounded-2xl border border-line bg-white p-4">
-          {!picked ? (
-            <div className="py-6 text-center">
-              <p className="text-sm font-semibold text-ink">Nothing selected</p>
-              <p className="mt-1 text-xs text-muted">
-                Click a heading, a paragraph, a button or a picture in the page. Its words and its look appear here.
-              </p>
-              <p className="mt-4 text-[11px] text-muted">
-                {fields.length} editable {fields.length === 1 ? "thing" : "things"} on this page.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="mb-3 flex items-start justify-between gap-2 border-b border-line pb-3">
-                <div className="min-w-0">
-                  <div className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{picked.tag}</div>
-                  <h3 className="truncate font-display text-base tracking-[-.02em]">{picked.label}</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onPick(null);
-                    tell(null);
-                  }}
-                  className="shrink-0 text-[11px] text-muted transition hover:text-ink"
-                >
-                  Clear
-                </button>
-              </div>
-
-              <FieldRow
-                key={`${loadToken}:${picked.id}`}
-                field={picked}
-                edit={edits[picked.id]}
-                problem={problems.get(picked.id)}
-                publicUrl={publicUrl}
-                readOnly={readOnly}
-                onChange={(next) => onChange(picked.id, next)}
-                bare
-              />
-
-              <div className="mt-4 border-t border-line pt-4">
-                <div className="mb-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Look</div>
-                <StylePanel
-                  style={style}
-                  readOnly={readOnly}
-                  onChange={(next) => onChange(picked.id, { ...edits[picked.id], style: next })}
-                  onReset={() => onChange(picked.id, { ...edits[picked.id], style: "" })}
-                />
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* The list of everything, so a field with nothing visible to click —
-            and anything scrolled far off screen — is still reachable. */}
-        <details className="mt-3 rounded-2xl border border-line bg-white p-4">
-          <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-[.1em] text-muted">
-            Everything on this page
-          </summary>
-          <ul className="mt-3 max-h-72 space-y-0.5 overflow-y-auto">
-            {fields.map((field) => (
-              <li key={field.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onPick(field.id);
-                    tell(field.id);
-                  }}
-                  className={`flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-xs ${
-                    field.id === pickedId ? "bg-ink text-cream" : "text-ink hover:bg-ink/[.04]"
-                  }`}
-                >
-                  <span className={`shrink-0 font-mono text-[9px] uppercase ${field.id === pickedId ? "text-cream/60" : "text-muted"}`}>
-                    {field.tag}
-                  </span>
-                  <span className="truncate">{field.preview || field.label}</span>
-                  {edits[field.id] && <span className="ml-auto shrink-0 text-[9px]">●</span>}
-                </button>
-              </li>
-            ))}
+    <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+      {sections.map((section) => (
+        <div key={section.id} className="mb-2">
+          <div className="px-2 pb-1 pt-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-ink/35">{section.label}</div>
+          <ul>
+            {section.fields.map((field) => {
+              const picked = field.id === pickedId;
+              const changed = edits[field.id] !== undefined && Object.keys(edits[field.id]!).length > 0;
+              return (
+                <li key={field.id}>
+                  <button
+                    type="button"
+                    onClick={() => onPick(field.id)}
+                    title={field.label}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] transition ${
+                      picked ? "bg-blue/10 text-ink" : "text-ink/80 hover:bg-ink/[.04] hover:text-ink"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded font-mono text-[8px] uppercase ${
+                        picked ? "bg-blue text-white" : "bg-ink/[.06] text-ink/45"
+                      }`}
+                    >
+                      {field.kind === "image" ? "▣" : field.kind === "link" ? "↗" : "T"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{field.preview || field.label}</span>
+                    {problems.has(field.id) && <span className="shrink-0 text-[9px] text-amber-600">!</span>}
+                    {changed && <span className="shrink-0 text-[9px] text-blue">●</span>}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
-        </details>
-      </aside>
+        </div>
+      ))}
     </div>
   );
 }
@@ -426,6 +309,8 @@ export function WebsiteEditor() {
   const [mode, setMode] = useState<Mode>("visual");
   /** The field the person clicked in the preview. */
   const [pickedId, setPickedId] = useState<string | null>(null);
+  /** The field being typed into, on the page itself. */
+  const [typingId, setTypingId] = useState<string | null>(null);
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [device, setDevice] = useState<Device>("desktop");
   const [previewToken, setPreviewToken] = useState(0);
@@ -433,12 +318,123 @@ export function WebsiteEditor() {
   const [failure, setFailure] = useState<string | null>(null);
   /** Bumped when the server's copy replaces local state, to remount the uncontrolled fields. */
   const [loadToken, setLoadToken] = useState(0);
+  /** Bumped when the page finishes handing typing back, so the panel's box catches up. */
+  const [frameEdit, setFrameEdit] = useState(0);
   const dirty = useRef(false);
+  /** An edit the frame cannot be told about — a link's destination, a picture. */
+  const needsReload = useRef(false);
 
   const page = useQuery({
     queryKey: ["website", "page", pageId],
     queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`),
   });
+
+  /* ------------------------------------------------------------- history */
+
+  // Undo is over the whole draft, not per field: one Ctrl+Z should take back
+  // the thing that just happened, and "the thing that just happened" is as
+  // likely to be a colour as a word. Snapshots are cheap — a draft is a handful
+  // of short strings — so the simple version is the right one.
+  const history = useRef<{ list: string[]; index: number }>({ list: ["{}"], index: 0 });
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
+  const restoring = useRef(false);
+  const commitTimer = useRef<number | null>(null);
+
+  const syncHistoryButtons = () => {
+    const { list, index } = history.current;
+    setHistoryState({ canUndo: index > 0, canRedo: index < list.length - 1 });
+  };
+
+  const commitHistory = useCallback((values: Record<string, FieldEdit>) => {
+    if (restoring.current) return;
+    if (commitTimer.current !== null) {
+      window.clearTimeout(commitTimer.current);
+      commitTimer.current = null;
+    }
+    const snapshot = JSON.stringify(values);
+    const state = history.current;
+    if (state.list[state.index] === snapshot) return;
+    state.list = state.list.slice(0, state.index + 1);
+    state.list.push(snapshot);
+    if (state.list.length > 60) state.list.shift();
+    state.index = state.list.length - 1;
+    syncHistoryButtons();
+  }, []);
+
+  // Typing is continuous; a keystroke is not a step. Discrete actions call
+  // `commitHistory` directly and this only catches what nothing else did.
+  useEffect(() => {
+    if (restoring.current) return;
+    if (commitTimer.current !== null) window.clearTimeout(commitTimer.current);
+    commitTimer.current = window.setTimeout(() => commitHistory(edits), 550);
+    return () => {
+      if (commitTimer.current !== null) window.clearTimeout(commitTimer.current);
+    };
+  }, [edits, commitHistory]);
+
+  /* ------------------------------------------------------------ the frame */
+
+  const tell = useCallback((message: Record<string, unknown>) => {
+    frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", ...message }, "*");
+  }, []);
+
+  const pick = useCallback(
+    (id: string | null) => {
+      setPickedId(id);
+      tell({ type: "select", id });
+    },
+    [tell],
+  );
+
+  const change = useCallback(
+    (fieldId: string, next: FieldEdit, options?: { fromFrame?: boolean; commit?: boolean }) => {
+      dirty.current = true;
+      setPublished(null);
+      if (Object.keys(next).some((key) => !LIVE_KEYS.has(key))) needsReload.current = true;
+      // Push what the frame can show straight into it, so the page changes
+      // while the slider is still moving rather than after the next save.
+      if (!options?.fromFrame) {
+        if (next.style !== undefined) tell({ type: "style", id: fieldId, style: next.style });
+        if (next.value !== undefined) tell({ type: "text", id: fieldId, html: next.value });
+      }
+      setEdits((current) => {
+        const updated = { ...current, [fieldId]: next };
+        if (options?.commit) commitHistory(updated);
+        return updated;
+      });
+    },
+    [commitHistory, tell],
+  );
+
+  // The frame talks back: which element was clicked, which one is being typed
+  // into, and what has been typed. It is same-origin but talked to by message
+  // anyway — that is the only channel that keeps working if the preview is ever
+  // served from the site's own origin, which is where this is heading.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { source?: string; type?: string; id?: string | null; html?: string; final?: boolean };
+      if (data?.source !== "dakyworld-preview") return;
+      if (data.type === "select") {
+        setPickedId(data.id ?? null);
+      } else if (data.type === "editing") {
+        setTypingId(data.id ?? null);
+        if (!data.id) setFrameEdit((token) => token + 1);
+      } else if (data.type === "text" && data.id) {
+        const id = data.id;
+        setEdits((current) => {
+          const updated = { ...current, [id]: { ...current[id], value: data.html ?? "" } };
+          if (data.final) commitHistory(updated);
+          return updated;
+        });
+        dirty.current = true;
+        setPublished(null);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [commitHistory]);
+
+  /* --------------------------------------------------------- server state */
 
   // The draft on the server is the starting point, and it is authoritative
   // whenever the page is loaded — including after a publish, which clears it.
@@ -447,6 +443,8 @@ export function WebsiteEditor() {
     setEdits(page.data.draft.values);
     setLoadToken((token) => token + 1);
     dirty.current = false;
+    history.current = { list: [JSON.stringify(page.data.draft.values)], index: 0 };
+    syncHistoryButtons();
     setSectionId((current) => current ?? page.data.sections[0]?.id ?? null);
   }, [page.data]);
 
@@ -454,7 +452,12 @@ export function WebsiteEditor() {
     mutationFn: (values: Record<string, FieldEdit>) => api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, { values }),
     onSuccess: () => {
       dirty.current = false;
-      setPreviewToken((token) => token + 1);
+      // Only when something changed that the frame could not be told about —
+      // reloading it would throw away the scroll position and the caret.
+      if (needsReload.current) {
+        needsReload.current = false;
+        setPreviewToken((token) => token + 1);
+      }
       void qc.invalidateQueries({ queryKey: ["website", "sites"] });
     },
   });
@@ -485,11 +488,58 @@ export function WebsiteEditor() {
     return () => window.removeEventListener("beforeunload", onLeave);
   }, []);
 
+  const restore = useCallback(
+    (step: number) => {
+      const state = history.current;
+      const index = state.index + step;
+      if (index < 0 || index >= state.list.length) return;
+      restoring.current = true;
+      state.index = index;
+      const values = JSON.parse(state.list[index]!) as Record<string, FieldEdit>;
+      setEdits(values);
+      dirty.current = true;
+      setLoadToken((token) => token + 1);
+      // Everything is back to a state the frame has not been told about.
+      needsReload.current = true;
+      setPreviewToken((token) => token + 1);
+      syncHistoryButtons();
+      window.setTimeout(() => {
+        restoring.current = false;
+      }, 0);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const inField = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if ((event.ctrlKey || event.metaKey) && (event.key === "z" || event.key === "Z") && !inField) {
+        event.preventDefault();
+        restore(event.shiftKey ? 1 : -1);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && (event.key === "y" || event.key === "Y") && !inField) {
+        event.preventDefault();
+        restore(1);
+        return;
+      }
+      if (event.key === "Escape" && !inField) {
+        tell({ type: "stopEdit" });
+        pick(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [restore, pick, tell]);
+
   const discard = useMutation({
     mutationFn: () => api.delete(`/website/pages/${pageId}/draft`),
     onSuccess: () => {
       setEdits({});
       dirty.current = false;
+      history.current = { list: ["{}"], index: 0 };
+      syncHistoryButtons();
       setPreviewToken((token) => token + 1);
       void qc.invalidateQueries({ queryKey: ["website"] });
     },
@@ -502,6 +552,9 @@ export function WebsiteEditor() {
       setPublished(result);
       setEdits({});
       dirty.current = false;
+      history.current = { list: ["{}"], index: 0 };
+      syncHistoryButtons();
+      setPreviewToken((token) => token + 1);
       void qc.invalidateQueries({ queryKey: ["website"] });
     },
     onError: (err) => {
@@ -513,22 +566,16 @@ export function WebsiteEditor() {
     },
   });
 
-  const change = (fieldId: string, next: FieldEdit) => {
-    dirty.current = true;
-    setPublished(null);
-    setEdits((current) => ({ ...current, [fieldId]: next }));
-  };
-
   const problems = useMemo(() => {
     const map = new Map<string, string>();
     for (const problem of save.data?.problems ?? page.data?.problems ?? []) map.set(problem.id, problem.reason);
     return map;
   }, [save.data, page.data]);
 
-  if (page.isLoading) return <div className="text-sm text-muted">Opening the page…</div>;
+  if (page.isLoading) return <div className="p-10 text-sm text-muted">Opening the page…</div>;
   if (page.isError) {
     return (
-      <div className="rounded-2xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900">
+      <div className="m-10 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900">
         {page.error instanceof ApiError ? page.error.message : "That page could not be opened."}
       </div>
     );
@@ -542,6 +589,7 @@ export function WebsiteEditor() {
   const changedCount = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length;
   const canPublish = can("website.publish");
   const readOnly = !can("website.edit");
+  const pickedStyle = pickedId ? (edits[pickedId]?.style ?? picked?.style ?? "") : "";
 
   const status = save.isPending
     ? "Saving…"
@@ -551,27 +599,93 @@ export function WebsiteEditor() {
         ? `${changedCount} unpublished change${changedCount === 1 ? "" : "s"}`
         : "Everything published";
 
+  const frameWidth = DEVICES.find((option) => option.key === device)!.width;
+
+  const canvas = (
+    <div className="min-h-0 flex-1 overflow-auto bg-cream p-4">
+      <div className="mx-auto h-full" style={{ width: frameWidth, maxWidth: "100%" }}>
+        <iframe
+          ref={mode === "visual" ? frame : undefined}
+          key={`${mode}-${previewToken}-${device}`}
+          title="Page"
+          src={apiUrl(`/website/pages/${pageId}/preview?${mode === "visual" ? "pick=1&" : ""}v=${previewToken}`)}
+          className="h-full min-h-[400px] w-full rounded-xl border border-line bg-white shadow-sm shadow-ink/5"
+        />
+      </div>
+    </div>
+  );
+
   return (
-    <div>
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-line pb-5">
-        <div>
-          <Link to="/website" className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
-            ← All pages
-          </Link>
-          <h1 className="mt-2 font-display text-2xl tracking-[-.03em]">{page.data.page.title}</h1>
-          <p className="mt-1 text-xs text-muted">
-            <span className="font-mono">{page.data.page.path}</span> · read from the {page.data.readFrom}
+    <div className="flex h-full min-h-0 flex-col">
+      {/* ------------------------------------------------------------ bar */}
+      <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-white px-4 py-2.5">
+        <Link to="/website" className="shrink-0 text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
+          ← All pages
+        </Link>
+        <div className="min-w-0">
+          <div className="truncate font-display text-sm tracking-[-.02em]">{page.data.page.title}</div>
+          <div className="truncate text-[10px] text-muted">
+            <span className="font-mono">{page.data.page.path}</span>
             {page.data.draft.savedAt && (
               <>
-                {" "}
-                · saved <RelativeTime value={page.data.draft.savedAt} />
+                {" · saved "}
+                <RelativeTime value={page.data.draft.savedAt} />
               </>
             )}
-          </p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`text-xs ${dirty.current || changedCount > 0 ? "text-ink" : "text-muted"}`}>{status}</span>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <span className={`text-[11px] ${dirty.current || changedCount > 0 ? "text-ink" : "text-muted"}`}>{status}</span>
+
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              title="Undo (Ctrl+Z)"
+              disabled={!historyState.canUndo}
+              onClick={() => restore(-1)}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition enabled:hover:bg-ink/[.05] enabled:hover:text-ink disabled:opacity-30"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+                <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4.4 2.9L1.8 5.5l2.6 2.6" />
+                  <path d="M1.8 5.5h5.9a3.8 3.8 0 0 1 0 7.6H5.4" />
+                </g>
+              </svg>
+            </button>
+            <button
+              type="button"
+              title="Redo (Ctrl+Shift+Z)"
+              disabled={!historyState.canRedo}
+              onClick={() => restore(1)}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition enabled:hover:bg-ink/[.05] enabled:hover:text-ink disabled:opacity-30"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+                <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9.6 2.9l2.6 2.6-2.6 2.6" />
+                  <path d="M12.2 5.5H6.3a3.8 3.8 0 0 0 0 7.6h2.3" />
+                </g>
+              </svg>
+            </button>
+          </div>
+
+          {mode !== "edit" && (
+            <div className="flex overflow-hidden rounded-lg border border-line">
+              {DEVICES.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setDevice(option.key)}
+                  className={`px-2.5 py-1 font-mono text-[9px] uppercase tracking-[.12em] ${
+                    device === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="flex overflow-hidden rounded-full border border-line">
             {MODES.map((option) => (
               <button
@@ -584,22 +698,22 @@ export function WebsiteEditor() {
                   setPreviewToken((token) => token + 1);
                   setMode(option.key);
                 }}
-                className={`px-3 py-1.5 text-[11px] font-semibold ${
-                  mode === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"
-                }`}
+                className={`px-3 py-1.5 text-[11px] font-semibold ${mode === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"}`}
               >
                 {option.label}
               </button>
             ))}
           </div>
+
           {changedCount > 0 && !readOnly && (
             <Button variant="ghost" size="sm" onClick={() => discard.mutate()} disabled={discard.isPending}>
-              Discard changes
+              Discard
             </Button>
           )}
           {canPublish && (
             <Button
               variant="accent"
+              size="sm"
               onClick={() => {
                 if (dirty.current) saveNow(edits);
                 if (window.confirm(`Publish ${page.data!.page.title} to ${site.publicUrl}? This changes the live page.`)) publish.mutate();
@@ -612,120 +726,151 @@ export function WebsiteEditor() {
         </div>
       </div>
 
-      {published && (
-        <div className="mb-6 rounded-2xl border border-line bg-white p-5 text-sm">
-          <p className="font-semibold text-ink">
-            Published — version {published.version}, {published.changed} change{published.changed === 1 ? "" : "s"}.
-          </p>
-          <p className="mt-1 text-muted">{published.note}</p>
-          <div className="mt-3 flex flex-wrap gap-4 text-xs">
-            <a href={published.url} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
-              Open the live page
-            </a>
-            <a href={published.commit.url} target="_blank" rel="noreferrer" className="text-muted underline-offset-2 hover:underline">
-              See the commit
-            </a>
-          </div>
+      {(published || failure) && (
+        <div className="flex-none border-b border-line px-4 py-3">
+          {published && (
+            <div className="rounded-xl border border-line bg-white p-3 text-sm">
+              <p className="font-semibold text-ink">
+                Published — version {published.version}, {published.changed} change{published.changed === 1 ? "" : "s"}.
+              </p>
+              <p className="mt-1 text-xs text-muted">{published.note}</p>
+              <div className="mt-2 flex flex-wrap gap-4 text-xs">
+                <a href={published.url} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
+                  Open the live page
+                </a>
+                <a href={published.commit.url} target="_blank" rel="noreferrer" className="text-muted underline-offset-2 hover:underline">
+                  See the commit
+                </a>
+              </div>
+            </div>
+          )}
+          {failure && <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{failure}</div>}
         </div>
       )}
 
-      {failure && <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900">{failure}</div>}
+      {/* ---------------------------------------------------------- body */}
+      <div className="flex min-h-0 flex-1">
+        {mode === "visual" && (
+          <aside className="flex w-[300px] flex-none flex-col border-r border-line bg-white">
+            <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+              <div className="min-w-0">
+                <div className="font-mono text-[9px] uppercase tracking-[.14em] text-ink/40">{picked ? picked.tag : "Nothing selected"}</div>
+                <div className="truncate font-display text-[13px] tracking-[-.02em]">{picked ? picked.label : "Pick something"}</div>
+              </div>
+              {picked && (
+                <button type="button" onClick={() => pick(null)} className="shrink-0 text-[11px] text-muted transition hover:text-ink">
+                  Clear
+                </button>
+              )}
+            </div>
 
-      {mode === "visual" ? (
-        <VisualEditor
-          pageId={pageId}
-          previewToken={previewToken}
-          device={device}
-          onDevice={setDevice}
-          frame={frame}
-          fields={allFields}
-          picked={picked}
-          pickedId={pickedId}
-          onPick={setPickedId}
-          edits={edits}
-          problems={problems}
-          publicUrl={site.publicUrl}
-          readOnly={readOnly}
-          loadToken={loadToken}
-          onChange={change}
-        />
-      ) : mode === "preview" ? (
-        <div>
-          <div className="mb-3 flex items-center gap-2">
-            {DEVICES.map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                onClick={() => setDevice(option.key)}
-                className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] ${
-                  device === option.key ? "border-ink bg-ink text-cream" : "border-ink/20 text-ink/60 hover:border-ink/40"
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-            <span className="ml-2 text-xs text-muted">Showing the page with your unpublished changes.</span>
-          </div>
-          <div className="flex justify-center overflow-hidden rounded-2xl border border-line bg-cream p-4">
-            <iframe
-              key={`${previewToken}-${device}`}
-              title="Page preview"
-              src={apiUrl(`/website/pages/${pageId}/preview?v=${previewToken}`)}
-              style={{ width: DEVICES.find((option) => option.key === device)!.width }}
-              className="h-[70vh] rounded-xl border border-line bg-white"
-            />
-          </div>
-        </div>
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-[240px_1fr]">
-          <nav className="lg:sticky lg:top-6 lg:self-start">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-[.1em] text-muted">Sections</div>
-            <ul className="space-y-1">
-              {sections.map((candidate) => {
-                const edited = candidate.fields.some((field) => edits[field.id]);
-                return (
-                  <li key={candidate.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSectionId(candidate.id)}
-                      title={candidate.label}
-                      className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm ${
-                        candidate.id === section?.id ? "bg-ink text-cream" : "text-ink hover:bg-ink/[.04]"
-                      }`}
-                    >
-                      <span className="truncate">{candidate.label}</span>
-                      <span className={`shrink-0 text-[10px] ${candidate.id === section?.id ? "text-cream/60" : "text-muted"}`}>
-                        {edited ? "●" : candidate.fields.length}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
+            <LayerList sections={sections} edits={edits} problems={problems} pickedId={pickedId} onPick={pick} />
 
-          <div className="space-y-3">
-            {section ? (
-              <>
-                <h2 className="font-display text-lg tracking-[-.02em]">{section.label}</h2>
-                {section.fields.map((field) => (
-                  <FieldRow
-                    key={`${loadToken}:${field.id}`}
-                    field={field}
-                    edit={edits[field.id]}
-                    problem={problems.get(field.id)}
-                    publicUrl={site.publicUrl}
+            <div className="max-h-[58%] min-h-0 flex-none overflow-y-auto border-t border-line">
+              {!picked ? (
+                <div className="px-4 py-6 text-center">
+                  <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                    Its words and its look appear here. Double click to type straight into the page.
+                  </p>
+                  <p className="mt-3 text-[10px] text-muted">
+                    {allFields.length} editable {allFields.length === 1 ? "thing" : "things"} on this page.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="border-b border-line px-4 py-3.5">
+                    <div className="mb-2.5 flex items-center justify-between">
+                      <span className="font-mono text-[10px] font-bold uppercase tracking-[.14em] text-ink/40">Content</span>
+                      {picked.kind !== "image" && (
+                        <button
+                          type="button"
+                          onClick={() => tell({ type: "edit", id: picked.id })}
+                          className="text-[10px] text-muted underline-offset-2 transition hover:text-blue hover:underline"
+                        >
+                          {typingId === picked.id ? "Typing on the page" : "Type on the page"}
+                        </button>
+                      )}
+                    </div>
+                    <FieldRow
+                      key={`${loadToken}:${frameEdit}:${picked.id}`}
+                      field={picked}
+                      edit={edits[picked.id]}
+                      problem={problems.get(picked.id)}
+                      publicUrl={site.publicUrl}
+                      readOnly={readOnly}
+                      onChange={(next) => change(picked.id, next)}
+                      bare
+                    />
+                  </div>
+
+                  <StylePanel
+                    style={pickedStyle}
                     readOnly={readOnly}
-                    onChange={(next) => change(field.id, next)}
+                    onChange={(next) => change(picked.id, { ...edits[picked.id], style: next })}
+                    onCommit={() => commitHistory(edits)}
+                    onReset={() => change(picked.id, { ...edits[picked.id], style: "" }, { commit: true })}
                   />
-                ))}
-              </>
-            ) : (
-              <p className="text-sm text-muted">This page has nothing editable on it.</p>
-            )}
-          </div>
-        </div>
-      )}
+                </>
+              )}
+            </div>
+          </aside>
+        )}
+
+        {mode === "edit" ? (
+          <>
+            <aside className="w-[240px] flex-none overflow-y-auto border-r border-line bg-white p-3">
+              <div className="mb-2 px-1 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-ink/40">Sections</div>
+              <ul className="space-y-0.5">
+                {sections.map((candidate) => {
+                  const edited = candidate.fields.some((field) => edits[field.id]);
+                  return (
+                    <li key={candidate.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSectionId(candidate.id)}
+                        title={candidate.label}
+                        className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] ${
+                          candidate.id === section?.id ? "bg-ink text-cream" : "text-ink hover:bg-ink/[.04]"
+                        }`}
+                      >
+                        <span className="truncate">{candidate.label}</span>
+                        <span className={`shrink-0 text-[9px] ${candidate.id === section?.id ? "text-cream/60" : "text-muted"}`}>
+                          {edited ? "●" : candidate.fields.length}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </aside>
+            <div className="min-h-0 flex-1 overflow-y-auto bg-cream px-6 py-6">
+              <div className="mx-auto max-w-3xl space-y-3">
+                {section ? (
+                  <>
+                    <h2 className="font-display text-lg tracking-[-.02em]">{section.label}</h2>
+                    {section.fields.map((field) => (
+                      <FieldRow
+                        key={`${loadToken}:${field.id}`}
+                        field={field}
+                        edit={edits[field.id]}
+                        problem={problems.get(field.id)}
+                        publicUrl={site.publicUrl}
+                        readOnly={readOnly}
+                        onChange={(next) => change(field.id, next)}
+                      />
+                    ))}
+                  </>
+                ) : (
+                  <p className="text-sm text-muted">This page has nothing editable on it.</p>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          canvas
+        )}
+      </div>
     </div>
   );
 }

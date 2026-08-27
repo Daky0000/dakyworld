@@ -1830,10 +1830,39 @@ and the only one that reaches a field with nothing visible to click (the title,
 the description). *Preview* is the page with no editor furniture on it at all.
 *Visual* renders the real page and you click the thing you want to change.
 
+**The editor takes the whole window.** `Layout` drops its centred `max-w-7xl`
+column for `/website/pages/*` and becomes a `h-screen` flex column, so the page
+being edited is a page rather than a card in a reading column. The properties
+panel is on the **left**, the page fills what is left of the screen, and the
+layer list — every field, under its section, click to select — sits at the top
+of that panel rather than behind a disclosure triangle. It is the only way to
+reach the page title, a picture's description, or a heading three screens down.
+
 - **No drag and drop, and nothing moves.** What that phrase usually means is a
   layout builder with a component model; this site has none, and turning
   somebody's hand-written HTML into something only the builder can open is the
   opposite of the point. Selection, words, and look — nothing else.
+- **Single click selects, double click types.** The caret goes into the element
+  on the page, at its real size and in its real typeface; the boxes in the panel
+  are how you reach what has nothing visible to click, not the main way in. Only
+  text, richtext and link fields are typeable — a picture is changed by address,
+  because there is nothing to type into it. `Escape` ends typing, and the
+  element is `contenteditable` only while it is actually being typed into.
+- **Changes are pushed into the frame, not waited for.** `text` and `style` go
+  down to the picker as they change, so a colour moves while the slider is still
+  moving. The frame is reloaded only for an edit that cannot be pushed — a
+  link's destination, a picture — which is what `needsReload` tracks. Reloading
+  on every autosave, as it used to, threw away the scroll position and the caret.
+- **The page is swept once so it can be clicked.** A site whose sections fade in
+  on scroll shows almost nothing in a frame that has never been scrolled, and
+  nobody can click a heading they cannot see. Under `?pick=1` the picker scrolls
+  the document top to bottom to trip every `IntersectionObserver`, then marks
+  anything still under 10% opacity with `data-dw-shown`. Never in plain Preview:
+  that one is meant to be the page exactly as a visitor gets it.
+- **Undo is over the whole draft, not per field.** One Ctrl+Z should take back
+  whatever just happened, and that is as likely to be a colour as a word.
+  Snapshots are `JSON.stringify(edits)`; typing debounces onto one step, and
+  discrete actions — a toggle, an alignment, adding a border — commit their own.
 - **The server marks the elements, the browser does not find them.**
   `previewDocument(html, url, fields)` inserts `data-dw-field` at each field's
   `attrInsert` under `?pick=1`; the frame posts up which one was clicked. The
@@ -1847,6 +1876,21 @@ the description). *Preview* is the page with no editor furniture on it at all.
   rule in a stylesheet — a rule applies to every page at once and to elements
   nobody was editing. Anything the panel has no control for is left as the
   developer wrote it and named on screen, so it is visible that it survived.
+- **The panel is a fixed set of controls, in three sections.** *Appearance*
+  (background, width, height, opacity, radius, overflow, padding on four sides,
+  and shadow / text shadow / transform / filter behind an "Add" link),
+  *Typography* (face, size, colour, weight, italic/underline/strike, alignment,
+  leading, tracking, case) and *Border*. Numbers scrub — drag a field's label.
+  Every colour opens one popover: the brand swatches first because they are the
+  right answer nearly every time, then a picker, a hex box and an alpha slider.
+  Blank means "as designed" everywhere, which is why they are text fields
+  holding numbers rather than `<input type="number">` with a zero sitting in it.
+  Filter is the one hand-typed CSS string and the one place the no-text-box rule
+  is bent; it is behind the "Add" link, and a value that does not parse does
+  nothing rather than breaking the layout.
+- **`padding` shorthand is expanded on the way in and written as longhands.**
+  A developer's `padding: 4px 8px` and the panel's four sides would otherwise
+  fight, and the shorthand would win.
 - **`safeStyle` filters what is stored as well as what is written.** Nothing in
   the panel can produce a bad declaration, so it is not the editor this guards
   against: a draft is stored JSON that outlives its session and is spliced into

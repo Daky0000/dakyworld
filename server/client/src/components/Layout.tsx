@@ -164,13 +164,24 @@ export function Layout() {
   // else, so every one of them gets a way back that doesn't mean hunting for
   // the browser chrome or guessing which nav tab you came in through.
   const canGoBack = location.pathname !== "/";
+  // One screen wants the whole window: the website editor puts a page of the
+  // real site beside its panel, and a page of a website inside a centred
+  // 1280px column with forty pixels of padding round it is not that page.
+  // Everywhere else keeps the reading column.
+  const fullBleed = /^\/website\/pages\//.test(location.pathname);
   return (
-    <div className="min-h-screen bg-cream text-ink">
+    <div className={fullBleed ? "flex h-screen flex-col overflow-hidden bg-cream text-ink" : "min-h-screen bg-cream text-ink"}>
       {/* Sticky, like the website's shell — navigation is the one thing you
           should never have to scroll back up for. Light rather than dark
           glass: this is a working tool, not a landing page. */}
-      <header className="sticky top-0 z-40 border-b border-line bg-cream/85 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 py-3.5">
+      <header
+        className={
+          fullBleed
+            ? "z-40 flex-none border-b border-line bg-cream"
+            : "sticky top-0 z-40 border-b border-line bg-cream/85 backdrop-blur-xl"
+        }
+      >
+        <div className={`flex items-center justify-between gap-6 px-6 py-3.5 ${fullBleed ? "" : "mx-auto max-w-7xl"}`}>
           <div className="flex items-center gap-3">
             <img src="/brand/mark-on-light-96.png" alt="" width={34} height={34} className="h-[34px] w-[34px]" />
             <div className="leading-none">
@@ -215,8 +226,8 @@ export function Layout() {
           </nav>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-6 py-10">
-        {canGoBack && (
+      <main className={fullBleed ? "min-h-0 flex-1" : "mx-auto max-w-7xl px-6 py-10"}>
+        {canGoBack && !fullBleed && (
           <button
             type="button"
             onClick={() => navigate(-1)}

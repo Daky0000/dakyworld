@@ -350,25 +350,38 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
 function markEditable(html: string, fields: SiteField[]): string {
   const marks = fields
     .filter((field) => field.attrInsert !== undefined)
-    .map((field) => ({ at: field.attrInsert as number, id: field.id }))
+    .map((field) => ({ at: field.attrInsert as number, id: field.id, kind: field.kind }))
     // Backwards, so each insert leaves the earlier offsets valid.
     .sort((a, b) => b.at - a.at);
 
   let out = html;
   for (const mark of marks) {
-    out = `${out.slice(0, mark.at)} data-dw-field="${mark.id.replace(/"/g, "&quot;")}"${out.slice(mark.at)}`;
+    out = `${out.slice(0, mark.at)} data-dw-field="${mark.id.replace(/"/g, "&quot;")}" data-dw-kind="${mark.kind}"${out.slice(mark.at)}`;
   }
   return out;
 }
 
 /**
- * Click-to-select, and nothing else.
+ * Click to select, double click to type, and nothing else.
  *
- * Deliberately about sixty lines with no library behind it. What a person wants
- * from a visual editor is to point at the thing they mean; the drag-and-drop
- * layout builders that word usually implies need a component model the page
- * does not have, and would turn a hand-written site into something only the
- * builder can open.
+ * Deliberately no library behind it. What a person wants from a visual editor
+ * is to point at the thing they mean; the drag-and-drop layout builders that
+ * word usually implies need a component model the page does not have, and would
+ * turn a hand-written site into something only the builder can open.
+ *
+ * Three channels back to the editor, and the split matters:
+ *
+ *  - `select` says which field was clicked. The panel follows the page.
+ *  - `text` carries what is being typed, straight out of the element it is
+ *    being typed into. Editing happens on the page, in place, at the real size
+ *    and in the real typeface — the panel's own box is the fallback, not the
+ *    main way in.
+ *  - `style` comes the other way: the panel writes the element's inline style
+ *    live so a change is visible while the slider is still moving, instead of
+ *    only after the draft saves and the frame reloads.
+ *
+ * Only text, richtext and link fields can be typed into. A picture is changed
+ * by address, in the panel, because there is nothing to type into it.
  *
  * Navigation is stopped for the same reason `form-action` is `'none'`: a click
  * on a link in a preview should select the link, not leave the page.
@@ -379,39 +392,174 @@ function pickerAssets(nonce: string): string {
   [data-dw-field] { cursor: pointer; }
   [data-dw-field]:hover { outline: 2px dashed rgba(49,87,255,.55); outline-offset: 2px; }
   [data-dw-selected] { outline: 2px solid #3157FF !important; outline-offset: 2px; background: rgba(49,87,255,.06); }
+  [data-dw-editing] { cursor: text !important; outline: 2px solid #3157FF !important; outline-offset: 2px; background: rgba(49,87,255,.10); }
+  [data-dw-editing]:hover { outline-style: solid !important; }
+  [data-dw-shown] { opacity: 1 !important; transform: none !important; filter: none !important; }
 </style>
 <script nonce="${nonce}">
 (function () {
   var selected = null;
+  var editing = null;
+  var timer = null;
+
+  function post(message) {
+    message.source = "dakyworld-preview";
+    parent.postMessage(message, "*");
+  }
+  function find(id) {
+    return id ? document.querySelector('[data-dw-field="' + String(id).replace(/"/g, "") + '"]') : null;
+  }
   function mark(el) {
-    if (selected) selected.removeAttribute("data-dw-selected");
+    if (selected && selected !== el) selected.removeAttribute("data-dw-selected");
     selected = el;
     if (el) el.setAttribute("data-dw-selected", "");
   }
-  document.addEventListener(
-    "click",
-    function (event) {
-      var el = event.target && event.target.closest ? event.target.closest("[data-dw-field]") : null;
-      // A click on nothing in particular clears the selection rather than
-      // leaving the panel describing something the eye has moved on from.
-      event.preventDefault();
-      event.stopPropagation();
-      mark(el);
-      parent.postMessage({ source: "dakyworld-preview", type: "select", id: el ? el.getAttribute("data-dw-field") : null }, "*");
-    },
-    true,
-  );
-  // Typing in the panel scrolls the page to what is being typed about.
+  // A picture has nothing to type into; its address is changed in the panel.
+  function typeable(el) {
+    var kind = el.getAttribute("data-dw-kind");
+    return kind === "text" || kind === "richtext" || kind === "link";
+  }
+  function push(final) {
+    if (!editing) return;
+    post({ type: "text", id: editing.getAttribute("data-dw-field"), html: editing.innerHTML, final: !!final });
+  }
+  function startEdit(el) {
+    if (!el || !typeable(el) || editing === el) return;
+    stopEdit();
+    editing = el;
+    el.setAttribute("contenteditable", "true");
+    el.setAttribute("data-dw-editing", "");
+    el.focus();
+    post({ type: "editing", id: el.getAttribute("data-dw-field") });
+  }
+  function stopEdit() {
+    if (!editing) return;
+    clearTimeout(timer);
+    push(true);
+    var was = editing;
+    editing = null;
+    was.removeAttribute("contenteditable");
+    was.removeAttribute("data-dw-editing");
+    was.blur();
+    post({ type: "editing", id: null });
+  }
+
+  document.addEventListener("click", function (event) {
+    var el = event.target && event.target.closest ? event.target.closest("[data-dw-field]") : null;
+    // While typing, a click inside the same element is the caret being placed.
+    if (editing && el === editing) return;
+    // A click on nothing in particular clears the selection rather than
+    // leaving the panel describing something the eye has moved on from.
+    event.preventDefault();
+    event.stopPropagation();
+    stopEdit();
+    mark(el);
+    post({ type: "select", id: el ? el.getAttribute("data-dw-field") : null });
+  }, true);
+
+  document.addEventListener("dblclick", function (event) {
+    var el = event.target && event.target.closest ? event.target.closest("[data-dw-field]") : null;
+    if (!el || !typeable(el)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    mark(el);
+    post({ type: "select", id: el.getAttribute("data-dw-field") });
+    startEdit(el);
+  }, true);
+
+  document.addEventListener("input", function () {
+    if (!editing) return;
+    clearTimeout(timer);
+    timer = setTimeout(function () { push(false); }, 250);
+  }, true);
+
+  document.addEventListener("keydown", function (event) {
+    if (!editing) return;
+    if (event.key === "Escape") { event.preventDefault(); stopEdit(); return; }
+    // Lines within an element, not new paragraphs — the browser's default here
+    // is a <div>, which would put a block inside a heading.
+    if (event.key === "Enter") { event.preventDefault(); document.execCommand("insertLineBreak"); }
+  }, true);
+
+  document.addEventListener("paste", function (event) {
+    if (!editing) return;
+    // Pasting out of a word processor brings its markup with it. The words are
+    // what somebody meant to paste.
+    event.preventDefault();
+    var text = event.clipboardData ? event.clipboardData.getData("text/plain") : "";
+    document.execCommand("insertText", false, text);
+  }, true);
+
+  // A page whose sections fade in as you scroll shows almost nothing in a
+  // frame that has never been scrolled, and nobody can click a heading they
+  // cannot see. Sweep the page once so every IntersectionObserver fires the
+  // way it would for a reader, then force anything still invisible.
+  //
+  // Only here, never in the plain Preview: that one is meant to be the page
+  // exactly as a visitor gets it, animations and all.
+  function force() {
+    var fields = document.querySelectorAll("[data-dw-field]");
+    for (var i = 0; i < fields.length; i++) {
+      var node = fields[i];
+      while (node && node !== document.body) {
+        if (!node.hasAttribute("data-dw-shown")) {
+          var style = window.getComputedStyle(node);
+          // Something the page means to keep hidden — a closed menu, a tab
+          // nobody is on — has no box and stays hidden.
+          if (style.display !== "none" && style.visibility !== "hidden" && parseFloat(style.opacity) < 0.1) {
+            node.setAttribute("data-dw-shown", "");
+          }
+        }
+        node = node.parentElement;
+      }
+    }
+  }
+  function sweep() {
+    var height = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
+    var step = Math.max(240, Math.round(window.innerHeight * 0.8));
+    var at = 0;
+    (function next() {
+      window.scrollTo(0, at);
+      at += step;
+      if (at < height + step) window.requestAnimationFrame(next);
+      else {
+        window.scrollTo(0, 0);
+        window.setTimeout(force, 80);
+      }
+    })();
+  }
+  if (document.readyState === "complete") window.setTimeout(sweep, 120);
+  else window.addEventListener("load", function () { window.setTimeout(sweep, 120); });
+
   window.addEventListener("message", function (event) {
     var data = event.data || {};
     if (data.source !== "dakyworld-editor") return;
+    if (data.type === "reveal") { sweep(); return; }
     if (data.type === "select") {
-      var el = data.id ? document.querySelector('[data-dw-field="' + String(data.id).replace(/"/g, '') + '"]') : null;
+      stopEdit();
+      var el = find(data.id);
       mark(el);
       if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    } else if (data.type === "edit") {
+      var target = find(data.id);
+      if (target) { mark(target); startEdit(target); }
+    } else if (data.type === "stopEdit") {
+      stopEdit();
+    } else if (data.type === "style") {
+      // The whole inline style, because that is what the panel edits — including
+      // the declarations it has no control for, which ride through untouched.
+      var styled = find(data.id);
+      if (styled) {
+        if (data.style) styled.setAttribute("style", String(data.style));
+        else styled.removeAttribute("style");
+      }
+    } else if (data.type === "text") {
+      var written = find(data.id);
+      // Never while it is being typed into: that would move the caret.
+      if (written && written !== editing) written.innerHTML = String(data.html == null ? "" : data.html);
     }
   });
-  parent.postMessage({ source: "dakyworld-preview", type: "ready" }, "*");
+  post({ type: "ready" });
 })();
 </script>`;
 }
