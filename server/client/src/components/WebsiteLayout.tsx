@@ -26,21 +26,35 @@ type Tab = {
   end?: boolean;
   needs?: string;
   /**
-   * A screen that does not exist yet.
+   * A screen that is planned and not built.
    *
-   * Listed here rather than left out, because the build order is the plan's and
-   * the tabs arrive in it — but **not rendered**, because a tab that opens onto
-   * an empty shell teaches somebody the product is broken rather than that the
-   * feature is coming.
+   * Rendered, marked, and reachable — the opposite of what a first pass at this
+   * did, and the reversal was deliberate. Hiding them keeps the product tidy and
+   * makes the plan invisible: the only record of a ten-screen product would be a
+   * PDF nobody opens twice, and a screen nobody can see is a screen that gets
+   * forgotten.
+   *
+   * What makes that safe is that these are not empty shells. Each one says what
+   * it will hold and what it is waiting on (`components/PlannedScreen.tsx`), so
+   * it reads as a plan rather than as a broken page — and all of them are gated
+   * on `website.manage`, so a client with editing rights never sees one.
    */
   unbuilt?: boolean;
 };
 
+/**
+ * The plan's §14.2 menu, in its order, complete.
+ *
+ * Everything unbuilt is gated on `website.manage` rather than on the permission
+ * it will eventually want — a client should not be shown the shape of a feature
+ * they cannot use yet.
+ */
 export const WEBSITE_TABS: Tab[] = [
   { to: "/website", label: "Overview", end: true, needs: "website.view" },
   { to: "/website/sites", label: "Sites", needs: "website.view" },
-  { to: "/website/assets", label: "Assets", needs: "website.edit", unbuilt: true },
-  { to: "/website/ai", label: "AI Assistant", needs: "website.edit", unbuilt: true },
+  { to: "/website/assets", label: "Assets", needs: "website.manage", unbuilt: true },
+  { to: "/website/ai", label: "AI Assistant", needs: "website.manage", unbuilt: true },
+  { to: "/website/updates", label: "Updates", needs: "website.manage", unbuilt: true },
   { to: "/website/team", label: "Team & Permissions", needs: "website.manage", unbuilt: true },
   { to: "/website/audit", label: "Audit Log", needs: "website.manage", unbuilt: true },
   { to: "/website/settings", label: "Settings", needs: "website.manage", unbuilt: true },
@@ -50,7 +64,7 @@ export const WEBSITE_TABS: Tab[] = [
 export function WebsiteLayout() {
   const { can } = useAuth();
   const location = useLocation();
-  const tabs = WEBSITE_TABS.filter((tab) => !tab.unbuilt && (!tab.needs || can(tab.needs)));
+  const tabs = WEBSITE_TABS.filter((tab) => !tab.needs || can(tab.needs));
 
   // A site's own pages live under /website/sites/:id, so the Sites tab stays lit
   // while somebody is inside one. Without this, opening a site makes the strip
@@ -70,6 +84,10 @@ export function WebsiteLayout() {
             }`}
           >
             {tab.label}
+            {/* A dot rather than the word "planned": the label is what somebody
+                aims at, and three extra words on six of nine tabs would make the
+                two working ones harder to find. The screen itself says the rest. */}
+            {tab.unbuilt && <span aria-label=" (planned)" title="Planned — not built yet" className="ml-1.5 text-ink/25">•</span>}
           </NavLink>
         ))}
       </div>

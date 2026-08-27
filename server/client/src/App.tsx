@@ -27,6 +27,15 @@ import { Website } from "./pages/Website";
 import { WebsiteEditor } from "./pages/WebsiteEditor";
 import { WebsiteLayout } from "./components/WebsiteLayout";
 import { WebsiteOverview } from "./pages/WebsiteOverview";
+// The plan's remaining screens. Each says what it will hold and is gated on
+// website.manage — see components/PlannedScreen.tsx and docs/website-builder.md.
+import { WebsiteAssets } from "./pages/WebsiteAssets";
+import { WebsiteAI } from "./pages/WebsiteAI";
+import { WebsiteUpdates } from "./pages/WebsiteUpdates";
+import { WebsiteTeam } from "./pages/WebsiteTeam";
+import { WebsiteAudit } from "./pages/WebsiteAudit";
+import { WebsiteSettings } from "./pages/WebsiteSettings";
+import { WebsiteBilling } from "./pages/WebsiteBilling";
 
 /**
  * Every screen carries the permission its own API routes ask for.
@@ -67,6 +76,13 @@ export default function App() {
         <Route path="/website" element={<Guard needs="website.view"><WebsiteLayout /></Guard>}>
           <Route index element={<WebsiteOverview />} />
           <Route path="sites" element={<Website />} />
+          <Route path="assets" element={<Guard needs="website.manage"><WebsiteAssets /></Guard>} />
+          <Route path="ai" element={<Guard needs="website.manage"><WebsiteAI /></Guard>} />
+          <Route path="updates" element={<Guard needs="website.manage"><WebsiteUpdates /></Guard>} />
+          <Route path="team" element={<Guard needs="website.manage"><WebsiteTeam /></Guard>} />
+          <Route path="audit" element={<Guard needs="website.manage"><WebsiteAudit /></Guard>} />
+          <Route path="settings" element={<Guard needs="website.manage"><WebsiteSettings /></Guard>} />
+          <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
         </Route>
         <Route path="/website/pages/:pageId" element={<Guard needs="website.view"><WebsiteEditor /></Guard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />

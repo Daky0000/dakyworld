@@ -1748,10 +1748,69 @@ or the webhook intake. Four rules from it that are easy to undo by accident:
   wrong." The client now appends the log reference to that sentence so the
   useless version is at least traceable.
 
-## The website editor
+## The Website Builder
 
-`src/services/website/`, `routes/website.ts`, the `/website` screen, and
-`admin/index.html` at the repository root. Lets a non-technical person change
+**[server/docs/website-builder.md](server/docs/website-builder.md) is the map** —
+every part of the Aug-2026 system plan, whether it is built, a skeleton or not
+started, and where it lives. Read it before adding to this module; the seven
+screens that are skeletons already say what they will hold, and the decisions
+behind them are written down so they are not re-litigated.
+
+It is a **product** now, sold as hosted seats on os.dakyworld.com rather than
+used only in-house. Three decisions shape everything: hosted seats (so no
+installed module, no license server, no update endpoint), billing through
+`CarePlan` + `Invoice` + Paystack rather than a parallel `License` model, and
+editable regions rather than blocks.
+
+`src/services/website/`, `routes/website.ts`, the `/website` screens, and
+`admin/index.html` at the repository root.
+
+**Everything outside `services/website/` imports from
+`services/website/index.ts` and from nowhere else inside it.** That is the
+`website-editor-core` boundary: `parse`, `discoverFields`,
+`validateFieldChange`, `sanitizeValue`, `detectConflicts`, `applyValues`,
+`buildPreview`, `buildPublishPlan`, `describeChanges`. A second site, a client's
+site, an AI proposing a change and an agent publishing one all go through the
+same parse, the same sanitiser and the same conflict check, or they are four
+editors that agree until the day they do not.
+
+**A draft save is an exchange, not a shout.** `SitePage.draftRevision` is quoted
+on every save and checked *in the same statement that writes*, so two editors on
+one page cannot silently overwrite each other. A refused save changes nothing —
+not the draft, not the revision — and answers 409 with both versions of every
+contested field, which is what the comparison dialog renders. The revision is
+monotonic and is bumped by a publish and by a discard as well as by a save:
+both change what the draft is, and a second screen holding the old number has to
+be told. `ifRevision` is refused explicitly rather than by Zod, because a
+`ZodError` renders as "Validation failed" plus an issue list to somebody whose
+actual remedy is to reload the page.
+
+**The publish path never reads the source cache** (`sourceCache.ts`). The whole
+purpose of the conflict check is to decide whether the page has moved under a
+draft, and a copy taken ninety seconds ago cannot answer that. `publishPage`
+invalidates the page it wrote, inside itself rather than at the call site, so a
+second publisher — a rollback, an agent — cannot forget. Live-site reads get a
+much shorter TTL than repository reads: GitHub Pages already lags a publish by a
+minute, and a cache on top of that lag makes a working publish look dead.
+
+**Rollback has two doors and they are different.** *Restore as draft* is the
+default and is right nearly every time — a page usually moved on for reasons
+unrelated to the edit being undone. *Publish this version* writes the whole
+stored file back and is the emergency; because it can undo a developer's later
+work it is never one click, and the diff is fetched first. **That diff compares
+what a person can see, not the bytes.** The first version compared inner HTML and
+printed plain text, so a file differing only in whitespace listed three changes
+whose before and after were the same sentence — on the one screen that has to be
+believed. Invisible differences are counted and said separately.
+
+**`middleware/errorHandler.ts` is its own module** so a harness can mount it.
+Whether a refusal reaches somebody as a sentence they can act on is a rule with
+real consequences, and it was one nothing could exercise without booting the
+whole application.
+
+`checks/websiteBuilder.ts` covers all of it — 55 assertions, database only, the
+page's HTML served from a local express so the real read path runs with no
+network and no credential. Lets a non-technical person change
 the words, links and pictures on a page of dakyworld.com and publish it, without
 touching HTML and without waiting for a developer. The same module is what would
 carry a client's site: `Site` has a `clientId` and nothing in it is shaped around

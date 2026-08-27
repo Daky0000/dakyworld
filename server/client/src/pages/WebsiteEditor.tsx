@@ -7,6 +7,7 @@ import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFiel
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { StylePanel } from "../components/StylePanel";
 import { WebsiteVersions } from "../components/WebsiteVersions";
+import { WebsiteAIPanel } from "../components/WebsiteAIPanel";
 
 /**
  * One page of the website, open at full size, with everything about the thing
@@ -474,6 +475,8 @@ export function WebsiteEditor() {
   const [conflict, setConflict] = useState<DraftConflict | null>(null);
   /** The publishing history, and the two ways back out of a bad publish. */
   const [showVersions, setShowVersions] = useState(false);
+  /** The assistant, scoped to whatever is selected. Planned — see WebsiteAIPanel. */
+  const [showAI, setShowAI] = useState(false);
 
   // Refetching on focus is what used to hand the effect below a fresh copy of
   // the draft in the middle of somebody typing. The guard on that effect is the
@@ -957,6 +960,7 @@ export function WebsiteEditor() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {showAI && <WebsiteAIPanel fieldLabel={picked?.label ?? null} onClose={() => setShowAI(false)} />}
       {showVersions && (
         <WebsiteVersions
           pageId={pageId}
@@ -1094,6 +1098,13 @@ export function WebsiteEditor() {
           <Button variant="ghost" size="sm" onClick={() => setShowVersions(true)}>
             Versions
           </Button>
+          {/* Only for whoever manages the site. It describes an unbuilt feature,
+              and a client should not be shown the shape of one. */}
+          {can("website.manage") && (
+            <Button variant="ghost" size="sm" onClick={() => setShowAI(true)}>
+              AI
+            </Button>
+          )}
           {changedCount > 0 && !readOnly && (
             <Button variant="ghost" size="sm" onClick={() => discard.mutate()} disabled={discard.isPending}>
               Discard
