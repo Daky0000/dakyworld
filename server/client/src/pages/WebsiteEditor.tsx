@@ -311,6 +311,8 @@ export function WebsiteEditor() {
   const [pickedId, setPickedId] = useState<string | null>(null);
   /** The field being typed into, on the page itself. */
   const [typingId, setTypingId] = useState<string | null>(null);
+  /** Fields the frame has no element for, so nothing can be shown live. */
+  const [absentIds, setAbsentIds] = useState<Set<string>>(new Set());
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [device, setDevice] = useState<Device>("desktop");
   const [previewToken, setPreviewToken] = useState(0);
@@ -324,15 +326,14 @@ export function WebsiteEditor() {
   /** An edit the frame cannot be told about — a link's destination, a picture. */
   const needsReload = useRef(false);
 
-  // Clicking into the page and back out again focuses this window, and a
-  // refetch on focus would hand the effect below a fresh copy of the draft in
-  // the middle of somebody typing. The editor already reloads the page when it
-  // needs to — after a publish, a discard, or an undo.
+  // Refetching on focus is what used to hand the effect below a fresh copy of
+  // the draft in the middle of somebody typing. The guard on that effect is the
+  // fix, not switching the refetch off: turning it off also stopped the editor
+  // ever catching up with the site, which is its own way of showing somebody
+  // stale words and letting them think nothing worked.
   const page = useQuery({
     queryKey: ["website", "page", pageId],
     queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`),
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
   });
 
   /* ------------------------------------------------------------- history */
@@ -429,8 +430,14 @@ export function WebsiteEditor() {
         // The frame has no element for that field — the page title and
         // description have none by design, and a handful of others were never
         // given an insertion point by the parse. Nothing can be pushed there,
-        // so fall back to reloading the frame once the draft is saved.
-        if (data.id && !data.id.startsWith("meta.")) needsReload.current = true;
+        // so fall back to reloading the frame once the draft is saved, and say
+        // so on screen: an edit that changes nothing visible and explains
+        // nothing is indistinguishable from an editor that is broken.
+        if (data.id) {
+          const id = data.id;
+          if (!id.startsWith("meta.")) needsReload.current = true;
+          setAbsentIds((current) => (current.has(id) ? current : new Set(current).add(id)));
+        }
       } else if (data.type === "text" && data.id) {
         const id = data.id;
         setEdits((current) => {
@@ -514,6 +521,10 @@ export function WebsiteEditor() {
     return () => window.removeEventListener("beforeunload", onLeave);
   }, []);
 
+  useEffect(() => {
+    setAbsentIds(new Set());
+  }, [previewToken]);
+
   const restore = useCallback(
     (step: number) => {
       const state = history.current;
@@ -582,6 +593,16 @@ export function WebsiteEditor() {
       syncHistoryButtons();
       setPreviewToken((token) => token + 1);
       void qc.invalidateQueries({ queryKey: ["website"] });
+      // The commit lands at once; the site it is read back from does not. Until
+      // Pages has rebuilt, the editor is showing the page as it was, which
+      // looks exactly like a publish that did nothing. Keep looking.
+      for (const delay of [20000, 45000, 90000]) {
+        window.setTimeout(() => {
+          if (dirty.current) return;
+          void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+          setPreviewToken((token) => token + 1);
+        }, delay);
+      }
     },
     onError: (err) => {
       setPublished(null);
@@ -695,6 +716,24 @@ export function WebsiteEditor() {
             </button>
           </div>
 
+          <button
+            type="button"
+            title="Read the page again from the site"
+            onClick={() => {
+              if (dirty.current) saveNow(edits);
+              void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+              setPreviewToken((token) => token + 1);
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-ink/[.05] hover:text-ink"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+              <g stroke="currentColor" strokeWidth="1.25" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.6 7a4.6 4.6 0 1 1-1.4-3.3" />
+                <path d="M11.9 1.7v2.9H9" />
+              </g>
+            </svg>
+          </button>
+
           {mode !== "edit" && (
             <div className="flex overflow-hidden rounded-lg border border-line">
               {DEVICES.map((option) => (
@@ -760,6 +799,10 @@ export function WebsiteEditor() {
                 Published — version {published.version}, {published.changed} change{published.changed === 1 ? "" : "s"}.
               </p>
               <p className="mt-1 text-xs text-muted">{published.note}</p>
+              <p className="mt-1 text-xs text-muted">
+                This screen reads the page back from the published site, so it goes on showing the old words until that rebuild
+                finishes. It will catch up on its own; the circular arrow in the bar looks again now.
+              </p>
               <div className="mt-2 flex flex-wrap gap-4 text-xs">
                 <a href={published.url} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
                   Open the live page
@@ -818,6 +861,13 @@ export function WebsiteEditor() {
                         </button>
                       )}
                     </div>
+                    {absentIds.has(picked.id) && (
+                      <p className="mb-2 rounded-lg bg-cream/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+                        {picked.id.startsWith("meta.")
+                          ? "This one is not on the page itself — it is what browsers and search results show. Nothing here will change in the preview."
+                          : "This one cannot be shown while you type. It appears in the page once the draft saves."}
+                      </p>
+                    )}
                     <FieldRow
                       key={`${loadToken}:${frameEdit}:${picked.id}`}
                       field={picked}

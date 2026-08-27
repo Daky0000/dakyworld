@@ -1858,12 +1858,22 @@ reach the page title, a picture's description, or a heading three screens down.
   recorded. The frame answers `absent` for those and the editor falls back to
   `needsReload`, because a push that lands nowhere and says nothing is
   indistinguishable from an editor that is broken.
-- **The page query must not refetch on window focus.** Clicking into the frame
-  and back out again focuses the app window; a refetch there handed the effect
-  that seeds `edits` a fresh copy of the saved draft in the middle of somebody
-  typing, and their unsaved words went back to what the server last knew. The
-  effect also refuses to run while `dirty.current` is set. This is what "I did
-  not see the changes I was making" turned out to be.
+- **The effect that seeds `edits` refuses to run while `dirty.current` is set.**
+  Clicking into the frame and back out again focuses the app window and
+  refetches the page; without that guard the refetch handed the effect a fresh
+  copy of the saved draft in the middle of somebody typing, and their unsaved
+  words went back to what the server last knew. The guard is the fix, **not**
+  switching the refetch off: an editor that never refetches never catches up
+  with the site either, which is its own way of showing somebody stale words and
+  letting them conclude that nothing worked.
+- **The editor reads the page back from the published site, and Pages takes a
+  minute or two to rebuild.** Until it has, a publish that worked looks exactly
+  like one that did nothing. The banner says so, the page query is re-invalidated
+  at 20s, 45s and 90s, and the circular arrow in the bar looks again on demand.
+- **A push the frame cannot land is said out loud.** An `absent` reply marks the
+  field in the panel — "not on the page itself" for the title and description,
+  "appears once the draft saves" for the rest — because an edit that changes
+  nothing visible and explains nothing is indistinguishable from a broken editor.
 - **The picker never hands back an element's own `innerHTML`.** It carries the
   `data-dw-*` this script put on the children, and `data-*` survives sanitising
   on purpose (`data-target` drives the count-up figures), so those marks were
