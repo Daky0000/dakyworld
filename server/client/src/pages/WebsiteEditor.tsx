@@ -64,8 +64,16 @@ const MODES: { key: Mode; label: string }[] = [
 const INPUT =
   "w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue focus:ring-2 focus:ring-blue/20";
 
-/** Fields whose value the frame can push and be pushed; everything else reloads. */
-const LIVE_KEYS = new Set(["value", "style"]);
+/**
+ * Changes that do not need the frame reloaded to be true on screen.
+ *
+ * `value`, `style` and `variant` are pushed straight into the page, so it
+ * changes under the cursor. `newTab` is in here for the opposite reason: it
+ * changes nothing anybody can see, so reloading the page to show it would throw
+ * away somebody's scroll position and their caret in exchange for no visible
+ * difference at all.
+ */
+const LIVE_KEYS = new Set(["value", "style", "variant", "newTab"]);
 
 /**
  * A field with formatting inside it.
@@ -112,11 +120,104 @@ function RichText({ html, onChange }: { html: string; onChange: (next: string) =
   );
 }
 
+/** `btn-primary` under stem `btn` reads as "Primary". */
+function variantLabel(stem: string | undefined, variant: string): string {
+  if (!stem || !variant.startsWith(`${stem}-`)) return variant;
+  const word = variant.slice(stem.length + 1).replace(/[-_]+/g, " ").trim();
+  return word ? word.charAt(0).toUpperCase() + word.slice(1) : variant;
+}
+
+/**
+ * The two things a button has that a link does not.
+ *
+ * **Its style.** Until now the only way to turn the lime button on a page into
+ * the dark one was to edit HTML, which is the thing this editor exists to
+ * avoid. The choices are the styles this page already wears somewhere, so
+ * picking one can never produce a button the stylesheet has no rule for — and
+ * "None" is offered because taking a style off is a real thing to want and
+ * there is otherwise no way back to a plain link.
+ *
+ * **Whether it opens in a new tab.** One switch, never two: the server writes
+ * `rel="noopener noreferrer"` alongside `target="_blank"` and takes both away
+ * together, because `target` on its own hands the page it opens a live handle
+ * on the one it came from, and nobody choosing "open in a new tab" is choosing
+ * that.
+ */
+function ButtonControls({
+  field,
+  edit,
+  onChange,
+  readOnly,
+}: {
+  field: SiteFieldRow;
+  edit: FieldEdit | undefined;
+  onChange: (next: FieldEdit) => void;
+  readOnly: boolean;
+}) {
+  const variant = edit?.variant !== undefined ? edit.variant : (field.variant ?? null);
+  const newTab = edit?.newTab ?? field.newTab ?? false;
+  // A button with nothing to change to has no control drawn at all, rather than
+  // one drawn with a single option in it that is already selected. A button
+  // wearing no style yet still gets one — that is how a style is *added*.
+  const choices = field.variants ?? [];
+  const canRestyle = choices.some((candidate) => candidate !== variant);
+
+  return (
+    <div className="mt-2 space-y-2">
+      {canRestyle && (
+        <div>
+          <span className="mb-1 block text-xs text-muted">Style</span>
+          <div className="flex flex-wrap gap-1">
+            {choices.map((candidate) => (
+              <button
+                key={candidate}
+                type="button"
+                disabled={readOnly}
+                onClick={() => onChange({ ...edit, variant: candidate })}
+                className={`rounded-lg border px-2.5 py-1 text-[12px] ${
+                  variant === candidate ? "border-ink bg-ink text-cream" : "border-line bg-white text-ink hover:border-ink/40"
+                } disabled:opacity-50`}
+              >
+                {variantLabel(field.variantStem, candidate)}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={readOnly}
+              onClick={() => onChange({ ...edit, variant: null })}
+              className={`rounded-lg border px-2.5 py-1 text-[12px] ${
+                variant === null ? "border-ink bg-ink text-cream" : "border-line bg-white text-muted hover:border-ink/40"
+              } disabled:opacity-50`}
+            >
+              None
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Absent on a `<button>`, which has nowhere to go and so no tab to open. */}
+      {field.newTab !== undefined && (
+        <label className="flex items-center gap-2 text-[12px] text-ink">
+          <input
+            type="checkbox"
+            checked={newTab}
+            disabled={readOnly}
+            onChange={(event) => onChange({ ...edit, newTab: event.target.checked })}
+            className="h-3.5 w-3.5 accent-blue"
+          />
+          <span>Opens in a new tab</span>
+        </label>
+      )}
+    </div>
+  );
+}
+
 function FieldRow({
   field,
   edit,
   problem,
   publicUrl,
+  links,
   onChange,
   readOnly,
   bare,
@@ -125,6 +226,8 @@ function FieldRow({
   edit: FieldEdit | undefined;
   problem: string | undefined;
   publicUrl: string;
+  /** The site's own pages, so a destination is picked rather than spelled. */
+  links: Array<{ path: string; title: string }>;
   onChange: (next: FieldEdit) => void;
   readOnly: boolean;
   /** Inside the visual panel, where the card's own border and title are noise. */
@@ -176,28 +279,50 @@ function FieldRow({
         />
       )}
 
-      {field.kind === "link" && (
-        <div className={`grid gap-2 ${bare ? "" : "sm:grid-cols-2"}`}>
-          <label className="block">
-            <span className="mb-1 block text-xs text-muted">Words on the link</span>
-            <input
-              className={INPUT}
-              value={value}
-              readOnly={readOnly || !field.value}
-              placeholder={field.value ? "" : "This link has no words of its own"}
-              onChange={(event) => onChange({ ...edit, value: event.target.value })}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs text-muted">Where it goes</span>
-            <input
-              className={`${INPUT} font-mono text-xs`}
-              value={href}
-              readOnly={readOnly}
-              onChange={(event) => onChange({ ...edit, href: event.target.value })}
-            />
-          </label>
-        </div>
+      {(field.kind === "link" || field.kind === "button") && (
+        <>
+          <div className={`grid gap-2 ${bare ? "" : "sm:grid-cols-2"}`}>
+            <label className="block">
+              <span className="mb-1 block text-xs text-muted">
+                {field.kind === "button" ? "Words on the button" : "Words on the link"}
+              </span>
+              <input
+                className={INPUT}
+                value={value}
+                readOnly={readOnly || !field.value}
+                placeholder={field.value ? "" : "This link has no words of its own"}
+                onChange={(event) => onChange({ ...edit, value: event.target.value })}
+              />
+            </label>
+            {/* A `<button>` has no destination — where it leads is decided by
+                script — so the box is not drawn rather than drawn and inert. */}
+            {field.href !== undefined && (
+              <label className="block">
+                <span className="mb-1 block text-xs text-muted">Where it goes</span>
+                <input
+                  className={`${INPUT} font-mono text-xs`}
+                  value={href}
+                  readOnly={readOnly}
+                  list={`${field.id}-links`}
+                  onChange={(event) => onChange({ ...edit, href: event.target.value })}
+                />
+                {/* The site's own pages, offered rather than imposed. Typing
+                    `contact` instead of `/contact` is a link to nowhere that
+                    looks exactly like a link until a visitor clicks it — and an
+                    address off the site, an anchor and a mailto: all still go in
+                    the same box. */}
+                <datalist id={`${field.id}-links`}>
+                  {links.map((link) => (
+                    <option key={link.path} value={link.path}>
+                      {link.title}
+                    </option>
+                  ))}
+                </datalist>
+              </label>
+            )}
+          </div>
+          {field.kind === "button" && <ButtonControls field={field} edit={edit} onChange={onChange} readOnly={readOnly} />}
+        </>
       )}
 
       {field.kind === "image" && (
@@ -550,7 +675,8 @@ export function WebsiteEditor() {
    * Returns what happened, because the three answers need different things:
    * written, no element to write on, or no reachable document.
    */
-  const writeInFrame = useCallback((kind: "style" | "text" | "select", id: string | null, value?: string): "written" | "absent" | "unreachable" => {
+  const writeInFrame = useCallback(
+    (kind: "style" | "text" | "select" | "variant", id: string | null, value?: string, from?: string): "written" | "absent" | "unreachable" => {
     let doc: Document | null = null;
     try {
       doc = frame.current?.contentDocument ?? null;
@@ -579,10 +705,20 @@ export function WebsiteEditor() {
       else el.removeAttribute("style");
       return "written";
     }
+    if (kind === "variant") {
+      // One token out, one in. Every other class the developer wrote survives,
+      // exactly as the server's own swap does — this is the same rule, applied
+      // early so the colour changes under the cursor instead of after a save.
+      if (from) el.classList.remove(from);
+      if (value) el.classList.add(value);
+      return "written";
+    }
     // Never over the top of the caret: the page is editable in place.
     if (!el.hasAttribute("data-dw-editing")) el.innerHTML = value ?? "";
     return "written";
-  }, []);
+  },
+    [],
+  );
 
   /**
    * Show a change on the page now, and know whether that worked.
@@ -593,8 +729,8 @@ export function WebsiteEditor() {
    * says so and starts leaning on the reload instead.
    */
   const push = useCallback(
-    (kind: "style" | "text", id: string, value: string) => {
-      const result = writeInFrame(kind, id, value);
+    (kind: "style" | "text" | "variant", id: string, value: string, from?: string) => {
+      const result = writeInFrame(kind, id, value, from);
       if (result === "written") {
         awaiting.current = 0;
         setLiveBlind(false);
@@ -605,7 +741,13 @@ export function WebsiteEditor() {
         setAbsentIds((current) => (current.has(id) ? current : new Set(current).add(id)));
         return;
       }
-      tell(kind === "style" ? { type: "style", id, style: value } : { type: "text", id, html: value });
+      tell(
+        kind === "style"
+          ? { type: "style", id, style: value }
+          : kind === "variant"
+            ? { type: "variant", id, from, to: value }
+            : { type: "text", id, html: value },
+      );
       awaiting.current += 1;
       const at = awaiting.current;
       window.setTimeout(() => {
@@ -635,6 +777,13 @@ export function WebsiteEditor() {
       if (!options?.fromFrame) {
         if (next.style !== undefined) push("style", fieldId, next.style);
         if (next.value !== undefined) push("text", fieldId, next.value);
+        if (next.variant !== undefined) {
+          push("variant", fieldId, next.variant ?? "", wornVariant.current[fieldId]);
+          // The frame now wears the new one, so the *next* swap has to take
+          // that off rather than the class the page loaded with. Without this,
+          // picking three styles in a row leaves the button wearing two.
+          wornVariant.current[fieldId] = next.variant ?? undefined;
+        }
       }
       setEdits((current) => {
         const updated = { ...current, [fieldId]: next };
@@ -699,6 +848,18 @@ export function WebsiteEditor() {
 
   // The draft on the server is the starting point, and it is authoritative
   // whenever the page is loaded — including after a publish, which clears it.
+  // Which style each button currently wears, kept in a ref rather than a
+  // dependency. `change` needs it to push a class swap into the frame, and
+  // making it a dependency would rebuild that callback on every background
+  // refetch — including the ones that fire while somebody is typing.
+  const wornVariant = useRef<Record<string, string | undefined>>({});
+  useEffect(() => {
+    if (!page.data) return;
+    wornVariant.current = Object.fromEntries(
+      page.data.sections.flatMap((section) => section.fields).map((field) => [field.id, field.variant]),
+    );
+  }, [page.data]);
+
   useEffect(() => {
     if (!page.data) return;
     // Never over the top of unsaved work. Publish, discard and undo all clear
@@ -925,7 +1086,7 @@ export function WebsiteEditor() {
   }
   if (!page.data) return null;
 
-  const { sections, site } = page.data;
+  const { sections, site, links } = page.data;
   const section = sections.find((candidate) => candidate.id === sectionId) ?? sections[0] ?? null;
   const allFields = sections.flatMap((candidate) => candidate.fields);
   const picked = pickedId ? (allFields.find((field) => field.id === pickedId) ?? null) : null;
@@ -1235,6 +1396,7 @@ export function WebsiteEditor() {
                       edit={edits[picked.id]}
                       problem={problems.get(picked.id)}
                       publicUrl={site.publicUrl}
+                      links={links ?? []}
                       readOnly={readOnly}
                       onChange={(next) => change(picked.id, next)}
                       bare
@@ -1293,6 +1455,7 @@ export function WebsiteEditor() {
                         edit={edits[field.id]}
                         problem={problems.get(field.id)}
                         publicUrl={site.publicUrl}
+                        links={links ?? []}
                         readOnly={readOnly}
                         onChange={(next) => change(field.id, next)}
                       />

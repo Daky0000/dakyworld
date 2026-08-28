@@ -28,8 +28,18 @@ export type FieldKind =
   | "text"
   /** Words with inline formatting inside them — bold, a line break, a link. */
   | "richtext"
-  /** A link or button: the words on it, and where it goes. */
+  /** A link inside a sentence: the words on it, and where it goes. */
   | "link"
+  /**
+   * A call to action styled as a button.
+   *
+   * The same two things a link has — words and a destination — plus the two a
+   * button has and a link does not: which of the site's button styles it wears,
+   * and whether it opens in a new tab. Those were unreachable before, so the
+   * only way to turn the lime button on a page into the dark one was to edit
+   * HTML, which is the thing this editor exists to avoid.
+   */
+  | "button"
   /** An image: which file, and the description read out to somebody who cannot see it. */
   | "image";
 
@@ -69,6 +79,47 @@ export type SiteField = {
    * editable element in the preview without re-parsing it in the browser.
    */
   attrInsert?: number;
+
+  // --- Buttons only --------------------------------------------------------
+
+  /**
+   * The style class this button wears — `btn-primary`, `btn-dark`.
+   *
+   * Recognised structurally rather than from a list of names: a button has a
+   * variant when it carries both `X` and `X-something`, so `class="btn
+   * btn-primary"` has stem `btn` and variant `btn-primary`, and
+   * `class="category-btn"` has neither because nothing on it carries `category`.
+   *
+   * That rule is what makes changing one safe without this module holding a
+   * vocabulary of somebody else's design system. A variant can only ever be
+   * swapped for another token under the same stem, so the worst a client can do
+   * is name a style their own stylesheet does not define — visible, reversible,
+   * and in their own namespace. Free-text class editing, which is what a naive
+   * version of this feature is, could reach `hidden` or any utility class on
+   * the page.
+   */
+  variant?: string;
+  /** The stem the variant hangs off, and the only prefix a new one may use. */
+  variantStem?: string;
+  /** Every variant of this stem worn by a button anywhere on this page. */
+  variantsOnPage?: string[];
+  /**
+   * The button's class attribute, as written.
+   *
+   * Carried so that the style menu can be widened from the site's stylesheet
+   * without re-parsing the page: a button wearing only `btn` has no variant to
+   * read a stem off, and it is exactly the button somebody wants to *give* a
+   * style to. Public information — the page is on the internet.
+   */
+  classes?: string;
+  classSpan?: Span;
+  /** True when `target` is `_blank`. */
+  newTab?: boolean;
+  /** Whole-attribute spans, because turning a new tab off has to remove them. */
+  targetAttr?: Span;
+  relAttr?: Span;
+  /** What `rel` says now, so tokens that are nothing to do with us survive. */
+  rel?: string;
 };
 
 export type SiteSection = {
@@ -117,6 +168,16 @@ export type FieldValue = {
   originalHref?: string;
   originalAlt?: string;
   originalStyle?: string;
+
+  /**
+   * A button's style class. `null` takes the variant off without adding one,
+   * which is the only way back to a plain unstyled button.
+   */
+  variant?: string | null;
+  /** Whether this button opens in a new tab. Writes `rel` with it, always. */
+  newTab?: boolean;
+  originalVariant?: string;
+  originalNewTab?: boolean;
 };
 
 /** Elements that never hold editable copy. */
@@ -160,6 +221,148 @@ const BUTTONISH = /\b(btn|button|cta|primary|secondary|action)\b/i;
 
 function classOf(element: ElementNode): string {
   return element.attrs.find((candidate) => candidate.name === "class")?.value ?? "";
+}
+
+function classTokens(value: string): string[] {
+  return value.split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Which of a button's classes is its style, and what prefix a new one may use.
+ *
+ * Structural, and that is the whole safety argument. A button carries `btn` and
+ * `btn-primary`; the first is the stem it shares with every other button on the
+ * site and the second is the one that decides how it looks. Recognising the
+ * pair this way means changing a style can only ever produce another token
+ * under the same stem — the editor never sends a class list, and there is no
+ * vocabulary of somebody else's design system to keep in step.
+ *
+ * `class="category-btn"` gets nothing, correctly: nothing on that element
+ * carries `category`, so `category-btn` is a name, not a modifier of anything.
+ *
+ * The longest matching stem wins, so `card` and `card-title` on one element
+ * pick `card-title-*` over `card-*` rather than whichever came first.
+ */
+export function variantOf(classValue: string): { stem: string; variant: string } | null {
+  const tokens = classTokens(classValue);
+  const carried = new Set(tokens);
+  let best: { stem: string; variant: string } | null = null;
+  for (const token of tokens) {
+    const cut = token.lastIndexOf("-");
+    if (cut <= 0) continue;
+    for (let at = token.length - 1; at > 0; at -= 1) {
+      if (token[at] !== "-") continue;
+      const stem = token.slice(0, at);
+      if (!carried.has(stem)) continue;
+      if (!best || stem.length > best.stem.length) best = { stem, variant: token };
+      break;
+    }
+  }
+  return best;
+}
+
+/** Only `btn-something`, and only characters a class may contain. */
+export function isVariantOfStem(stem: string, candidate: string): boolean {
+  return candidate.startsWith(`${stem}-`) && candidate.length > stem.length + 1 && /^[A-Za-z0-9_-]+$/.test(candidate);
+}
+
+/**
+ * The one rule for what a style change may do to a class list.
+ *
+ * The stem is taken from the **requested** style rather than from whatever the
+ * button already wears, and that is what lets a button carrying only `btn` be
+ * given `btn-primary`. The safety property is unchanged and is the whole point:
+ * a style is only accepted when the element already carries the class it hangs
+ * off, so from `class="btn"` you can reach `btn-anything` and nothing else —
+ * never `hidden`, never a utility class from elsewhere on the page.
+ *
+ * Returns null when the request is not allowed, and the caller writes nothing.
+ * Refusing is deliberately not the same as writing a fallback: a style that
+ * silently became a different style is worse than one that did not change.
+ */
+export function resolveVariantChange(classValue: string, requested: string | null): { from: string | null; to: string | null } | null {
+  const tokens = classTokens(classValue);
+  const carried = new Set(tokens);
+
+  if (requested === null) {
+    const found = variantOf(classValue);
+    return found ? { from: found.variant, to: null } : null;
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(requested)) return null;
+
+  // The longest carried class the request extends. Longest so that `card` and
+  // `card-title` on one element resolve `card-title-wide` against the specific
+  // one rather than the general one.
+  let stem: string | null = null;
+  for (let at = requested.length - 1; at > 0; at -= 1) {
+    if (requested[at] !== "-") continue;
+    const candidate = requested.slice(0, at);
+    if (carried.has(candidate) && (!stem || candidate.length > stem.length)) stem = candidate;
+  }
+  if (!stem) return null;
+  if (carried.has(requested)) return null; // already wearing it
+
+  // Anything else under the same stem comes off, so a button cannot end up
+  // wearing two colours at once.
+  const from = tokens.find((token) => token !== stem && isVariantOfStem(stem!, token)) ?? null;
+  return { from, to: requested };
+}
+
+/**
+ * A class list with one variant swapped for another, and everything else kept.
+ *
+ * `mt-9` on a button is a developer's spacing decision and has nothing to do
+ * with which colour somebody picked, so it survives. The order of the remaining
+ * tokens survives too — a diff on a publish should show the one word that
+ * changed.
+ */
+export function withVariant(classValue: string, change: { from: string | null; to: string | null }): string {
+  const tokens = classTokens(classValue);
+  const without = change.from ? tokens.filter((token) => token !== change.from) : tokens;
+  if (change.to === null) return without.join(" ");
+  // Put it back where the old one was, so a diff reads as one word replaced
+  // rather than as a reordered attribute.
+  const at = change.from ? tokens.indexOf(change.from) : -1;
+  if (at === -1) return [...without, change.to].join(" ");
+  return [...without.slice(0, at), change.to, ...without.slice(at)].join(" ");
+}
+
+/** `btn-primary` under stem `btn` reads as "Primary". */
+export function variantLabel(stem: string, variant: string): string {
+  const word = variant.slice(stem.length + 1).replace(/[-_]+/g, " ").trim();
+  return word ? word.charAt(0).toUpperCase() + word.slice(1) : variant;
+}
+
+const NEW_TAB_REL = ["noopener", "noreferrer"];
+
+/**
+ * The two attributes that open a link in a new tab, read as one fact.
+ *
+ * They are written as one fact too — see `applyValues`. `target="_blank"`
+ * without `rel="noopener"` hands the page it opens a live handle on the one it
+ * came from, and nobody choosing "open in a new tab" is choosing that. There is
+ * no control anywhere in this editor that can produce one without the other.
+ */
+function newTabOf(element: ElementNode): Pick<SiteField, "newTab" | "targetAttr" | "relAttr" | "rel"> {
+  const target = attrNode(element, "target");
+  const rel = attrNode(element, "rel");
+  return {
+    newTab: target?.value.trim().toLowerCase() === "_blank",
+    targetAttr: target ? { start: target.start, end: target.end } : undefined,
+    relAttr: rel ? { start: rel.start, end: rel.end } : undefined,
+    rel: rel?.value,
+  };
+}
+
+/** Everything a button field carries beyond what a link does. */
+function buttonBits(element: ElementNode): Partial<SiteField> {
+  const classAttr = element.attrs.find((candidate) => candidate.name === "class");
+  const found = classAttr ? variantOf(classAttr.value) : null;
+  return {
+    ...(found ? { variant: found.variant, variantStem: found.stem } : {}),
+    ...(classAttr ? { classes: classAttr.value, classSpan: { start: classAttr.valueStart, end: classAttr.valueEnd } } : {}),
+    ...newTabOf(element),
+  };
 }
 
 /** True when nothing inside this element renders any words. */
@@ -258,11 +461,11 @@ function linkField(source: string, element: ElementNode, id: string): SiteField 
   const span = contentSpan(source, element);
   if (!span && !href) return null;
   const value = span ? source.slice(span.start, span.end) : "";
-  const label = BUTTONISH.test(classOf(element)) ? "Button" : "Link";
+  const isButton = BUTTONISH.test(classOf(element));
   return {
     id,
-    kind: "link",
-    label,
+    kind: isButton ? "button" : "link",
+    label: isButton ? "Button" : "Link",
     tag: "a",
     value,
     preview: firstLine(plain(value)) || href?.value || "Link",
@@ -270,6 +473,39 @@ function linkField(source: string, element: ElementNode, id: string): SiteField 
     content: span ?? undefined,
     hrefSpan: href ? { start: href.valueStart, end: href.valueEnd } : undefined,
     ...styleOf(element),
+    ...(isButton ? buttonBits(element) : {}),
+  };
+}
+
+/**
+ * A `<button>`, which is a button with nowhere to go.
+ *
+ * It was already editable — its words came through as an ordinary text field —
+ * and that is most of what anybody needs from one, because where a `<button>`
+ * leads is decided by script rather than by an address. What it did not have
+ * was the style switch, which is the same decision on the same kind of thing:
+ * the filter chips on the insights page are `<button>` and the calls to action
+ * beside them are `<a>`, and it would be strange for one to be restylable and
+ * the other not.
+ */
+function buttonElementField(source: string, element: ElementNode, id: string): SiteField | null {
+  const span = contentSpan(source, element);
+  if (!span) return null;
+  const value = source.slice(span.start, span.end);
+  return {
+    id,
+    kind: "button",
+    label: "Button",
+    tag: "button",
+    value,
+    preview: firstLine(plain(value)),
+    content: span,
+    ...styleOf(element),
+    ...buttonBits(element),
+    // A `<button>` has no destination and no tab to open, so neither is offered.
+    newTab: undefined,
+    targetAttr: undefined,
+    relAttr: undefined,
   };
 }
 
@@ -336,6 +572,11 @@ function collect(source: string, element: ElementNode, out: SiteField[], section
         continue;
       }
       const field = linkField(source, child, id);
+      if (field) out.push(field);
+      continue;
+    }
+    if (child.tag === "button" && textOf(source, child) !== "" && !hasDescendant(child, (node) => node.tag === "img")) {
+      const field = buttonElementField(source, child, id);
       if (field) out.push(field);
       continue;
     }
@@ -520,7 +761,54 @@ export function readPage(source: string): PageContent {
     .map((section) => ({ ...section, fields: section.fields.filter((field) => !withinGenerated(field, generated)) }))
     .filter((section) => section.fields.length > 0);
 
-  return { sections: kept, fields: kept.flatMap((section) => section.fields) };
+  const all = kept.flatMap((section) => section.fields);
+  offerVariants(all);
+  return { sections: kept, fields: all };
+}
+
+/**
+ * Tells every button which other styles its own page already uses.
+ *
+ * Read off the page rather than out of a stylesheet, and that is a real limit
+ * worth stating: a variant defined in CSS and used nowhere on this page is not
+ * offered here. The alternative is fetching and parsing somebody's stylesheet
+ * to build a menu, which makes the field list depend on a second network read
+ * and on guessing which of a site's classes are meant to be interchangeable.
+ *
+ * What is offered is therefore always true — every one of these is a style this
+ * page is already wearing somewhere, so picking it cannot produce a button the
+ * stylesheet has no rule for. Typing a style the page does not use is still
+ * possible and still safe (see `variantOf`); it is just not a menu item.
+ */
+function offerVariants(fields: SiteField[]): void {
+  const byStem = new Map<string, Set<string>>();
+  for (const field of fields) {
+    if (!field.variantStem || !field.variant) continue;
+    const seen = byStem.get(field.variantStem) ?? new Set<string>();
+    seen.add(field.variant);
+    byStem.set(field.variantStem, seen);
+  }
+  for (const field of fields) {
+    if (!field.variantStem) continue;
+    const seen = byStem.get(field.variantStem);
+    if (seen) field.variantsOnPage = [...seen].sort();
+  }
+}
+
+function relTokens(value: string | undefined): string[] {
+  return (value ?? "").split(/\s+/).map((token) => token.toLowerCase()).filter(Boolean);
+}
+
+/**
+ * An attribute's span, widened to swallow the space in front of it.
+ *
+ * Removing `target="_blank"` on its own leaves `<a  href=…>` — harmless, and
+ * the kind of thing that turns a one-line diff into a line somebody has to look
+ * twice at. Only one space is taken, so an attribute a developer put on its own
+ * line keeps its indentation.
+ */
+function withLeadingSpace(source: string, span: Span): Span {
+  return span.start > 0 && source[span.start - 1] === " " ? { start: span.start - 1, end: span.end } : span;
 }
 
 /** Escapes a string for use inside a double-quoted attribute value. */
@@ -599,7 +887,12 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
       (edit.original !== undefined && edit.original !== field.value) ||
       (edit.originalHref !== undefined && edit.originalHref !== (field.href ?? "")) ||
       (edit.originalAlt !== undefined && edit.originalAlt !== (field.alt ?? "")) ||
-      (edit.originalStyle !== undefined && edit.originalStyle !== (field.style ?? ""));
+      (edit.originalStyle !== undefined && edit.originalStyle !== (field.style ?? "")) ||
+      // A button restyled by a developer since the draft was written is the
+      // same class of surprise as a heading they rewrote: the draft still
+      // remembers a variant that is no longer there, and writing over it would
+      // undo their change without saying so.
+      (edit.originalVariant !== undefined && edit.originalVariant !== (field.variant ?? ""));
     if (moved) {
       conflicts.push({ id, expected: edit.original ?? edit.originalHref ?? edit.originalAlt ?? "", found: field.value });
       continue;
@@ -641,6 +934,47 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
         touched = true;
       }
     }
+    // A button's style, swapped one token for another inside its own class
+    // attribute. Every other class on the element survives — `mt-9` is a
+    // developer's spacing decision and has nothing to do with which colour
+    // somebody picked.
+    if (edit.variant !== undefined && field.classSpan) {
+      const current = source.slice(field.classSpan.start, field.classSpan.end);
+      const change = resolveVariantChange(current, edit.variant);
+      const next = change ? withVariant(current, change) : current;
+      if (next !== current) {
+        edits.push({ span: field.classSpan, text: attrEscape(next) });
+        touched = true;
+      }
+    }
+
+    // `target` and `rel`, written and removed as one thing. A `target="_blank"`
+    // with no `rel="noopener"` hands the page it opens a live handle on the one
+    // it came from, and nobody choosing "open in a new tab" is choosing that —
+    // so there is no path through here that produces one without the other.
+    if (edit.newTab !== undefined && field.kind === "button" && field.hrefSpan && edit.newTab !== Boolean(field.newTab)) {
+      const rel = relTokens(field.rel);
+      if (edit.newTab) {
+        const wanted = [...rel.filter((token) => !NEW_TAB_REL.includes(token)), ...NEW_TAB_REL].join(" ");
+        if (field.targetAttr) edits.push({ span: field.targetAttr, text: 'target="_blank"' });
+        else if (field.attrInsert !== undefined) edits.push({ insertAt: field.attrInsert, text: ' target="_blank"' });
+        if (field.relAttr) edits.push({ span: field.relAttr, text: `rel="${attrEscape(wanted)}"` });
+        else if (field.attrInsert !== undefined) edits.push({ insertAt: field.attrInsert, text: ` rel="${attrEscape(wanted)}"` });
+        touched = true;
+      } else {
+        // Removed rather than emptied. `target=""` is not "no target" to a
+        // browser, and a `rel` left holding only the two tokens we put there is
+        // ours to take away — anything else on it is the developer's and stays.
+        if (field.targetAttr) edits.push({ span: withLeadingSpace(source, field.targetAttr), text: "" });
+        const kept = rel.filter((token) => !NEW_TAB_REL.includes(token));
+        if (field.relAttr) {
+          if (kept.length === 0) edits.push({ span: withLeadingSpace(source, field.relAttr), text: "" });
+          else edits.push({ span: field.relAttr, text: `rel="${attrEscape(kept.join(" "))}"` });
+        }
+        touched = true;
+      }
+    }
+
     if (touched) changed.push(id);
   }
 

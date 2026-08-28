@@ -25,6 +25,16 @@ export type Attr = {
   /** Offsets of the value itself, inside the quotes. Equal when the attribute is bare. */
   valueStart: number;
   valueEnd: number;
+  /**
+   * Offsets of the whole attribute — the name, the `=`, the quotes and all.
+   *
+   * The value span is enough to *change* an attribute and not enough to remove
+   * one. Turning "opens in a new tab" back off has to take `target` and `rel`
+   * away together, and writing `target=""` instead would leave a browser
+   * reading an empty target, which is not the same as no target at all.
+   */
+  start: number;
+  end: number;
 };
 
 export type ElementNode = {
@@ -118,7 +128,7 @@ function readAttrs(source: string, from: number): { attrs: Attr[]; tagEnd: numbe
     let j = i;
     while (j < source.length && /\s/.test(source[j]!)) j += 1;
     if (source[j] !== "=") {
-      attrs.push({ name, value: "", valueStart: i, valueEnd: i });
+      attrs.push({ name, value: "", valueStart: i, valueEnd: i, start: nameStart, end: i });
       continue;
     }
 
@@ -128,12 +138,12 @@ function readAttrs(source: string, from: number): { attrs: Attr[]; tagEnd: numbe
     if (quote === QUOTE_DOUBLE || quote === QUOTE_SINGLE) {
       const close = source.indexOf(quote, j + 1);
       const valueEnd = close < 0 ? source.length : close;
-      attrs.push({ name, value: source.slice(j + 1, valueEnd), valueStart: j + 1, valueEnd });
+      attrs.push({ name, value: source.slice(j + 1, valueEnd), valueStart: j + 1, valueEnd, start: nameStart, end: valueEnd + 1 });
       i = valueEnd + 1;
     } else {
       const valueStart = j;
       while (j < source.length && !/[\s>]/.test(source[j]!)) j += 1;
-      attrs.push({ name, value: source.slice(valueStart, j), valueStart, valueEnd: j });
+      attrs.push({ name, value: source.slice(valueStart, j), valueStart, valueEnd: j, start: nameStart, end: j });
       i = j;
     }
   }

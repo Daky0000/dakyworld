@@ -1890,12 +1890,74 @@ carry a client's site: `Site` has a `clientId` and nothing in it is shaped aroun
 Dakyworld being the only row.
 
 **The editable-region model, not the block model.** Pages become a list of
-fields — headings, paragraphs, list items, link labels and destinations, image
-sources and alt text — grouped by the section they sit in, with each section
-named after its own heading. Adding, removing and reordering sections is
-deliberately **not** offered: that needs a component library that knows how to
-render a new section, and rebuilding this homepage's arches, orbs and count-up
-figures as generic blocks would be a redesign wearing a migration's clothes.
+fields — headings, paragraphs, list items, link labels and destinations, button
+labels, styles and destinations, image sources and alt text — grouped by the
+section they sit in, with each section named after its own heading. Adding,
+removing and reordering sections is deliberately **not** offered: that needs a
+component library that knows how to render a new section, and rebuilding this
+homepage's arches, orbs and count-up figures as generic blocks would be a
+redesign wearing a migration's clothes.
+
+**A button is its own kind of field, because it has two things a link does
+not** — `kind: "button"`. Its words and its destination were always editable,
+because those are what an `<a>` has. Which *style* it wears was not, so turning
+the lime call to action on a page into the dark one meant editing HTML, which
+is the thing this editor exists to avoid. And there was no control at all for
+opening a link in a new tab.
+
+- **A style is recognised structurally, never from a list of button names.** A
+  button has one when it carries both `X` and `X-something`, so `class="btn
+  btn-primary"` has stem `btn` and style `btn-primary`, and
+  `class="category-btn"` has neither — nothing on it carries `category`.
+  `resolveVariantChange()` is the whole rule and it takes the stem from the
+  style being **asked for** rather than the one already worn, which is what
+  lets a button wearing only `btn` be *given* a colour. Without that, "None"
+  would be a one-way door: publish a button with its style removed and no menu
+  could ever reach it again.
+- **That rule is the security story.** Free-text class editing — which is what
+  a naive version of this is — reaches `hidden`, or any utility class on the
+  page, from a control a client is meant to use for choosing a colour. Here the
+  element must already carry the class the request hangs off, so from
+  `class="btn"` you can reach `btn-anything` and nothing else. A style that is
+  not allowed is **refused, never coerced**: a style that silently became a
+  different style is worse than one that did not change.
+- **The swap is one token.** Every other class survives, in place — `mt-9` on a
+  button is a developer's spacing decision and has nothing to do with which
+  colour somebody picked — so a publish is still a one-line diff.
+- **The menu comes from the site's stylesheet, the rule does not.**
+  `siteStyleClasses()` reads the linked CSS (same host only, cached beside the
+  pages, degrading to the classes the page itself wears). Read off the page
+  alone the homepage offered two of this site's three button styles, because
+  nothing on it wears `btn-ghost`. **It is a menu, not a permission** — nothing
+  about whether a style may be *written* consults it.
+- **`target` and `rel` are one fact.** `target="_blank"` without
+  `rel="noopener"` hands the page it opens a live handle on the one it came
+  from, and nobody choosing "open in a new tab" is choosing that. One switch
+  writes both and removes both, and a `rel` token the developer put there for
+  their own reasons (`nofollow`) survives in each direction. Removed, not
+  emptied: `target=""` is not "no target" to a browser, which is the one place
+  the `style=""` precedent does not apply.
+- **A `<button>` element gets the style control and no destination**, because
+  where a `<button>` leads is decided by script. It was already editable as
+  ordinary text; what it did not have was the switch its `<a>` siblings have.
+- The style is **pushed into the frame** like text and inline style are, so a
+  colour changes under the cursor rather than after the next save and reload.
+  The editor sends both halves of the swap, because it is the side that knows
+  which token is the style — reading it back off the element would be a second
+  implementation of that rule, in another language, that has to agree with the
+  first for ever. `newTab` is in `LIVE_KEYS` for the opposite reason: it changes
+  nothing visible, so reloading to show it would cost a scroll position and a
+  caret for no difference at all.
+- **Destinations are offered, not validated into a corner.** The route sends
+  the site's own pages and the box is a datalist over them, because `contact`
+  instead of `/contact` is a link to nowhere that looks exactly like a link
+  until a visitor clicks it. An address off the site, an anchor and a `mailto:`
+  still go in the same box.
+
+`checks/websiteButtons.ts` (59) covers it against the real pages here. Half of
+it is negatives: an ordinary link must stay a link, a `<button>` must not be
+offered a new tab, and every one of `hidden`, `btn`, `""`, `btn-primary hidden`
+and `btn-<script>` must leave the page byte-identical.
 
 ```
 GitHub (or the live site)  →  parse.ts     offsets for every element
@@ -2085,7 +2147,7 @@ reach the page title, a picture's description, or a heading three screens down.
   a public page. `url(` goes because it fetches from a page with a strict CSP,
   `expression(` because old IE ran it, and anything with a quote or an angle
   bracket in it because that is how you leave an attribute.
-- `checks/websiteVisual.ts` (165) runs against every real page here: marking 203
+- `checks/websiteVisual.ts` (190) runs against every real page here: marking 203
   elements changes no field's value and lands no mark outside a tag, and a style
   edit is still a one-line diff in a 474-line file.
 

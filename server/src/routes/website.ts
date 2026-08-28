@@ -15,12 +15,13 @@ import {
   buildPreview,
   buildPublishPlan,
   discoverFields,
+  isVariantOfStem,
   sanitizeValue,
   validateFieldChange,
   type FieldValue,
   type SiteField,
 } from "../services/website/index.js";
-import { discoverPages, pageSource, pageUrl, publishPage, siteRepo, WebsiteError } from "../services/website/site.js";
+import { discoverPages, pageSource, pageUrl, publishPage, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
 
 /**
  * Editing the websites this company publishes.
@@ -87,6 +88,14 @@ function publicField(field: SiteField) {
     // editor's business; where it sits in the file is not, and sending them
     // would invite a second implementation of the splice in the browser.
     ...(field.style !== undefined ? { style: field.style } : {}),
+    // Buttons. `variantStem` travels because the editor labels a style by the
+    // word after it — `btn-primary` reads as "Primary" — and `variantsOnPage`
+    // is the menu: every style this page already wears somewhere, so picking
+    // one can never produce a button the stylesheet has no rule for.
+    ...(field.variant !== undefined ? { variant: field.variant } : {}),
+    ...(field.variantStem !== undefined ? { variantStem: field.variantStem } : {}),
+    ...(field.variantsOnPage !== undefined ? { variants: field.variantsOnPage } : {}),
+    ...(field.newTab !== undefined ? { newTab: field.newTab } : {}),
   };
 }
 
@@ -289,12 +298,63 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
     const content = discoverFields(source.html);
     const values = draftValues(page);
 
-    const saver = page.draftSavedById
-      ? await prisma.user.findUnique({ where: { id: page.draftSavedById }, select: { id: true, name: true } })
-      : null;
+    // The style menu, widened from what this page happens to wear to what the
+    // site actually defines. Best-effort and never fatal: with no stylesheet
+    // reachable the menu is still every style the page uses, and the rule that
+    // decides whether a style may be *written* never consults this at all.
+    const defined = await siteStyleClasses(site, page, source.html).catch(() => new Set<string>());
+    const widen = (field: SiteField) => {
+      if (field.classes === undefined) return field;
+      // The stems this button could take a style from: the one it already wears
+      // a style off, plus any class it carries that the stylesheet defines
+      // styles for. The second is what lets a button wearing only `btn` be
+      // *given* a colour — which is otherwise a one-way door, since picking
+      // "None" and publishing would leave a button no menu could ever reach
+      // again.
+      const carried = field.classes.split(/\s+/).filter(Boolean);
+      const stems = new Set(field.variantStem ? [field.variantStem] : []);
+      for (const token of carried) {
+        for (const candidate of defined) if (isVariantOfStem(token, candidate)) stems.add(token);
+      }
+      if (stems.size === 0) return field;
+
+      const offered = new Set(field.variantsOnPage ?? []);
+      for (const stem of stems) {
+        for (const candidate of defined) if (isVariantOfStem(stem, candidate)) offered.add(candidate);
+      }
+      // Capped, because a utility-first stylesheet can define hundreds under
+      // one stem and a menu of hundreds is not a menu.
+      return {
+        ...field,
+        // A button with no style yet has no stem to read off itself, so the
+        // one derived here travels with it — that is what lets the editor
+        // label `btn-primary` as "Primary" rather than printing the class.
+        // Only when there is exactly one: two stems and there is no single
+        // word to strip.
+        ...(field.variantStem === undefined && stems.size === 1 ? { variantStem: [...stems][0] } : {}),
+        variantsOnPage: [...offered].sort().slice(0, 12),
+      };
+    };
+
+    const [saver, siblings] = await Promise.all([
+      page.draftSavedById
+        ? prisma.user.findUnique({ where: { id: page.draftSavedById }, select: { id: true, name: true } })
+        : Promise.resolve(null),
+      // Where a link on this page can go without leaving the site. Sent so a
+      // destination is something somebody picks rather than something they
+      // spell — `contact` instead of `/contact` is a link to nowhere that looks
+      // exactly like a link, and nothing on the page says otherwise until a
+      // visitor clicks it.
+      prisma.sitePage.findMany({
+        where: { siteId: site.id },
+        orderBy: { path: "asc" },
+        select: { path: true, title: true },
+      }),
+    ]);
 
     res.json({
       site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site) },
+      links: siblings,
       page: {
         id: page.id,
         title: page.title,
@@ -309,11 +369,14 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
         id: section.id,
         label: section.label,
         kind: section.kind,
-        fields: section.fields.map(publicField),
+        fields: section.fields.map((field) => publicField(widen(field))),
       })),
       draft: {
         values: Object.fromEntries(
-          Object.entries(values).map(([id, edit]) => [id, { value: edit.value, href: edit.href, alt: edit.alt, style: edit.style }]),
+          Object.entries(values).map(([id, edit]) => [
+            id,
+            { value: edit.value, href: edit.href, alt: edit.alt, style: edit.style, variant: edit.variant, newTab: edit.newTab },
+          ]),
         ),
         // The number the editor has to send back on every save. Handing it out
         // here, and only here, is what makes a save an exchange: a screen that
@@ -347,6 +410,9 @@ const draftBody = z.object({
       href: z.string().max(2_000).optional(),
       alt: z.string().max(500).optional(),
       style: z.string().max(2_000).optional(),
+      /** A button's style class. `null` takes the style off without adding one. */
+      variant: z.string().max(120).nullable().optional(),
+      newTab: z.boolean().optional(),
     }),
   ),
 });

@@ -112,6 +112,77 @@ export async function pageSource(site: Site, page: SitePage, options: { fresh?: 
   return live;
 }
 
+/**
+ * Every class the site's own stylesheet defines.
+ *
+ * One reason only: the button style menu. Read off the page alone, a menu can
+ * offer a style the page already wears somewhere — which is always true, and on
+ * a page whose buttons happen to be all one colour, is a menu of one. The
+ * stylesheet is where the answer actually lives, and reading it turns "the
+ * styles this page uses" into "the styles this site has".
+ *
+ * Everything about it degrades. No stylesheet linked, none reachable, none
+ * parseable: the caller falls back to what the page itself is wearing, and the
+ * *write* rule never consults this at all — `variantOf` is structural, so a
+ * style is safe whether or not this succeeded. It is a menu, not a permission.
+ *
+ * Cached alongside pages, and read the same two ways: from the repository when
+ * a token is configured, from the live site otherwise. A stylesheet on another
+ * host is skipped rather than fetched — a font CDN is not this site's design
+ * system, and fetching arbitrary URLs named in somebody's HTML is a door this
+ * module has no reason to open.
+ */
+export async function siteStyleClasses(site: Site, page: SitePage, html: string): Promise<Set<string>> {
+  const classes = new Set<string>();
+  const hrefs = [...html.matchAll(/<link\b[^>]*>/gi)]
+    .filter((tag) => /rel\s*=\s*["']?stylesheet/i.test(tag[0]))
+    .map((tag) => /href\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1])
+    .filter((href): href is string => Boolean(href))
+    // Same site only, and only the first few: a page linking eleven
+    // stylesheets is not a reason to make eleven requests every time somebody
+    // opens it.
+    .filter((href) => !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("//"))
+    .slice(0, 3);
+
+  for (const href of hrefs) {
+    const css = await readStylesheet(site, page, href).catch(() => null);
+    if (!css) continue;
+    // Selectors only — the part before the `{`. A class name mentioned inside a
+    // declaration is not a class this site defines.
+    for (const rule of css.split("{")) {
+      const selector = rule.slice(rule.lastIndexOf("}") + 1);
+      for (const match of selector.matchAll(/\.(-?[A-Za-z_][A-Za-z0-9_-]*)/g)) classes.add(match[1]!);
+    }
+  }
+  return classes;
+}
+
+async function readStylesheet(site: Site, page: SitePage, href: string): Promise<string | null> {
+  // Resolved against the page, so `assets/site.css` beside `about.html` and
+  // `/assets/site.css` both land in the same place.
+  const filePath = href.startsWith("/")
+    ? href.slice(1).split(/[?#]/)[0]!
+    : new URL(href, `https://x/${page.filePath}`).pathname.slice(1).split(/[?#]/)[0]!;
+  if (!filePath || filePath.includes("..")) return null;
+
+  const repo = siteRepo(site);
+  const key = sourceKey({ siteId: site.id, repo, branch: site.repoBranch, filePath });
+  const cached = readCache(key);
+  if (cached) return cached.html;
+
+  if (repo && (await githubConfigured())) {
+    const css = await readFile(repo, repoFilePath(site, { filePath }), site.repoBranch).catch(() => null);
+    if (css !== null) {
+      writeCache(key, { html: css, from: "repository" });
+      return css;
+    }
+    return null;
+  }
+  const css = await fetchLive(`${site.publicUrl.replace(/\/+$/, "")}/${filePath}`);
+  writeCache(key, { html: css, from: "live site" });
+  return css;
+}
+
 /** `about.html` → `/about`, `index.html` → `/`. The site serves extensionless paths. */
 export function pathFromFile(filePath: string): string {
   const name = filePath.replace(/\.html$/i, "");
@@ -451,8 +522,8 @@ function markEditable(html: string, fields: SiteField[]): string {
  *    live so a change is visible while the slider is still moving, instead of
  *    only after the draft saves and the frame reloads.
  *
- * Only text, richtext and link fields can be typed into. A picture is changed
- * by address, in the panel, because there is nothing to type into it.
+ * Only text, richtext, link and button fields can be typed into. A picture is
+ * changed by address, in the panel, because there is nothing to type into it.
  *
  * Navigation is stopped for the same reason `form-action` is `'none'`: a click
  * on a link in a preview should select the link, not leave the page.
@@ -486,9 +557,11 @@ function pickerAssets(nonce: string): string {
     if (el) el.setAttribute("data-dw-selected", "");
   }
   // A picture has nothing to type into; its address is changed in the panel.
+  // A button's words are typed on the page like any other words — its style and
+  // its destination are the parts that live in the panel.
   function typeable(el) {
     var kind = el.getAttribute("data-dw-kind");
-    return kind === "text" || kind === "richtext" || kind === "link";
+    return kind === "text" || kind === "richtext" || kind === "link" || kind === "button";
   }
   // Never the element's own innerHTML: it carries the attributes this script
   // put on its children, and a data-* attribute survives sanitising on purpose
@@ -651,6 +724,23 @@ function pickerAssets(nonce: string): string {
       // Never while it is being typed into: that would move the caret.
       if (written !== editing) written.innerHTML = String(data.html == null ? "" : data.html);
       post({ type: "applied", id: data.id, want: "text" });
+    } else if (data.type === "variant") {
+      // A button's style, swapped here as well as in the draft. Without this a
+      // colour change shows nothing until the autosave and the reload behind
+      // it, which is a second or two of an editor that looks broken — the same
+      // reason a style change is pushed rather than waited for. (No backticks
+      // in here: this whole script is a template literal.)
+      //
+      // One token out, one token in, and every other class left exactly as the
+      // developer wrote it. The editor sends both halves because it is the side
+      // that knows which token is the style: reading it back off the element
+      // would be a second implementation of that rule, in a different language,
+      // that has to agree with the first for ever.
+      var restyled = find(data.id);
+      if (!restyled) { post({ type: "absent", id: data.id, want: "variant" }); return; }
+      if (data.from) restyled.classList.remove(String(data.from));
+      if (data.to) restyled.classList.add(String(data.to));
+      post({ type: "applied", id: data.id, want: "variant" });
     }
   });
   // Announced after the listener above exists, and again on load, because an

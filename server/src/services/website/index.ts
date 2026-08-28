@@ -37,8 +37,11 @@
 import { decodeEntities, parseHtml } from "./parse.js";
 import {
   applyValues,
+  isVariantOfStem,
   readPage,
+  resolveVariantChange,
   safeStyle,
+  variantLabel,
   type ApplyResult,
   type FieldKind,
   type FieldValue,
@@ -60,7 +63,7 @@ export const EDITOR_CORE_VERSION = 1;
 
 // --- The parts that were already here -------------------------------------
 
-export { applyValues, readPage, safeStyle, checkLink, sanitizePlain, sanitizeRich };
+export { applyValues, readPage, safeStyle, checkLink, sanitizePlain, sanitizeRich, isVariantOfStem, resolveVariantChange, variantLabel };
 export type { ApplyResult, FieldKind, FieldValue, PageContent, PreviewDocument, SiteField, SiteSection };
 
 /** The document's structure. Rarely wanted directly — `discoverFields` is the usual way in. */
@@ -88,7 +91,7 @@ export const buildPreview = previewDocument;
  */
 export function sanitizeValue(
   field: SiteField,
-  raw: { value?: string; href?: string; alt?: string; style?: string },
+  raw: { value?: string; href?: string; alt?: string; style?: string; variant?: string | null; newTab?: boolean },
 ): FieldValue {
   const next: FieldValue = {};
 
@@ -101,6 +104,23 @@ export function sanitizeValue(
   if (raw.alt !== undefined && raw.alt !== (field.alt ?? "")) next.alt = raw.alt;
   if (raw.style !== undefined && safeStyle(raw.style) !== (field.style ?? "")) next.style = safeStyle(raw.style);
 
+  // A button's style, cleaned to the one shape it may take: another token under
+  // this button's own stem. Anything else is dropped here rather than refused,
+  // because it can only arrive from a client that has been tampered with — the
+  // editor's control cannot produce one — and `applyValues` checks it again
+  // before it writes.
+  if (raw.variant !== undefined && field.kind === "button" && field.classes !== undefined) {
+    const wanted = raw.variant === null ? null : raw.variant.trim();
+    // The same rule `applyValues` writes by, asked here so a request that could
+    // never be written is never stored either. A draft outlives its session and
+    // is spliced into a public page weeks later; anything unpublishable must
+    // never have been saved.
+    if (resolveVariantChange(field.classes, wanted)) next.variant = wanted;
+  }
+  if (raw.newTab !== undefined && field.kind === "button" && field.hrefSpan && raw.newTab !== Boolean(field.newTab)) {
+    next.newTab = raw.newTab;
+  }
+
   if (Object.keys(next).length === 0) return next;
 
   // What the page said when the edit was made. This is the whole reason a draft
@@ -110,6 +130,8 @@ export function sanitizeValue(
   if (field.style !== undefined) next.originalStyle = field.style;
   if (field.href !== undefined) next.originalHref = field.href;
   if (field.alt !== undefined) next.originalAlt = field.alt;
+  if (field.variant !== undefined) next.originalVariant = field.variant;
+  if (field.newTab !== undefined) next.originalNewTab = field.newTab;
   return next;
 }
 
@@ -230,7 +252,7 @@ export function buildPublishPlan(input: { source: string; values: Record<string,
 // --- New: saying what changed, in words --------------------------------------
 
 /** Which part of a field moved. A picture and its description are two changes. */
-export type ChangedPart = "words" | "destination" | "picture" | "description" | "styling";
+export type ChangedPart = "words" | "destination" | "picture" | "description" | "styling" | "button style" | "opens in";
 
 export type FieldChangeSummary = {
   id: string;
@@ -319,6 +341,24 @@ export function describeChanges(fields: SiteField[], values: Record<string, Fiel
     if (edit.style !== undefined) {
       out.push({ id, label, kind, part: "styling", from: shown(edit.originalStyle), to: shown(edit.style) });
     }
+    if (edit.variant !== undefined) {
+      // Shown as the word somebody picked — "Primary" — rather than the class,
+      // because this line is read by whoever is deciding whether to publish.
+      const stem = field?.variantStem;
+      const name = (token: string | null | undefined) =>
+        !token ? "no style" : stem ? variantLabel(stem, token) : token;
+      out.push({ id, label, kind, part: "button style", from: name(edit.originalVariant), to: name(edit.variant) });
+    }
+    if (edit.newTab !== undefined) {
+      out.push({
+        id,
+        label,
+        kind,
+        part: "opens in",
+        from: edit.originalNewTab ? "a new tab" : "the same tab",
+        to: edit.newTab ? "a new tab" : "the same tab",
+      });
+    }
   }
   return out;
 }
@@ -334,9 +374,9 @@ export function describeChanges(fields: SiteField[], values: Record<string, Fiel
 export function categoriseChanges(summaries: FieldChangeSummary[]): ChangeCategories {
   return {
     text: summaries.some((entry) => entry.part === "words"),
-    links: summaries.some((entry) => entry.part === "destination"),
+    links: summaries.some((entry) => entry.part === "destination" || entry.part === "opens in"),
     images: summaries.some((entry) => entry.part === "picture" || entry.part === "description"),
-    styles: summaries.some((entry) => entry.part === "styling"),
+    styles: summaries.some((entry) => entry.part === "styling" || entry.part === "button style"),
     seo: summaries.some((entry) => entry.id.startsWith("meta.")),
   };
 }

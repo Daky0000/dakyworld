@@ -2721,7 +2721,7 @@ export type SitePageRow = {
   lastPublishedAt: string | null;
 };
 
-export type FieldKind = "text" | "richtext" | "link" | "image";
+export type FieldKind = "text" | "richtext" | "link" | "button" | "image";
 
 /** One thing on a page somebody can change. Offsets stay on the server. */
 export type SiteFieldRow = {
@@ -2737,6 +2737,15 @@ export type SiteFieldRow = {
   decorative?: boolean;
   /** The element's own inline style, when it has one. */
   style?: string;
+  // Buttons only.
+  /** The style class it wears — `btn-primary`. */
+  variant?: string;
+  /** The prefix a style has to start with, and the word a label is made from. */
+  variantStem?: string;
+  /** Every style this page already uses for this kind of button. */
+  variants?: string[];
+  /** Whether it opens in a new tab. Absent on a `<button>`, which goes nowhere. */
+  newTab?: boolean;
 };
 
 export type SiteSectionRow = {
@@ -2747,10 +2756,12 @@ export type SiteSectionRow = {
 };
 
 /** What the editor sends back: only the parts of a field that changed. */
-export type FieldEdit = { value?: string; href?: string; alt?: string; style?: string };
+export type FieldEdit = { value?: string; href?: string; alt?: string; style?: string; variant?: string | null; newTab?: boolean };
 
 export type SitePageDetail = {
   site: { id: string; name: string; publicUrl: string; repo: string | null };
+  /** Where a link on this page can go without leaving the site. */
+  links: Array<{ path: string; title: string }>;
   page: {
     id: string;
     title: string;
