@@ -1335,6 +1335,8 @@ function ModelsPanel({ settings }: { settings: AppSettings }) {
         </div>
       </Panel>
 
+      <FreeModelsPanel connected={Boolean(byKey.get("openrouter")?.configured)} />
+
       {providers
         .filter((provider) => provider.key !== "anthropic")
         .map((provider) => (
@@ -1365,6 +1367,183 @@ function ModelsPanel({ settings }: { settings: AppSettings }) {
         }
       />
     </div>
+  );
+}
+
+interface FreeModelRow {
+  id: string;
+  name: string;
+  context: number | null;
+  free: boolean;
+  tools: boolean;
+}
+
+interface FreeLadderReport {
+  connected: boolean;
+  ladder: string[];
+  max: number;
+  models: FreeModelRow[];
+  stale: Array<{ id: string; why: string }>;
+  note?: string;
+}
+
+/**
+ * The free ladder: up to three OpenRouter models to try before paying for anything.
+ *
+ * OpenRouter publishes models that cost nothing per token. They are real models
+ * and they are also the least reliable thing available: a free endpoint is
+ * shared, so it queues, rate-limits, and sometimes simply does not answer. One
+ * of them as *the* model is a system that stops working at busy times. Three in
+ * a row with Claude behind them is a system that costs nothing most days and
+ * never stops.
+ *
+ * Picked from a list rather than typed, because the ids are long and exact and
+ * change — a slug typed from memory is a 404 three days later, inside a
+ * sequence, at six in the morning.
+ */
+function FreeModelsPanel({ connected }: { connected: boolean }) {
+  const qc = useQueryClient();
+  const report = useQuery({
+    queryKey: ["settings", "openrouter", "free"],
+    queryFn: () => api.get<FreeLadderReport>("/settings/models/openrouter/free"),
+  });
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const ladder = draft ?? report.data?.ladder ?? [];
+  const max = report.data?.max ?? 3;
+
+  const save = useMutation({
+    mutationFn: (models: string[]) => api.put<{ ladder: string[]; note?: string }>("/settings/models/openrouter/free", { models }),
+    onSuccess: () => {
+      setDraft(null);
+      void qc.invalidateQueries({ queryKey: ["settings", "openrouter", "free"] });
+    },
+  });
+
+  const toggle = (id: string) => {
+    setDraft(ladder.includes(id) ? ladder.filter((entry) => entry !== id) : ladder.length >= max ? ladder : [...ladder, id]);
+  };
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= ladder.length) return;
+    const next = [...ladder];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved!);
+    setDraft(next);
+  };
+
+  const models = report.data?.models ?? [];
+  const byId = new Map(models.map((model) => [model.id, model]));
+
+  return (
+    <Panel
+      title="Free models first"
+      what={
+        <>
+          Up to {max} free OpenRouter models, tried in order. When one doesn't answer — busy, rate-limited, or simply silent — the next
+          is asked straight away, and when all of them have been tried Claude finishes the work. Nothing waits and nothing is lost;
+          the only difference is the bill.
+        </>
+      }
+      state={
+        ladder.length === 0 ? (
+          <NotConnected>No free models set, so OpenRouter uses its own model and pays for it.</NotConnected>
+        ) : (
+          <Connected>
+            <span>
+              {ladder.length} rung{ladder.length === 1 ? "" : "s"}, then Claude
+            </span>
+            <span className="font-mono text-xs text-ink/50">{ladder.join(" → ")}</span>
+          </Connected>
+        )
+      }
+    >
+      {!connected && (
+        <p className="mt-4 border border-line bg-ink/[.02] px-3 py-2 text-sm text-ink/60">
+          Connect an OpenRouter key below first — the list of free models is read from your own account rather than written down here,
+          so it is always the models you can actually reach.
+        </p>
+      )}
+
+      {/* A rung that has stopped being free is the one thing a saved list cannot
+          tell you about itself, and it is the one that costs money. */}
+      {(report.data?.stale ?? []).map((entry) => (
+        <p key={entry.id} className="mt-3 border border-amber-300 bg-amber-50/50 px-3 py-2 text-sm text-ink/70">
+          <span className="font-mono text-xs">{entry.id}</span> — {entry.why}
+        </p>
+      ))}
+
+      {ladder.length > 0 && (
+        <ol className="mt-4 space-y-2">
+          {ladder.map((id, index) => (
+            <li key={id} className="flex items-center gap-3 border border-line bg-white px-3 py-2">
+              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">{index + 1}</span>
+              <span className="min-w-0 flex-1 truncate text-sm text-ink">{byId.get(id)?.name ?? id}</span>
+              {byId.get(id) && !byId.get(id)!.tools && (
+                <Badge tone="muted">no tools — agents skip it</Badge>
+              )}
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={() => move(index, index - 1)} disabled={index === 0}>
+                  ↑
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => move(index, index + 1)} disabled={index === ladder.length - 1}>
+                  ↓
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => toggle(id)}>
+                  Remove
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {connected && models.length > 0 && (
+        <div className="mt-4">
+          <p className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">
+            Free on your account ({models.length}) — pick up to {max}
+          </p>
+          <div className="mt-2 max-h-72 overflow-y-auto border border-line">
+            {models.map((model) => {
+              const picked = ladder.includes(model.id);
+              return (
+                <button
+                  key={model.id}
+                  type="button"
+                  onClick={() => toggle(model.id)}
+                  disabled={!picked && ladder.length >= max}
+                  className={`flex w-full items-center gap-3 border-b border-line px-3 py-2 text-left last:border-b-0 ${
+                    picked ? "bg-blue/[.06]" : "hover:bg-ink/[.02]"
+                  } disabled:opacity-40`}
+                >
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${picked ? "bg-blue" : "bg-ink/15"}`} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-ink">{model.name}</span>
+                    <span className="block truncate font-mono text-[11px] text-ink/45">{model.id}</span>
+                  </span>
+                  {/* An agent turn sends tool definitions. A model that cannot take
+                      them writes perfectly well and fails every agent task, which is
+                      worth knowing before it is picked rather than after. */}
+                  {model.tools ? <Badge tone="positive">tools</Badge> : <Badge tone="muted">no tools</Badge>}
+                  {model.context && <span className="shrink-0 text-xs text-ink/40">{Math.round(model.context / 1000)}k</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center gap-3">
+        <Button onClick={() => save.mutate(ladder)} disabled={save.isPending || draft === null}>
+          {save.isPending ? "Checking…" : "Save the ladder"}
+        </Button>
+        {draft !== null && (
+          <Button variant="ghost" onClick={() => setDraft(null)}>
+            Cancel
+          </Button>
+        )}
+        {save.data?.note && <span className="text-sm text-ink/55">{save.data.note}</span>}
+      </div>
+      <ErrorNote error={save.error ?? report.error} />
+    </Panel>
   );
 }
 

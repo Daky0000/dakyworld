@@ -102,6 +102,27 @@ export const SETTING = {
   OPENROUTER_KEY: "openrouter.apiKey",
   OPENROUTER_MODEL: "openrouter.model",
   /**
+   * Free OpenRouter models to try, in order, as a JSON array of model ids.
+   *
+   * OpenRouter publishes models that cost nothing per token. They are real
+   * models and they are also the least reliable thing in this system: a free
+   * endpoint is shared, so it queues, it rate-limits, and some of the time it
+   * simply does not answer. One of them as *the* model would be a system that
+   * stops working at busy times. Three of them in a row, with the paid floor
+   * behind them, is a system that costs nothing most days and never stops.
+   *
+   * So this is a ladder, not a choice: while it holds anything, OpenRouter work
+   * goes down it — first rung, then the next when that one does not answer —
+   * and when the whole ladder is exhausted the job carries on to the next
+   * vendor, which is Claude. Empty, and nothing about the model layer changes.
+   *
+   * Every id in here was checked against OpenRouter's own catalogue at the
+   * moment it was saved and cost nothing then. That is also what lets the
+   * ledger price them at zero rather than at the unknown-model rate, which is
+   * deliberately the dearest we know of — see `rateForModel`.
+   */
+  OPENROUTER_FREE_MODELS: "openrouter.freeModels",
+  /**
    * Which vendor serves which job, as JSON, holding only what has been changed
    * from the shipped routing: `{"text":"anthropic"}`.
    */

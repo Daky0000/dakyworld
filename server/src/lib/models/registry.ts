@@ -519,6 +519,92 @@ export async function modelForJob(job: ModelJob, provider: ProviderKey): Promise
   return providerModel(provider);
 }
 
+// --- The free ladder --------------------------------------------------------
+
+/**
+ * How many free models are worth trying before giving up on free.
+ *
+ * Three, and the number is a judgement rather than a limit of the mechanism.
+ * A free endpoint that does not answer is usually busy rather than broken, so
+ * a second one is very likely to work; by the third, the sensible conclusion is
+ * that free capacity is short right now and the work still has to happen. Each
+ * rung costs a request and some seconds of waiting, and a ladder of ten would
+ * turn a busy afternoon into minutes of latency in front of a person, paid for
+ * in nothing but delay.
+ */
+export const FREE_LADDER_MAX = 3;
+
+/**
+ * The free OpenRouter models to try, in order.
+ *
+ * Capped rather than refused above the cap: a stored list that grew past three
+ * — pasted in by hand, or written by a future screen — should quietly use the
+ * first three rather than fail, because the alternative is a model layer that
+ * stops working on a settings value nobody thought was dangerous.
+ */
+export async function freeLadder(): Promise<string[]> {
+  const raw = await getSetting(SETTING.OPENROUTER_FREE_MODELS);
+  if (!raw?.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.warn("[models] openrouter.freeModels is not valid JSON — no free models will be tried.");
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<string>();
+  const ladder: string[] = [];
+  for (const entry of parsed) {
+    if (typeof entry !== "string") continue;
+    const id = entry.trim();
+    // A duplicate rung is a rung that proves nothing: the same endpoint that
+    // just failed is asked again, and the ladder is one shorter than it looks.
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ladder.push(id);
+    if (ladder.length >= FREE_LADDER_MAX) break;
+  }
+  return ladder;
+}
+
+/**
+ * True when this model is a rung, and therefore costs nothing.
+ *
+ * The ledger asks this before it prices a call. It is deliberately the stored
+ * list rather than a guess from the id — most free ids end in `:free` and not
+ * all of them do, and a naming convention is not a price. What makes the stored
+ * list trustworthy is that nothing reaches it without having been checked
+ * against OpenRouter's own catalogue and found free at that moment; and the
+ * Settings screen re-checks, so a model that stops being free is named on the
+ * screen rather than quietly charged for.
+ */
+export async function isFreeModel(model: string): Promise<boolean> {
+  return (await freeLadder()).includes(model);
+}
+
+/**
+ * Every model an OpenRouter attempt should try, in order.
+ *
+ * The ladder when there is one. **`[undefined]` when there is not**, meaning
+ * "whatever this vendor's ordinary model is" — and that is not a tidiness
+ * choice. A deployment that never touches this setting has to behave exactly
+ * as it did, down to the wording of the note a person reads when a vendor
+ * hands over: naming the model there is right when three of them were tried
+ * and wrong when one was, where it turns "ox-alpha could not do it" into a
+ * slug nobody recognises.
+ *
+ * When a ladder *is* set it **replaces** the vendor's model rather than sitting
+ * in front of it, which is the rule the Settings screen states in those words:
+ * the point is a run of free attempts and then the paid floor, and slipping a
+ * paid call in between would be a bill nobody asked for at exactly the moment
+ * free capacity was short.
+ */
+export async function openRouterAttempts(): Promise<(string | undefined)[]> {
+  const ladder = await freeLadder();
+  return ladder.length > 0 ? ladder : [undefined];
+}
+
 /** The image model, which is a different model from the same vendor. */
 export async function imageModel(): Promise<string> {
   const configured = (await getSetting(SETTING.OPENAI_IMAGE_MODEL))?.trim();

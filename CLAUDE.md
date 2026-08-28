@@ -126,6 +126,62 @@ pricing table**, so it prices at the dearest known rate in the ledger until
 one is added — the safe direction for a ceiling, worth remembering before
 concluding the budget is being spent too fast.
 
+**The free ladder: three free models, then the paid floor** —
+`openrouter.freeModels`, `freeLadder()` in `registry.ts`. OpenRouter publishes
+models that cost nothing per token. They are real models and they are also the
+least reliable thing available: a free endpoint is shared, so it queues,
+rate-limits, and some of the time simply does not answer. One of them as *the*
+model is a system that stops working at busy times; three in a row with Claude
+behind them is a system that costs nothing most days and never stops.
+
+- **The ladder replaces OpenRouter's model, it does not precede it.** Slipping
+  a paid call in between the free rungs and Claude would be a bill nobody asked
+  for at exactly the moment free capacity was short. Empty, and **nothing about
+  the model layer changes** — which is asserted, because a 429 without a ladder
+  still requeues the task rather than moving the bill to Claude, and that
+  deliberate difference for one status is the thing most likely to get
+  flattened into agreement by somebody reading one branch.
+- **A rung gets one attempt and a short clock**, where the paid floor keeps the
+  patient behaviour. Waiting out a queue is right when the vendor is the only
+  one who can do this and wrong when the next free model is one line down:
+  `FREE_ATTEMPTS = 1`, 60s in `call.ts` and 120s for an agent turn, against
+  four attempts and ninety seconds of backoff for a paid one.
+- **A key-level refusal does not climb.** 401/402/403 are true of every model on
+  the account, so climbing is three calls into the same wall and a slower
+  failure. 400/404/429/5xx/silence are true of that model and say nothing about
+  the next.
+- **Both halves of the model layer had to be wired**, because they are two
+  implementations of the same wire: `callModel` for one-shot work and
+  `runAgentLoop` for an agent turn. A ladder in one and not the other works for
+  writing an email and does nothing for the workforce.
+- **A rung is priced at zero, from the stored list rather than from the id.**
+  Most free ids end in `:free` and not all do, and a naming convention is not a
+  price — nothing reaches the list without having been checked against
+  OpenRouter's catalogue and found free at both ends, and the Settings screen
+  re-checks so a model that stops being free is named rather than quietly
+  charged for. Left unpriced it would fall through to the floor rate, which is
+  deliberately the dearest we know of: a free day would read as the most
+  expensive one this company has ever had and trip every ceiling on money
+  nobody spent.
+- The picker reads the account's own catalogue, marks which models accept
+  `tools`, and says so — a model without them writes perfectly well and fails
+  every agent task.
+
+**Two defects this uncovered, both invisible and both live.** `model` in
+`runAgentLoop` was resolved once from whichever vendor came first, so **every
+handover to Claude was asking Anthropic for `stealth/ox-alpha`** — the failover
+that exists to save a run would have died on the model name. It survived because
+the harness's fake Anthropic echoes a Claude id whatever it is asked for, so
+"Claude finished the run" passed while the request said otherwise;
+`checks/agentLoopOpenRouter.ts` now reads the model out of the **request body**.
+And `BASE` in `call.ts` was captured at import while `openRouterBase()` in
+`claudeAgent.ts` is read per call, so a harness repointing a vendor between
+scenarios got a frozen address in one half and a live one in the other — a check
+that passes while testing nothing, and on a machine with a real key one that
+spends money. Both halves read per call now.
+
+`checks/freeModels.ts` (25) drives both paths against local fakes.
+
 **The chain is not decoration — a two-step fallback had a hole in it.** `vision`
 is routed to ChatGPT and fell back to Claude only, so a deployment holding a
 Gemini key and nothing else had *no model at all* for looking at a page: the

@@ -309,6 +309,16 @@ async function main() {
   check("the refused vendor was asked exactly once", refusedBodies.length === 1, String(refusedBodies.length));
   check("Claude took the run over and finished it", fallback.stoppedBecause === "finished" && fallback.model.startsWith("claude"), `${fallback.stoppedBecause} / ${fallback.model}`);
   check("Claude served both turns of it", anthBodies.length === 2, String(anthBodies.length));
+  // Read out of the request body, not off the result. The result's model comes
+  // back from the stub, which answers with a Claude id whatever it is asked
+  // for — so "Claude finished the run" passed for two months while the
+  // handover was actually asking Anthropic for `stealth/ox-alpha`. What the
+  // wire carried is the only place that fact lived.
+  check(
+    "and was asked for a Claude model, not the slug the run started on",
+    anthBodies.every((body) => String(body.model).startsWith("claude")),
+    anthBodies.map((body) => String(body.model)).join(", "),
+  );
   check("the work still got done", fallback.text === "Done.", fallback.text);
 
   // --- Scenario C: the cooldown holds for the runs behind it ------------------

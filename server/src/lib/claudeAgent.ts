@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { recordLlmCall } from "./llmLedger.js";
 import { AnalystError, analystKey, type Effort } from "./claude.js";
 import { costOf, modelForEffort, type ModelRate } from "./claudePricing.js";
-import { PROVIDER_PRICING, providerConfigured, providerKey, providerModel, reasoningEffortFor, requestFee } from "./models/registry.js";
+import { PROVIDER_PRICING, freeLadder, providerConfigured, providerKey, providerModel, reasoningEffortFor, requestFee } from "./models/registry.js";
 import { rateForModel } from "./models/call.js";
 
 /**
@@ -349,6 +349,22 @@ export function clearOpenRouterCooldown(): void {
 const TURN_TIMEOUT_MS = 600_000;
 
 /**
+ * The same turn on a free rung, on a much shorter clock.
+ *
+ * Ten minutes is right for a paid model that is the only one who can do this:
+ * an agent turn with a long conversation and a hard question behind it really
+ * can take minutes, and giving up on one costs the whole run. A free rung is
+ * the opposite case — there is another free model one line down — so a shared
+ * endpoint that has said nothing in two minutes is not thinking, it is busy,
+ * and the right answer is the next rung rather than eight more minutes of
+ * waiting.
+ *
+ * Two minutes rather than the model layer's one, because a turn here carries
+ * the whole conversation and every tool definition with it.
+ */
+const FREE_TURN_TIMEOUT_MS = 120_000;
+
+/**
  * One finished model turn, in the loop's own vocabulary.
  *
  * Both wires produce this, so everything after the call — narration, tool
@@ -464,6 +480,8 @@ async function openRouterTurn(args: {
   messages: Anthropic.Beta.BetaMessageParam[];
   tools: AgentTool[];
   effort: Effort;
+  /** A rung of the free ladder: one short clock, and no waiting about. */
+  free?: boolean;
 }): Promise<WireTurn> {
   const body: Record<string, unknown> = {
     model: args.model,
@@ -478,17 +496,28 @@ async function openRouterTurn(args: {
     }));
   }
 
-  const response = await fetch(`${openRouterBase()}/chat/completions`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${args.apiKey}`,
-      "content-type": "application/json",
-      // Optional attribution OpenRouter asks for; changes nothing about the call.
-      "x-title": "Dakyworld OS",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(TURN_TIMEOUT_MS),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${openRouterBase()}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${args.apiKey}`,
+        "content-type": "application/json",
+        // Optional attribution OpenRouter asks for; changes nothing about the call.
+        "x-title": "Dakyworld OS",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(args.free ? FREE_TURN_TIMEOUT_MS : TURN_TIMEOUT_MS),
+    });
+  } catch (err) {
+    // A timeout and a dropped connection arrive here as a `DOMException` and a
+    // `TypeError`, neither of which the caller can tell apart from a bug in
+    // this file. Given a status they become what they are — *this model did
+    // not answer* — which is the commonest thing a free rung does and the
+    // exact case the ladder exists for. Left raw, a free model that hung took
+    // the whole run down while two more sat unasked.
+    throw new OpenRouterError(504, `${args.model} did not answer: ${(err as Error).message}`);
+  }
 
   if (!response.ok) {
     const detail = (await response.text().catch(() => "")).slice(0, 500);
@@ -551,6 +580,18 @@ async function modelForVendor(vendor: AgentVendor, effort: Effort): Promise<stri
   // split there would be a no-op — the decision that matters is the vendor.
   return vendor === "openrouter" ? providerModel("openrouter") : modelForEffort(effort);
 }
+
+/**
+ * A key-level refusal, told apart from a model-level one.
+ *
+ * The distinction did not matter while OpenRouter meant one model. With a
+ * ladder it decides whether the *next rung* is worth trying: a wrong key, a
+ * banned account or an empty balance is true of every model on the account, so
+ * climbing the ladder would be three calls into the same wall. A slug that no
+ * longer exists, a parameter this model will not take, a rate limit or a
+ * silence is true of that model and says nothing about the next one.
+ */
+const KEY_LEVEL_STATUSES = [401, 402, 403];
 
 /** The rate for whichever model answered, from whichever table knows it, plus any per-request fee. */
 async function priceOf(model: string): Promise<{ rate: ModelRate; fee: number }> {
@@ -624,10 +665,27 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     );
   }
   let serving: AgentVendor = candidates[0];
+
+  /**
+   * The free models to climb, in order, and which rung we are on.
+   *
+   * Empty when the Owner has set none, and then nothing below changes: the one
+   * OpenRouter model is asked exactly as it always was, and a rate limit still
+   * requeues the task rather than quietly moving the bill to Claude.
+   *
+   * With a ladder the rule is different and deliberately so. A free endpoint
+   * that is busy, silent or rate-limited has not failed — it is free, and that
+   * is what free capacity does at four in the afternoon. So a rung that does
+   * not answer costs one short call and the next rung is asked; when the ladder
+   * runs out, Claude finishes the run. That is the whole feature.
+   */
+  const ladder = await freeLadder();
+  let rung = 0;
+
   // Chosen from the effort rather than fixed, so a sub-agent checking a link
   // is not billed at the rate of a director deciding what to say to a
   // stranger. See `modelForVendor`.
-  const model = await modelForVendor(serving, effort);
+  const model = ladder[0] ?? (await modelForVendor(serving, effort));
 
   let client: Anthropic | null = null;
   const startedAt = Date.now();
@@ -756,13 +814,42 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         try {
           response = await openRouterTurn({
             apiKey: (await providerKey("openrouter")) ?? "",
-            model: await modelForVendor("openrouter", effort),
+            model: ladder[rung] ?? (await modelForVendor("openrouter", effort)),
             system: request.system,
             messages,
             tools: request.tools,
             effort,
+            free: ladder.length > 0,
           });
         } catch (err) {
+          const status = err instanceof OpenRouterError ? err.status : 502;
+
+          // A rung that did not serve, with rungs left. Not a failure of
+          // anything: the next free model is asked and the conversation is
+          // untouched, because nothing was spent and nothing was said.
+          //
+          // Key-level statuses are excluded — a wrong key, a banned account or
+          // an empty balance is true of every model on it, so climbing would
+          // be three calls into the same wall.
+          if (ladder.length > 0 && !KEY_LEVEL_STATUSES.includes(status) && rung + 1 < ladder.length) {
+            console.warn(`[agent] ${ladder[rung]} did not serve (${status}) — trying ${ladder[rung + 1]}.`);
+            rung += 1;
+            continue;
+          }
+
+          // The ladder is out. Everything free has been asked, so the paid
+          // floor finishes the run — including on a 429, which without a
+          // ladder deliberately requeues instead. That difference is the point:
+          // waiting out a queue is right when the vendor is the only one who
+          // can do this, and wrong when three free models have already said no
+          // and a connected Claude is sitting there.
+          if (ladder.length > 0 && candidates.includes("anthropic")) {
+            if (KEY_LEVEL_STATUSES.includes(status)) openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
+            console.warn(`[agent] every free model was tried (last: ${(err as Error).message}) — Claude takes the rest of this run.`);
+            serving = "anthropic";
+            continue;
+          }
+
           // A vendor that cannot serve this at all — wrong key, out of
           // credits, or a model it no longer lists — is not a reason to lose
           // the run when the floor is connected. Nothing has been spent yet,
@@ -798,9 +885,25 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           client = new Anthropic({ apiKey });
         }
         const anth = client;
+        // Resolved here, for this vendor, rather than taken from the `model`
+        // the run started with.
+        //
+        // That was a real defect and an invisible one. `model` is decided once
+        // from whoever is first in `candidates`, so on every handover — a
+        // refused key, an empty balance, a retired slug, and now an exhausted
+        // free ladder — Anthropic was being asked for `stealth/ox-alpha`, or
+        // for a free OpenRouter id. The whole point of the handover is to save
+        // a run, and it would have failed at the first turn on the model name.
+        //
+        // It survived because the harness's fake Anthropic echoes a Claude
+        // model whatever it is asked for, so the assertion "Claude finished the
+        // run" passed while the request said otherwise. `checks/agentLoopOpenRouter.ts`
+        // now reads the model out of the *request body*, which is the only
+        // place the truth was.
+        const claudeModel = await modelForVendor("anthropic", effort);
         const send = (withFallbacks: boolean) =>
           anth.beta.messages.create({
-            model,
+            model: claudeModel,
             max_tokens: MAX_TOKENS,
             system,
             // Opus 5 thinks by default; asked for explicitly so the setting is

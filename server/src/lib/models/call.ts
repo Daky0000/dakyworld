@@ -7,7 +7,9 @@ import {
   PROVIDERS,
   PROVIDER_PRICING,
   imageModel,
+  isFreeModel,
   modelForJob,
+  openRouterAttempts,
   providerKey,
   providerModel,
   reasoningEffortFor,
@@ -42,13 +44,33 @@ import {
  * A caller never sees the difference.
  */
 
-/** The base URLs, overridable so the whole layer can be pointed at a local stub. */
-const BASE = {
-  openai: process.env.OPENAI_BASE_URL?.replace(/\/$/, "") || "https://api.openai.com/v1",
-  gemini: process.env.GEMINI_BASE_URL?.replace(/\/$/, "") || "https://generativelanguage.googleapis.com/v1beta",
-  perplexity: process.env.PERPLEXITY_BASE_URL?.replace(/\/$/, "") || "https://api.perplexity.ai",
-  openrouter: process.env.OPENROUTER_BASE_URL?.replace(/\/$/, "") || "https://openrouter.ai/api/v1",
-};
+/**
+ * Where each vendor lives, read **per call** rather than captured at import.
+ *
+ * It was an object built once at module load, which is the same fact
+ * `openRouterBase()` in `claudeAgent.ts` reads per call — and the two halves of
+ * the model layer disagreeing about the same environment variable is the bug
+ * this shape prevents. A harness that repoints a vendor between scenarios got a
+ * frozen address here and a live one there, so the same fake served the agent
+ * loop and was silently bypassed by the one-shot path, which then reached
+ * whatever the default host is. That is a check that passes while testing
+ * nothing, and on a machine with a real key it is a check that spends money.
+ */
+function base(vendor: "openai" | "gemini" | "perplexity" | "openrouter"): string {
+  const fromEnv = {
+    openai: process.env.OPENAI_BASE_URL,
+    gemini: process.env.GEMINI_BASE_URL,
+    perplexity: process.env.PERPLEXITY_BASE_URL,
+    openrouter: process.env.OPENROUTER_BASE_URL,
+  }[vendor];
+  const fallback = {
+    openai: "https://api.openai.com/v1",
+    gemini: "https://generativelanguage.googleapis.com/v1beta",
+    perplexity: "https://api.perplexity.ai",
+    openrouter: "https://openrouter.ai/api/v1",
+  }[vendor];
+  return fromEnv?.replace(/\/$/, "") || fallback;
+}
 
 /** Long enough for a page of HTML, short enough that a hung vendor doesn't hold a task open. */
 const TIMEOUT_MS = 180_000;
@@ -162,7 +184,16 @@ function readOverrides(raw: string | null): Record<string, ModelRate> {
  */
 export async function rateForModel(model: string): Promise<ModelRate> {
   const overrides = readOverrides(await getSetting(SETTING.MODEL_PRICING));
-  return overrides[model] ?? PROVIDER_PRICING[model] ?? rateFor(model);
+  if (overrides[model]) return overrides[model];
+  // A rung on the free ladder costs nothing, and has to be *known* to cost
+  // nothing: an unpriced model falls through to the floor below, which is
+  // deliberately the dearest rate we have ever seen. Left to that, a day's
+  // work on free models would read on the costs screen as the most expensive
+  // day this company has ever had, and every budget ceiling would trip on
+  // money nobody spent. See `isFreeModel` for why the stored list is the
+  // authority rather than the shape of the id.
+  if (await isFreeModel(model)) return { inputPerMTok: 0, outputPerMTok: 0 };
+  return PROVIDER_PRICING[model] ?? rateFor(model);
 }
 
 // --- HTTP -------------------------------------------------------------------
@@ -196,6 +227,27 @@ const MAX_ATTEMPTS = 4;
 /** Never hold a caller longer than this in total waiting for a queue to clear. */
 const MAX_BACKOFF_TOTAL_MS = 90_000;
 const BACKOFF_MS = [2000, 6000, 15_000];
+
+/**
+ * How a free attempt differs from a paid one, and why it has to.
+ *
+ * Everything above is written for a vendor that is the *only* one who can do
+ * this: a queue is worth waiting out, because the alternative is losing work
+ * already paid for upstream. A rung on the free ladder is the opposite case.
+ * There is another free model one line down, so waiting ninety seconds for a
+ * shared endpoint to clear — and then possibly failing anyway — spends the one
+ * thing a free model was chosen to save, which is nobody's money and
+ * everybody's afternoon.
+ *
+ * So a rung gets **one attempt and a short clock**. A 429 is not queued for,
+ * it is a reason to try the next model now; and a free endpoint that has said
+ * nothing in a minute is not thinking, it is busy.
+ *
+ * The paid floor keeps the patient behaviour, because by the time the ladder
+ * is exhausted there genuinely is nowhere else to go.
+ */
+const FREE_ATTEMPTS = 1;
+const FREE_TIMEOUT_MS = 60_000;
 
 /** A 429 or a 5xx is worth repeating. A 400 or a 401 will say the same thing again. */
 function worthRetrying(status: number): boolean {
@@ -231,14 +283,26 @@ function pause(ms: number): Promise<void> {
  * so they are told apart here rather than in each adapter. The difference now
  * is that nobody has to read the second one unless waiting did not help.
  */
-async function post(url: string, headers: Record<string, string>, body: unknown, vendor: string): Promise<Record<string, unknown>> {
+async function post(
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+  vendor: string,
+  /**
+   * Overrides for a call that is one of several attempts rather than the only
+   * one. See `FREE_TIMEOUT_MS`: waiting out a queue is right when there is
+   * nowhere else to go and wrong when the next rung of the ladder is free too.
+   */
+  limits?: { attempts?: number; timeoutMs?: number },
+): Promise<Record<string, unknown>> {
   let waited = 0;
+  const maxAttempts = limits?.attempts ?? MAX_ATTEMPTS;
 
   for (let attempt = 0; ; attempt++) {
     try {
-      return await postOnce(url, headers, body, vendor);
+      return await postOnce(url, headers, body, vendor, limits?.timeoutMs);
     } catch (err) {
-      const last = attempt >= MAX_ATTEMPTS - 1;
+      const last = attempt >= maxAttempts - 1;
       if (last || !(err instanceof ProviderError) || !worthRetrying(err.failure.status)) throw err;
 
       const asked = err.failure.retryAfterMs;
@@ -252,9 +316,15 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
   }
 }
 
-async function postOnce(url: string, headers: Record<string, string>, body: unknown, vendor: string): Promise<Record<string, unknown>> {
+async function postOnce(
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+  vendor: string,
+  timeoutMs = TIMEOUT_MS,
+): Promise<Record<string, unknown>> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Response;
   try {
@@ -330,7 +400,7 @@ interface Completion {
  */
 async function callOpenAI(apiKey: string, model: string, request: ModelRequest): Promise<Completion> {
   const body = await post(
-    `${BASE.openai}/chat/completions`,
+    `${base("openai")}/chat/completions`,
     { authorization: `Bearer ${apiKey}` },
     {
       model,
@@ -414,7 +484,7 @@ function assistantText(message: unknown): string {
  */
 async function callGemini(apiKey: string, model: string, request: ModelRequest): Promise<Completion> {
   const body = await post(
-    `${BASE.gemini}/models/${encodeURIComponent(model)}:generateContent`,
+    `${base("gemini")}/models/${encodeURIComponent(model)}:generateContent`,
     { "x-goog-api-key": apiKey },
     {
       systemInstruction: { parts: [{ text: request.system }] },
@@ -474,7 +544,7 @@ function forGemini(schema: unknown): unknown {
  */
 async function callPerplexity(apiKey: string, model: string, request: ModelRequest): Promise<Completion> {
   const body = await post(
-    `${BASE.perplexity}/v1/sonar`,
+    `${base("perplexity")}/v1/sonar`,
     { authorization: `Bearer ${apiKey}` },
     {
       model,
@@ -547,7 +617,7 @@ async function openRouterCompilesSchemas(apiKey: string, model: string): Promise
   if (catalogueReadAt) return null; // Catalogue is fresh and simply doesn't list it.
 
   try {
-    const response = await fetch(`${BASE.openrouter}/models`, {
+    const response = await fetch(`${base("openrouter")}/models`, {
       headers: { authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(15_000),
     });
@@ -645,7 +715,7 @@ function schemaContract(schema: unknown): string {
  *
  * See `reasoningEffortFor` and `tokensWithReasoning` in registry.ts.
  */
-async function callOpenRouter(apiKey: string, model: string, request: ModelRequest): Promise<Completion> {
+async function callOpenRouter(apiKey: string, model: string, request: ModelRequest, free = false): Promise<Completion> {
   // The same default `callClaude` applies when a caller names no effort, so a
   // job moving between vendors does not quietly change how hard it is thought
   // about.
@@ -657,7 +727,7 @@ async function callOpenRouter(apiKey: string, model: string, request: ModelReque
   const system = compiles === true ? request.system : `${request.system}\n${schemaContract(schema)}`;
 
   const body = await post(
-    `${BASE.openrouter}/chat/completions`,
+    `${base("openrouter")}/chat/completions`,
     {
       authorization: `Bearer ${apiKey}`,
       // Optional attribution headers OpenRouter asks for; they change nothing
@@ -682,6 +752,7 @@ async function callOpenRouter(apiKey: string, model: string, request: ModelReque
           : { type: "json_schema", json_schema: { name: "result", strict: true, schema } },
     },
     "OpenRouter",
+    free ? { attempts: FREE_ATTEMPTS, timeoutMs: FREE_TIMEOUT_MS } : undefined,
   );
 
   const choice = (body.choices as { message?: unknown; finish_reason?: string }[] | undefined)?.[0];
@@ -759,12 +830,51 @@ function whyFailed(status: number): string {
 export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T>> {
   const say = (kind: FailureKind) => request.messages?.[kind] ?? DEFAULT_MESSAGES[kind];
 
-  if (request.provider) {
-    try {
-      return await attemptProvider<T>(request.provider, request, say);
-    } catch (err) {
-      throw err instanceof AttemptFailed ? err.error : err;
+  const tried: string[] = [];
+  // An array rather than a `let`, so that what the last vendor said survives
+  // being written from inside `askVendor` below — a variable only ever
+  // assigned in a closure reads as never-assigned at the throw.
+  const failures: AnalystError[] = [];
+
+  /**
+   * Every model this vendor should be asked for, in order.
+   *
+   * One for everybody except OpenRouter, which has a ladder of free models
+   * when the Owner has set one — and the whole point of the ladder is that a
+   * rung failing is an ordinary event rather than the vendor failing. See
+   * `openRouterAttempts`.
+   */
+  const modelsFor = async (serving: ProviderKey): Promise<(string | undefined)[]> =>
+    serving === "openrouter" ? await openRouterAttempts() : [undefined];
+
+  /**
+   * Asks one vendor, down its whole ladder, and gives up on it only when every
+   * rung has failed in a way worth failing over.
+   *
+   * Returns null when the vendor is exhausted; throws for a refusal, which
+   * must stop the search entirely rather than shop for a second opinion.
+   */
+  const askVendor = async (serving: ProviderKey): Promise<ModelResult<T> | null> => {
+    for (const model of await modelsFor(serving)) {
+      try {
+        return await attemptProvider<T>(serving, request, say, model);
+      } catch (err) {
+        if (!(err instanceof AttemptFailed)) throw err;
+        if (!err.failover) throw err.error;
+        // Named by model where there was a choice of them, because "OpenRouter
+        // failed" three times over is a note that hides which rungs were tried
+        // and reads as one thing going wrong three times.
+        tried.push(model ? `${model} ${err.why}` : `${PROVIDERS[serving].name} ${err.why}`);
+        failures.push(err.error);
+      }
     }
+    return null;
+  };
+
+  if (request.provider) {
+    const result = await askVendor(request.provider);
+    if (result) return result;
+    throw failures.at(-1) ?? new AnalystError(502, say("empty"));
   }
 
   const { chosen, chain } = await serveChain(request.job);
@@ -773,25 +883,16 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
     throw new AnalystError(503, route.note ?? say("noKey"));
   }
 
-  const tried: string[] = [];
-  let last: AnalystError | null = null;
-
   for (const serving of chain) {
-    try {
-      const result = await attemptProvider<T>(serving, request, say);
-      return { ...result, fallbackNote: handoverNote(request.job, chosen, serving, tried) };
-    } catch (err) {
-      if (!(err instanceof AttemptFailed)) throw err;
-      if (!err.failover) throw err.error;
-      tried.push(`${PROVIDERS[serving].name} ${err.why}`);
-      last = err.error;
-    }
+    const result = await askVendor(serving);
+    if (result) return { ...result, fallbackNote: handoverNote(request.job, chosen, serving, tried) };
   }
 
   // Everyone who could do this job was asked and none of them answered. The
   // sentence names all of them, because "the model failed" sends somebody to
   // check one key when the answer is that four vendors are unreachable or one
   // request is malformed for all of them.
+  const last = failures.at(-1);
   throw new AnalystError(
     last?.status ?? 502,
     `${JOBS[request.job].phrase} could not be done. ${tried.join("; ")}. Last error: ${last?.message ?? "unknown"}`,
@@ -811,6 +912,8 @@ async function attemptProvider<T>(
   serving: ProviderKey,
   request: ModelRequest,
   say: (kind: FailureKind) => string,
+  /** One rung of the free ladder, when this attempt is one of several. */
+  modelOverride?: string,
 ): Promise<ModelResult<T>> {
   if (serving === "anthropic") {
     try {
@@ -853,7 +956,9 @@ async function attemptProvider<T>(
   const apiKey = await providerKey(serving);
   if (!apiKey) throw new AttemptFailed(new AnalystError(503, say("noKey")), true, "not connected");
 
-  const model = await modelForJob(request.job, serving);
+  const model = modelOverride ?? (await modelForJob(request.job, serving));
+  // A rung is asked once and given a short clock. See `FREE_TIMEOUT_MS`.
+  const free = serving === "openrouter" && (await isFreeModel(model));
   const startedAt = Date.now();
 
   const fail = async (status: number, message: string) => {
@@ -880,7 +985,7 @@ async function attemptProvider<T>(
           ? await callGemini(apiKey, model, request)
           : serving === "perplexity"
             ? await callPerplexity(apiKey, model, request)
-            : await callOpenRouter(apiKey, model, request);
+            : await callOpenRouter(apiKey, model, request, free);
   } catch (err) {
     if (err instanceof ProviderError) {
       const kind = err.failure.kind;
@@ -1066,7 +1171,7 @@ export async function generateImage(request: ImageRequest): Promise<ImageResult>
   let body: Record<string, unknown>;
   try {
     body = await post(
-      `${BASE.openai}/images/generations`,
+      `${base("openai")}/images/generations`,
       { authorization: `Bearer ${apiKey}` },
       {
         model,
@@ -1126,6 +1231,69 @@ export async function generateImage(request: ImageRequest): Promise<ImageResult>
  * support conversation; one that is refused at the moment it is pasted is a
  * typo the Owner fixes in ten seconds.
  */
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+  /** Context length in tokens, when OpenRouter states one. */
+  context: number | null;
+  /** True when both the prompt and the completion rate are zero. */
+  free: boolean;
+  /** Whether the model can be asked for tools — an agent turn needs this. */
+  tools: boolean;
+}
+
+/**
+ * Everything OpenRouter will serve this account, with the free ones marked.
+ *
+ * The listing endpoint is free and authenticated, which is what makes it the
+ * right thing to build a picker on: no tokens are spent to find out what is
+ * available, and the answer is the account's own rather than a list written
+ * down here that goes stale the week a model is retired.
+ *
+ * **Free is read from the published rate, not from the id.** Most free ids end
+ * in `:free` and not all of them do, and a naming convention is not a price —
+ * pricing both halves at zero is. That distinction is what the ledger later
+ * relies on when it prices a rung at nothing.
+ *
+ * `tools` is carried because an agent turn sends tool definitions, and a model
+ * that cannot take them fails every agent task while working perfectly for
+ * one-shot writing. Better as a column on the picker than as a defect somebody
+ * diagnoses at six in the morning.
+ */
+export async function listOpenRouterModels(apiKey: string): Promise<OpenRouterModel[]> {
+  const response = await fetch(`${base("openrouter")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
+  if (!response.ok) {
+    throw new AnalystError(response.status === 401 || response.status === 403 ? 400 : 502, describeRejection("openrouter", response.status, await response.text()));
+  }
+  const payload = (await response.json().catch(() => null)) as {
+    data?: {
+      id?: unknown;
+      name?: unknown;
+      context_length?: unknown;
+      pricing?: { prompt?: unknown; completion?: unknown };
+      supported_parameters?: unknown;
+    }[];
+  } | null;
+
+  const models: OpenRouterModel[] = [];
+  for (const entry of payload?.data ?? []) {
+    if (typeof entry?.id !== "string" || !entry.id) continue;
+    const prompt = Number(entry.pricing?.prompt ?? NaN);
+    const completion = Number(entry.pricing?.completion ?? NaN);
+    models.push({
+      id: entry.id,
+      name: typeof entry.name === "string" && entry.name ? entry.name : entry.id,
+      context: typeof entry.context_length === "number" ? entry.context_length : null,
+      // Both halves, and both have to parse. A missing or unreadable rate is
+      // not free — it is unknown, and treating unknown as free is how a bill
+      // arrives for a model somebody picked off a list headed "free".
+      free: Number.isFinite(prompt) && Number.isFinite(completion) && prompt === 0 && completion === 0,
+      tools: Array.isArray(entry.supported_parameters) && entry.supported_parameters.includes("tools"),
+    });
+  }
+  return models;
+}
+
 export async function verifyProviderKey(provider: ProviderKey, apiKey: string, modelChoice?: string): Promise<{ model: string }> {
   const definition = PROVIDERS[provider];
   const model = definition.defaultModel;
@@ -1141,7 +1309,7 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string, m
       // spending anything — and it carries every id the account can ask for,
       // which makes it the one place a wrong model slug can be caught before
       // it becomes a month of calls that quietly failed over to somebody else.
-      const response = await fetch(`${BASE.openrouter}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
+      const response = await fetch(`${base("openrouter")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
       if (!response.ok) throw new ProviderError({ status: response.status, kind: "auth", detail: await response.text() });
 
       // The id being saved with the key, when the form sent one — checking the
@@ -1167,12 +1335,12 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string, m
     if (provider === "openai") {
       // The model list is the cheapest authenticated call there is — no tokens,
       // no charge, and it fails on exactly the thing being checked.
-      const response = await fetch(`${BASE.openai}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
+      const response = await fetch(`${base("openai")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
       if (!response.ok) throw new ProviderError({ status: response.status, kind: "auth", detail: await response.text() });
       return { model: (await providerModel(provider)) || model };
     }
     if (provider === "gemini") {
-      const response = await fetch(`${BASE.gemini}/models`, { headers: { "x-goog-api-key": apiKey } });
+      const response = await fetch(`${base("gemini")}/models`, { headers: { "x-goog-api-key": apiKey } });
       if (!response.ok) throw new ProviderError({ status: response.status, kind: "auth", detail: await response.text() });
       return { model: (await providerModel(provider)) || model };
     }
@@ -1184,7 +1352,7 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string, m
     // is a 400 ("max_tokens must be at least 16"), which the caller then reads
     // as a rejected key. `disable_search` keeps it off the per-search fee,
     // which is the part of a Perplexity call that actually costs money.
-    const response = await fetch(`${BASE.perplexity}/v1/sonar`, {
+    const response = await fetch(`${base("perplexity")}/v1/sonar`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({

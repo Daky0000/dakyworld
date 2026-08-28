@@ -17,20 +17,23 @@ import { AnalystError, verifyKey } from "../lib/anthropic.js";
 import {
   JOBS,
   MODEL_JOBS,
+  FREE_LADDER_MAX,
   PROVIDERS,
   PROVIDER_KEYS,
   describeProviders,
   describeRouting,
+  freeLadder,
   isModelJob,
   isPricedModel,
   isProviderKey,
+  providerKey,
   readJobModels,
   readRoutes,
   routeFor,
   type ModelJob,
   type ProviderKey,
 } from "../lib/models/registry.js";
-import { verifyProviderKey } from "../lib/models/call.js";
+import { listOpenRouterModels, verifyProviderKey } from "../lib/models/call.js";
 import {
   GoogleError,
   buildAuthUrl,
@@ -836,6 +839,108 @@ settingsRouter.put("/models/:provider", async (req, res, next) => {
     // A new key changes what every model tool can do, and readiness is cached.
     clearReadinessCache();
     res.json(await describeAll(req));
+  } catch (err) {
+    if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+/**
+ * The free models OpenRouter will serve this account, and the ladder in use.
+ *
+ * A picker rather than a text box, because the ids are long, exact and change
+ * — `meta-llama/llama-3.3-70b-instruct:free` typed from memory is a 404 three
+ * days later inside a sequence. Pasting is still allowed on the way in; this
+ * is what makes pasting unnecessary.
+ *
+ * **The rungs already saved are re-checked against this same listing**, so a
+ * model that has stopped being free, or that OpenRouter no longer lists, is
+ * named on the screen instead of quietly becoming a charge. That is the one
+ * thing this endpoint does that a static list could not.
+ */
+settingsRouter.get("/models/openrouter/free", async (_req, res, next) => {
+  try {
+    const apiKey = await providerKey("openrouter");
+    const ladder = await freeLadder();
+    if (!apiKey) {
+      return res.json({
+        connected: false,
+        ladder,
+        max: FREE_LADDER_MAX,
+        models: [],
+        stale: [],
+        note: "Connect an OpenRouter key first — the list of free models is read from your own account.",
+      });
+    }
+
+    const models = await listOpenRouterModels(apiKey);
+    const free = models.filter((model) => model.free);
+    const byId = new Map(models.map((model) => [model.id, model]));
+    const stale = ladder
+      .map((id) => {
+        const found = byId.get(id);
+        if (!found) return { id, why: "OpenRouter no longer lists this model." };
+        if (!found.free) return { id, why: "This model is no longer free — it will be billed at OpenRouter's rate." };
+        return null;
+      })
+      .filter((entry): entry is { id: string; why: string } => entry !== null);
+
+    res.json({
+      connected: true,
+      ladder,
+      max: FREE_LADDER_MAX,
+      // Tool-capable first: an agent turn sends tool definitions, and a model
+      // that cannot take them works for writing and fails every agent task.
+      models: free.sort((a, b) => Number(b.tools) - Number(a.tools) || a.name.localeCompare(b.name)),
+      stale,
+    });
+  } catch (err) {
+    if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+/**
+ * Sets the ladder — the free models to try, in order.
+ *
+ * Every id is checked against OpenRouter's own catalogue and has to be free
+ * *now*, which is what lets the ledger price a rung at zero later. A model
+ * that is listed but no longer free is refused by name rather than saved with
+ * a warning: the whole reason somebody sets this is to not be billed.
+ */
+settingsRouter.put("/models/openrouter/free", async (req, res, next) => {
+  try {
+    const input = z.object({ models: z.array(z.string().max(120)).max(FREE_LADDER_MAX) }).parse(req.body ?? {});
+    const wanted = [...new Set(input.models.map((id) => id.trim()).filter(Boolean))];
+
+    if (wanted.length === 0) {
+      await deleteSetting(SETTING.OPENROUTER_FREE_MODELS);
+      return res.json({ ladder: [], note: "Cleared. OpenRouter work goes to its own model again." });
+    }
+
+    const apiKey = await providerKey("openrouter");
+    if (!apiKey) return res.status(400).json({ error: "Connect an OpenRouter key first — a free model can only be checked against your own account." });
+
+    const models = await listOpenRouterModels(apiKey);
+    const byId = new Map(models.map((model) => [model.id, model]));
+    for (const id of wanted) {
+      const found = byId.get(id);
+      if (!found) return res.status(400).json({ error: `OpenRouter has no model called “${id}”. Pick one from the list, or check the id at openrouter.ai/models.` });
+      if (!found.free) return res.status(400).json({ error: `“${id}” is not free — OpenRouter charges for it. Only free models belong on this list.` });
+    }
+
+    await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(wanted));
+    const withoutTools = wanted.filter((id) => !byId.get(id)?.tools);
+    res.json({
+      ladder: wanted,
+      // Said rather than refused. A model with no tool support is a perfectly
+      // good rung for writing and a dead one for an agent turn, and which of
+      // those matters is the Owner's call, not this route's.
+      note:
+        withoutTools.length > 0
+          ? `Saved. ${withoutTools.join(", ")} ${withoutTools.length === 1 ? "does" : "do"} not support tools, so ${withoutTools.length === 1 ? "it" : "they"} will fail an agent task and be skipped to the next rung — fine for writing, wasted on an agent.`
+          : "Saved. OpenRouter work goes down this ladder, and Claude finishes anything all of them refuse.",
+    });
   } catch (err) {
     if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });
     next(err);
