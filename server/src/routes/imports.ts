@@ -367,7 +367,12 @@ importsRouter.post("/analyze", async (req, res, next) => {
 // --- Plans -----------------------------------------------------------------
 
 const planInput = z.object({
-  plan: z.object({ tables: z.array(z.any()), summary: z.string().optional() }),
+  plan: z.object({
+    tables: z.array(z.any()),
+    summary: z.string().optional(),
+    /** One lead list per worksheet, or one per detected table. Absent means per worksheet. */
+    grouping: z.enum(["sheet", "table"]).optional(),
+  }),
   /** Re-sent when the server no longer holds the parsed file. */
   dataBase64: z.string().optional(),
   fileName: z.string().optional(),

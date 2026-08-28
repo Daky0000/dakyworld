@@ -10,6 +10,7 @@ import type {
   ImportPlan,
   LeadImportRecord,
   PlanColumn,
+  PlanGrouping,
   PlanTable,
   TablePreview,
 } from "../lib/types";
@@ -46,6 +47,45 @@ interface Upload {
   name: string;
   size: number;
   dataBase64: string;
+}
+
+/**
+ * The lists a plan will produce — the same rule the server applies at commit
+ * (`planGroups` in services/sheetPlan.ts), mirrored here so the review screen
+ * can show what will happen before anybody presses Import. The server is still
+ * the authority; this is a preview of its answer, not a second one.
+ */
+function groupsOf(plan: ImportPlan, tables: PlanTable[]): { key: string; title: string; sheet: string; tables: PlanTable[] }[] {
+  const grouping: PlanGrouping = plan.grouping === "table" ? "table" : "sheet";
+  const groups: { key: string; title: string; sheet: string; tables: PlanTable[] }[] = [];
+  const byKey = new Map<string, (typeof groups)[number]>();
+
+  for (const table of tables) {
+    const key = grouping === "sheet" ? `sheet:${table.sheet}` : `table:${table.id}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.tables.push(table);
+      continue;
+    }
+    const group = { key, title: table.title, sheet: table.sheet, tables: [table] };
+    byKey.set(key, group);
+    groups.push(group);
+  }
+
+  for (const group of groups) if (group.tables.length > 1) group.title = group.sheet || group.title;
+  return groups;
+}
+
+/** The file, without its extension — what the tag beside the worksheet's is called. */
+function fileLabel(fileName?: string | null): string | null {
+  const trimmed = (fileName ?? "").trim().replace(/\.[^.]+$/, "").trim();
+  return trimmed || null;
+}
+
+/** The tags one worksheet's leads will carry. Mirrors `tagsForSheet` on the server. */
+function tagsFor(sheet: string, fileName?: string | null): string[] {
+  const file = fileLabel(fileName);
+  return [sheet, ...(file && file.toLowerCase() !== sheet.trim().toLowerCase() ? [file] : [])];
 }
 
 /**
@@ -222,7 +262,9 @@ export function LeadImport() {
     if (!record) return;
     const assembled: AnalyzeResponse = {
       import: { ...record, analyzedBy: state.readers.join(", ") || record.analyzedBy },
-      plan: { tables: state.tables, summary: "" },
+      // One list per worksheet unless the Owner says otherwise on the review
+      // screen — see `GroupingCard`.
+      plan: { tables: state.tables, summary: "", grouping: "sheet" },
       previews: state.previews,
       sheets: state.done.map((name) => ({ name, rows: 0, columns: 0 })),
       warning: state.warnings.length ? state.warnings.join(" ") : null,
@@ -290,7 +332,7 @@ export function LeadImport() {
     <div>
       <PageHeader
         title="Import a lead sheet"
-        subtitle="Point at a spreadsheet — messy is fine. Every table it holds becomes its own batch, with its own columns."
+        subtitle="Point at a spreadsheet — messy is fine. Each worksheet becomes one list, tagged with its own name so you can find it again."
         action={
           <div className="flex items-center gap-3">
             {analysis && (
@@ -788,6 +830,8 @@ function ReviewStep({
 }) {
   const { data: fieldSet } = useLeadFields(null);
   const included = plan.tables.filter((table) => table.include !== false);
+  const grouping: PlanGrouping = plan.grouping === "table" ? "table" : "sheet";
+  const groups = groupsOf(plan, included);
   const importing = analysis.import.status === "IMPORTING";
 
   const updateTable = (index: number, patch: Partial<PlanTable>) => {
@@ -805,32 +849,51 @@ function ReviewStep({
       )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Tables found" value={plan.tables.length} sub={`${included.length} ticked for import`} />
+        <StatTile
+          label="Tables found"
+          value={plan.tables.length}
+          sub={`${included.length} ticked · across ${analysis.sheets.length} worksheet${analysis.sheets.length === 1 ? "" : "s"}`}
+        />
+        <StatTile label="Lists to create" value={groups.length} sub={grouping === "sheet" ? "One per worksheet" : "One per table found"} />
         <StatTile label="Leads to create" value={totalRows} sub="Existing ones are refreshed, not duplicated" />
         <StatTile label="Read by" value={analysis.import.analyzedBy === "rules" ? "Pattern rules" : "AI analyst"} sub={analysis.import.analyzedBy ?? ""} />
-        <StatTile label="Sheets read" value={analysis.sheets.length} sub={analysis.sheets.map((sheet) => sheet.name).join(", ")} />
       </div>
 
       {analysis.warning && <Note tone="warn">{analysis.warning}</Note>}
       {plan.summary && <p className="mb-6 border-l-2 border-blue/60 bg-white px-4 py-3 text-sm text-ink/70">{plan.summary}</p>}
 
+      <GroupingCard
+        plan={plan}
+        groups={groups}
+        previews={previews}
+        fileName={analysis.import.fileName}
+        onGrouping={(next) => onPlan({ ...plan, grouping: next })}
+      />
+
       <div className="space-y-6">
-        {plan.tables.map((table, index) => (
-          <TableCard
-            key={table.id}
-            table={table}
-            preview={previews.find((entry) => entry.tableId === table.id)}
-            builtins={fieldSet?.builtins ?? []}
-            onChange={(patch) => updateTable(index, patch)}
-          />
-        ))}
+        {plan.tables.map((table, index) => {
+          // Only worth saying when it isn't obvious: a list holding one table
+          // is named after that table, and repeating its own title under it
+          // would be noise on every card.
+          const merged = groups.find((group) => group.tables.length > 1 && group.tables.some((entry) => entry.id === table.id));
+          return (
+            <TableCard
+              key={table.id}
+              table={table}
+              preview={previews.find((entry) => entry.tableId === table.id)}
+              builtins={fieldSet?.builtins ?? []}
+              landsIn={merged?.title}
+              onChange={(patch) => updateTable(index, patch)}
+            />
+          );
+        })}
       </div>
 
       {error instanceof Error && <Note tone="bad">{error.message}</Note>}
 
       <div className="sticky bottom-4 mt-6 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
         <span className="font-mono text-[11px] uppercase tracking-[.14em]">
-          {included.length} batch{included.length === 1 ? "" : "es"} · {totalRows} leads
+          {groups.length} list{groups.length === 1 ? "" : "s"} · {included.length} table{included.length === 1 ? "" : "s"} · {totalRows} leads
         </span>
         <span className="flex-1" />
         <button
@@ -854,15 +917,102 @@ function ReviewStep({
   );
 }
 
+/**
+ * What the import will actually leave on the Leads page.
+ *
+ * The review screen listed the *tables* and said nothing about the lists they
+ * become, which is fine while one table is one list and misleading the moment
+ * a worksheet's three sections merge into one. So the lists are named here,
+ * with what goes into each and the tags each will carry, above the tables
+ * themselves.
+ */
+function GroupingCard({
+  plan,
+  groups,
+  previews,
+  fileName,
+  onGrouping,
+}: {
+  plan: ImportPlan;
+  groups: { key: string; title: string; sheet: string; tables: PlanTable[] }[];
+  previews: TablePreview[];
+  fileName?: string | null;
+  onGrouping: (next: PlanGrouping) => void;
+}) {
+  const grouping: PlanGrouping = plan.grouping === "table" ? "table" : "sheet";
+  const rowsIn = (tables: PlanTable[]) =>
+    tables.reduce((sum, table) => sum + (previews.find((preview) => preview.tableId === table.id)?.rowCount ?? 0), 0);
+
+  const choices: { value: PlanGrouping; label: string; hint: string }[] = [
+    { value: "sheet", label: "One list per worksheet", hint: "Everything found on a tab lands together" },
+    { value: "table", label: "One list per table found", hint: "For a tab holding genuinely different tables" },
+  ];
+
+  return (
+    <Card className="mb-6">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <h3 className="font-display text-lg">Lists this will create</h3>
+        <span className="flex-1" />
+        <div className="flex divide-x divide-ink/15 border border-ink/15">
+          {choices.map((choice) => (
+            <button
+              key={choice.value}
+              type="button"
+              title={choice.hint}
+              onClick={() => onGrouping(choice.value)}
+              className={`px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition ${
+                grouping === choice.value ? "bg-ink text-cream" : "text-ink/50 hover:text-ink"
+              }`}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {groups.length === 0 ? (
+        <p className="text-sm text-ink/50">Nothing is ticked for import yet.</p>
+      ) : (
+        <ul className="divide-y divide-ink/5 rounded-2xl border border-line">
+          {groups.map((group) => (
+            <li key={group.key} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+              <span className="min-w-[10rem] flex-1 truncate">{group.title}</span>
+              <div className="flex flex-wrap items-center gap-1">
+                {tagsFor(group.sheet, fileName).map((tag) => (
+                  <Badge key={tag} tone="muted">
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+              <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+                {group.tables.length > 1 && `${group.tables.length} tables · `}
+                {rowsIn(group.tables)} rows
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-3 text-xs text-ink/50">
+        Every lead carries its worksheet as a tag, so you can find the ones that came off the same sheet even after a list is renamed or
+        split.
+      </p>
+    </Card>
+  );
+}
+
 function TableCard({
   table,
   preview,
   builtins,
+  landsIn,
   onChange,
 }: {
   table: PlanTable;
   preview?: TablePreview;
   builtins: { key: string; label: string; writable: boolean }[];
+  /** The list this table joins, when it is sharing one with others. */
+  landsIn?: string;
   onChange: (patch: Partial<PlanTable>) => void;
 }) {
   const [showColumns, setShowColumns] = useState(false);
@@ -895,6 +1045,9 @@ function TableCard({
             {table.headerRow !== null && ` · header row ${table.headerRow + 1}`} · {kept.length} columns
             {custom.length > 0 && ` (${custom.length} new)`}
           </p>
+          {landsIn && (
+            <p className="mt-1 font-mono text-[10px] uppercase tracking-[.12em] text-blue">Joins the list “{landsIn}”</p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Badge tone={table.confidence >= 0.75 ? "positive" : "muted"}>{Math.round(table.confidence * 100)}% sure</Badge>

@@ -2,18 +2,31 @@
  * Running an import plan.
  *
  * Analysis produces a plan (services/sheetPlan.ts); this is what turns an
- * approved plan into rows in the database. Every table in the plan becomes its
- * own lead group with its own column set, so a workbook holding a table of
- * people and a table of organisations lands as two groups that look nothing
- * alike — which is the point, because forcing them into one shape is exactly
+ * approved plan into rows in the database.
+ *
+ * **A worksheet becomes a lead list, and the plan says so** — `plan.grouping`,
+ * defaulting to `"sheet"`. A tab with three section headings in it is three
+ * tables to the detector and one list to the person who typed it, so merging
+ * them is the honest reading; the merged list's columns are the union of its
+ * tables', so a section carrying a column the others lack keeps it. Set to
+ * `"table"` on the review screen and every detected table gets its own list
+ * with its own column set, which is what a workbook holding a table of people
+ * and a table of organisations wants — forcing those into one shape is exactly
  * what loses the data.
+ *
+ * **Either way every list and every lead carries the worksheet as a tag**, and
+ * the file name beside it where the two differ. That is what makes "these came
+ * off the same sheet" a thing you can filter by rather than a thing you have to
+ * remember: a list can be renamed, split or emptied into another, and the tag
+ * on the lead survives all three.
  */
 
 import type { LeadCaptureMethod, LeadGroup, Prisma } from "@prisma/client";
 import { enrolNewLeads } from "./emailSequences.js";
 import { prisma } from "../lib/prisma.js";
 import { builtinField, isBuiltinKey } from "./leadFields.js";
-import { extractRows, normalizePlan, type ImportPlan, type PlanTable } from "./sheetPlan.js";
+import { normaliseTags, registerTags } from "./leadTags.js";
+import { extractRows, normalizePlan, planGroups, type ImportPlan, type PlanGroup, type PlanTable } from "./sheetPlan.js";
 import type { SheetGrid } from "./spreadsheet.js";
 import type { GridSource } from "./sheetSource.js";
 
@@ -188,29 +201,37 @@ async function uniqueSlug(base: string): Promise<string> {
 }
 
 /**
- * The column set for an imported group: the sheet's own columns in the sheet's
+ * The column set for an imported list: the sheet's own columns in the sheet's
  * own order, plus the few built-ins the pipeline needs to work at all (status
  * to move a lead along, score to sort by, added-date for context).
+ *
+ * Takes every table in the list rather than one, because a list merged from a
+ * worksheet's sections has to hold **all** their columns. First table wins on
+ * a shared key — the label somebody would recognise is the one at the top of
+ * the sheet — and a column only the third section has is added after the rest
+ * rather than left out, which would silently drop what it holds.
  */
-function fieldsForTable(table: PlanTable): Prisma.LeadFieldCreateManyInput[] {
+function fieldsForTables(tables: PlanTable[]): Prisma.LeadFieldCreateManyInput[] {
   const rows: Prisma.LeadFieldCreateManyInput[] = [];
   const used = new Set<string>();
 
-  for (const column of table.columns) {
-    if (column.field === "ignore") continue;
-    const key = column.field === "custom" ? (column.key ?? column.label) : column.field;
-    if (!key || used.has(key)) continue;
-    used.add(key);
-    rows.push({
-      groupId: undefined,
-      key,
-      label: column.label,
-      type: column.type,
-      builtin: isBuiltinKey(key),
-      hidden: false,
-      position: rows.length,
-      meta: column.header ? ({ sourceHeader: column.header, sourceColumn: column.index } as Prisma.InputJsonValue) : undefined,
-    });
+  for (const table of tables) {
+    for (const column of table.columns) {
+      if (column.field === "ignore") continue;
+      const key = column.field === "custom" ? (column.key ?? column.label) : column.field;
+      if (!key || used.has(key)) continue;
+      used.add(key);
+      rows.push({
+        groupId: undefined,
+        key,
+        label: column.label,
+        type: column.type,
+        builtin: isBuiltinKey(key),
+        hidden: false,
+        position: rows.length,
+        meta: column.header ? ({ sourceHeader: column.header, sourceColumn: column.index } as Prisma.InputJsonValue) : undefined,
+      });
+    }
   }
 
   for (const key of ["status", "leadScore", "createdAt"]) {
@@ -243,8 +264,19 @@ export interface CommitResult {
 }
 
 export interface ImportCheckpoint {
+  /** How many tables are finished, in the order `commitPlan` works through them. */
   tableIndex: number;
   chunkIndex: number;
+  /**
+   * The list each grouping key is being written into.
+   *
+   * Needed because a list now outlives the table that opened it: the second
+   * section of a worksheet joins the list the first one created, and a commit
+   * resumed between the two has to find it rather than open a second list with
+   * the same name. `currentGroupId` is the older single-list form and is still
+   * read on resume, so a commit interrupted before this shipped carries on.
+   */
+  groupIds?: Record<string, string>;
   currentGroupId: string | null;
   result: {
     groupsCreated: number;
@@ -283,21 +315,86 @@ async function saveCheckpoint(importId: string, checkpoint: ImportCheckpoint) {
  * and "CSV" are what the Owner recognises — an `.xlsx` fetched from Drive is
  * still an Excel file, and where it was stored isn't the interesting part.
  */
-async function captureMethodFor(importId: string): Promise<LeadCaptureMethod> {
-  const record = await prisma.leadImport.findUnique({
-    where: { id: importId },
-    select: { source: true, fileName: true },
-  });
+function captureMethodFor(record: { source: string; fileName: string | null } | null): LeadCaptureMethod {
   if (!record) return "OTHER";
   if (record.source === "GOOGLE_SHEET") return "GOOGLE_SHEET";
   return /\.(csv|tsv)$/i.test(record.fileName ?? "") ? "CSV" : "EXCEL";
 }
 
+/** The file, without its extension — how a person refers to it. */
+function fileLabel(fileName: string | null | undefined): string | null {
+  const trimmed = (fileName ?? "").trim().replace(/\.[^.]+$/, "").trim();
+  return trimmed || null;
+}
+
 /**
- * Writes an approved plan. Each table gets a group, that group's columns, and
- * its rows; rows whose identity already exists are refreshed rather than
- * duplicated, and only where the sheet actually has a value — an import must
- * never blank out a field somebody filled in by hand.
+ * The tags every lead and list from one worksheet carries.
+ *
+ * The worksheet name first, because that is the question being answered —
+ * *are these from the same sheet* — and the file name beside it, because a
+ * workbook's tabs are routinely called "Leads 1" … "Leads 39" and a tab name
+ * on its own is then no answer at all. Skipped when the two are the same
+ * string, which is every CSV: a sheet named after the file it is.
+ *
+ * Registered rather than written raw. `Lead.tags` holds slugs and the registry
+ * holds the words, so a tag coined here is renameable from the Tags screen
+ * afterwards without touching a single lead — see services/leadTags.ts.
+ */
+async function tagsForSheet(sheet: string, fileName: string | null): Promise<string[]> {
+  const file = fileLabel(fileName);
+  const wanted = [sheet, ...(file && file.toLowerCase() !== sheet.trim().toLowerCase() ? [file] : [])];
+  return registerTags(wanted.filter((value) => value.trim() !== ""));
+}
+
+/** What a merged list says about itself: which sections of the tab it holds. */
+function describeGroup(planned: PlanGroup): string | null {
+  if (planned.tables.length === 1) return planned.tables[0].notes?.slice(0, 300) || null;
+  const ranges = planned.tables.map((table) => `${table.title} (rows ${table.firstDataRow + 1}–${table.lastDataRow + 1})`);
+  return `${planned.tables.length} tables from "${planned.sheet}" — ${ranges.join(", ")}`.slice(0, 300);
+}
+
+/**
+ * Opens the lead list one group of the plan will fill.
+ *
+ * The P2002 recovery is for a commit whose checkpoint was lost between
+ * attempts: the list is already there, and creating a second one called the
+ * same thing would split the worksheet across two lists — the failure this
+ * grouping exists to end. Looked up by the import it belongs to, so it can
+ * only ever adopt a list this same import opened.
+ */
+async function openGroup(importId: string, planned: PlanGroup, tags: string[]): Promise<{ group: LeadGroup; created: boolean }> {
+  const name = planned.title.slice(0, 80);
+  const first = planned.tables[0];
+  const last = planned.tables[planned.tables.length - 1];
+  const data = {
+    name,
+    description: describeGroup(planned),
+    autoCreated: true,
+    sourceLabel: `${planned.sheet}!${first.firstDataRow + 1}-${last.lastDataRow + 1}`,
+    leadImportId: importId,
+    tags,
+  };
+
+  try {
+    return { group: await prisma.leadGroup.create({ data: { ...data, slug: await uniqueSlug(planned.title) } }), created: true };
+  } catch (err) {
+    if ((err as Prisma.PrismaClientKnownRequestError)?.code !== "P2002") throw err;
+    const found = await prisma.leadGroup.findFirst({ where: { leadImportId: importId, name } });
+    if (found) return { group: found, created: false };
+    // Two commits raced for the same slug and neither list is ours. Take the next.
+    return { group: await prisma.leadGroup.create({ data: { ...data, slug: await uniqueSlug(planned.title) } }), created: true };
+  }
+}
+
+/**
+ * Writes an approved plan. Each group of the plan gets a lead list, that
+ * list's columns, and its rows; rows whose identity already exists are
+ * refreshed rather than duplicated, and only where the sheet actually has a
+ * value — an import must never blank out a field somebody filled in by hand.
+ *
+ * `plan.grouping` decides what a list is: one per worksheet by default, one
+ * per detected table when the Owner asks for that on the review screen. Either
+ * way every list and every lead carries the worksheet as a tag.
  *
  * Long worksheets are processed in checkpoints so a timeout or error can be
  * resumed from where it stopped rather than re-doing everything.
@@ -317,66 +414,85 @@ export async function commitPlan(
     groups: existingCheckpoint?.result.groups ?? [],
   };
   const startedAt = new Date(existingCheckpoint?.startedAt ?? Date.now());
-  const captureMethod = await captureMethodFor(importId);
+  const record = await prisma.leadImport.findUnique({ where: { id: importId }, select: { source: true, fileName: true } });
+  const captureMethod = captureMethodFor(record);
 
-  const tables = plan.tables.filter((table) => table.include !== false);
+  // Flattened list-first, so a list's tables are consecutive. That is what
+  // lets the second section of a worksheet find the list the first one opened,
+  // and it reads each tab once — a plan whose tables run in sheet order is
+  // what keeps a 39-tab workbook affordable (see services/sheetSource.ts).
+  const included = plan.tables.filter((table) => table.include !== false);
+  const work = planGroups(plan, included).flatMap((group) => group.tables.map((table) => ({ group, table })));
+
   const startTableIndex = existingCheckpoint?.tableIndex ?? 0;
+  const groupIds = new Map<string, string>(Object.entries(existingCheckpoint?.groupIds ?? {}));
+  // A checkpoint written before a list could span tables names only the one it
+  // was in the middle of. Reading it here is what lets that commit carry on.
+  if (existingCheckpoint?.currentGroupId && work[startTableIndex]) {
+    groupIds.set(work[startTableIndex].group.key, existingCheckpoint.currentGroupId);
+  }
+  /** Column keys each list already has, so a second table only adds what is new. */
+  const columnsOf = new Map<string, Set<string>>();
+  /** Where each list sits in `result.groups`, so several tables add up to one line. */
+  const resultAt = new Map(result.groups.map((entry, index) => [entry.id, index]));
 
-  for (let t = startTableIndex; t < tables.length; t++) {
-    const table = tables[t];
-    if (table.include === false) continue;
-    // Asked for by name rather than looked up in a list: the source holds one
-    // sheet, so a plan whose tables run in sheet order reads each tab exactly
-    // once and a workbook of forty is never in memory whole.
+  for (let t = startTableIndex; t < work.length; t++) {
+    const { group: planned, table } = work[t];
+    const advance = async (chunkIndex: number, currentGroupId: string | null) => {
+      await saveCheckpoint(importId, {
+        tableIndex: chunkIndex === 0 && currentGroupId === null ? t + 1 : t,
+        chunkIndex,
+        groupIds: Object.fromEntries(groupIds),
+        currentGroupId,
+        result: { ...result, groups: [...result.groups] },
+        startedAt: startedAt.toISOString(),
+      });
+    };
+
     const grid = await source.get(table.sheet);
-    if (!grid) continue;
+    if (!grid) {
+      await advance(0, null);
+      continue;
+    }
 
     const { rows, skipped } = extractRows(grid, table);
     result.rowsSkipped += skipped;
     if (!rows.length) {
-      await saveCheckpoint(importId, {
-        tableIndex: t + 1,
-        chunkIndex: 0,
-        currentGroupId: null,
-        result: { ...result, groups: [...result.groups] },
-        startedAt: startedAt.toISOString(),
-      });
+      await advance(0, null);
       continue;
     }
 
+    const sheetTags = await tagsForSheet(table.sheet, record?.fileName ?? null);
+
     let group: LeadGroup;
-    const existingGroupId = existingCheckpoint?.currentGroupId;
-    if (existingGroupId) {
-      group = await prisma.leadGroup.findUnique({ where: { id: existingGroupId } }) ?? (() => { throw new Error(`Group ${existingGroupId} missing`); })();
+    const knownId = groupIds.get(planned.key);
+    const found = knownId ? await prisma.leadGroup.findUnique({ where: { id: knownId } }) : null;
+    if (found) {
+      group = found;
     } else {
-      try {
-        group = await prisma.leadGroup.create({
-          data: {
-            name: table.title.slice(0, 80),
-            slug: await uniqueSlug(table.title),
-            description: table.notes?.slice(0, 300) || null,
-            autoCreated: true,
-            sourceLabel: `${table.sheet}!${table.firstDataRow + 1}-${table.lastDataRow + 1}`,
-            leadImportId: importId,
-          },
-        });
-        result.groupsCreated += 1;
-      } catch (err) {
-        if ((err as Prisma.PrismaClientKnownRequestError)?.code === "P2002") {
-          group = await prisma.leadGroup.findFirst({ where: { leadImportId: importId, name: table.title.slice(0, 80) } }) ??
-                  await prisma.leadGroup.findFirst({ where: { slug: await uniqueSlug(table.title) } }) ??
-                  (() => { throw err; })();
-        } else {
-          throw err;
-        }
-      }
+      const opened = await openGroup(importId, planned, sheetTags);
+      group = opened.group;
+      if (opened.created) result.groupsCreated += 1;
+      groupIds.set(planned.key, group.id);
     }
 
-    const wasTableProcessed = (existingCheckpoint?.tableIndex ?? 0) > t ||
-      (existingCheckpoint?.tableIndex === t && (existingCheckpoint?.chunkIndex ?? 0) > 0);
-    if (!wasTableProcessed) {
-      const fields = fieldsForTable(table).map((field) => ({ ...field, groupId: group.id }));
-      if (fields.length) await prisma.leadField.createMany({ data: fields });
+    // Every column of every table in this list, created once. Read back from
+    // the database rather than tracked in memory, because a resumed commit has
+    // no memory of the run that opened the list.
+    let known = columnsOf.get(group.id);
+    if (!known) {
+      const existingFields = await prisma.leadField.findMany({ where: { groupId: group.id }, select: { key: true } });
+      known = new Set(existingFields.map((field) => field.key));
+      columnsOf.set(group.id, known);
+
+      const missing = fieldsForTables(planned.tables).filter((field) => !known!.has(field.key));
+      if (missing.length) {
+        await prisma.leadField.createMany({
+          data: missing.map((field, offset) => ({ ...field, groupId: group.id, position: known!.size + offset })),
+          skipDuplicates: true,
+        });
+        for (const field of missing) known.add(field.key);
+      }
     }
 
     const seen = new Set<string>();
@@ -398,22 +514,29 @@ export async function commitPlan(
       const batch = prepared.slice(offset, offset + CHUNK);
       const keys = batch.map((row) => row.dedupeKey).filter((key): key is string => Boolean(key));
 
-    const existing: { id: string; dedupeKey: string; customFields: unknown; groupId: string | null }[] = [];
+    const existing: { id: string; dedupeKey: string; customFields: unknown; groupId: string | null; tags: string[] }[] = [];
     for (let k = 0; k < keys.length; k += CHUNK) {
       const keyBatch = keys.slice(k, k + CHUNK);
       const found = await prisma.lead.findMany({
         where: { dedupeKey: { in: keyBatch } },
-        select: { id: true, dedupeKey: true, customFields: true, groupId: true },
+        select: { id: true, dedupeKey: true, customFields: true, groupId: true, tags: true },
       });
       existing.push(...(found as typeof existing));
     }
     const existingByKey = new Map(existing.map((lead) => [lead.dedupeKey as string, lead]));
+
+      // A sheet's own Tags column is registered a batch at a time rather than a
+      // row at a time — same words, one round trip. `Lead.tags` holds slugs, so
+      // the raw labels are folded through `normaliseTags` per row below.
+      const columnTags = batch.flatMap((row) => (Array.isArray(row.lead.tags) ? (row.lead.tags as string[]) : []));
+      if (columnTags.length) await registerTags(columnTags);
 
       const toCreate: Prisma.LeadCreateManyInput[] = [];
       const toUpdate: { where: { id: string }; data: Prisma.LeadUncheckedUpdateInput }[] = [];
 
       for (const row of batch) {
         const scalars = row.lead as Prisma.LeadUncheckedCreateInput & Record<string, unknown>;
+        const rowTags = [...new Set([...normaliseTags(row.lead.tags as string[] | undefined), ...sheetTags])];
         const base = {
           ...scalars,
           contactName: String(row.lead.contactName),
@@ -423,6 +546,9 @@ export async function commitPlan(
           captureMethod,
           groupId: group.id,
           dedupeKey: row.dedupeKey,
+          // After the spread, never in it: the sheet's own labels are folded to
+          // slugs and the worksheet's tag is added to them.
+          tags: rowTags,
           customFields: Object.keys(row.custom).length ? (row.custom as Prisma.InputJsonValue) : undefined,
           enrichment: { importId, sheet: table.sheet, row: row.rowIndex + 1, raw: row.raw } as Prisma.InputJsonValue,
         };
@@ -435,6 +561,11 @@ export async function commitPlan(
 
         const update: Prisma.LeadUncheckedUpdateInput = {};
         for (const [key, value] of Object.entries(scalars)) {
+          // Tags are merged below, never replaced. An array is not null and not
+          // "", so the loop would have written the sheet's tags straight over
+          // whatever a person or a scrape had put on the lead — and a re-import
+          // of an updated file would have quietly untagged the whole list.
+          if (key === "tags") continue;
           if (value === null || value === undefined || value === "") continue;
           if (key === "contactName" && !value) continue;
           (update as Record<string, unknown>)[key] = value;
@@ -443,6 +574,8 @@ export async function commitPlan(
           const previous = (match.customFields as Record<string, unknown> | null) ?? {};
           update.customFields = { ...previous, ...row.custom } as Prisma.InputJsonValue;
         }
+        const nextTags = [...new Set([...match.tags, ...rowTags])];
+        if (nextTags.length !== match.tags.length) update.tags = nextTags;
         if (!match.groupId) update.groupId = group.id;
 
         toUpdate.push({ where: { id: match.id }, data: update });
@@ -460,24 +593,21 @@ export async function commitPlan(
         await Promise.all(updateBatch.map((op) => prisma.lead.update(op)));
       }
 
-      await saveCheckpoint(importId, {
-        tableIndex: t,
-        chunkIndex: offset + CHUNK,
-        currentGroupId: group.id,
-        result: { ...result, groups: [...result.groups] },
-        startedAt: startedAt.toISOString(),
-      });
+      await advance(offset + CHUNK, group.id);
     }
 
-    result.groups.push({ id: group.id, name: group.name, leads: prepared.length });
+    // One line per list, not per table: a worksheet's three sections are one
+    // list on the Leads page and reporting them as three would say the import
+    // did something it did not.
+    const at = resultAt.get(group.id);
+    if (at === undefined) {
+      resultAt.set(group.id, result.groups.length);
+      result.groups.push({ id: group.id, name: group.name, leads: prepared.length });
+    } else {
+      result.groups[at].leads += prepared.length;
+    }
 
-    await saveCheckpoint(importId, {
-      tableIndex: t + 1,
-      chunkIndex: 0,
-      currentGroupId: null,
-      result: { ...result, groups: [...result.groups] },
-      startedAt: startedAt.toISOString(),
-    });
+    await advance(0, null);
   }
 
   if (result.leadsCreated > 0) {

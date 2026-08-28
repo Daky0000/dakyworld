@@ -8,11 +8,16 @@
  * data" throws most of that away.
  *
  * So the file is described as a *plan* first — a list of tables, each with its
- * own header row, row range, column range and column mapping. Each table
- * becomes its own lead group with its own columns. The plan is produced by the
- * analyst in lib/anthropic.ts, or by the rules below when no API key is set,
- * and either way the Owner sees and can correct it before a single lead is
- * written.
+ * own header row, row range, column range and column mapping. The plan is
+ * produced by the analyst in lib/anthropic.ts, or by the rules below when no
+ * API key is set, and either way the Owner sees and can correct it before a
+ * single lead is written.
+ *
+ * **What a table is and what a lead list is are two different questions.**
+ * `plan.grouping` answers the second: one list per worksheet by default, so a
+ * tab with three section headings down it arrives as one findable thing rather
+ * than three; one list per table when the Owner asks for that on the review
+ * screen. See `planGroups`.
  */
 
 import type { LeadFieldType } from "@prisma/client";
@@ -59,9 +64,28 @@ export interface PlanTable {
   include: boolean;
 }
 
+/**
+ * How the tables in a plan become lead lists.
+ *
+ * `"sheet"` — everything found on one worksheet lands in **one** list. This is
+ * the default, and it is the default because of what a real file looks like: a
+ * tab of leads with three section headings in it is three tables to a detector
+ * and one list to the person who typed it, and three lists called "Accra",
+ * "Kumasi" and "Takoradi" scattered among a workbook's other ninety are not
+ * findable as a thing. The columns of a merged list are the union of its
+ * tables', so a section with a column the others lack keeps it.
+ *
+ * `"table"` — one list per detected table, which is what a workbook of
+ * genuinely different tables wants: a table of people and a table of
+ * organisations forced into one column set is the shape that loses data.
+ */
+export type PlanGrouping = "sheet" | "table";
+
 export interface ImportPlan {
   tables: PlanTable[];
   summary: string;
+  /** Absent means "sheet" — see `groupingOf`. */
+  grouping?: PlanGrouping;
 }
 
 // --- Header synonyms -------------------------------------------------------
@@ -334,6 +358,7 @@ function findBlocks(grid: SheetGrid): Block[] {
   let start: number | null = null;
   let banner: string | null = null;
   let pendingBanner: string | null = null;
+  let pendingBannerRow = -1;
 
   for (let index = 0; index < grid.rows.length; index += 1) {
     const filled = filledCount(grid.rows[index]);
@@ -345,13 +370,17 @@ function findBlocks(grid: SheetGrid): Block[] {
         banner = null;
       }
       // A heading is usually separated from its table by a blank row, so a
-      // pending banner survives the gap.
+      // pending banner survives the gap — but only the gap. A title with six
+      // empty rows under it is a title for the sheet, or a leftover; carrying
+      // it down to whatever appears next names the wrong table after it.
+      if (pendingBanner !== null && index - pendingBannerRow > MAX_GAP_ROWS + 1) pendingBanner = null;
       continue;
     }
 
     // A row with one filled cell and nothing started yet is a heading, not a table.
     if (filled === 1 && start === null) {
       pendingBanner = grid.rows[index].find((cell) => cell !== "") ?? null;
+      pendingBannerRow = index;
       continue;
     }
 
@@ -392,6 +421,47 @@ function looksLikeHeader(row: string[]): boolean {
 /** The set of columns a row fills, as a string, for comparing row shapes. */
 function shapeOf(row: string[]): string {
   return row.map((cell) => (cell === "" ? "0" : "1")).join("");
+}
+
+/** How many cells in a row read as the *name* of a lead field rather than a value. */
+function headerWordCount(row: string[]): number {
+  return row.filter((cell) => cell !== "" && guessField(cell) !== "custom").length;
+}
+
+/**
+ * What a cell is, roughly. Used only to tell a header row from the rows under
+ * it: a header names an email column, it does not contain an email address.
+ */
+function cellKind(value: string): string {
+  if (value === "") return "";
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) return "email";
+  if (/^(https?:\/\/|www\.)/i.test(value)) return "url";
+  if (/^[+(]?\d[\d\s()\-.]{7,}$/.test(value) && !DATE_SHAPE.test(value)) return "phone";
+  if (/^-?[\d,. ]+$/.test(value)) return "number";
+  return "text";
+}
+
+/**
+ * A row that is a table's headers rather than one of its leads.
+ *
+ * `looksLikeHeader` alone is a shape test — short, wordy, non-numeric — and a
+ * row of short text values passes it, which is most rows of a lead sheet. Two
+ * further things have to hold before a row is promoted to a header or read as
+ * a boundary, because both of those decisions move a real lead:
+ *
+ *  - it **names** at least two lead fields ("Name", "Phone", "Email"), and
+ *  - it **contains** none of them: no address with an @ in it, no URL, no run
+ *    of digits long enough to be a telephone number.
+ *
+ * A row reading `Kofi Mensah | Accra | website design | referral` passes the
+ * shape test and fails this one, which is the whole point — promoting it would
+ * throw away a lead and rename every column after it.
+ */
+function namesColumns(row: string[]): boolean {
+  const cells = row.filter((cell) => cell !== "");
+  if (cells.length < 2 || !looksLikeHeader(row)) return false;
+  if (cells.some((cell) => cellKind(cell) !== "text")) return false;
+  return headerWordCount(row) >= 2;
 }
 
 function buildTable(
@@ -491,6 +561,42 @@ function buildTable(
 }
 
 /**
+ * Where a segment's headers are, and what sits above them.
+ *
+ * The first row of a block is not automatically the header row, and treating
+ * it as one is a boundary error that costs the whole table rather than a row
+ * of it: a title spanning two or three cells — "ACCRA CLINICS", "Updated 3 Aug
+ * 2026" — becomes the header, so every column is labelled from a title cell or
+ * from nothing, and the *real* header row below it is imported as a lead
+ * called "Name". `findBlocks` already lifts a title out when it fills exactly
+ * one cell and stands above a blank row; this is the same idea for the titles
+ * that do neither.
+ *
+ * A row is a title when it is narrow against the body of the table and the row
+ * under it genuinely names columns. Up to two of them, because a heading and a
+ * date underneath it is the commonest pair.
+ */
+function pickHeader(grid: SheetGrid, start: number, end: number): { headerRow: number | null; firstDataRow: number; banner: string | null } {
+  const body = modalWidth(grid.rows.slice(start, Math.min(end, start + 12) + 1));
+  let banner: string | null = null;
+  let cursor = start;
+
+  for (let step = 0; step < 2 && cursor < end; step += 1) {
+    const filled = filledCount(grid.rows[cursor] ?? []);
+    const below = grid.rows[cursor + 1] ?? [];
+    const narrow = filled > 0 && filled * 2 <= body;
+    if (!narrow || !namesColumns(below) || filledCount(below) * 2 < body) break;
+    banner ??= grid.rows[cursor].find((cell) => cell !== "") ?? null;
+    cursor += 1;
+  }
+
+  if (cursor <= end && looksLikeHeader(grid.rows[cursor] ?? [])) {
+    return { headerRow: cursor, firstDataRow: cursor + 1, banner };
+  }
+  return { headerRow: null, firstDataRow: cursor, banner };
+}
+
+/**
  * The fallback analyst. Finds blank-row-separated blocks, promotes single-cell
  * rows above them to titles, picks a header row per block, and splits a block
  * again wherever a second header appears inside it. Good enough for a tidy
@@ -501,10 +607,16 @@ export function detectTables(grids: SheetGrid[]): PlanTable[] {
 
   for (const grid of grids) {
     for (const [blockIndex, block] of findBlocks(grid).entries()) {
-      // A header inside the block means a second table starts there.
+      // A header inside the block means a second table starts there — measured
+      // against the block's *header* row rather than its first row. A block
+      // opening on a two-cell title has a shape unlike anything under it, so
+      // every header-ish row below it differed from it and the block shattered
+      // into a table per section heading.
+      const opening = pickHeader(grid, block.start, block.end);
+      const anchor = opening.headerRow ?? opening.firstDataRow;
       const boundaries: number[] = [block.start];
-      const firstShape = shapeOf(grid.rows[block.start]);
-      for (let row = block.start + 2; row <= block.end; row += 1) {
+      const firstShape = shapeOf(grid.rows[anchor] ?? []);
+      for (let row = anchor + 2; row <= block.end; row += 1) {
         if (looksLikeHeader(grid.rows[row]) && shapeOf(grid.rows[row]) !== firstShape && !looksLikeHeader(grid.rows[row - 1])) {
           boundaries.push(row);
         }
@@ -512,14 +624,12 @@ export function detectTables(grids: SheetGrid[]): PlanTable[] {
 
       for (const [segmentIndex, segmentStart] of boundaries.entries()) {
         const segmentEnd = segmentIndex + 1 < boundaries.length ? boundaries[segmentIndex + 1] - 1 : block.end;
-        const hasHeader = looksLikeHeader(grid.rows[segmentStart]);
-        const headerRow = hasHeader ? segmentStart : null;
-        const firstDataRow = hasHeader ? segmentStart + 1 : segmentStart;
+        const picked = segmentIndex === 0 ? opening : pickHeader(grid, segmentStart, segmentEnd);
         const table = buildTable(
           grid,
-          { ...block, banner: segmentIndex === 0 ? block.banner : null },
-          headerRow,
-          firstDataRow,
+          { ...block, banner: (segmentIndex === 0 ? block.banner : null) ?? picked.banner },
+          picked.headerRow,
+          picked.firstDataRow,
           segmentEnd,
           tables.length + blockIndex,
         );
@@ -534,8 +644,14 @@ export function detectTables(grids: SheetGrid[]): PlanTable[] {
 // --- Rendering for the analyst ---------------------------------------------
 
 const CELL_PREVIEW_LENGTH = 48;
-const HEAD_ROWS = 110;
+/** The top of a sheet, always shown whole — banners, headers and the first rows live there. */
+const HEAD_ROWS = 60;
+/** And the bottom, so the last data row can be placed exactly. */
 const TAIL_ROWS = 15;
+/** Rows either side of a landmark, so what it separates is visible too. */
+const LANDMARK_CONTEXT = 2;
+/** The most rows one sheet renders as. Past it, landmarks are thinned evenly. */
+const MAX_RENDERED_ROWS = 340;
 
 function renderRow(index: number, row: string[]): string {
   const cells = row.map((cell) => {
@@ -545,28 +661,114 @@ function renderRow(index: number, row: string[]): string {
   return `${String(index).padStart(4, " ")} | ${cells.join(" | ")}`;
 }
 
+/** The commonest filled-cell count in a range — what a row of this table looks like. */
+function modalWidth(rows: string[][]): number {
+  const counts = new Map<number, number>();
+  for (const row of rows) {
+    const filled = filledCount(row);
+    if (filled) counts.set(filled, (counts.get(filled) ?? 0) + 1);
+  }
+  let width = 0;
+  let seen = 0;
+  for (const [candidate, count] of counts) {
+    if (count > seen || (count === seen && candidate > width)) {
+      width = candidate;
+      seen = count;
+    }
+  }
+  return width;
+}
+
+/**
+ * A row that might be a boundary: the blank, the banner, the second set of
+ * headers, the totals line. Everything a table could start or stop at.
+ *
+ * `body` is the sheet's own modal row width, and it is what keeps a
+ * single-column list of names from reading as several hundred banners.
+ */
+function isLandmark(rows: string[][], index: number, body: number): boolean {
+  const row = rows[index] ?? [];
+  const filled = filledCount(row);
+  if (filled === 0) return true;
+  if (filled === 1 && body >= 3) return true;
+  if (looksLikeHeader(row)) return true;
+  return /^(total|subtotal|grand total|sum)\b/i.test(row.find((cell) => cell !== "") ?? "");
+}
+
+/** `count` of `values`, spread evenly across it, first and last always kept. */
+function thin<T>(values: T[], count: number): T[] {
+  if (count <= 0) return [];
+  if (values.length <= count) return values;
+  const step = (values.length - 1) / (count - 1 || 1);
+  const kept: T[] = [];
+  for (let index = 0; index < count; index += 1) kept.push(values[Math.round(index * step)]);
+  return [...new Set(kept)];
+}
+
 /**
  * A sheet as text the analyst can read, with 0-based row numbers down the side
- * so the row indices it reports line up with the grid exactly. Long sheets show
- * the top and the bottom — enough to place the last data row without paying for
- * ten thousand rows of middle.
+ * so the row indices it reports line up with the grid exactly.
+ *
+ * **The middle of a long sheet is not simply thrown away**, and that was the
+ * single most expensive thing about this function. It used to render the first
+ * 110 rows and the last 15: a second table starting at row 400 was invisible,
+ * a table that ended at row 380 was invisible, and the analyst — asked for
+ * exact boundaries — could only answer about the two ends of the file it had
+ * been shown. So it reported one table running from the top to somewhere it
+ * could see, and everything between was lost or merged. That is what "it
+ * doesn't group them properly" looks like from the inside.
+ *
+ * So the rows that could *be* a boundary are kept wherever they sit: a blank
+ * run, a banner across a row on its own, a second set of headers, a totals
+ * line — each with a couple of rows either side so the analyst can see what it
+ * separates. Only long runs of identical-looking data rows are elided, and the
+ * count of what was elided is printed where it was.
+ *
+ * Costs more tokens than the two ends did, deliberately. A sheet is read once
+ * per import and a wrong boundary costs an afternoon of cleanup.
  */
 export function renderGrid(grid: SheetGrid): string {
-  const header = `### Sheet "${grid.name}" — ${grid.rows.length} rows (0-${Math.max(0, grid.rows.length - 1)}), ${
-    grid.rows[0]?.length ?? 0
-  } columns (${columnLetter(0)}-${columnLetter(Math.max(0, (grid.rows[0]?.length ?? 1) - 1))})${
-    grid.truncated ? `, truncated from ${grid.totalRows} rows` : ""
-  }`;
-
-  const lines: string[] = [header];
   const rows = grid.rows;
-  if (rows.length <= HEAD_ROWS + TAIL_ROWS) {
-    rows.forEach((row, index) => lines.push(renderRow(index, row)));
-  } else {
-    rows.slice(0, HEAD_ROWS).forEach((row, index) => lines.push(renderRow(index, row)));
-    lines.push(`     … ${rows.length - HEAD_ROWS - TAIL_ROWS} more rows in the same shape …`);
-    rows.slice(-TAIL_ROWS).forEach((row, offset) => lines.push(renderRow(rows.length - TAIL_ROWS + offset, row)));
+  const lines: string[] = [
+    `### Sheet "${grid.name}" — ${rows.length} rows (0-${Math.max(0, rows.length - 1)}), ${
+      rows[0]?.length ?? 0
+    } columns (${columnLetter(0)}-${columnLetter(Math.max(0, (rows[0]?.length ?? 1) - 1))})${
+      grid.truncated ? `, truncated from ${grid.totalRows} rows` : ""
+    }`,
+  ];
+
+  const keep = new Set<number>();
+  for (let index = 0; index < Math.min(HEAD_ROWS, rows.length); index += 1) keep.add(index);
+  for (let index = Math.max(0, rows.length - TAIL_ROWS); index < rows.length; index += 1) keep.add(index);
+
+  const body = modalWidth(rows);
+  const landmarks: number[] = [];
+  for (let index = HEAD_ROWS; index < rows.length - TAIL_ROWS; index += 1) {
+    if (isLandmark(rows, index, body)) landmarks.push(index);
   }
+
+  const budget = Math.max(0, MAX_RENDERED_ROWS - keep.size);
+  for (const index of thin(landmarks, Math.floor(budget / (1 + LANDMARK_CONTEXT * 2)))) {
+    for (let near = index - LANDMARK_CONTEXT; near <= index + LANDMARK_CONTEXT; near += 1) {
+      if (near >= 0 && near < rows.length) keep.add(near);
+    }
+  }
+
+  let elided = 0;
+  const flush = () => {
+    if (elided) lines.push(`     … ${elided} more rows in the same shape …`);
+    elided = 0;
+  };
+  for (let index = 0; index < rows.length; index += 1) {
+    if (keep.has(index)) {
+      flush();
+      lines.push(renderRow(index, rows[index]));
+    } else {
+      elided += 1;
+    }
+  }
+  flush();
+
   return lines.join("\n");
 }
 
@@ -581,6 +783,59 @@ export function renderHints(tables: PlanTable[]): string {
         }, columns ${columnLetter(table.startColumn)}-${columnLetter(table.endColumn)}, title guess "${table.title}"`,
     )
     .join("\n");
+}
+
+// --- Grouping --------------------------------------------------------------
+
+/** The plan's grouping, defaulting to one list per worksheet. */
+export function groupingOf(plan: Pick<ImportPlan, "grouping">): PlanGrouping {
+  return plan.grouping === "table" ? "table" : "sheet";
+}
+
+export interface PlanGroup {
+  /** Stable across a resumed commit: the worksheet, or the table's own id. */
+  key: string;
+  /** Becomes the lead list's name. */
+  title: string;
+  /** The worksheet these came off. Every group is from exactly one. */
+  sheet: string;
+  tables: PlanTable[];
+}
+
+/**
+ * The lead lists a plan will produce, in the plan's own order.
+ *
+ * Order is the plan's rather than the sheet's, so the review screen and the
+ * commit agree about which list is which — and a plan whose tables run in
+ * sheet order still reads each tab exactly once, which is what keeps a 39-tab
+ * workbook affordable (see services/sheetSource.ts).
+ *
+ * A worksheet holding exactly one table keeps that table's own title, because
+ * a banner the analyst read off the file ("Companies/Organizations") says more
+ * than the tab name does. Two or more, and the tab name is what tells the
+ * Owner where the list came from — which is the whole reason for merging them.
+ */
+export function planGroups(plan: ImportPlan, tables: PlanTable[] = plan.tables): PlanGroup[] {
+  const grouping = groupingOf(plan);
+  const groups: PlanGroup[] = [];
+  const byKey = new Map<string, PlanGroup>();
+
+  for (const table of tables) {
+    const key = grouping === "sheet" ? `sheet:${table.sheet}` : `table:${table.id}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.tables.push(table);
+      continue;
+    }
+    const group: PlanGroup = { key, title: table.title, sheet: table.sheet, tables: [table] };
+    byKey.set(key, group);
+    groups.push(group);
+  }
+
+  for (const group of groups) {
+    if (group.tables.length > 1) group.title = group.sheet || group.title;
+  }
+  return groups;
 }
 
 // --- Applying a plan -------------------------------------------------------
@@ -824,7 +1079,7 @@ export function normalizePlan(plan: ImportPlan, grids: SheetGrid[]): ImportPlan 
     })
     .filter((table): table is PlanTable => table !== null && table.columns.length > 0);
 
-  return { tables, summary: (plan.summary ?? "").slice(0, 2000) };
+  return { tables, summary: (plan.summary ?? "").slice(0, 2000), grouping: groupingOf(plan) };
 }
 
 // --- Repairing an analyst's plan -------------------------------------------
@@ -841,7 +1096,7 @@ export function normalizePlan(plan: ImportPlan, grids: SheetGrid[]): ImportPlan 
  * next model to serve it is one nobody here has tried.
  *
  * So the boundaries the prompt asks for are checked against the grid rather
- * than trusted, and the two mistakes it warns about loudest are repaired:
+ * than trusted, and the mistakes it warns about loudest are repaired:
  *
  * - **A table split at a blank row.** The prompt calls this "the most damaging
  *   mistake available to you" and it is not overstating it. The fragment sits
@@ -850,6 +1105,16 @@ export function normalizePlan(plan: ImportPlan, grids: SheetGrid[]): ImportPlan 
  *   The Owner gets an empty group with no reason given, beside a full group
  *   that stops halfway down their file. Two of five leads, gone quietly. That
  *   is the shape of "it doesn't group them properly".
+ * - **A table that stops halfway down the sheet.** The other half of the same
+ *   complaint, and until Aug 2026 nothing fixed it: a table the analyst simply
+ *   truncated has no second fragment to be joined to, so `uncoveredRows`
+ *   noticed the loss and only ever said so. `extendedEnd` runs it on while the
+ *   rows below still look like its own, and stops dead at the first sign of
+ *   anything new.
+ * - **A title read as the header row.** Costs every column in the table rather
+ *   than a row of it: the columns are named after cells of the title, and the
+ *   real header row is imported as a lead called "Name". Repaired *and*
+ *   relabelled — moving the row alone would fix the count and leave the names.
  * - **Two tables claiming the same rows.** The opposite failure and the worse
  *   one, because it does not look like a failure: the same business is written
  *   into two groups, scored twice, and written to twice.
@@ -911,6 +1176,141 @@ function uncoveredRows(grid: SheetGrid, range: { firstDataRow: number; lastDataR
 const UNCOVERED_ROWS_WORTH_SAYING = 3;
 
 /**
+ * The row a table's headers are really on, when the one it named is a title.
+ *
+ * The same mistake `pickHeader` guards the rules against, arriving from the
+ * other direction: the analyst reads "ACCRA CLINICS — AUGUST" in row 4 as the
+ * header, so every column is labelled off a title cell, the real header in row
+ * 5 is imported as a lead called "Name", and the whole table lands with the
+ * wrong column mapping. Cheap to detect and worth the whole table.
+ *
+ * Returns null unless the named header is narrow against the body *and* the
+ * row under it genuinely names columns — see `namesColumns`.
+ */
+function headerBelow(grid: SheetGrid, table: PlanTable): number | null {
+  if (table.headerRow === null) return null;
+  const named = grid.rows[table.headerRow] ?? [];
+  const below = grid.rows[table.headerRow + 1];
+  if (!below) return null;
+  const body = modalWidth(grid.rows.slice(table.firstDataRow, Math.min(table.lastDataRow, table.firstDataRow + 12) + 1));
+  const filled = filledCount(named);
+  if (!filled || filled * 2 > body) return null;
+  if (!namesColumns(below) || filledCount(below) * 2 < body) return null;
+  return table.headerRow + 1;
+}
+
+/**
+ * How far a table really runs, when it was reported as stopping short.
+ *
+ * The commonest complaint about an import is that a list came in and stopped
+ * halfway down the file, and until now nothing fixed it: `isContinuationOf`
+ * joins two *reported* tables back together, and a table the analyst simply
+ * truncated has no second half to join to. `uncoveredRows` noticed the loss and
+ * only ever said so, which is a sentence in a summary about several thousand
+ * leads that are not there.
+ *
+ * So the rows below a table are walked, and it runs on while they still look
+ * like its own. It stops — deliberately, at the first one — on anything that
+ * announces something new: a row claimed by another table, a banner on a row of
+ * its own, a row that names columns, a totals line, a run of blanks longer than
+ * a gap, or a row filling different columns. Merging two real tables is as
+ * damaging as splitting one, so every one of those is a hard stop rather than a
+ * score to weigh up.
+ */
+function extendedEnd(grid: SheetGrid, table: PlanTable, claimed: (row: number) => boolean): number {
+  const own = footprint(grid, table.firstDataRow, table.lastDataRow);
+  if (!own.size) return table.lastDataRow;
+  const kinds = columnKinds(grid, table);
+
+  let end = table.lastDataRow;
+  let gap = 0;
+  for (let row = table.lastDataRow + 1; row < grid.rows.length; row += 1) {
+    if (claimed(row)) break;
+    const cells = grid.rows[row] ?? [];
+    const filled = filledCount(cells);
+    if (filled === 0) {
+      gap += 1;
+      if (gap > MAX_GAP_ROWS) break;
+      continue;
+    }
+    if (filled === 1) break;
+    if (namesColumns(cells)) break;
+    if (/^(total|subtotal|grand total|sum)\b/i.test(cells.find((cell) => cell !== "") ?? "")) break;
+    if (columnOverlap(own, footprint(grid, row, row)) < 0.8) break;
+    if (conflictsWithKinds(kinds, cells)) break;
+    gap = 0;
+    end = row;
+  }
+  return end;
+}
+
+/**
+ * What each of a table's columns holds, where the answer is unambiguous.
+ *
+ * Only email, URL, phone and number are recorded — those are the four a header
+ * cell can never be mistaken for. A column of ordinary text tells you nothing
+ * about the row below, so it is left out rather than guessed at.
+ */
+function columnKinds(grid: SheetGrid, table: PlanTable): Map<number, string> {
+  const kinds = new Map<number, string>();
+  const rows = grid.rows.slice(table.firstDataRow, Math.min(table.lastDataRow, table.firstDataRow + 20) + 1);
+  for (const column of table.columns) {
+    const values = rows.map((row) => row[column.index] ?? "").filter((value) => value !== "");
+    if (values.length < 3) continue;
+    const first = cellKind(values[0]);
+    if (first === "text" || first === "") continue;
+    if (values.filter((value) => cellKind(value) === first).length / values.length > 0.8) kinds.set(column.index, first);
+  }
+  return kinds;
+}
+
+/**
+ * True when a row cannot belong to a table with these columns.
+ *
+ * This is what tells a second table's header row from another lead: the word
+ * "Email" sitting in a column that has held nothing but email addresses for
+ * two hundred rows is a header, whatever else it looks like. Used only to stop
+ * `extendedEnd` running one table into the next.
+ */
+function conflictsWithKinds(kinds: Map<number, string>, row: string[]): boolean {
+  if (!kinds.size) return false;
+  for (const [index, kind] of kinds) {
+    const value = row[index] ?? "";
+    if (value !== "" && cellKind(value) !== kind) return true;
+  }
+  return false;
+}
+
+/**
+ * Re-reads a table's column names off the row that really holds them.
+ *
+ * `normalizePlan` labels a column from the `header` and `label` already on the
+ * plan, never from the grid — so moving `headerRow` alone would correct where
+ * the data starts and leave every column still named after a cell of the
+ * table's title. The whole point of finding the right header row is the names
+ * on it.
+ */
+function relabelFromHeader(grid: SheetGrid, table: PlanTable, headerRow: number): void {
+  const cells = grid.rows[headerRow] ?? [];
+  const rows = grid.rows.slice(headerRow + 1, Math.min(table.lastDataRow, headerRow + 40) + 1);
+
+  table.columns = table.columns.map((column) => {
+    const header = (cells[column.index] ?? "").trim();
+    if (!header) return { ...column, header: "" };
+    const field = guessField(header);
+    const builtin = field !== "custom" && field !== "ignore" ? builtinField(field) : undefined;
+    return {
+      index: column.index,
+      header,
+      label: builtin?.label ?? header,
+      field,
+      key: field === "custom" ? slugifyKey(header) : undefined,
+      type: builtin?.type ?? guessType(header, rows.map((row) => row[column.index] ?? "")),
+    };
+  });
+}
+
+/**
  * Runs the repairs over an analyst's plan and says what it changed.
  *
  * Normalised on the way in so the repairs can trust the indices, and again on
@@ -948,7 +1348,7 @@ export function repairPlan(plan: ImportPlan, grids: SheetGrid[], hints: PlanTabl
     tables.sort((a, b) => a.firstDataRow - b.firstDataRow || a.lastDataRow - b.lastDataRow);
     const merged: PlanTable[] = [];
 
-    for (const table of tables) {
+    for (const [index, table] of tables.entries()) {
       const previous = merged[merged.length - 1];
 
       // A header row counted as data is an off-by-one that costs a row:
@@ -957,6 +1357,18 @@ export function repairPlan(plan: ImportPlan, grids: SheetGrid[], hints: PlanTabl
       if (table.headerRow !== null && table.headerRow >= table.firstDataRow && table.headerRow <= table.lastDataRow) {
         repairs.push(`"${table.title}" counted its own header row as data — started it at row ${table.headerRow + 1} instead.`);
         table.firstDataRow = table.headerRow + 1;
+      }
+
+      // A title read as the header row. Costs every column in the table, so it
+      // is checked before anything that depends on where the data starts.
+      const realHeader = headerBelow(grid, table);
+      if (realHeader !== null) {
+        repairs.push(
+          `"${table.title}" read row ${table.headerRow! + 1} as its column headers, but that row is the table's title — row ${realHeader + 1} names the columns, so the data starts at row ${realHeader + 2}.`,
+        );
+        table.headerRow = realHeader;
+        table.firstDataRow = Math.max(table.firstDataRow, realHeader + 1);
+        relabelFromHeader(grid, table, realHeader);
       }
 
       if (previous && isContinuationOf(grid, previous, table)) {
@@ -982,6 +1394,22 @@ export function repairPlan(plan: ImportPlan, grids: SheetGrid[], hints: PlanTabl
         continue;
       }
 
+      // A table reported as stopping short of where its own rows stop. Checked
+      // against every table *below* it in the plan, so running on can never
+      // reach a row somebody else already has.
+      const later = tables.slice(index + 1);
+      const runsOnTo = extendedEnd(grid, table, (row) =>
+        later.some((other) => row >= other.firstDataRow && row <= other.lastDataRow),
+      );
+      if (runsOnTo > table.lastDataRow) {
+        let gained = 0;
+        for (let row = table.lastDataRow + 1; row <= runsOnTo; row += 1) if (filledCount(grid.rows[row] ?? [])) gained += 1;
+        repairs.push(
+          `"${table.title}" stopped at row ${table.lastDataRow + 1}, but the same columns carry on to row ${runsOnTo + 1} — ran it on so those ${gained} row${gained === 1 ? "" : "s"} aren't left behind.`,
+        );
+        table.lastDataRow = runsOnTo;
+      }
+
       merged.push(table);
     }
 
@@ -1004,5 +1432,5 @@ export function repairPlan(plan: ImportPlan, grids: SheetGrid[], hints: PlanTabl
   const summary = repairs.length
     ? `${normalized.summary}\n\nCorrected before review: ${repairs.join(" ")}`.trim()
     : normalized.summary;
-  return { plan: normalizePlan({ tables: kept, summary }, grids), repairs };
+  return { plan: normalizePlan({ tables: kept, summary, grouping: normalized.grouping }, grids), repairs };
 }

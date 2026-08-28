@@ -439,9 +439,18 @@ export interface PlanTable {
   include: boolean;
 }
 
+/**
+ * How the detected tables become lead lists. `"sheet"` — the default — puts
+ * everything found on one worksheet into one list; `"table"` gives every
+ * detected table a list of its own.
+ */
+export type PlanGrouping = "sheet" | "table";
+
 export interface ImportPlan {
   tables: PlanTable[];
   summary: string;
+  /** Absent means "sheet". */
+  grouping?: PlanGrouping;
 }
 
 export interface TablePreview {

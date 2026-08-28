@@ -177,6 +177,40 @@ const FRAGMENT_TAIL = {
   })),
 };
 
+/**
+ * A long sheet with a boundary buried in the middle of it.
+ *
+ * 400 rows of clinics, a blank row and a banner at row 300, then a table of
+ * suppliers with different columns. Nothing about the top or the bottom of
+ * this file says the second table exists — which is the whole point, because
+ * the top and the bottom used to be all the analyst was shown.
+ */
+function longSheet() {
+  const rows: string[][] = [["Accra clinics — the long list", "", "", ""], ["", "", "", ""], ["S/N", "Name", "Phone", "Email"]];
+  for (let n = 1; n <= 297; n += 1) rows.push([String(n), `Clinic ${n}`, `024400${String(1000 + n).slice(-4)}`, `c${n}@clinic.test`]);
+  rows.push(["", "", "", ""]);
+  rows.push(["Suppliers", "", "", ""]);
+  rows.push(["Supplier", "Website", "Contact person", "Email"]);
+  for (let n = 1; n <= 40; n += 1) rows.push([`Supplier ${n}`, `s${n}.example.com`, `Person ${n}`, `s${n}@example.com`]);
+  return { name: "Long", rows, totalRows: rows.length, truncated: false };
+}
+
+/**
+ * A worksheet whose real header row has a title sitting on top of it.
+ *
+ * Two filled cells, so `findBlocks` does not lift it out as a banner — and
+ * two is enough to be read as the header row, which labels every column off a
+ * title cell and imports the real header as a lead called "Name".
+ */
+const TITLED_ROWS: string[][] = [
+  ["ACCRA CLINICS", "August 2026", "", ""],
+  ["S/N", "Name", "Phone", "Email"],
+  ["1", "Kofi Mensah", "0244000001", "kofi@clinic.test"],
+  ["2", "Ama Boateng", "0244000002", "ama@clinic.test"],
+  ["3", "Yaw Owusu", "0244000003", "yaw@clinic.test"],
+];
+const TITLED = { name: "Titled", rows: TITLED_ROWS, totalRows: TITLED_ROWS.length, truncated: false };
+
 async function main() {
   // --- Two fake vendors, before anything imports ---------------------------
   //
@@ -265,7 +299,7 @@ Let me know if you would like it changed.`
   const { analyzeGrids } = await import("../src/lib/anthropic.js");
   const { callModel } = await import("../src/lib/models/call.js");
   const { reasoningEffortFor, tokensWithReasoning } = await import("../src/lib/models/registry.js");
-  const { detectTables, normalizePlan, repairPlan } = await import("../src/services/sheetPlan.js");
+  const { detectTables, normalizePlan, planGroups, renderGrid, repairPlan } = await import("../src/services/sheetPlan.js");
   const { buildPreviews } = await import("../src/services/leadImport.js");
 
   // Rule one of this directory: a database and nothing else. `getSetting`
@@ -473,6 +507,115 @@ Let me know if you would like it changed.`
   const offByOne = repairPlan({ summary: "", tables: [{ ...PEOPLE, firstDataRow: 2 }] as any }, [GRID as any], hints);
   check("the data starts below the header again", offByOne.plan.tables[0]?.firstDataRow === 3, String(offByOne.plan.tables[0]?.firstDataRow));
   check("...and it is reported", offByOne.repairs.some((line) => line.includes("header row")));
+
+  // --- What the analyst is actually shown ----------------------------------
+  //
+  // The boundary the analyst is asked for can sit anywhere in the file, and
+  // the render used to be the first 110 rows and the last 15. A second table
+  // starting at row 300 was invisible, so no plan could ever contain it, and
+  // the tables the analyst *did* report ran to wherever it could see.
+  console.log("\nA boundary in the middle of a long sheet");
+  const long = longSheet();
+  const rendered = renderGrid(long as any);
+  check("the sheet is not rendered whole", rendered.includes("more rows in the same shape"), "nothing was elided");
+  check("the banner 300 rows down is shown", rendered.includes("| Suppliers |"), "the banner was elided");
+  check("...and so is the header row under it", rendered.includes("Supplier | Website | Contact person | Email"));
+  check(
+    "...with its real row number, so a boundary reported off it lines up",
+    new RegExp(`^\\s*${long.rows.findIndex((row) => row[0] === "Suppliers")} \\| Suppliers`, "m").test(rendered),
+  );
+  check("the last row is still shown", rendered.includes("Supplier 40"));
+  check("and it is still bounded", rendered.split("\n").length < 400, `${rendered.split("\n").length} lines`);
+
+  // The rules read the same file without a model, and must find both tables —
+  // this is the independent evidence `repairPlan` uses.
+  const longHints = detectTables([long as any]);
+  check("the pattern rules find both tables in it", longHints.length === 2, `${longHints.length} tables`);
+
+  console.log("\nA table reported as stopping halfway down");
+  const truncated = repairPlan(
+    { summary: "", tables: [{ ...longHints[0], lastDataRow: 120 }] as any },
+    [long as any],
+    longHints,
+  );
+  check("it is run on to where its own rows stop", truncated.plan.tables[0]?.lastDataRow === 299, String(truncated.plan.tables[0]?.lastDataRow));
+  check("...and never past the banner into the next table", truncated.plan.tables[0]?.lastDataRow! < 301);
+  check("...and it is reported rather than done quietly", truncated.repairs.some((line) => line.includes("carry on")), JSON.stringify(truncated.repairs));
+  const kept = buildPreviews([long as any], truncated.plan)[0];
+  check("every lead below the reported end survives", kept?.rowCount === 297, `${kept?.rowCount} rows`);
+
+  console.log("\nThe negatives for running a table on");
+  const bothReported = repairPlan({ summary: "", tables: longHints as any }, [long as any], longHints);
+  check("a table with another below it is left where it ends", bothReported.plan.tables.length === 2, `${bothReported.plan.tables.length} tables`);
+  check("...and nothing is reported as repaired", bothReported.repairs.length === 0, JSON.stringify(bothReported.repairs));
+  const untouched = repairPlan({ summary: "", tables: [PEOPLE, COMPANIES] as any }, [GRID as any], hints);
+  check(
+    "the people table does not run on into the companies table",
+    untouched.plan.tables[0]?.lastDataRow === 7,
+    String(untouched.plan.tables[0]?.lastDataRow),
+  );
+
+  console.log("\nA title row read as the column headers");
+  const titledHints = detectTables([TITLED as any]);
+  check("the rules read the row below the title as the header", titledHints[0]?.headerRow === 1, String(titledHints[0]?.headerRow));
+  check("...and the title becomes the list's name", titledHints[0]?.title === "ACCRA CLINICS", titledHints[0]?.title);
+
+  const misread = repairPlan(
+    {
+      summary: "",
+      tables: [
+        {
+          ...PEOPLE,
+          sheet: "Titled",
+          headerRow: 0,
+          firstDataRow: 1,
+          lastDataRow: 4,
+          columns: [
+            { index: 0, header: "ACCRA CLINICS", label: "ACCRA CLINICS", field: "custom", key: "accra_clinics", type: "TEXT" },
+            { index: 1, header: "August 2026", label: "August 2026", field: "custom", key: "august_2026", type: "TEXT" },
+            { index: 2, header: "", label: "Column C", field: "custom", key: "column_c", type: "TEXT" },
+            { index: 3, header: "", label: "Column D", field: "custom", key: "column_d", type: "TEXT" },
+          ],
+        },
+      ] as any,
+    },
+    [TITLED as any],
+    titledHints,
+  );
+  const fixed = misread.plan.tables[0];
+  check("the header moves to the row that names the columns", fixed?.headerRow === 1, String(fixed?.headerRow));
+  check("...the data starts below it", fixed?.firstDataRow === 2, String(fixed?.firstDataRow));
+  // Moving the row alone would leave every column still named after a title
+  // cell, which is the half of this repair that is actually worth having.
+  check("...and the columns are renamed off it", fixed?.columns.some((column) => column.field === "contactEmail") === true, JSON.stringify(fixed?.columns.map((c) => c.field)));
+  check("...so the leads have an email address", buildPreviews([TITLED as any], misread.plan)[0]?.reachable === 3, `${buildPreviews([TITLED as any], misread.plan)[0]?.reachable}`);
+  check("...and the header row is no longer imported as a lead", buildPreviews([TITLED as any], misread.plan)[0]?.rowCount === 3);
+  check("...and it is reported", misread.repairs.some((line) => line.includes("title")), JSON.stringify(misread.repairs));
+
+  // The negative: a table whose header really is on the row it named must not
+  // be shunted down one, which would throw away its first lead.
+  const rightAlready = repairPlan({ summary: "", tables: [PEOPLE] as any }, [GRID as any], hints);
+  check("a correctly-read header row is left alone", rightAlready.plan.tables[0]?.headerRow === 2, String(rightAlready.plan.tables[0]?.headerRow));
+
+  // --- Grouping ------------------------------------------------------------
+  //
+  // A worksheet's sections are one list to the person who typed them. The
+  // negative is the one that matters: a plan asking for a list per table must
+  // still get one, because a tab holding people and organisations forced into
+  // one column set is what loses the data.
+  console.log("\nOne list per worksheet");
+  const twoOnOneSheet = normalizePlan({ summary: "", tables: [PEOPLE, COMPANIES] as any }, [GRID as any]);
+  const perSheet = planGroups(twoOnOneSheet);
+  check("two tables on one tab become one list", perSheet.length === 1, `${perSheet.length} lists`);
+  check("...named after the worksheet", perSheet[0]?.title === "Sheet1", perSheet[0]?.title);
+  check("...holding both of them", perSheet[0]?.tables.length === 2, `${perSheet[0]?.tables.length} tables`);
+
+  const perTable = planGroups({ ...twoOnOneSheet, grouping: "table" });
+  check("asking for a list per table gives two", perTable.length === 2, `${perTable.length} lists`);
+  check("...each keeping its own name", perTable[1]?.title === "Companies/Organizations", perTable[1]?.title);
+
+  const single = planGroups(normalizePlan({ summary: "", tables: [COMPANIES] as any }, [GRID as any]));
+  check("a tab with one table on it keeps that table's own title", single[0]?.title === "Companies/Organizations", single[0]?.title);
 
   // --- Rule 3: everything this check created, gone -------------------------
   await prisma.llmCall.deleteMany({ where: { purpose: { startsWith: "check.sheetAnalyst" } } });
