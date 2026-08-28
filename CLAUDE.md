@@ -1068,6 +1068,79 @@ plus a timestamp, so the router is mounted **above the JSON parser** in
   hear from within three seconds, and a retried Approve would be a second agent
   — so `applyHire` is idempotent about an already-approved request rather than
   throwing, and `tmp/slackButtons.ts` asserts that a re-delivery creates nothing.
+- **The one exception is opening a dialog.** A `trigger_id` is dead three
+  seconds after the click, so `views.open` runs *before* the acknowledgement.
+  Acknowledging first means the dialog never opens, and it fails silently.
+  A `view_submission` refusal also has to be answered synchronously with a
+  `response_action`, because a dialog that closes on a rejected answer looks
+  exactly like one that accepted it.
+
+**An agent that stops and asks is heard now** — `agents/escalationCards.ts`,
+`agents/escalations.ts`. `escalate` wrote `BLOCKED` to a row and nothing else,
+so the most important thing an agent ever says reached no channel and no
+notification: an escalation was indistinguishable from an agent that stopped.
+`finishTask` is the one funnel, so the card is posted from there — for BLOCKED
+and FAILED only, and only when *this* run is the one that ended it, since a run
+overtaken by the reaper must not announce an outcome it did not write.
+
+- **The card carries the agent's own choices as buttons.** `escalate` puts them
+  on the `BLOCKED` step, and the commonest answer — "the second one" — should be
+  one tap rather than a sentence typed on a phone. "Answer…" opens a dialog
+  where there is a bot token, and every card also prints
+  `/dakyworld answer <id> …` with the id filled in, because that is the only
+  road that works on a webhook-only workspace.
+- **One answer, everywhere** — `recordOwnerAnswer()`. The browser route and the
+  Slack buttons were two copies of "append to the brief, rejoin the
+  conversation, requeue", and the third thing neither did was rewrite the Slack
+  card. That is what *"I decided and nothing happened in Slack"* actually was.
+- **A webhook post is still recorded as posted**, under a `webhook` sentinel
+  channel, because a webhook reports neither a channel nor a message id.
+  Without it `settleTaskCard` cannot tell a question that was never posted —
+  where announcing an answer would be shouting at a channel that never saw it —
+  from one sitting on the wall with live buttons under it.
+- **A rehearsal is silent, and failures are capped; escalations never are.**
+  Nine agents rehearsing against one company would be nine questions about work
+  that is not real. Failures arrive in weather — a vendor going down fails
+  everything at once — so four cards in ten minutes and the rest are left to the
+  Agents screen. A question is always worth interrupting somebody for.
+
+**A rehearsal's prepared actions are specimens, not proposals.** Every outward
+call a rehearsal previewed was filed as a live `ActionRequest`, counted in the
+pending badge, and posted to Slack with a working *Approve — do it* button —
+and approving one re-invokes the tool for real, against the real business the
+rehearsal was pointed at. They are still filed, because the rehearsal screen
+reads them back; `ActionRequest.rehearsal` keeps them out of `listRequests`,
+`countPending` and the card, and `approve()` refuses one outright as the last
+guard rather than the only one.
+
+**Whether Slack works is now a thing the app can answer** —
+`services/slackHealth.ts`, `GET /api/settings/slack/health`, the panel under
+Settings → Alerts. *"When I decide, nothing happens in Slack"* is the single
+symptom of five unrelated faults, four of which left no trace anywhere the
+Owner could see: nothing connected; **a bot token with no default channel**, so
+every card is built and none is posted inside a `catch` that logs and returns
+false; a bot never invited (`ok: false` on a 200); no signing secret, so cards
+appear and every button on them is refused with a 503 nobody sees; and
+Interactivity never switched on, so the click goes nowhere at all.
+`verifySlackRequest` now records every inbound verdict — the last one that
+verified and the last one that did not, with its reason — because a verified
+request is the *only* proof the wiring is right, and `/dakyworld ping` exists to
+produce one on demand. The health read never posts: a check that puts a message
+in the channel every time somebody opens Settings is a check that gets turned
+off.
+
+`/dakyworld` also answers `status`, `tasks`, `answer` and `approvals`.
+`status` counts NEEDS_APPROVAL tasks separately from the approval queue —
+only outward and spending previews become cards, so a task holding a prepared
+write is work waiting on a person with nothing in the queue to represent it.
+
+`checks/slackEscalations.ts` (51) is the committed half: it signs payloads with
+the app's own secret and drives the real router over real HTTP, and plays the
+incoming webhook on the same local express, so both directions run with no
+network and no credential. Half of it is negatives — an unsigned request, a
+wrong secret, somebody not on the approver list, a re-delivered click, a
+rehearsal that must post nothing, and an escalation that must still be posted
+during a run of failures.
 
 **Memory is recalled by subject, not by similarity.** `agents/memory.ts` files
 a memory against `lead:abc`, `client:xyz` or `self`, and recall returns only
@@ -2221,6 +2294,18 @@ substitute, so headings come out serif. The files are still correct — do not
   here: a router below the JSON parser sees a parsed object rather than the
   bytes Slack signed, and every signature then fails with a message that says
   nothing about body parsing.
+- **Restoring a row is not restoring the state — `checks/roster.ts` proved it
+  the expensive way.** Its reconcile section strips two tools off
+  `billing.collector`, deletes `agents.toolkitOffered`, lets the reconcile grant
+  them back, and then wrote the *old* toolkit over the row. The ledger was left
+  saying those tools had been offered, so no boot ever offered them again: the
+  Payment Chaser sat without `email.send` — a collections agent that could not
+  write to anybody — caused by the check that exists to prove it can. And the
+  section's final assertion, made after that restore, then failed on any
+  database where the subject was behind, which is the exact state it simulates.
+  Both halves are restored now, the assertion moved to straight after the
+  reconcile, and the toolkit put back as **found ∪ seed** so a tool the Owner
+  ticked on by hand is never taken away.
 - **A harness that creates rows must delete them, including the ones it expects
   to be refused.** Two leftovers came out of writing these: `reset()` called at
   the *end* of a run re-created the pair of test agents it was meant to remove

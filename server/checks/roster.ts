@@ -30,7 +30,7 @@ import { WRITER_JOBS } from "../src/services/writers/registry.js";
 import { jobsWithShippedWording, shippedDoctrine } from "../src/services/writers/shipped.js";
 import { resolveBrief } from "../src/services/writers/brief.js";
 import { prisma } from "../src/lib/prisma.js";
-import { SETTING } from "../src/lib/settings.js";
+import { SETTING, clearSettingsCache } from "../src/lib/settings.js";
 
 const src = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
@@ -180,6 +180,12 @@ console.log(`  added ${await ensureAgents()}`);
 // one: a row created before a tool was added to its seed. So one is made.
 const SUBJECT = "billing.collector";
 const before = await prisma.agent.findUniqueOrThrow({ where: { key: SUBJECT }, select: { toolkit: true } });
+// The offered-set is half of the state this section destroys, and putting the
+// toolkit back without it left the subject permanently behind: reconcile skips
+// anything already marked offered, so a row restored to a toolkit that predates
+// a tool never gets that tool again — on this machine or on any database this
+// check is pointed at. Snapshotted here and written back at the end.
+const offeredBefore = await prisma.appSetting.findUnique({ where: { key: SETTING.AGENT_TOOLKIT_OFFERED } });
 const stripped = before.toolkit.filter((tool) => tool !== "email.send" && tool !== "payment.link");
 await prisma.agent.update({ where: { key: SUBJECT }, data: { toolkit: stripped } });
 await prisma.appSetting.deleteMany({ where: { key: SETTING.AGENT_TOOLKIT_OFFERED } });
@@ -197,6 +203,24 @@ check(
 const second = await reconcileSeedToolkits();
 check(second.granted.length === 0, `a second reconcile grants nothing — it granted to ${second.granted.map((g) => g.key).join(", ")}`);
 
+// Every seed's toolkit is now genuinely on its row, which is the whole point.
+//
+// Read here, straight after the reconcile, rather than at the end of the
+// section. The untick below deliberately takes a tool away and the restore
+// after it deliberately puts the subject back the way it was found — so an
+// assertion made after either of those is measuring what this check just did
+// to the row rather than what the reconcile achieved, and it failed on every
+// database where the subject happened to be behind, which is the exact state
+// this section exists to simulate.
+const rows = await prisma.agent.findMany({ select: { key: true, toolkit: true } });
+const stored = new Map(rows.map((row) => [row.key, new Set(row.toolkit)]));
+for (const seed of AGENT_SEEDS) {
+  const held = stored.get(seed.key);
+  if (!held) continue;
+  const missing = seed.toolkit.filter((tool) => !held.has(tool));
+  check(missing.length === 0, `${seed.key}: holds everything its seed names — missing ${missing.join(", ")}`);
+}
+
 // And the rule that makes it safe to run on every boot for ever: a grant the
 // Owner takes away after being offered it stays taken away. Without this the
 // pass would undo an untick on every deploy, silently, and the untick is the
@@ -211,17 +235,32 @@ check(
   !third.granted.some((grant) => grant.key === SUBJECT),
   `a tool the Owner unticks after it was offered is not re-granted — ${SUBJECT} was handed back ${third.granted.find((g) => g.key === SUBJECT)?.tools.join(", ")}`,
 );
-await prisma.agent.update({ where: { key: SUBJECT }, data: { toolkit: before.toolkit } });
-
-// Every seed's toolkit is now genuinely on its row, which is the whole point.
-const rows = await prisma.agent.findMany({ select: { key: true, toolkit: true } });
-const stored = new Map(rows.map((row) => [row.key, new Set(row.toolkit)]));
-for (const seed of AGENT_SEEDS) {
-  const held = stored.get(seed.key);
-  if (!held) continue;
-  const missing = seed.toolkit.filter((tool) => !held.has(tool));
-  check(missing.length === 0, `${seed.key}: holds everything its seed names — missing ${missing.join(", ")}`);
+// Put both halves back: the toolkit, and the ledger that decides whether a
+// later boot would ever offer those tools again.
+//
+// Restored as **what was found, plus what the seed names**, and the second half
+// is not tidiness. A plain restore is what put this database wrong in the first
+// place: the section above deletes the offered-ledger, lets reconcile grant, and
+// then writes the old toolkit back — so the row lost the tools while the ledger
+// went on saying they had been offered, and reconcile never offered them again
+// on any boot afterwards. `billing.collector` sat without `email.send` for as
+// long as that lasted: a payment chaser that could not write to anybody, caused
+// by the check that exists to prove it can.
+//
+// A union rather than an overwrite, because a tool the Owner ticked on by hand
+// is not this check's to take away.
+const seedToolkit = AGENT_SEEDS.find((seed) => seed.key === SUBJECT)?.toolkit ?? [];
+await prisma.agent.update({
+  where: { key: SUBJECT },
+  data: { toolkit: [...new Set([...before.toolkit, ...seedToolkit])] },
+});
+await prisma.appSetting.deleteMany({ where: { key: SETTING.AGENT_TOOLKIT_OFFERED } });
+if (offeredBefore) {
+  await prisma.appSetting.create({
+    data: { key: offeredBefore.key, value: offeredBefore.value, secret: offeredBefore.secret },
+  });
 }
+clearSettingsCache();
 
 // --- 7. Work that exists and cannot start ----------------------------------
 const stalled = await prisma.agentTask.groupBy({

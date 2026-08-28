@@ -81,6 +81,22 @@ export interface InvokeOptions extends ToolContext {
    * resumed run replaying a turn is always a retry.
    */
   idempotencyKey?: string;
+  /**
+   * This call belongs to a rehearsal, so anything it prepares is a specimen.
+   *
+   * Set by the runner from `AgentTask.rehearsal`. It changes nothing about the
+   * call itself — a rehearsal that behaved differently from the real thing
+   * would be testing the rehearsal — and only marks what the preview leaves
+   * behind, so it stays readable on the rehearsal screen and stays out of the
+   * approval queue, out of the pending count and out of Slack.
+   *
+   * Without it, pointing the workforce at one real company filed a queue of
+   * live, approvable actions against that company and posted an "Approve — do
+   * it" card to Slack for each one. Approving any of them would have sent the
+   * letter for real, which is exactly what the rehearsal guarantee says cannot
+   * happen.
+   */
+  rehearsal?: boolean;
 }
 
 /**
@@ -231,6 +247,7 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
         wouldDo,
         heldBecause: permission.reason ?? null,
         rationale: options.rationale,
+        rehearsal: options.rehearsal ?? false,
       });
     }
 
@@ -319,6 +336,7 @@ async function fileActionRequest(entry: {
   wouldDo: string;
   heldBecause: string | null;
   rationale?: { why: string; gain: string; risk: string };
+  rehearsal: boolean;
 }): Promise<string | undefined> {
   try {
     const request = await prisma.actionRequest.create({
@@ -329,6 +347,7 @@ async function fileActionRequest(entry: {
         input: trim(entry.input) as never,
         wouldDo: entry.wouldDo.slice(0, 2000),
         heldBecause: entry.heldBecause,
+        rehearsal: entry.rehearsal,
         // The schema asks the model for these on every outward tool, so they
         // are normally present. The fallback covers a tool driven from the API
         // rather than by an agent mid-task, where there is no model to ask.
@@ -345,9 +364,16 @@ async function fileActionRequest(entry: {
     // scope because the card builder reaches back into the catalogue, and a
     // cycle between the gate and anything else is the kind that shows up as an
     // undefined export at boot.
-    void import("../approvalCards.js")
-      .then(({ postApprovalCard }) => postApprovalCard(request.id))
-      .catch((err: Error) => console.error("[tools] could not post the approval card:", err.message));
+    //
+    // Never for a rehearsal. Nine agents rehearsing against one company would
+    // fill the channel with Approve buttons for letters to a business nobody
+    // has decided to write to, and the one card that mattered that morning
+    // would be somewhere above them.
+    if (!entry.rehearsal) {
+      void import("../approvalCards.js")
+        .then(({ postApprovalCard }) => postApprovalCard(request.id))
+        .catch((err: Error) => console.error("[tools] could not post the approval card:", err.message));
+    }
 
     return request.id;
   } catch (err) {

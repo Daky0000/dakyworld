@@ -408,6 +408,11 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
         // previews away every artefact, which would make a rehearsal a test of
         // nothing.
         dryRun: task.rehearsal && heldByRehearsal(tool),
+        // Marks what the preview leaves behind, and nothing else. A rehearsal
+        // still calls exactly the same tools with exactly the same inputs —
+        // what changes is that the prepared actions it files are specimens for
+        // the rehearsal screen rather than live proposals in the Owner's queue.
+        rehearsal: task.rehearsal,
         taskId: task.id,
         rationale,
         // What makes a repeat of this call the same call. Only the runner can
@@ -1567,6 +1572,27 @@ async function finishTask(
 
   if (!moved.moved && moved.lostTo && moved.lostTo !== status) {
     console.warn(`[agent] ${taskId} was already ${moved.lostTo}; not writing ${status} over it.`);
+  }
+
+  // The two endings a person has to hear about.
+  //
+  // BLOCKED is an agent asking a question, and a question nobody hears is not
+  // an escalation — it is an agent that stopped. FAILED is work that will not
+  // happen unless somebody presses Run. Everything else is either finished or
+  // already on a card of its own: NEEDS_APPROVAL posts one per prepared action
+  // as it is prepared, which is the right grain, because the decision is about
+  // the action rather than about the task.
+  //
+  // Only when this run is the one that ended it — a run overtaken by the
+  // reaper must not announce an outcome it did not write. Imported here rather
+  // than at the top for the same reason `invoke.ts` reaches for its card
+  // builder late: the builder reads back across the services, and a cycle
+  // through the runner shows up as an undefined export at boot. Not awaited,
+  // and never fatal: Slack being down must not turn a question into a failure.
+  if (moved.moved && (status === "BLOCKED" || status === "FAILED")) {
+    void import("./escalationCards.js")
+      .then(({ postTaskCard }) => postTaskCard(taskId))
+      .catch((err: Error) => console.error("[agent] could not post the escalation card:", err.message));
   }
 
   const task = await prisma.agentTask.findUnique({ where: { id: taskId }, select: { status: true, summary: true } });

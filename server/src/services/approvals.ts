@@ -50,10 +50,20 @@ export interface DecisionBy {
 
 // --- Reading ----------------------------------------------------------------
 
-/** What the queue shows, newest first. */
+/**
+ * What the queue shows, newest first.
+ *
+ * **Rehearsals are excluded everywhere in this file.** A rehearsal holds every
+ * outward call at a preview and files each one, because the rehearsal screen
+ * reads them back — they are the letters and proposals somebody opens
+ * afterwards to judge the workforce. They are specimens, and the target of a
+ * rehearsal is a real business: a live Approve button on a rehearsed email
+ * would send it, which is the one thing the rehearsal guarantee promises
+ * cannot happen. They are filed, marked, and kept out of here.
+ */
 export async function listRequests(status: ActionRequest["status"] | "ALL" = "PENDING", limit = 100) {
   const requests = await prisma.actionRequest.findMany({
-    where: status === "ALL" ? {} : { status },
+    where: { rehearsal: false, ...(status === "ALL" ? {} : { status }) },
     orderBy: { createdAt: "desc" },
     take: limit,
   });
@@ -106,7 +116,7 @@ export async function listRequests(status: ActionRequest["status"] | "ALL" = "PE
 }
 
 export async function countPending(): Promise<number> {
-  return prisma.actionRequest.count({ where: { status: "PENDING", expiresAt: { gt: new Date() } } });
+  return prisma.actionRequest.count({ where: { rehearsal: false, status: "PENDING", expiresAt: { gt: new Date() } } });
 }
 
 /**
@@ -146,6 +156,17 @@ export async function freshPreview(request: ActionRequest): Promise<{ wouldDo: s
 export async function approve(id: string, by: DecisionBy) {
   const existing = await prisma.actionRequest.findUnique({ where: { id } });
   if (!existing) throw new ApprovalRefused("There is no such request.");
+
+  // The last guard rather than the only one — these are already kept out of
+  // the queue and out of Slack, so nothing should reach here with an id for
+  // one. It is here because the cost of being wrong is a real email to a real
+  // company that was only ever a rehearsal's target, and a filter is a weaker
+  // promise than a refusal.
+  if (existing.rehearsal) {
+    throw new ApprovalRefused(
+      "That was prepared inside a rehearsal, so it cannot be carried out. A rehearsal holds every outward call at a preview on purpose — if the work is right, give the agent the job for real.",
+    );
+  }
 
   if (existing.status !== "PENDING") {
     // Not an error. Somebody clicked twice, or Slack retried, and the honest

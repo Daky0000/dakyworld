@@ -2328,6 +2328,17 @@ model AgentTask {
   blockedReason String?
   error         String?
 
+  /// Where this task's escalation card was posted, so answering it anywhere
+  /// rewrites the message rather than leaving a live question in the channel.
+  ///
+  /// The same pair as `ActionRequest` and `AgentHireRequest` carry, and here
+  /// for the same reason: a task that stopped to ask something is the one
+  /// event in this system that is worthless if nobody sees it, and a channel
+  /// full of questions that have already been answered is how people stop
+  /// reading the channel.
+  slackChannel String?
+  slackTs      String?
+
   /// What this one task is allowed to spend before it stops itself, in USD.
   ///
   /// The same shape as `Rehearsal.budgetUsd`, and for the same reason: the
@@ -3009,6 +3020,22 @@ model ActionRequest {
   /// cold — so a card has a life and the tool's own handler stays the last guard.
   expiresAt DateTime
 
+  /// This was prepared inside a rehearsal, so it is a specimen and not a proposal.
+  ///
+  /// A rehearsal points the whole workforce at one real company and holds every
+  /// outward call at a preview. Each of those previews is filed here, because
+  /// the rehearsal screen reads them back — they are the letters and proposals
+  /// somebody opens afterwards to judge whether the workforce is any good.
+  ///
+  /// What they must never be is approvable. The target of a rehearsal is a real
+  /// business with a real address, and `approve()` re-invokes the tool with the
+  /// input as prepared — so a live Approve button on a rehearsed email would
+  /// send it, which is the exact thing the rehearsal guarantee promises cannot
+  /// happen. Marked rather than not written, so the screen keeps its evidence:
+  /// these are kept out of the queue, out of the pending count, out of Slack,
+  /// and refused by `approve()` itself.
+  rehearsal Boolean @default(false)
+
   /// Where the card was posted, so a settled decision does not leave a live
   /// Approve button behind in Slack.
   slackChannel String?
@@ -3020,6 +3047,8 @@ model ActionRequest {
   @@index([status, createdAt])
   @@index([agentKey, status])
   @@index([taskId])
+  /// The queue's own query: everything pending that is not a rehearsal specimen.
+  @@index([rehearsal, status])
 }
 
 // ---------------------------------------------------------------------------

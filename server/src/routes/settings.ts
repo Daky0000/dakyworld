@@ -56,6 +56,7 @@ import {
 } from "../lib/hostingerMail.js";
 import { logoSources, signature, toHtml, toText } from "../services/emailRender.js";
 import { SlackError, sendSlack, slackTransport, verifySlack } from "../lib/slack.js";
+import { slackHealth } from "../services/slackHealth.js";
 import { GitHubError, verifyGitHubToken } from "../lib/github.js";
 import { calendarReady, listCalendars } from "../lib/calendar.js";
 import { rotateWebhookSecret, webhookSecret } from "../lib/webhooks.js";
@@ -1513,6 +1514,27 @@ settingsRouter.put("/slack", async (req, res, next) => {
 
     clearReadinessCache();
     res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * What is actually wrong with Slack, in the words that name the fix.
+ *
+ * Written because *"when I decide, nothing happens in Slack"* is the one
+ * symptom that five unrelated faults all produce, four of which leave no trace
+ * anywhere the Owner can see — a bot token with no default channel, a bot
+ * never invited to the channel, a missing signing secret, Interactivity never
+ * switched on. `services/slackHealth.ts` argues each of them out.
+ *
+ * A read, and only a read: it never posts, because a check that puts a message
+ * in the channel every time somebody opens Settings is a check that gets
+ * turned off. The test message and `/dakyworld ping` are the deliberate acts.
+ */
+settingsRouter.get("/slack/health", async (_req, res, next) => {
+  try {
+    res.json(await slackHealth());
   } catch (err) {
     next(err);
   }

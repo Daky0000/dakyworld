@@ -7,7 +7,8 @@ import { permissionFor } from "../services/tools/invoke.js";
 import { authoredInstruction, composePrompt, isBusy, runTask, step } from "../services/agents/runner.js";
 import { historyOf, recordCreated, transition } from "../services/agents/state.js";
 
-import { appendOwnerAnswer, clearCheckpoint } from "../services/agents/checkpoint.js";
+import { clearCheckpoint } from "../services/agents/checkpoint.js";
+import { blockedTasks, recordOwnerAnswer } from "../services/agents/escalations.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
 import { resolveBrief } from "../services/writers/brief.js";
@@ -1021,14 +1022,15 @@ agentsRouter.post("/tasks/:id/run", async (req, res, next) => {
       .parse(req.body ?? {});
 
     if (answer?.trim()) {
-      await prisma.agentTask.update({
-        where: { id: task.id },
-        data: { brief: `${task.brief}\n\n--- Answer from the Owner ---\n${answer.trim()}` },
+      // One shared path with the Slack buttons — services/agents/escalations.ts.
+      // It writes the answer onto the brief, into the conversation the agent
+      // will rejoin, *and* over the Slack card, so a question answered here
+      // stops being a live question in the channel. That last part is what was
+      // missing: deciding in the app changed nothing in Slack.
+      await recordOwnerAnswer(task, answer.trim().slice(0, 2000), {
+        userId: req.dbUser?.id ?? null,
+        who: req.dbUser?.name ?? req.dbUser?.email ?? null,
       });
-      // Into the conversation as well as onto the record. Without this the
-      // agent resumes at the moment it asked its question, having never been
-      // told the answer, and asks it again.
-      await appendOwnerAnswer(task.id, answer.trim());
     }
 
     const resuming = Boolean(task.checkpoint) && !fresh;
@@ -1456,6 +1458,26 @@ agentsRouter.delete("/:key/memory/:id", async (req, res, next) => {
  * them and Express takes the first match. `hiring/policy` and `gaps` are two
  * segments where `/:key` is one.
  */
+/**
+ * Every question the workforce is currently holding, in one list.
+ *
+ * The Agents screen already shows a task that stopped, next to the agent that
+ * stopped it. This answers a different question — *is anything waiting on me
+ * right now* — which is the one somebody asks from a phone, and the one the
+ * `/dakyworld tasks` slash command answers from the same source rather than
+ * from a second query that could disagree with this one.
+ *
+ * Two segments, so it cannot be mistaken for an agent key: `/:key` is one.
+ */
+agentsRouter.get("/questions/blocked", async (_req, res, next) => {
+  try {
+    const waiting = await blockedTasks(50);
+    res.json({ waiting, count: waiting.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 agentsRouter.get("/hiring/policy", async (_req, res, next) => {
   try {
     const [policy, slack, pending] = await Promise.all([hirePolicy(), slackConfigured(), listHireRequests("PENDING")]);

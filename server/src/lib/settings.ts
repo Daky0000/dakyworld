@@ -318,6 +318,25 @@ export const SETTING = {
    * cosmetic one.
    */
   SLACK_APPROVERS: "slack.approverIds",
+  /**
+   * The last inbound Slack request that verified, and the last one that did not.
+   *
+   * Written by `verifySlackRequest`, read only by the health panel, and here
+   * rather than in a table because the useful question is not "how many" — it
+   * is "has Slack *ever* reached this app, and if the last one bounced, why".
+   *
+   * Without these the whole inbound half is unobservable from inside the app.
+   * A signing secret pasted from the wrong field, an Interactivity switch
+   * nobody turned on, a request URL pointing at the old host and an app that
+   * was never created all present identically: a button that does nothing, and
+   * a `console.warn` in a log the Owner is not reading. This is the difference
+   * between "Slack is broken" and "that signature did not match, so the secret
+   * is the wrong one".
+   */
+  SLACK_INBOUND_OK_AT: "slack.inbound.lastOkAt",
+  SLACK_INBOUND_OK_KIND: "slack.inbound.lastOkKind",
+  SLACK_INBOUND_REFUSED_AT: "slack.inbound.lastRefusedAt",
+  SLACK_INBOUND_REFUSED_REASON: "slack.inbound.lastRefusedReason",
 
   // GitHub, read-mostly, for the technical agents. See lib/github.ts.
   GITHUB_TOKEN: "github.token",

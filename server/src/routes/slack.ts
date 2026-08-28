@@ -1,9 +1,15 @@
 import { Router, type Request, type Response } from "express";
+import { prisma } from "../lib/prisma.js";
 import {
   mayDecideFromSlack,
+  openSlackModal,
   replyToInteraction,
   verifySlackRequest,
 } from "../lib/slack.js";
+import { ANSWER_VIEW, TASK_ACTIONS } from "../services/agents/escalationCards.js";
+import { AnswerRefused, answerTask, answerWithOption, blockedTasks, leaveBlocked, retryTask } from "../services/agents/escalations.js";
+import { countPending, listRequests } from "../services/approvals.js";
+import { slackHealth } from "../services/slackHealth.js";
 import {
   HIRE_ACTIONS,
   HireRefused,
@@ -64,9 +70,9 @@ function rawBodyOf(req: Request): string {
 }
 
 /** Every request here passes the same two checks before anything is read. */
-async function authenticate(req: Request, res: Response): Promise<string | null> {
+async function authenticate(req: Request, res: Response, kind: string): Promise<string | null> {
   const raw = rawBodyOf(req);
-  const check = await verifySlackRequest(req.headers as Record<string, unknown>, raw);
+  const check = await verifySlackRequest(req.headers as Record<string, unknown>, raw, kind);
   if (!check.verified) {
     // Logged, because a run of these is either a misconfigured app or somebody
     // probing, and both are worth seeing. Answered with a bare status: an
@@ -89,12 +95,18 @@ interface Interaction {
   type?: string;
   user?: { id?: string; name?: string };
   response_url?: string;
+  trigger_id?: string;
   actions?: BlockAction[];
+  view?: {
+    callback_id?: string;
+    private_metadata?: string;
+    state?: { values?: Record<string, Record<string, { value?: string | null }>> };
+  };
 }
 
 slackRouter.post("/actions", async (req, res, next) => {
   try {
-    const raw = await authenticate(req, res);
+    const raw = await authenticate(req, res, "interaction");
     if (raw === null) return;
 
     const payload = formFields(raw).payload;
@@ -107,12 +119,69 @@ slackRouter.post("/actions", async (req, res, next) => {
       return res.status(400).send("That payload was not JSON.");
     }
 
+    const userId = interaction.user?.id ?? null;
+    const who = interaction.user?.name ?? userId ?? "somebody in Slack";
+
+    // Somebody typed an answer into the dialog and pressed Send.
+    if (interaction.type === "view_submission") {
+      const view = interaction.view;
+      if (view?.callback_id !== ANSWER_VIEW.callbackId) return res.status(200).send("");
+      const taskId = view.private_metadata ?? "";
+      const typed = view.state?.values?.[ANSWER_VIEW.blockId]?.[ANSWER_VIEW.actionId]?.value ?? "";
+
+      // Slack closes the dialog on an empty 200 and shows the error inline on
+      // a `response_action`. A refusal has to come back *now*, synchronously,
+      // because a dialog that closes on a rejected answer looks exactly like a
+      // dialog that accepted it.
+      if (!(await mayDecideFromSlack(userId))) {
+        return res.json({
+          response_action: "errors",
+          errors: { [ANSWER_VIEW.blockId]: "You are not on the list of people who can answer these." },
+        });
+      }
+      if (!typed.trim()) {
+        return res.json({ response_action: "errors", errors: { [ANSWER_VIEW.blockId]: "An empty answer is not an answer." } });
+      }
+
+      res.status(200).send("");
+      void answerTask(taskId, typed, { slackUserId: userId, who: `${who} in Slack` }).catch((err) =>
+        console.error("[slack] could not answer that task:", (err as Error).message),
+      );
+      return;
+    }
+
     if (interaction.type !== "block_actions") return res.status(200).send("");
 
     const action = interaction.actions?.[0];
     const responseUrl = interaction.response_url ?? null;
-    const userId = interaction.user?.id ?? null;
-    const who = interaction.user?.name ?? userId ?? "somebody in Slack";
+
+    // The one thing that cannot wait for the acknowledgement. A `trigger_id`
+    // is dead three seconds after the click, so opening the dialog *after*
+    // answering Slack means it never opens — and it fails silently, which is
+    // the worst shape a failure can have here.
+    if (action?.action_id === TASK_ACTIONS.answer && interaction.trigger_id && action.value) {
+      if (!(await mayDecideFromSlack(userId))) {
+        res.status(200).send("");
+        await notAllowed(responseUrl);
+        return;
+      }
+      let opened = false;
+      try {
+        opened = await openSlackModal(interaction.trigger_id, answerView(action.value));
+      } catch (err) {
+        console.error("[slack] could not open the answer dialog:", (err as Error).message);
+      }
+      res.status(200).send("");
+      if (!opened) {
+        // A webhook-only Slack has no API to open a dialog with, so the
+        // command that does the same job is offered instead of nothing.
+        await replyToInteraction(
+          responseUrl ?? "",
+          `Typing an answer here needs a bot token. Either add one under Settings → Alerts, or answer with \`/dakyworld answer ${action.value} your answer\`.`,
+        ).catch(() => undefined);
+      }
+      return;
+    }
 
     // Acknowledged before the work, for the reason in the header comment.
     res.status(200).send("");
@@ -125,6 +194,42 @@ slackRouter.post("/actions", async (req, res, next) => {
     next(err);
   }
 });
+
+async function notAllowed(responseUrl: string | null): Promise<void> {
+  if (!responseUrl) return;
+  await replyToInteraction(
+    responseUrl,
+    "You are not on the list of people who can decide these. Ask the Owner to add your Slack user id under Settings → Alerts.",
+  ).catch(() => undefined);
+}
+
+/** The dialog an escalation's "Answer…" button opens. */
+function answerView(taskId: string) {
+  return {
+    type: "modal",
+    callback_id: ANSWER_VIEW.callbackId,
+    // The task travels with the dialog rather than in a map on this server: a
+    // deploy between opening the dialog and sending it must not lose it.
+    private_metadata: taskId,
+    title: { type: "plain_text", text: "Answer the agent" },
+    submit: { type: "plain_text", text: "Send" },
+    close: { type: "plain_text", text: "Cancel" },
+    blocks: [
+      {
+        type: "input",
+        block_id: ANSWER_VIEW.blockId,
+        label: { type: "plain_text", text: "What should it do?" },
+        element: {
+          type: "plain_text_input",
+          action_id: ANSWER_VIEW.actionId,
+          multiline: true,
+          max_length: 2000,
+          placeholder: { type: "plain_text", text: "Say what you want done. It carries on from where it stopped." },
+        },
+      },
+    ],
+  };
+}
 
 async function handleAction(
   actionId: string,
@@ -172,6 +277,35 @@ async function handleAction(
         await say("Declined. Nothing was carried out, and the agent will be told when it next picks the task up.");
         return;
       }
+      // --- A task that stopped and asked ------------------------------------
+      case TASK_ACTIONS.option: {
+        // `taskId::index`. Split from the right, because a cuid never contains
+        // a colon but a future id shape might.
+        const cut = value.lastIndexOf("::");
+        const taskId = cut === -1 ? value : value.slice(0, cut);
+        const index = cut === -1 ? 0 : Number.parseInt(value.slice(cut + 2), 10);
+        const outcome = await answerWithOption(taskId, Number.isFinite(index) ? index : 0, { slackUserId: ctx.userId, who: `${ctx.who} in Slack` });
+        await say(
+          outcome.started
+            ? "Answered — it has picked up where it stopped."
+            : "Answered. That agent is on another job, so this goes back in the queue and starts as soon as it is free.",
+        );
+        return;
+      }
+      case TASK_ACTIONS.leave: {
+        await leaveBlocked(value, { slackUserId: ctx.userId, who: `${ctx.who} in Slack` });
+        await say("Left where it is. It stays on the Agents screen, and answering it later carries on from the same place.");
+        return;
+      }
+      case TASK_ACTIONS.retry: {
+        const outcome = await retryTask(value, { slackUserId: ctx.userId, who: `${ctx.who} in Slack` });
+        await say(
+          outcome.started
+            ? "Running again, continuing from its checkpoint rather than starting over."
+            : "Back in the queue. That agent is on another job, so it starts as soon as it is free.",
+        );
+        return;
+      }
       case HIRE_ACTIONS.approve: {
         const result = await applyHire(value, { slackUserId: ctx.userId, note: `Approved in Slack by ${ctx.who}.` });
         await say(
@@ -207,7 +341,7 @@ async function handleAction(
         return;
     }
   } catch (err) {
-    if (err instanceof HireRefused || err instanceof ApprovalRefused) {
+    if (err instanceof HireRefused || err instanceof ApprovalRefused || err instanceof AnswerRefused) {
       await say(err.message);
       return;
     }
@@ -228,11 +362,15 @@ async function handleAction(
  */
 slackRouter.post("/commands", async (req, res, next) => {
   try {
-    const raw = await authenticate(req, res);
+    const raw = await authenticate(req, res, "command");
     if (raw === null) return;
 
     const fields = formFields(raw);
-    const text = (fields.text ?? "").trim().toLowerCase();
+    // Kept in the case it was typed. The topic is lowered for matching, and an
+    // answer is a sentence a person wrote — lowercasing it would hand the agent
+    // "yes, use the cedi price, not the usd one" and lose the names in it.
+    const typed = (fields.text ?? "").trim();
+    const text = typed.toLowerCase();
     const userId = fields.user_id ?? null;
     const who = fields.user_name ?? userId ?? "somebody in Slack";
     const [topic, argument] = text.split(/\s+/);
@@ -243,12 +381,130 @@ slackRouter.post("/commands", async (req, res, next) => {
       return ephemeral(
         [
           "*What I answer:*",
+          "`/dakyworld ping` — prove this workspace can reach Dakyworld OS",
+          "`/dakyworld status` — what is waiting on you right now",
+          "`/dakyworld tasks` — agents that stopped and asked something",
+          "`/dakyworld answer <task id> <your answer>` — answer one of them, and it carries on",
+          "`/dakyworld approvals` — actions prepared and waiting on a decision",
           "`/dakyworld hiring` — whether new agents are approved automatically or asked about first",
           "`/dakyworld hiring auto` — hire without asking me (still autonomy 1, dry run on)",
           "`/dakyworld hiring ask` — ask me first (the default)",
-          "`/dakyworld hires` — what is waiting on a decision",
+          "`/dakyworld hires` — what is waiting on a hiring decision",
           "`/dakyworld gaps` — crafts the agents say Dakyworld does not have",
         ].join("\n"),
+      );
+    }
+
+    /**
+     * The one command whose whole purpose is to prove the wiring.
+     *
+     * Reaching this line means the signature verified, which means the signing
+     * secret is right, the request URL is right, the app is installed and this
+     * server is the one Slack is talking to. Every one of those is otherwise
+     * unobservable from inside Slack, and all five failures look identical
+     * from a channel: a button that does nothing.
+     *
+     * It also leaves a mark. `verifySlackRequest` has already recorded that an
+     * inbound request verified, so the Settings screen stops saying "no request
+     * from Slack has ever arrived" the moment somebody runs this.
+     */
+    if (topic === "ping") {
+      const health = await slackHealth();
+      return ephemeral(
+        [
+          ":white_check_mark: *Slack can reach Dakyworld OS.* That proves the signing secret, the request URL and the app install all line up.",
+          health.outbound.ready
+            ? `Posting back out works too — ${health.outbound.transport === "TOKEN" ? `bot token, default channel ${health.outbound.channel}` : "incoming webhook"}.`
+            : ":warning: Posting *out* is not set up, so cards will not appear here. Settings → Alerts.",
+          health.inbound.openToAnyone
+            ? ":warning: Nobody is named under “Who may approve”, so anyone who can see this channel can decide things."
+            : `Deciding is limited to ${health.inbound.approvers.length} person(s).`,
+        ].join("\n"),
+      );
+    }
+
+    if (topic === "status") {
+      const [waiting, approvals, prepared, hires, health] = await Promise.all([
+        blockedTasks(5),
+        countPending(),
+        // Counted separately from the approval queue, and not folded into it.
+        // A task finishes NEEDS_APPROVAL whenever *anything* was prepared, and
+        // only the outward and spending calls become cards — so a run that
+        // previewed a write to our own records is work waiting on a person with
+        // nothing in the queue to represent it. Left out, this line would say
+        // "nothing is waiting on you" about a task that is.
+        prisma.agentTask.count({ where: { status: "NEEDS_APPROVAL", rehearsal: false } }),
+        listHireRequests("PENDING"),
+        slackHealth(),
+      ]);
+      const lines = [
+        `*${waiting.length}* agent(s) stopped and asked · *${approvals}* action(s) waiting on a decision · *${prepared}* task(s) holding prepared work · *${hires.length}* hire(s) proposed`,
+      ];
+      if (waiting.length > 0) lines.push("", "*Stopped and asking:*", ...waiting.map((task) => `• ${task.agent.name} — ${task.blockedReason ?? task.title}`));
+      if (health.problems.length > 0) lines.push("", `:warning: ${health.problems[0]}`);
+      if (waiting.length === 0 && approvals === 0 && prepared === 0 && hires.length === 0) lines.push("", "Nothing is waiting on you.");
+      return ephemeral(lines.join("\n"));
+    }
+
+    if (topic === "tasks") {
+      const waiting = await blockedTasks(10);
+      if (waiting.length === 0) return ephemeral("No agent is waiting on you. Nothing has stopped and asked.");
+      return ephemeral(
+        [
+          "*Stopped and asking:*",
+          ...waiting.map((task) =>
+            [
+              `• *${task.agent.name}* — ${task.blockedReason ?? task.title}`,
+              task.options.length > 0 ? `   _Choices:_ ${task.options.join(" · ")}` : null,
+              `   \`/dakyworld answer ${task.id} your answer\``,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          ),
+        ].join("\n"),
+      );
+    }
+
+    /**
+     * `/dakyworld answer <task id> <words>`.
+     *
+     * The road that works on every setup. A dialog needs a bot token and a
+     * button needs Interactivity; this needs neither, so a workspace connected
+     * by one pasted webhook URL can still answer an agent — which is the whole
+     * difference between an escalation and a task that quietly stopped.
+     */
+    if (topic === "answer") {
+      if (!(await mayDecideFromSlack(userId))) {
+        return ephemeral("You are not on the list of people who can answer these. Ask the Owner to add your Slack user id under Settings → Alerts.");
+      }
+      // Split off the topic and the id from the text as typed, so the answer
+      // keeps its capitals and its punctuation.
+      const rest = typed.replace(/^\S+\s*/, "");
+      const [taskId, ...words] = rest.split(/\s+/);
+      const answer = rest.slice(taskId ? taskId.length : 0).trim();
+      if (!taskId || words.length === 0 || !answer) {
+        return ephemeral("Say which task and what to do — `/dakyworld answer <task id> <your answer>`. `/dakyworld tasks` lists them with their ids.");
+      }
+      try {
+        const outcome = await answerTask(taskId, answer, { slackUserId: userId, who: `${who} in Slack` });
+        return ephemeral(
+          outcome.started
+            ? "Answered — it has picked up where it stopped."
+            : "Answered. That agent is on another job, so this goes back in the queue and starts as soon as it is free.",
+        );
+      } catch (err) {
+        if (err instanceof AnswerRefused) return ephemeral(err.message);
+        throw err;
+      }
+    }
+
+    if (topic === "approvals") {
+      const pending = await listRequests("PENDING", 10);
+      if (pending.length === 0) return ephemeral("Nothing is waiting on a decision.");
+      return ephemeral(
+        `*Prepared and waiting on you:*\n${pending
+          .map((request) => `• *${request.agent.name}* — ${request.wouldDo.slice(0, 160)}${request.spends ? " :coin:" : ""}`)
+          .join("\n")}`,
       );
     }
 

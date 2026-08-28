@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { SETTING, getSetting } from "./settings.js";
+import { SETTING, getSetting, setSetting } from "./settings.js";
 
 /**
  * Slack, for internal alerting and escalation.
@@ -223,7 +223,15 @@ export interface SlackVerification {
   unconfigured: boolean;
 }
 
-export async function verifySlackRequest(headers: Record<string, unknown>, rawBody: string): Promise<SlackVerification> {
+export async function verifySlackRequest(headers: Record<string, unknown>, rawBody: string, kind = "request"): Promise<SlackVerification> {
+  const verdict = await judge(headers, rawBody);
+  // Recorded on the way out rather than at each `return` above, so a verdict
+  // added later cannot be the one that forgets to leave a trace.
+  await noteInbound(verdict, kind);
+  return verdict;
+}
+
+async function judge(headers: Record<string, unknown>, rawBody: string): Promise<SlackVerification> {
   const secret = await getSetting(SETTING.SLACK_SIGNING_SECRET);
   if (!secret) {
     return { verified: false, unconfigured: true, reason: "No Slack signing secret is set, so an inbound Slack request cannot be trusted." };
@@ -240,13 +248,69 @@ export async function verifySlackRequest(headers: Record<string, unknown>, rawBo
     return { verified: false, unconfigured: false, reason: "That Slack request is too old to act on." };
   }
 
+  // An empty body against a present signature is the mounting mistake, not an
+  // attack, and it is worth saying so by name: this router has to sit above
+  // the JSON parser because the signature covers the exact bytes Slack sent,
+  // and a parsed body is not those bytes. Said here because the symptom —
+  // every signature failing — is identical to a wrong secret, and the two have
+  // completely different fixes.
+  if (!rawBody) {
+    return {
+      verified: false,
+      unconfigured: false,
+      reason: "That Slack request arrived with no raw body, so its signature cannot be checked. The Slack router must be mounted above the JSON body parser.",
+    };
+  }
+
   const expected = `v0=${crypto.createHmac("sha256", secret).update(`v0:${timestamp}:${rawBody}`).digest("hex")}`;
   // Length-checked first: timingSafeEqual throws on a mismatch rather than
   // returning false, and a wrong-length signature is a wrong signature.
   const a = Buffer.from(expected, "utf8");
   const b = Buffer.from(signature, "utf8");
   const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-  return ok ? { verified: true, unconfigured: false, reason: null } : { verified: false, unconfigured: false, reason: "That Slack signature did not match." };
+  return ok
+    ? { verified: true, unconfigured: false, reason: null }
+    : { verified: false, unconfigured: false, reason: "That Slack signature did not match the signing secret this app holds." };
+}
+
+/**
+ * Leaves a trace of every inbound request, so the inbound half is observable.
+ *
+ * Best-effort and never thrown from: this is a diagnostic, and a diagnostic
+ * that can refuse a verified request is worse than no diagnostic at all.
+ */
+async function noteInbound(verdict: SlackVerification, kind: string): Promise<void> {
+  try {
+    const at = new Date().toISOString();
+    if (verdict.verified) {
+      await setSetting(SETTING.SLACK_INBOUND_OK_AT, at);
+      await setSetting(SETTING.SLACK_INBOUND_OK_KIND, kind);
+      return;
+    }
+    await setSetting(SETTING.SLACK_INBOUND_REFUSED_AT, at);
+    await setSetting(SETTING.SLACK_INBOUND_REFUSED_REASON, `${kind}: ${verdict.reason ?? "refused"}`.slice(0, 300));
+  } catch {
+    // Deliberately silent. See above.
+  }
+}
+
+export interface SlackInbound {
+  /** When a request from Slack last verified, and what kind it was. */
+  lastOkAt: string | null;
+  lastOkKind: string | null;
+  /** When one was last refused, and why — the sentence that names the actual fix. */
+  lastRefusedAt: string | null;
+  lastRefusedReason: string | null;
+}
+
+export async function slackInbound(): Promise<SlackInbound> {
+  const [lastOkAt, lastOkKind, lastRefusedAt, lastRefusedReason] = await Promise.all([
+    getSetting(SETTING.SLACK_INBOUND_OK_AT),
+    getSetting(SETTING.SLACK_INBOUND_OK_KIND),
+    getSetting(SETTING.SLACK_INBOUND_REFUSED_AT),
+    getSetting(SETTING.SLACK_INBOUND_REFUSED_REASON),
+  ]);
+  return { lastOkAt, lastOkKind, lastRefusedAt, lastRefusedReason };
 }
 
 /**
@@ -323,6 +387,32 @@ export async function sendSlackBlocks(input: { text: string; blocks: unknown[]; 
   }
 
   return { delivered: false, transport: "NONE", channel: null };
+}
+
+/**
+ * Opens a dialog on top of whatever the clicker was looking at.
+ *
+ * Token transport only, and that is a real limit rather than an oversight:
+ * `views.open` is an API call, and a webhook has no API. So a webhook-only
+ * Slack cannot be asked to type anything, which is exactly why every card that
+ * wants words also prints the slash command that does the same job — see
+ * `escalationCards.ts`.
+ *
+ * Returns false rather than throwing when there is no token, so a caller can
+ * fall back to saying "use the command instead" in one line.
+ *
+ * `trigger_id` expires three seconds after the click, which is the reason the
+ * interaction router opens the dialog *before* it acknowledges rather than
+ * after: an acknowledgement first and a dialog second is a dialog that never
+ * opens, and it fails silently.
+ */
+export async function openSlackModal(triggerId: string, view: unknown): Promise<boolean> {
+  const token = await getSetting(SETTING.SLACK_BOT_TOKEN);
+  if (!token) return false;
+  const response = await post(`${API_BASE}/views.open`, { trigger_id: triggerId, view }, token);
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+  if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+  return true;
 }
 
 /**

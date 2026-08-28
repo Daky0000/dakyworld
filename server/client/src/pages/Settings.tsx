@@ -2792,8 +2792,97 @@ function StoragePanel({ settings }: { settings: AppSettings }) {
  * token is only worth the setup once escalations should land somewhere
  * different from run reports — that is the one thing a webhook cannot do.
  */
+/**
+ * What Slack's health looks like from here.
+ *
+ * Written because "when I decide, nothing happens in Slack" is the one symptom
+ * that a handful of unrelated faults all produce, and four of them left no
+ * trace anywhere on this screen: a bot token with no default channel, a bot
+ * never invited to the channel, a missing signing secret, and Interactivity
+ * never switched on in the Slack app. See services/slackHealth.ts on the
+ * server, which is where each of them is argued out.
+ */
+interface SlackHealth {
+  outbound: { transport: "TOKEN" | "WEBHOOK" | "NONE"; channel: string | null; ready: boolean };
+  inbound: {
+    signingSecret: boolean;
+    approvers: string[];
+    openToAnyone: boolean;
+    everVerified: boolean;
+    lastOkAt: string | null;
+    lastOkKind: string | null;
+    lastRefusedAt: string | null;
+    lastRefusedReason: string | null;
+  };
+  requestUrls: { actions: string; commands: string };
+  problems: string[];
+  ready: boolean;
+}
+
+function SlackHealthNote() {
+  const { data } = useQuery({ queryKey: ["slack", "health"], queryFn: () => api.get<SlackHealth>("/settings/slack/health") });
+  if (!data) return null;
+
+  return (
+    <div className="mt-4 border border-line">
+      <div className="flex flex-wrap items-center gap-3 border-b border-line px-3 py-2">
+        <span className={`h-2 w-2 rounded-full ${data.ready ? "bg-lime" : data.problems.length > 0 ? "bg-amber-500" : "bg-ink/20"}`} />
+        <span className="text-sm text-ink/70">
+          {data.ready
+            ? "Slack works in both directions — cards go out, and buttons come back."
+            : data.outbound.ready
+              ? "Cards can be posted. Nothing has come back from Slack yet."
+              : "Nothing can be posted to Slack yet."}
+        </span>
+      </div>
+
+      {/* Each problem names its own fix. A list of things that are wrong with no
+          remedy beside them is a list somebody reads once. */}
+      {data.problems.length > 0 && (
+        <ul className="space-y-2 px-3 py-3 text-sm text-ink/60">
+          {data.problems.map((problem) => (
+            <li key={problem} className="flex gap-2">
+              <span aria-hidden className="text-amber-600">
+                !
+              </span>
+              <span>{problem}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="border-t border-line px-3 py-3 text-xs text-ink/50">
+        {/* The proof, or the absence of it. A verified request is the only thing
+            that distinguishes a correct setup from a plausible-looking one. */}
+        {data.inbound.everVerified ? (
+          <p>
+            Slack last reached this app on <span className="text-ink/70">{new Date(data.inbound.lastOkAt ?? "").toLocaleString()}</span>
+            {data.inbound.lastOkKind ? ` (${data.inbound.lastOkKind})` : ""}.
+          </p>
+        ) : (
+          <p>
+            No request from Slack has ever arrived here. Run <code className="font-mono">/dakyworld ping</code> in the channel — it proves
+            the signing secret, the request URL and the app install in one go.
+          </p>
+        )}
+        {data.inbound.lastRefusedReason && (
+          <p className="mt-1">
+            Last refused {data.inbound.lastRefusedAt ? new Date(data.inbound.lastRefusedAt).toLocaleString() : ""} —{" "}
+            <span className="text-ink/70">{data.inbound.lastRefusedReason}</span>
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AlertsPanel({ settings }: { settings: AppSettings }) {
   const save = useSaveSettings();
+  const qc = useQueryClient();
+  // Every write here changes the verdict above it, and a panel that keeps
+  // telling somebody to paste the secret they have just pasted is the thing
+  // that makes a diagnostic get ignored.
+  const refreshHealth = () => qc.invalidateQueries({ queryKey: ["slack", "health"] });
   const [webhookUrl, setWebhookUrl] = useState("");
   const [botToken, setBotToken] = useState("");
   const [channel, setChannel] = useState(settings.alerts.defaultChannel ?? "");
@@ -2816,10 +2905,20 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
       setBotToken("");
       setSigningSecret("");
       save(result);
+      refreshHealth();
     },
   });
-  const remove = useMutation({ mutationFn: () => api.delete<AppSettings>("/settings/slack"), onSuccess: save });
-  const test = useMutation({ mutationFn: () => api.post<{ delivered: boolean; channel: string | null }>("/settings/slack/test", {}) });
+  const remove = useMutation({
+    mutationFn: () => api.delete<AppSettings>("/settings/slack"),
+    onSuccess: (result) => {
+      save(result);
+      refreshHealth();
+    },
+  });
+  const test = useMutation({
+    mutationFn: () => api.post<{ delivered: boolean; channel: string | null }>("/settings/slack/test", {}),
+    onSuccess: refreshHealth,
+  });
 
   const alerts = settings.alerts;
 
@@ -2869,6 +2968,16 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
           Sent. If nothing arrived, the bot probably isn't in that channel yet.
         </p>
       )}
+
+      <SlackHealthNote />
+
+      {/* What an agent will actually interrupt you about, said plainly. The
+          feature is worth nothing if nobody knows a question ever arrives. */}
+      <p className="mt-3 text-sm text-ink/55">
+        What lands here: an agent that stopped and asked something (with its own choices as buttons), an action prepared and waiting on a
+        decision, a run that failed, and a proposal to employ a new agent. Every one of them can also be answered on the Agents screen —
+        Slack is the fast road, never the only one.
+      </p>
 
       {alerts.envManaged ? (
         <EnvNote variable="SLACK_WEBHOOK_URL" />

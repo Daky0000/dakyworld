@@ -36,7 +36,13 @@ approvalsRouter.get("/", async (req, res, next) => {
       .parse(req.query.status ?? "PENDING");
 
     const requests = await listRequests(status === "ALL" ? "ALL" : status);
-    const [pending, counts] = await Promise.all([countPending(), prisma.actionRequest.groupBy({ by: ["status"], _count: true })]);
+    const [pending, counts] = await Promise.all([
+      countPending(),
+      // Rehearsal specimens are excluded here as well as from the list. A tab
+      // reading "42 declined" that shows nothing when opened is worse than no
+      // number at all.
+      prisma.actionRequest.groupBy({ by: ["status"], where: { rehearsal: false }, _count: true }),
+    ]);
 
     res.json({
       requests,
