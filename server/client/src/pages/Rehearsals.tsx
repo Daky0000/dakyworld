@@ -648,6 +648,11 @@ function Prepared({ run }: { run: RehearsalDetail }) {
               </span>
             </div>
             <p className="mt-1.5 text-sm leading-relaxed text-ink/80">{action.wouldDo}</p>
+            {action.status === "EXECUTED" && (
+              <p className="mt-1 font-mono text-[10px] uppercase tracking-[.1em] text-red-700">
+                Carried out for real — cost ${action.costUsd.toFixed(4)}. This should have stayed a preview.
+              </p>
+            )}
             {action.why && (
               <dl className="mt-2 space-y-1 border-t border-amber-200 pt-2 text-xs leading-relaxed text-ink/65">
                 <div>

@@ -163,6 +163,12 @@ function ApprovalCard({ request, onSettled }: { request: ActionRequestRow; onSet
           </p>
         )}
 
+        {request.status === "EXECUTED" && (
+          <p className="text-[11px] text-ink/40">
+            Cost <span className="text-ink/60">${Number(request.costUsd).toFixed(4)}</span>
+          </p>
+        )}
+
         {request.expired && request.status === "PENDING" && (
           <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             This was prepared more than a week ago, so it can no longer be carried out. What the agent proposed then may not be

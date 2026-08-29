@@ -99,7 +99,7 @@ export interface RehearsalView {
     data: unknown;
   }>;
   /** What was prepared and never carried out — the whole outward half of the run. */
-  prepared: Array<{ id: string; agentKey: string; tool: string; wouldDo: string; heldBecause: string | null; status: string; why: string; gain: string; risk: string; input: unknown; createdAt: Date }>;
+  prepared: Array<{ id: string; agentKey: string; tool: string; wouldDo: string; heldBecause: string | null; status: string; why: string; gain: string; risk: string; input: unknown; createdAt: Date; costUsd: number }>;
   /** What the run actually produced and left behind, so "did it work" has an answer. */
   produced: {
     audits: Array<{ id: string; ranAt: Date; overallScore: number; verdict: string; pdfFileId: string | null; markdownFileId: string | null }>;
@@ -151,7 +151,7 @@ export async function readRehearsal(id: string): Promise<RehearsalView | null> {
           // `why`, `gain` and `risk` are the case the agent made for acting.
           // They are the whole difference between a preview somebody can
           // decide on and one they can only stare at.
-          select: { id: true, agentKey: true, tool: true, wouldDo: true, heldBecause: true, status: true, why: true, gain: true, risk: true, input: true, createdAt: true },
+          select: { id: true, agentKey: true, tool: true, wouldDo: true, heldBecause: true, status: true, why: true, gain: true, risk: true, input: true, createdAt: true, costUsd: true },
         })
       : [],
   ]);
@@ -253,7 +253,7 @@ export async function readRehearsal(id: string): Promise<RehearsalView | null> {
         data: step.data,
       };
     }),
-    prepared,
+    prepared: prepared.map((request) => ({ ...request, costUsd: Number(request.costUsd) })),
     produced,
   };
 }

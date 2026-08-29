@@ -61,7 +61,9 @@ async function approvalBlocks(request: ActionRequest, decidedBy: string | null):
     { type: "section", text: { type: "mrkdwn", text: `*Risk*\n${request.risk}`.slice(0, 3000) } },
   ];
 
-  if (tool?.spends) {
+  if (request.status === "EXECUTED") {
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `:coin: *Cost:* $${Number(request.costUsd).toFixed(4)}` } });
+  } else if (tool?.spends) {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: ":coin: *This one costs money.*" } });
   }
 

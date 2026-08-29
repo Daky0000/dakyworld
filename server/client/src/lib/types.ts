@@ -2144,6 +2144,8 @@ export interface ActionRequestRow {
   /** True when it sat unanswered long enough that it can no longer be carried out. */
   expired: boolean;
   createdAt: string;
+  /** What it actually cost, once carried out. "0.0000" until then. */
+  costUsd: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -2590,6 +2592,7 @@ export interface RehearsalDetail {
     risk: string;
     input: unknown;
     createdAt: string;
+    costUsd: number;
   }>;
   produced: {
     audits: Array<{ id: string; ranAt: string; overallScore: number; verdict: string; pdfFileId: string | null; markdownFileId: string | null }>;

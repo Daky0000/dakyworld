@@ -242,6 +242,8 @@ export interface GapInput {
   taskId?: string | null;
   skillNeeded: string;
   reason: string;
+  /** True when the asking task is a rehearsal — see `recordGap`. */
+  rehearsal?: boolean;
 }
 
 export interface GapOutcome {
@@ -268,6 +270,18 @@ export interface GapOutcome {
  * set, and the count is its size.
  */
 export async function recordGap(input: GapInput): Promise<GapOutcome> {
+  // A rehearsal is a test of the workforce, not a request to grow it. Hitting
+  // "nobody can do this" against a scratch lead is exactly the kind of thing a
+  // rehearsal is for surfacing — but the fix for it is a real decision on a
+  // real gap, made once, not one opened by a run against a business that was
+  // never a real prospect. The step is still written to the task's own
+  // timeline by `needSkill`, so it is visible on the rehearsal screen; nothing
+  // here reaches the real `AgentGap` register or puts a task on the Agent
+  // Creator's real queue.
+  if (input.rehearsal) {
+    return { gapId: "rehearsal", joined: false, timesRequested: 1, reviewTaskId: null, note: "This is a rehearsal, so nothing was filed — the gap only shows on this run's own timeline." };
+  }
+
   const skillNeeded = input.skillNeeded.trim().slice(0, 120);
   const wanted = tokens(skillNeeded);
 

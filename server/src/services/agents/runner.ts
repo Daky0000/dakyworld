@@ -946,6 +946,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
         taskId: task.id,
         skillNeeded: skill,
         reason: String(input.reason ?? ""),
+        rehearsal: task.rehearsal,
       });
       counters.gapsRaised += 1;
       await step(task.id, "GAP_RAISED", `Nobody can ${skill} — recorded${outcome.joined ? ` (${outcome.timesRequested} agents have now asked)` : ""}`, {

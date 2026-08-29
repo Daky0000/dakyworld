@@ -104,6 +104,11 @@ async function reset() {
   await prisma.emailSequenceStep.deleteMany({ where: { sequence: { name: { startsWith: MARK } } } });
   await prisma.emailSequence.deleteMany({ where: { name: { startsWith: MARK } } });
   await prisma.lead.deleteMany({ where: { contactName: { startsWith: MARK } } });
+  // The Agent Creator's review task for the control gap — real, because
+  // `people.recruiter` is a real seeded agent in this database, not a harness
+  // one. Deleted by the title it was given, which carries the marked skill.
+  await prisma.agentTask.deleteMany({ where: { title: { contains: MARK } } });
+  await prisma.agentGap.deleteMany({ where: { skillNeeded: { contains: MARK } } });
   await prisma.agentMemory.deleteMany({ where: { agentKey: { in: ALL_KEYS } } });
   await prisma.agent.deleteMany({ where: { key: { in: ALL_KEYS } } });
 }
@@ -492,7 +497,7 @@ async function nothingRehearsedEntersASequence() {
 
 // --- 4. The pipeline ----------------------------------------------------------
 
-function itStaysOutOfThePipeline() {
+async function itStaysOutOfThePipeline() {
   console.log("\nThe pipeline");
 
   const normal = buildLeadWhere({}) as { rehearsal?: boolean };
@@ -500,6 +505,30 @@ function itStaysOutOfThePipeline() {
 
   const asked = buildLeadWhere({ rehearsal: "only" }) as { rehearsal?: boolean };
   check("and can be asked for them", asked.rehearsal === true);
+
+  // The same guarantee, from the other door. A person reading the Leads screen
+  // is one thing; an agent's own `lead.read` is the tool real standing work
+  // uses to go looking for something to do, and it built its own query rather
+  // than going through `buildLeadWhere` — so it had its own, separate way to
+  // surface a scratch lead to a task that was never a rehearsal.
+  const readLeads = findTool("lead.read");
+  check("the catalogue still has lead.read", Boolean(readLeads));
+  if (!readLeads) return;
+
+  const visible = await prisma.lead.create({ data: { contactName: `${MARK} pipeline visible`, rehearsal: false, source: "OTHER" } });
+  const hidden = await prisma.lead.create({ data: { contactName: `${MARK} pipeline hidden`, rehearsal: true, source: "OTHER" } });
+
+  const ctx = { agentKey: AGENT_KEY, userId: null, dryRun: false };
+  const listed = (await readLeads.run({ search: MARK, limit: 50 }, ctx)) as Array<{ id: string }>;
+  const ids = listed.map((lead) => lead.id);
+  check("a rehearsal lead does not surface in a listing search", !ids.includes(hidden.id), JSON.stringify(ids));
+  check("an ordinary one still does — the control", ids.includes(visible.id), JSON.stringify(ids));
+
+  // Direct lookup by id is untouched on purpose: a rehearsal's own agents are
+  // handed the id on their task and must still be able to read their own
+  // scratch lead.
+  const direct = (await readLeads.run({ id: hidden.id }, ctx)) as { id: string } | null;
+  check("a direct lookup by id still works — rehearsals read their own lead", direct?.id === hidden.id);
 }
 
 // --- 4b. The spending ceiling -------------------------------------------------
@@ -711,6 +740,50 @@ async function itWakesWhatItNeedsAndPutsItBack() {
   await prisma.agent.update({ where: { key: SIDEWAYS_KEY }, data: { status: "ACTIVE" } });
 }
 
+// --- 6b. Gaps -------------------------------------------------------------
+
+/**
+ * `needSkill` must not grow the roster off a test.
+ *
+ * Everything else in this file is about outward calls and money; a gap is
+ * neither, which is exactly why it was missed the first time round — it
+ * "does not create anything" in the tool's own description, but recording it
+ * puts a real task on the Agent Creator's real queue, and that agent really
+ * can call `agent.hire`. A rehearsal against a website nobody chose to
+ * approach must not be the reason Dakyworld employs somebody.
+ */
+async function needSkillDoesNotLeakFromARehearsal() {
+  console.log("\nGaps");
+
+  const rehearsed = await prisma.agentTask.create({
+    data: { agentKey: AGENT_KEY, title: `${MARK} gap rehearsal`, brief: "A harness task.", origin: "OWNER", rehearsal: true },
+  });
+  const skill = `${MARK} juggle flaming chainsaws`;
+  const needSkill = workflowTools(await prisma.agent.findUniqueOrThrow({ where: { key: AGENT_KEY } }), rehearsed, freshCounters()).find(
+    (tool) => tool.name === "needSkill",
+  );
+  check("the agent is given needSkill", Boolean(needSkill));
+  if (!needSkill) return;
+
+  const result = await needSkill.run({ skill, reason: "Testing that a rehearsal cannot hire its way out of this.", blocking: false });
+  check("it says this is a rehearsal", result.content.toLowerCase().includes("rehearsal"), result.content);
+  const filed = await prisma.agentGap.findFirst({ where: { skillNeeded: skill } });
+  check("no real gap was filed", !filed, JSON.stringify(filed));
+
+  // The control: the same call from an ordinary task must still work, or this
+  // would pass because `recordGap` stopped filing gaps at all.
+  const ordinary = await prisma.agentTask.create({
+    data: { agentKey: AGENT_KEY, title: `${MARK} gap ordinary`, brief: "A harness task.", origin: "OWNER" },
+  });
+  const ordinarySkill = `${MARK} pilot a submarine`;
+  const ordinaryNeedSkill = workflowTools(await prisma.agent.findUniqueOrThrow({ where: { key: AGENT_KEY } }), ordinary, freshCounters()).find(
+    (tool) => tool.name === "needSkill",
+  );
+  await ordinaryNeedSkill?.run({ skill: ordinarySkill, reason: "Testing that an ordinary task still files a real gap.", blocking: false });
+  const realGap = await prisma.agentGap.findFirst({ where: { skillNeeded: ordinarySkill } });
+  check("an ordinary task still files a real gap — the control", Boolean(realGap), ordinarySkill);
+}
+
 // --- 7. The catalogue ---------------------------------------------------------
 
 /**
@@ -748,7 +821,7 @@ async function main() {
   await theGateHoldsAtAnyAutonomy();
   await theFlagIsInherited();
   await nothingRehearsedEntersASequence();
-  itStaysOutOfThePipeline();
+  await itStaysOutOfThePipeline();
   await itStopsWhenItHasSpentItsBudget();
   await gate1SalesEntry();
   await gate2EvidenceGathering();
@@ -757,6 +830,7 @@ async function main() {
   await gate5ColdEmailDraft();
   await itCanBeThrownAway();
   await itWakesWhatItNeedsAndPutsItBack();
+  await needSkillDoesNotLeakFromARehearsal();
   await everyScenarioStartsWithSomebody();
 
   await reset();
