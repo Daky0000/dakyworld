@@ -489,6 +489,26 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
     group.agents.includes(agent.key)
   );
 
+  // A rehearsal reusing a lead that already has research skips site.look and
+  // reports that research instead, rather than scraping the same site twice.
+  if (task.skipLook && task.leadId) {
+    const siteLookTool = tools.find((t) => t.name === "site__look");
+    if (siteLookTool) {
+      const leadId = task.leadId;
+      const runSiteLook = siteLookTool.run;
+      siteLookTool.run = async (input) => {
+        const existingResearch = await prisma.leadResearch.findUnique({ where: { leadId } });
+        if (existingResearch) {
+          const summary = existingResearch.facts.length > 0 ? existingResearch.facts.join("\n") : "No facts were recorded on that run.";
+          return {
+            content: `Using research already on file from ${new Date(existingResearch.ranAt).toLocaleDateString()} rather than looking again.\n\n${summary}`,
+          };
+        }
+        return runSiteLook(input);
+      };
+    }
+  }
+
   // If the agent belongs to a parallel group, add the group info to the counters
   // so the orchestration layer can coordinate parallel execution
   if (matchingGroups.length > 0) {

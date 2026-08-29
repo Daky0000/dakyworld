@@ -1,4 +1,4 @@
-import type { AgentTaskStatus, Prisma } from "@prisma/client";
+import type { AgentTaskStatus, Lead, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { normaliseSiteUrl } from "../siteShot.js";
 import { isBusy, runTask } from "../agents/runner.js";
@@ -74,6 +74,8 @@ export interface StartInput {
   /** What this run may spend before it stops itself. Undefined takes the default; 0 lifts the ceiling. */
   budgetUsd?: number | null;
   userId?: string | null;
+  /** Reuse an existing lead ID (and its research) rather than creating a fresh lead. */
+  leadId?: string;
 }
 
 export class RehearsalRefused extends Error {
@@ -125,28 +127,47 @@ export async function startRehearsal(input: StartInput) {
     );
   }
 
-  const businessName = input.businessName?.trim() || host;
+  let lead: Lead | null = null;
+  // Set once a reused lead already has research on file, so the tool wrapper
+  // below can report that instead of scraping the same site a second time.
+  let skipLook = false;
 
-  const lead = await prisma.lead.create({
-    data: {
-      // No name and no address on purpose. `contactName` is required, so it
-      // carries the site; `contactEmail` and `contactPhone` stay null, which
-      // means that even if every other guard in this file were removed there
-      // is no address for anything to send to and no number to text.
-      contactName: businessName,
-      companyName: businessName,
-      website,
-      source: "OTHER",
-      captureMethod: "MANUAL",
-      status: "NEW",
-      rehearsal: true,
-      // Nothing dedupes against a rehearsal: two runs on the same site are two
-      // separate rehearsals, and a real capture of that business later must
-      // not collide with either.
-      dedupeKey: null,
-      discoveryNotes: `Created for a rehearsal of “${scenario.name}” against ${website}. Not a real prospect — see the Rehearsal screen.`,
-    },
-  });
+  if (input.leadId) {
+    lead = await prisma.lead.findUnique({ where: { id: input.leadId } });
+    if (!lead) {
+      throw new RehearsalRefused(`There is no lead with id "${input.leadId}".`);
+    }
+    if (lead.rehearsal) {
+      throw new RehearsalRefused(`Lead ${input.leadId} is already marked as a rehearsal lead.`);
+    }
+    const existingResearch = await prisma.leadResearch.findUnique({ where: { leadId: lead.id } });
+    skipLook = existingResearch !== null;
+  }
+
+  const businessName = input.businessName?.trim() || lead?.companyName || host;
+
+  if (!lead) {
+    // No name and no address on purpose. `contactName` is required, so it
+    // carries the site; `contactEmail` and `contactPhone` stay null, which
+    // means that even if every other guard in this file were removed there
+    // is no address for anything to send to and no number to text.
+    lead = await prisma.lead.create({
+      data: {
+        contactName: businessName,
+        companyName: businessName,
+        website,
+        source: "OTHER",
+        captureMethod: "MANUAL",
+        status: "NEW",
+        rehearsal: true,
+        // Nothing dedupes against a rehearsal: two runs on the same site are two
+        // separate rehearsals, and a real capture of that business later must
+        // not collide with either.
+        dedupeKey: null,
+        discoveryNotes: `Created for a rehearsal of “${scenario.name}” against ${website}. Not a real prospect — see the Rehearsal screen.`,
+      },
+    });
+  }
 
   const brief = [scenario.brief({ site: website, name: businessName }), input.note?.trim() ? `\n\nFrom the Owner: ${input.note.trim()}` : ""]
     .join("")
@@ -162,6 +183,7 @@ export async function startRehearsal(input: StartInput) {
       priority: 2,
       leadId: lead.id,
       rehearsal: true,
+      skipLook,
     },
   });
   await recordCreated(task.id, task.traceId, task.status, {

@@ -2336,6 +2336,13 @@ model AgentTask {
   /// thing would be testing the rehearsal.
   rehearsal Boolean @default(false)
 
+  /// A rehearsal reused a lead that already has research on file. The runner's
+  /// tool wrapper reads this to answer `site.look` from that research instead
+  /// of scraping the same site again — set once, at task creation, and never
+  /// inherited by `delegate` or `handOff` the way `rehearsal` is, because a
+  /// report working a different piece of the same lead may still need to look.
+  skipLook Boolean @default(false)
+
   /// Set when a manager delegated this to a report.
   parent   AgentTask?  @relation("Delegation", fields: [parentId], references: [id])
   parentId String?
