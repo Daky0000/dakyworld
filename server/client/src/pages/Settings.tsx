@@ -106,7 +106,7 @@ export function Settings() {
     switch (id) {
       case "analyst":
         // Green when something can actually read sheets right now; amber when
-        // a stand-in is covering because ox-alpha isn't connected; idle when
+        // a stand-in is covering because the chosen vendor isn't connected; idle when
         // no model can do it at all.
         return data.analyst.reading.ready ? "ok" : data.analyst.reading.serving !== data.analyst.reading.chosen ? "warn" : "idle";
       // Green only when every job is served by the vendor chosen for it.
@@ -1197,7 +1197,7 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
   });
 
   const analyst = settings.analyst;
-  /** What the Owner calls whoever serves a job — "ox-alpha", not "openrouter". */
+  /** What the Owner calls whoever serves a job — "OpenRouter", not "openrouter". */
   const providerName = (key: string) => settings.models.providers.find((provider) => provider.key === key)?.name ?? key;
 
   return (
@@ -1381,6 +1381,13 @@ interface FreeModelRow {
 interface FreeLadderReport {
   connected: boolean;
   ladder: string[];
+  /**
+   * Where the ladder in use came from. "shipped" is the default nobody has
+   * touched, "owner" is a list picked here, "off" is free models deliberately
+   * switched off — three different sentences, and the screen said the same one
+   * for the first and the third.
+   */
+  source: "shipped" | "owner" | "off";
   max: number;
   models: FreeModelRow[];
   stale: Array<{ id: string; why: string }>;
@@ -1394,8 +1401,14 @@ interface FreeLadderReport {
  * and they are also the least reliable thing available: a free endpoint is
  * shared, so it queues, rate-limits, and sometimes simply does not answer. One
  * of them as *the* model is a system that stops working at busy times. Three in
- * a row with Claude behind them is a system that costs nothing most days and
- * never stops.
+ * a row with a paid floor behind them is a system that costs nothing most days
+ * and never stops.
+ *
+ * **On by default.** It was an opt-in for one day, and an opt-in nobody has
+ * opted into does nothing at all — so a deployment that never opens this panel
+ * still starts every agent on a free model. What is picked is read from the
+ * account's own catalogue at the first boot that has a key, because a free slug
+ * written down in advance is the most perishable id OpenRouter publishes.
  *
  * Picked from a list rather than typed, because the ids are long and exact and
  * change — a slug typed from memory is a 404 three days later, inside a
@@ -1411,13 +1424,15 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
   const ladder = draft ?? report.data?.ladder ?? [];
   const max = report.data?.max ?? 3;
 
+  // `null` is "use whatever ships", `[]` is "no free models, deliberately".
   const save = useMutation({
-    mutationFn: (models: string[]) => api.put<{ ladder: string[]; note?: string }>("/settings/models/openrouter/free", { models }),
+    mutationFn: (models: string[] | null) => api.put<{ ladder: string[]; note?: string }>("/settings/models/openrouter/free", { models }),
     onSuccess: () => {
       setDraft(null);
       void qc.invalidateQueries({ queryKey: ["settings", "openrouter", "free"] });
     },
   });
+  const source = report.data?.source ?? "shipped";
 
   const toggle = (id: string) => {
     setDraft(ladder.includes(id) ? ladder.filter((entry) => entry !== id) : ladder.length >= max ? ladder : [...ladder, id]);
@@ -1438,18 +1453,20 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
       title="Free models first"
       what={
         <>
-          Up to {max} free OpenRouter models, tried in order. When one doesn't answer — busy, rate-limited, or simply silent — the next
-          is asked straight away, and when all of them have been tried Claude finishes the work. Nothing waits and nothing is lost;
-          the only difference is the bill.
+          Up to {max} free OpenRouter models, tried in order, and every agent starts on the first of them. When one doesn't answer —
+          busy, rate-limited, or simply silent — the next is asked straight away, and when all {max} have been tried the paid floor
+          finishes the work: Claude, then ChatGPT, then Gemini, whichever of them you have connected. Nothing waits and nothing is
+          lost; the only difference is the bill.
         </>
       }
       state={
-        ladder.length === 0 ? (
-          <NotConnected>No free models set, so OpenRouter uses its own model and pays for it.</NotConnected>
+        source === "off" ? (
+          <NotConnected>Free models are off, so OpenRouter uses its own model and pays for every call.</NotConnected>
         ) : (
           <Connected>
             <span>
-              {ladder.length} rung{ladder.length === 1 ? "" : "s"}, then Claude
+              {ladder.length} rung{ladder.length === 1 ? "" : "s"}
+              {source === "shipped" ? " (the shipped ladder)" : ""}, then the paid floor
             </span>
             <span className="font-mono text-xs text-ink/50">{ladder.join(" → ")}</span>
           </Connected>
@@ -1531,13 +1548,25 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <Button onClick={() => save.mutate(ladder)} disabled={save.isPending || draft === null}>
           {save.isPending ? "Checking…" : "Save the ladder"}
         </Button>
         {draft !== null && (
           <Button variant="ghost" onClick={() => setDraft(null)}>
             Cancel
+          </Button>
+        )}
+        {/* The two states that are not "a list I picked", each reachable in one
+            click, because the difference between them is money. */}
+        {source !== "shipped" && (
+          <Button variant="ghost" size="sm" onClick={() => save.mutate(null)} disabled={save.isPending}>
+            Use the shipped ladder
+          </Button>
+        )}
+        {source !== "off" && (
+          <Button variant="ghost" size="sm" onClick={() => save.mutate([])} disabled={save.isPending}>
+            Turn free models off
           </Button>
         )}
         {save.data?.note && <span className="text-sm text-ink/55">{save.data.note}</span>}

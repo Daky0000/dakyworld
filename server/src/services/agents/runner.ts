@@ -1186,9 +1186,41 @@ async function rosterSize(): Promise<number> {
  */
 export { authoredInstruction } from "./authored.js";
 
+/**
+ * How every agent works, whatever its craft.
+ *
+ * Four passes, named and ordered, and it is the one part of the prompt that is
+ * about *method* rather than about this agent's job, this company, or the
+ * etiquette of the tools. It exists because of what changed underneath the
+ * workforce on 28 Aug 2026: every agent turn now starts on a **free** model and
+ * only reaches a paid one when three free ones have refused the work.
+ *
+ * That is the right call on cost and it changes what a prompt has to do. A
+ * strong model reads a paragraph of craft doctrine and infers the procedure —
+ * that it should look at the record first, that a claim needs a source, that a
+ * draft should be re-read before it is handed over. A weaker one does the thing
+ * the paragraph talks *about* and skips the procedure nobody wrote down, and
+ * the failure looks like carelessness rather than like a missing instruction:
+ * an agent that answered from the brief without opening the record, a figure
+ * with no source under it, a letter nobody checked.
+ *
+ * **Four passes rather than ten steps**, because a list long enough to be
+ * complete is a list a model skims. And it deliberately says nothing about
+ * tools, escalation, memory or who to ask — all four have their own paragraphs
+ * in the working region below, and a prompt that says the same thing twice in
+ * two sets of words is how a model ends up averaging two instructions into
+ * neither. See the note in CLAUDE.md on prompts that contradict themselves.
+ */
+const METHOD = `How you work, whatever the task is. Four passes, in this order, and do not start one before the last is done:
+
+1. **Establish.** Get what is actually on the record in front of you before you form a view — the lead, the client, the project, the thread, whatever the task is about. A brief is somebody's summary of a record, not the record. Where you cannot get a fact, write down that you could not, rather than working around the hole quietly.
+2. **Decide.** Say what you concluded and name the one or two facts that decided it. A conclusion with no fact under it is a preference, and the next person to read it has to derive it again from scratch.
+3. **Produce.** One finished thing, of the kind named under "What you produce" below. Finished means somebody could use it as it stands — not an outline of it, not a description of what it would contain.
+4. **Verify.** Read back what you produced against the record: every figure to its source, every name as the record spells it, every claim to the thing that supports it. Then say, in one line, which part of it you are least sure of. That line is worth more to the person reading than another paragraph of the work itself.`;
+
 /** One labelled block of the assembled prompt. */
 export interface PromptRegion {
-  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "working";
+  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "method" | "working";
   /** The heading the screen puts on it. */
   label: string;
   /** Where the words come from, in a sentence, for somebody deciding whether they can change them. */
@@ -1344,6 +1376,18 @@ export async function composePrompt(
   }
 
   if (working) {
+    // Before the tool etiquette, because it is the shape of the work and that
+    // comes before how the work reaches anything. Working only: a colleague
+    // being consulted answers one question in four sentences and is not
+    // producing a finished thing, so telling it to verify and hand over would
+    // be describing a job it has not been given.
+    regions.push({
+      key: "method",
+      label: "How it does the work",
+      source: "services/agents/runner.ts — the same four passes for every agent, seeded or hired.",
+      editable: false,
+      text: METHOD,
+    });
     regions.push({
       key: "working",
       label: "How it works here",

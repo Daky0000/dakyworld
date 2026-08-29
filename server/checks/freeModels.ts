@@ -5,18 +5,19 @@
  * and they are also the least reliable thing in this system — a free endpoint is
  * shared, so it queues, rate-limits, and some of the time simply does not
  * answer. One of them as *the* model is a system that stops working at busy
- * times. Three of them in a row with Claude behind them is a system that costs
- * nothing most days and never stops.
+ * times. Three of them in a row with a paid floor behind them is a system that
+ * costs nothing most days and never stops.
  *
- * Six claims, and the negatives are the half that matter:
+ * Nine claims, and the negatives are the half that matter:
  *
  *  1. Every rung is tried, in the order it was set, and the work still gets
  *     done by the last one that answers.
  *  2. When the whole ladder is silent, Claude finishes — and is asked for a
  *     *Claude* model, not the OpenRouter slug the run started on.
- *  3. A rate limit climbs the ladder. Without a ladder it must still requeue
- *     the task, which is a deliberately different answer for the same status
- *     and the one thing most likely to be "simplified" into agreement.
+ *  3. A rate limit climbs the ladder. With free models switched off it must
+ *     still requeue the task, which is a deliberately different answer for the
+ *     same status and the one thing most likely to be "simplified" into
+ *     agreement.
  *  4. A key-level refusal — wrong key, no credits, banned account — does **not**
  *     climb. It is true of every model on the account, so three calls into the
  *     same wall is three wasted calls and a slower failure.
@@ -24,7 +25,19 @@
  *     to the floor rate, which is deliberately the dearest we know of, so a
  *     free day would otherwise read as the most expensive one this company has
  *     ever had and trip every budget ceiling on money nobody spent.
- *  6. With no ladder set, nothing about the model layer changes.
+ *  6. **A deployment that has configured nothing still runs free-first.** The
+ *     ladder was an opt-in for one day, and an opt-in nobody has opted into is
+ *     a feature that does nothing.
+ *  7. **Unset, empty and unreadable are three different states.** Unset is the
+ *     shipped ladder, an empty list is free models deliberately off, and a
+ *     corrupt row falls back to the shipped ladder rather than quietly starting
+ *     to spend money.
+ *  8. **The paid floor is the best of three, not Claude alone.** A rate-limited
+ *     Claude hands the run to ChatGPT, and a failing ChatGPT hands it to Gemini
+ *     — with the conversation intact across all three wires.
+ *  9. Every shipped rung is a `:free` id, because the ledger prices a rung at
+ *     zero and the shipped seed is the one list nothing has checked against a
+ *     live catalogue.
  *
  * Both halves of the model layer are driven, because they are two separate
  * implementations of the same wire: `callModel` for one-shot work and
@@ -120,7 +133,85 @@ function openRouterStub(
   });
 }
 
-function anthropicStub(bodies: Record<string, unknown>[]): Promise<{ server: Server; url: string }> {
+function anthropicStub(
+  bodies: Record<string, unknown>[],
+  /** Answers with something other than a completed turn — a refused key, say. */
+  reply?: (body: Record<string, unknown>) => { status: number; payload: unknown },
+): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      req.on("end", () => {
+        let body: Record<string, unknown> = {};
+        try {
+          body = JSON.parse(raw || "{}") as Record<string, unknown>;
+        } catch {
+          body = {};
+        }
+        bodies.push(body);
+        const answer = reply?.(body);
+        if (answer) {
+          res.writeHead(answer.status, { "content-type": "application/json" });
+          res.end(typeof answer.payload === "string" ? answer.payload : JSON.stringify(answer.payload));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            id: `msg_${bodies.length}`,
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-5",
+            content: [{ type: "text", text: '{"answer":"from claude"}' }],
+            stop_reason: "end_turn",
+            stop_sequence: null,
+            usage: { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+          }),
+        );
+      });
+    });
+    server.listen(0, "127.0.0.1", () => resolve({ server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }));
+  });
+}
+
+/**
+ * A fake ChatGPT. Same wire as OpenRouter — which is the point of putting it
+ * second on the paid floor — so this is the OpenRouter stub without a
+ * catalogue.
+ */
+function chatCompletionsStub(
+  hits: Hit[],
+  reply: (model: string) => { status: number; payload: unknown },
+): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      req.on("end", () => {
+        let body: Record<string, unknown> = {};
+        try {
+          body = JSON.parse(raw || "{}") as Record<string, unknown>;
+        } catch {
+          body = {};
+        }
+        const model = String(body.model ?? "");
+        hits.push({ path: req.url ?? "", model });
+        const answer = reply(model);
+        res.writeHead(answer.status, { "content-type": "application/json" });
+        res.end(typeof answer.payload === "string" ? answer.payload : JSON.stringify(answer.payload));
+      });
+    });
+    server.listen(0, "127.0.0.1", () => resolve({ server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }));
+  });
+}
+
+/**
+ * A fake Gemini, which is the one wire on the floor that is genuinely a
+ * different shape: `:generateContent`, `contents` rather than `messages`, and
+ * an answer in `candidates[0].content.parts`.
+ */
+function geminiStub(bodies: Record<string, unknown>[]): Promise<{ server: Server; url: string }> {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       let raw = "";
@@ -136,14 +227,9 @@ function anthropicStub(bodies: Record<string, unknown>[]): Promise<{ server: Ser
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
-            id: `msg_${bodies.length}`,
-            type: "message",
-            role: "assistant",
-            model: "claude-sonnet-5",
-            content: [{ type: "text", text: '{"answer":"from claude"}' }],
-            stop_reason: "end_turn",
-            stop_sequence: null,
-            usage: { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+            modelVersion: "gemini-check",
+            candidates: [{ finishReason: "STOP", content: { role: "model", parts: [{ text: "Done, from Gemini." }] } }],
+            usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 6 },
           }),
         );
       });
@@ -174,7 +260,7 @@ async function main() {
   const { prisma } = await import("../src/lib/prisma.js");
   const { clearSettingsCache, SETTING, setSetting } = await import("../src/lib/settings.js");
   const { callModel } = await import("../src/lib/models/call.js");
-  const { freeLadder, FREE_LADDER_MAX } = await import("../src/lib/models/registry.js");
+  const { DEFAULT_FREE_LADDER, freeLadder, freeLadderSource, FREE_LADDER_MAX, PAID_AGENT_CHAIN } = await import("../src/lib/models/registry.js");
   const { runAgentLoop, clearOpenRouterCooldown } = await import("../src/lib/claudeAgent.js");
 
   // Rule one of this directory: a database and nothing else, and certainly no
@@ -189,6 +275,12 @@ async function main() {
     SETTING.OPENROUTER_KEY,
     SETTING.OPENROUTER_MODEL,
     SETTING.OPENROUTER_FREE_MODELS,
+    // The other two thirds of the paid floor. A machine with a real ChatGPT key
+    // pasted would otherwise have the last scenario reach OpenAI for real.
+    SETTING.OPENAI_KEY,
+    SETTING.OPENAI_MODEL,
+    SETTING.GEMINI_KEY,
+    SETTING.GEMINI_MODEL,
     SETTING.MODEL_ROUTES,
     SETTING.MODEL_JOB_MODELS,
   ];
@@ -233,12 +325,39 @@ async function main() {
   // failed is asked again and the ladder is shorter than it looks.
   check("a duplicate rung is dropped", (await freeLadder()).join(",") === "free/one:free,free/two:free");
 
+  // 7. Unset, empty and unreadable are three different states, and the whole
+  // "free first by default" promise rests on the first of them.
+  await prisma.appSetting.deleteMany({ where: { key: SETTING.OPENROUTER_FREE_MODELS } });
+  clearSettingsCache();
+  const shipped = await freeLadder();
+  check("a deployment that has configured nothing still has a ladder", shipped.length === FREE_LADDER_MAX, String(shipped.length));
+  check("and it is the shipped one", shipped.join(",") === DEFAULT_FREE_LADDER.join(","), shipped.join(","));
+  check("named as the shipped one rather than as somebody's choice", (await freeLadderSource()) === "shipped");
+  // 9. The seed is the one list nothing has checked against a live catalogue,
+  // and `isFreeModel` prices every rung at zero. `:free` is OpenRouter's own
+  // convention for a zero-rate variant and it is the only guarantee available
+  // to a list written in advance.
+  check(
+    "every shipped rung is a free variant by its id",
+    DEFAULT_FREE_LADDER.every((id) => id.endsWith(":free")),
+    DEFAULT_FREE_LADDER.join(", "),
+  );
+
+  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
+  clearSettingsCache();
+  check("an empty list is free models switched off, deliberately", (await freeLadder()).length === 0);
+  check("and says so rather than reading as unconfigured", (await freeLadderSource()) === "off");
+
   await setSetting(SETTING.OPENROUTER_FREE_MODELS, "not json at all");
   clearSettingsCache();
-  check("a corrupt setting means no ladder rather than a broken model layer", (await freeLadder()).length === 0);
+  // Unreadable is not the same as off. Falling through to the paid model here
+  // would answer a corrupt settings row by starting to spend money.
+  check("a corrupt setting falls back to the shipped ladder", (await freeLadder()).join(",") === DEFAULT_FREE_LADDER.join(","));
 
   await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(RUNGS));
   clearSettingsCache();
+  check("a list picked here is named as the Owner's", (await freeLadderSource()) === "owner");
+  check("and the paid floor is three vendors deep", PAID_AGENT_CHAIN.join(",") === "anthropic,openai,gemini", PAID_AGENT_CHAIN.join(","));
 
   // --- Scenario A: the second rung answers -----------------------------------
 
@@ -367,14 +486,17 @@ async function main() {
   orD.server.close();
   claudeD.server.close();
 
-  // --- Scenario E: no ladder, and nothing changes ---------------------------
+  // --- Scenario E: free models off, and nothing changes ---------------------
   //
-  // The negative that matters most. Without a ladder a 429 requeues the task
-  // rather than moving the bill to Claude — that is a deliberate difference for
-  // the same status, and the one most likely to be flattened into agreement by
-  // somebody reading only one of the two branches.
+  // The negative that matters most. With free models deliberately off, a 429
+  // requeues the task rather than moving the bill to a paid vendor — that is a
+  // deliberate difference for the same status, and the one most likely to be
+  // flattened into agreement by somebody reading only one of the two branches.
+  //
+  // Stored as `[]`, not deleted: deleting the row now means "use the shipped
+  // ladder", which is the opposite of what this scenario is about.
 
-  await prisma.appSetting.deleteMany({ where: { key: SETTING.OPENROUTER_FREE_MODELS } });
+  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
   clearSettingsCache();
   clearOpenRouterCooldown();
 
@@ -398,13 +520,78 @@ async function main() {
   } catch (err) {
     requeued = (err as Error).message;
   }
-  check("with no ladder a rate limit still requeues the task", requeued.includes("rate-limiting"), requeued || "(the run finished)");
-  check("and does not quietly move the bill to Claude", anthE.length === 0, `${anthE.length} call(s)`);
+  check("with free models off a rate limit still requeues the task", requeued.includes("rate-limiting"), requeued || "(the run finished)");
+  check("and does not quietly move the bill to a paid vendor", anthE.length === 0, `${anthE.length} call(s)`);
   const calledE = hitsE.filter((hit) => !hit.path.includes("/models")).map((hit) => hit.model);
   check("asking the one configured model, not a free id", calledE.every((model) => !RUNGS.includes(model ?? "")), calledE.join(", "));
   await prisma.llmCall.deleteMany({ where: { purpose: "check.free.noLadder" } });
   orE.server.close();
   claudeE.server.close();
+
+  // --- Scenario F: the paid floor is the best of three ----------------------
+  //
+  // The instruction was "three free models, then the best paid one of the
+  // three". A floor of one vendor under a ladder built entirely out of
+  // endpoints that fail is a single point of failure in the place least able to
+  // afford one: a run that survived three busy free models and then met a
+  // rate-limited Claude died with two connected vendors sitting unasked.
+  //
+  // Claude refuses the key, ChatGPT breaks, Gemini finishes — over three
+  // different wires, with the same conversation.
+
+  await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(RUNGS));
+  await setSetting(SETTING.OPENAI_KEY, "sk-check-not-a-real-key");
+  await setSetting(SETTING.GEMINI_KEY, "gm-check-not-a-real-key");
+  clearSettingsCache();
+  clearOpenRouterCooldown();
+
+  const hitsF: Hit[] = [];
+  const orF = await openRouterStub(hitsF, () => ({ status: 503, payload: "upstream is busy" }));
+  const anthF: Record<string, unknown>[] = [];
+  const claudeF = await anthropicStub(anthF, () => ({ status: 401, payload: { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } } }));
+  const openAiF: Hit[] = [];
+  const chatgptF = await chatCompletionsStub(openAiF, () => ({ status: 500, payload: "internal error" }));
+  const geminiF: Record<string, unknown>[] = [];
+  const gmF = await geminiStub(geminiF);
+
+  process.env.OPENROUTER_BASE_URL = orF.url;
+  process.env.ANTHROPIC_BASE_URL = claudeF.url;
+  process.env.OPENAI_BASE_URL = chatgptF.url;
+  process.env.GEMINI_BASE_URL = gmF.url;
+  clearSettingsCache();
+
+  const floor = await runAgentLoop({
+    purpose: "check.free.paidFloor",
+    system: "You are a check.",
+    prompt: "Say you are done.",
+    tools: [lookUpTool],
+    effort: "medium",
+  });
+  const calledF = hitsF.filter((hit) => !hit.path.includes("/models")).map((hit) => hit.model);
+  check("every free rung is tried before anything is paid for", calledF.join(",") === RUNGS.join(","), calledF.join(","));
+  check("then Claude is asked first of the paid three", anthF.length === 1, `${anthF.length} call(s)`);
+  check("a refused Claude hands on rather than losing the run", openAiF.length === 1, `${openAiF.length} ChatGPT call(s)`);
+  check("and a broken ChatGPT hands on to Gemini", geminiF.length === 1, `${geminiF.length} Gemini call(s)`);
+  check("which finishes it", floor.stoppedBecause === "finished", floor.stoppedBecause);
+  check(
+    "the conversation survived three different wires",
+    typeof floor.text === "string" && floor.text.includes("Gemini"),
+    floor.text,
+  );
+  // Each vendor is asked for its *own* model. The whole point of a handover is
+  // to save a run, and asking Gemini for a free OpenRouter slug fails on the
+  // model name at the first turn — which is exactly the defect that survived a
+  // green harness once already.
+  check(
+    "each vendor was asked for a model of its own",
+    anthF.every((body) => String(body.model).startsWith("claude")) && openAiF.every((hit) => !RUNGS.includes(hit.model ?? "")),
+    `${anthF.map((body) => String(body.model)).join(", ")} | ${openAiF.map((hit) => hit.model).join(", ")}`,
+  );
+  await prisma.llmCall.deleteMany({ where: { purpose: "check.free.paidFloor" } });
+  orF.server.close();
+  claudeF.server.close();
+  chatgptF.server.close();
+  gmF.server.close();
 
   await restore();
   console.log(`\n${passed} passed, ${failures.length} failed`);

@@ -712,7 +712,7 @@ export interface AppSettings {
     envManaged: boolean;
     key: string | null;
     /**
-     * Who reads an imported sheet right now — ox-alpha by default, Claude
+     * Who reads an imported sheet right now — OpenRouter by default, Claude
      * standing in behind it. Same shape as a row on the AI models screen.
      */
     reading: ModelRoute;
@@ -1702,7 +1702,7 @@ export interface AgentDetail extends Agent {
 /** The shipped wording for a seeded agent, for comparing against an edit. */
 /** One labelled block of the prompt an agent actually receives. */
 export interface PromptRegion {
-  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "working";
+  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "method" | "working";
   label: string;
   /** Where the words come from, for somebody deciding whether they can change them. */
   source: string;

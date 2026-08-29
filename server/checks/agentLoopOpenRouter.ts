@@ -153,7 +153,7 @@ let seenInput: Record<string, unknown> | null = null;
 
 async function main() {
   const { prisma } = await import("../src/lib/prisma.js");
-  const { clearSettingsCache, SETTING } = await import("../src/lib/settings.js");
+  const { clearSettingsCache, SETTING, setSetting } = await import("../src/lib/settings.js");
   const { runAgentLoop, reasoningEffortFor, clearOpenRouterCooldown } = await import("../src/lib/claudeAgent.js");
   const { PROVIDERS } = await import("../src/lib/models/registry.js");
 
@@ -172,22 +172,38 @@ async function main() {
     SETTING.ANTHROPIC_MODEL_ECONOMY,
     SETTING.OPENROUTER_KEY,
     SETTING.OPENROUTER_MODEL,
+    SETTING.OPENROUTER_FREE_MODELS,
+    // The other two thirds of the paid floor. This file is about the OpenRouter
+    // wire and the handover *to* the floor; a machine with a real ChatGPT or
+    // Gemini key pasted would otherwise have a scenario reach one for real.
+    SETTING.OPENAI_KEY,
+    SETTING.GEMINI_KEY,
   ];
   const savedSettings = await prisma.appSetting.findMany({ where: { key: { in: VENDOR_SETTINGS } } });
   await prisma.appSetting.deleteMany({ where: { key: { in: VENDOR_SETTINGS } } });
+  // **Free models off for this file.** Not laziness — a separation of subjects.
+  // The ladder ships switched on, so every scenario below would otherwise be
+  // three calls where it is asserting about one, and what it is asserting about
+  // is the *wire*: the message translation, the checkpoint shape, and what
+  // happens when a vendor cannot serve. The ladder has its own file
+  // (`checks/freeModels.ts`), which drives all three rungs and the paid floor
+  // behind them. An empty list is the deliberate "off" state; deleting the row
+  // would mean "use the shipped ladder", which is the opposite.
+  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
   clearSettingsCache();
 
   // --- The effort mapping ----------------------------------------------------
   //
-  // ox-alpha offers low/high/max and defaults to max. Our medium must not
-  // become max by omission, and our high must not fall through to low.
+  // The shipped OpenRouter model offers low/high/max and defaults to max. Our
+  // medium must not become max by omission, and our high must not fall through
+  // to low.
   check("low stays low", reasoningEffortFor("low") === "low");
   check("medium steps up to high, not the model's max default", reasoningEffortFor("medium") === "high");
   check("high rides at max", reasoningEffortFor("high") === "max");
   check("xhigh rides at max", reasoningEffortFor("xhigh") === "max");
   check("max rides at max", reasoningEffortFor("max") === "max");
 
-  // --- Scenario A: ox-alpha alone, happy path --------------------------------
+  // --- Scenario A: OpenRouter alone, happy path ------------------------------
 
   const orBodies: Record<string, any>[] = [];
   const orServer = await httpServer((_body, send) => {
@@ -198,7 +214,7 @@ async function main() {
   // Set before anything reads them; getSetting falls back to these live.
   process.env.OPENROUTER_API_KEY = "sk-or-check-not-a-real-key";
   process.env.OPENROUTER_BASE_URL = orServer.url;
-  // Claude must stay unconnected, or the selection never reaches ox-alpha.
+  // Claude must stay unconnected, or the selection never reaches OpenRouter.
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_BASE_URL;
   clearSettingsCache();
@@ -354,7 +370,7 @@ async function main() {
 
   process.env.OPENROUTER_BASE_URL = goneServer.url;
   clearSettingsCache();
-  // Scenario C left ox-alpha inside its cooldown, which would skip the vendor
+  // Scenario C left OpenRouter inside its cooldown, which would skip the vendor
   // before the 404 could be reached and make this a test of nothing.
   clearOpenRouterCooldown();
 
@@ -426,6 +442,14 @@ async function main() {
 
   await prisma.llmCall.deleteMany({ where: { purpose: { startsWith: "check.agentLoop" } } });
   // Put back exactly what was here: same rows, same encrypted values.
+  //
+  // Cleared first, and that is not belt and braces. This file *writes* one of
+  // the keys it snapshots — free models are switched off for these scenarios —
+  // so the row it deleted at the start is present again by the time it gets
+  // here, and a bare `createMany` collides on the unique key and takes the
+  // whole check down at the last line. A harness that restores rows has to
+  // clear them first, whatever it believes about what it left behind.
+  await prisma.appSetting.deleteMany({ where: { key: { in: VENDOR_SETTINGS } } });
   if (savedSettings.length > 0) await prisma.appSetting.createMany({ data: savedSettings });
   clearSettingsCache();
   await prisma.$disconnect();

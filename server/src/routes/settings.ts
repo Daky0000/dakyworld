@@ -23,6 +23,7 @@ import {
   describeProviders,
   describeRouting,
   freeLadder,
+  freeLadderSource,
   isModelJob,
   isPricedModel,
   isProviderKey,
@@ -204,7 +205,7 @@ async function describeAll(req: Request) {
       configured: Boolean(anthropicKey),
       envManaged: isEnvManaged(SETTING.ANTHROPIC_KEY),
       key: anthropicKey ? maskSecret(anthropicKey) : null,
-      // Who reads an imported sheet right now: ox-alpha by default, Claude
+      // Who reads an imported sheet right now: OpenRouter by default, Claude
       // standing in behind it, both changeable under AI models like every
       // other job. Sent whole so the panel can name the model actually doing
       // the reading and say why, when it is a stand-in.
@@ -862,10 +863,15 @@ settingsRouter.get("/models/openrouter/free", async (_req, res, next) => {
   try {
     const apiKey = await providerKey("openrouter");
     const ladder = await freeLadder();
+    // Three states, not two. See `LadderSource`: "three rungs" reads the same
+    // whether they are ours or the Owner's, and an empty ladder reads as
+    // unconfigured when it means switched off.
+    const source = await freeLadderSource();
     if (!apiKey) {
       return res.json({
         connected: false,
         ladder,
+        source,
         max: FREE_LADDER_MAX,
         models: [],
         stale: [],
@@ -888,6 +894,7 @@ settingsRouter.get("/models/openrouter/free", async (_req, res, next) => {
     res.json({
       connected: true,
       ladder,
+      source,
       max: FREE_LADDER_MAX,
       // Tool-capable first: an agent turn sends tool definitions, and a model
       // that cannot take them works for writing and fails every agent task.
@@ -910,12 +917,33 @@ settingsRouter.get("/models/openrouter/free", async (_req, res, next) => {
  */
 settingsRouter.put("/models/openrouter/free", async (req, res, next) => {
   try {
-    const input = z.object({ models: z.array(z.string().max(120)).max(FREE_LADDER_MAX) }).parse(req.body ?? {});
+    // `null` and `[]` are deliberately different, and conflating them is how a
+    // deploy would switch free models back on for somebody who turned them off.
+    // Null means *use whatever ships*; an empty array means *no free models,
+    // I mean it*.
+    const input = z.object({ models: z.array(z.string().max(120)).max(FREE_LADDER_MAX).nullable() }).parse(req.body ?? {});
+
+    if (input.models === null) {
+      await deleteSetting(SETTING.OPENROUTER_FREE_MODELS);
+      const shipped = await freeLadder();
+      return res.json({
+        ladder: shipped,
+        source: await freeLadderSource(),
+        note: `Back to the shipped ladder: ${shipped.join(" → ")}, then the paid floor. It is re-picked from your own catalogue on the next restart.`,
+      });
+    }
+
     const wanted = [...new Set(input.models.map((id) => id.trim()).filter(Boolean))];
 
     if (wanted.length === 0) {
-      await deleteSetting(SETTING.OPENROUTER_FREE_MODELS);
-      return res.json({ ladder: [], note: "Cleared. OpenRouter work goes to its own model again." });
+      // Stored, not deleted. A deleted row means "never decided" and would be
+      // filled with the shipped ladder on the next read.
+      await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
+      return res.json({
+        ladder: [],
+        source: await freeLadderSource(),
+        note: "Free models off. OpenRouter uses its own model and pays for every call.",
+      });
     }
 
     const apiKey = await providerKey("openrouter");
@@ -933,13 +961,14 @@ settingsRouter.put("/models/openrouter/free", async (req, res, next) => {
     const withoutTools = wanted.filter((id) => !byId.get(id)?.tools);
     res.json({
       ladder: wanted,
+      source: await freeLadderSource(),
       // Said rather than refused. A model with no tool support is a perfectly
       // good rung for writing and a dead one for an agent turn, and which of
       // those matters is the Owner's call, not this route's.
       note:
         withoutTools.length > 0
           ? `Saved. ${withoutTools.join(", ")} ${withoutTools.length === 1 ? "does" : "do"} not support tools, so ${withoutTools.length === 1 ? "it" : "they"} will fail an agent task and be skipped to the next rung — fine for writing, wasted on an agent.`
-          : "Saved. OpenRouter work goes down this ladder, and Claude finishes anything all of them refuse.",
+          : "Saved. OpenRouter work goes down this ladder, and the paid floor — Claude, then ChatGPT, then Gemini — finishes anything all of them refuse.",
     });
   } catch (err) {
     if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });

@@ -95,7 +95,7 @@ export const SETTING = {
   PERPLEXITY_KEY: "perplexity.apiKey",
   PERPLEXITY_MODEL: "perplexity.model",
   /**
-   * OpenRouter — one key that reaches **ox-alpha**, the default for every job
+   * OpenRouter — one key that reaches every model it lists, the default for every job
    * it can do. When it is not connected, or a call through it fails, the job
    * moves down the same chain as ever. See lib/models/registry.ts.
    */

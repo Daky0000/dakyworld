@@ -895,7 +895,7 @@ deploy stays the source of truth wherever you chose to make it one.
 | AI models — ChatGPT | https://platform.openai.com/api-keys | `OPENAI_API_KEY`, `OPENAI_MODEL` |
 | AI models — Gemini | https://aistudio.google.com/apikey | `GEMINI_API_KEY`, `GEMINI_MODEL` |
 | AI models — Perplexity | https://www.perplexity.ai/account/api/group | `PERPLEXITY_API_KEY`, `PERPLEXITY_MODEL` |
-| AI models — OpenRouter (ox-alpha) | https://openrouter.ai/settings/keys | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
+| AI models — OpenRouter | https://openrouter.ai/settings/keys | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
 | Google Drive | https://console.cloud.google.com/apis/credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` *(only behind a proxy that rewrites the host)* |
 | Payments (Stripe) | https://dashboard.stripe.com/apikeys | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | File storage (Cloudinary) | https://console.cloudinary.com | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
@@ -938,45 +938,60 @@ request host), and Google matches it character for character.
 ### Which model does what
 
 Under **Settings → AI models** every job the system asks a model for is listed
-with the model chosen for it. **ox-alpha, through one OpenRouter key, is the
-default for every job except drawing pictures:**
+with the model chosen for it. **OpenRouter, through one key, is the default for
+every job except drawing pictures:**
 
 | Job | Goes to | What it covers |
 |---|---|---|
-| Writing | ox-alpha (OpenRouter) | Every piece of prose — proposal copy, email drafts, ad concepts, page copy, cold outreach |
-| Reading sheets | ox-alpha (OpenRouter) | An imported spreadsheet of leads — where every table starts and stops and what each column means |
-| Sorting a prompt | ox-alpha (OpenRouter) | Filing a pasted instruction under the headings an agent prompt is made of |
-| Reading the post | ox-alpha (OpenRouter) | What an arriving email is, and whose job it is |
-| Web pages | ox-alpha (OpenRouter) | Complete HTML pages on the brand design system |
-| Research | ox-alpha (OpenRouter) | Who a prospect actually is, filling the blanks a scrape left behind |
-| Fact-checking | ox-alpha (OpenRouter) | Whether a draft's claims still hold |
-| Plain English | ox-alpha (OpenRouter) | Rewrites a draft to sound like a person wrote it |
-| Looking | ox-alpha (OpenRouter) | What a first-time visitor sees in a screenshot of their page |
+| Writing | OpenRouter | Every piece of prose — proposal copy, email drafts, ad concepts, page copy, cold outreach |
+| Reading sheets | OpenRouter | An imported spreadsheet of leads — where every table starts and stops and what each column means |
+| Sorting a prompt | OpenRouter | Filing a pasted instruction under the headings an agent prompt is made of |
+| Reading the post | OpenRouter | What an arriving email is, and whose job it is |
+| Web pages | OpenRouter | Complete HTML pages on the brand design system |
+| Research | OpenRouter | Who a prospect actually is, filling the blanks a scrape left behind |
+| Fact-checking | OpenRouter | Whether a draft's claims still hold |
+| Plain English | OpenRouter | Rewrites a draft to sound like a person wrote it |
+| Looking | OpenRouter | What a first-time visitor sees in a screenshot of their page |
 | Images | ChatGPT | Pictures for ads, social posts and mock-ups — the one job this app can only ask ChatGPT for |
 
+**Free models are tried first, and you do not have to set that up.** OpenRouter
+publishes models that cost nothing per token, and every job above — every agent
+turn included — starts on one of them. Three are tried in order; when one is
+busy, rate-limited or simply silent, the next is asked straight away rather than
+waited for. Only when all three have refused the work does anything get paid
+for. The three are picked from **your own account's catalogue** the first time
+the app starts with an OpenRouter key, so they are models you can actually
+reach, and you can change or reorder them under Settings → AI models — or turn
+free models off entirely, which is remembered and not undone by an update.
+
+**Then the best paid model of three.** When the free ladder is out, the work is
+finished by Claude, or by ChatGPT if Claude is busy or unreachable, or by Gemini
+if neither answers — whichever of the three you have connected, in that order. A
+run that has already done half its work is never lost because one vendor is rate
+limiting: it carries on where it left off, on somebody else.
+
 **One key is the whole configuration.** Paste an OpenRouter key into Settings →
-AI models and everything above moves onto ox-alpha; nothing else needs setting.
-**That includes the agents themselves** — an agent turn runs on ox-alpha when
-it is connected and falls back to Claude when it is not or when OpenRouter
-refuses the key mid-run, so rehearsals and task runs no longer need an
-Anthropic balance while ox-alpha is connected.
+AI models and everything above moves onto it; nothing else needs setting.
+**That includes the agents themselves** — an agent turn runs on the free ladder
+and falls back to whichever paid model is connected, so rehearsals and task runs
+no longer need an Anthropic balance at all.
 The key is checked against OpenRouter before it is stored, and the model id is
-checked against OpenRouter's own catalogue at the same moment — if `ox-alpha`
-is listed there under a different slug, the screen says so and names the
+checked against OpenRouter's own catalogue at the same moment — if the model is
+listed there under a different slug, the screen says so and names the
 closest ids rather than saving a route that would quietly fail over forever.
 
-**When ox-alpha isn't connected, or a call through it fails**, the job moves
+**When OpenRouter isn't connected, or a call through it fails**, the job moves
 down the same chain as ever — the declared fallback first, then every other
 vendor that can actually do the work — and what came back says who answered.
 No key at all and nothing changes from how the system has always behaved.
 
-**ox-alpha does not enforce JSON schemas, so the shape is written into its
-prompt.** Models on OpenRouter declare separately whether they take "some JSON"
-and whether they compile a schema and hold the answer to it; ox-alpha declares
-the first and not the second, and every job in this app describes what it wants
-*in its schema* — the field names, the allowed values, the instruction on each
-field. Left alone that meant ox-alpha being asked for a plan with no
-description of one anywhere in the request. The app now reads each model's own
+**Not every model enforces JSON schemas, so the shape is written into the
+prompt for the ones that do not.** Models on OpenRouter declare separately
+whether they take "some JSON" and whether they compile a schema and hold the
+answer to it; the shipped model declares the first and not the second, and every
+job in this app describes what it wants *in its schema* — the field names, the
+allowed values, the instruction on each field. Left alone that meant the model
+being asked for a plan with no description of one anywhere in the request. The app now reads each model's own
 declaration from OpenRouter and adapts: a model that enforces schemas gets the
 schema, one that does not gets the shape spelled out in words instead. Nothing
 to configure.
@@ -991,14 +1006,16 @@ name found for it instead of arriving as an empty group. **Every correction is
 listed at the top of the review screen** — these are exactly the boundaries
 worth checking against your file before you press Import.
 
-Two honest caveats. **Research and fact-checking answered by ox-alpha are not
-searched against the live web** — the result says so plainly, naming who
+Two honest caveats. **Research and fact-checking answered through OpenRouter
+are not searched against the live web** — the result says so plainly, naming who
 checked and against what, and Perplexity stays one step down those chains for
 when live sources matter more than the default does; put it back on either job
-with one dropdown. And **ox-alpha prices at the dearest rate we know of in the
-spend ledger until its real rate is added** to `models.pricing` or the pricing
-table — an unpriced model reading as free is how a budget ceiling gets
-bypassed, so the safe direction is taken until the true number is known.
+with one dropdown. And **a paid OpenRouter model prices at the dearest rate we
+know of in the spend ledger until its real rate is added** to `models.pricing`
+or the pricing table — an unpriced model reading as free is how a budget ceiling
+gets bypassed, so the safe direction is taken until the true number is known. A
+*free* rung is the exception: it is priced at zero deliberately, against the
+ladder rather than against a guess from the model's name.
 
 Each key is checked against its provider before it is stored, so a typo fails
 on the screen. Every call is priced and written to the spend ledger whichever

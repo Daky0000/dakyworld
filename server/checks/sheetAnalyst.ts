@@ -1,5 +1,5 @@
 /**
- * Does a lead sheet actually get read properly on ox-alpha?
+ * Does a lead sheet actually get read properly on the model serving it?
  *
  * Reading an imported spreadsheet was the one judgement job in this app still
  * hard-wired to Claude through its own private call path. Making it a routed
@@ -8,7 +8,7 @@
  * halves below both need pinning.
  *
  * **The wire.** `models/call.ts` sent no `reasoning_effort` at all, so every
- * routed job rode at ox-alpha's own default of max — triage included, which
+ * routed job rode at the model's own default of max — triage included, which
  * asks for `low` in so many words and runs once per *arriving* message. And
  * `max_tokens` caps reasoning *plus* reply on an OpenAI-shaped wire, so the
  * analyst's 16,000 could be spent thinking before a character of the plan was
@@ -328,7 +328,7 @@ Let me know if you would like it changed.`
 
   // --- The mapping ---------------------------------------------------------
   //
-  // ox-alpha offers low/high/max and its own default is max, so our `low` must
+  // The shipped OpenRouter model offers low/high/max and its own default is max, so our `low` must
   // not become max by omission and our `high` must not fall through to low.
   console.log("\nHow hard it is asked to think");
   check("low stays low", reasoningEffortFor("low") === "low");
@@ -345,7 +345,7 @@ Let me know if you would like it changed.`
   const analysis = await analyzeGrids([GRID as any], hints);
   const sent = orBodies.at(-1);
 
-  check("ox-alpha served it, under its shipped slug", sent?.model === SHIPPED, String(sent?.model));
+  check("OpenRouter served it, under its shipped slug", sent?.model === SHIPPED, String(sent?.model));
   check("it was not quietly handed to the stand-in", analysis.note === null, String(analysis.note));
   check("the effort reaches the wire at all", typeof sent?.reasoning_effort === "string", JSON.stringify(sent?.reasoning_effort));
   check("reading a sheet is asked for at max, not left to the default", sent?.reasoning_effort === "max", String(sent?.reasoning_effort));
@@ -355,7 +355,7 @@ Let me know if you would like it changed.`
     String(sent?.max_tokens),
   );
   // The defect that made the analyst look like it had simply got worse.
-  // ox-alpha declares `response_format` and NOT `structured_outputs`, so
+  // The shipped OpenRouter model declares `response_format` and NOT `structured_outputs`, so
   // OpenRouter drops a `json_schema` sent to it — and every caller in this app
   // describes its answer entirely in the schema. The sheet analyst's system
   // prompt says "return a plan" and never says what a plan looks like, so the
@@ -402,13 +402,13 @@ Let me know if you would like it changed.`
   // A run that spends its whole budget reasoning comes back empty with
   // `finish_reason: "length"`. That must not lose the import: it is exactly the
   // case another vendor handles, and the Owner must be told a stand-in did it.
-  console.log("\nWhen ox-alpha runs out of room");
+  console.log("\nWhen the OpenRouter model runs out of room");
   orTruncates = true;
   const covered = await analyzeGrids([GRID as any], hints);
   orTruncates = false;
   check("the sheet is still read", covered.plan.tables.length > 0);
   check("...by the stand-in, over the Anthropic wire", anthropicBodies.length === 1, `${anthropicBodies.length} calls`);
-  check("...and the handover is said out loud", covered.note !== null && covered.note.includes("ox-alpha"), String(covered.note));
+  check("...and the handover is said out loud", covered.note !== null && covered.note.includes(PROVIDERS.openrouter.name), String(covered.note));
 
   // OpenRouter fronts arbitrary models and not all of them answer with a
   // plain string. This used to reach `.trim()` as an array and throw an
@@ -420,7 +420,7 @@ Let me know if you would like it changed.`
   const inParts = await analyzeGrids([GRID as any], hints);
   orAnswersInParts = false;
   check("the plan is still read", inParts.plan.tables.length === 2, `${inParts.plan.tables.length} tables`);
-  check("...on ox-alpha, without falling through to the stand-in", inParts.note === null, String(inParts.note));
+  check("...on OpenRouter, without falling through to the stand-in", inParts.note === null, String(inParts.note));
 
   // A model told to return JSON rather than held to it answers with a sentence
   // of preamble often enough to matter. Rejecting that costs a second vendor
@@ -432,7 +432,7 @@ Let me know if you would like it changed.`
   const wrapped = await analyzeGrids([GRID as any], hints);
   orAddsPreamble = false;
   check("the plan is still read", wrapped.plan.tables.length === 1, `${wrapped.plan.tables.length} tables`);
-  check("...on ox-alpha, without paying a second vendor to redo it", wrapped.note === null, String(wrapped.note));
+  check("...on OpenRouter, without paying a second vendor to redo it", wrapped.note === null, String(wrapped.note));
 
   // --- The plan ------------------------------------------------------------
 

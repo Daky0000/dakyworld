@@ -107,7 +107,7 @@ as descriptions; nothing in one is ever executed.
 
 **Models are chosen by job, never by vendor** — `src/lib/models/`. A caller
 says `callModel({ job: "text" })` and the routing decides who serves it:
-**ox-alpha through OpenRouter is the shipped default for every job except
+**OpenRouter is the shipped default for every job except
 images**, ChatGPT draws, and Perplexity researches companies, checks facts
 against live sources and rewrites drafts into plain English when it is asked
 for by name. **A job whose chosen vendor has no key — or whose call fails
@@ -121,26 +121,56 @@ Two things about the OpenRouter half: **the model id is verified against
 OpenRouter's own catalogue at key-save time** (`verifyProviderKey` reads
 `GET /models`, free and authenticated), so a slug that isn't listed fails on
 the screen with the closest matches named rather than becoming a month of
-calls that quietly failed over; and **ox-alpha has no published rate in either
-pricing table**, so it prices at the dearest known rate in the ledger until
-one is added — the safe direction for a ceiling, worth remembering before
-concluding the budget is being spent too fast.
+calls that quietly failed over; and **the shipped OpenRouter model has no
+published rate in either pricing table**, so it prices at the dearest known
+rate in the ledger until one is added — the safe direction for a ceiling,
+worth remembering before concluding the budget is being spent too fast. (A
+*free* rung is the exception and is priced at zero explicitly; see below.)
 
-**The free ladder: three free models, then the paid floor** —
-`openrouter.freeModels`, `freeLadder()` in `registry.ts`. OpenRouter publishes
-models that cost nothing per token. They are real models and they are also the
-least reliable thing available: a free endpoint is shared, so it queues,
-rate-limits, and some of the time simply does not answer. One of them as *the*
-model is a system that stops working at busy times; three in a row with Claude
-behind them is a system that costs nothing most days and never stops.
+**The vendor is called "OpenRouter", not after its model.** It was named
+"ox-alpha" after the one model it served, and that stopped being true twice
+over: the slug was a stealth listing OpenRouter retired without notice, and the
+vendor now climbs a ladder of free models before anything else, so there is no
+single model to name it after. "ox-alpha isn't connected" sent somebody looking
+for a model when what was missing was a key.
 
+**The free ladder: three free models, then the best paid one of three** —
+`openrouter.freeModels`, `freeLadder()` and `PAID_AGENT_CHAIN` in `registry.ts`.
+OpenRouter publishes models that cost nothing per token. They are real models
+and they are also the least reliable thing available: a free endpoint is shared,
+so it queues, rate-limits, and some of the time simply does not answer. One of
+them as *the* model is a system that stops working at busy times; three in a row
+with a paid floor behind them is a system that costs nothing most days and never
+stops.
+
+- **It is on by default, and that was the whole point of it.** It shipped as an
+  opt-in on 28 Aug 2026 and was switched on by default the next day: an opt-in
+  nobody has opted into is a feature that does nothing, and a deployment that
+  never opened the Settings screen was paying for every agent turn while three
+  free models sat there. `DEFAULT_FREE_LADDER` is the seed; `ensureFreeLadder()`
+  replaces it at the first boot that has a key with the three best free
+  tool-capable models **the account's own catalogue lists**, because a free slug
+  written down in a source file is the most perishable id OpenRouter publishes.
+- **Unset, empty and unreadable are three different states**, and conflating any
+  two of them is a money bug. Unset is the shipped ladder; a stored `[]` is free
+  models deliberately off and must survive a deploy; an unreadable row falls back
+  to the shipped ladder rather than quietly starting to pay for things.
+- **The paid floor is Claude, then ChatGPT, then Gemini** — the best of three,
+  not one named vendor. A floor of one under a ladder built entirely out of
+  endpoints that fail is a single point of failure in the place least able to
+  afford one: a run that survived three busy free models and then met a
+  rate-limited Claude died with two connected vendors sitting unasked. The agent
+  loop speaks all three wires — OpenAI chat completions for OpenRouter *and*
+  ChatGPT, the SDK for Anthropic, `:generateContent` for Gemini — and translates
+  each into the loop's Anthropic-shaped state, so a conversation can start on a
+  free rung and finish on Gemini with the checkpoint intact.
 - **The ladder replaces OpenRouter's model, it does not precede it.** Slipping
-  a paid call in between the free rungs and Claude would be a bill nobody asked
-  for at exactly the moment free capacity was short. Empty, and **nothing about
-  the model layer changes** — which is asserted, because a 429 without a ladder
-  still requeues the task rather than moving the bill to Claude, and that
-  deliberate difference for one status is the thing most likely to get
-  flattened into agreement by somebody reading one branch.
+  a paid call in between the free rungs and the floor would be a bill nobody
+  asked for at exactly the moment free capacity was short. Switched off, and
+  **nothing about the model layer changes** — which is asserted, because a 429
+  with free models off still requeues the task rather than moving the bill to a
+  paid vendor, and that deliberate difference for one status is the thing most
+  likely to get flattened into agreement by somebody reading one branch.
 - **A rung gets one attempt and a short clock**, where the paid floor keeps the
   patient behaviour. Waiting out a queue is right when the vendor is the only
   one who can do this and wrong when the next free model is one line down:
@@ -154,15 +184,16 @@ behind them is a system that costs nothing most days and never stops.
   implementations of the same wire: `callModel` for one-shot work and
   `runAgentLoop` for an agent turn. A ladder in one and not the other works for
   writing an email and does nothing for the workforce.
-- **A rung is priced at zero, from the stored list rather than from the id.**
+- **A rung is priced at zero, from the ladder rather than from the id.**
   Most free ids end in `:free` and not all do, and a naming convention is not a
-  price — nothing reaches the list without having been checked against
+  price — nothing reaches the *stored* list without having been checked against
   OpenRouter's catalogue and found free at both ends, and the Settings screen
   re-checks so a model that stops being free is named rather than quietly
-  charged for. Left unpriced it would fall through to the floor rate, which is
-  deliberately the dearest we know of: a free day would read as the most
-  expensive one this company has ever had and trip every ceiling on money
-  nobody spent.
+  charged for. The shipped seed is the one list nothing has checked, which is
+  why every id in it ends in `:free` and why a check asserts that. Left unpriced
+  a rung would fall through to the floor rate, which is deliberately the dearest
+  we know of: a free day would read as the most expensive one this company has
+  ever had and trip every ceiling on money nobody spent.
 - The picker reads the account's own catalogue, marks which models accept
   `tools`, and says so — a model without them writes perfectly well and fails
   every agent task.
@@ -174,13 +205,17 @@ that exists to save a run would have died on the model name. It survived because
 the harness's fake Anthropic echoes a Claude id whatever it is asked for, so
 "Claude finished the run" passed while the request said otherwise;
 `checks/agentLoopOpenRouter.ts` now reads the model out of the **request body**.
-And `BASE` in `call.ts` was captured at import while `openRouterBase()` in
-`claudeAgent.ts` is read per call, so a harness repointing a vendor between
+And `BASE` in `call.ts` was captured at import while the agent loop's own
+`openRouterBase()` was read per call, so a harness repointing a vendor between
 scenarios got a frozen address in one half and a live one in the other — a check
 that passes while testing nothing, and on a machine with a real key one that
-spends money. Both halves read per call now.
+spends money. There is now **one** function, `vendorBase()` in `registry.ts`,
+imported by both halves: two correct copies of the same fact are one copy away
+from two different facts, and this pair has already been there once.
 
-`checks/freeModels.ts` (25) drives both paths against local fakes.
+`checks/freeModels.ts` (40) drives both paths against local fakes, including the
+whole floor — three free rungs, a refused Claude, a broken ChatGPT, and Gemini
+finishing the run over a third wire.
 
 **The chain is not decoration — a two-step fallback had a hole in it.** `vision`
 is routed to ChatGPT and fell back to Claude only, so a deployment holding a
@@ -967,22 +1002,27 @@ only the tools its `toolkit` grants, and turns a manual tool-use loop
 goes through `invokeTool`, so the gate is unchanged.
 
 **An agent turn is a job like any other, and it routes like one.** The loop
-itself picks its vendor: ox-alpha through OpenRouter first, Claude the floor,
-and a rehearsal dies no more on an empty Anthropic balance while ox-alpha sits
-connected. A **key-level refusal** (401/402/403) hands the run to Claude
-mid-flight — nothing has been spent yet, so the same turn is retried there —
-and puts ox-alpha on a 15-minute cooldown so the resumes behind it start on
-Claude instead of each paying one call into the same refusal. Rate limits and
-timeouts still throw and requeue, exactly as before. The loop's internal state
-stays Anthropic-shaped throughout: `openRouterTurn()` translates at the wire
-(Anthropic blocks out as OpenAI chat messages, tool results back keyed by call
-id), so a checkpoint written by one vendor resumes on the other, and the effort
-travels as `reasoning_effort` mapped onto what ox-alpha accepts — low stays
+itself picks its vendor: **OpenRouter first and free first** — it climbs the
+three rungs of the free ladder before anything is paid for — then the paid
+floor, which is Claude, then ChatGPT, then Gemini, whichever of them has a key.
+A rehearsal dies no more on an empty Anthropic balance while free capacity sits
+there unasked. There is **one** place in the loop that decides what a failure
+means, for all four vendors: a rung that did not serve climbs to the next rung;
+an exhausted ladder hands on to the floor **including on a 429**; a paid vendor
+hands on for anything at all; and OpenRouter with free models switched off keeps
+the old, narrower rule so a rate limit still requeues rather than moving the
+bill. A **key-level refusal** (401/402/403) also puts OpenRouter on a 15-minute
+cooldown so the resumes behind it start at the floor instead of each paying one
+call into the same refusal. The loop's internal state stays Anthropic-shaped
+throughout: `chatCompletionsTurn()` and `geminiTurn()` translate at the wire, so
+a checkpoint written by one vendor resumes on another, and the effort travels as
+`reasoning_effort` mapped onto what the OpenRouter model accepts — low stays
 low, medium steps up to high, high rides at max, because the model's own
 default is max and leaving it unset would put headline-depth reasoning under
 every economy run. `checks/agentLoopOpenRouter.ts` drives the real loop against
 a fake OpenRouter and pins the wire shape, the checkpoint shape and the
-handover.
+handover; it switches free models **off** for its own scenarios, because the
+ladder has its own file and this one is about the wire.
 
 **Check `result.dryRun` before `result.refusedReason`.** A dry run carries a
 `refusedReason` too — it is the sentence explaining *why* the call was
@@ -1224,6 +1264,44 @@ Graphic Designer, Video Editor, Ad Designer, Proposal Writer, Cold Lead Writer
 and the rest, each with `skills` (a client's words, matched by a router)
 separate from `toolkit` (a permission). Both kinds seed at autonomy 1 with dry
 run on, and the create route cannot say otherwise.
+
+**A prompt is a document with parts, and every agent works the same four
+passes** — `METHOD` in `agents/runner.ts`, `LAYER_HEADINGS` in
+`agents/authored.ts`, and the `process` layer of all 51 seeds, rewritten
+29 Aug 2026.
+
+This is the other half of putting free models first. A strong model reads a
+paragraph of craft doctrine and *infers* the procedure — look at the record
+before deciding, put a source under a figure, re-read a draft before handing it
+over. A weaker one does the thing the paragraph talks about and skips the
+procedure nobody wrote down, and the failure reads as carelessness rather than
+as a missing instruction: an agent that answered from the brief without opening
+the record, a number with nothing under it, a letter nobody checked. Every agent
+turn now starts on a free model, so the procedure has to be written down.
+
+- **`METHOD` is four named passes — Establish, Decide, Produce, Verify — given
+  to every agent, seeded or hired**, as its own labelled region of the prompt.
+  Four rather than ten because a list long enough to be complete is a list a
+  model skims. It says **nothing** about tools, escalation, memory or who to
+  ask: all four already have paragraphs in the working region, and a prompt that
+  says the same thing twice in two sets of words is how a model ends up
+  averaging two instructions into neither.
+- **The ten layers are joined under headings now**, not as ten anonymous
+  paragraphs in which the rule about money, the definition of finished and the
+  description of the craft all look alike. It costs about thirty tokens and it
+  is what lets `METHOD` say "one finished thing, of the kind named under *What
+  you produce*" and have that mean something. The words are untouched; this is
+  layout.
+- **Every seed's `process` is an ordered workflow**, numbered, ending where the
+  craft ends rather than trailing off. The judgement that was already in them is
+  kept sentence for sentence — it was the good part — and what was added is the
+  order, the first step naming what to read, and the step that was missing.
+  `outreach.writer` and `outreach.followup` are deliberately untouched: their
+  `process` is the shipped outreach doctrine, rebuilt from the skill libraries
+  on 22 Aug at the founder's instruction, and it is prose for a reason.
+- **Nothing needed a migration.** `refreshUneditedSeedPrompts()` runs on every
+  boot and carries a changed seed onto any agent whose wording the Owner has not
+  rewritten — 48 of the 51 on the first run, with the other three unchanged.
 
 **One agent, one job — one *deliverable*, not one department.** Applied to the
 whole roster in Aug 2026, which is where eighteen of the specialists came from.

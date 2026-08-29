@@ -1,8 +1,10 @@
 import { AnalystError, callClaude, forStructuredOutput, type Effort, type FailureKind, type PromptImage } from "../claude.js";
 import { costOf, rateFor, type ModelRate } from "../claudePricing.js";
 import { recordLlmCall } from "../llmLedger.js";
-import { SETTING, getSetting } from "../settings.js";
+import { SETTING, getSetting, setSetting } from "../settings.js";
 import {
+  DEFAULT_FREE_LADDER,
+  FREE_LADDER_MAX,
   JOBS,
   PROVIDERS,
   PROVIDER_PRICING,
@@ -17,6 +19,7 @@ import {
   routeFor,
   serveChain,
   tokensWithReasoning,
+  vendorBase,
   type ModelJob,
   type ProviderKey,
 } from "./registry.js";
@@ -47,30 +50,20 @@ import {
 /**
  * Where each vendor lives, read **per call** rather than captured at import.
  *
- * It was an object built once at module load, which is the same fact
- * `openRouterBase()` in `claudeAgent.ts` reads per call — and the two halves of
- * the model layer disagreeing about the same environment variable is the bug
- * this shape prevents. A harness that repoints a vendor between scenarios got a
- * frozen address here and a live one there, so the same fake served the agent
- * loop and was silently bypassed by the one-shot path, which then reached
- * whatever the default host is. That is a check that passes while testing
- * nothing, and on a machine with a real key it is a check that spends money.
+ * It was an object built once at module load, which is the same fact the agent
+ * loop reads per call — and the two halves of the model layer disagreeing about
+ * the same environment variable is the bug this shape prevents. A harness that
+ * repoints a vendor between scenarios got a frozen address here and a live one
+ * there, so the same fake served the agent loop and was silently bypassed by
+ * the one-shot path, which then reached whatever the default host is. That is a
+ * check that passes while testing nothing, and on a machine with a real key it
+ * is a check that spends money.
+ *
+ * Now **one** function, in `registry.ts`, imported by both halves. Two correct
+ * copies of the same fact is one copy away from two different facts, and this
+ * pair has already been there once.
  */
-function base(vendor: "openai" | "gemini" | "perplexity" | "openrouter"): string {
-  const fromEnv = {
-    openai: process.env.OPENAI_BASE_URL,
-    gemini: process.env.GEMINI_BASE_URL,
-    perplexity: process.env.PERPLEXITY_BASE_URL,
-    openrouter: process.env.OPENROUTER_BASE_URL,
-  }[vendor];
-  const fallback = {
-    openai: "https://api.openai.com/v1",
-    gemini: "https://generativelanguage.googleapis.com/v1beta",
-    perplexity: "https://api.perplexity.ai",
-    openrouter: "https://openrouter.ai/api/v1",
-  }[vendor];
-  return fromEnv?.replace(/\/$/, "") || fallback;
-}
+const base = vendorBase;
 
 /** Long enough for a page of HTML, short enough that a hung vendor doesn't hold a task open. */
 const TIMEOUT_MS = 180_000;
@@ -517,8 +510,17 @@ async function callGemini(apiKey: string, model: string, request: ModelRequest):
   };
 }
 
-/** Drops the keywords Gemini's schema dialect rejects. Recursive, and non-destructive. */
-function forGemini(schema: unknown): unknown {
+/**
+ * Drops the keywords Gemini's schema dialect rejects. Recursive, and
+ * non-destructive.
+ *
+ * Exported because the agent loop needs the same translation for a different
+ * schema: a *tool declaration*. Gemini rejects `additionalProperties` with a
+ * 400 rather than ignoring it, and every tool schema in this app is closed —
+ * so without this, handing an agent turn to Gemini would fail on the tool
+ * definitions before the model saw a word of the task.
+ */
+export function forGemini(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(forGemini);
   if (!schema || typeof schema !== "object") return schema;
 
@@ -706,7 +708,8 @@ function schemaContract(schema: unknown): string {
  * it.** Both were missing here, and both were invisible. `effort` is not an
  * OpenAI parameter, so every routed job — triage included, which asks for
  * `low` in so many words and runs once per *arriving* message — rode at
- * ox-alpha's own default of max. And `max_tokens` caps reasoning *plus* reply
+ * the model's own default, which on the shipped one is max. And `max_tokens`
+ * caps reasoning *plus* reply
  * on this wire, so the sheet analyst's 16,000 could be spent thinking before a
  * character of the plan was written, and what came back was an empty message
  * with `finish_reason: "length"` — read here, correctly, as "produced nothing
@@ -1095,7 +1098,7 @@ function stripFence(text: string): string {
  * Two attempts, in order of trust. The plain parse is what a vendor enforcing
  * a schema always gives. The second is for a model that was *asked* for JSON
  * rather than held to it — which is now a supported case rather than an
- * accident, because ox-alpha does not compile schemas — and which answers with
+ * accident, because the shipped OpenRouter model does not compile schemas — and which answers with
  * a sentence of preamble often enough to be worth six lines here. The
  * alternative is a rejected reply, a second vendor paid to redo the work, and
  * "the analyst's plan could not be read" put in front of the Owner.
@@ -1292,6 +1295,87 @@ export async function listOpenRouterModels(apiKey: string): Promise<OpenRouterMo
     });
   }
   return models;
+}
+
+/**
+ * Picks the free ladder from the account's own catalogue, the first time there
+ * is a key to read it with.
+ *
+ * `DEFAULT_FREE_LADDER` is a seed written into a source file, and a free model
+ * id is the most perishable thing OpenRouter publishes: the `:free` variant is
+ * withdrawn, the model is renamed, the provider stops offering it. A seed is
+ * therefore right for the first boot and wrong for the sixth month, and the
+ * only list that is right in the sixth month is the one the account itself
+ * returns.
+ *
+ * **Only ever when the Owner has stored nothing.** A stored ladder is a
+ * decision — including a stored *empty* one, which means "no free models,
+ * deliberately" — and this must never overwrite either. It runs once in the
+ * life of a deployment, at the first boot that has a key, and after that the
+ * setting exists and this returns null forever.
+ *
+ * **Tool-capable only.** An agent turn sends tool definitions. A free model
+ * that cannot take them answers 400 and is skipped to the next rung, which
+ * works but wastes a call on every single agent task — and writing is served
+ * perfectly well by a model that also does tools, so there is nothing to trade
+ * off.
+ *
+ * **Three different houses where possible.** Free capacity goes short one
+ * provider at a time: three variants from the same house is one rung wearing
+ * three hats, and it fails as one. The seeds that are still free and still
+ * take tools keep their places first — they were chosen deliberately — and the
+ * rest of the ladder is filled from the widest-context models of houses not
+ * already on it.
+ *
+ * Never fatal. OpenRouter being unreachable at boot is not a reason to fail a
+ * deploy; the seed serves until the next one.
+ */
+export async function ensureFreeLadder(): Promise<{ ladder: string[]; from: "catalogue" } | null> {
+  const stored = await getSetting(SETTING.OPENROUTER_FREE_MODELS);
+  if (stored?.trim()) return null;
+
+  const apiKey = await providerKey("openrouter");
+  if (!apiKey) return null;
+
+  let models: OpenRouterModel[];
+  try {
+    models = await listOpenRouterModels(apiKey);
+  } catch (err) {
+    console.warn(`[models] could not read OpenRouter's catalogue to pick the free ladder — the shipped one stands: ${(err as Error).message}`);
+    return null;
+  }
+
+  const usable = models.filter((model) => model.free && model.tools);
+  if (usable.length === 0) {
+    console.warn("[models] OpenRouter lists no free model that supports tools — the shipped ladder stands.");
+    return null;
+  }
+
+  const byId = new Map(usable.map((model) => [model.id, model]));
+  const house = (id: string) => id.split("/")[0] ?? id;
+
+  const ladder: string[] = [];
+  const houses = new Set<string>();
+  const take = (id: string) => {
+    if (ladder.length >= FREE_LADDER_MAX || ladder.includes(id)) return;
+    ladder.push(id);
+    houses.add(house(id));
+  };
+
+  // The seeds first, where they have survived.
+  for (const id of DEFAULT_FREE_LADDER) if (byId.has(id)) take(id);
+
+  // Then the widest-context free models, one house at a time, and only then a
+  // second from a house already represented.
+  const rest = usable
+    .filter((model) => !ladder.includes(model.id))
+    .sort((a, b) => (b.context ?? 0) - (a.context ?? 0) || a.id.localeCompare(b.id));
+  for (const model of rest) if (!houses.has(house(model.id))) take(model.id);
+  for (const model of rest) take(model.id);
+
+  await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(ladder));
+  console.log(`[models] free ladder picked from OpenRouter's catalogue: ${ladder.join(", ")}`);
+  return { ladder, from: "catalogue" };
 }
 
 export async function verifyProviderKey(provider: ProviderKey, apiKey: string, modelChoice?: string): Promise<{ model: string }> {

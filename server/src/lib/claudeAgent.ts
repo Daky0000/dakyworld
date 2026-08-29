@@ -2,8 +2,19 @@ import Anthropic from "@anthropic-ai/sdk";
 import { recordLlmCall } from "./llmLedger.js";
 import { AnalystError, analystKey, type Effort } from "./claude.js";
 import { costOf, modelForEffort, type ModelRate } from "./claudePricing.js";
-import { PROVIDER_PRICING, freeLadder, providerConfigured, providerKey, providerModel, reasoningEffortFor, requestFee } from "./models/registry.js";
-import { rateForModel } from "./models/call.js";
+import {
+  PAID_AGENT_CHAIN,
+  PROVIDERS,
+  PROVIDER_PRICING,
+  freeLadder,
+  providerConfigured,
+  providerKey,
+  providerModel,
+  reasoningEffortFor,
+  requestFee,
+  vendorBase,
+} from "./models/registry.js";
+import { forGemini, rateForModel } from "./models/call.js";
 
 /**
  * The agent loop.
@@ -254,49 +265,60 @@ function rejectedTheBeta(err: unknown): boolean {
 }
 
 
-// --- The OpenRouter wire ----------------------------------------------------
+// --- The wires --------------------------------------------------------------
 
 /**
- * An agent turn over OpenRouter, translated at the edge.
+ * An agent turn over somebody other than Anthropic, translated at the edge.
  *
  * The loop's whole internal state — messages, checkpoints, tool calls — is
  * Anthropic-shaped, because that is the shape it was born in and the shape
- * every checkpoint already saved is in. Rather than a second loop with a
- * second state format (two loops drift, and a checkpoint written by one is
+ * every checkpoint already saved is in. Rather than a loop per vendor with a
+ * state format per vendor (they drift, and a checkpoint written by one is
  * unreadable by the other), this translates at the wire: Anthropic blocks go
- * out as OpenAI chat messages, and what comes back comes back as Anthropic
+ * out in the vendor's shape, and what comes back comes back as Anthropic
  * blocks. A run can start on one vendor and finish on another without
- * anything between the two caring.
+ * anything between the two caring — which is the entire reason a free rung can
+ * hand a half-finished conversation to a paid model and have it carry on.
  *
- * Three things are deliberately dropped on this wire:
+ * Three things are deliberately dropped on the chat-completions wire:
  *
- * - **Cache breakpoints.** OpenRouter exposes no equivalent, so marking
- *   nothing costs nothing.
- * - **Thinking blocks.** ox-alpha reasons server-side and returns only the
+ * - **Cache breakpoints.** Neither OpenRouter nor OpenAI exposes an
+ *   equivalent, so marking nothing costs nothing.
+ * - **Thinking blocks.** These models reason server-side and return only the
  *   answer, so they never enter the conversation here — and a conversation
  *   resumed from Claude carries them harmlessly, because they are skipped
  *   rather than sent.
  * - **`output_config.effort`.** Not an OpenAI parameter. The effort travels
- *   instead as `reasoning_effort`, mapped onto what ox-alpha accepts (it
- *   offers low/high/max, not our medium): low stays low, medium steps up to
- *   high, and everything above rides at max. Named explicitly because the
- *   model's own default is **max** — leaving it unset would put headline-depth
- *   reasoning under every economy run.
+ *   instead as `reasoning_effort`. See `reasoningEffortFor`, and the note
+ *   there about `max` being one vendor's word rather than a standard one.
  */
-
-type AgentVendor = "openrouter" | "anthropic";
 
 /**
- * The OpenRouter root, honouring `OPENROUTER_BASE_URL` — the same answer
- * `BASE.openrouter` gives in models/call.ts, restated here because the loop
- * speaks its own wire rather than going through that file's adapters. Read
- * per call rather than captured at import, so a check can repoint it between
- * runs; if the two ever disagree, one of them is wrong, and the env var is
- * the shared truth.
+ * Who can run an agent turn.
+ *
+ * Four rather than two as of 28 Aug 2026. OpenRouter goes first and climbs its
+ * free ladder; when every free rung has refused the work, the paid floor
+ * finishes it, and the floor is now **the best of three** rather than
+ * Anthropic alone. See `PAID_AGENT_CHAIN` in models/registry.ts for the order
+ * and why it is that order.
+ *
+ * Perplexity is not here and never will be: it searches the live web and does
+ * not take tool definitions, so an agent turn on it is a turn with no tools,
+ * which is not an agent.
  */
-function openRouterBase(): string {
-  return process.env.OPENROUTER_BASE_URL?.replace(/\/$/, "") || "https://openrouter.ai/api/v1";
-}
+type AgentVendor = "openrouter" | "anthropic" | "openai" | "gemini";
+
+/** The three that speak a wire this file writes by hand. Anthropic has an SDK. */
+type FetchVendor = Exclude<AgentVendor, "anthropic">;
+
+/**
+ * The two vendors whose wire is OpenAI chat completions.
+ *
+ * One function serves both, and that is the point of putting ChatGPT on the
+ * paid floor before Gemini: the step from a free OpenRouter rung to a paid
+ * OpenAI model is a different base URL and a different key, and nothing else.
+ */
+type ChatCompletionsVendor = "openrouter" | "openai";
 
 /**
  * The statuses that mean this vendor cannot serve this request at all.
@@ -312,7 +334,7 @@ function openRouterBase(): string {
  * 400 is here for the same reason `callModel` treats it as "refused the request
  * shape": a parameter one model will not take is routine for the next. This
  * matters more than it looks after a model swap — `reasoningEffortFor` sends
- * ox-alpha's own `max`, which is not an OpenAI-standard effort, so a
+ * the shipped model's own `max`, which is not an OpenAI-standard effort, so a
  * replacement model that rejects it would have taken every high-effort task
  * down with it. It costs at most one extra call, and the sentence that comes
  * back then names both vendors instead of one.
@@ -326,7 +348,7 @@ function openRouterBase(): string {
 const CANNOT_SERVE_STATUSES = [400, 401, 402, 403, 404];
 
 /**
- * How long a refused ox-alpha key sits out.
+ * How long a refused OpenRouter key sits out.
  *
  * Long enough that the resumes a failed run leaves behind start on Claude
  * instead of each paying one wasted call into the same refusal; short enough
@@ -391,7 +413,8 @@ interface WireTurn {
 }
 
 /**
- * Our effort word onto ox-alpha's three. See the block comment above.
+ * Our effort word onto the three the OpenRouter model takes. See the block
+ * comment above.
  *
  * It lives in `models/registry.ts` with the other vendor facts now, because
  * the one-shot half of the model layer needs the same answer and was sending
@@ -460,24 +483,36 @@ function toOpenAiMessages(system: string, messages: Anthropic.Beta.BetaMessagePa
   return wire;
 }
 
-class OpenRouterError extends Error {
+/**
+ * A turn that did not happen, with the vendor's own status on it.
+ *
+ * One class for all three fetch vendors rather than one each. What the loop
+ * does about a failure depends on the *status* and on what else is connected,
+ * never on which company answered — a 402 is an empty balance whoever sent it,
+ * and writing that decision out three times is how the three copies come to
+ * disagree. `vendor` rides along so the sentence a person reads names who
+ * refused.
+ */
+class WireError extends Error {
   constructor(
     readonly status: number,
+    readonly vendor: FetchVendor,
     message: string,
   ) {
     super(message);
-    this.name = "OpenRouterError";
+    this.name = "WireError";
   }
 }
 
 /**
- * One turn, out and back.
+ * One turn, out and back, over OpenAI chat completions.
  *
  * Errors are left typed rather than mapped here: whether a refusal means
- * "fall back to Claude" or "lose the run" is the caller's decision, and it
+ * "try the next model" or "lose the run" is the caller's decision, and it
  * depends on what else is connected.
  */
-async function openRouterTurn(args: {
+async function chatCompletionsTurn(args: {
+  vendor: ChatCompletionsVendor;
   apiKey: string;
   model: string;
   system: string;
@@ -502,12 +537,13 @@ async function openRouterTurn(args: {
 
   let response: Response;
   try {
-    response = await fetch(`${openRouterBase()}/chat/completions`, {
+    response = await fetch(`${vendorBase(args.vendor)}/chat/completions`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${args.apiKey}`,
         "content-type": "application/json",
-        // Optional attribution OpenRouter asks for; changes nothing about the call.
+        // Optional attribution OpenRouter asks for; ignored by OpenAI and
+        // changes nothing about either call.
         "x-title": "Dakyworld OS",
       },
       body: JSON.stringify(body),
@@ -520,7 +556,7 @@ async function openRouterTurn(args: {
     // not answer* — which is the commonest thing a free rung does and the
     // exact case the ladder exists for. Left raw, a free model that hung took
     // the whole run down while two more sat unasked.
-    throw new OpenRouterError(504, `${args.model} did not answer: ${(err as Error).message}`);
+    throw new WireError(504, args.vendor, `${args.model} did not answer: ${(err as Error).message}`);
   }
 
   if (!response.ok) {
@@ -528,10 +564,10 @@ async function openRouterTurn(args: {
     // The prepaid trap, said where it bites: a 402 mid-run reads like a bug
     // when it is a balance.
     const hint =
-      response.status === 402
+      response.status === 402 && args.vendor === "openrouter"
         ? " OpenRouter is prepaid: this means the account is out of credits, not that anything is broken — top up at openrouter.ai/credits."
         : "";
-    throw new OpenRouterError(response.status, `${detail}${hint}`);
+    throw new WireError(response.status, args.vendor, `${detail}${hint}`);
   }
 
   const payload = (await response.json().catch(() => null)) as {
@@ -577,12 +613,167 @@ async function openRouterTurn(args: {
   };
 }
 
+// --- The Gemini wire --------------------------------------------------------
+
+/**
+ * The conversation as Gemini `contents`.
+ *
+ * Gemini is the one paid vendor on the floor whose shape is genuinely
+ * different: roles are `user` and `model` rather than `user` and `assistant`,
+ * a tool call is a `functionCall` part inside the model's own turn rather than
+ * a sibling field, and a tool result is a `functionResponse` part in a **user**
+ * turn rather than a message with a role of its own.
+ *
+ * **Tool results are matched by name, not by id**, because Gemini's function
+ * calls carry no id. The loop's own state does carry ids, so the mapping is
+ * made here and nowhere else: a result is emitted with the name of the call it
+ * answers, in the order the calls were made. Where a turn calls the same tool
+ * twice, order is what keeps the pairs straight — which is why these are built
+ * in one pass over the conversation rather than gathered into a map first.
+ */
+function toGeminiContents(messages: Anthropic.Beta.BetaMessageParam[]): Record<string, unknown>[] {
+  const contents: Record<string, unknown>[] = [];
+  /** tool_use id → the name Gemini knows it by, filled as the calls go past. */
+  const namesById = new Map<string, string>();
+
+  for (const message of messages) {
+    if (typeof message.content === "string") {
+      contents.push({ role: message.role === "assistant" ? "model" : "user", parts: [{ text: message.content }] });
+      continue;
+    }
+
+    const parts: Record<string, unknown>[] = [];
+    for (const block of message.content) {
+      if (block.type === "text" && block.text.trim()) {
+        parts.push({ text: block.text });
+      } else if (block.type === "tool_use") {
+        namesById.set(block.id, block.name);
+        parts.push({ functionCall: { name: block.name, args: (block.input ?? {}) as Record<string, unknown> } });
+      } else if (block.type === "tool_result") {
+        const name = namesById.get(block.tool_use_id) ?? "unknown_tool";
+        const output = typeof block.content === "string" ? block.content : JSON.stringify(block.content);
+        // Gemini wants an object here, so the string is wrapped rather than
+        // sent bare. `isError` is carried in the payload because there is no
+        // `is_error` flag on this wire, and a tool that was refused is
+        // information the model needs rather than a detail to drop.
+        parts.push({ functionResponse: { name, response: { result: output, ...(block.is_error ? { error: true } : {}) } } });
+      }
+      // Thinking blocks are skipped, exactly as on the chat-completions wire.
+    }
+
+    if (parts.length === 0) continue;
+    contents.push({ role: message.role === "assistant" ? "model" : "user", parts });
+  }
+
+  return contents;
+}
+
+/**
+ * One turn, out and back, over Gemini.
+ *
+ * Last on the paid floor and worth having: it is a third house, and the whole
+ * argument for a floor of three is that the two above it can be rate-limited
+ * or refused at the same moment. Everything it returns is translated into the
+ * loop's Anthropic-shaped vocabulary here, so nothing downstream knows or
+ * cares that this run finished on Gemini.
+ */
+async function geminiTurn(args: {
+  apiKey: string;
+  model: string;
+  system: string;
+  messages: Anthropic.Beta.BetaMessageParam[];
+  tools: AgentTool[];
+  effort: Effort;
+}): Promise<WireTurn> {
+  const body: Record<string, unknown> = {
+    systemInstruction: { parts: [{ text: args.system }] },
+    contents: toGeminiContents(args.messages),
+    generationConfig: { maxOutputTokens: MAX_TOKENS },
+  };
+  if (args.tools.length > 0) {
+    body.tools = [
+      {
+        functionDeclarations: args.tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          // The closed schemas this app writes everywhere would 400 here. See
+          // `forGemini`.
+          parameters: forGemini(tool.inputSchema),
+        })),
+      },
+    ];
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${vendorBase("gemini")}/models/${encodeURIComponent(args.model)}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": args.apiKey, "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TURN_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new WireError(504, "gemini", `${args.model} did not answer: ${(err as Error).message}`);
+  }
+
+  if (!response.ok) {
+    throw new WireError(response.status, "gemini", (await response.text().catch(() => "")).slice(0, 500));
+  }
+
+  const payload = (await response.json().catch(() => null)) as {
+    modelVersion?: unknown;
+    candidates?: {
+      finishReason?: unknown;
+      content?: { parts?: { text?: unknown; functionCall?: { name?: unknown; args?: unknown } }[] };
+    }[];
+    usageMetadata?: { promptTokenCount?: unknown; candidatesTokenCount?: unknown };
+  } | null;
+
+  const candidate = payload?.candidates?.[0];
+  const content: Anthropic.Beta.BetaContentBlockParam[] = [];
+  let wantsTools = false;
+
+  for (const part of candidate?.content?.parts ?? []) {
+    if (typeof part.text === "string" && part.text.trim()) {
+      content.push({ type: "text", text: part.text });
+    }
+    if (part.functionCall && typeof part.functionCall.name === "string") {
+      wantsTools = true;
+      content.push({
+        // An id of our own, because Gemini sends none. It never goes back on
+        // this wire — `toGeminiContents` matches by name — but the loop's
+        // state, its checkpoints and every other vendor are built on ids, and
+        // a run that starts here can finish on Claude.
+        type: "tool_use",
+        id: `gemini_${Math.random().toString(36).slice(2)}`,
+        name: part.functionCall.name,
+        input: (part.functionCall.args ?? {}) as Record<string, unknown>,
+      });
+    }
+  }
+
+  const finish = typeof candidate?.finishReason === "string" ? candidate.finishReason : "";
+  return {
+    model: typeof payload?.modelVersion === "string" && payload.modelVersion ? payload.modelVersion : args.model,
+    stop_reason: finish === "MAX_TOKENS" ? "max_tokens" : wantsTools ? "tool_use" : "end_turn",
+    usage: {
+      input_tokens: typeof payload?.usageMetadata?.promptTokenCount === "number" ? payload.usageMetadata.promptTokenCount : 0,
+      output_tokens: typeof payload?.usageMetadata?.candidatesTokenCount === "number" ? payload.usageMetadata.candidatesTokenCount : 0,
+    },
+    content,
+  };
+}
+
 /** Which model serves an agent turn on this vendor — the Owner's choice, else the shipped default. */
 async function modelForVendor(vendor: AgentVendor, effort: Effort): Promise<string> {
   // Claude keeps the effort split: a sub-agent checking a link is not billed
-  // at a director's rate. ox-alpha prices every effort the same today, so a
-  // split there would be a no-op — the decision that matters is the vendor.
-  return vendor === "openrouter" ? providerModel("openrouter") : modelForEffort(effort);
+  // at a director's rate, and Anthropic is the one vendor here with a named
+  // cheap model this loop knows about. The other three answer with whatever
+  // the Owner set for them, which for OpenRouter is beside the point anyway —
+  // the ladder replaces it — and for ChatGPT and Gemini is a single model
+  // choice on the Settings screen rather than an effort split this file would
+  // be guessing at.
+  return vendor === "anthropic" ? modelForEffort(effort) : providerModel(vendor);
 }
 
 /**
@@ -596,6 +787,47 @@ async function modelForVendor(vendor: AgentVendor, effort: Effort): Promise<stri
  * silence is true of that model and says nothing about the next one.
  */
 const KEY_LEVEL_STATUSES = [401, 402, 403];
+
+/**
+ * The status behind a failed turn, whichever wire it came off.
+ *
+ * The loop decides what to do about a failure from the status and from what
+ * else is connected, never from which company answered — so the four vendors'
+ * four different error types are flattened here, once, rather than in four
+ * branches that would each have to be kept in step with the others. 502 is the
+ * honest answer for anything with no status on it at all: something went wrong
+ * out there and we do not know what.
+ */
+function statusOf(err: unknown): number {
+  if (err instanceof WireError) return err.status;
+  if (err instanceof Anthropic.AuthenticationError) return 401;
+  if (err instanceof Anthropic.RateLimitError) return 429;
+  if (err instanceof Anthropic.APIError && typeof err.status === "number") return err.status;
+  if (err instanceof AnalystError) return err.status;
+  return 502;
+}
+
+/**
+ * What a person is told when the last vendor that could have done this failed.
+ *
+ * Names the vendor, because "the model failed" sends somebody to check the one
+ * key they happen to remember. Names the *balance* on a 402, because a prepaid
+ * account reads as a bug otherwise. Says "will be picked up again" only on a
+ * rate limit, because that is the only one of these where waiting is the fix.
+ */
+function describeTurnFailure(vendor: AgentVendor, status: number, model: string, err: unknown): string {
+  const who = PROVIDERS[vendor].name;
+  if (status === 429) return `${who} is rate-limiting this key. The task will be picked up again.`;
+  if (status === 402) return `${who} has no credit left on this account. Top it up, or connect another model under Settings → AI models.`;
+  if (KEY_LEVEL_STATUSES.includes(status)) return `${who} rejected the API key. Check it under Settings → AI models.`;
+  if (status === 404) {
+    return (
+      `${who} does not have the model “${model}”. Change it under Settings → AI models, ` +
+      `or connect another vendor so work carries on when a model is retired.`
+    );
+  }
+  return `Could not reach ${who}: ${(err as Error).message}`;
+}
 
 /** The rate for whichever model answered, from whichever table knows it, plus any per-request fee. */
 async function priceOf(model: string): Promise<{ rate: ModelRate; fee: number }> {
@@ -654,34 +886,45 @@ export interface AgentRunRequest {
 export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunResult> {
   const effort = request.effort ?? "medium";
 
-  // Who runs this conversation. **ox-alpha first** — an agent turn is a job
-  // like any other, and the shipped default serves every job it can do — with
-  // Claude as the floor, exactly as everywhere else in the model layer. A
-  // vendor whose key was refused recently sits its cooldown out rather than
+  // Who runs this conversation, in the order they will be asked.
+  //
+  // **OpenRouter first**, because that is where the free models are and free
+  // is the instruction: an agent turn is a job like any other, and every job
+  // starts on something that costs nothing. Then the paid floor, which is the
+  // best of Claude, ChatGPT and Gemini rather than one named vendor — see
+  // `PAID_AGENT_CHAIN`. Only vendors with a key are in the list, so the chain
+  // can only ever end at somebody who could actually have served it.
+  //
+  // A vendor whose key was refused recently sits its cooldown out rather than
   // costing every resume behind this one a wasted call against a dead balance.
   const candidates: AgentVendor[] = [];
   if ((await providerConfigured("openrouter")) && Date.now() >= openRouterRefusedUntil) candidates.push("openrouter");
-  if (await providerConfigured("anthropic")) candidates.push("anthropic");
+  for (const paid of PAID_AGENT_CHAIN) {
+    if (await providerConfigured(paid)) candidates.push(paid);
+  }
   if (candidates.length === 0) {
     throw new AnalystError(
       503,
-      "No model is connected for running agents. Add an ox-alpha (OpenRouter) key or a Claude key under Settings → AI models — either one can do this.",
+      "No model is connected for running agents. Add an OpenRouter, Claude, ChatGPT or Gemini key under Settings → AI models — any one of them can do this.",
     );
   }
-  let serving: AgentVendor = candidates[0];
+  let at = 0;
+  let serving: AgentVendor = candidates[at];
 
   /**
    * The free models to climb, in order, and which rung we are on.
    *
-   * Empty when the Owner has set none, and then nothing below changes: the one
-   * OpenRouter model is asked exactly as it always was, and a rate limit still
-   * requeues the task rather than quietly moving the bill to Claude.
+   * **Three rungs ship by default**, so free-first is what happens on a
+   * deployment nobody has configured. Empty only when somebody has turned free
+   * models off deliberately, and then nothing below changes: the one OpenRouter
+   * model is asked exactly as it always was, and a rate limit still requeues
+   * the task rather than quietly moving the bill onto a paid vendor.
    *
    * With a ladder the rule is different and deliberately so. A free endpoint
    * that is busy, silent or rate-limited has not failed — it is free, and that
    * is what free capacity does at four in the afternoon. So a rung that does
    * not answer costs one short call and the next rung is asked; when the ladder
-   * runs out, Claude finishes the run. That is the whole feature.
+   * runs out, the paid floor finishes the run. That is the whole feature.
    */
   const ladder = await freeLadder();
   let rung = 0;
@@ -689,7 +932,13 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   // Chosen from the effort rather than fixed, so a sub-agent checking a link
   // is not billed at the rate of a director deciding what to say to a
   // stranger. See `modelForVendor`.
-  const model = ladder[0] ?? (await modelForVendor(serving, effort));
+  //
+  // The first rung only when OpenRouter is the one starting. It was
+  // unconditional, which was harmless while the ladder was an opt-in nobody
+  // had opted into and wrong the moment it shipped switched on: a deployment
+  // holding a Claude key and no OpenRouter key would open its ledger row with
+  // the name of a free model it was never going to call.
+  const model = serving === "openrouter" ? (ladder[0] ?? (await modelForVendor(serving, effort))) : await modelForVendor(serving, effort);
 
   let client: Anthropic | null = null;
   const startedAt = Date.now();
@@ -814,113 +1063,56 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     } else {
       let response: WireTurn;
 
-      if (serving === "openrouter") {
-        try {
-          response = await openRouterTurn({
-            apiKey: (await providerKey("openrouter")) ?? "",
-            model: ladder[rung] ?? (await modelForVendor("openrouter", effort)),
-            system: request.system,
-            messages,
-            tools: request.tools,
-            effort,
-            free: ladder.length > 0,
-          });
-        } catch (err) {
-          const status = err instanceof OpenRouterError ? err.status : 502;
-
-          // A rung that did not serve, with rungs left. Not a failure of
-          // anything: the next free model is asked and the conversation is
-          // untouched, because nothing was spent and nothing was said.
+      // One turn, from whoever is serving — and **one** place below that
+      // decides what a failure means.
+      //
+      // It used to be two: OpenRouter had its own failover rules and Anthropic
+      // had its own, and the two disagreed about which statuses are worth
+      // routing around. That is how a live Chief Executive task died on a 404
+      // with a connected Claude sitting unasked. With four vendors in the
+      // chain, four copies of that decision would be four ways to be wrong, so
+      // the wires differ and the judgement does not.
+      try {
+        if (serving === "anthropic") {
+          if (!client) {
+            const apiKey = await analystKey();
+            if (!apiKey) {
+              throw new AnalystError(503, "No Anthropic API key is set. Add one under Settings → AI models before an agent can work.");
+            }
+            client = new Anthropic({ apiKey });
+          }
+          const anth = client;
+          // Resolved here, for this vendor, rather than taken from the `model`
+          // the run started with.
           //
-          // Key-level statuses are excluded — a wrong key, a banned account or
-          // an empty balance is true of every model on it, so climbing would
-          // be three calls into the same wall.
-          if (ladder.length > 0 && !KEY_LEVEL_STATUSES.includes(status) && rung + 1 < ladder.length) {
-            console.warn(`[agent] ${ladder[rung]} did not serve (${status}) — trying ${ladder[rung + 1]}.`);
-            rung += 1;
-            continue;
-          }
+          // That was a real defect and an invisible one. `model` is decided
+          // once from whoever is first in `candidates`, so on every handover —
+          // a refused key, an empty balance, a retired slug, an exhausted free
+          // ladder — Anthropic was being asked for a free OpenRouter id. The
+          // whole point of the handover is to save a run, and it would have
+          // failed at the first turn on the model name.
+          //
+          // It survived because the harness's fake Anthropic echoes a Claude
+          // model whatever it is asked for, so the assertion "Claude finished
+          // the run" passed while the request said otherwise.
+          // `checks/agentLoopOpenRouter.ts` now reads the model out of the
+          // *request body*, which is the only place the truth was.
+          const claudeModel = await modelForVendor("anthropic", effort);
+          const send = (withFallbacks: boolean) =>
+            anth.beta.messages.create({
+              model: claudeModel,
+              max_tokens: MAX_TOKENS,
+              system,
+              // Opus 5 thinks by default; asked for explicitly so the setting is
+              // visible here rather than inherited. Summarised, because the
+              // reasoning is worth showing on a task somebody is watching.
+              thinking: { type: "adaptive", display: "summarized" },
+              output_config: { effort },
+              tools: definitions,
+              messages: withCacheBreakpoints(messages),
+              ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
+            });
 
-          // The ladder is out. Everything free has been asked, so the paid
-          // floor finishes the run — including on a 429, which without a
-          // ladder deliberately requeues instead. That difference is the point:
-          // waiting out a queue is right when the vendor is the only one who
-          // can do this, and wrong when three free models have already said no
-          // and a connected Claude is sitting there.
-          if (ladder.length > 0 && candidates.includes("anthropic")) {
-            if (KEY_LEVEL_STATUSES.includes(status)) openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
-            console.warn(`[agent] every free model was tried (last: ${(err as Error).message}) — Claude takes the rest of this run.`);
-            serving = "anthropic";
-            continue;
-          }
-
-          // A vendor that cannot serve this at all — wrong key, out of
-          // credits, or a model it no longer lists — is not a reason to lose
-          // the run when the floor is connected. Nothing has been spent yet,
-          // so the same turn is retried on Claude, and ox-alpha sits out its
-          // cooldown so the resumes behind this one start there instead of
-          // each paying one call into the same wall.
-          if (err instanceof OpenRouterError && CANNOT_SERVE_STATUSES.includes(err.status) && candidates.includes("anthropic")) {
-            openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
-            console.warn(`[agent] ox-alpha could not serve this (${(err as Error).message}) — Claude takes the rest of this run.`);
-            serving = "anthropic";
-            continue;
-          }
-          const message =
-            err instanceof OpenRouterError && err.status === 429
-              ? "OpenRouter is rate-limiting this key. The task will be picked up again."
-              : err instanceof OpenRouterError && err.status === 404
-                ? `OpenRouter does not have the model “${await modelForVendor("openrouter", effort)}”. ` +
-                  `Change it under Settings → AI models, or connect Anthropic so work carries on when a model is retired.`
-                : `Could not reach OpenRouter: ${(err as Error).message}`;
-          // The conversation up to here is intact and worth keeping: a rate
-          // limit is a task that resumes in five minutes, not one that starts
-          // again.
-          await checkpoint();
-          await finish(false, message);
-          throw new AnalystError(err instanceof OpenRouterError && err.status === 429 ? 429 : 502, message);
-        }
-      } else {
-        if (!client) {
-          const apiKey = await analystKey();
-          if (!apiKey) {
-            throw new AnalystError(503, "No Anthropic API key is set. Add one under Settings → AI models before an agent can work.");
-          }
-          client = new Anthropic({ apiKey });
-        }
-        const anth = client;
-        // Resolved here, for this vendor, rather than taken from the `model`
-        // the run started with.
-        //
-        // That was a real defect and an invisible one. `model` is decided once
-        // from whoever is first in `candidates`, so on every handover — a
-        // refused key, an empty balance, a retired slug, and now an exhausted
-        // free ladder — Anthropic was being asked for `stealth/ox-alpha`, or
-        // for a free OpenRouter id. The whole point of the handover is to save
-        // a run, and it would have failed at the first turn on the model name.
-        //
-        // It survived because the harness's fake Anthropic echoes a Claude
-        // model whatever it is asked for, so the assertion "Claude finished the
-        // run" passed while the request said otherwise. `checks/agentLoopOpenRouter.ts`
-        // now reads the model out of the *request body*, which is the only
-        // place the truth was.
-        const claudeModel = await modelForVendor("anthropic", effort);
-        const send = (withFallbacks: boolean) =>
-          anth.beta.messages.create({
-            model: claudeModel,
-            max_tokens: MAX_TOKENS,
-            system,
-            // Opus 5 thinks by default; asked for explicitly so the setting is
-            // visible here rather than inherited. Summarised, because the
-            // reasoning is worth showing on a task somebody is watching.
-            thinking: { type: "adaptive", display: "summarized" },
-            output_config: { effort },
-            tools: definitions,
-            messages: withCacheBreakpoints(messages),
-            ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
-          });
-
-        try {
           try {
             response = await send(fallbacksAvailable);
           } catch (err) {
@@ -930,19 +1122,97 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
             console.warn(`[agent] server-side fallbacks unavailable on this key: ${(err as Error).message}`);
             response = await send(false);
           }
-        } catch (err) {
-          const message =
-            err instanceof Anthropic.AuthenticationError
-              ? "Anthropic rejected the API key. Check it under Settings → AI models."
-              : err instanceof Anthropic.RateLimitError
-                ? "Anthropic is rate-limiting this key. The task will be picked up again."
-                : `Could not reach Anthropic: ${(err as Error).message}`;
-          // The conversation up to here is intact and worth keeping: a rate limit
-          // is a task that resumes in five minutes, not one that starts again.
-          await checkpoint();
-          await finish(false, message);
-          throw new AnalystError(err instanceof Anthropic.RateLimitError ? 429 : 502, message);
+        } else if (serving === "gemini") {
+          response = await geminiTurn({
+            apiKey: (await providerKey("gemini")) ?? "",
+            model: await modelForVendor("gemini", effort),
+            system: request.system,
+            messages,
+            tools: request.tools,
+            effort,
+          });
+        } else {
+          response = await chatCompletionsTurn({
+            vendor: serving,
+            apiKey: (await providerKey(serving)) ?? "",
+            // The rung when OpenRouter is climbing one; this vendor's own
+            // model otherwise.
+            model:
+              serving === "openrouter"
+                ? (ladder[rung] ?? (await modelForVendor("openrouter", effort)))
+                : await modelForVendor(serving, effort),
+            system: request.system,
+            messages,
+            tools: request.tools,
+            effort,
+            free: serving === "openrouter" && ladder.length > 0,
+          });
         }
+      } catch (err) {
+        const status = statusOf(err);
+        const climbing = serving === "openrouter" && ladder.length > 0;
+
+        // A rung that did not serve, with rungs left. Not a failure of
+        // anything: the next free model is asked and the conversation is
+        // untouched, because nothing was spent and nothing was said.
+        //
+        // Key-level statuses are excluded — a wrong key, a banned account or
+        // an empty balance is true of every model on the account, so climbing
+        // would be three calls into the same wall.
+        if (climbing && !KEY_LEVEL_STATUSES.includes(status) && rung + 1 < ladder.length) {
+          console.warn(`[agent] ${ladder[rung]} did not serve (${status}) — trying ${ladder[rung + 1]}.`);
+          rung += 1;
+          continue;
+        }
+
+        // Whoever is next, if anybody is. Three rules decide whether this
+        // failure is worth handing on:
+        //
+        // 1. **An exhausted free ladder always hands on**, including on a 429.
+        //    Three free models have said no; waiting out a queue is right when
+        //    the vendor is the only one who can do this and wrong when a paid
+        //    floor is sitting there connected.
+        // 2. **OpenRouter with free models switched off keeps the old rule** —
+        //    only a status that means it cannot serve the request at all moves
+        //    the work, so a rate limit still requeues the task rather than
+        //    quietly moving the bill onto a paid vendor. Somebody who turned
+        //    free off did not thereby ask to spend more.
+        // 3. **A paid vendor hands on for anything**, rate limits included.
+        //    That is the whole point of a floor of three: the second is asked
+        //    precisely because the first is busy. When there is nobody left, a
+        //    429 still comes out as a 429 and the task resumes.
+        const handsOn = climbing || serving !== "openrouter" || CANNOT_SERVE_STATUSES.includes(status);
+        const next = handsOn ? candidates[at + 1] : undefined;
+
+        if (next) {
+          // A refused key sits its cooldown out, so the resumes queued behind
+          // this run start at the floor instead of each paying one call into
+          // the same wall.
+          if (serving === "openrouter" && KEY_LEVEL_STATUSES.includes(status)) {
+            openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
+          }
+          console.warn(
+            climbing
+              ? `[agent] every free model was tried (last: ${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`
+              : `[agent] ${PROVIDERS[serving].name} could not serve this (${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`,
+          );
+          at += 1;
+          serving = next;
+          continue;
+        }
+
+        const message = describeTurnFailure(
+          serving,
+          status,
+          climbing ? ladder[rung] : await modelForVendor(serving, effort),
+          err,
+        );
+        // The conversation up to here is intact and worth keeping: a rate
+        // limit is a task that resumes in five minutes, not one that starts
+        // again.
+        await checkpoint();
+        await finish(false, message);
+        throw new AnalystError(status === 429 ? 429 : status === 503 ? 503 : 502, message);
       }
 
       // Priced before the answer is judged: everything from here has been paid for.
@@ -1001,9 +1271,18 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           rung += 1;
           continue;
         }
-        if (serving === "openrouter" && candidates.includes("anthropic")) {
-          console.warn(`[agent] OpenRouter answered with nothing (stop_reason: ${response.stop_reason}) — Claude takes the rest of this run.`);
-          serving = "anthropic";
+        // Handed on down the same chain a thrown failure uses, rather than
+        // only from OpenRouter to Claude. A paid vendor that answers with
+        // nothing has failed exactly as one that throws has, and the reason
+        // there are three of them is so the next one is asked.
+        const nextAfterSilence = candidates[at + 1];
+        if (nextAfterSilence) {
+          console.warn(
+            `[agent] ${PROVIDERS[serving].name} answered with nothing (stop_reason: ${response.stop_reason}) — ` +
+              `${PROVIDERS[nextAfterSilence].name} takes the rest of this run.`,
+          );
+          at += 1;
+          serving = nextAfterSilence;
           continue;
         }
         // Nobody left to ask. A quiet, empty "success" would be worse than

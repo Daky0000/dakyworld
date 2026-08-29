@@ -223,14 +223,14 @@ async function main() {
 
   console.log("\nThe sheet analyst's own model");
   const { analyzeGrids } = await import("../src/lib/anthropic.js");
-  const { routeFor } = await import("../src/lib/models/registry.js");
+  const { PROVIDERS, routeFor } = await import("../src/lib/models/registry.js");
 
-  // ox-alpha is the shipped answer for reading sheets, same as for writing
+  // OpenRouter is the shipped answer for reading sheets, same as for writing
   // them. This environment holds no OpenRouter key, so what actually serves
   // right now is the stand-in — exactly the state a deployment with only a
   // Claude key is in.
   const route = await routeFor("spreadsheet");
-  check("reading sheets ships routed to ox-alpha", route.chosen === "openrouter");
+  check("reading sheets ships routed to OpenRouter", route.chosen === "openrouter");
   // A stand-in is not "ready": ready means the chosen vendor is the one
   // serving, and the note is what says who is covering instead.
   check("with only a Claude key the stand-in serves it", route.serving === "anthropic" && !route.ready);
@@ -257,7 +257,7 @@ async function main() {
   );
   const analysis = await analyzeGrids([{ name: "Leads", rows: [["Name"], ["Kofi"]], totalRows: 2, truncated: false }], []);
   check("analyzeGrids sends the override to the wire", lastModel() === "claude-haiku-4-5");
-  check("a call served by the fallback says so", analysis.note !== null && analysis.note.includes("ox-alpha"));
+  check("a call served by the fallback says so", analysis.note !== null && analysis.note.includes(PROVIDERS.openrouter.name));
 
   await prisma.llmCall.deleteMany({
     where: { purpose: "sheet.analyse", id: { notIn: [...knownSheetRows] } },

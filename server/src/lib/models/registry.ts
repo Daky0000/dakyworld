@@ -93,10 +93,13 @@ export interface JobDescription {
 /**
  * The shipped routing.
  *
- * These are the Owner's choices, written down: **ox-alpha through OpenRouter
- * serves every job it can do**, ChatGPT draws the pictures, and each job moves
- * down its chain when ox-alpha isn't connected or a call through it fails —
- * the declared fallback first, then every other vendor that can do the work.
+ * These are the Owner's choices, written down: **OpenRouter serves every job
+ * it can do**, ChatGPT draws the pictures, and each job moves down its chain
+ * when OpenRouter isn't connected or a call through it fails — the declared
+ * fallback first, then every other vendor that can do the work.
+ *
+ * OpenRouter starts on a **free** model and only pays for one when three free
+ * ones have refused the work. See `DEFAULT_FREE_LADDER` and `freeLadder()`.
  */
 export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: ProviderKey }> = {
   text: {
@@ -113,10 +116,10 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "reading a spreadsheet",
     blurb:
       "Reads an imported spreadsheet of leads — where every table starts and stops, what each column means, which columns don't fit — and returns the plan a person reviews before anything is written.",
-    // ox-alpha first like everything else. This was the one judgement job in
+    // OpenRouter first like everything else. This was the one judgement job in
     // the system still hard-wired to Claude through its own private call path,
     // which made it the one model nobody could change. It is a routing
-    // decision like any other now: ox-alpha by default, Claude standing in
+    // decision like any other now: OpenRouter by default, Claude standing in
     // behind it, both changeable from the Settings screen.
     defaultProvider: "openrouter",
     fallback: "anthropic",
@@ -130,7 +133,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "sorting a prompt into sections",
     blurb:
       "Reading a written instruction and filing it under the ten headings an agent prompt is made of — so a pasted playbook becomes a prompt rather than a wall of text.",
-    // ox-alpha first like everything else. This job is comprehension and
+    // OpenRouter first like everything else. This job is comprehension and
     // filing, not prose: nothing it returns is read by a customer, and the
     // failure that matters is a paragraph put under the wrong heading or
     // quietly reworded. Every vendor that can follow a schema can do it, so
@@ -187,7 +190,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Fact-checking",
     phrase: "fact-checking",
     blurb: "Checks a draft's claims against live sources, so nothing goes out that stopped being true last year.",
-    // ox-alpha carries the job by default, per the Owner's call. It does not
+    // OpenRouter carries the job by default, per the Owner's call. It does not
     // search the live web, so an answer it gives reports itself as checked
     // against no live source — the tool result says who checked and against
     // what, and Perplexity stays one step down the chain for when that
@@ -201,7 +204,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "researching a company",
     blurb:
       "Finds out who a prospect actually is — trade, address, reputation, who runs it — from live sources, and fills the blanks a scrape left behind.",
-    // Same reasoning as factcheck above: ox-alpha by default, and the result
+    // Same reasoning as factcheck above: OpenRouter by default, and the result
     // records honestly whether what came back was searched for or remembered.
     defaultProvider: "openrouter",
     fallback: "anthropic",
@@ -334,18 +337,31 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
   },
   openrouter: {
     key: "openrouter",
-    // The Owner calls it by the model, not by the shop it came from — the same
-    // reason ChatGPT is not called "OpenAI" here.
-    name: "ox-alpha",
+    // **The shop, not the model.** This used to be called "ox-alpha" after the
+    // one model it served, on the reasoning that the Owner calls a thing by
+    // the model rather than by the shop it came from — the same reason ChatGPT
+    // is not called "OpenAI" here.
+    //
+    // That stopped being true twice over. The slug it was named after was a
+    // stealth listing that OpenRouter retired without notice on 26 Aug 2026,
+    // so the vendor was carrying the name of a model that no longer existed;
+    // and this vendor now serves a *ladder* of free models before anything
+    // else, so there is no single model to name it after. A sentence reading
+    // "ox-alpha isn't connected" sent somebody looking for a model in a
+    // catalogue when what was missing was a key. It is OpenRouter, which is
+    // what is on the key, on the console and on the bill.
+    name: "OpenRouter",
     vendor: "OpenRouter",
     purpose:
-      "The default for every job it can do — one key covers writing, sorting, triage, pages, research, fact-checking, plain English and looking at a page.",
+      "The default for every job it can do — one key covers writing, sorting, triage, pages, research, fact-checking, plain English and looking at a page. Free models are tried first; see the ladder below.",
     keySetting: SETTING.OPENROUTER_KEY,
     modelSetting: SETTING.OPENROUTER_MODEL,
-    // ox-alpha was a stealth listing, and on 26 Aug 2026 OpenRouter retired the
-    // slug with a 404 whose body named what it had been all along: ZAI's
-    // GLM-5.3 Flash. Same model, real name. A stealth id is a rented one and
-    // this is the second thing to check when every job stops at once.
+    // What OpenRouter is asked for when the free ladder is switched off. It
+    // was a stealth listing called `stealth/ox-alpha`, and on 26 Aug 2026
+    // OpenRouter retired the slug with a 404 whose body named what it had been
+    // all along: ZAI's GLM-5.3 Flash. Same model, real name. A stealth id is a
+    // rented one and this is the second thing to check when every job stops at
+    // once.
     defaultModel: "z-ai/glm-5.3-flash",
     // Nothing cheaper names its default, which makes the economy tier a no-op
     // here rather than a broken request.
@@ -357,8 +373,8 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // else), so listing `image` here would put a route in the dropdown that
     // looks saved and never once serves — the exact thing the routing exists
     // to prevent. Everything else is chat completions, which OpenRouter
-    // speaks for any model on it; if ox-alpha turns out not to read pictures,
-    // a vision call fails over to the next vendor that can.
+    // speaks for any model on it; if the model serving turns out not to read
+    // pictures, a vision call fails over to the next vendor that can.
     jobs: ["text", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
     // The shipped id. If OpenRouter lists the model under a different slug,
     // paste that instead — the field takes anything, and verifying the key
@@ -386,17 +402,18 @@ export function isModelJob(value: unknown): value is ModelJob {
  * whichever caller happened to need it first. It was written for the agent
  * loop and stayed there, which meant the *other* half of the model layer —
  * every one-shot `callModel` — put nothing on the wire at all and every routed
- * job ran at **ox-alpha's own default, which is max**. Triage asks for `low`
+ * job ran at **the model's own default, which on the shipped one is max**.
+ * Triage asks for `low`
  * in so many words, runs once per arriving message, and was paying
  * headline-depth reasoning on every one of them.
  *
  * Exactly the bug `checks/modelChoice.ts` exists for, one field over: nothing
  * breaks, every answer is correct, and the only symptom is the bill.
  *
- * ox-alpha offered low/high/max, not our medium — so medium steps up to high,
- * and everything above rides at max.
+ * The model this was written against offered low/high/max, not our medium —
+ * so medium steps up to high, and everything above rides at max.
  *
- * **`max` is ox-alpha's word, not an OpenAI-standard one** (that scale is
+ * **`max` is that model's word, not an OpenAI-standard one** (that scale is
  * low/medium/high). It survived the move to `z-ai/glm-5.3-flash` untouched
  * because changing it would change what every job costs and how well it
  * thinks, on a guess about a model nobody has measured here yet. If high-effort
@@ -415,8 +432,8 @@ export function reasoningEffortFor(effort: Effort): "low" | "high" | "max" {
  * On an OpenAI-shaped wire `max_tokens` caps **reasoning plus reply**, the
  * same trap Anthropic's does — but nothing here was leaving any slack for it.
  * The sheet analyst asks for 16,000 tokens because a plan describing forty
- * columns across three tables is genuinely long, and at max effort ox-alpha
- * can spend that much before it writes a character. What comes back then is
+ * columns across three tables is genuinely long, and at max effort a reasoning
+ * model can spend that much before it writes a character. What comes back then is
  * `finish_reason: "length"` with an empty message, which this layer correctly
  * reads as "produced nothing usable" and hands to the next vendor — so the
  * Owner pays for a reasoning run, waits for it, and gets somebody else's
@@ -535,7 +552,56 @@ export async function modelForJob(job: ModelJob, provider: ProviderKey): Promise
 export const FREE_LADDER_MAX = 3;
 
 /**
+ * The ladder that ships, used when the Owner has never set one.
+ *
+ * **Free-first is a default, not an opt-in.** It was an opt-in for exactly one
+ * day, and an opt-in nobody has opted into is a feature that does nothing: a
+ * deployment where this setting was never touched paid for every agent turn
+ * and every piece of writing while three free models sat there. The
+ * instruction was "all agents use a free model first", and a setting somebody
+ * has to find is not that.
+ *
+ * **These three are a seed, not a promise.** A free slug is the most perishable
+ * id there is — the model moves, the `:free` variant is withdrawn, the provider
+ * renames it — and this file cannot know today what OpenRouter lists in six
+ * months. Two things make that survivable:
+ *
+ * 1. `ensureFreeLadder()` (models/call.ts) reads the account's **own**
+ *    catalogue at boot and stores the three best free, tool-capable models it
+ *    actually lists, replacing this seed. From then on the ladder is a fact
+ *    about the account rather than a guess in a source file.
+ * 2. A rung that no longer exists answers 404, which is a rung that did not
+ *    serve, which is the next rung. A dead seed costs one fast call, not a run.
+ *
+ * Three different houses on purpose. Free capacity goes short for one provider
+ * at a time — a ladder of three variants of the same model is one rung wearing
+ * three hats, and it fails as one.
+ *
+ * **Every id here ends in `:free`,** and that is load-bearing rather than
+ * tidy: `isFreeModel()` prices a rung at zero, and the stored ladder earns
+ * that by having been checked against the live catalogue, while this seed has
+ * not been checked by anything. The suffix is OpenRouter's own convention for
+ * a zero-rate variant and it is the only guarantee available to a list written
+ * in advance. `checks/freeModels.ts` asserts it.
+ */
+export const DEFAULT_FREE_LADDER = [
+  "z-ai/glm-4.5-air:free",
+  "deepseek/deepseek-chat-v3-0324:free",
+  "qwen/qwen3-235b-a22b:free",
+];
+
+/**
  * The free OpenRouter models to try, in order.
+ *
+ * Three states, and they are three rather than two on purpose:
+ *
+ * - **Nothing stored** — the shipped ladder. A fresh deployment tries free
+ *   models without anybody configuring it.
+ * - **A stored list** — that list, capped at three.
+ * - **A stored empty list** — free models are off, deliberately, and OpenRouter
+ *   is asked for its own model as it was before any of this existed. Somebody
+ *   who has turned this off must not have it turned back on by a deploy, which
+ *   is exactly what would happen if "empty" and "unset" meant the same thing.
  *
  * Capped rather than refused above the cap: a stored list that grew past three
  * — pasted in by hand, or written by a future screen — should quietly use the
@@ -544,15 +610,19 @@ export const FREE_LADDER_MAX = 3;
  */
 export async function freeLadder(): Promise<string[]> {
   const raw = await getSetting(SETTING.OPENROUTER_FREE_MODELS);
-  if (!raw?.trim()) return [];
+  if (!raw?.trim()) return [...DEFAULT_FREE_LADDER];
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    console.warn("[models] openrouter.freeModels is not valid JSON — no free models will be tried.");
-    return [];
+    // Unreadable is not the same as "off". Off is a value somebody stored on
+    // purpose; this is a row nobody can read, and the two must not have the
+    // same effect — falling through to the paid model here would answer a
+    // corrupt settings row by quietly starting to spend money.
+    console.warn("[models] openrouter.freeModels is not valid JSON — using the shipped free ladder.");
+    return [...DEFAULT_FREE_LADDER];
   }
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed)) return [...DEFAULT_FREE_LADDER];
   const seen = new Set<string>();
   const ladder: string[] = [];
   for (const entry of parsed) {
@@ -569,15 +639,38 @@ export async function freeLadder(): Promise<string[]> {
 }
 
 /**
+ * Where the ladder currently in use came from.
+ *
+ * The screen needs this and cannot infer it: "three rungs" looks identical
+ * whether they are the shipped seed, the Owner's own picks, or a stale copy of
+ * a seed from two deploys ago — and "no rungs" reads as *not set up* when it
+ * actually means *deliberately switched off*. Every one of those is a different
+ * sentence to put in front of somebody.
+ */
+export type LadderSource = "shipped" | "owner" | "off";
+
+export async function freeLadderSource(): Promise<LadderSource> {
+  const raw = await getSetting(SETTING.OPENROUTER_FREE_MODELS);
+  if (!raw?.trim()) return "shipped";
+  return (await freeLadder()).length > 0 ? "owner" : "off";
+}
+
+/**
  * True when this model is a rung, and therefore costs nothing.
  *
- * The ledger asks this before it prices a call. It is deliberately the stored
- * list rather than a guess from the id — most free ids end in `:free` and not
- * all of them do, and a naming convention is not a price. What makes the stored
- * list trustworthy is that nothing reaches it without having been checked
+ * The ledger asks this before it prices a call. It is deliberately the ladder
+ * rather than a guess from the id — most free ids end in `:free` and not all of
+ * them do, and a naming convention is not a price. What makes a *stored* rung
+ * trustworthy is that nothing reaches the setting without having been checked
  * against OpenRouter's own catalogue and found free at that moment; and the
  * Settings screen re-checks, so a model that stops being free is named on the
  * screen rather than quietly charged for.
+ *
+ * The shipped seed is the one case that has been checked by nobody, which is
+ * why every id in it ends in `:free` and why `ensureFreeLadder()` replaces it
+ * with catalogue-verified ids the first time a key is present. Worst case is a
+ * seed rung that turns out to cost a fraction of a cent and is recorded as
+ * nothing, for as long as it takes one boot to correct the list.
  */
 export async function isFreeModel(model: string): Promise<boolean> {
   return (await freeLadder()).includes(model);
@@ -586,15 +679,16 @@ export async function isFreeModel(model: string): Promise<boolean> {
 /**
  * Every model an OpenRouter attempt should try, in order.
  *
- * The ladder when there is one. **`[undefined]` when there is not**, meaning
- * "whatever this vendor's ordinary model is" — and that is not a tidiness
- * choice. A deployment that never touches this setting has to behave exactly
- * as it did, down to the wording of the note a person reads when a vendor
- * hands over: naming the model there is right when three of them were tried
- * and wrong when one was, where it turns "ox-alpha could not do it" into a
- * slug nobody recognises.
+ * The ladder when there is one. **`[undefined]` when there is not** — that is,
+ * when somebody has deliberately turned free models off — meaning "whatever
+ * this vendor's ordinary model is". That is not a tidiness choice: with free
+ * models off, this vendor has to behave exactly as it did before any of this
+ * existed, down to the wording of the note a person reads when a vendor hands
+ * over. Naming the model there is right when three of them were tried and
+ * wrong when one was, where it turns "OpenRouter could not do it" into a slug
+ * nobody recognises.
  *
- * When a ladder *is* set it **replaces** the vendor's model rather than sitting
+ * When a ladder *is* in use it **replaces** the vendor's model rather than sitting
  * in front of it, which is the rule the Settings screen states in those words:
  * the point is a run of free attempts and then the paid floor, and slipping a
  * paid call in between would be a bill nobody asked for at exactly the moment
@@ -603,6 +697,74 @@ export async function isFreeModel(model: string): Promise<boolean> {
 export async function openRouterAttempts(): Promise<(string | undefined)[]> {
   const ladder = await freeLadder();
   return ladder.length > 0 ? ladder : [undefined];
+}
+
+// --- The paid floor ---------------------------------------------------------
+
+/**
+ * The paid models that finish the work when every free rung has refused it,
+ * best first.
+ *
+ * The Owner's instruction on 28 Aug 2026 was: free models first, and when
+ * three of them have failed, **the best paid model of the three** — not one
+ * named vendor. Until then the floor was Anthropic alone, which is a floor
+ * with a single point of failure under a ladder built entirely out of
+ * endpoints that fail. A run that got past three busy free models and then met
+ * a rate-limited Claude died with two connected vendors sitting unasked.
+ *
+ * **Why this order.** All three write well and the difference between them at
+ * the end of an agent run is not prose, it is whether the model can hold a
+ * long tool-calling conversation without losing the thread — twelve turns,
+ * sixteen tool results, a checkpoint in the middle, and an escalation that has
+ * to be recognised as an ending. Claude is measurably the strongest of the
+ * three at that here and is the vendor this loop's own wire was written
+ * against; ChatGPT speaks the same chat-completions shape the free rungs do,
+ * so it is the smallest possible step sideways; Gemini is last because its
+ * function-calling wire is the one furthest from both, not because of the
+ * model.
+ *
+ * **Only what is connected is asked.** A missing key removes a vendor from the
+ * chain rather than failing the run — the same rule as `serveChain`, which is
+ * what the one-shot half of the model layer has always done and what this
+ * brings the agent loop into line with.
+ *
+ * This is deliberately a constant rather than a setting. The per-job routing
+ * screen already lets the Owner say who writes prose and who reads pictures;
+ * what order to try the survivors in when three free models have just failed
+ * is an engineering answer, and a second dropdown for it would be a way to
+ * configure a worse one.
+ */
+export type PaidProvider = Extract<ProviderKey, "anthropic" | "openai" | "gemini">;
+export const PAID_AGENT_CHAIN: readonly PaidProvider[] = ["anthropic", "openai", "gemini"];
+
+/**
+ * Where a vendor's API lives, honouring the per-vendor base override.
+ *
+ * One function, because there were two: `models/call.ts` had its own and the
+ * agent loop had `openRouterBase()`, and on 20 Aug 2026 they disagreed — one
+ * captured at import, one read per call — so a harness repointing a vendor
+ * between scenarios got a frozen address in one half and a live one in the
+ * other. That is a check that passes while testing nothing, and on a machine
+ * with real keys it is a check that spends money.
+ *
+ * Read per call, never captured. `anthropic` is absent because the SDK owns
+ * its own base URL (`ANTHROPIC_BASE_URL`) and asking twice is how the two
+ * halves get to disagree again.
+ */
+export function vendorBase(vendor: Exclude<ProviderKey, "anthropic">): string {
+  const fromEnv = {
+    openai: process.env.OPENAI_BASE_URL,
+    gemini: process.env.GEMINI_BASE_URL,
+    perplexity: process.env.PERPLEXITY_BASE_URL,
+    openrouter: process.env.OPENROUTER_BASE_URL,
+  }[vendor];
+  const fallback = {
+    openai: "https://api.openai.com/v1",
+    gemini: "https://generativelanguage.googleapis.com/v1beta",
+    perplexity: "https://api.perplexity.ai",
+    openrouter: "https://openrouter.ai/api/v1",
+  }[vendor];
+  return fromEnv?.replace(/\/$/, "") || fallback;
 }
 
 /** The image model, which is a different model from the same vendor. */
