@@ -1398,7 +1398,38 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           });
         }
 
-        const summary = result.text || "Finished, but said nothing about what it did.";
+        let summary: string;
+        if (result.text && result.text.trim()) {
+          summary = result.text.trim();
+        } else {
+          const parts: string[] = [];
+          if (counters.toolCalls > 0) {
+            parts.push(`made ${counters.toolCalls} tool${counters.toolCalls !== 1 ? " calls" : ""}`);
+          }
+          if (counters.dryRun > 0) {
+            parts.push(`prepared ${counters.dryRun} action${counters.dryRun !== 1 ? "s" : ""} for approval`);
+          }
+          if (counters.refused > 0) {
+            parts.push(`had ${counters.refused} call${counters.refused !== 1 ? "s" : ""} refused`);
+          }
+          if (counters.escalated) {
+            parts.push(`escalated: ${String(counters.escalated).slice(0, 200)}`);
+          }
+          if (counters.delegated > 0) {
+            parts.push(`delegated to ${counters.delegated} agent${counters.delegated !== 1 ? "s" : ""}`);
+          }
+          if (counters.consulted > 0) {
+            parts.push(`consulted ${counters.consulted} colleague${counters.consulted !== 1 ? "s" : ""}`);
+          }
+          if (counters.gapsRaised > 0) {
+            parts.push(`raised ${counters.gapsRaised} gap${counters.gapsRaised !== 1 ? "s" : ""}`);
+          }
+          if (parts.length === 0) {
+            summary = "Finished, but said nothing about what it did.";
+          } else {
+            summary = `Completed ${parts.join(", ")}.`;
+          }
+        }
 
         // Three ways to finish, and they are genuinely different outcomes.
         if (counters.escalated) {
