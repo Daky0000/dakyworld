@@ -376,10 +376,53 @@ async function main() {
   check("and Claude actually served the turns", anthBodies.length > anthBefore, `${anthBodies.length - anthBefore} turn(s)`);
   check("the work still got done", retired.text === "Done.", retired.text);
 
+  // --- Scenario E: a turn that says nothing is not a silent success ----------
+  //
+  // A vendor can answer 200 OK with `finish_reason: "stop"` and no text and no
+  // tool call — a busy or degraded model doing this instead of a clean error.
+  // Nothing here throws, so the loop used to read `stop_reason: "end_turn"`
+  // and call it finished: a task marked DONE having said and done nothing,
+  // with no warning anywhere. Treated exactly like a vendor that could not
+  // serve the request — the run hands over to Claude rather than accepting it.
+  const emptyBodies: unknown[] = [];
+  const emptyServer = await httpServer((_body, send) => {
+    emptyBodies.push(_body);
+    send(200, {
+      id: "chatcmpl_check_empty",
+      object: "chat.completion",
+      model: "stealth/ox-alpha",
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "" } }],
+      usage: { prompt_tokens: 40, completion_tokens: 0 },
+    });
+  });
+
+  process.env.OPENROUTER_BASE_URL = emptyServer.url;
+  clearSettingsCache();
+  clearOpenRouterCooldown();
+
+  const anthBeforeEmpty = anthBodies.length;
+  const empty = await runAgentLoop({
+    purpose: "check.agentLoop.emptyTurn",
+    system: "You are a check.",
+    prompt: "Look something up, then say you are done.",
+    tools: [lookUpTool],
+    effort: "medium",
+  });
+
+  check("the empty turn was tried once", emptyBodies.length === 1, String(emptyBodies.length));
+  check(
+    "it did not accept nothing as a finish — Claude took the run over",
+    empty.stoppedBecause === "finished" && empty.model.startsWith("claude"),
+    `${empty.stoppedBecause} / ${empty.model}`,
+  );
+  check("and Claude actually served it", anthBodies.length > anthBeforeEmpty, `${anthBodies.length - anthBeforeEmpty} turn(s)`);
+  check("the run still produced a real answer", empty.text.length > 0, JSON.stringify(empty.text));
+
   goneServer.server.close();
   orServer.server.close();
   anthServer.server.close();
   refusedServer.server.close();
+  emptyServer.server.close();
 
   await prisma.llmCall.deleteMany({ where: { purpose: { startsWith: "check.agentLoop" } } });
   // Put back exactly what was here: same rows, same encrypted values.

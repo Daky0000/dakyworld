@@ -978,11 +978,41 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       }
 
       // What it said this turn, before any tool it wants to call.
+      const sawToolUse = response.content.some((block) => block.type === "tool_use");
+      let sawText = false;
       for (const block of response.content) {
         if (block.type === "text" && block.text.trim()) {
+          sawText = true;
           narration.push(block.text.trim());
           await request.onText?.(block.text.trim());
         }
+      }
+
+      // A turn that said nothing and asked for nothing is not a real answer —
+      // it is what a busy or degraded model does instead of a clean error,
+      // and this loop used to accept it as "finished" because nothing threw.
+      // The result was a task that reports success while having done, and
+      // said, nothing at all. Treated exactly like a rung or vendor that
+      // failed: climb the ladder, then hand to the floor, and only give up
+      // when nobody is left to ask.
+      if (!sawText && !sawToolUse && response.stop_reason !== "pause_turn") {
+        if (serving === "openrouter" && ladder.length > 0 && rung + 1 < ladder.length) {
+          console.warn(`[agent] ${ladder[rung]} answered with nothing (stop_reason: ${response.stop_reason}) — trying ${ladder[rung + 1]}.`);
+          rung += 1;
+          continue;
+        }
+        if (serving === "openrouter" && candidates.includes("anthropic")) {
+          console.warn(`[agent] OpenRouter answered with nothing (stop_reason: ${response.stop_reason}) — Claude takes the rest of this run.`);
+          serving = "anthropic";
+          continue;
+        }
+        // Nobody left to ask. A quiet, empty "success" would be worse than
+        // saying so: the conversation is kept, exactly as the other failures
+        // above keep it, so running this again continues rather than starts over.
+        const message = `The model finished this turn without saying anything or calling a tool (stop_reason: ${response.stop_reason}). Likely a busy or degraded model rather than a real answer.`;
+        await checkpoint();
+        await finish(false, message);
+        throw new AnalystError(502, message);
       }
 
       if (response.stop_reason === "end_turn") {
@@ -1001,8 +1031,10 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
 
       assistantContent = response.content;
 
-      if (assistantContent.filter((block) => block.type === "tool_use").length === 0) {
-        // No tools and not end_turn — nothing further will happen.
+      if (!sawToolUse) {
+        // Said something, but not end_turn and asked for no tool — nothing
+        // further will happen. (The empty case — neither text nor a tool —
+        // was already handled above.)
         stoppedBecause = "finished";
         return finish(true);
       }
