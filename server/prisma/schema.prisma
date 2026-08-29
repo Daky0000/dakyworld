@@ -357,6 +357,15 @@ model Lead {
   /// Set when this lead is a rehearsal's scratch record. Deleted with it.
   rehearsalRun Rehearsal?
 
+  /// Evidence bundles related to this lead, stored at `evidence:/${lead_id}/${source}` paths.
+  evidence       Evidence[]
+  /// PDF reports related to this lead, stored at `pdf:/${lead_id}/report.pdf` paths.
+  pdfReport      PdfReport[]
+  /// Email drafts related to this lead, stored at `email:/${lead_id}/draft` paths.
+  emailDraft     EmailDraft[]
+  /// Routing objects related to this lead, stored at `routing:/${lead_id}/object.json` paths.
+  routingObject  RoutingObject[]
+
   @@index([status])
   @@index([groupId])
   @@index([scraperRunId])
