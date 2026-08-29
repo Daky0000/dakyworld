@@ -527,6 +527,14 @@ export interface Counters {
  */
 function restoreCounters(stored: Record<string, unknown> | undefined): Counters {
   const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  const groups = (value: unknown): Counters["parallelGroups"] =>
+    Array.isArray(value)
+      ? value.flatMap((entry) =>
+          entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string" && Array.isArray((entry as { agents?: unknown }).agents)
+            ? [{ name: (entry as { name: string }).name, agents: (entry as { agents: unknown[] }).agents.filter((a): a is string => typeof a === "string") }]
+            : [],
+        )
+      : null;
   return {
     toolCalls: number(stored?.toolCalls),
     dryRun: number(stored?.dryRun),
@@ -536,9 +544,7 @@ function restoreCounters(stored: Record<string, unknown> | undefined): Counters 
     consulted: number(stored?.consulted),
     handedOff: number(stored?.handedOff),
     gapsRaised: number(stored?.gapsRaised),
-    parallelGroups: stored?.parallelGroups
-      ? [...stored.parallelGroups]
-      : null,
+    parallelGroups: groups(stored?.parallelGroups),
   };
 }
 
@@ -1267,7 +1273,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       const saved = await loadCheckpoint(task.id);
       const counters: Counters = saved
         ? restoreCounters(saved.counters)
-        : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
+        : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0, parallelGroups: null };
       // A resume must not carry the escalation that ended the last run, or the
       // task would go straight back to BLOCKED without doing anything. What the
       // Owner answered is already in the conversation by this point.
@@ -1847,16 +1853,6 @@ export const PARALLEL_GROUPS = [
   { name: "GROUP_3", agents: ["outreach.writer"] },
   { name: "GROUP_4", agents: ["design.graphic"] },
 ];
-
-/** How many colleagues one task may ask, and how many pieces it may hand away.
- *  Both are cheap individually and pathological in bulk. Three consults is a
- *  hard question being worked properly; ten is an agent canvassing the building
- *  instead of deciding, at a model call each. Two hand-offs is a task with two
- *  craft pieces in it; five is a task that was somebody else's from the start,
- *  and the right answer to that is an escalation about the brief.
- */
-const MAX_CONSULTS = 3;
-const MAX_HANDOFFS = 2;
 
 /** How many are in flight right now, for the dashboard. */
 export function inFlight(): number {

@@ -74,7 +74,7 @@ const ALL_KEYS = [AGENT_KEY, MANAGER_KEY, SIDEWAYS_KEY];
 const MARK = "rehearsalcheck";
 
 function freshCounters(): Counters {
-  return { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
+  return { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0, parallelGroups: null };
 }
 
 /**
@@ -191,8 +191,9 @@ async function theGateHoldsAtAnyAutonomy() {
   // that branch, on every run.
   const unpreviewable = TOOLS.filter((tool) => heldByRehearsal(tool) && !tool.preview);
   check("every outward tool in the catalogue can be previewed", unpreviewable.length === 0, unpreviewable.map((tool) => tool.key).join(", "));
+}
 
-// --- 5. GatesAndSafety --------------------------------------------------------------
+// --- 1b. The five gates ---------------------------------------------------------
 
 /**
  * GATE 1 (Sales Entry): autonomy ≥ 1, input match, integration configured
@@ -265,7 +266,7 @@ async function gate2EvidenceGathering() {
                       agent.toolkit.includes(companyAudit.key) &&
                       agent.toolkit.includes(siteLook.key) &&
                       agent.toolkit.includes(auditWebsite.key);
-  check("4 tools active for evidence gathering", toolsOk, `toolkit: ${agent.toolkit.join(", ")}`);
+  check("4 tools active for evidence gathering", toolsActive, `toolkit: ${agent.toolkit.join(", ")}`);
 
   // Minimum viability - ensure at least some tool calls can proceed
   const viabilityOk = toolsActive && dryRunOk;

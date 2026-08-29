@@ -1005,7 +1005,7 @@ ${OFFER_CRAFT}`,
           "whatsapp.link",
           "whatsapp.templates",
         ],
-escalationPolicy:
+        escalationPolicy:
           "Checks the suppression list before writing to anybody, and stops dead on a reply, an unsubscribe or a complaint. Never claims a result Dakyworld did not get, never implies a prior relationship, and never sends — every message is a draft a person approves.",
         // The playbook, not a description of one. This is Cold Email Playbook
         // v3 (`server/docs/cold-email-playbook.md`), the same doctrine
@@ -1020,6 +1020,7 @@ escalationPolicy:
         // the deliverable, exactly as `services/writers/brief.ts` describes.
         input_type: ["diagnosis", "fused_findings", "brand_voice"],
         output_type: ["email_draft", "contextRef"],
+        process: COLD_EMAIL_DOCTRINE,
         output:
           "The message, the observation it is built on and where that observation came from, the subject line, why this angle rather than the other, and anything a person must verify before it is sent. Include contextRef and contextAggregration fields.",
       },

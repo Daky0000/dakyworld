@@ -135,7 +135,7 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
       const regex = new RegExp(`^${pattern.replace(/\*/g, '.*')}$`);
       if (regex.test(tool.key)) {
         // Log boundary violation in audit trail
-        const violationId = await record({
+        await record({
           tool: tool.key,
           options: { ...options, boundaryViolation: true },
           ok: false,
@@ -153,7 +153,8 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
           where: { key: options.agentKey },
           select: { boundaryViolations: true, status: true, name: true },
         });
-        if (updatedAgent?.boundaryViolations >= 3) {
+        const violations = updatedAgent?.boundaryViolations ?? 0;
+        if (violations >= 3) {
           // Suspend the agent after 3 consecutive violations
           await prisma.agent.update({
             where: { key: options.agentKey },
@@ -168,7 +169,7 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
         return {
           allowed: false,
           mustDryRun: false,
-          reason: `${agent.name} is not responsible for ${tool.key}. (boundary violation ${updatedAgent?.boundaryViolations}/3 recorded)`,
+          reason: `${agent.name} is not responsible for ${tool.key}. (boundary violation ${violations}/3 recorded)`,
         };
       }
     }
