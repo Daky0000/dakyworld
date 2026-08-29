@@ -97,6 +97,8 @@ export interface InvokeOptions extends ToolContext {
    * happen.
    */
   rehearsal?: boolean;
+  /** Set when the tool call touches a category the agent is not responsible for. */
+  boundaryViolation?: boolean;
 }
 
 /**

@@ -1936,6 +1936,9 @@ model Agent {
   /// tool key's. Read by the router when it picks who a job belongs to, and
   /// shown on the roster so "who do I ask for a video edit" has an answer.
   skills           String[] @default([])
+  /// Categories or tools this agent is NOT responsible for (boundary enforcement).
+  /// Calls touching these will be rejected with a boundary violation.
+  not_responsible  String[] @default([])
   escalationPolicy String?
   /// The ten layered prompt sections, keyed by name. One column rather than a
   /// version table until prompts are actually edited in the app.
