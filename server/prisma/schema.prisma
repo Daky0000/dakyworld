@@ -411,6 +411,54 @@ model LeadResearch {
 
   @@index([ranAt])
 }
+/// Evidence bundles stored at `evidence:/${lead_id}/${source}` paths.
+/// Sources: visual, seo, performance, perplexity
+model Evidence {
+  id        String   @id @default(cuid())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId    String
+  source    String   // e.g. "visual", "seo", "performance", "perplexity"
+  filepath  String   // e.g. "visual/lead-123-screenshot.jpg"
+  capturedAt DateTime @default(now())
+  metadata  Json?    // additional context about the evidence
+
+  @@index([leadId])
+  @@index([source])
+}
+/// PDF report stored at `pdf:/${lead_id}/report.pdf`
+model PdfReport {
+  id       String   @id @default(cuid())
+  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId   String
+  filename String   // e.g. "report.pdf"
+  filepath String   // e.g. "pdf/lead-123-report.pdf"
+  createdAt DateTime @default(now())
+  metadata Json?    // additional context about the report
+
+  @@index([leadId])
+}
+/// Email draft stored at `email:/${lead_id}/draft`
+model EmailDraft {
+  id      String   @id @default(cuid())
+  lead    Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId  String
+  subject String
+  body    String
+  draftedAt DateTime @default(now())
+  metadata Json?   // additional context about the draft
+
+  @@index([leadId])
+}
+/// Routing object stored at `routing:/${lead_id}/object.json`
+model RoutingObject {
+  id       String   @id @default(cuid())
+  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId   String
+  object   Json     // the routing object JSON
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+}
 
 /// Where a demo stands. A demo is only worth building for somebody who asked,
 /// so DRAFT is short and SENT is the state that matters.
@@ -1915,6 +1963,8 @@ model Agent {
   /// shipped wording recoverable — set means "rewritten here", which is what
   /// the Reset action on the Agents screen offers to undo.
   promptEditedAt DateTime?
+  /// Number of consecutive boundary violations before suspension.
+  boundaryViolations Int @default(0)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 

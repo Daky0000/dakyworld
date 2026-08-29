@@ -116,6 +116,22 @@ export interface AgentSeed {
   kpis: string[];
   toolkit: string[];
   /**
+   * Formal input schema keys expected by this agent, matching `[[AgentSchema]]` contract.
+   * e.g. `{company_name, website_url}` for Sales Director.
+   */
+  input_type?: string[];
+  /**
+   * Formal output schema keys produced by this agent, matching `[[AgentSchema]]` contract.
+   * e.g. `{lead_id, status, contextRef}` for Sales Director.
+   */
+  output_type?: string[];
+  /**
+   * Categories or tools this agent is NOT responsible for (boundary enforcement).
+   * Calls touching these will be rejected with a boundary violation.
+   * e.g. ["design.*", "ux.*"] for an agent that should not touch design work.
+   */
+  not_responsible?: string[];
+  /**
    * What this one is good at, in a client's words rather than in tool keys.
    * Empty on the management tier, where the output is a decision rather than
    * a craft — see the specialists below.
@@ -248,6 +264,9 @@ ${MONEY_CRAFT}`,
     kpis: ["Qualified conversations", "Proposal conversion", "Sales velocity", "Objections logged"],
     toolkit: ["crm.read", "lead.read", "proposal.draft", "calendar.read"],
     escalationPolicy: "Pricing exceptions and unusual negotiation go to the Owner.",
+    input_type: ["company_name", "website_url"],
+    output_type: ["lead_id", "status", "contextRef"],
+    not_responsible: ["design.*", "ux.*", "performance.*"],
     prompt: layers({
       role: "You are the Dakyworld CRO.",
       mission: "Focus on qualified revenue, not volume.",
@@ -257,7 +276,7 @@ ${MONEY_CRAFT}`,
 
 ${PROSPECT_CRAFT}`,
       escalateWhen: "Discounting, a high-value contract, or anything with reputational risk.",
-      output: "Per opportunity: the evidence, the next step, the owner and the date.",
+      output: "Per opportunity: the evidence, the next step, the owner and the date. Include contextRef and contextAggregration fields linking to prior stage records.",
     }),
   },
   {
@@ -273,6 +292,8 @@ ${PROSPECT_CRAFT}`,
     kpis: ["Qualified inbound", "Content published", "Search visibility"],
     toolkit: ["content.draft", "analytics.read", "client.read"],
     escalationPolicy: "New public claims and major brand changes need approval before publishing.",
+    input_type: ["lead_id", "company_name", "website_url"],
+    output_type: ["asset", "audience", "problem", "proof", "distribution"],
     prompt: layers({
       role: "You are the Dakyworld CMO.",
       mission: "Position Dakyworld as an accountable outsourced IT department, not a freelancer or a tool reseller.",
@@ -282,7 +303,7 @@ ${PROSPECT_CRAFT}`,
 
 ${GROWTH_CRAFT}`,
       escalateWhen: "A claim you cannot evidence, anything legal or compliance-adjacent, or a change in brand direction.",
-      output: "The asset, plus the audience, problem, proof and distribution behind it.",
+      output: "The asset, plus the audience, problem, proof and distribution behind it. Include contextRef and contextAggregration fields.",
     }),
   },
   {
@@ -704,10 +725,13 @@ ${BUILD_CRAFT}`,
         toolkit: ["design.brief", "image.generate", "document.render", "content.draft", "client.read"],
         escalationPolicy:
           "Never changes the brand system to solve a layout problem. A new public mark, a new colour or a new typeface is the Owner's decision, not a design choice.",
+        input_type: ["audit_report", "brand_tokens", "preserve_list", "design_verdict"],
+        output_type: ["pdf_report", "contextRef"],
+        not_responsible: ["email.*", "outreach.*", "lead.prepare", "lead.update"],
         process: `Write the brief before the artwork: purpose, audience, hierarchy, the exact copy, the sizes. Work inside the brand system's tokens. Lime is a mark and an action colour only and never type on white; on light surfaces the accent is blue.
 
 ${BRAND_CRAFT}`,
-        output: "The brief, the artwork or the prompt that made it, the sizes delivered, and what still needs a human eye.",
+        output: "The brief, the artwork or the prompt that made it, the sizes delivered, and what still needs a human eye. Include contextRef and contextAggregration fields.",
       },
       {
         key: "video.editor",
@@ -806,10 +830,12 @@ ${PROSE_CRAFT}`,
         kpis: ["Technical faults fixed", "Impressions and clicks", "Local pack visibility", "Indexation coverage"],
         toolkit: ["audit.website", "audit.read", "company.audit", "security.scan", "site.look", "content.draft", "analytics.read", "lead.read"],
         escalationPolicy: "Never promises a ranking or a timeline search engines do not guarantee. No paid links, no cloaking, no scraped content.",
+        input_type: ["diagnosis", "site_structure"],
+        output_type: ["seo_verdict", "contextRef"],
         process: `Fix what is broken before chasing what is missing — an unindexable site does not need more keywords. Every recommendation names the fault, the evidence, the fix and who does it.
 
 ${SEARCH_CRAFT}`,
-        output: "The findings with their evidence, ranked by what they cost, and the fix for each.",
+        output: "The findings with their evidence, ranked by what they cost, and the fix for each. Include contextRef and contextAggregration fields.",
       },
       {
         key: "design.ux",
@@ -833,6 +859,8 @@ ${SEARCH_CRAFT}`,
         toolkit: ["audit.read", "demo.read", "design.brief", "lead.read"],
         escalationPolicy:
           "Never designs around a fault nobody has confirmed. It works from what the reviewer actually saw, and a page nobody has looked at is a page it asks to have looked at rather than guessing about.",
+        input_type: ["diagnosis", "preserve_list"],
+        output_type: ["ux_verdict", "contextRef"],
         process: `Start from the review, not from the screenshot — somebody whose whole job is looking has already said what is wrong, and re-deciding that here is how two answers to one question get into a client's inbox. Design in the owner's terms: not that a heading is the wrong size, but that a builder comparing three suppliers must be able to tell within five seconds that this one sells what he needs. Work inside the brand design system's tokens.
 
 ${INTERFACE_CRAFT}`,
@@ -977,7 +1005,7 @@ ${OFFER_CRAFT}`,
           "whatsapp.link",
           "whatsapp.templates",
         ],
-        escalationPolicy:
+escalationPolicy:
           "Checks the suppression list before writing to anybody, and stops dead on a reply, an unsubscribe or a complaint. Never claims a result Dakyworld did not get, never implies a prior relationship, and never sends — every message is a draft a person approves.",
         // The playbook, not a description of one. This is Cold Email Playbook
         // v3 (`server/docs/cold-email-playbook.md`), the same doctrine
@@ -990,9 +1018,10 @@ ${OFFER_CRAFT}`,
         // letter cannot drift apart — which is the failure that made a prompt
         // edit change nothing for a month. Editing this agent still takes over
         // the deliverable, exactly as `services/writers/brief.ts` describes.
-        process: COLD_EMAIL_DOCTRINE,
+        input_type: ["diagnosis", "fused_findings", "brand_voice"],
+        output_type: ["email_draft", "contextRef"],
         output:
-          "The message, the observation it is built on and where that observation came from, the subject line, why this angle rather than the other, and anything a person must verify before it is sent.",
+          "The message, the observation it is built on and where that observation came from, the subject line, why this angle rather than the other, and anything a person must verify before it is sent. Include contextRef and contextAggregration fields.",
       },
 
       // Under the COO: the front line of live work.

@@ -485,6 +485,19 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
     },
   }));
 
+  const matchingGroups = PARALLEL_GROUPS.filter((group) =>
+    group.agents.includes(agent.key)
+  );
+
+  // If the agent belongs to a parallel group, add the group info to the counters
+  // so the orchestration layer can coordinate parallel execution
+  if (matchingGroups.length > 0) {
+    counters.parallelGroups = matchingGroups.map((group) => ({
+      name: group.name,
+      agents: group.agents,
+    }));
+  }
+
   return [...tools, ...workflowTools(agent, task, counters)];
 }
 
@@ -500,6 +513,8 @@ export interface Counters {
   handedOff: number;
   /** Gaps raised: "nobody here can do this". */
   gapsRaised: number;
+  /** Parallel execution groups for agent coordination. */
+  parallelGroups: Array<{ name: string; agents: string[] }> | null;
 }
 
 /**
@@ -521,6 +536,9 @@ function restoreCounters(stored: Record<string, unknown> | undefined): Counters 
     consulted: number(stored?.consulted),
     handedOff: number(stored?.handedOff),
     gapsRaised: number(stored?.gapsRaised),
+    parallelGroups: stored?.parallelGroups
+      ? [...stored.parallelGroups]
+      : null,
   };
 }
 
@@ -1816,6 +1834,29 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
 export function isBusy(agentKey: string): boolean {
   return busyAgents.has(agentKey);
 }
+
+/** Parallel execution groups for agent coordination.
+ *  GROUP_1: SEO+PERFORMANCE (both need site audit context)
+ *  GROUP_2: DESIGN+UX (both need design context)
+ *  GROUP_3: COLD_LEAD_WRITER (stands alone - email draft)
+ *  GROUP_4: GRAPHIC_DESIGNER (stands alone - PDF report)
+ */
+export const PARALLEL_GROUPS = [
+  { name: "GROUP_1", agents: ["seo.specialist", "performance"] },
+  { name: "GROUP_2", agents: ["design.ux", "design.graphic"] },
+  { name: "GROUP_3", agents: ["outreach.writer"] },
+  { name: "GROUP_4", agents: ["design.graphic"] },
+];
+
+/** How many colleagues one task may ask, and how many pieces it may hand away.
+ *  Both are cheap individually and pathological in bulk. Three consults is a
+ *  hard question being worked properly; ten is an agent canvassing the building
+ *  instead of deciding, at a model call each. Two hand-offs is a task with two
+ *  craft pieces in it; five is a task that was somebody else's from the start,
+ *  and the right answer to that is an escalation about the brief.
+ */
+const MAX_CONSULTS = 3;
+const MAX_HANDOFFS = 2;
 
 /** How many are in flight right now, for the dashboard. */
 export function inFlight(): number {

@@ -58,6 +58,10 @@ export interface AgentTool {
 export interface AgentToolOutcome {
   /** What goes back to the model as the tool result. */
   content: string;
+  /** Reference to the canonical record this output relates to (e.g. "lead:/123", "pdf:/123/report.pdf"). */
+  contextRef?: string;
+  /** Tracks which context was read from prior stages for context-aware design. */
+  contextAggregration?: string;
   /** True when the tool failed or was refused — sets `is_error` on the result block. */
   isError?: boolean;
   /** Ends the loop after this result is delivered. Used by `escalate`. */

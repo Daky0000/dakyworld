@@ -123,6 +123,55 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
     return { allowed: false, mustDryRun: false, reason: `${agent.name} hasn't been granted ${tool.key}.` };
   }
 
+  // --- Boundary Enforcement: not_responsible check ---
+  // If the agent has a not_responsible list, reject calls that touch
+  // categories/tools they are not responsible for.
+  if (agent.not_responsible && agent.not_responsible.length > 0) {
+    const notResponsiblePatterns = agent.not_responsible;
+    // Check if the tool key matches any not_responsible pattern
+    for (const pattern of notResponsiblePatterns) {
+      const regex = new RegExp(`^${pattern.replace(/\*/g, '.*')}$`);
+      if (regex.test(tool.key)) {
+        // Log boundary violation in audit trail
+        const violationId = await record({
+          tool: tool.key,
+          options: { ...options, boundaryViolation: true },
+          ok: false,
+          refusedReason: `${agent.name} is not responsible for ${tool.key}.`,
+          durationMs: 0,
+        });
+        // Increment the agent's boundary violations counter
+        await prisma.agent.update({
+          where: { key: options.agentKey },
+          data: { boundaryViolations: { increment: 1 } },
+          select: { boundaryViolations: true },
+        });
+        // Check if the agent has exceeded the violation threshold
+        const updatedAgent = await prisma.agent.findUnique({
+          where: { key: options.agentKey },
+          select: { boundaryViolations: true, status: true, name: true },
+        });
+        if (updatedAgent?.boundaryViolations >= 3) {
+          // Suspend the agent after 3 consecutive violations
+          await prisma.agent.update({
+            where: { key: options.agentKey },
+            data: { status: "PAUSED" },
+          });
+          return {
+            allowed: false,
+            mustDryRun: false,
+            reason: `${agent.name} has been suspended after 3 consecutive boundary violations. Requires human review.`,
+          };
+        }
+        return {
+          allowed: false,
+          mustDryRun: false,
+          reason: `${agent.name} is not responsible for ${tool.key}. (boundary violation ${updatedAgent?.boundaryViolations}/3 recorded)`,
+        };
+      }
+    }
+  }
+
   // A spend ceiling the Owner set, and the only check here an approval cannot
   // lift. Deliberately **only for a tool that spends** — a blanket hold would
   // stop an agent reading a record, which blinds it without saving a penny and
