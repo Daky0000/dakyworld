@@ -219,10 +219,95 @@ agentsRouter.get("/:key", async (req, res, next) => {
   }
 });
 
+/**
+ * What this agent has actually done, and every time somebody changed how much
+ * it may do without being asked.
+ *
+ * The question an autonomy decision needs answered is "has this one earned
+ * it", and before this there was nowhere to look: the roster showed a level
+ * and a dry-run tick and nothing behind either.
+ *
+ * **Every number here is summed from a ledger that already exists**, and none
+ * of it is a stored counter. `recordLlmCall` is explicitly allowed to fail
+ * silently — accounting must not break the work it accounts for — so a counter
+ * would drift the first time a write failed, and a promotion argued from a
+ * counter that has quietly lost count is the worst version of this feature.
+ * The same reasoning as `services/budgets.ts`, which sums for the same reason.
+ *
+ * Nothing here promotes anything. An autonomy change is a decision and it goes
+ * through `PATCH /agents/:key` like any other, where it is gated on
+ * `agents.autonomy` and now leaves a history entry.
+ */
+agentsRouter.get("/:key/autonomy", async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({
+      where: { key: req.params.key },
+      select: { key: true, name: true, autonomyLevel: true, dryRun: true, status: true, boundaryViolations: true },
+    });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const [history, byStatus, work, calls, refused, escalations] = await Promise.all([
+      prisma.agentAutonomyChange.findMany({ where: { agentKey: agent.key }, orderBy: { at: "desc" }, take: 50 }),
+      prisma.agentTask.groupBy({ by: ["status"], where: { agentKey: agent.key, rehearsal: false }, _count: true }),
+      prisma.agentTask.aggregate({
+        where: { agentKey: agent.key, rehearsal: false },
+        _sum: { toolCalls: true, dryRunCalls: true },
+      }),
+      prisma.toolCall.count({ where: { agentKey: agent.key } }),
+      prisma.toolCall.count({ where: { agentKey: agent.key, refusedReason: { not: null } } }),
+      // An escalation is a task reaching BLOCKED, which `transition()` records
+      // whoever caused it. Counted off the transition rather than off the task's
+      // current status, or a blocked task that was later answered and finished
+      // would read as never having stopped to ask.
+      prisma.agentTaskTransition.count({ where: { to: "BLOCKED", task: { agentKey: agent.key, rehearsal: false } } }),
+    ]);
+
+    const counted = Object.fromEntries(byStatus.map((row) => [row.status, row._count]));
+    const finished = (counted.DONE ?? 0) + (counted.FAILED ?? 0);
+    const toolCalls = work._sum.toolCalls ?? 0;
+    const dryRunCalls = work._sum.dryRunCalls ?? 0;
+
+    res.json({
+      agent,
+      history,
+      evidence: {
+        tasks: counted,
+        // A window with none of something is not a zero — the same rule the
+        // costs screen states. Null means "no evidence", which is the honest
+        // answer for an agent nobody has given work to yet, and is a very
+        // different thing from an agent that fails everything.
+        successRate: finished > 0 ? (counted.DONE ?? 0) / finished : null,
+        toolCalls,
+        dryRunCalls,
+        /** How much of what it does is still being prepared rather than done. */
+        preparedShare: toolCalls > 0 ? dryRunCalls / toolCalls : null,
+        refusedCalls: refused,
+        refusedShare: calls > 0 ? refused / calls : null,
+        escalations,
+        /** Standing boundary crossings. Three in a row pauses the agent. */
+        boundaryViolations: agent.boundaryViolations,
+        waitingOnApproval: counted.NEEDS_APPROVAL ?? 0,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const patchInput = z.object({
   /** 0 observe · 1 draft · 2 recommend · 3 execute-with-policy · 4 autonomous · 5 delegated. */
   autonomyLevel: z.number().int().min(0).max(5).optional(),
   dryRun: z.boolean().optional(),
+  /**
+   * Why the autonomy level or the dry-run flag is moving.
+   *
+   * Optional rather than required, because the screen has been able to make
+   * this change since before there was anywhere to write a reason and a
+   * suddenly-mandatory field would break it. Where none is given the history
+   * records the move itself, which is still the two facts that were missing
+   * entirely: who, and when.
+   */
+  autonomyReason: z.string().max(600).optional(),
   status: z.enum(["DRAFT", "ACTIVE", "PAUSED", "RETIRED"]).optional(),
   /** Catalogue keys this agent may call. Replaces the list wholesale. */
   toolkit: z.array(z.string().max(64)).max(60).optional(),
@@ -312,8 +397,12 @@ agentsRouter.patch("/:key", async (req, res, next) => {
     // names that never had code behind them: the first save cleans them up.
     const known = new Set((await listAllTools()).map((tool) => tool.key));
     const dropped = input.toolkit?.filter((key) => !known.has(key)) ?? [];
+    // Pulled out of the spread: it is a reason for the change, not a column on
+    // the row. Left in, Prisma refuses the whole update.
+    const { autonomyReason, ...fields } = input;
+
     const data = {
-      ...input,
+      ...fields,
       ...(input.toolkit ? { toolkit: input.toolkit.filter((key) => known.has(key)) } : {}),
       // Stamped only on a seeded agent: a custom one has no shipped wording to
       // go back to, so the flag would mean nothing there.
@@ -326,6 +415,35 @@ agentsRouter.patch("/:key", async (req, res, next) => {
     };
 
     const updated = await prisma.agent.update({ where: { key: req.params.key }, data });
+
+    // The two fields that decide whether software may act on a client without
+    // being asked, and until now the only two consequential fields on this
+    // router that left no trace. Written after the update rather than before:
+    // a history entry for a change that then failed is worse than none.
+    //
+    // Never throws the request away. A failed history write must not undo a
+    // decision somebody made — the same rule `step()` keeps on the timeline.
+    const levelMoved = input.autonomyLevel !== undefined && input.autonomyLevel !== agent.autonomyLevel;
+    const dryRunMoved = input.dryRun !== undefined && input.dryRun !== agent.dryRun;
+    if (levelMoved || dryRunMoved) {
+      try {
+        await prisma.agentAutonomyChange.create({
+          data: {
+            agentKey: agent.key,
+            fromLevel: levelMoved ? agent.autonomyLevel : null,
+            toLevel: levelMoved ? input.autonomyLevel : null,
+            fromDryRun: dryRunMoved ? agent.dryRun : null,
+            toDryRun: dryRunMoved ? input.dryRun : null,
+            reason: autonomyReason?.trim() || describeAutonomyMove(agent, input),
+            actor: req.dbUser ? "owner" : "api",
+            actorId: req.dbUser?.id ?? null,
+          },
+        });
+      } catch (err) {
+        console.error(`[agents] could not record the autonomy change on ${agent.key}:`, (err as Error).message);
+      }
+    }
+
     res.json({
       ...updated,
       ...(dropped.length ? { droppedGrants: dropped } : {}),
@@ -339,6 +457,29 @@ agentsRouter.patch("/:key", async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * What to write in the history when nobody said why.
+ *
+ * Never blank and never "changed": a history of unexplained rows is a list,
+ * and the move itself is at least the fact somebody will be looking for.
+ * Dry run is spelled out rather than printed as a boolean, because "dryRun:
+ * false" is not a sentence anybody reads at speed and it is the more
+ * consequential half of the pair.
+ */
+function describeAutonomyMove(
+  before: { autonomyLevel: number; dryRun: boolean },
+  after: { autonomyLevel?: number; dryRun?: boolean },
+): string {
+  const parts: string[] = [];
+  if (after.autonomyLevel !== undefined && after.autonomyLevel !== before.autonomyLevel) {
+    parts.push(`autonomy ${before.autonomyLevel} → ${after.autonomyLevel}`);
+  }
+  if (after.dryRun !== undefined && after.dryRun !== before.dryRun) {
+    parts.push(after.dryRun ? "dry run switched on" : "dry run switched off — it can act for real now");
+  }
+  return `${parts.join(", ")}. No reason was given.`;
+}
 
 /**
  * Would putting `agentKey` under `managerKey` create a loop?

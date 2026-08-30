@@ -2547,6 +2547,51 @@ model AgentTaskCheckpoint {
 /// Written by `transition()` in services/agents/state.ts, which is now the only
 /// thing that may set a status. The guard is what makes the log complete: a
 /// second writer would be a second history.
+/// One recorded change to how much an agent may do without being asked.
+///
+/// The autonomy level and the dry-run flag are the two most consequential
+/// fields on an agent — together they decide whether software may act on a
+/// client without a person seeing it first — and until Aug 2026 changing
+/// either left no trace at all. `PATCH /agents/:key` gated the change behind a
+/// permission and then wrote it like a typo fix in a mission statement, so
+/// "who turned dry run off, and when, and why" had no answer anywhere.
+///
+/// Modelled on `AgentTaskTransition`, deliberately: same shape, same free-text
+/// `actor`, same reason-in-a-sentence. A task's history and an agent's history
+/// are the same kind of record and should not be read two different ways.
+///
+/// `agentKey` is a bare key rather than a relation, like every other
+/// cross-boundary agent reference here — the history outlives the agent, which
+/// matters most for a custom agent somebody hired and later deleted.
+model AgentAutonomyChange {
+  id String @id @default(cuid())
+
+  agentKey String
+
+  /// Null when only the dry-run flag moved.
+  fromLevel Int?
+  toLevel   Int?
+  /// Null when only the level moved.
+  fromDryRun Boolean?
+  toDryRun   Boolean?
+
+  /// Why, in a sentence somebody can read. Supplied by whoever made the change
+  /// where they gave one, and a plain description of the move where they did
+  /// not — never blank, because a history of unexplained changes is a list.
+  reason String
+
+  /// What made the move: `owner`, `api`, `slack`. Not an enum, for the same
+  /// reason `AgentTaskTransition.actor` is not one — a new caller must not need
+  /// a migration to be able to write its own history.
+  actor   String
+  /// The person, when a person did it.
+  actorId String?
+
+  at DateTime @default(now())
+
+  @@index([agentKey, at])
+}
+
 model AgentTaskTransition {
   id String @id @default(cuid())
 
