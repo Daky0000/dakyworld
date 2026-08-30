@@ -29,6 +29,7 @@ import {
   NARROWED,
   NARROWED_TOOLKIT,
   PROMPT_LAYERS,
+  SUBJECT_KINDS,
   ensureAgents,
   reconcileSeedToolkits,
   refreshUneditedSeedPrompts,
@@ -111,6 +112,17 @@ for (const seed of AGENT_SEEDS) {
     // agent finds out by being refused a tool its own card says it holds.
     const both = seed.toolkit.filter((key) => matchesGlob(pattern, key));
     check(both.length === 0, `${seed.key}: not_responsible "${pattern}" does not forbid a tool it is also granted — ${both.join(", ")}`);
+  }
+}
+
+// A subject boundary that names something that is not a subject silently
+// refuses nothing — the same failure as a pattern matching no tool.
+for (const seed of AGENT_SEEDS) {
+  for (const kind of seed.not_responsible_subject ?? []) {
+    check(
+      (SUBJECT_KINDS as readonly string[]).includes(kind),
+      `${seed.key}: not_responsible_subject "${kind}" is one of ${SUBJECT_KINDS.join(", ")}`,
+    );
   }
 }
 
@@ -414,6 +426,56 @@ const paused = await prisma.agent.findUniqueOrThrow({ where: { key: BOUNDARY_KEY
 check(paused.status === "PAUSED", `three in a row pauses the agent — it is ${paused.status}`);
 check(Boolean(thirdCross.refusedReason?.includes("paused")), `the pause says so — got "${thirdCross.refusedReason}"`);
 
+// --- The subject boundary, over the same gate ------------------------------
+//
+// What a tool key cannot say. `email.draft` is the right tool for a stranger
+// and for a client of two years; what separates them is the record the task
+// hangs off, and that is not in the call.
+await prisma.agent.update({
+  where: { key: BOUNDARY_KEY },
+  data: { status: "ACTIVE", boundaryViolations: 0, not_responsible: [], not_responsible_subject: ["client"] },
+});
+
+const client = await prisma.client.create({ data: { name: "Boundary Check Client" } });
+const lead = await prisma.lead.create({ data: { contactName: "Boundary Check Lead" } });
+const taskFor = (data: { leadId?: string; clientId?: string }) =>
+  prisma.agentTask.create({
+    data: { agentKey: BOUNDARY_KEY, title: "boundary check", brief: "boundary check", ...data },
+    select: { id: true },
+  });
+
+const aboutClient = await taskFor({ clientId: client.id });
+const aboutLead = await taskFor({ leadId: lead.id });
+// A converted lead keeps its leadId. This is the case the boundary exists for
+// and the one that looks most like an ordinary lead.
+const aboutBoth = await taskFor({ leadId: lead.id, clientId: client.id });
+
+const onClient = await invokeTool("lead.read", { limit: 1 }, { agentKey: BOUNDARY_KEY, userId: null, dryRun: false, taskId: aboutClient.id });
+check(!onClient.ok, "a task about a forbidden subject is refused");
+check(Boolean(onClient.refusedReason?.includes("about a client")), `the refusal names the subject — got "${onClient.refusedReason}"`);
+
+// The negative. The same agent, the same tool, a task about something it is
+// responsible for — this must still really run, or the boundary is just an
+// outage.
+const onLead = await invokeTool("lead.read", { limit: 1 }, { agentKey: BOUNDARY_KEY, userId: null, dryRun: false, taskId: aboutLead.id });
+check(onLead.ok, `a task about an allowed subject still runs — ${onLead.error ?? onLead.refusedReason ?? "ok"}`);
+
+const onBoth = await invokeTool("lead.read", { limit: 1 }, { agentKey: BOUNDARY_KEY, userId: null, dryRun: false, taskId: aboutBoth.id });
+check(!onBoth.ok, "a task carrying both a lead and a client is refused — a lead that is also a client is a client");
+
+// No task, no subject to be wrong about. A tool driven outside a task must not
+// be refused by a rule that has nothing to read.
+const noTask = await invokeTool("lead.read", { limit: 1 }, { agentKey: BOUNDARY_KEY, userId: null, dryRun: false });
+check(noTask.ok, `a call with no task behind it is not refused — ${noTask.error ?? noTask.refusedReason ?? "ok"}`);
+
+// And an agent that declares no subject boundary never pays for the feature.
+await prisma.agent.update({ where: { key: BOUNDARY_KEY }, data: { not_responsible_subject: [] } });
+const unbounded = await invokeTool("lead.read", { limit: 1 }, { agentKey: BOUNDARY_KEY, userId: null, dryRun: false, taskId: aboutClient.id });
+check(unbounded.ok, "an agent with no subject boundary works a client task exactly as before");
+
+await prisma.agentTask.deleteMany({ where: { agentKey: BOUNDARY_KEY } });
+await prisma.client.delete({ where: { id: client.id } });
+await prisma.lead.delete({ where: { id: lead.id } });
 await clearBoundarySubject();
 
 // --- 6c. The boundary reaching a row that predates it -----------------------

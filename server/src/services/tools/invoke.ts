@@ -166,8 +166,8 @@ export interface Permission {
   mustDryRun: boolean;
   reason: string | null;
   /**
-   * Set when this refusal is a boundary crossing: the `not_responsible`
-   * pattern the tool key matched.
+   * Set when this refusal is a boundary crossing, and holding the sentence
+   * that says which one — a forbidden tool, or a forbidden subject.
    *
    * Reported rather than acted on, because **this function is a question, not
    * an event.** The Agents and Tools screens call it once per tool per agent
@@ -177,7 +177,7 @@ export interface Permission {
    * would have called a tool. The strike belongs to `invokeTool`, where an
    * agent has actually tried something.
    */
-  boundaryPattern?: string;
+  boundaryCrossing?: string;
   /**
    * Strikes standing against this agent when the question was asked.
    *
@@ -210,13 +210,26 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
   // Answered here and acted on in `invokeTool`. See `boundaryPattern`.
   const crossed = boundaryCrossed(agent.not_responsible, tool.key);
   if (crossed) {
-    return {
-      allowed: false,
-      mustDryRun: false,
-      reason: `${agent.name} is not responsible for ${tool.key} (matched "${crossed}").`,
-      boundaryPattern: crossed,
-      boundaryStrikes: agent.boundaryViolations,
-    };
+    const sentence = `${agent.name} is not responsible for ${tool.key} (matched "${crossed}").`;
+    return { allowed: false, mustDryRun: false, reason: sentence, boundaryCrossing: sentence, boundaryStrikes: agent.boundaryViolations };
+  }
+
+  // The other half of a boundary: not what is being done, but who it is being
+  // done about. A tool key cannot say this — `email.draft` is the right tool
+  // for a stranger and for a client of two years, and what separates them is
+  // the record the task hangs off.
+  //
+  // Read only when the agent actually declares one, so every other agent pays
+  // nothing for the feature. A call with no task behind it is not refused:
+  // there is no subject to be wrong about.
+  if (agent.not_responsible_subject.length > 0 && options.taskId) {
+    const forbidden = await forbiddenSubject(options.taskId, agent.not_responsible_subject);
+    if (forbidden) {
+      const sentence =
+        `${agent.name} is not responsible for work about a ${forbidden}, and this task is about one. ` +
+        `Hand it to whoever is, or escalate.`;
+      return { allowed: false, mustDryRun: false, reason: sentence, boundaryCrossing: sentence, boundaryStrikes: agent.boundaryViolations };
+    }
   }
 
   // A spend ceiling the Owner set, and the only check here an approval cannot
@@ -274,12 +287,38 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
 }
 
 /**
+ * The first subject this task carries that the agent must not work on.
+ *
+ * A task can carry several at once — the mail router sets `leadId` and
+ * `clientId` together when a message matches both, and a delegated child
+ * inherits the pair. That is deliberately a crossing rather than an excuse: a
+ * lead that is also a client is a client, and the point of this boundary is
+ * that the Cold Lead Writer must not open a first message to one.
+ */
+async function forbiddenSubject(taskId: string, forbidden: string[]): Promise<string | null> {
+  const task = await prisma.agentTask.findUnique({
+    where: { id: taskId },
+    select: { leadId: true, clientId: true, projectId: true, proposalId: true, invoiceId: true },
+  });
+  if (!task) return null;
+
+  const carried: [string, string | null][] = [
+    ["lead", task.leadId],
+    ["client", task.clientId],
+    ["project", task.projectId],
+    ["proposal", task.proposalId],
+    ["invoice", task.invoiceId],
+  ];
+  return carried.find(([kind, id]) => id && forbidden.includes(kind))?.[0] ?? null;
+}
+
+/**
  * Counts a crossing, pauses on the third in a row, and says which it was.
  *
  * Separate from `permissionFor` because it writes. Reached only from
  * `invokeTool`, so only a real attempt to call a tool counts against an agent.
  */
-async function countBoundaryCrossing(agentKey: string, toolKey: string, pattern: string): Promise<string> {
+async function countBoundaryCrossing(agentKey: string, toolKey: string, sentence: string): Promise<string> {
   const after = await prisma.agent.update({
     where: { key: agentKey },
     data: { boundaryViolations: { increment: 1 } },
@@ -287,17 +326,17 @@ async function countBoundaryCrossing(agentKey: string, toolKey: string, pattern:
   });
 
   if (after.boundaryViolations < BOUNDARY_STRIKES) {
-    return `${after.name} is not responsible for ${toolKey} (matched "${pattern}"). Crossing ${after.boundaryViolations} of ${BOUNDARY_STRIKES} before it is paused.`;
+    return `${sentence} Crossing ${after.boundaryViolations} of ${BOUNDARY_STRIKES} before it is paused.`;
   }
 
   await prisma.agent.update({ where: { key: agentKey }, data: { status: "PAUSED" } });
-  // The tool and the pattern are both named. A paused agent whose card says
-  // nothing about why is the "fixable setting rendering as Something went
-  // wrong" failure this codebase has a rule about — and the fix is more often
-  // to correct the boundary than to scold the agent.
+  // What was crossed is named, here and in the sentence above. A paused agent
+  // whose card says nothing about why is the "fixable setting rendering as
+  // Something went wrong" failure this codebase has a rule about — and the fix
+  // is more often to correct the boundary than to scold the agent.
   return (
-    `${after.name} has been paused after ${BOUNDARY_STRIKES} boundary crossings in a row, the last of them ${toolKey} ` +
-    `(matched "${pattern}"). Either that boundary is wrong or the work is being sent to the wrong agent. ` +
+    `${sentence} That is ${BOUNDARY_STRIKES} boundary crossings in a row, the last of them on ${toolKey}, so ` +
+    `${after.name} has been paused. Either the boundary is wrong or the work is being sent to the wrong agent. ` +
     `Setting it back to Active on the Agents screen clears the count.`
   );
 }
@@ -326,8 +365,8 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
     // here rather than inside the gate, so that drawing the Agents screen —
     // which asks the same question once per tool — costs an agent nothing.
     const reason =
-      permission.boundaryPattern && options.agentKey
-        ? await countBoundaryCrossing(options.agentKey, key, permission.boundaryPattern)
+      permission.boundaryCrossing && options.agentKey
+        ? await countBoundaryCrossing(options.agentKey, key, permission.boundaryCrossing)
         : permission.reason;
     // No separate boundary marker on the row: `refusedReason` names the tool
     // and the pattern it matched, which is what somebody reading the ledger

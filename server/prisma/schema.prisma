@@ -1936,9 +1936,19 @@ model Agent {
   /// tool key's. Read by the router when it picks who a job belongs to, and
   /// shown on the roster so "who do I ask for a video edit" has an answer.
   skills           String[] @default([])
-  /// Categories or tools this agent is NOT responsible for (boundary enforcement).
-  /// Calls touching these will be rejected with a boundary violation.
+  /// Tool keys this agent is NOT responsible for, as globs — `design.*`.
+  /// A call matching one is refused and counts a boundary crossing.
   not_responsible  String[] @default([])
+  /// The kinds of record this agent must not work on: lead, client, project,
+  /// proposal, invoice.
+  ///
+  /// The half `not_responsible` cannot express. A tool key says what is being
+  /// done; this says who it is being done about, and the two are independent —
+  /// `email.draft` is the right tool for a stranger and for a client of two
+  /// years, and the Cold Lead Writer should only ever have one of them in
+  /// front of it. Read from the task the call belongs to, which already
+  /// carries every one of these as a relation.
+  not_responsible_subject String[] @default([])
   escalationPolicy String?
   /// The ten layered prompt sections, keyed by name. One column rather than a
   /// version table until prompts are actually edited in the app.

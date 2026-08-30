@@ -103,6 +103,10 @@ export interface PromptLayers {
   memory: string;
 }
 
+/** What an `AgentTask` can be about. One per relation on the row. */
+export const SUBJECT_KINDS = ["lead", "client", "project", "proposal", "invoice"] as const;
+export type SubjectKind = (typeof SUBJECT_KINDS)[number];
+
 export interface AgentSeed {
   key: string;
   name: string;
@@ -126,11 +130,31 @@ export interface AgentSeed {
    */
   output_type?: string[];
   /**
-   * Categories or tools this agent is NOT responsible for (boundary enforcement).
-   * Calls touching these will be rejected with a boundary violation.
-   * e.g. ["design.*", "ux.*"] for an agent that should not touch design work.
+   * Tool keys this agent is NOT responsible for, as globs — `["design.*"]`.
+   *
+   * A call matching one is refused and counts a boundary crossing. `*` is the
+   * only wildcard; every pattern must name at least one tool that exists,
+   * which `checks/roster.ts` enforces — a pattern matching nothing reads as a
+   * restriction and refuses nothing.
    */
   not_responsible?: string[];
+  /**
+   * The kinds of record this agent must not work on.
+   *
+   * The half a tool key cannot express. `email.draft` is the right tool for a
+   * stranger and for a client of two years; what separates them is who the
+   * task is about, and that lives on `AgentTask`'s relations rather than in
+   * the call. Without this, "the Cold Lead Writer must never write a first
+   * message to somebody who is already a client" is unsayable — and it is the
+   * letter-to-the-wrong-company class of mistake, which is the one this
+   * codebase treats as the worst available.
+   *
+   * **The mirror of a rule is not always a rule.** `["lead"]` on the Client
+   * Communications Agent looks like the obvious counterpart and is wrong: a
+   * converted lead is a client whose task still carries `leadId`, so it would
+   * refuse the agent its actual job. Only asymmetric cases belong here.
+   */
+  not_responsible_subject?: SubjectKind[];
   /**
    * What this one is good at, in a client's words rather than in tool keys.
    * Empty on the management tier, where the output is a decision rather than
@@ -1027,6 +1051,16 @@ ${OFFER_CRAFT}`,
         // the deliverable, exactly as `services/writers/brief.ts` describes.
         input_type: ["diagnosis", "fused_findings", "brand_voice"],
         output_type: ["email_draft", "contextRef"],
+        // The one thing this agent must never be pointed at. Its deliverable is
+        // the *first* message to somebody who has never heard of Dakyworld, and
+        // a task that carries a client is a task about somebody who has — a
+        // converted lead keeps its `leadId`, so "it looked like a lead" is
+        // exactly how this goes wrong. There is no wording that reliably stops
+        // a model here, which is why it is not wording.
+        //
+        // The mirror is deliberately absent: `["lead"]` on the Client
+        // Communications Agent would refuse it every converted client it has.
+        not_responsible_subject: ["client"],
         process: COLD_EMAIL_DOCTRINE,
         output:
           "The message, the observation it is built on and where that observation came from, the subject line, why this angle rather than the other, and anything a person must verify before it is sent. Include contextRef and contextAggregration fields.",
@@ -1650,6 +1684,8 @@ ${SERVICE_CRAFT}`,
     // here is a boundary that exists in the source and nowhere else — which is
     // exactly what happened to `design.graphic`.
     not_responsible: "not_responsible" in spec ? [...(spec as { not_responsible: readonly string[] }).not_responsible] : [],
+    not_responsible_subject:
+      "not_responsible_subject" in spec ? [...(spec as { not_responsible_subject: readonly SubjectKind[] }).not_responsible_subject] : [],
     prompt: layers({
       role: `You are the Dakyworld ${spec.title}.`,
       mission: spec.mission,
@@ -1886,7 +1922,15 @@ export async function narrowSeededAgents(): Promise<NarrowingResult | null> {
  */
 export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[]; keptAsEdited: string[] }> {
   const existing = await prisma.agent.findMany({
-    select: { key: true, promptEditedAt: true, prompt: true, mission: true, escalationPolicy: true, not_responsible: true },
+    select: {
+      key: true,
+      promptEditedAt: true,
+      prompt: true,
+      mission: true,
+      escalationPolicy: true,
+      not_responsible: true,
+      not_responsible_subject: true,
+    },
   });
   const seeds = new Map(AGENT_SEEDS.map((seed) => [seed.key, seed]));
 
@@ -1922,10 +1966,12 @@ export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[];
     //
     // Order-sensitive on purpose: these are regexes tried in order, and the
     // cheap comparison is the honest one here.
+    const same = (held: string[], wanted: readonly string[]) =>
+      held.length === wanted.length && held.every((value, i) => value === wanted[i]);
     const wantedBoundary = seed.not_responsible ?? [];
+    const wantedSubjects = seed.not_responsible_subject ?? [];
     const boundarySame =
-      agent.not_responsible.length === wantedBoundary.length &&
-      agent.not_responsible.every((pattern, i) => pattern === wantedBoundary[i]);
+      same(agent.not_responsible, wantedBoundary) && same(agent.not_responsible_subject, wantedSubjects);
 
     if (promptSame && boundarySame && agent.mission === seed.mission && agent.escalationPolicy === seed.escalationPolicy) continue;
 
@@ -1937,6 +1983,7 @@ export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[];
         kpis: seed.kpis,
         skills: seed.skills ?? [],
         not_responsible: wantedBoundary,
+        not_responsible_subject: wantedSubjects,
         escalationPolicy: seed.escalationPolicy,
         prompt: seed.prompt as unknown as object,
       },
@@ -2220,6 +2267,7 @@ export async function ensureAgents(): Promise<number> {
       toolkit: seed.toolkit,
       skills: seed.skills ?? [],
       not_responsible: seed.not_responsible ?? [],
+      not_responsible_subject: seed.not_responsible_subject ?? [],
       avatar: seed.avatar ?? null,
       escalationPolicy: seed.escalationPolicy,
       prompt: seed.prompt as unknown as object,
