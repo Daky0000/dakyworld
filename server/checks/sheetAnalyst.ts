@@ -295,7 +295,7 @@ Let me know if you would like it changed.`
   delete process.env.PERPLEXITY_API_KEY;
 
   const { prisma } = await import("../src/lib/prisma.js");
-  const { SETTING, clearSettingsCache } = await import("../src/lib/settings.js");
+  const { SETTING, clearSettingsCache, setSetting } = await import("../src/lib/settings.js");
   const { analyzeGrids } = await import("../src/lib/anthropic.js");
   const { callModel } = await import("../src/lib/models/call.js");
   const { reasoningEffortFor, tokensWithReasoning } = await import("../src/lib/models/registry.js");
@@ -312,11 +312,24 @@ Let me know if you would like it changed.`
     SETTING.ANTHROPIC_MODEL,
     SETTING.OPENROUTER_KEY,
     SETTING.OPENROUTER_MODEL,
+    SETTING.OPENROUTER_FREE_MODELS,
     SETTING.MODEL_ROUTES,
     SETTING.MODEL_JOB_MODELS,
   ];
   const savedSettings = await prisma.appSetting.findMany({ where: { key: { in: VENDOR_SETTINGS } } });
   await prisma.appSetting.deleteMany({ where: { key: { in: VENDOR_SETTINGS } } });
+  // **Free models off for this file**, the same separation of subjects
+  // `checks/agentLoopOpenRouter.ts` makes and for the same reason. Everything
+  // below asserts about the *wire* — the effort that reaches it, the token
+  // budget, whether a `json_schema` survives, and what happens when the answer
+  // is truncated, arrives in parts, or comes wrapped in a sentence. With the
+  // shipped ladder on, each of those would be three calls against three ids
+  // this file's fake catalogue does not describe, and every assertion would be
+  // about which rung answered instead. The ladder has its own file
+  // (`checks/freeModels.ts`), which drives all three rungs and the paid floor
+  // under them. An empty list is the deliberate "off" state; deleting the row
+  // means "use the shipped ladder", which is the opposite.
+  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
   clearSettingsCache();
 
   // "sheet.analyse" is a real production purpose, so only the rows this run
@@ -376,7 +389,6 @@ Let me know if you would like it changed.`
   // wearing a repair's clothes.
   console.log("");
   console.log("A model that does compile schemas");
-  const { setSetting } = await import("../src/lib/settings.js");
   await setSetting(SETTING.OPENROUTER_MODEL, "vendor/strict-one");
   await analyzeGrids([GRID as any], hints);
   const strictSent = orBodies.at(-1);
