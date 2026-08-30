@@ -9,7 +9,22 @@ import { SETTING, getSetting } from "./settings.js";
  * auth, timeouts and error shapes are decided.
  */
 
-const API_BASE = "https://api.apify.com/v2";
+/**
+ * Apify's root, honouring `APIFY_BASE_URL`.
+ *
+ * **Read per call, never captured at import.** That is not style: `BASE` in
+ * `models/call.ts` was once a module constant while `openRouterBase()` was a
+ * function, so a harness repointing a vendor between scenarios got a frozen
+ * address in one half and a live one in the other — a check that passes while
+ * testing nothing, and on a machine with a real token, one that spends money.
+ *
+ * Env only, and never a setting. A base URL is where the harness sends things,
+ * not something the Owner configures, and putting it on the Settings screen
+ * would make "send my captures somewhere else" two clicks away.
+ */
+function apiBase(): string {
+  return process.env.APIFY_BASE_URL?.replace(/\/$/, "") || "https://api.apify.com/v2";
+}
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export class ApifyError extends Error {
@@ -83,7 +98,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const token = await resolveToken(options);
   if (!options.anonymous && !options.optionalAuth && !token) throw new ApifyNotConfiguredError();
 
-  const url = new URL(`${API_BASE}${path}`);
+  const url = new URL(`${apiBase()}${path}`);
   for (const [key, value] of Object.entries(options.query ?? {})) {
     if (value !== undefined) url.searchParams.set(key, String(value));
   }
@@ -550,7 +565,7 @@ export async function abortRun(runId: string): Promise<ApifyRun> {
 
 /** Raw scraped rows. `clean=true` drops Apify's empty/hidden records. */
 export async function getDatasetItems(datasetId: string, limit = 1000, offset = 0): Promise<Record<string, unknown>[]> {
-  const url = new URL(`${API_BASE}/datasets/${datasetId}/items`);
+  const url = new URL(`${apiBase()}/datasets/${datasetId}/items`);
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("clean", "true");

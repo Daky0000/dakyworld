@@ -24,7 +24,17 @@ import { SETTING, getSetting, setSetting } from "./settings.js";
  */
 
 const WEBHOOK_HOST = "hooks.slack.com";
-const API_BASE = "https://slack.com/api";
+/**
+ * Slack's API root, honouring `SLACK_BASE_URL`.
+ *
+ * Read per call for the reason written on `apify.apiBase()`: a module constant
+ * captured at import cannot be repointed by a harness that sets the variable
+ * after its own imports have run, and the failure is a check that passes
+ * against the real vendor while claiming to be offline.
+ */
+function apiBase(): string {
+  return process.env.SLACK_BASE_URL?.replace(/\/$/, "") || "https://slack.com/api";
+}
 const TIMEOUT_MS = 10_000;
 
 export class SlackError extends Error {
@@ -122,7 +132,7 @@ export async function sendSlack(message: SlackMessage): Promise<SlackResult> {
     if (!channel) {
       throw new SlackError(400, "No Slack channel to send to. Set a default channel under Settings → Alerts.");
     }
-    const response = await post(`${API_BASE}/chat.postMessage`, { channel, text: message.text, blocks: blocks(message) }, token);
+    const response = await post(`${apiBase()}/chat.postMessage`, { channel, text: message.text, blocks: blocks(message) }, token);
     // Slack answers 200 with `ok: false` for real failures, so the status code
     // alone means nothing here.
     const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string } | null;
@@ -165,7 +175,7 @@ function slackErrorMessage(code?: string): string {
 /** Confirms a credential works before it is stored. */
 export async function verifySlack(credential: { token?: string; webhookUrl?: string }): Promise<{ transport: SlackTransport; team: string | null }> {
   if (credential.token) {
-    const response = await fetch(`${API_BASE}/auth.test`, {
+    const response = await fetch(`${apiBase()}/auth.test`, {
       method: "POST",
       headers: { Authorization: `Bearer ${credential.token}`, "Content-Type": "application/json" },
     });
@@ -347,7 +357,7 @@ export async function updateSlack(channel: string, ts: string, message: SlackMes
   const token = await getSetting(SETTING.SLACK_BOT_TOKEN);
   if (!token) return false;
   const body = "blocks" in message ? { channel, ts, text: message.text, blocks: message.blocks } : { channel, ts, text: message.text, blocks: blocks(message) };
-  const response = await post(`${API_BASE}/chat.update`, body, token);
+  const response = await post(`${apiBase()}/chat.update`, body, token);
   const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
   if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
   return true;
@@ -371,7 +381,7 @@ export async function sendSlackBlocks(input: { text: string; blocks: unknown[]; 
   if (token) {
     const channel = input.channel?.trim() || fallbackChannel;
     if (!channel) throw new SlackError(400, "No Slack channel to send to. Set a default channel under Settings → Alerts.");
-    const response = await post(`${API_BASE}/chat.postMessage`, { channel, text: input.text, blocks: input.blocks }, token);
+    const response = await post(`${apiBase()}/chat.postMessage`, { channel, text: input.text, blocks: input.blocks }, token);
     const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string } | null;
     if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
     return { delivered: true, transport: "TOKEN", channel, ts: payload.ts ?? null };
@@ -409,7 +419,7 @@ export async function sendSlackBlocks(input: { text: string; blocks: unknown[]; 
 export async function openSlackModal(triggerId: string, view: unknown): Promise<boolean> {
   const token = await getSetting(SETTING.SLACK_BOT_TOKEN);
   if (!token) return false;
-  const response = await post(`${API_BASE}/views.open`, { trigger_id: triggerId, view }, token);
+  const response = await post(`${apiBase()}/views.open`, { trigger_id: triggerId, view }, token);
   const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
   if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
   return true;

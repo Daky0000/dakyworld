@@ -24,3 +24,36 @@ Run one directly while working on it:
 ```bash
 npx tsx checks/spine.ts
 ```
+
+## Every vendor can be pointed somewhere else
+
+Rule 1 says no API key. What makes that possible for anything that talks to a
+vendor is that each client reads its root from an environment variable and
+falls back to the real address:
+
+```
+ANTHROPIC_BASE_URL  OPENAI_BASE_URL  GEMINI_BASE_URL  PERPLEXITY_BASE_URL
+OPENROUTER_BASE_URL  APIFY_BASE_URL  SLACK_BASE_URL
+```
+
+Point them at one local express and the **real** adapters run against a fake
+vendor — the same code path, the same retries, the same refusals. `tmp/vendorStub.ts`
+is the model-layer one; `checks/vendorBases.ts` is the committed proof that the
+override actually reaches the wire.
+
+Two things to keep right, both of which have been wrong here before:
+
+- **Read the base per call, never capture it at import.** `BASE` in
+  `models/call.ts` was a module constant while `openRouterBase()` was a
+  function, so a harness repointing a vendor between scenarios got a frozen
+  address in one half and a live one in the other: green, testing nothing, and
+  on a machine with a real key, spending money.
+- **A stub is a different far end, not a way past the credential check.**
+  `toolReadiness()` is deliberately untouched by any of this. Making it answer
+  "configured" when nothing is means an agent calls `email.send`, receives a
+  fake success and reports the letter as sent — which is the exact failure the
+  readiness layer exists to prevent. Set the credential (`APIFY_TOKEN=stub`)
+  and let the real gate pass for the real reason.
+
+SMTP needs no override: `smtp.host` and `smtp.port` are already settings, so a
+local sink is configuration rather than code.
