@@ -118,7 +118,7 @@ const STOPWORDS = new Set([
  * cost of a false match is a sentence on a card somebody reads, and the cost
  * of a missed one is a duplicate agent somebody notices next week.
  */
-function tokens(text: string): Set<string> {
+export function tokens(text: string): Set<string> {
   return new Set(
     text
       .toLowerCase()
@@ -130,7 +130,7 @@ function tokens(text: string): Set<string> {
   );
 }
 
-function similarity(a: Set<string>, b: Set<string>): { score: number; shared: string[] } {
+export function similarity(a: Set<string>, b: Set<string>): { score: number; shared: string[] } {
   if (a.size === 0 || b.size === 0) return { score: 0, shared: [] };
   const shared = [...a].filter((word) => b.has(word));
   // Against the *smaller* set, not the union: "video" matching a five-skill

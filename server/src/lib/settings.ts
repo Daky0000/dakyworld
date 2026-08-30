@@ -463,6 +463,30 @@ export const SETTING = {
    * Hard ceiling on what one tool call may spend, in USD. The tool layer
    * refuses anything above it rather than trusting an agent's arithmetic.
    */
+  /**
+   * Whether an agent's brief names the tools most likely to be useful on it.
+   *
+   * On by default. The ranking never filters or reorders the tool array — a
+   * model that cannot see a granted tool cannot use it, so a bad ranking would
+   * be a silent loss of capability rather than a worse suggestion. Turning
+   * this off removes a sentence from the brief and nothing else.
+   */
+  ENABLE_TOOL_RELEVANCE: "agents.toolRelevance",
+  /**
+   * How many colleagues one task may ask, by the task's own priority.
+   *
+   * JSON keyed on `AgentTask.priority` — 1 urgent, 2 normal, 3 whenever — as
+   * `{"1": 5, "2": 3, "3": 2}`, which is the default and leaves the normal
+   * case exactly where it has always been. An urgent task is the one where a
+   * fourth opinion is most likely to be worth its model call, and a
+   * whenever-task is the one where canvassing the building is least defensible.
+   *
+   * **Zero is a limit, not an absence.** Setting a priority to 0 means no
+   * consults at all on those tasks; the usual `> 0` guard would read it as
+   * unset and silently restore the default, which is the trap
+   * `Rehearsal.budgetUsd` carries a comment about.
+   */
+  CONSULT_PRIORITY_LIMITS: "agents.consultLimits",
   AGENT_MAX_CALL_USD: "agents.maxCallUsd",
 
   /**

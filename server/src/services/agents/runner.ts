@@ -3,10 +3,12 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Agent, AgentTask, AgentStepKind } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
+import { SETTING, getSetting } from "../../lib/settings.js";
 import { clipToolResult, runAgentLoop, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
 import { clearCheckpoint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
 import { AnalystError } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
+import type { ToolDefinition } from "../tools/types.js";
 import { invokeTool } from "../tools/invoke.js";
 import { companyProfile, contactBlock } from "../systemProfile.js";
 import { BRAND, VOICE } from "../dakyworld.js";
@@ -14,7 +16,7 @@ import { MemoryRefused, recall, remember, subjectOf, type Recalled } from "./mem
 import { authoredInstruction } from "./authored.js";
 import { describeTask, taskSubjects } from "./context.js";
 import { appendNote, renderDossier } from "../context/dossier.js";
-import { recordGap, searchRoster } from "./hiring.js";
+import { recordGap, searchRoster, similarity, tokens } from "./hiring.js";
 import { callModel } from "../../lib/models/call.js";
 import { withRunContext } from "../../lib/runContext.js";
 import { recordCreated, transition } from "./state.js";
@@ -131,9 +133,55 @@ const MAX_ATTEMPTS = 3;
  * instead of deciding, at a model call each. Two hand-offs is a task with two
  * craft pieces in it; five is a task that was somebody else's from the start,
  * and the right answer to that is an escalation about the brief.
+ *
+ * `MAX_CONSULTS` is now the fallback for a task whose priority is not in
+ * `CONSULT_LIMITS` below, rather than the limit itself.
  */
 const MAX_CONSULTS = 3;
 const MAX_HANDOFFS = 2;
+
+/**
+ * The consult ceiling, by how urgent the task is.
+ *
+ * One number for every task was the wrong shape in one direction only: three
+ * is right for the ordinary case and too few for the rare task where getting
+ * it wrong is expensive, which is exactly the task somebody marked urgent.
+ * `AgentTask.priority` already exists and already drives the order the runner
+ * picks in, so this needs no new field and no new vocabulary.
+ *
+ * The count itself stays a single `consulted` on `Counters`. Splitting it per
+ * priority would change the checkpoint's shape for nothing — a task has one
+ * priority, so only the ceiling varies.
+ */
+const CONSULT_LIMITS: Record<number, number> = { 1: 5, 2: 3, 3: 2 };
+
+/**
+ * Exported for `checks/agentBriefing.ts`. Zero being a real limit rather than
+ * an unset value is the kind of thing that is only ever wrong once, in
+ * production, for the person who typed it deliberately.
+ */
+export async function consultLimitFor(task: Pick<AgentTask, "priority">): Promise<number> {
+  const raw = (await getSetting(SETTING.CONSULT_PRIORITY_LIMITS))?.trim();
+  let limits = CONSULT_LIMITS;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const read: Record<number, number> = { ...CONSULT_LIMITS };
+      for (const [priority, value] of Object.entries(parsed)) {
+        // `>= 0`, not `> 0`. Zero means no consults on tasks of this priority
+        // and is a thing somebody may deliberately want; the usual guard would
+        // hand them the default back without saying so.
+        if (typeof value === "number" && Number.isInteger(value) && value >= 0) read[Number(priority)] = value;
+      }
+      limits = read;
+    } catch {
+      // A hand-edited setting must not stop the workforce consulting. An
+      // unreadable value is treated as no value.
+      limits = CONSULT_LIMITS;
+    }
+  }
+  return limits[task.priority] ?? MAX_CONSULTS;
+}
 
 /**
  * The agents whose entire output is a piece of writing somebody outside the
@@ -373,7 +421,72 @@ function draftWarning(target: { name: string; status: string }, rehearsal: boole
   return ` Note: ${target.name} is still a draft, so nothing will start on this until somebody activates them — say so in your summary.`;
 }
 
-async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Promise<AgentTool[]> {
+interface GrantedTools {
+  tools: AgentTool[];
+  /**
+   * The granted tools whose purpose overlaps this task's own words, best
+   * first. Named in the brief; never used to filter or reorder `tools`.
+   */
+  likely: { key: string; name: string; purpose: string }[];
+}
+
+/**
+ * Which of the granted tools this particular task is probably about.
+ *
+ * An agent is handed everything its toolkit grants with a catalogue
+ * description each and no indication of which of them this brief calls for —
+ * eighteen for the Cold Lead Writer, and the model works out the shortlist
+ * from scratch on every task, at the top of a context it is paying to re-send.
+ *
+ * **Scored, never filtered.** A tool the model cannot see is a tool it cannot
+ * use, so a bad ranking would be a silent loss of capability rather than a
+ * worse suggestion. The whole effect is a sentence in the brief.
+ *
+ * Uses the tokeniser from `agents/hiring.ts`, which already answers "how much
+ * do these two descriptions have in common" for the roster search and the
+ * overlap check. A third copy of that rule is a third thing to keep in step.
+ */
+function likelyTools(granted: ToolDefinition[], task: AgentTask): GrantedTools["likely"] {
+  const wanted = tokens(`${task.title} ${task.brief}`);
+  if (wanted.size === 0) return [];
+
+  return granted
+    .map((tool) => ({
+      tool,
+      score: similarity(wanted, tokens(`${tool.name} ${tool.purpose} ${tool.group}`)).score,
+    }))
+    // Zero overlap is not a recommendation. Three tools the task never
+    // mentioned, presented as the likely ones, is worse than saying nothing —
+    // it is a wrong answer where there was previously an honest absence.
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((entry) => ({ key: entry.tool.key, name: entry.tool.name, purpose: entry.tool.purpose }));
+}
+
+/**
+ * The sentence that goes on the brief, or nothing.
+ *
+ * Deliberately on the **brief** rather than the system prompt. The system
+ * prompt carries a cache breakpoint and is the same for every task this agent
+ * runs; per-task text in there would write a new cache entry each time and
+ * read none, which is the expensive half of caching with none of the saving.
+ */
+export function likelyToolsLine(likely: GrantedTools["likely"]): string {
+  if (likely.length === 0) return "";
+  return [
+    "LIKELY USEFUL HERE, on the words of this brief alone:",
+    ...likely.map((tool) => `- \`${tool.key}\` — ${tool.purpose}`),
+    "This is a guess from the wording and nothing more. Your whole toolkit is available; if the right tool is not in this list, use it anyway.",
+  ].join("\n");
+}
+
+/**
+ * Exported so a check can assert the thing that actually matters here: that
+ * ranking the tools never costs the agent one. A test of `likelyTools()` alone
+ * would go on passing after somebody made the ranking filter.
+ */
+export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Promise<GrantedTools> {
   const catalogue = await listAllTools();
   const granted = catalogue.filter((tool) => agent.toolkit.includes(tool.key));
 
@@ -505,7 +618,19 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
     }
   }
 
-  return [...tools, ...workflowTools(agent, task, counters)];
+  return {
+    tools: [...tools, ...workflowTools(agent, task, counters)],
+    // Ranked over the catalogue entries rather than the wrapped `tools`: the
+    // wrapper renames every key for the API (`lead.read` becomes `lead__read`)
+    // and folds the purpose into a longer description, and scoring that text
+    // would be scoring our own boilerplate as much as the tool.
+    likely: (await relevanceOn()) ? likelyTools(granted, task) : [],
+  };
+}
+
+/** Default on. Off removes a sentence from the brief and changes nothing else. */
+async function relevanceOn(): Promise<boolean> {
+  return (await getSetting(SETTING.ENABLE_TOOL_RELEVANCE)) !== "false";
 }
 
 export interface Counters {
@@ -514,7 +639,7 @@ export interface Counters {
   refused: number;
   escalated: string | null;
   delegated: number;
-  /** Questions asked of colleagues. Capped — see `MAX_CONSULTS`. */
+  /** Questions asked of colleagues. Capped by priority — see `CONSULT_LIMITS`. */
   consulted: number;
   /** Work handed sideways to an agent that is not a report. */
   handedOff: number;
@@ -819,9 +944,13 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
     run: async (input) => {
-      if (counters.consulted >= MAX_CONSULTS) {
+      const limit = await consultLimitFor(task);
+      if (counters.consulted >= limit) {
         return {
-          content: `You have already asked ${MAX_CONSULTS} colleagues on this task, which is the limit. Decide with what you have, or escalate — a fourth opinion is a sign the brief is unclear rather than that the answer is close.`,
+          content:
+            limit === 0
+              ? `Consulting is switched off for tasks at this priority. Decide with what you have, or escalate.`
+              : `You have already asked ${limit} colleague(s) on this task, which is the limit at this priority. Decide with what you have, or escalate — one more opinion is a sign the brief is unclear rather than that the answer is close.`,
           isError: true,
         };
       }
@@ -835,12 +964,19 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       const question = String(input.question ?? "").slice(0, 1200);
       const answer = await askColleague(colleague, agent, task, question);
       counters.consulted += 1;
+      const left = limit - counters.consulted;
       await step(task.id, "CONSULTED", `Asked ${colleague.name}: ${question.slice(0, 200)}`, {
         ok: true,
         data: { agentKey: colleague.key, question, answer: answer.text, answeredBy: answer.provider },
       });
       return {
-        content: `${colleague.name} says:\n\n${answer.text}\n\n(That is their opinion from their own instructions, not a fact you have checked. The work is still yours. If they contradict the record in front of you, the record wins and you should say so.)`,
+        content:
+          `${colleague.name} says:\n\n${answer.text}\n\n` +
+          `(That is their opinion from their own instructions, not a fact you have checked. The work is still yours. ` +
+          `If they contradict the record in front of you, the record wins and you should say so. ` +
+          // Said here rather than discovered by being refused: an agent that
+          // knows it has one question left spends it on the one that matters.
+          `${left > 0 ? `You may ask ${left} more colleague(s) on this task.` : `That was your last consult on this task.`})`,
       };
     },
   };
@@ -1351,11 +1487,16 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       }
 
       const memories = await recall(agent.key, taskSubjects(task));
-      const [system, tools, brief] = await Promise.all([
+      const [system, granted, described] = await Promise.all([
         systemPrompt(agent, memories),
         toolsFor(agent, task, counters),
         describeTask(task),
       ]);
+      const tools = granted.tools;
+      // Appended to the brief rather than woven into it, so the task's own
+      // words stay first and a reader can see where ours begin.
+      const hint = likelyToolsLine(granted.likely);
+      const brief = hint ? `${described}\n\n${hint}` : described;
 
       // Flipped by a checkpoint that finds the row no longer belongs to this run.
       // The only correct response is to stop touching it.
