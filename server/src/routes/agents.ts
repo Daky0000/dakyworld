@@ -314,6 +314,11 @@ agentsRouter.patch("/:key", async (req, res, next) => {
       // Stamped only on a seeded agent: a custom one has no shipped wording to
       // go back to, so the flag would mean nothing there.
       ...(rewriting.length > 0 && !agent.custom ? { promptEditedAt: new Date() } : {}),
+      // Switching a paused agent back on is the human review the boundary
+      // strikes were counting up to, so it clears them. Without this, an agent
+      // paused for three crossings is paused again by its very next one — and
+      // the message it gets says "three in a row", which by then is a lie.
+      ...(input.status === "ACTIVE" && agent.boundaryViolations > 0 ? { boundaryViolations: 0 } : {}),
     };
 
     const updated = await prisma.agent.update({ where: { key: req.params.key }, data });

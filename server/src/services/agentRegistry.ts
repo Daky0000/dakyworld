@@ -266,7 +266,11 @@ ${MONEY_CRAFT}`,
     escalationPolicy: "Pricing exceptions and unusual negotiation go to the Owner.",
     input_type: ["company_name", "website_url"],
     output_type: ["lead_id", "status", "contextRef"],
-    not_responsible: ["design.*", "ux.*", "performance.*"],
+    // The Sales Director sells; it does not design or build. Written in tool
+    // keys that exist — `ux.*` and `performance.*` named nothing in the
+    // catalogue, which is a boundary that reads as a restriction and refuses
+    // nothing. `checks/roster.ts` fails on one now.
+    not_responsible: ["design.*", "image.*", "web.*", "code.*"],
     prompt: layers({
       role: "You are the Dakyworld CRO.",
       mission: "Focus on qualified revenue, not volume.",
@@ -727,7 +731,10 @@ ${BUILD_CRAFT}`,
           "Never changes the brand system to solve a layout problem. A new public mark, a new colour or a new typeface is the Owner's decision, not a design choice.",
         input_type: ["audit_report", "brand_tokens", "preserve_list", "design_verdict"],
         output_type: ["pdf_report", "contextRef"],
-        not_responsible: ["email.*", "outreach.*", "lead.prepare", "lead.update"],
+        // The studio does not write to prospects and does not edit the lead
+        // record. `outreach.*` was the intent and matched no tool: outreach
+        // lives under these five prefixes.
+        not_responsible: ["email.*", "message.*", "whatsapp.*", "sms.*", "sequence.*", "lead.prepare", "lead.update"],
         process: `Write the brief before the artwork: purpose, audience, hierarchy, the exact copy, the sizes. Work inside the brand system's tokens. Lime is a mark and an action colour only and never type on white; on light surfaces the accent is blue.
 
 ${BRAND_CRAFT}`,
@@ -1639,6 +1646,10 @@ ${SERVICE_CRAFT}`,
     kpis: [...spec.kpis],
     toolkit: [...spec.toolkit],
     escalationPolicy: spec.escalationPolicy,
+    // Carried through explicitly. A field declared on the spec and not copied
+    // here is a boundary that exists in the source and nowhere else — which is
+    // exactly what happened to `design.graphic`.
+    not_responsible: "not_responsible" in spec ? [...(spec as { not_responsible: readonly string[] }).not_responsible] : [],
     prompt: layers({
       role: `You are the Dakyworld ${spec.title}.`,
       mission: spec.mission,
@@ -1751,7 +1762,7 @@ export async function narrowSeededAgents(): Promise<NarrowingResult | null> {
  */
 export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[]; keptAsEdited: string[] }> {
   const existing = await prisma.agent.findMany({
-    select: { key: true, promptEditedAt: true, prompt: true, mission: true, escalationPolicy: true },
+    select: { key: true, promptEditedAt: true, prompt: true, mission: true, escalationPolicy: true, not_responsible: true },
   });
   const seeds = new Map(AGENT_SEEDS.map((seed) => [seed.key, seed]));
 
@@ -1776,7 +1787,23 @@ export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[];
     const stored = (agent.prompt ?? {}) as Record<string, unknown>;
     const wanted = seed.prompt as unknown as Record<string, unknown>;
     const promptSame = PROMPT_LAYERS.every((layer) => (stored[layer] ?? "") === (wanted[layer] ?? ""));
-    if (promptSame && agent.mission === seed.mission && agent.escalationPolicy === seed.escalationPolicy) continue;
+
+    // The boundary list is compared here as well as written below, and it has
+    // to be: `ensureAgents()` only ever creates, so a boundary added to a seed
+    // after that agent already existed never joined the row — and the check in
+    // `tools/invoke.ts` reads the row. Every agent on every database carried an
+    // empty list while two seeds declared one, which made the whole of boundary
+    // enforcement dead code that read as a shipped feature. Same shape of
+    // defect, and same fix, as `reconcileSeedToolkits()` was written for.
+    //
+    // Order-sensitive on purpose: these are regexes tried in order, and the
+    // cheap comparison is the honest one here.
+    const wantedBoundary = seed.not_responsible ?? [];
+    const boundarySame =
+      agent.not_responsible.length === wantedBoundary.length &&
+      agent.not_responsible.every((pattern, i) => pattern === wantedBoundary[i]);
+
+    if (promptSame && boundarySame && agent.mission === seed.mission && agent.escalationPolicy === seed.escalationPolicy) continue;
 
     await prisma.agent.update({
       where: { key: agent.key },
@@ -1785,6 +1812,7 @@ export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[];
         responsibilities: seed.responsibilities,
         kpis: seed.kpis,
         skills: seed.skills ?? [],
+        not_responsible: wantedBoundary,
         escalationPolicy: seed.escalationPolicy,
         prompt: seed.prompt as unknown as object,
       },
@@ -2073,6 +2101,7 @@ export async function ensureAgents(): Promise<number> {
       kpis: seed.kpis,
       toolkit: seed.toolkit,
       skills: seed.skills ?? [],
+      not_responsible: seed.not_responsible ?? [],
       avatar: seed.avatar ?? null,
       escalationPolicy: seed.escalationPolicy,
       prompt: seed.prompt as unknown as object,

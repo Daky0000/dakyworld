@@ -485,10 +485,6 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
     },
   }));
 
-  const matchingGroups = PARALLEL_GROUPS.filter((group) =>
-    group.agents.includes(agent.key)
-  );
-
   // A rehearsal reusing a lead that already has research skips site.look and
   // reports that research instead, rather than scraping the same site twice.
   if (task.skipLook && task.leadId) {
@@ -509,15 +505,6 @@ async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Prom
     }
   }
 
-  // If the agent belongs to a parallel group, add the group info to the counters
-  // so the orchestration layer can coordinate parallel execution
-  if (matchingGroups.length > 0) {
-    counters.parallelGroups = matchingGroups.map((group) => ({
-      name: group.name,
-      agents: group.agents,
-    }));
-  }
-
   return [...tools, ...workflowTools(agent, task, counters)];
 }
 
@@ -533,8 +520,6 @@ export interface Counters {
   handedOff: number;
   /** Gaps raised: "nobody here can do this". */
   gapsRaised: number;
-  /** Parallel execution groups for agent coordination. */
-  parallelGroups: Array<{ name: string; agents: string[] }> | null;
 }
 
 /**
@@ -547,14 +532,9 @@ export interface Counters {
  */
 function restoreCounters(stored: Record<string, unknown> | undefined): Counters {
   const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
-  const groups = (value: unknown): Counters["parallelGroups"] =>
-    Array.isArray(value)
-      ? value.flatMap((entry) =>
-          entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string" && Array.isArray((entry as { agents?: unknown }).agents)
-            ? [{ name: (entry as { name: string }).name, agents: (entry as { agents: unknown[] }).agents.filter((a): a is string => typeof a === "string") }]
-            : [],
-        )
-      : null;
+  // Unknown keys in `stored` are ignored rather than rejected, which is what
+  // lets a checkpoint written by an older deploy resume here — `parallelGroups`
+  // was one, and any counter retired later will be another.
   return {
     toolCalls: number(stored?.toolCalls),
     dryRun: number(stored?.dryRun),
@@ -564,7 +544,6 @@ function restoreCounters(stored: Record<string, unknown> | undefined): Counters 
     consulted: number(stored?.consulted),
     handedOff: number(stored?.handedOff),
     gapsRaised: number(stored?.gapsRaised),
-    parallelGroups: groups(stored?.parallelGroups),
   };
 }
 
@@ -1356,7 +1335,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       const saved = await loadCheckpoint(task.id);
       const counters: Counters = saved
         ? restoreCounters(saved.counters)
-        : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0, parallelGroups: null };
+        : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
       // A resume must not carry the escalation that ended the last run, or the
       // task would go straight back to BLOCKED without doing anything. What the
       // Owner answered is already in the conversation by this point.
@@ -1954,19 +1933,6 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
 export function isBusy(agentKey: string): boolean {
   return busyAgents.has(agentKey);
 }
-
-/** Parallel execution groups for agent coordination.
- *  GROUP_1: SEO+PERFORMANCE (both need site audit context)
- *  GROUP_2: DESIGN+UX (both need design context)
- *  GROUP_3: COLD_LEAD_WRITER (stands alone - email draft)
- *  GROUP_4: GRAPHIC_DESIGNER (stands alone - PDF report)
- */
-export const PARALLEL_GROUPS = [
-  { name: "GROUP_1", agents: ["seo.specialist", "performance"] },
-  { name: "GROUP_2", agents: ["design.ux", "design.graphic"] },
-  { name: "GROUP_3", agents: ["outreach.writer"] },
-  { name: "GROUP_4", agents: ["design.graphic"] },
-];
 
 /** How many are in flight right now, for the dashboard. */
 export function inFlight(): number {

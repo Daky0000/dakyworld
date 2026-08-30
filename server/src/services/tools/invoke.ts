@@ -32,6 +32,62 @@ const EXECUTE_LEVEL = 3;
 /** Spending needs one level above executing: money is the harder mistake to undo. */
 const SPEND_LEVEL = 4;
 
+/**
+ * Boundary crossings in a row before an agent is paused for somebody to look at.
+ *
+ * **In a row**, and that word is load-bearing: `invokeTool` clears the count on
+ * the agent's next call that the gate allows. Without that it was a lifetime
+ * tally, so an agent that crossed a boundary once a quarter was silently paused
+ * on its third occasion — months apart — under a message claiming three
+ * consecutive violations. A count that never resets is not a strike system, it
+ * is a slow fuse.
+ */
+const BOUNDARY_STRIKES = 3;
+
+/**
+ * The first `not_responsible` pattern this tool key crosses, or null.
+ *
+ * A glob rather than a regex, and deliberately so. The first version compiled
+ * each pattern with `new RegExp` after replacing `*` with `.*` and escaping
+ * nothing else, which is wrong twice: the unescaped `.` in `lead.update` also
+ * matches any character, and a pattern carrying a `(` — which the Agent
+ * Creator can write, since a hired agent's boundaries come from an approved
+ * design rather than from a seed — throws a `SyntaxError` out of the
+ * permission gate. That exception is not thrown for the agent that owns the
+ * bad pattern; it is thrown inside `permissionFor`, which every tool call in
+ * the system passes through.
+ *
+ * `*` is the only wildcard. It matches any run of characters, including none.
+ */
+function boundaryCrossed(patterns: string[], toolKey: string): string | null {
+  return patterns.find((pattern) => matchesGlob(pattern, toolKey)) ?? null;
+}
+
+/**
+ * Exported so `checks/roster.ts` asserts the seeds against the matcher that
+ * actually runs. A second copy of this rule in the harness is a harness that
+ * goes on passing after the real one changes.
+ */
+export function matchesGlob(pattern: string, value: string): boolean {
+  const parts = pattern.split("*");
+  if (parts.length === 1) return pattern === value;
+
+  const head = parts[0];
+  const tail = parts[parts.length - 1];
+  if (!value.startsWith(head) || !value.endsWith(tail)) return false;
+
+  let at = head.length;
+  for (const part of parts.slice(1, -1)) {
+    const found = value.indexOf(part, at);
+    if (found === -1) return false;
+    at = found + part.length;
+  }
+  // The head and the tail must not overlap each other: "aa*aa" needs four
+  // characters and must not be satisfied by "aaa". (`a*b` matching `ab` is
+  // correct — a `*` matches nothing at all.)
+  return at <= value.length - tail.length;
+}
+
 export class ToolRefused extends Error {
   constructor(message: string) {
     super(message);
@@ -97,8 +153,6 @@ export interface InvokeOptions extends ToolContext {
    * happen.
    */
   rehearsal?: boolean;
-  /** Set when the tool call touches a category the agent is not responsible for. */
-  boundaryViolation?: boolean;
 }
 
 /**
@@ -111,6 +165,26 @@ export interface Permission {
   /** True when the call is allowed but must stop at a preview. */
   mustDryRun: boolean;
   reason: string | null;
+  /**
+   * Set when this refusal is a boundary crossing: the `not_responsible`
+   * pattern the tool key matched.
+   *
+   * Reported rather than acted on, because **this function is a question, not
+   * an event.** The Agents and Tools screens call it once per tool per agent
+   * purely to draw a roster — see `routes/agents.ts` — so a version of it that
+   * counted a strike and paused the agent would pause `cro` the moment somebody
+   * opened its page and three forbidden tools appeared in the listing. Nobody
+   * would have called a tool. The strike belongs to `invokeTool`, where an
+   * agent has actually tried something.
+   */
+  boundaryPattern?: string;
+  /**
+   * Strikes standing against this agent when the question was asked.
+   *
+   * Carried out so `invokeTool` can clear them on an allowed call without
+   * reading the row a second time — the agent is already loaded here.
+   */
+  boundaryStrikes?: number;
 }
 
 export async function permissionFor(tool: ToolDefinition, options: InvokeOptions): Promise<Permission> {
@@ -125,54 +199,24 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
     return { allowed: false, mustDryRun: false, reason: `${agent.name} hasn't been granted ${tool.key}.` };
   }
 
-  // --- Boundary Enforcement: not_responsible check ---
-  // If the agent has a not_responsible list, reject calls that touch
-  // categories/tools they are not responsible for.
-  if (agent.not_responsible && agent.not_responsible.length > 0) {
-    const notResponsiblePatterns = agent.not_responsible;
-    // Check if the tool key matches any not_responsible pattern
-    for (const pattern of notResponsiblePatterns) {
-      const regex = new RegExp(`^${pattern.replace(/\*/g, '.*')}$`);
-      if (regex.test(tool.key)) {
-        // Log boundary violation in audit trail
-        await record({
-          tool: tool.key,
-          options: { ...options, boundaryViolation: true },
-          ok: false,
-          refusedReason: `${agent.name} is not responsible for ${tool.key}.`,
-          durationMs: 0,
-        });
-        // Increment the agent's boundary violations counter
-        await prisma.agent.update({
-          where: { key: options.agentKey },
-          data: { boundaryViolations: { increment: 1 } },
-          select: { boundaryViolations: true },
-        });
-        // Check if the agent has exceeded the violation threshold
-        const updatedAgent = await prisma.agent.findUnique({
-          where: { key: options.agentKey },
-          select: { boundaryViolations: true, status: true, name: true },
-        });
-        const violations = updatedAgent?.boundaryViolations ?? 0;
-        if (violations >= 3) {
-          // Suspend the agent after 3 consecutive violations
-          await prisma.agent.update({
-            where: { key: options.agentKey },
-            data: { status: "PAUSED" },
-          });
-          return {
-            allowed: false,
-            mustDryRun: false,
-            reason: `${agent.name} has been suspended after 3 consecutive boundary violations. Requires human review.`,
-          };
-        }
-        return {
-          allowed: false,
-          mustDryRun: false,
-          reason: `${agent.name} is not responsible for ${tool.key}. (boundary violation ${violations}/3 recorded)`,
-        };
-      }
-    }
+  // The work this agent is explicitly not responsible for, in tool keys.
+  //
+  // Seeded from `AgentSeed.not_responsible` and carried onto the row by
+  // `ensureAgents()` and `refreshUneditedSeedPrompts()`. Until Aug 2026 neither
+  // of those wrote the column, so this read an empty array on every agent on
+  // every database and had never once fired — the enforcement was correct,
+  // shipped, documented, and unreachable.
+  //
+  // Answered here and acted on in `invokeTool`. See `boundaryPattern`.
+  const crossed = boundaryCrossed(agent.not_responsible, tool.key);
+  if (crossed) {
+    return {
+      allowed: false,
+      mustDryRun: false,
+      reason: `${agent.name} is not responsible for ${tool.key} (matched "${crossed}").`,
+      boundaryPattern: crossed,
+      boundaryStrikes: agent.boundaryViolations,
+    };
   }
 
   // A spend ceiling the Owner set, and the only check here an approval cannot
@@ -226,7 +270,36 @@ export async function permissionFor(tool: ToolDefinition, options: InvokeOptions
     return { allowed: true, mustDryRun: true, reason: `Acting outside the company needs autonomy ${EXECUTE_LEVEL}; ${agent.name} is at ${agent.autonomyLevel}.` };
   }
 
-  return { allowed: true, mustDryRun: options.dryRun, reason: null };
+  return { allowed: true, mustDryRun: options.dryRun, reason: null, boundaryStrikes: agent.boundaryViolations };
+}
+
+/**
+ * Counts a crossing, pauses on the third in a row, and says which it was.
+ *
+ * Separate from `permissionFor` because it writes. Reached only from
+ * `invokeTool`, so only a real attempt to call a tool counts against an agent.
+ */
+async function countBoundaryCrossing(agentKey: string, toolKey: string, pattern: string): Promise<string> {
+  const after = await prisma.agent.update({
+    where: { key: agentKey },
+    data: { boundaryViolations: { increment: 1 } },
+    select: { boundaryViolations: true, name: true },
+  });
+
+  if (after.boundaryViolations < BOUNDARY_STRIKES) {
+    return `${after.name} is not responsible for ${toolKey} (matched "${pattern}"). Crossing ${after.boundaryViolations} of ${BOUNDARY_STRIKES} before it is paused.`;
+  }
+
+  await prisma.agent.update({ where: { key: agentKey }, data: { status: "PAUSED" } });
+  // The tool and the pattern are both named. A paused agent whose card says
+  // nothing about why is the "fixable setting rendering as Something went
+  // wrong" failure this codebase has a rule about — and the fix is more often
+  // to correct the boundary than to scold the agent.
+  return (
+    `${after.name} has been paused after ${BOUNDARY_STRIKES} boundary crossings in a row, the last of them ${toolKey} ` +
+    `(matched "${pattern}"). Either that boundary is wrong or the work is being sent to the wrong agent. ` +
+    `Setting it back to Active on the Agents screen clears the count.`
+  );
 }
 
 export async function invokeTool(key: string, rawInput: unknown, options: InvokeOptions): Promise<ToolResult> {
@@ -249,8 +322,29 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
 
   const permission = await permissionFor(tool, options);
   if (!permission.allowed) {
-    const callId = await record({ tool: key, options, ok: false, refusedReason: permission.reason, durationMs: Date.now() - startedAt });
-    return refusal(key, permission.reason ?? "Not permitted.", Date.now() - startedAt, callId);
+    // A boundary refusal is the one that has a consequence attached. Counted
+    // here rather than inside the gate, so that drawing the Agents screen —
+    // which asks the same question once per tool — costs an agent nothing.
+    const reason =
+      permission.boundaryPattern && options.agentKey
+        ? await countBoundaryCrossing(options.agentKey, key, permission.boundaryPattern)
+        : permission.reason;
+    // No separate boundary marker on the row: `refusedReason` names the tool
+    // and the pattern it matched, which is what somebody reading the ledger
+    // needs. A flag with no column behind it was there before and recorded
+    // nothing.
+    const callId = await record({ tool: key, options, ok: false, refusedReason: reason, durationMs: Date.now() - startedAt });
+    return refusal(key, reason ?? "Not permitted.", Date.now() - startedAt, callId);
+  }
+
+  // What makes the strikes consecutive: a call this agent was allowed to make
+  // clears the count. Without it, three crossings months apart add up to a
+  // suspension under a message claiming three in a row.
+  //
+  // The count came out of the gate with the permission, so this writes only
+  // when there is something to clear and never reads the row again.
+  if (options.agentKey && (permission.boundaryStrikes ?? 0) > 0) {
+    await prisma.agent.update({ where: { key: options.agentKey }, data: { boundaryViolations: 0 } });
   }
 
   const parsed = tool.input.safeParse(rawInput ?? {});

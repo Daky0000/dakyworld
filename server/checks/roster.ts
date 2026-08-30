@@ -24,7 +24,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AGENT_SEEDS, ensureAgents, reconcileSeedToolkits } from "../src/services/agentRegistry.js";
+import { AGENT_SEEDS, PROMPT_LAYERS, ensureAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts } from "../src/services/agentRegistry.js";
+import { invokeTool, matchesGlob } from "../src/services/tools/invoke.js";
 import { listAllTools } from "../src/services/tools/catalogue.js";
 import { WRITER_JOBS } from "../src/services/writers/registry.js";
 import { jobsWithShippedWording, shippedDoctrine } from "../src/services/writers/shipped.js";
@@ -66,6 +67,14 @@ for (const seed of AGENT_SEEDS) {
   if (seed.managerKey) check(known.has(seed.managerKey), `${seed.key}: manager ${seed.managerKey} exists`);
   check(Boolean(seed.mission?.trim()), `${seed.key}: has a mission`);
   if (seed.tier === "SUB_AGENT") check((seed.skills?.length ?? 0) > 0, `${seed.key}: a specialist names its skills`);
+
+  // The ten layers are what the runner composes into the working prompt, and a
+  // blank one is a heading with nothing under it. `layers()` fills the three
+  // shared ones, so a gap here is a question a seed skipped rather than a
+  // helper that failed.
+  const prompt = seed.prompt as unknown as Record<string, string | undefined>;
+  const blank = PROMPT_LAYERS.filter((layer) => !prompt[layer]?.trim());
+  check(blank.length === 0, `${seed.key}: every prompt layer is filled in — blank: ${blank.join(", ")}`);
 }
 
 // --- 2 & 3. The roster against the catalogue -------------------------------
@@ -79,6 +88,34 @@ for (const seed of AGENT_SEEDS) {
     holders.set(tool, [...(holders.get(tool) ?? []), seed.key]);
   }
 }
+
+// A boundary is only real if it names something. A pattern matching no tool in
+// the catalogue is a rule that refuses nothing while reading, on the Agents
+// screen and in this file, as a live restriction — the same failure the
+// UNHELD_BY_DESIGN pair above is written against. Checked with the matcher the
+// gate itself uses, not a copy of it.
+for (const seed of AGENT_SEEDS) {
+  for (const pattern of seed.not_responsible ?? []) {
+    const hits = [...toolKeys].filter((key) => matchesGlob(pattern, key));
+    check(hits.length > 0, `${seed.key}: not_responsible "${pattern}" matches at least one tool in the catalogue`);
+    // Granted and forbidden at once is a grant that can never fire, and the
+    // agent finds out by being refused a tool its own card says it holds.
+    const both = seed.toolkit.filter((key) => matchesGlob(pattern, key));
+    check(both.length === 0, `${seed.key}: not_responsible "${pattern}" does not forbid a tool it is also granted — ${both.join(", ")}`);
+  }
+}
+
+// `*` is zero or more, which is what the `.*` it replaced did.
+check(matchesGlob("a*b", "ab"), `matchesGlob: "a*b" matches "ab" — * matches nothing at all`);
+check(matchesGlob("a*b", "axb"), `matchesGlob: "a*b" matches "axb"`);
+// The off-by-one that guard is really for: the head and the tail must not be
+// allowed to overlap each other. "aa*aa" needs four characters, not three.
+check(!matchesGlob("aa*aa", "aaa"), `matchesGlob: "aa*aa" does not match "aaa"`);
+check(matchesGlob("lead.*", "lead.read"), `matchesGlob: "lead.*" matches "lead.read"`);
+check(!matchesGlob("lead.*", "leadread"), `matchesGlob: "lead.*" does not match "leadread"`);
+// The `.` is a literal, not a wildcard. The first version of this compiled the
+// pattern as a regex with nothing escaped, so it did match.
+check(!matchesGlob("lead.read", "leadXread"), `matchesGlob: the dot in "lead.read" is a literal`);
 
 const orphans: string[] = [];
 for (const tool of catalogue) {
@@ -261,6 +298,112 @@ if (offeredBefore) {
   });
 }
 clearSettingsCache();
+
+// --- 6b. The boundary, over the real gate ----------------------------------
+//
+// `not_responsible` shipped enforced and unreachable. The check in
+// `permissionFor` was correct; `ensureAgents()` never wrote the column, so
+// every agent on every database carried an empty list and the branch had never
+// once been taken. Two seeds declared boundaries the whole time, and one of
+// them (`design.graphic`) was dropped a second time by the specialist `.map()`
+// before it even reached AGENT_SEEDS.
+//
+// So this drives `invokeTool` rather than `permissionFor`: the defect lived in
+// the distance between what the seed said and what the row held, and only a
+// call that goes the whole way catches that class of thing again.
+const BOUNDARY_KEY = "check.boundary.agent";
+
+async function clearBoundarySubject() {
+  await prisma.toolCall.deleteMany({ where: { agentKey: BOUNDARY_KEY } });
+  await prisma.agent.deleteMany({ where: { key: BOUNDARY_KEY } });
+}
+
+await clearBoundarySubject();
+await prisma.agent.create({
+  data: {
+    key: BOUNDARY_KEY,
+    name: "Boundary Check",
+    title: "Boundary Check",
+    tier: "SUB_AGENT",
+    department: "TECHNOLOGY",
+    status: "ACTIVE",
+    mission: "Exists for the length of this check.",
+    // Granted both. The point of the boundary is that a grant is not enough.
+    toolkit: ["lead.read", "agents.read"],
+    not_responsible: ["lead.*"],
+    custom: true,
+  },
+});
+
+const cross = () => invokeTool("lead.read", { limit: 1 }, { agentKey: BOUNDARY_KEY, userId: null, dryRun: false });
+const allowed = () => invokeTool("agents.read", {}, { agentKey: BOUNDARY_KEY, userId: null, dryRun: false });
+const strikes = async () =>
+  (await prisma.agent.findUniqueOrThrow({ where: { key: BOUNDARY_KEY }, select: { boundaryViolations: true } })).boundaryViolations;
+
+const refused = await cross();
+check(!refused.ok, "a tool inside not_responsible is refused");
+check(Boolean(refused.refusedReason?.includes("not responsible")), `the refusal says why — got "${refused.refusedReason}"`);
+check((await strikes()) === 1, "the crossing is counted");
+
+// The refusal is on the audit trail. "Why did nothing happen last night" is
+// answered from ToolCall or it is not answered at all.
+const logged = await prisma.toolCall.count({ where: { agentKey: BOUNDARY_KEY, tool: "lead.read", ok: false } });
+check(logged === 1, `the refusal is written to ToolCall — found ${logged}`);
+
+// The negative, and the half worth more than the positive: a granted tool
+// outside the boundary must still really run. A boundary that quietly refuses
+// everything is indistinguishable from one that works, right up until the
+// agent cannot do its job.
+const fine = await allowed();
+check(fine.ok, `a granted tool outside the boundary still runs — ${fine.error ?? fine.refusedReason ?? "ok"}`);
+check((await strikes()) === 0, "an allowed call clears the count, which is what makes the strikes consecutive");
+
+// Three in a row, from zero, with nothing in between.
+await cross();
+await cross();
+const thirdCross = await cross();
+check((await strikes()) === 3, "three crossings in a row are counted");
+const paused = await prisma.agent.findUniqueOrThrow({ where: { key: BOUNDARY_KEY }, select: { status: true } });
+check(paused.status === "PAUSED", `three in a row pauses the agent — it is ${paused.status}`);
+check(Boolean(thirdCross.refusedReason?.includes("paused")), `the pause says so — got "${thirdCross.refusedReason}"`);
+
+await clearBoundarySubject();
+
+// --- 6c. The boundary reaching a row that predates it -----------------------
+//
+// The same shape as the toolkit reconcile above, and the same defect:
+// `ensureAgents()` only ever creates, so a boundary added to a seed after that
+// agent existed never joined the row. `refreshUneditedSeedPrompts()` is what
+// carries it, and it has to notice a difference in the boundary alone —
+// comparing only the prompt, the mission and the policy would skip an agent
+// whose wording is already current.
+const withBoundary = AGENT_SEEDS.find((seed) => (seed.not_responsible?.length ?? 0) > 0);
+if (!withBoundary) {
+  check(false, "at least one seed declares a boundary — otherwise nothing above is being exercised");
+} else {
+  const row = await prisma.agent.findUnique({
+    where: { key: withBoundary.key },
+    select: { promptEditedAt: true, not_responsible: true },
+  });
+  if (!row) {
+    check(false, `${withBoundary.key} is on the roster`);
+  } else if (row.promptEditedAt) {
+    // The contract, not a failure: an agent the Owner has rewritten is theirs.
+    console.log(`
+  skipped the boundary backfill — ${withBoundary.key} has been rewritten here, so the refresh leaves it alone.`);
+  } else {
+    await prisma.agent.update({ where: { key: withBoundary.key }, data: { not_responsible: [] } });
+    await refreshUneditedSeedPrompts();
+    const after = await prisma.agent.findUniqueOrThrow({
+      where: { key: withBoundary.key },
+      select: { not_responsible: true },
+    });
+    check(
+      after.not_responsible.join("|") === (withBoundary.not_responsible ?? []).join("|"),
+      `a boundary added to a seed reaches a row that already existed — ${withBoundary.key} holds [${after.not_responsible.join(", ")}]`,
+    );
+  }
+}
 
 // --- 7. Work that exists and cannot start ----------------------------------
 const stalled = await prisma.agentTask.groupBy({
