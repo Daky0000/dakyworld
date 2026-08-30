@@ -15,6 +15,7 @@ import {
 } from "../services/leadFields.js";
 import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
 import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLeads, tagSlug } from "../services/leadTags.js";
+import { BulkCountChanged, countTarget, deleteLeads, targetIds, updateLeads } from "../services/leadBulk.js";
 import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, prepareLeads, storedPrep } from "../services/leadPrep.js";
 import { demoUrl } from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
@@ -40,6 +41,11 @@ leadsRouter.use(
       { path: /^\/tags/, method: ["POST", "PATCH", "DELETE"], permission: "leads.tags" },
       { path: /^\/fields/, method: ["POST", "PUT", "DELETE"], permission: "leads.tags" },
       { path: /^\/bulk\/delete$/, permission: "leads.delete" },
+      // A POST that reads. It answers "how many would this touch", which is
+      // what the confirmation is built from — gating it as a write would mean
+      // somebody who may look at leads cannot be told how many they are about
+      // to be warned about.
+      { path: /^\/bulk\/count$/, permission: "leads.view" },
     ],
   }),
 );
@@ -433,12 +439,38 @@ leadsRouter.patch("/groups/:id", async (req, res, next) => {
 });
 
 // Deleting a group never deletes leads — they fall back to "Ungrouped".
+/**
+ * Removes a list. `?withLeads=true` removes what is in it as well.
+ *
+ * Emptying the list is the default and stays the default: a list is a way of
+ * organising leads and deleting one is usually a tidy-up, so leads coming out
+ * of it ungrouped is the answer nine times in ten. The other time is a scrape
+ * that brought in four hundred businesses in the wrong country, and doing that
+ * by hand was: delete the list, filter to ungrouped, and hope nothing else was
+ * already there.
+ *
+ * The destructive half carries `expect`, like every other filter delete here.
+ */
 leadsRouter.delete("/groups/:id", async (req, res, next) => {
   try {
-    await prisma.lead.updateMany({ where: { groupId: req.params.id }, data: { groupId: null } });
-    await prisma.leadGroup.delete({ where: { id: req.params.id } });
-    res.status(204).send();
+    const withLeads = req.query.withLeads === "true";
+    if (!withLeads) {
+      await prisma.lead.updateMany({ where: { groupId: req.params.id }, data: { groupId: null } });
+      await prisma.leadGroup.delete({ where: { id: req.params.id } });
+      return res.status(204).send();
+    }
+
+    const expect = Number(req.query.expect);
+    const result = await deleteLeads({
+      where: { groupId: req.params.id, rehearsal: false },
+      expect: Number.isFinite(expect) ? expect : undefined,
+    });
+    // Anything kept back keeps the list, or the proposal loses the only place
+    // that says which batch it came out of.
+    if (result.keptWithProposals.length === 0) await prisma.leadGroup.delete({ where: { id: req.params.id } });
+    res.json({ ...result, listRemoved: result.keptWithProposals.length === 0 });
   } catch (err) {
+    if (err instanceof BulkCountChanged) return res.status(409).json({ error: err.message, expected: err.expected, actual: err.actual });
     next(err);
   }
 });
@@ -664,53 +696,97 @@ leadsRouter.delete("/fields", async (req, res, next) => {
 
 // --- Bulk actions ----------------------------------------------------------
 
-// PATCH /api/leads/bulk — what you need after a scrape drops 200 rows at once.
+/**
+ * Who a bulk action is about: a ticked selection, or everything matching.
+ *
+ * `filter` is the same query string the screen is already showing, parsed by
+ * the same `buildWhere` the listing uses — so "act on all of these" means
+ * exactly what the person is looking at, rather than a second filter
+ * implementation that has to agree with the first for ever.
+ *
+ * `expect` is the count they were shown. A filter that matched twelve rows when
+ * the screen drew it can match forty thousand by the time the button is pressed
+ * — a scrape finishes, an import commits — so a destructive filter action
+ * quotes the number back and is refused if it has moved. Same exchange as
+ * `ifRevision` in the website editor.
+ */
+const bulkTarget = z.object({
+  ids: z.array(z.string().cuid()).optional(),
+  filter: z.record(z.string()).optional(),
+  expect: z.number().int().min(0).optional(),
+});
+
+function resolveTarget(input: z.infer<typeof bulkTarget>) {
+  return {
+    ids: input.ids,
+    where: input.filter ? buildWhere(input.filter) : undefined,
+    expect: input.expect,
+  };
+}
+
+/** How many a filter would touch, so the screen can say so before it is pressed. */
+leadsRouter.post("/bulk/count", async (req, res, next) => {
+  try {
+    const input = bulkTarget.parse(req.body);
+    res.json({ count: await countTarget(resolveTarget(input)) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/leads/bulk — what you need after a scrape drops 200 rows at once,
+// and now also what you need when the answer is "all 46,110 of them".
 leadsRouter.patch("/bulk", async (req, res, next) => {
   try {
-    const { ids, status, groupId, addTags, removeTags } = z
-      .object({
-        ids: z.array(z.string().cuid()).min(1, "Select at least one lead"),
+    const input = bulkTarget
+      .extend({
         status: z.enum(LEAD_STATUSES).optional(),
         groupId: z.string().cuid().nullable().optional(),
         addTags: z.array(z.string().max(60)).max(24).optional(),
         removeTags: z.array(z.string().max(60)).max(24).optional(),
       })
       .parse(req.body);
+    const target = resolveTarget(input);
 
-    // "Unchecked" is the variant that accepts foreign keys like groupId directly.
-    const data: Prisma.LeadUncheckedUpdateManyInput = {};
-    if (status) data.status = status;
-    if (groupId !== undefined) data.groupId = groupId;
+    const changing = input.status !== undefined || input.groupId !== undefined;
+    const retagging = Boolean(input.addTags?.length || input.removeTags?.length);
+    if (!changing && !retagging) return res.status(400).json({ error: "Nothing to change" });
 
-    // Tags are deliberately *not* done here with `push`. Prisma can push into
-    // an array column in one statement but cannot pull from one and cannot
+    const updated = changing ? await updateLeads(target, { status: input.status, groupId: input.groupId }) : 0;
+
+    // Tags are deliberately *not* done with `push`. Prisma can push into an
+    // array column in one statement but cannot pull from one and cannot
     // de-duplicate, so pushing a tag a lead already carries stores it twice.
-    // retagLeads reads, merges and writes back — see services/leadTags.ts.
-    const retagged = addTags?.length || removeTags?.length ? await retagLeads(ids, addTags ?? [], removeTags ?? []) : 0;
+    // retagLeads reads, merges and writes back — see services/leadTags.ts —
+    // and it needs real ids, which is the one path a filter has to be resolved
+    // into a list for.
+    const retagged = retagging
+      ? await retagLeads(input.ids ?? (await targetIds(target)), input.addTags ?? [], input.removeTags ?? [])
+      : 0;
 
-    if (Object.keys(data).length === 0 && retagged === 0) {
-      return res.status(400).json({ error: "Nothing to change" });
-    }
-
-    const result = Object.keys(data).length ? await prisma.lead.updateMany({ where: { id: { in: ids } }, data }) : { count: 0 };
-    res.json({ updated: Math.max(result.count, retagged), retagged });
+    res.json({ updated: Math.max(updated, retagged), retagged });
   } catch (err) {
+    if (err instanceof BulkCountChanged) return res.status(409).json({ error: err.message, expected: err.expected, actual: err.actual });
     next(err);
   }
 });
 
+/**
+ * Deletes a selection, or everything matching a filter.
+ *
+ * See `services/leadBulk.ts` for what a deleted lead takes with it. The short
+ * version: a contact log goes, a sent email and an agent's work are detached
+ * rather than destroyed, and a lead carrying a priced proposal is kept back and
+ * named instead of failing the whole request — which is what used to happen,
+ * so two proposals made forty-six thousand leads undeletable.
+ */
 leadsRouter.post("/bulk/delete", async (req, res, next) => {
   try {
-    const { ids } = z.object({ ids: z.array(z.string().cuid()).min(1) }).parse(req.body);
-    // Proposals hold a lead reference; refuse rather than orphan them.
-    const withProposals = await prisma.lead.count({ where: { id: { in: ids }, proposals: { some: {} } } });
-    if (withProposals > 0) {
-      return res.status(409).json({ error: `${withProposals} of these leads have proposals and can't be deleted.` });
-    }
-    await prisma.communication.deleteMany({ where: { leadId: { in: ids } } });
-    const result = await prisma.lead.deleteMany({ where: { id: { in: ids } } });
-    res.json({ deleted: result.count });
+    const input = bulkTarget.parse(req.body);
+    const result = await deleteLeads(resolveTarget(input));
+    res.json(result);
   } catch (err) {
+    if (err instanceof BulkCountChanged) return res.status(409).json({ error: err.message, expected: err.expected, actual: err.actual });
     next(err);
   }
 });

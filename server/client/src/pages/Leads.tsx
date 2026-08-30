@@ -99,6 +99,19 @@ const EMPTY_FILTERS: Filters = {
   scraperRunId: "",
 };
 
+/**
+ * The filter as the bulk endpoints take it.
+ *
+ * Built from `toQuery` and parsed back rather than written out again, so "act
+ * on everything matching" is provably the same filter the list is showing. A
+ * second serialiser here is a second thing that has to agree with `buildWhere`
+ * for ever, and the day it stops agreeing is the day a bulk delete removes a
+ * different set of leads from the one on screen.
+ */
+function toFilterObject(filters: Filters): Record<string, string> {
+  return Object.fromEntries(new URLSearchParams(toQuery(filters)));
+}
+
 function toQuery(filters: Filters): string {
   const params = new URLSearchParams();
   if (filters.q) params.set("q", filters.q);
@@ -133,6 +146,15 @@ export function Leads() {
   }));
   const [groupBy, setGroupBy] = useState<GroupBy>("group");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /**
+   * "Everything matching", rather than the rows that happen to be ticked.
+   *
+   * A tick list cannot express forty-six thousand leads — the page holds a few
+   * hundred of them and the request body would hold the rest. In this mode the
+   * bulk actions send the filter itself and the count the screen is showing,
+   * and the server refuses if that count has moved since.
+   */
+  const [allMatching, setAllMatching] = useState(false);
   const [showForm, setShowForm] = useState(false);
   // null = editing the default set; a group id = editing that list's own set.
   // `undefined` means the editor is closed.
@@ -231,23 +253,55 @@ export function Leads() {
   });
 
   const bulkUpdate = useMutation({
-    mutationFn: (body: { ids: string[]; status?: string; groupId?: string | null; addTags?: string[]; removeTags?: string[] }) =>
-      api.patch("/leads/bulk", body),
+    mutationFn: (body: Record<string, unknown>) => api.patch("/leads/bulk", body),
     onSuccess: () => {
       invalidate();
       // A bulk retag can coin a tag, so the vocabulary is stale too.
       void qc.invalidateQueries({ queryKey: ["lead-tags"] });
       setSelected(new Set());
+      setAllMatching(false);
     },
   });
 
+  const [deleteResult, setDeleteResult] = useState<string | null>(null);
   const bulkDelete = useMutation({
-    mutationFn: (ids: string[]) => api.post("/leads/bulk/delete", { ids }),
-    onSuccess: () => {
+    mutationFn: (body: Record<string, unknown>) =>
+      api.post<{ deleted: number; keptWithProposals: { name: string }[]; detached: { emails: number; messages: number; tasks: number } }>(
+        "/leads/bulk/delete",
+        body,
+      ),
+    onMutate: () => setDeleteResult(null),
+    onSuccess: (result) => {
       invalidate();
       setSelected(new Set());
+      setAllMatching(false);
+      // Said out loud rather than left to a silent refresh. A delete that keeps
+      // some rows back is the interesting case, and one that quietly removed
+      // fewer than somebody asked for is how a list looks cleared and is not.
+      const kept = result.keptWithProposals.length;
+      const detached = result.detached.emails + result.detached.messages + result.detached.tasks;
+      setDeleteResult(
+        `Deleted ${result.deleted} lead${result.deleted === 1 ? "" : "s"}.` +
+          (kept
+            ? ` Kept ${kept} that ${kept === 1 ? "has a proposal" : "have proposals"}: ${result.keptWithProposals
+                .slice(0, 5)
+                .map((lead) => lead.name)
+                .join(", ")}${kept > 5 ? `, and ${kept - 5} more` : ""}.`
+            : "") +
+          (detached ? ` ${detached} email, message and task record${detached === 1 ? "" : "s"} were kept and unlinked.` : ""),
+      );
     },
+    onError: (err: Error) => setDeleteResult(err.message),
   });
+
+  /**
+   * Who a bulk action is about, in the shape the endpoints take.
+   *
+   * One place, so the six call sites cannot disagree about whether they are
+   * acting on the ticks or on the filter.
+   */
+  const bulkTarget = () =>
+    allMatching ? { filter: toFilterObject(filters), expect: matching } : { ids: [...selected] };
 
   /**
    * Look at a whole selection at once.
@@ -418,17 +472,29 @@ export function Leads() {
 
       {managingTags && <TagManager onClose={() => setManagingTags(false)} />}
 
-      {selected.size > 0 && (
+      {(selected.size > 0 || allMatching) && (
         <BulkBar
-          count={selected.size}
+          count={allMatching ? matching : selected.size}
+          total={matching}
+          allMatching={allMatching}
+          onSelectAllMatching={() => setAllMatching(true)}
           groups={stats?.groups ?? []}
           pending={bulkUpdate.isPending || bulkDelete.isPending}
           error={bulkDelete.error}
-          onStatus={(status) => bulkUpdate.mutate({ ids: [...selected], status })}
-          onGroup={(groupId) => bulkUpdate.mutate({ ids: [...selected], groupId })}
-          onTags={(addTags, removeTags) => bulkUpdate.mutate({ ids: [...selected], addTags, removeTags })}
+          onStatus={(status) => bulkUpdate.mutate({ ...bulkTarget(), status })}
+          onGroup={(groupId) => bulkUpdate.mutate({ ...bulkTarget(), groupId })}
+          onTags={(addTags, removeTags) => bulkUpdate.mutate({ ...bulkTarget(), addTags, removeTags })}
           onDelete={() => {
-            if (confirm(`Delete ${selected.size} lead(s)? This cannot be undone.`)) bulkDelete.mutate([...selected]);
+            const count = allMatching ? matching : selected.size;
+            // Typing the number is the guard on the destructive half. A
+            // confirm() somebody has clicked forty times is not a decision, and
+            // this is the one action on the screen with nothing behind it.
+            const answer = prompt(
+              `Delete ${count.toLocaleString()} lead${count === 1 ? "" : "s"}? This cannot be undone.\n\n` +
+                `Leads carrying a proposal are kept back and named. Emails, phone messages and agent tasks are kept and unlinked.\n\n` +
+                `Type ${count} to confirm.`,
+            );
+            if (answer?.trim() === String(count)) bulkDelete.mutate(bulkTarget());
           }}
           onLook={() => {
             if (
@@ -440,8 +506,20 @@ export function Leads() {
             }
           }}
           looking={bulkLook.isPending}
-          onClear={() => setSelected(new Set())}
+          onClear={() => {
+            setSelected(new Set());
+            setAllMatching(false);
+          }}
         />
+      )}
+
+      {deleteResult && (
+        <p className="mb-4 rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink/70">
+          {deleteResult}{" "}
+          <button type="button" onClick={() => setDeleteResult(null)} className="text-blue hover:underline">
+            Dismiss
+          </button>
+        </p>
       )}
 
       {lookedResult && (
@@ -1494,6 +1572,9 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
 
 function BulkBar({
   count,
+  total,
+  allMatching,
+  onSelectAllMatching,
   groups,
   pending,
   error,
@@ -1506,6 +1587,11 @@ function BulkBar({
   onClear,
 }: {
   count: number;
+  /** Everything the current filter matches, not just what is on this page. */
+  total: number;
+  /** True when the actions apply to the filter rather than to the ticks. */
+  allMatching: boolean;
+  onSelectAllMatching: () => void;
   groups: LeadStats["groups"];
   pending: boolean;
   error: unknown;
@@ -1526,7 +1612,25 @@ function BulkBar({
   return (
     <div className="mb-4 border border-ink bg-ink px-4 py-3 text-cream">
       <div className="flex flex-wrap items-center gap-3">
-      <span className="font-mono text-[11px] uppercase tracking-[.14em]">{count} selected</span>
+      <span className="font-mono text-[11px] uppercase tracking-[.14em]">
+        {count.toLocaleString()} selected{allMatching ? " — everything matching" : ""}
+      </span>
+      {/*
+        The step from "the rows I ticked" to "all of them". Without it the
+        largest thing this screen can act on is one page, and clearing a
+        46,110-lead import means ticking a few hundred rows at a time.
+        Offered only when there is more to reach, so it never appears saying
+        the same number twice.
+      */}
+      {!allMatching && total > count && (
+        <button
+          type="button"
+          onClick={onSelectAllMatching}
+          className="border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10"
+        >
+          Select all {total.toLocaleString()} matching
+        </button>
+      )}
       <select
         defaultValue=""
         disabled={pending}
@@ -1565,7 +1669,12 @@ function BulkBar({
       <button
         type="button"
         onClick={onLook}
-        disabled={pending || looking}
+        // Off in select-all-matching mode, deliberately. Looking at a business
+        // spends real money per lead — research, an audit and two screenshots —
+        // so "all 46,110 matching" is not a thing to make one click away. Tick
+        // the ones you mean.
+        disabled={pending || looking || allMatching}
+        title={allMatching ? "Tick the leads you want looked at — this one spends money per business." : undefined}
         className="font-mono text-[10px] uppercase tracking-[.14em] text-lime transition hover:text-lime/80 disabled:text-cream/40"
       >
         {looking ? "Looking…" : "Look at them"}
