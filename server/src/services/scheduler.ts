@@ -17,6 +17,7 @@ import { SETTING, getSetting, setSetting } from "../lib/settings.js";
 import { expireStaleRequests, staleByAgent } from "./approvals.js";
 import { raiseStandingWork } from "./agents/standingWork.js";
 import { restoreOrphanedWakes } from "./rehearsals/wake.js";
+import { settleIdleRehearsals } from "./rehearsals/run.js";
 import { purgeExpiredSessions } from "../lib/session.js";
 
 /**
@@ -117,6 +118,10 @@ export async function tick(now = new Date()) {
     // is what works them, on the next tick rather than this one — deliberately,
     // so raising work and doing it stay separable.
     raiseStandingWork(now),
+    // Rehearsals nobody is watching any more. The screen drains its own run
+    // while it is open; this is the floor under that, and it is what puts a
+    // woken agent's autonomy back when the tab was closed part-way.
+    settleIdleRehearsals(),
     housekeepingTick(now),
   ]);
   for (const result of results) {

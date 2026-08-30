@@ -633,25 +633,64 @@ function Step({ step }: { step: RehearsalStep }) {
   );
 }
 
-/** The outward half of the run: everything the gate stopped, and the case made for it. */
+/**
+ * Everything the gate stopped, the case the agent made for it, and — the part
+ * that was missing — which gate.
+ *
+ * This used to say every one of these would have left the building, which is
+ * only true of the outward half. The rest are calls an agent was not allowed to
+ * make: research and site audits held by its own autonomy level or a spending
+ * ceiling, nothing to do with the rehearsal. Reading the second as the first is
+ * how a run where the Website Auditor could not run either of its own two tools
+ * looked like the guarantee working.
+ */
 function Prepared({ run }: { run: RehearsalDetail }) {
+  const held = run.prepared.filter((action) => !action.outward).length;
   return (
     <section className="mt-8">
       <Eyebrow>Prepared, and not carried out</Eyebrow>
       <p className="mb-3 mt-2 text-xs leading-relaxed text-muted">
-        Every one of these is something that would have left the building. In a rehearsal they all stop here — this is the list you would be
-        approving one by one if this were real.
+        Each of these stopped at a preview. Most would have left the building, and in a rehearsal those always stop here — that is the list you
+        would be approving one by one if this were real.
+        {held > 0 && (
+          <>
+            {" "}
+            <strong className="font-medium text-ink/75">
+              {held} of them stopped for a different reason: the agent was not allowed to make the call at all.
+            </strong>{" "}
+            Those say so underneath, and they are a fact about that agent&rsquo;s settings rather than about this run.
+          </>
+        )}
       </p>
       <div className="space-y-2">
         {run.prepared.map((action) => (
-          <div key={action.id} className="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+          <div
+            key={action.id}
+            className={
+              action.outward
+                ? "rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3"
+                : "rounded-2xl border border-ink/10 bg-ink/[.02] px-4 py-3"
+            }
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <code className="font-mono text-[11px] text-amber-900">{action.tool}</code>
-              <span className="font-mono text-[9px] uppercase tracking-[.1em] text-amber-800">
+              <code className={action.outward ? "font-mono text-[11px] text-amber-900" : "font-mono text-[11px] text-ink/70"}>{action.tool}</code>
+              <span
+                className={
+                  action.outward
+                    ? "font-mono text-[9px] uppercase tracking-[.1em] text-amber-800"
+                    : "font-mono text-[9px] uppercase tracking-[.1em] text-muted"
+                }
+              >
                 {run.agents.find((agent) => agent.key === action.agentKey)?.name ?? action.agentKey}
               </span>
             </div>
             <p className="mt-1.5 text-sm leading-relaxed text-ink/80">{action.wouldDo}</p>
+            {action.heldBecause && (
+              <p className={action.outward ? "mt-1 text-xs leading-relaxed text-amber-900/70" : "mt-1 text-xs leading-relaxed text-muted"}>
+                {action.outward ? "Held: " : "Not allowed: "}
+                {action.heldBecause}
+              </p>
+            )}
             {action.status === "EXECUTED" && (
               <p className="mt-1 font-mono text-[10px] uppercase tracking-[.1em] text-red-700">
                 Carried out for real — cost ${action.costUsd.toFixed(4)}. This should have stayed a preview.

@@ -1048,7 +1048,15 @@ prompt teaches four steps and says to stop at the first one that answers:
    model call, matched on skills and mission rather than on tool keys.
    Everything else depends on it: an agent cannot hand work to a key it has
    never seen, and one that cannot *look* would report a gap for a craft that
-   has been on the roster since March.
+   has been on the roster since March. **It names the route as well as the
+   craftsman** (`RosterMatch.through`): a match that is not your report but
+   sits under one of them says so, because otherwise an executive searching for
+   "website audit" is handed a specialist four rungs down with no road to it but
+   `handOff`, of which every task gets two. That is what a whole-floor run did —
+   the Chief Executive tried three specialists, was told each time that they do
+   not report to it, converted them to sideways hand-offs, spent both, and never
+   asked the three directors who own those lanes and to whom it may delegate as
+   often as it likes.
 2. **`consult`** — ask a colleague one question and get the answer back inside
    this task. **Deliberately one model call and no tools**, not a nested agent
    run: a consult that could call tools would be a second agent working the same
@@ -1199,6 +1207,18 @@ overtaken by the reaper must not announce an outcome it did not write.
   that is not real. Failures arrive in weather — a vendor going down fails
   everything at once — so four cards in ten minutes and the rest are left to the
   Agents screen. A question is always worth interrupting somebody for.
+
+**A prepared call says which gate stopped it.** `permissionFor` returns no
+reason when the *caller* asked for the dry run rather than the agent's card
+forcing it — which in a rehearsal is the guarantee itself — so the one call the
+feature exists to hold came back unexplained, and the screen filled the silence
+with the wrong answer: it labelled every prepared action "would have left the
+building", including internal research an agent simply was not allowed to run.
+`heldBecause` is never blank now, the rehearsal floor is named ahead of the
+card's reason because it binds whatever the card says, the reason reaches the
+agent too (the Website Auditor, held by its own autonomy level, reported its
+audit as "pending a person's approval"), and the screen separates the two using
+the catalogue's `outward` flag rather than sniffing the sentence.
 
 **A rehearsal's prepared actions are specimens, not proposals.** Every outward
 call a rehearsal previewed was filed as a live `ActionRequest`, counted in the
@@ -1507,6 +1527,28 @@ anybody at all.
 - **A draft is woken; a paused agent is not.** Pausing is something a person
   *did* — it is how the Owner stops an agent's standing work — and a test is not
   a reason to overrule it. Retired likewise. Both refuse with the reason said.
+- **Waking is three columns, not one, and for months it was one.** A draft
+  seeds at `autonomyLevel 1` with `dryRun` on, and `permissionFor` downgrades
+  every spending, outward, write and send call from an agent in that state to a
+  preview — so an agent the rehearsal itself woke could not carry out a single
+  tool it owned. A whole-floor run against a real site is what showed it: the
+  Website Auditor, woken from draft, prepared `site.look` and `audit.website`
+  and ran neither, while the SEO Specialist — already active at a working level
+  because somebody had switched it on weeks before — ran both for real on the
+  same site in the same minute. The run was a test of which agents happened to
+  be configured. A woken agent is now lifted to `REHEARSAL_AUTONOMY` (4, the
+  level `invokeTool` requires to spend) with dry run off, **raised only, never
+  lowered**, and the level and the flag go back with the status. The guarantee
+  is untouched by it: `policy.ts` holds every outward call at a preview through
+  `invokeTool`'s own floor whatever the card says, which is asserted.
+- **An agent that was already ACTIVE keeps what the Owner gave it.** Same
+  distinction as the paused one, at the other end: autonomy 1 on a draft is a
+  default nobody chose, and autonomy 1 on a live agent is a decision. So a run
+  can still contain an agent that prepared everything and did nothing — which is
+  why every prepared call now carries `heldBecause` and the screen prints it.
+- **The lift and the restore are both written to `AgentAutonomyChange`**, actor
+  `rehearsal`. A history with holes in it is the thing that column exists to
+  prevent, and "who moved this agent to four" has to have an answer.
 - **`Rehearsal.wokeAgents` is written before the status changes**, in the same
   transaction. An agent awake with no record of who woke it is an agent that
   stays awake, and then a test has permanently changed how the business runs.
@@ -1517,8 +1559,34 @@ anybody at all.
 - **`restoreOrphanedWakes()` at boot**, beside `resumeInterruptedTasks()`, for a
   container killed mid-run. It also marks that rehearsal STOPPED rather than
   leaving it RUNNING for ever.
+- **`settleIdleRehearsals()` on the minute tick** is the floor under `nudge`,
+  which is the screen draining its own run and was the only caller of `settle`.
+  A rehearsal whose tab was closed part-way stayed RUNNING with its agents awake
+  until the next restart — already wrong, and worse now that waking lifts an
+  autonomy level as well as a status.
 - It restores only agents still sitting at ACTIVE, so an agent the Owner has
   since paused or switched on for good is left alone.
+
+**The agent at the top does not get to finish before its directors have** —
+`askForClosingBrief()` in `rehearsals/run.ts`, `Rehearsal.closingTaskId`.
+`delegate` and `handOff` are fire-and-forget for a good reason — an agent that
+blocked on a report would hold its own agent lock while that report queued
+behind it, and `REHEARSAL_CONCURRENCY` is 1, so waiting is a deadlock rather
+than a delay. The consequence was invisible until a whole-floor run showed it
+plainly: the Chief Executive read the numbers, handed the site to two directors,
+and wrote a brief saying "two hand-offs queued" that carried none of their
+findings. Every wide scenario ended that way, every time, with the run's
+headline answer the least informed thing in it.
+
+So the wait moves to where waiting is free. When `settle` finds nothing can move
+again, the starting agent is given one more task carrying **what each of them
+actually said, in their own words** — a précis assembled here would be this file
+doing the job the agent is about to be asked to do. The negatives are the half
+worth keeping: it does not fire when the root task did not finish (an agent that
+escalated asked a person a question, and a confident summary over the top of it
+buries the question), not when nobody else worked, not twice, and not when it
+would tip the run past `MAX_TASKS` or its budget — a closing brief the next
+drain stops is worse than not asking.
 
 **Reasoning is on the timeline now, for every task and not only these.**
 `AgentStepKind.THOUGHT` existed since the runtime shipped and nothing ever wrote
@@ -1531,12 +1599,16 @@ the summary and gets its own FINISHED step.
 The screen's own poll drives the run (`nudge`), which is unusual enough to be
 commented at the route: the minute tick would eventually start every queued task
 in the tree, and six hops at one a minute is five minutes of a still screen that
-reads as a hang. `checks/rehearsal.ts` is the committed half — 51 assertions,
+reads as a hang. `checks/rehearsal.ts` is the committed half — 97 assertions,
 database only — and every claim in it carries the **negative** that catches the
 mistake worth catching: an unrestricted agent must still really be allowed to
 send, a rehearsal must not blind its own agents, an ordinary lead must still
 enrol, an ordinary delegation must *not* come out marked as a rehearsal, and a
-paused agent must stay paused. `tmp/rehearsalDrive.ts` drives a whole run
+paused agent must stay paused. Ten of its assertions had **never once passed**:
+the five gate sections assert against nine tools the harness's own agents were
+never granted, and a grant is checked before everything else — so a file that
+was permanently ten red is a file nobody reads a new failure out of. The
+toolkit was widened rather than the assertions weakened. `tmp/rehearsalDrive.ts` drives a whole run
 against a local Anthropic stub, starting from a floor where every agent is a
 draft.
 

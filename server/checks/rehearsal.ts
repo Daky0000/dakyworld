@@ -29,7 +29,14 @@
  *     half that matters: an agent left awake by an abandoned test is the floor
  *     quietly changed, taking real work off the minute tick days later with
  *     nothing connecting it to the run that did it. A paused agent is never
- *     woken — that is a decision somebody made.
+ *     woken — that is a decision somebody made. Waking is three columns and
+ *     not one: an agent switched on at the seeded autonomy 1 with dry run on
+ *     is refused every tool it owns, which made a run a test of which agents
+ *     somebody happened to have configured rather than of the workforce.
+ *  7. **The closing brief.** Hand-offs are fire-and-forget and a run works one
+ *     task at a time, so the agent at the top always finished before anybody it
+ *     asked. It is asked again once they have all reported — once, and never
+ *     over the top of an agent that stopped to ask a person something.
  *
  * Every claim carries a **negative** beside the positive, which is the half
  * that catches the mistakes worth catching: an unrestricted agent must still
@@ -47,7 +54,7 @@ import { permissionFor } from "../src/services/tools/invoke.js";
 import { findTool, TOOLS } from "../src/services/tools/catalogue.js";
 import { enrol } from "../src/services/emailSequences.js";
 import { buildWhere as buildLeadWhere } from "../src/routes/leads.js";
-import { nudge, tasksIn, teardownRehearsal, RehearsalRefused } from "../src/services/rehearsals/run.js";
+import { nudge, settle, tasksIn, teardownRehearsal, RehearsalRefused } from "../src/services/rehearsals/run.js";
 import { SCENARIOS } from "../src/services/rehearsals/scenarios.js";
 import { heldByRehearsal } from "../src/services/rehearsals/policy.js";
 import { reportsUnder, restoreOrphanedWakes, restoreWakes, wakeFor } from "../src/services/rehearsals/wake.js";
@@ -110,6 +117,10 @@ async function reset() {
   await prisma.agentTask.deleteMany({ where: { title: { contains: MARK } } });
   await prisma.agentGap.deleteMany({ where: { skillNeeded: { contains: MARK } } });
   await prisma.agentMemory.deleteMany({ where: { agentKey: { in: ALL_KEYS } } });
+  // Waking an agent now writes to the autonomy history, which has no foreign
+  // key to the agent — so without this the harness leaves rows behind that
+  // outlive the agents they are about.
+  await prisma.agentAutonomyChange.deleteMany({ where: { agentKey: { in: ALL_KEYS } } });
   await prisma.agent.deleteMany({ where: { key: { in: ALL_KEYS } } });
 }
 
@@ -132,8 +143,27 @@ async function makeAgents() {
     // One of each kind the policy distinguishes: outward, read, write, and a
     // spending one. A grant is checked before the dry-run rule, so a toolkit
     // missing one of these fails as "not granted" and says nothing about the
-    // rule under test.
-    toolkit: ["email.send", "lead.read", "lead.update", "lead.prepare"],
+    // rule under test — which is exactly what the five gate sections below had
+    // been doing since they were written. They assert against nine more tools
+    // than this list held, so ten of their assertions could never pass, and a
+    // check file that is permanently ten red is one nobody reads a new failure
+    // out of.
+    toolkit: [
+      "email.send",
+      "lead.read",
+      "lead.update",
+      "lead.prepare",
+      "company.audit",
+      "site.look",
+      "audit.website",
+      "audit.read",
+      "design.brief",
+      "image.generate",
+      "document.render",
+      "content.draft",
+      "content.factcheck",
+      "email.draft",
+    ],
   };
   // A manager, because `delegate` is only handed to an agent with reports and
   // only accepts an agent that reports to it.
@@ -673,7 +703,11 @@ async function itWakesWhatItNeedsAndPutsItBack() {
   check("the reporting tree is walked", under.includes(MANAGER_KEY) && under.includes(AGENT_KEY), under.join(", "));
   check("and stops at the edge of it", !under.includes(SIDEWAYS_KEY), under.join(", "));
 
-  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "DRAFT" } });
+  // The state a draft actually seeds in, rather than the harness default of
+  // autonomy 5 — which is the whole of what this half is about. An agent woken
+  // into autonomy 1 with dry run on turns up, is handed the work, and is
+  // refused every spending, writing and outward tool it owns.
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "DRAFT", autonomyLevel: 1, dryRun: true } });
   await prisma.agent.update({ where: { key: SIDEWAYS_KEY }, data: { status: "PAUSED" } });
 
   const rehearsal = await prisma.rehearsal.create({
@@ -681,8 +715,40 @@ async function itWakesWhatItNeedsAndPutsItBack() {
   });
 
   const woke = await wakeFor(rehearsal.id, [AGENT_KEY, SIDEWAYS_KEY, MANAGER_KEY]);
-  check("a draft is woken", woke.woke[AGENT_KEY] === "DRAFT", JSON.stringify(woke.woke));
+  check("a draft is woken", woke.woke[AGENT_KEY]?.status === "DRAFT", JSON.stringify(woke.woke));
   check("an already-active agent is left alone", !(MANAGER_KEY in woke.woke));
+
+  // The defect a whole-floor run against a real site found: the Website
+  // Auditor, woken from draft, prepared both of its own tools and carried out
+  // neither, while an agent somebody had switched on weeks earlier ran the
+  // same two for real on the same site. Waking is three columns, not one.
+  const awake = await prisma.agent.findUnique({ where: { key: AGENT_KEY } });
+  check("and woken able to do its job, not just to turn up", awake?.autonomyLevel === 4 && awake?.dryRun === false, JSON.stringify(awake));
+
+  const spender = findTool("lead.prepare");
+  if (spender) {
+    const allowed = await permissionFor(spender, { agentKey: AGENT_KEY, userId: null, dryRun: false });
+    check("so a spending tool really runs for it", allowed.allowed && !allowed.mustDryRun, JSON.stringify(allowed));
+  }
+  // And the guarantee still binds above it. The lift must not be a way out of
+  // the one rule the whole feature rests on.
+  const sender = findTool("email.send");
+  if (sender) {
+    const held = await permissionFor(sender, { agentKey: AGENT_KEY, userId: null, dryRun: heldByRehearsal(sender) });
+    check("but an outward call still stops at a preview", held.allowed && held.mustDryRun, JSON.stringify(held));
+  }
+
+  // The negative on the other half of the decision: an agent the Owner had
+  // already switched on keeps the autonomy the Owner gave it. A run that
+  // silently raised a live agent would be doing what waking refuses to do to a
+  // paused one.
+  const manager = await prisma.agent.findUnique({ where: { key: MANAGER_KEY } });
+  check("an active agent's own settings are not touched", manager?.autonomyLevel === 5 && manager?.dryRun === false, JSON.stringify(manager));
+
+  // Never blank, and never a hole. The autonomy history is the answer to "who
+  // moved this agent to four".
+  const lifted = await prisma.agentAutonomyChange.findFirst({ where: { agentKey: AGENT_KEY }, orderBy: { at: "desc" } });
+  check("and the lift is on the autonomy record", lifted?.actor === "rehearsal" && lifted?.toLevel === 4, JSON.stringify(lifted));
 
   // A person paused that agent on purpose. A test is not a reason to overrule
   // it, and the refusal has to say so rather than fail silently.
@@ -717,6 +783,29 @@ async function itWakesWhatItNeedsAndPutsItBack() {
   check("once nothing needs it, it goes back", restored.includes(AGENT_KEY), restored.join(", "));
   check("as a draft, not as something else", (await prisma.agent.findUnique({ where: { key: AGENT_KEY } }))?.status === "DRAFT");
 
+  // `other` was written with the shape older runs used — a bare status — which
+  // is deliberately still what this asserts against. A row from before the lift
+  // existed records no level, and restoring one it never took would be this
+  // code inventing an agent's history. So the status goes back and the level
+  // is left exactly where it is.
+  const afterLegacy = await prisma.agent.findUnique({ where: { key: AGENT_KEY } });
+  check("a row written before the lift restores the status only", afterLegacy?.autonomyLevel === 4, JSON.stringify(afterLegacy));
+
+  // The whole card, put back, from a row that recorded one.
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "DRAFT", autonomyLevel: 1, dryRun: true } });
+  const full = await prisma.rehearsal.create({
+    data: { website: `https://${MARK}wake4.test`, host: `${MARK}wake4.test`, scenario: "cold-outreach", status: "RUNNING" },
+  });
+  await wakeFor(full.id, [AGENT_KEY]);
+  await prisma.rehearsal.update({ where: { id: full.id }, data: { status: "SETTLED" } });
+  await restoreWakes(full.id);
+  const put = await prisma.agent.findUnique({ where: { key: AGENT_KEY } });
+  check(
+    "the level and the dry-run flag go back with the status",
+    put?.status === "DRAFT" && put?.autonomyLevel === 1 && put?.dryRun === true,
+    JSON.stringify(put),
+  );
+
   // The crash path: a rehearsal left RUNNING with agents still awake.
   await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "ACTIVE" } });
   const orphan = await prisma.rehearsal.create({
@@ -736,8 +825,103 @@ async function itWakesWhatItNeedsAndPutsItBack() {
     (await prisma.rehearsal.findUnique({ where: { id: orphan.id } }))?.status === "STOPPED",
   );
 
-  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "ACTIVE" } });
+  // Back to the harness default for whatever runs after this.
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { status: "ACTIVE", autonomyLevel: 5, dryRun: false } });
   await prisma.agent.update({ where: { key: SIDEWAYS_KEY }, data: { status: "ACTIVE" } });
+}
+
+// --- 6c. The answer, with the reports in ----------------------------------
+
+/**
+ * The agent at the top does not get to finish before its directors have.
+ *
+ * `delegate` and `handOff` are fire-and-forget, and a rehearsal runs one task
+ * at a time — so the starting agent always finished first and always finished
+ * with nothing back. A whole-floor run against a real site ended with the
+ * Chief Executive's brief saying "two hand-offs queued" and carrying not one
+ * of the findings: the headline answer of the run was the least informed thing
+ * in it.
+ *
+ * The negatives are the half worth having. It must not fire when nobody else
+ * worked (the first brief already had everything), must not fire when the root
+ * did not finish (that agent asked a person a question, and a confident
+ * summary written over the top of it buries the question), and must not fire
+ * twice — a run that asked for a closing brief every time it settled would
+ * never settle.
+ */
+async function theTopIsAskedAgainOnceEverybodyHasReported() {
+  console.log("\nThe closing brief");
+
+  async function runWith(children: Array<{ status: "DONE" | "BLOCKED"; summary: string | null }>, rootStatus: "DONE" | "BLOCKED" = "DONE") {
+    const root = await prisma.agentTask.create({
+      data: {
+        agentKey: MANAGER_KEY,
+        title: `${MARK} whole floor`,
+        brief: "A harness task.",
+        origin: "OWNER",
+        rehearsal: true,
+        status: rootStatus,
+        summary: "Two hand-offs queued. I have not heard back from either.",
+      },
+    });
+    for (const child of children) {
+      await prisma.agentTask.create({
+        data: {
+          agentKey: AGENT_KEY,
+          title: `${MARK} a piece of it`,
+          brief: "A harness task.",
+          origin: "AGENT",
+          parentId: root.id,
+          rehearsal: true,
+          status: child.status,
+          summary: child.summary,
+        },
+      });
+    }
+    const rehearsal = await prisma.rehearsal.create({
+      data: {
+        website: `https://${MARK}closing.test`,
+        host: `${MARK}closing.test`,
+        scenario: "whole-floor",
+        status: "RUNNING",
+        rootTaskId: root.id,
+      },
+    });
+    await settle(rehearsal.id);
+    return { rehearsal: await prisma.rehearsal.findUnique({ where: { id: rehearsal.id } }), rootId: root.id };
+  }
+
+  const withReports = await runWith([{ status: "DONE", summary: "Their TLS certificate expired in June." }]);
+  const closing = withReports.rehearsal?.closingTaskId
+    ? await prisma.agentTask.findUnique({ where: { id: withReports.rehearsal.closingTaskId } })
+    : null;
+  check("a run whose reports have come back asks the top for the answer again", Boolean(closing), JSON.stringify(withReports.rehearsal?.status));
+  check("it goes back to the agent the run started with", closing?.agentKey === MANAGER_KEY);
+  // The whole point: their words, in front of it. A closing brief that only
+  // said "your reports are in" would produce the same uninformed summary again.
+  check("carrying what each of them actually said", Boolean(closing?.brief.includes("Their TLS certificate expired in June.")));
+  check("and the run stays open for it", withReports.rehearsal?.status === "RUNNING");
+
+  // Twice would never terminate.
+  await settle(withReports.rehearsal!.id);
+  const after = await prisma.agentTask.count({ where: { parentId: withReports.rootId, origin: "OWNER" } });
+  check("and is not asked for a second one", after === 1, `${after}`);
+
+  await prisma.rehearsal.deleteMany({ where: { host: { startsWith: MARK } } });
+  await prisma.agentTask.deleteMany({ where: { title: { contains: MARK } } });
+
+  const alone = await runWith([]);
+  check("a run nobody else worked on is not asked again", !alone.rehearsal?.closingTaskId);
+  check("it just settles", alone.rehearsal?.status === "SETTLED", JSON.stringify(alone.rehearsal?.status));
+
+  await prisma.rehearsal.deleteMany({ where: { host: { startsWith: MARK } } });
+  await prisma.agentTask.deleteMany({ where: { title: { contains: MARK } } });
+
+  const stopped = await runWith([{ status: "DONE", summary: "Something useful." }], "BLOCKED");
+  check("and an agent that stopped to ask a person is not written over", !stopped.rehearsal?.closingTaskId);
+
+  await prisma.rehearsal.deleteMany({ where: { host: { startsWith: MARK } } });
+  await prisma.agentTask.deleteMany({ where: { title: { contains: MARK } } });
 }
 
 // --- 6b. Gaps -------------------------------------------------------------
@@ -830,6 +1014,7 @@ async function main() {
   await gate5ColdEmailDraft();
   await itCanBeThrownAway();
   await itWakesWhatItNeedsAndPutsItBack();
+  await theTopIsAskedAgainOnceEverybodyHasReported();
   await needSkillDoesNotLeakFromARehearsal();
   await everyScenarioStartsWithSomebody();
 

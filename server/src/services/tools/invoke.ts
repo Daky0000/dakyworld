@@ -413,6 +413,23 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
     const durationMs = Date.now() - startedAt;
     const callId = await record({ tool: key, options, ok: true, dryRun: true, input: parsed.data, output: { wouldDo }, durationMs });
 
+    // Why this stopped, in one sentence, and never blank.
+    //
+    // `permissionFor` returns no reason when the *caller* asked for the dry run
+    // rather than the agent's card forcing it — which in a rehearsal is the
+    // guarantee itself. So the one call a rehearsal is actually built to hold
+    // was the one that came back unexplained, and the screen filled the silence
+    // with the wrong answer: it labelled every prepared call outward, including
+    // the internal research an agent simply had not been allowed to run.
+    //
+    // The rehearsal's floor is named first when it applies, because it binds
+    // whatever the card says — an agent at autonomy 5 with dry run off still
+    // stops here.
+    const heldBecause =
+      options.dryRun && options.rehearsal
+        ? "This would have left the building, and a rehearsal holds every one of those at a preview whatever the agent's autonomy says."
+        : (permission.reason ?? null);
+
     // A preview that nobody can act on is a description of work that will only
     // ever be done again by hand. Filing it here — with the input as the tool's
     // own schema validated it — is what lets Approve mean "carry this out"
@@ -430,7 +447,7 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
         tool: key,
         input: parsed.data,
         wouldDo,
-        heldBecause: permission.reason ?? null,
+        heldBecause,
         rationale: options.rationale,
         rehearsal: options.rehearsal ?? false,
       });
@@ -443,7 +460,7 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
       output: null,
       dryRun: true,
       wouldDo,
-      refusedReason: permission.reason ?? undefined,
+      refusedReason: heldBecause ?? undefined,
       actionRequestId: requestId,
       costUsd: 0,
       durationMs,

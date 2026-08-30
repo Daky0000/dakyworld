@@ -194,6 +194,43 @@ export interface RosterMatch {
   score: number;
   /** True when this agent reports to the one that asked — `delegate` works. */
   reportsToYou: boolean;
+  /**
+   * The agent in *your own* line this one sits under, when it is not yours.
+   *
+   * Without it a search answers "who does this craft" and nothing else, and an
+   * executive asking who audits a website is handed a specialist four rungs
+   * down with no road to it but `handOff` — of which every task gets two. The
+   * whole-floor run against laluxurys.com is what that looks like: the Chief
+   * Executive tried three specialists, was told each time that they do not
+   * report to it, converted them to sideways hand-offs, spent both, and wrote
+   * its brief with none of the answers back — while the three directors who
+   * own those lanes, and to whom it may delegate as often as it likes, were
+   * never asked.
+   *
+   * Null when the match is your own report, when it is above you, or when
+   * nobody between you and it reports to you.
+   */
+  through: { key: string; name: string } | null;
+}
+
+/**
+ * The first agent on the path up from `agentKey` that reports to `askingKey`.
+ *
+ * Bounded for the same reason `reportsUnder` is: a `managerKey` cycle must be
+ * a wrong answer rather than a hang.
+ */
+function routeTo(agentKey: string, managerOf: Map<string, string | null>, askingKey?: string): string | null {
+  if (!askingKey) return null;
+  let cursor = agentKey;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const manager = managerOf.get(cursor);
+    if (!manager) return null;
+    // The match itself reporting to you is `reportsToYou`, not a route through
+    // somebody — saying both would read as two different people.
+    if (manager === askingKey) return cursor === agentKey ? null : cursor;
+    cursor = manager;
+  }
+  return null;
 }
 
 /**
@@ -216,10 +253,18 @@ export async function searchRoster(need: string, askingAgentKey?: string): Promi
     select: { key: true, name: true, title: true, mission: true, skills: true, status: true, managerKey: true },
   });
 
+  // The chart, by key, so a route can be walked without a query a rung. It is
+  // the same rows the search runs over, which means a retired agent part-way
+  // up breaks the chain and the route comes back null — no suggestion rather
+  // than a suggestion to delegate through somebody who no longer works here.
+  const managerOf = new Map<string, string | null>(agents.map((agent) => [agent.key, agent.managerKey]));
+  const named = new Map(agents.map((agent) => [agent.key, agent.name]));
+
   return agents
     .filter((agent) => agent.key !== askingAgentKey)
     .map((agent) => {
       const { score } = similarity(wanted, tokens([agent.title, agent.mission, ...agent.skills].join(" ")));
+      const via = routeTo(agent.key, managerOf, askingAgentKey);
       return {
         key: agent.key,
         name: agent.name,
@@ -229,6 +274,7 @@ export async function searchRoster(need: string, askingAgentKey?: string): Promi
         status: agent.status,
         score: Number(score.toFixed(2)),
         reportsToYou: Boolean(askingAgentKey && agent.managerKey === askingAgentKey),
+        through: via ? { key: via, name: named.get(via) ?? via } : null,
       };
     })
     .filter((match) => match.score >= 0.2)

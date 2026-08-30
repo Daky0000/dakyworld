@@ -41,6 +41,17 @@ import type { ToolDefinition } from "../tools/types.js";
  * so a brief that talked an agent into scraping a city would really scrape it.
  * Nothing in the shipped scenarios asks for that, and the ceiling on the run
  * plus the cost readout is what would show it.
+ *
+ * **This is a floor, not the only gate.** `permissionFor` still applies the
+ * agent's own card on top — its autonomy level and its dry-run flag — and for
+ * a long time that quietly cancelled everything argued above: an agent the
+ * rehearsal itself woke sat at the seeded autonomy 1 with dry run on and could
+ * carry out none of its own tools, so the artefacts this file calls the point
+ * of the exercise were never produced. `wake.ts` now lifts the agents it wakes
+ * for the length of the run. An agent that was *already* active keeps whatever
+ * the Owner set, deliberately — so a run can still contain one that prepared
+ * everything and did nothing, and `heldBecause` on each prepared call is where
+ * that is said rather than left to be guessed at.
  */
 export function heldByRehearsal(tool: Pick<ToolDefinition, "outward">): boolean {
   return tool.outward;

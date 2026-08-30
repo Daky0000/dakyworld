@@ -1,5 +1,6 @@
 import type { AgentStepKind, AgentTaskStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
+import { listAllTools } from "../tools/catalogue.js";
 import { scenarioName } from "./scenarios.js";
 import { tasksIn } from "./run.js";
 
@@ -98,8 +99,19 @@ export interface RehearsalView {
     dryRun: boolean | null;
     data: unknown;
   }>;
-  /** What was prepared and never carried out — the whole outward half of the run. */
-  prepared: Array<{ id: string; agentKey: string; tool: string; wouldDo: string; heldBecause: string | null; status: string; why: string; gain: string; risk: string; input: unknown; createdAt: Date; costUsd: number }>;
+  /**
+   * What was prepared and never carried out.
+   *
+   * Not all one thing, which is what the screen used to assume. `outward` is
+   * the difference: true is a call the rehearsal held because it would have
+   * reached a stranger, which is the guarantee working; false is a call the
+   * agent was not permitted to make in the first place — its autonomy level, a
+   * spending ceiling, its own dry-run flag — which is a fact about that agent's
+   * card and not about the run at all. Read off the catalogue rather than
+   * inferred from the sentence in `heldBecause`, so re-wording that sentence
+   * cannot silently reclassify half the list.
+   */
+  prepared: Array<{ id: string; agentKey: string; tool: string; outward: boolean; wouldDo: string; heldBecause: string | null; status: string; why: string; gain: string; risk: string; input: unknown; createdAt: Date; costUsd: number }>;
   /** What the run actually produced and left behind, so "did it work" has an answer. */
   produced: {
     audits: Array<{ id: string; ranAt: Date; overallScore: number; verdict: string; pdfFileId: string | null; markdownFileId: string | null }>;
@@ -155,6 +167,14 @@ export async function readRehearsal(id: string): Promise<RehearsalView | null> {
         })
       : [],
   ]);
+
+  // Which of the prepared calls would actually have reached outside. One pass
+  // over the catalogue rather than a lookup each, and only when there is
+  // something to classify.
+  const outwardByTool = new Map<string, boolean>();
+  if (prepared.length > 0) {
+    for (const tool of await listAllTools()) outwardByTool.set(tool.key, tool.outward);
+  }
 
   // --- Who did what --------------------------------------------------------
   const stepsByTask = new Map<string, number>();
@@ -253,7 +273,14 @@ export async function readRehearsal(id: string): Promise<RehearsalView | null> {
         data: step.data,
       };
     }),
-    prepared: prepared.map((request) => ({ ...request, costUsd: Number(request.costUsd) })),
+    prepared: prepared.map((request) => ({
+      ...request,
+      // Unknown tool reads as outward. A key the catalogue no longer has is
+      // one nobody can check, and the safe way to be wrong about a prepared
+      // action is to over-report what would have left the building.
+      outward: outwardByTool.get(request.tool) ?? true,
+      costUsd: Number(request.costUsd),
+    })),
     produced,
   };
 }

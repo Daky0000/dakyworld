@@ -549,11 +549,22 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
           toolCallId: result.callId,
           ok: true,
           dryRun: true,
-          data: { input },
+          // The reason travels with the step, not only with the action request.
+          // Without it the timeline says a call was prepared and never why, and
+          // the agent reading its own history back — or a person reading the
+          // rehearsal screen — is left to infer it. They infer wrong: the
+          // Website Auditor, held by its own autonomy level, told the Owner its
+          // audit was "pending a person's approval".
+          data: { input, heldBecause: result.refusedReason ?? null },
         });
         return {
           content: [
             `PREPARED, NOT DONE — ${result.wouldDo}`,
+            // Said to the agent as well, because what it should do next depends
+            // on it, and because it is what ends up in the summary a person
+            // reads. "I was not allowed to spend" and "a person must approve
+            // this before it goes out" are different sentences about the work.
+            ...(result.refusedReason ? ["", `Why: ${result.refusedReason}`] : []),
             "",
             result.actionRequestId
               ? "This is what would have happened. It has not happened. It is now waiting for a person to approve, and it will be carried out exactly as prepared when they do — so do not prepare it a second time, and do not describe it as done."
@@ -926,7 +937,15 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
             (match) =>
               `${match.name} (\`${match.key}\`) — ${match.title}. ${match.mission}${match.skills.length ? ` Good at: ${match.skills.slice(0, 5).join(", ")}.` : ""}${
                 match.status === "ACTIVE" ? "" : ` [${match.status.toLowerCase()} — cannot take work right now]`
-              }${match.reportsToYou ? " [reports to you — you may `delegate`]" : ""}`,
+              }${match.reportsToYou ? " [reports to you — you may `delegate`]" : ""}${
+                // The route, when there is one. A search that names only the
+                // craftsman leaves an executive with `handOff` and two of them,
+                // which is how a whole-floor run spends both on specialists and
+                // never asks the three directors who own those lanes.
+                match.through
+                  ? ` [sits under ${match.through.name} (\`${match.through.key}\`), who reports to you — \`delegate\` to ${match.through.name} and let them route it, rather than spending a hand-off here]`
+                  : ""
+              }`,
           )
           .join("\n"),
       };
@@ -984,8 +1003,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
 
   const handOff: AgentTool = {
     name: "handOff",
-    description:
-      "Give the remaining work to an agent that does not report to you, because it is their craft rather than yours. Unlike `delegate` this goes sideways across the chart, so it needs a reason a person would accept. They get a task of their own; you do not wait for it, and you say in your summary that you handed it over.",
+    description: `Give the remaining work to an agent that does not report to you, because it is their craft rather than yours. Unlike \`delegate\` this goes sideways across the chart, so it needs a reason a person would accept. They get a task of their own; you do not wait for it, and you say in your summary that you handed it over. You get ${MAX_HANDOFFS} of these on a task, so spend them on work that has no route down your own chart — if the agent you want sits under one of your reports, \`delegate\` to that report instead.`,
     inputSchema: zodToJsonSchema(
       z.object({
         agentKey: z.string().max(64).describe("Who takes it. Find one with findAgent first."),
@@ -1408,7 +1426,7 @@ You are not working alone. There are ${await rosterSize()} agents here, each wit
 
 1. \`findAgent\` — look for somebody whose craft this is. Do this *before* attempting anything outside your own job, not after producing something you are unsure of.
 2. \`consult\` — you keep the work and want their judgement on one question inside their craft. They answer from their own instructions and their own memory of this client, so ask them the thing only they would know. Their answer is an opinion, not a checked fact: where it contradicts the record in front of you, the record wins and you say so.
-3. \`handOff\` (or \`delegate\`, if they report to you) — the work itself is theirs. Write the brief as if to somebody who was not here, because they were not.
+3. \`handOff\` (or \`delegate\`, if they report to you) — the work itself is theirs. Write the brief as if to somebody who was not here, because they were not. **Down the chart before sideways across it.** You may delegate to your own reports as often as the work needs; you get ${MAX_HANDOFFS} hand-offs on a whole task and no more. So when \`findAgent\` says a match sits under one of your reports, delegate to that report and let them route it — handing sideways to the specialist yourself spends a hand-off, skips the person who owns that lane, and leaves you with one move left for everything else the task still needs.
 4. \`needSkill\` — only when \`findAgent\` found nobody. It records that Dakyworld has no such craft; the Agent Creator reads it and a person decides whether to employ somebody. It is not a way to put down work that is actually yours, and a gap raised for something a colleague already does is worse than useless — it argues for hiring a duplicate.
 
 Asking is cheap and being wrong in public is not. An agent that consulted a colleague and changed its mind has done the job properly; say in your summary who you asked and what it changed.`,

@@ -1,4 +1,4 @@
-import type { AgentStatus } from "@prisma/client";
+import type { AgentStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 
 /**
@@ -22,6 +22,17 @@ import { prisma } from "../../lib/prisma.js";
  * test wanted to would be the software deciding it knew better. Retired is the
  * same, more so. Both are refused with the reason said out loud.
  *
+ * **Waking is three columns, not one.** See `REHEARSAL_AUTONOMY`: a status of
+ * ACTIVE on a card that still says autonomy 1 and dry run on is an agent that
+ * turns up, is handed the work, and is refused every tool it owns.
+ *
+ * **Only what it woke.** The same distinction, applied to the same decision at
+ * the other end: an agent that was *already* active keeps the autonomy level
+ * and dry-run flag the Owner gave it, untouched. A run may therefore still
+ * contain an agent that prepared everything and carried out nothing — and that
+ * is a true fact about the setup rather than a fault, which is why every
+ * prepared call carries `heldBecause` and the screen now says it.
+ *
  * **What was woken is written down before anything is woken**, on the
  * rehearsal's own row as `{ "dev.web": "DRAFT" }`. A process that dies
  * mid-rehearsal would otherwise leave the floor switched on with nothing
@@ -33,11 +44,71 @@ import { prisma } from "../../lib/prisma.js";
 /** The only status a rehearsal may change, and what it changes it to. */
 const WAKEABLE: AgentStatus = "DRAFT";
 
+/**
+ * The autonomy a woken agent runs at for the length of the run.
+ *
+ * Waking used to mean the status column and nothing else, which made a
+ * rehearsal a test of which agents somebody happened to have switched on
+ * already. Every agent seeds at `autonomyLevel 1` with `dryRun` on, and
+ * `permissionFor` downgrades any spending, outward, write or send call from an
+ * agent in that state to a preview — so an agent the rehearsal itself woke
+ * could not carry out a single one of its own tools.
+ *
+ * The run against laluxurys.com is the whole argument. The Website Auditor,
+ * woken from draft, prepared `site.look` and `audit.website` and carried out
+ * neither; the SEO Specialist — already active at a working level, because
+ * somebody had switched it on weeks before — ran both for real against the
+ * same site in the same minute. Two agents, one job, opposite platforms, and
+ * nothing on the screen said why.
+ *
+ * Four rather than five, because four is what `invokeTool` requires to spend
+ * and spending is what research and a site audit do. The safety of the run
+ * does not rest on this number either way: `rehearsals/policy.ts` holds every
+ * outward call at a preview through `invokeTool`'s own floor, whatever the
+ * agent's card says.
+ *
+ * Raised only, never lowered — an agent seeded above this keeps what it had.
+ */
+const REHEARSAL_AUTONOMY = 4;
+
+/**
+ * What an agent's card held before a rehearsal touched it.
+ *
+ * Rows written before this was three columns hold a bare `AgentStatus`, and
+ * are read back as a status with two nulls: *this run only ever changed the
+ * status, so only put the status back*. Restoring a level a run never lifted
+ * would be inventing one.
+ */
+export interface WokeState {
+  status: AgentStatus;
+  autonomyLevel: number | null;
+  dryRun: boolean | null;
+}
+
 export interface WakeResult {
-  /** Keys switched to ACTIVE by this call, with the status each had before. */
-  woke: Record<string, AgentStatus>;
+  /** Keys switched to ACTIVE by this call, with the card each had before. */
+  woke: Record<string, WokeState>;
   /** Agents this wanted and could not have, with the reason. */
   refused: Array<{ key: string; name: string; reason: string }>;
+}
+
+function readWoke(stored: unknown): Record<string, WokeState> {
+  const rows = (stored ?? {}) as Record<string, unknown>;
+  const read: Record<string, WokeState> = {};
+  for (const [key, value] of Object.entries(rows)) {
+    if (typeof value === "string") {
+      read[key] = { status: value as AgentStatus, autonomyLevel: null, dryRun: null };
+      continue;
+    }
+    const row = value as Partial<WokeState> | null;
+    if (!row || typeof row.status !== "string") continue;
+    read[key] = {
+      status: row.status as AgentStatus,
+      autonomyLevel: typeof row.autonomyLevel === "number" ? row.autonomyLevel : null,
+      dryRun: typeof row.dryRun === "boolean" ? row.dryRun : null,
+    };
+  }
+  return read;
 }
 
 /**
@@ -85,10 +156,11 @@ export async function reportsUnder(rootKey: string): Promise<string[]> {
 export async function wakeFor(rehearsalId: string, keys: string[]): Promise<WakeResult> {
   const agents = await prisma.agent.findMany({
     where: { key: { in: keys } },
-    select: { key: true, name: true, status: true },
+    select: { key: true, name: true, status: true, autonomyLevel: true, dryRun: true },
   });
 
-  const woke: Record<string, AgentStatus> = {};
+  const woke: Record<string, WokeState> = {};
+  const lift: Array<{ key: string; toLevel: number; toDryRun: boolean }> = [];
   const refused: WakeResult["refused"] = [];
 
   for (const agent of agents) {
@@ -101,17 +173,46 @@ export async function wakeFor(rehearsalId: string, keys: string[]): Promise<Wake
       });
       continue;
     }
-    woke[agent.key] = agent.status;
+    woke[agent.key] = { status: agent.status, autonomyLevel: agent.autonomyLevel, dryRun: agent.dryRun };
+    lift.push({ key: agent.key, toLevel: Math.max(agent.autonomyLevel, REHEARSAL_AUTONOMY), toDryRun: false });
   }
 
-  if (Object.keys(woke).length > 0) {
+  if (lift.length > 0) {
     const rehearsal = await prisma.rehearsal.findUnique({ where: { id: rehearsalId }, select: { wokeAgents: true } });
-    const already = (rehearsal?.wokeAgents ?? {}) as Record<string, AgentStatus>;
+    const already = readWoke(rehearsal?.wokeAgents);
     await prisma.$transaction([
       // Written first. An agent awake with no record of who woke it is an agent
-      // that stays awake.
-      prisma.rehearsal.update({ where: { id: rehearsalId }, data: { wokeAgents: { ...already, ...woke } } }),
-      prisma.agent.updateMany({ where: { key: { in: Object.keys(woke) }, status: WAKEABLE }, data: { status: "ACTIVE" } }),
+      // that stays awake — and now an agent left at a level nobody chose.
+      prisma.rehearsal.update({
+        where: { id: rehearsalId },
+        data: { wokeAgents: { ...already, ...woke } as unknown as Prisma.InputJsonValue },
+      }),
+      // One update each rather than one `updateMany`, because the level each
+      // agent ends at depends on the level it started at. The status guard is
+      // the same conditional write it always was: two processes reaching for
+      // the same draft cannot both wake it.
+      ...lift.map((agent) =>
+        prisma.agent.updateMany({
+          where: { key: agent.key, status: WAKEABLE },
+          data: { status: "ACTIVE", autonomyLevel: agent.toLevel, dryRun: agent.toDryRun },
+        }),
+      ),
+      // The autonomy history is the answer to "who moved this agent to four",
+      // and a rehearsal that moved one without writing it would make that
+      // history a list with holes in it — the exact failure the column exists
+      // to prevent. `actor` is a string for this reason: a new caller must not
+      // need a migration to be able to explain itself.
+      prisma.agentAutonomyChange.createMany({
+        data: lift.map((agent) => ({
+          agentKey: agent.key,
+          fromLevel: woke[agent.key].autonomyLevel,
+          toLevel: agent.toLevel,
+          fromDryRun: woke[agent.key].dryRun,
+          toDryRun: agent.toDryRun,
+          reason: `Woken for a rehearsal, so it can carry out its own tools. Put back when the run ends.`,
+          actor: "rehearsal",
+        })),
+      }),
     ]);
   }
 
@@ -182,10 +283,16 @@ async function rehearsalOf(taskId: string, hint: { id: string; rootTaskId: strin
  * paused, retired, or deliberately switched on for good is theirs; a tidy-up
  * that overwrote that would be this file doing exactly what it refuses to do
  * at the other end.
+ *
+ * The autonomy and the dry-run flag go back **with** the status, in the same
+ * write. Putting one back and not the others would leave a draft sitting at
+ * autonomy 4 with dry run off, waiting for the day somebody switches it on —
+ * which is the same failure as an agent left awake, arriving later and harder
+ * to trace.
  */
 export async function restoreWakes(rehearsalId: string): Promise<string[]> {
   const rehearsal = await prisma.rehearsal.findUnique({ where: { id: rehearsalId }, select: { wokeAgents: true } });
-  const woke = (rehearsal?.wokeAgents ?? {}) as Record<string, AgentStatus>;
+  const woke = readWoke(rehearsal?.wokeAgents);
   const keys = Object.keys(woke);
   if (keys.length === 0) return [];
 
@@ -195,14 +302,42 @@ export async function restoreWakes(rehearsalId: string): Promise<string[]> {
     select: { wokeAgents: true },
   });
   for (const other of others) {
-    for (const key of Object.keys((other.wokeAgents ?? {}) as Record<string, AgentStatus>)) stillNeeded.add(key);
+    for (const key of Object.keys(readWoke(other.wokeAgents))) stillNeeded.add(key);
   }
 
   const restored: string[] = [];
   for (const key of keys) {
     if (stillNeeded.has(key)) continue;
-    const put = await prisma.agent.updateMany({ where: { key, status: "ACTIVE" }, data: { status: woke[key] } });
-    if (put.count > 0) restored.push(key);
+    const was = woke[key];
+    const put = await prisma.agent.updateMany({
+      where: { key, status: "ACTIVE" },
+      data: {
+        status: was.status,
+        // Only what this run actually lifted. A row written by an older
+        // rehearsal carries nulls here, and writing a level it never took
+        // would be this function inventing the agent's history.
+        ...(was.autonomyLevel === null ? {} : { autonomyLevel: was.autonomyLevel }),
+        ...(was.dryRun === null ? {} : { dryRun: was.dryRun }),
+      },
+    });
+    if (put.count === 0) continue;
+    restored.push(key);
+    if (was.autonomyLevel !== null || was.dryRun !== null) {
+      await prisma.agentAutonomyChange.create({
+        data: {
+          agentKey: key,
+          // What the lift set, recomputed rather than re-read: it is a pure
+          // function of the level recorded above, and one fewer query on a
+          // path that runs once per woken agent at the end of every run.
+          fromLevel: was.autonomyLevel === null ? null : Math.max(was.autonomyLevel, REHEARSAL_AUTONOMY),
+          toLevel: was.autonomyLevel,
+          fromDryRun: was.dryRun === null ? null : false,
+          toDryRun: was.dryRun,
+          reason: "Put back after the rehearsal that woke it ended.",
+          actor: "rehearsal",
+        },
+      });
+    }
   }
 
   await prisma.rehearsal.update({ where: { id: rehearsalId }, data: { wokeAgents: {} } });

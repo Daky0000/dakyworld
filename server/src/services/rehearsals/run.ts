@@ -336,7 +336,13 @@ export async function settle(rehearsalId: string, known?: Awaited<ReturnType<typ
   if (!rehearsal?.rootTaskId) return;
 
   const tasks = known ?? (await tasksIn(rehearsal.rootTaskId));
-  const moving = tasks.some((task) => !SETTLED.includes(task.status));
+  let moving = tasks.some((task) => !SETTLED.includes(task.status));
+
+  // Nothing can move again, and the agent at the top wrote its answer before
+  // anybody it asked had replied. Give it the replies and let it answer again.
+  // Setting `moving` keeps the run RUNNING for one more task, which is what
+  // stops the block below settling it and putting the floor back under it.
+  if (!moving && (await askForClosingBrief(rehearsal, tasks))) moving = true;
 
   const totals = tasks.reduce(
     (sum, task) => ({
@@ -372,6 +378,149 @@ export async function settle(rehearsalId: string, known?: Awaited<ReturnType<typ
     const put = await restoreWakes(rehearsalId);
     if (put.length > 0) console.log(`[rehearsal] put ${put.length} agent(s) back after ${rehearsalId}: ${put.join(", ")}`);
   }
+}
+
+/**
+ * Settles every run with nothing left moving, whether or not anybody is
+ * watching it.
+ *
+ * `nudge` is the screen draining its own run, and it is the only thing that
+ * ever called `settle` — so a rehearsal whose tab was closed part-way stayed
+ * RUNNING with its agents still awake until the next restart picked it up as
+ * an orphan. That was already the wrong shape and it matters more now: waking
+ * an agent lifts its autonomy as well as its status, so a run nobody closed
+ * leaves a draft sitting at a spending level nobody chose.
+ *
+ * On the minute tick, beside `runDueTasks` — which is also what starts the
+ * closing brief this may queue, so a run finishes properly with the screen
+ * shut.
+ */
+export async function settleIdleRehearsals(): Promise<number> {
+  const running = await prisma.rehearsal.findMany({ where: { status: "RUNNING" }, select: { id: true } });
+  let finished = 0;
+  for (const rehearsal of running) {
+    await settle(rehearsal.id);
+    const after = await prisma.rehearsal.findUnique({ where: { id: rehearsal.id }, select: { status: true } });
+    if (after && after.status !== "RUNNING") finished += 1;
+  }
+  return finished;
+}
+
+/**
+ * Asks the agent the run started with to write the answer again, now that the
+ * work it handed out has come back.
+ *
+ * **Why the run needs this at all.** `delegate` and `handOff` are
+ * fire-and-forget, deliberately: an agent that blocked on a report would hold
+ * its own agent lock while that report queued behind it, and a rehearsal runs
+ * one task at a time, so waiting is a deadlock rather than a delay. The
+ * consequence went unnoticed until a whole-floor run showed it plainly — the
+ * Chief Executive read the numbers, handed the site to two directors, and
+ * wrote a brief that said "two hand-offs queued" and carried not one of their
+ * findings. Every wide scenario ends that way, every time: the answer at the
+ * top of the run is the least informed thing in it.
+ *
+ * So the wait moves to where waiting is free. Nothing is running, everything
+ * that was going to report has reported, and the one task left to start is the
+ * one that reads them.
+ *
+ * **What it refuses to do.** It does not fire when the root task did not
+ * finish — an agent that escalated or failed asked a person a question, and
+ * writing a confident summary over the top of that would bury it. It does not
+ * fire when nobody else worked, because then the first brief already had
+ * everything. It does not fire twice. And it takes the run's own ceilings
+ * seriously: a closing brief that tipped a run past its task cap or its budget
+ * would be stopped by the next drain and never run at all, which is worse than
+ * not asking.
+ *
+ * Returns true when it queued one.
+ */
+async function askForClosingBrief(
+  rehearsal: { id: string; rootTaskId: string | null; closingTaskId: string | null; budgetUsd: unknown; status: string },
+  tasks: Awaited<ReturnType<typeof tasksIn>>,
+): Promise<boolean> {
+  if (rehearsal.status !== "RUNNING" || rehearsal.closingTaskId || !rehearsal.rootTaskId) return false;
+
+  const root = tasks.find((task) => task.id === rehearsal.rootTaskId);
+  if (!root || root.status !== "DONE") return false;
+
+  const others = tasks.filter((task) => task.id !== root.id);
+  if (others.length === 0) return false;
+
+  // Room to actually run it. Both ceilings, checked the way `nudge` checks
+  // them, because it is `nudge` that would stop the run before this ever
+  // started.
+  if (tasks.length + 1 > MAX_TASKS) return false;
+  const budget = rehearsal.budgetUsd === null || rehearsal.budgetUsd === undefined ? DEFAULT_BUDGET_USD : Number(rehearsal.budgetUsd);
+  const spent = tasks.reduce((sum, task) => sum + Number(task.costUsd), 0);
+  if (budget > 0 && spent >= budget) return false;
+
+  // What each of them actually said, in the order it came back. Their own
+  // words rather than a summary of summaries: the point of the exercise is
+  // four honest answers, and a précis of them written here would be this file
+  // doing the job the agent is about to be asked to do.
+  const reports = others
+    .map((task) => {
+      const said =
+        task.summary?.trim() ||
+        task.blockedReason?.trim() ||
+        task.error?.trim() ||
+        "Nothing came back — this one did not get far enough to report.";
+      return `--- ${task.agent.name} (${task.agent.title}) — ${task.title} [${task.status.toLowerCase().replace(/_/g, " ")}] ---\n${said}`;
+    })
+    .join("\n\n");
+
+  const child = await prisma.agentTask.create({
+    data: {
+      agentKey: root.agentKey,
+      title: `${root.title} — the answer, with everybody's reports in`,
+      brief: `You wrote a first answer to this before anybody you handed work to had reported back. They have now. Here is what each of them said, in their own words.
+
+${reports}
+
+Write the answer again, properly this time — the one you would put in front of the Owner.
+
+- Lead with what is now **known**, and say which of them established it. A finding with a name on it is worth ten assertions.
+- Where two of them disagree, say so and say which you believe and why. Do not average them.
+- Where one of them could not establish something — a tool it was not allowed to run, a page that would not load, a fact nobody checked — say that plainly and leave the gap open. A confident sentence over a hole is the one thing that loses the meeting.
+- Say what you would do next, who owns it, and what it costs.
+
+You are finishing this yourself. Do not hand any more of it out, and do not repeat the first brief: this replaces it.
+
+--- Your first answer, for reference ---
+${(root.summary ?? "").trim().slice(0, 1200) || "(nothing recorded)"}`.slice(0, 8000),
+      origin: "OWNER",
+      parentId: root.id,
+      priority: root.priority,
+      leadId: root.leadId,
+      clientId: root.clientId,
+      projectId: root.projectId,
+      proposalId: root.proposalId,
+      invoiceId: root.invoiceId,
+      rehearsal: true,
+    },
+  });
+
+  // The claim, and the database arbitrates it. `settle` is reached from two
+  // places now — the screen's own poll and the minute tick — and the read above
+  // is not in the same statement as this write, so two of them arriving
+  // together would each find no closing task and each create one. Conditional
+  // on it still being null, and the loser takes its task back rather than
+  // leaving a second brief queued against the same run.
+  const claimed = await prisma.rehearsal.updateMany({
+    where: { id: rehearsal.id, closingTaskId: null },
+    data: { closingTaskId: child.id },
+  });
+  if (claimed.count === 0) {
+    await prisma.agentTask.delete({ where: { id: child.id } });
+    return false;
+  }
+
+  await recordCreated(child.id, child.traceId, child.status, {
+    reason: `Everybody ${root.agent.name} handed work to has reported. Asking it for the answer again with those in front of it.`,
+    actor: "owner",
+  });
+  return true;
 }
 
 /**

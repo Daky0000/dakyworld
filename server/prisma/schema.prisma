@@ -3596,6 +3596,23 @@ model Rehearsal {
   /// so the tree is the run, and there is no second bookkeeping to drift.
   rootTaskId String?
 
+  /// The last task of the run: the starting agent, given back what everybody it
+  /// handed work to actually reported.
+  ///
+  /// `delegate` and `handOff` are fire-and-forget by design — an agent that
+  /// waited on a report would hold its own agent lock while the report queued
+  /// behind it, and a rehearsal runs one task at a time. So the agent at the
+  /// top always finished first, and always finished with nothing back: the
+  /// whole-floor run against laluxurys.com ended with the Chief Executive's
+  /// brief saying "two hand-offs queued" and carrying none of the findings,
+  /// which made the run's headline answer its least informed one.
+  ///
+  /// Written by `settle()` when nothing can move again and there is something
+  /// to report back. It is the one piece of bookkeeping the tree cannot carry:
+  /// the closing task is a child like any other, and without this the run would
+  /// ask for a second one every time it settled.
+  closingTaskId String?
+
   /// Agents this run switched on, and what each was before: `{ "dev.web": "DRAFT" }`.
   ///
   /// Every specialist seeds as a draft and a draft picks nothing up, so a

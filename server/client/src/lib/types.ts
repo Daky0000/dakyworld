@@ -2602,6 +2602,8 @@ export interface RehearsalDetail {
     id: string;
     agentKey: string;
     tool: string;
+    /** True when this would have reached outside the company — the half a rehearsal holds on purpose. */
+    outward: boolean;
     wouldDo: string;
     heldBecause: string | null;
     status: string;
