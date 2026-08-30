@@ -23,6 +23,7 @@ import { attachUser, requireAuth } from "../src/middleware/auth.js";
 import { agentsRouter } from "../src/routes/agents.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { prisma } from "../src/lib/prisma.js";
+import { SETTING, clearSettingsCache, setSetting } from "../src/lib/settings.js";
 
 let bad = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -34,6 +35,7 @@ const AGENT_KEY = "check.autonomy.agent";
 const PORT = 4599;
 
 async function reset() {
+  await prisma.actionRequest.deleteMany({ where: { agentKey: AGENT_KEY } });
   await prisma.agentAutonomyChange.deleteMany({ where: { agentKey: AGENT_KEY } });
   await prisma.agentTaskTransition.deleteMany({ where: { task: { agentKey: AGENT_KEY } } });
   await prisma.toolCall.deleteMany({ where: { agentKey: AGENT_KEY } });
@@ -171,6 +173,113 @@ console.log("\nNo evidence is not a zero");
   check("an agent with no finished tasks has no success rate", body.evidence.successRate === null, `${body.evidence.successRate}`);
   check("and no prepared share", body.evidence.preparedShare === null, `${body.evidence.preparedShare}`);
   await prisma.agent.deleteMany({ where: { key: EMPTY } });
+}
+
+console.log("\nWork already waiting holds up a rise");
+{
+  // An agent at level 1 with dry run on has been *preparing* all along — that
+  // is what dry run is for — and every one of those is a decision nobody has
+  // made. Raising the level does not carry them out; it means the next one
+  // like them happens without being asked, which is worth a look first.
+  const prepared = async (createdAt: Date) =>
+    prisma.actionRequest.create({
+      data: {
+        agentKey: AGENT_KEY,
+        tool: "email.send",
+        input: {},
+        wouldDo: "Send a first email to Adom Clinic",
+        why: "Their certificate expired.",
+        gain: "The strongest opening we have.",
+        risk: "Their host may have caused it.",
+        createdAt,
+        expiresAt: new Date(Date.now() + 7 * 86_400_000),
+      },
+    });
+
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { autonomyLevel: 1, dryRun: true } });
+  const old = await prepared(new Date(Date.now() - 50 * 3_600_000));
+
+  const held = await patch({ autonomyLevel: 3 });
+  check("raising autonomy over undecided work is held up", held.status === 409, `status ${held.status}`);
+  const body = (await held.json()) as { error: string; pending: { waitingHours: number }[] };
+  check("the refusal says how long it has been waiting", body.error.includes("50 hour"), body.error.slice(0, 140));
+  check("and hands back what is waiting", body.pending?.length === 1, `${body.pending?.length}`);
+  const unmoved = await prisma.agent.findUniqueOrThrow({ where: { key: AGENT_KEY } });
+  check("nothing was changed", unmoved.autonomyLevel === 1, `${unmoved.autonomyLevel}`);
+  check("and no history was written for a change that did not happen", (await history()).length === 2, `${(await history()).length}`);
+
+  // Never refuses twice. It is an acknowledgement, not a permission.
+  const through = await patch({ autonomyLevel: 3, acknowledgePending: true, autonomyReason: "Read the queue; it is fine." });
+  check("acknowledging it goes through", through.status === 200, `status ${through.status}`);
+  const moved = await prisma.agent.findUniqueOrThrow({ where: { key: AGENT_KEY } });
+  check("and the agent really moves", moved.autonomyLevel === 3, `${moved.autonomyLevel}`);
+
+  // The safe direction is never held up. Somebody putting an agent *back* into
+  // dry run while work waits is doing the cautious thing, and making them
+  // acknowledge a queue to do it would be the guard working against itself.
+  await prepared(new Date());
+  const down = await patch({ autonomyLevel: 1, dryRun: true });
+  check("lowering autonomy is never held up", down.status === 200, `status ${down.status}`);
+
+  // A rehearsal's prepared actions are specimens, not proposals — the same
+  // reason they stay out of the badge and out of Slack.
+  await prisma.actionRequest.deleteMany({ where: { agentKey: AGENT_KEY } });
+  await prisma.actionRequest.create({
+    data: {
+      agentKey: AGENT_KEY,
+      tool: "email.send",
+      input: {},
+      wouldDo: "A rehearsed letter",
+      why: "x",
+      gain: "x",
+      risk: "x",
+      rehearsal: true,
+      expiresAt: new Date(Date.now() + 7 * 86_400_000),
+    },
+  });
+  const rehearsed = await patch({ autonomyLevel: 2 });
+  check("a rehearsal's specimens do not hold anything up", rehearsed.status === 200, `status ${rehearsed.status}`);
+
+  // An expired card is a re-ask nobody has made.
+  await prisma.actionRequest.deleteMany({ where: { agentKey: AGENT_KEY } });
+  await prisma.actionRequest.create({
+    data: {
+      agentKey: AGENT_KEY,
+      tool: "email.send",
+      input: {},
+      wouldDo: "A letter nobody answered",
+      why: "x",
+      gain: "x",
+      risk: "x",
+      expiresAt: new Date(Date.now() - 3_600_000),
+    },
+  });
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { autonomyLevel: 1 } });
+  const expired = await patch({ autonomyLevel: 2 });
+  check("an expired card does not hold anything up", expired.status === 200, `status ${expired.status}`);
+
+  // And the flag turns the whole read off.
+  await prisma.actionRequest.deleteMany({ where: { agentKey: AGENT_KEY } });
+  await prisma.actionRequest.create({
+    data: {
+      agentKey: AGENT_KEY,
+      tool: "email.send",
+      input: {},
+      wouldDo: "waiting",
+      why: "x",
+      gain: "x",
+      risk: "x",
+      expiresAt: new Date(Date.now() + 7 * 86_400_000),
+    },
+  });
+  await prisma.agent.update({ where: { key: AGENT_KEY }, data: { autonomyLevel: 1 } });
+  await setSetting(SETTING.ENABLE_PENDING_REVIEW, "false");
+  clearSettingsCache();
+  const off = await patch({ autonomyLevel: 2 });
+  check("switching the guard off skips it entirely", off.status === 200, `status ${off.status}`);
+  await prisma.appSetting.deleteMany({ where: { key: SETTING.ENABLE_PENDING_REVIEW } });
+  clearSettingsCache();
+  void old;
 }
 
 await reset();

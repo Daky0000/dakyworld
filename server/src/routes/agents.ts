@@ -12,6 +12,8 @@ import { blockedTasks, recordOwnerAnswer } from "../services/agents/escalations.
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS, surplusToolkits } from "../services/agentRegistry.js";
 import { closeEscalation, openEscalations } from "../services/agents/escalationDigest.js";
+import { pendingFor } from "../services/approvals.js";
+import { SETTING, getSetting } from "../lib/settings.js";
 import { resolveBrief } from "../services/writers/brief.js";
 import { briefSettingKey, jobsOwnedBy, writerJob } from "../services/writers/registry.js";
 import { shippedDoctrine } from "../services/writers/shipped.js";
@@ -268,6 +270,20 @@ agentsRouter.post("/tasks/:id/escalation/close", async (req, res, next) => {
 });
 
 /**
+ * The prepared actions this agent is holding, waiting on a decision.
+ *
+ * Read before raising its autonomy — see the guard in the PATCH handler. Two
+ * segments, so it sits safely below `/:key`.
+ */
+agentsRouter.get("/:key/pending-actions", async (req, res, next) => {
+  try {
+    res.json({ pending: await pendingFor(req.params.key) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * What this agent has actually done, and every time somebody changed how much
  * it may do without being asked.
  *
@@ -356,6 +372,14 @@ const patchInput = z.object({
    * entirely: who, and when.
    */
   autonomyReason: z.string().max(600).optional(),
+  /**
+   * "I have seen the work already waiting, raise it anyway."
+   *
+   * Required only when this request would widen what the agent may do while
+   * prepared actions of its are sitting undecided. It is an acknowledgement
+   * rather than a permission — the guard never refuses twice.
+   */
+  acknowledgePending: z.boolean().optional(),
   status: z.enum(["DRAFT", "ACTIVE", "PAUSED", "RETIRED"]).optional(),
   /** Catalogue keys this agent may call. Replaces the list wholesale. */
   toolkit: z.array(z.string().max(64)).max(60).optional(),
@@ -403,6 +427,38 @@ agentsRouter.patch("/:key", async (req, res, next) => {
         .json({ error: 'Your role does not include "Set autonomy". Ask an Owner to add it on Team & Access.' });
     }
 
+    // Work this agent has already prepared and nobody has decided on.
+    //
+    // Raising the level does not carry any of it out — an `ActionRequest` is
+    // still approved one at a time. What it does mean is that the *next* one
+    // like it happens without being asked, and deciding that while a queue of
+    // exactly that thing sits unread is the mistake worth interrupting.
+    //
+    // Only on the way up, and only for the moves that widen what may happen
+    // unattended: switching dry run back on, or lowering the level, is the safe
+    // direction and is never held up.
+    //
+    // In the route rather than in `middleware/security.ts`: the autonomy field
+    // is already handled here, this needs a database read, and a middleware
+    // that queries the approval queue on every agent PATCH would charge every
+    // unrelated typo fix for it.
+    const widening =
+      (input.autonomyLevel !== undefined && input.autonomyLevel > agent.autonomyLevel) ||
+      (input.dryRun === false && agent.dryRun);
+    if (widening && !input.acknowledgePending && (await getSetting(SETTING.ENABLE_PENDING_REVIEW)) !== "false") {
+      const waiting = await pendingFor(agent.key, 10);
+      if (waiting.length > 0) {
+        const oldest = waiting[0];
+        return res.status(409).json({
+          error:
+            `${agent.name} has ${waiting.length} prepared action(s) nobody has decided on yet — the oldest has been waiting ` +
+            `${oldest.waitingHours} hour(s). Raising what it may do unattended while that queue sits unread is worth a look first. ` +
+            `Decide them under Approvals, or send this again with acknowledgePending to go ahead anyway.`,
+          pending: waiting,
+        });
+      }
+    }
+
     // Rewriting a seeded agent is allowed and recorded. `ensureAgents()` only
     // ever creates, so an edit made here survives every future deploy — the
     // flag is what lets the screen offer the shipped wording back rather than
@@ -447,7 +503,7 @@ agentsRouter.patch("/:key", async (req, res, next) => {
     const dropped = input.toolkit?.filter((key) => !known.has(key)) ?? [];
     // Pulled out of the spread: it is a reason for the change, not a column on
     // the row. Left in, Prisma refuses the whole update.
-    const { autonomyReason, ...fields } = input;
+    const { autonomyReason, acknowledgePending: _acknowledged, ...fields } = input;
 
     const data = {
       ...fields,

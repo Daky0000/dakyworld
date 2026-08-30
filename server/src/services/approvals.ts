@@ -115,8 +115,55 @@ export async function listRequests(status: ActionRequest["status"] | "ALL" = "PE
   });
 }
 
+/**
+ * What "waiting on a person" means, in one place.
+ *
+ * A rehearsal's prepared actions are specimens rather than proposals, and an
+ * expired one is a re-ask nobody has made. Three readers of this had to agree
+ * — the badge, the Slack card and now the autonomy guard — and the way they
+ * agree is by not each writing it out.
+ */
+export function pendingWhere(agentKey?: string) {
+  return { rehearsal: false, status: "PENDING" as const, expiresAt: { gt: new Date() }, ...(agentKey ? { agentKey } : {}) };
+}
+
 export async function countPending(): Promise<number> {
-  return prisma.actionRequest.count({ where: { rehearsal: false, status: "PENDING", expiresAt: { gt: new Date() } } });
+  return prisma.actionRequest.count({ where: pendingWhere() });
+}
+
+/**
+ * The prepared actions one agent is holding, oldest first.
+ *
+ * Read before its autonomy is raised. An agent at level 1 with dry run on has
+ * been *preparing* work all along — that is what dry run is for — and every one
+ * of those is a decision somebody has not made yet. Raising the level does not
+ * carry them out, but it does mean the next one like them happens without being
+ * asked, and deciding that while a queue of the same thing sits unread is the
+ * shape of the mistake this guards against.
+ */
+export async function pendingFor(agentKey: string, limit = 50) {
+  const requests = await prisma.actionRequest.findMany({
+    where: pendingWhere(agentKey),
+    orderBy: { createdAt: "asc" },
+    take: limit,
+    select: { id: true, tool: true, wouldDo: true, why: true, createdAt: true, expiresAt: true },
+  });
+  const now = Date.now();
+  return requests.map((request) => ({
+    ...request,
+    /** Whole hours it has been waiting. The staleness sweep reads the same number. */
+    waitingHours: Math.floor((now - request.createdAt.getTime()) / 3_600_000),
+  }));
+}
+
+/** Prepared actions nobody has looked at for two days, by agent. */
+export async function staleByAgent(olderThanHours = 48) {
+  const cutoff = new Date(Date.now() - olderThanHours * 3_600_000);
+  return prisma.actionRequest.groupBy({
+    by: ["agentKey"],
+    where: { ...pendingWhere(), createdAt: { lt: cutoff } },
+    _count: true,
+  });
 }
 
 /**

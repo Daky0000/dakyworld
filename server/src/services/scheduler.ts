@@ -14,7 +14,7 @@ import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { ensureGapReviews, expireStaleHireRequests } from "./agents/hiring.js";
 import { postEscalationDigest } from "./agents/escalationDigest.js";
 import { SETTING, getSetting, setSetting } from "../lib/settings.js";
-import { expireStaleRequests } from "./approvals.js";
+import { expireStaleRequests, staleByAgent } from "./approvals.js";
 import { raiseStandingWork } from "./agents/standingWork.js";
 import { restoreOrphanedWakes } from "./rehearsals/wake.js";
 import { purgeExpiredSessions } from "../lib/session.js";
@@ -221,6 +221,23 @@ async function housekeepingTick(now: Date) {
   // would also make the queue a list of things that are not going to happen,
   // which is how a queue stops being read.
   await expireStaleRequests();
+
+  // Prepared actions somebody has had two days to look at.
+  //
+  // Different from expiry above and it matters: expiry is what happens to a
+  // card at seven days, which is a card giving up. This is at two, while there
+  // is still time to act on it — and it is per agent, because eleven cards
+  // spread across the workforce is a busy week and eleven against one agent is
+  // an agent nobody is reading.
+  //
+  // Said in the log rather than posted. A Slack message every day about the
+  // same undecided card is how the channel stops being read, and the weekly
+  // digest already carries the questions that genuinely need chasing.
+  for (const row of await staleByAgent()) {
+    console.log(
+      `[scheduler] ${row.agentKey} has ${row._count} prepared action(s) waiting more than 48 hours — decide them under Approvals.`,
+    );
+  }
 
   // The week's unanswered questions, once a week. On the daily tick rather
   // than a timer of its own: this function already runs once a day and already

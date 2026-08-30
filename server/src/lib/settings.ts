@@ -494,6 +494,14 @@ export const SETTING = {
    * a digest that arrives every week reporting no news is one people stop
    * opening, and the week it matters is the week it is ignored.
    */
+  /**
+   * Whether raising an agent's autonomy is held up by work already waiting.
+   *
+   * On unless set to "false". It never blocks outright — the same request with
+   * `acknowledgePending: true` goes through — so this is a "look at these
+   * first", not a lock. Off skips the read entirely.
+   */
+  ENABLE_PENDING_REVIEW: "agents.pendingReview",
   WEEKLY_DIGEST: "agents.weeklyDigest",
   /** When the last digest went out, as an ISO week. The tick's own guard. */
   WEEKLY_DIGEST_SENT: "agents.weeklyDigest.sentWeek",
