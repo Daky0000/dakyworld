@@ -1106,6 +1106,14 @@ export interface PromptRegion {
  * `video.editor` keep it (a hook or a caption is prose, not layout);
  * `design.graphic` and `billing.invoicer` drop it (print layout of existing
  * content, and template-driven line items, neither is voice-governed prose).
+ *
+ * **`review.look` and `design.ux` are deliberately not here**, on the same
+ * reasoning `WRITES_FOR_OUTSIDE` above already made about their *effort*: a
+ * reviewer's finding is a paragraph of prose that gets quoted straight into a
+ * cold email opener or a branded audit a prospect reads, not a structured fact
+ * a separate writer re-drafts the way `seo.specialist`'s or `sec.analyst`'s
+ * findings are. Two lists making different calls about the same two agents
+ * would be the kind of drift nobody notices until a quoted line reads wrong.
  */
 const NO_BRAND_VOICE = new Set([
   // Executive and board — strategic reasoning over other agents' output, read-only toolkits.
@@ -1116,8 +1124,10 @@ const NO_BRAND_VOICE = new Set([
   "delivery.director",
   // Finance — arithmetic and template documents.
   "careplan.manager", "billing.invoicer", "finance.forecast",
-  // Marketing — technical audits and internal briefs, or layout of others' content.
-  "design.graphic", "review.look", "seo.specialist", "design.ux", "seo.local", "seo.keywords",
+  // Marketing — technical audits and internal briefs whose findings a separate
+  // writer re-drafts, or layout of others' content. Not review.look or
+  // design.ux — see above.
+  "design.graphic", "seo.specialist", "seo.local", "seo.keywords",
   // Technology — nothing here is read by anybody outside the company.
   "dev.web", "dev.hosting", "sec.analyst", "qa.tester", "dev.automation", "analytics.engine", "integration.manager",
   // Client — analysis, not correspondence.
