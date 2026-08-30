@@ -71,6 +71,7 @@ export const STEP_STYLE: Record<AgentStepKind, { mark: string; tone: string }> =
   FAILED: { mark: "×", tone: "text-red-600" },
   INTERRUPTED: { mark: "‖", tone: "text-ink/40" },
   RESUMED: { mark: "▸", tone: "text-ink/40" },
+  SERVING: { mark: "◐", tone: "text-ink/40" },
 };
 
 /** Shared with the rehearsal room, which shows the same kinds interleaved across agents. */
@@ -91,6 +92,7 @@ export const STEP_LABEL: Record<AgentStepKind, string> = {
   FAILED: "failed",
   INTERRUPTED: "paused, kept its place",
   RESUMED: "carried on",
+  SERVING: "model",
 };
 
 export function AgentWork({ agent }: { agent: AgentDetail }) {

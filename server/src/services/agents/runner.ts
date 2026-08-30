@@ -1577,6 +1577,14 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           onText: async (text) => {
             await step(task.id, "THOUGHT", text);
           },
+          // Which model is doing the work, and every handover. Written as a
+          // step for the same reason THOUGHT is: the question somebody
+          // watching a task actually has is "what is it doing right now", and
+          // for the first minute or two of a run the honest answer is the name
+          // of a model that has not answered yet.
+          onServing: async (note) => {
+            await step(task.id, "SERVING", note);
+          },
           onCheckpoint: async (state) => {
             const held = await saveCheckpoint(task.id, runOwner, state, { ...counters });
             if (!held) lostOwnership = true;

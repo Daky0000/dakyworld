@@ -1825,7 +1825,8 @@ export type AgentStepKind =
   | "FINISHED"
   | "FAILED"
   | "INTERRUPTED"
-  | "RESUMED";
+  | "RESUMED"
+  | "SERVING";
 
 /** How much work an agent has on. Shown on its card, so the roster is live. */
 export interface AgentWorkload {

@@ -2707,6 +2707,15 @@ enum AgentStepKind {
   INTERRUPTED
   /// A run continuing from a checkpoint rather than starting again.
   RESUMED
+  /// Which model is doing the work, and every handover between them.
+  ///
+  /// The model layer's decisions were written to the server console and
+  /// nowhere else, so the minutes a run spends climbing a ladder of free
+  /// models -- or moving from a drained vendor to the next one -- showed on
+  /// the screen as a task that was simply sitting there. Then it either
+  /// finished or failed, and the first line anybody read about the vendor was
+  /// the error. This is that account, written as it happens.
+  SERVING
 }
 
 /// The timeline of one task, written as it happens.

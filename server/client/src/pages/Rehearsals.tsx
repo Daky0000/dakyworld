@@ -58,6 +58,10 @@ const LENSES = {
   tools: { label: "Tools", kinds: ["TOOL_CALL", "PREPARED", "REFUSED"] as AgentStepKind[] },
   handovers: { label: "Handovers", kinds: ["DELEGATED", "HANDED_OFF", "CONSULTED", "GAP_RAISED"] as AgentStepKind[] },
   memory: { label: "What it kept", kinds: ["REMEMBERED", "NOTED"] as AgentStepKind[] },
+  // Which model served each agent, and every handover between them. Its own
+  // lens because it answers a different question from the rest: not what the
+  // workforce decided, but what it cost and who was actually asked.
+  models: { label: "Models", kinds: ["SERVING"] as AgentStepKind[] },
 } as const;
 
 type Lens = keyof typeof LENSES;

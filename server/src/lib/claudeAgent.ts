@@ -631,6 +631,50 @@ async function chatCompletionsTurn(args: {
  * twice, order is what keeps the pairs straight — which is why these are built
  * in one pass over the conversation rather than gathered into a map first.
  */
+/**
+ * A `tool_use` block carrying the thought signature Gemini issued with it.
+ *
+ * Gemini 3 signs the reasoning behind a function call and **requires the
+ * signature back** on the same part when that call reappears in the history:
+ * without it the next turn is a `400 INVALID_ARGUMENT` naming the tool and its
+ * position, not a degraded answer. So the signature has to survive from the
+ * turn that produced it to every later turn — across a checkpoint, and across
+ * a handover to another vendor and back.
+ *
+ * It rides on the loop's own Anthropic-shaped block rather than in a side map
+ * for exactly that reason: a map does not survive `onCheckpoint`, and a
+ * resumed run would 400 on its first Gemini turn with nothing in the record to
+ * explain why. The cost is that this one field is not part of Anthropic's
+ * schema, so it is stripped on the way to that wire — see
+ * `withoutThoughtSignatures`. The OpenAI wire builds its messages from
+ * scratch, so nothing leaks there.
+ */
+type SignedToolUse = Anthropic.Beta.BetaToolUseBlockParam & { thoughtSignature?: string };
+
+/**
+ * The same messages with Gemini's signatures taken back off.
+ *
+ * Anthropic rejects a content block carrying a field its schema does not
+ * define, so a run that started on Gemini and handed to Claude would fail on
+ * its first turn — the exact failure the handover exists to prevent.
+ */
+function withoutThoughtSignatures(messages: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
+  return messages.map((message) => {
+    if (typeof message.content === "string") return message;
+    if (!message.content.some((block) => block.type === "tool_use" && (block as SignedToolUse).thoughtSignature)) {
+      return message;
+    }
+    return {
+      ...message,
+      content: message.content.map((block) => {
+        if (block.type !== "tool_use") return block;
+        const { thoughtSignature: _dropped, ...rest } = block as SignedToolUse;
+        return rest as Anthropic.Beta.BetaContentBlockParam;
+      }),
+    };
+  });
+}
+
 function toGeminiContents(messages: Anthropic.Beta.BetaMessageParam[]): Record<string, unknown>[] {
   const contents: Record<string, unknown>[] = [];
   /** tool_use id → the name Gemini knows it by, filled as the calls go past. */
@@ -648,7 +692,13 @@ function toGeminiContents(messages: Anthropic.Beta.BetaMessageParam[]): Record<s
         parts.push({ text: block.text });
       } else if (block.type === "tool_use") {
         namesById.set(block.id, block.name);
-        parts.push({ functionCall: { name: block.name, args: (block.input ?? {}) as Record<string, unknown> } });
+        const signature = (block as SignedToolUse).thoughtSignature;
+        parts.push({
+          functionCall: { name: block.name, args: (block.input ?? {}) as Record<string, unknown> },
+          // A sibling of `functionCall` on the part, which is where Gemini put
+          // it and where it wants it back.
+          ...(signature ? { thoughtSignature: signature } : {}),
+        });
       } else if (block.type === "tool_result") {
         const name = namesById.get(block.tool_use_id) ?? "unknown_tool";
         const output = typeof block.content === "string" ? block.content : JSON.stringify(block.content);
@@ -724,7 +774,7 @@ async function geminiTurn(args: {
     modelVersion?: unknown;
     candidates?: {
       finishReason?: unknown;
-      content?: { parts?: { text?: unknown; functionCall?: { name?: unknown; args?: unknown } }[] };
+      content?: { parts?: { text?: unknown; thoughtSignature?: unknown; functionCall?: { name?: unknown; args?: unknown } }[] };
     }[];
     usageMetadata?: { promptTokenCount?: unknown; candidatesTokenCount?: unknown };
   } | null;
@@ -748,7 +798,9 @@ async function geminiTurn(args: {
         id: `gemini_${Math.random().toString(36).slice(2)}`,
         name: part.functionCall.name,
         input: (part.functionCall.args ?? {}) as Record<string, unknown>,
-      });
+        // Kept verbatim. Gemini will not accept this call back without it.
+        ...(typeof part.thoughtSignature === "string" ? { thoughtSignature: part.thoughtSignature } : {}),
+      } as SignedToolUse);
     }
   }
 
@@ -850,6 +902,17 @@ export interface AgentRunRequest {
   onText?: (text: string) => Promise<void>;
   onToolCall?: (call: { name: string; input: Record<string, unknown>; outcome: AgentToolOutcome }) => Promise<void>;
   /**
+   * Which model is serving, and every handover between them.
+   *
+   * These decisions were written to the server console and nowhere a person
+   * could see. A run that climbs three free models and then moves through two
+   * paid ones can spend minutes doing exactly that, and on the screen it is a
+   * task sitting still -- until it finishes, or fails with a vendor error that
+   * is the first thing anybody has been told about any vendor. Never allowed
+   * to end the run: an account of the work is not the work.
+   */
+  onServing?: (note: string) => Promise<void>;
+  /**
    * Where a previous run of this same task got to. Null starts from the brief.
    */
   resume?: AgentCheckpointState | null;
@@ -910,6 +973,22 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   }
   let at = 0;
   let serving: AgentVendor = candidates[at];
+
+  /**
+   * Say who is serving, to the console and to whoever is watching.
+   *
+   * One function so the two never drift apart: a handover the log knows about
+   * and the timeline does not is the state this was written to end.
+   */
+  const saying = async (note: string) => {
+    console.warn(`[agent] ${note}`);
+    if (!request.onServing) return;
+    try {
+      await request.onServing(note);
+    } catch (err) {
+      console.error(`[agent] could not record who is serving: ${(err as Error).message}`);
+    }
+  };
 
   /**
    * The free models to climb, in order, and which rung we are on.
@@ -1050,6 +1129,17 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     return finish(true, "interrupted");
   };
 
+  // Said before the first turn rather than after it. The first model call is
+  // where a run spends its longest silence -- a free rung can sit for two
+  // minutes before it answers or gives up -- and "OpenRouter, on
+  // <slug>" is the difference between a screen that is working and a screen
+  // that has hung.
+  await saying(
+    ladder.length > 0
+      ? `${PROVIDERS[serving].name}, starting on the first of ${ladder.length} free model(s): ${ladder[0]}.`
+      : `${PROVIDERS[serving].name}, on ${model}.`,
+  );
+
   while (iteration < MAX_ITERATIONS) {
     if (await stopWanted()) return interrupted();
 
@@ -1109,7 +1199,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
               thinking: { type: "adaptive", display: "summarized" },
               output_config: { effort },
               tools: definitions,
-              messages: withCacheBreakpoints(messages),
+              messages: withCacheBreakpoints(withoutThoughtSignatures(messages)),
               ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
             });
 
@@ -1160,7 +1250,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         // an empty balance is true of every model on the account, so climbing
         // would be three calls into the same wall.
         if (climbing && !KEY_LEVEL_STATUSES.includes(status) && rung + 1 < ladder.length) {
-          console.warn(`[agent] ${ladder[rung]} did not serve (${status}) — trying ${ladder[rung + 1]}.`);
+          await saying(`${ladder[rung]} did not serve (${status}) — trying ${ladder[rung + 1]}.`);
           rung += 1;
           continue;
         }
@@ -1191,10 +1281,10 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           if (serving === "openrouter" && KEY_LEVEL_STATUSES.includes(status)) {
             openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
           }
-          console.warn(
+          await saying(
             climbing
-              ? `[agent] every free model was tried (last: ${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`
-              : `[agent] ${PROVIDERS[serving].name} could not serve this (${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`,
+              ? `every free model was tried (last: ${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`
+              : `${PROVIDERS[serving].name} could not serve this (${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`,
           );
           at += 1;
           serving = next;
@@ -1267,7 +1357,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       // when nobody is left to ask.
       if (!sawText && !sawToolUse && response.stop_reason !== "pause_turn") {
         if (serving === "openrouter" && ladder.length > 0 && rung + 1 < ladder.length) {
-          console.warn(`[agent] ${ladder[rung]} answered with nothing (stop_reason: ${response.stop_reason}) — trying ${ladder[rung + 1]}.`);
+          await saying(`${ladder[rung]} answered with nothing (stop_reason: ${response.stop_reason}) — trying ${ladder[rung + 1]}.`);
           rung += 1;
           continue;
         }
@@ -1277,8 +1367,8 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         // there are three of them is so the next one is asked.
         const nextAfterSilence = candidates[at + 1];
         if (nextAfterSilence) {
-          console.warn(
-            `[agent] ${PROVIDERS[serving].name} answered with nothing (stop_reason: ${response.stop_reason}) — ` +
+          await saying(
+            `${PROVIDERS[serving].name} answered with nothing (stop_reason: ${response.stop_reason}) — ` +
               `${PROVIDERS[nextAfterSilence].name} takes the rest of this run.`,
           );
           at += 1;

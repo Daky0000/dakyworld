@@ -79,6 +79,13 @@ interface Hit {
  * before it sends one, so a fake without `/models` makes every scenario here
  * fail on a lookup rather than on the thing being tested.
  */
+/**
+ * Every stub server this file starts, so the teardown can close the ones a
+ * failing scenario never reached. A listening server keeps Node's event loop
+ * alive; that is what turns one failed assertion into a run that never ends.
+ */
+const opened: Server[] = [];
+
 function openRouterStub(
   hits: Hit[],
   reply: (model: string, hit: number) => { status: number; payload: unknown },
@@ -129,6 +136,7 @@ function openRouterStub(
         res.end(typeof answer.payload === "string" ? answer.payload : JSON.stringify(answer.payload));
       });
     });
+    opened.push(server);
     server.listen(0, "127.0.0.1", () => resolve({ server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }));
   });
 }
@@ -171,6 +179,7 @@ function anthropicStub(
         );
       });
     });
+    opened.push(server);
     server.listen(0, "127.0.0.1", () => resolve({ server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }));
   });
 }
@@ -202,6 +211,7 @@ function chatCompletionsStub(
         res.end(typeof answer.payload === "string" ? answer.payload : JSON.stringify(answer.payload));
       });
     });
+    opened.push(server);
     server.listen(0, "127.0.0.1", () => resolve({ server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }));
   });
 }
@@ -211,7 +221,18 @@ function chatCompletionsStub(
  * different shape: `:generateContent`, `contents` rather than `messages`, and
  * an answer in `candidates[0].content.parts`.
  */
-function geminiStub(bodies: Record<string, unknown>[]): Promise<{ server: Server; url: string }> {
+function geminiStub(
+  bodies: Record<string, unknown>[],
+  reply?: (call: number) => Record<string, unknown>,
+  /**
+   * Refuse an unsigned function call the way Gemini 3 actually does.
+   *
+   * Without this the signature assertion is the only thing standing between a
+   * regression and a green run, and a wire check that cannot reproduce the
+   * vendor's refusal is a check that would have passed on the broken code.
+   */
+  signaturesRequired?: boolean,
+): Promise<{ server: Server; url: string }> {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       let raw = "";
@@ -224,16 +245,38 @@ function geminiStub(bodies: Record<string, unknown>[]): Promise<{ server: Server
           body = {};
         }
         bodies.push(body);
+        const unsigned =
+          signaturesRequired &&
+          ((body.contents ?? []) as { parts?: Record<string, unknown>[] }[]).some((entry) =>
+            (entry.parts ?? []).some((part) => part.functionCall && !part.thoughtSignature),
+          );
+        if (unsigned) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: {
+                code: 400,
+                status: "INVALID_ARGUMENT",
+                message:
+                  "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly.",
+              },
+            }),
+          );
+          return;
+        }
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
-          JSON.stringify({
-            modelVersion: "gemini-check",
-            candidates: [{ finishReason: "STOP", content: { role: "model", parts: [{ text: "Done, from Gemini." }] } }],
-            usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 6 },
-          }),
+          JSON.stringify(
+            reply?.(bodies.length) ?? {
+              modelVersion: "gemini-check",
+              candidates: [{ finishReason: "STOP", content: { role: "model", parts: [{ text: "Done, from Gemini." }] } }],
+              usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 6 },
+            },
+          ),
         );
       });
     });
+    opened.push(server);
     server.listen(0, "127.0.0.1", () => resolve({ server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }));
   });
 }
@@ -293,6 +336,13 @@ async function main() {
     for (const row of saved) await prisma.appSetting.create({ data: { key: row.key, value: row.value, secret: row.secret } });
     clearSettingsCache();
   };
+
+  // Every scenario runs inside this. A stub server that is still listening
+  // keeps the event loop alive, so a scenario that throws used to leave the
+  // process hanging with nothing printed and the check keys still in the dev
+  // database — which reads exactly like the check itself is broken. The
+  // failure is reported and the machine put back either way.
+  try {
 
   // The schema as `callModel` takes it: JSON Schema, closed and fully required.
   const answer = {
@@ -560,12 +610,20 @@ async function main() {
   process.env.GEMINI_BASE_URL = gmF.url;
   clearSettingsCache();
 
+  // What somebody watching this run would have seen while it happened. Every
+  // line below was a `console.warn` on the server and nothing else until
+  // 31 Aug 2026, so a run spending minutes climbing a ladder showed on the
+  // screen as a task sitting still.
+  const watched: string[] = [];
   const floor = await runAgentLoop({
     purpose: "check.free.paidFloor",
     system: "You are a check.",
     prompt: "Say you are done.",
     tools: [lookUpTool],
     effort: "medium",
+    onServing: async (note) => {
+      watched.push(note);
+    },
   });
   const calledF = hitsF.filter((hit) => !hit.path.includes("/models")).map((hit) => hit.model);
   check("every free rung is tried before anything is paid for", calledF.join(",") === RUNGS.join(","), calledF.join(","));
@@ -587,16 +645,173 @@ async function main() {
     anthF.every((body) => String(body.model).startsWith("claude")) && openAiF.every((hit) => !RUNGS.includes(hit.model ?? "")),
     `${anthF.map((body) => String(body.model)).join(", ")} | ${openAiF.map((hit) => hit.model).join(", ")}`,
   );
+  // The account a person reads while it is still running.
+  check("the run says who it is starting on, before the first turn", watched[0]?.includes(RUNGS[0]) === true, watched[0] ?? "(nothing)");
+  check(
+    "every rung that did not serve is said out loud",
+    RUNGS.slice(1).every((rung) => watched.some((note) => note.includes(rung))),
+    watched.join(" | ").slice(0, 200),
+  );
+  check(
+    "and so is every handover between paid vendors",
+    watched.some((note) => note.includes("ChatGPT takes the rest")) && watched.some((note) => note.includes("Gemini takes the rest")),
+    watched.join(" | ").slice(0, 300),
+  );
   await prisma.llmCall.deleteMany({ where: { purpose: "check.free.paidFloor" } });
   orF.server.close();
   claudeF.server.close();
   chatgptF.server.close();
   gmF.server.close();
 
-  await restore();
-  console.log(`\n${passed} passed, ${failures.length} failed`);
-  if (failures.length > 0) process.exitCode = 1;
-  await prisma.$disconnect();
+  // --- Scenario G: Gemini's thought signatures survive the round trip -------
+  //
+  // Gemini 3 signs the reasoning behind a function call and requires the
+  // signature back on the same part when that call reappears in the history.
+  // Drop it and the *second* turn is a 400 INVALID_ARGUMENT naming the tool
+  // and its position -- so a run only fails once it has actually used a tool,
+  // which is every run that does any work. This happened live, on the first
+  // task ever to reach the new floor.
+
+  clearOpenRouterCooldown();
+  const SIGNATURE = "sig_check_Cg8KDXRob3VnaHRfc2lnbmF0dXJl";
+  const geminiG: Record<string, unknown>[] = [];
+  const gmG = await geminiStub(geminiG, (call) =>
+    call === 1
+      ? {
+          modelVersion: "gemini-check",
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: {
+                role: "model",
+                parts: [{ thoughtSignature: SIGNATURE, functionCall: { name: "look_up", args: { what: "the record" } } }],
+              },
+            },
+          ],
+          usageMetadata: { promptTokenCount: 90, candidatesTokenCount: 8 },
+        }
+      : {
+          modelVersion: "gemini-check",
+          candidates: [{ finishReason: "STOP", content: { role: "model", parts: [{ text: "Looked it up, from Gemini." }] } }],
+          usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 9 },
+        },
+    true,
+  );
+
+  // Gemini alone on the floor, so the run starts and finishes on that wire.
+  await prisma.appSetting.deleteMany({
+    where: { key: { in: [SETTING.ANTHROPIC_KEY, SETTING.OPENAI_KEY, SETTING.OPENROUTER_KEY] } },
+  });
+  await setSetting(SETTING.GEMINI_KEY, "gm-check-not-a-real-key");
+  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
+  // The row is only half of it: `getSetting` prefers the environment, and the
+  // scenarios above export three of these keys for the whole process. A vendor
+  // meant to be unconnected has to lose both, or this run starts on OpenRouter
+  // against a stub that has already been closed.
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  process.env.GEMINI_API_KEY = "gm-check-not-a-real-key";
+  process.env.GEMINI_BASE_URL = gmG.url;
+  clearSettingsCache();
+
+  const signed = await runAgentLoop({
+    purpose: "check.free.geminiSignature",
+    system: "You are a check.",
+    prompt: "Look something up, then say you are done.",
+    tools: [lookUpTool],
+    effort: "medium",
+  });
+
+  const secondTurn = geminiG[1] as { contents?: { parts?: Record<string, unknown>[] }[] } | undefined;
+  const sentBack = (secondTurn?.contents ?? [])
+    .flatMap((entry) => entry.parts ?? [])
+    .find((part) => part.functionCall);
+  check("a signed function call is answered rather than refused", signed.stoppedBecause === "finished", signed.stoppedBecause);
+  check("the tool actually ran", signed.toolCalls === 1, `${signed.toolCalls} tool call(s)`);
+  check("the history goes back with the call in it", Boolean(sentBack), JSON.stringify(secondTurn?.contents ?? []).slice(0, 200));
+  check(
+    "...carrying the thought signature Gemini issued with it",
+    sentBack?.thoughtSignature === SIGNATURE,
+    String(sentBack?.thoughtSignature),
+  );
+  await prisma.llmCall.deleteMany({ where: { purpose: "check.free.geminiSignature" } });
+  gmG.server.close();
+
+  // And the same signature must not reach Anthropic, which refuses a content
+  // block carrying a field its schema does not define. A resumed run is where
+  // that bites: the checkpoint holds the signed call, and the vendor above
+  // Gemini on the floor is Claude.
+  const anthG: Record<string, unknown>[] = [];
+  const claudeG = await anthropicStub(anthG);
+  await prisma.appSetting.deleteMany({ where: { key: { in: [SETTING.GEMINI_KEY] } } });
+  await setSetting(SETTING.ANTHROPIC_KEY, "sk-ant-check-not-a-real-key");
+  delete process.env.GEMINI_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
+  process.env.ANTHROPIC_BASE_URL = claudeG.url;
+  clearSettingsCache();
+
+  const carried = await runAgentLoop({
+    purpose: "check.free.signatureStrip",
+    system: "You are a check.",
+    prompt: "Carry on.",
+    tools: [lookUpTool],
+    effort: "medium",
+    resume: {
+      iteration: 1,
+      messages: [
+        { role: "user", content: "Look something up." },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "gemini_x", name: "look_up", input: { what: "the record" }, thoughtSignature: SIGNATURE } as never,
+          ],
+        },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "gemini_x", content: "the record" }] },
+      ],
+      narration: [],
+      pendingAssistant: null,
+      pendingResults: null,
+      pendingStop: false,
+      toolCalls: 1,
+      inputTokens: 90,
+      outputTokens: 8,
+      costUsd: 0,
+      model: "gemini-check",
+    },
+  });
+  check(
+    "a resumed run reaches Claude at all",
+    anthG.length >= 1 && carried.stoppedBecause === "finished",
+    `${anthG.length} call(s) / ${carried.stoppedBecause}`,
+  );
+  check(
+    "...with no Gemini signature on any block Anthropic would refuse",
+    !JSON.stringify(anthG).includes(SIGNATURE),
+    JSON.stringify(anthG).slice(0, 200),
+  );
+  await prisma.llmCall.deleteMany({ where: { purpose: "check.free.signatureStrip" } });
+  claudeG.server.close();
+
+  } catch (err) {
+    // A scenario that threw is a failed check, not a crashed script.
+    failures.push(`the run stopped: ${(err as Error).message}`);
+    console.log(`
+  THREW  ${(err as Error).stack ?? (err as Error).message}`);
+  } finally {
+    for (const server of opened) {
+      try {
+        server.close();
+      } catch {
+        // Already closed by the scenario that opened it.
+      }
+    }
+    await restore();
+    console.log(`
+${passed} passed, ${failures.length} failed`);
+    if (failures.length > 0) process.exitCode = 1;
+    await prisma.$disconnect();
+  }
 }
 
 void main().catch(async (err) => {
