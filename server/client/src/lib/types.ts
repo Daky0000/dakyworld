@@ -1647,6 +1647,16 @@ export interface Agent {
   promptText?: string | null;
   /** What it has on right now. Present on the roster. */
   work?: AgentWorkload;
+  /**
+   * How many tasks it may start in a day, a week and a month.
+   *
+   * Null is no ceiling; **0 is a ceiling of none** — the way to stop an agent
+   * taking work without retiring it. A budget says how much may be spent and
+   * nothing about how often, which is the gap these close.
+   */
+  maxTasksPerDay: number | null;
+  maxTasksPerWeek: number | null;
+  maxTasksPerMonth: number | null;
   escalationPolicy: string | null;
   prompt: Record<string, string>;
 }
@@ -1678,6 +1688,13 @@ export interface AgentDetail extends Agent {
   promptLayers: string[];
   /** True when there is shipped wording to reset to. */
   resettable: boolean;
+  /**
+   * What it has started in each period, against its ceiling.
+   *
+   * Returned whether or not a ceiling is set: "12 today, no limit" is the
+   * number somebody needs in order to decide what the limit should be.
+   */
+  pace: Array<{ period: "DAY" | "WEEK" | "MONTH"; started: number; limit: number | null }>;
   /** True when it is mid-task, so an edit lands after the one it is on. */
   busy: boolean;
 }

@@ -155,6 +155,13 @@ export function Leads() {
    * and the server refuses if that count has moved since.
    */
   const [allMatching, setAllMatching] = useState(false);
+  /**
+   * Lists ticked for removal.
+   *
+   * A workbook import opens one list per worksheet, so a bad import is
+   * thirty-nine lists and thirty-nine confirmations for a single decision.
+   */
+  const [pickedLists, setPickedLists] = useState<Set<string>>(new Set());
   const [showForm, setShowForm] = useState(false);
   // null = editing the default set; a group id = editing that list's own set.
   // `undefined` means the editor is closed.
@@ -264,6 +271,28 @@ export function Leads() {
   });
 
   const [deleteResult, setDeleteResult] = useState<string | null>(null);
+
+  const deleteLists = useMutation({
+    mutationFn: (body: { ids: string[]; withLeads: boolean; expect?: number }) =>
+      api.post<{ listsRemoved: number; leadsUngrouped?: number; deleted: number; keptWithProposals: { name: string }[] }>(
+        "/leads/groups/bulk/delete",
+        body,
+      ),
+    onMutate: () => setDeleteResult(null),
+    onSuccess: (result) => {
+      invalidate();
+      setPickedLists(new Set());
+      setDeleteResult(
+        `Removed ${result.listsRemoved} list${result.listsRemoved === 1 ? "" : "s"}.` +
+          (result.leadsUngrouped ? ` ${result.leadsUngrouped} lead(s) came out ungrouped.` : "") +
+          (result.deleted ? ` ${result.deleted} lead(s) deleted.` : "") +
+          (result.keptWithProposals.length
+            ? ` ${result.keptWithProposals.length} lead(s) kept because they carry a proposal, and their list with them.`
+            : ""),
+      );
+    },
+    onError: (err: Error) => setDeleteResult(err.message),
+  });
   const bulkDelete = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       api.post<{ deleted: number; keptWithProposals: { name: string }[]; detached: { emails: number; messages: number; tasks: number } }>(
@@ -513,6 +542,48 @@ export function Leads() {
         />
       )}
 
+      {pickedLists.size > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
+          <span className="font-mono text-[11px] uppercase tracking-[.14em]">
+            {pickedLists.size} list{pickedLists.size === 1 ? "" : "s"} picked
+          </span>
+          {/* Emptying is the default and stays it: a list is a way of
+              organising leads, and deleting one is usually a tidy-up. */}
+          <button
+            type="button"
+            disabled={deleteLists.isPending}
+            onClick={() => deleteLists.mutate({ ids: [...pickedLists], withLeads: false })}
+            className="border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10 disabled:text-cream/40"
+          >
+            Remove, keep the leads
+          </button>
+          <button
+            type="button"
+            disabled={deleteLists.isPending}
+            onClick={() => {
+              const count = blocks
+                .filter((block) => pickedLists.has(block.key))
+                .reduce((sum, block) => sum + (block.total ?? block.leads.length), 0);
+              const answer = prompt(
+                `Remove ${pickedLists.size} list${pickedLists.size === 1 ? "" : "s"} and delete the ${count.toLocaleString()} lead` +
+                  `${count === 1 ? "" : "s"} in them? This cannot be undone.\n\nType ${count} to confirm.`,
+              );
+              if (answer?.trim() === String(count)) deleteLists.mutate({ ids: [...pickedLists], withLeads: true, expect: count });
+            }}
+            className="border border-red-300/50 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-red-300 hover:bg-red-300/10 disabled:text-cream/40"
+          >
+            Remove and delete their leads
+          </button>
+          <button
+            type="button"
+            onClick={() => setPickedLists(new Set())}
+            className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60 hover:text-cream"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {deleteResult && (
         <p className="mb-4 rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink/70">
           {deleteResult}{" "}
@@ -568,6 +639,15 @@ export function Leads() {
           {grouping ? (
             <LeadListCards
               blocks={blocks}
+              pickedLists={pickedLists}
+              onPickList={(id) =>
+                setPickedLists((current) => {
+                  const next = new Set(current);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                })
+              }
               selected={selected}
               onOpenList={(block) => setOpenList(block.key)}
               onFilterToList={(id) => setFilters({ ...filters, groupId: id })}
@@ -837,6 +917,8 @@ function groupLeads(leads: Lead[], groupBy: GroupBy): RenderGroup[] {
 function LeadListCards({
   blocks,
   selected,
+  pickedLists,
+  onPickList,
   onOpenList,
   onFilterToList,
   onEditColumns,
@@ -844,6 +926,9 @@ function LeadListCards({
 }: {
   blocks: RenderGroup[];
   selected: Set<string>;
+  /** Lists ticked for removal. */
+  pickedLists: Set<string>;
+  onPickList: (id: string) => void;
   onOpenList: (block: RenderGroup) => void;
   onFilterToList: (id: string) => void;
   onEditColumns: (groupId: string | null) => void;
@@ -878,6 +963,12 @@ function LeadListCards({
                   key={block.key}
                   className="group flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-ink/5 px-4 py-4 transition last:border-0 hover:bg-cream/60 sm:flex-nowrap"
                 >
+                  {block.list && (
+                    <label className="shrink-0 cursor-pointer" title="Pick this list for removal">
+                      <input type="checkbox" checked={pickedLists.has(block.key)} onChange={() => onPickList(block.key)} />
+                    </label>
+                  )}
+
                   {/* Size first, the way the reference puts the document first:
                       it is the thing you scan down the column for. */}
                   <button

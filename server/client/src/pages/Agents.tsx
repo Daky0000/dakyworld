@@ -19,6 +19,21 @@ const LEVELS = [
   { n: 5, name: "Delegated", means: "Material actions. Reserved for a recorded owner decision." },
 ];
 
+/**
+ * Whether an agent picks work up at all.
+ *
+ * Separate from autonomy and often confused with it: status is "is it
+ * working", autonomy is "how much may it do while working". An ACTIVE agent at
+ * level 1 with dry run on is exactly what every agent here ships as once it is
+ * switched on — it takes tasks and prepares everything for a person.
+ */
+const STATUSES = [
+  { value: "DRAFT" as const, label: "Draft", means: "On the roster and taking nothing. Work queued against it waits." },
+  { value: "ACTIVE" as const, label: "Active", means: "Picks up its queue. What it may do while working is the ceiling below." },
+  { value: "PAUSED" as const, label: "Paused", means: "Stopped by you. A rehearsal will not wake it and nothing will start." },
+  { value: "RETIRED" as const, label: "Retired", means: "Finished with. It cannot be delegated to or consulted." },
+];
+
 const DEPARTMENTS: Record<string, string> = {
   EXECUTIVE: "Executive", REVENUE: "Revenue", DELIVERY: "Delivery", FINANCE: "Finance",
   MARKETING: "Marketing", TECHNOLOGY: "Technology", CLIENT: "Client Success", RISK: "Risk & Quality", PEOPLE: "Agent Ops",
@@ -69,13 +84,40 @@ export function Agents() {
       { replace: true },
     );
   const [hiring, setHiring] = useState(false);
+  /**
+   * Agents ticked for a batch change.
+   *
+   * The roster is fifty-one and every specialist ships as a draft, so the
+   * ordinary first act here — switch on the ones I want working — was
+   * fifty-one visits to a drawer.
+   */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["agents"],
     queryFn: () => api.get<AgentList>("/agents"),
   });
 
+  const setStatus = useMutation({
+    mutationFn: (body: { keys: string[]; status: string }) =>
+      api.patch<{ updated: number; queuedNowStartable: number }>("/agents/bulk", body),
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+      setPicked(new Set());
+      setBatchNote(
+        `${result.updated} agent${result.updated === 1 ? "" : "s"} updated.` +
+          (result.queuedNowStartable
+            ? ` ${result.queuedNowStartable} queued task${result.queuedNowStartable === 1 ? "" : "s"} can now start.`
+            : ""),
+      );
+    },
+    onError: (err: Error) => setBatchNote(err.message),
+  });
+  const [batchNote, setBatchNote] = useState<string | null>(null);
+
   const agents = data?.agents ?? [];
+  const drafts = agents.filter((agent) => agent.status === "DRAFT");
   const byTier = TIER_ORDER.map((tier) => [tier, agents.filter((a) => a.tier === tier)] as const).filter(([, list]) => list.length > 0);
 
   return (
@@ -107,6 +149,63 @@ export function Agents() {
           thing on this screen that is blocking work rather than describing it. */}
       <AgentHiring />
 
+      {batchNote && (
+        <p className="rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink/70">
+          {batchNote}{" "}
+          <button type="button" onClick={() => setBatchNote(null)} className="text-blue hover:underline">
+            Dismiss
+          </button>
+        </p>
+      )}
+
+      {/*
+        Switching a batch on. Status only — autonomy and dry run decide whether
+        software may act on a client unasked, and a bulk control over those
+        would be one click that widened the whole workforce. Activating an
+        agent only lets it pick up the queue it already has, at the level it
+        already holds, which for everything here is 1 with dry run on.
+      */}
+      {(picked.size > 0 || drafts.length > 0) && (
+        <div className="flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
+          <span className="font-mono text-[11px] uppercase tracking-[.14em]">
+            {picked.size > 0 ? `${picked.size} picked` : `${drafts.length} draft${drafts.length === 1 ? "" : "s"} on the roster`}
+          </span>
+          {picked.size === 0 ? (
+            <button
+              type="button"
+              onClick={() => setPicked(new Set(drafts.map((agent) => agent.key)))}
+              className="border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10"
+            >
+              Pick every draft
+            </button>
+          ) : (
+            <>
+              {(["ACTIVE", "PAUSED", "DRAFT"] as const).map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  disabled={setStatus.isPending}
+                  onClick={() => setStatus.mutate({ keys: [...picked], status })}
+                  className="border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10 disabled:text-cream/40"
+                >
+                  {status === "ACTIVE" ? "Set active" : status === "PAUSED" ? "Pause" : "Back to draft"}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPicked(new Set())}
+                className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60 hover:text-cream"
+              >
+                Clear
+              </button>
+            </>
+          )}
+          <span className="font-mono text-[10px] uppercase tracking-[.1em] text-cream/50">
+            Status only — what each may do unasked stays where it is
+          </span>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-sm text-ink/50">Loading…</div>
       ) : agents.length === 0 ? (
@@ -120,7 +219,28 @@ export function Agents() {
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {list.map((agent) => (
-                <button key={agent.key} type="button" onClick={() => setOpenKey(agent.key)} className="text-left">
+                <div key={agent.key} className="relative">
+                  {/* Beside the card rather than inside it: the card is itself a
+                      button, and a checkbox nested in one is neither clickable
+                      nor valid. */}
+                  <label
+                    className="absolute right-3 top-3 z-10 flex cursor-pointer items-center gap-1 rounded-lg border border-line bg-white/90 px-1.5 py-0.5"
+                    title="Pick for a batch change"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={picked.has(agent.key)}
+                      onChange={() =>
+                        setPicked((current) => {
+                          const next = new Set(current);
+                          if (next.has(agent.key)) next.delete(agent.key);
+                          else next.add(agent.key);
+                          return next;
+                        })
+                      }
+                    />
+                  </label>
+                <button type="button" onClick={() => setOpenKey(agent.key)} className="w-full text-left">
                   <Card className="h-full transition hover:border-blue/40">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -161,6 +281,7 @@ export function Agents() {
                     ) : null}
                   </Card>
                 </button>
+                </div>
               ))}
             </div>
           </section>
@@ -359,7 +480,22 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
   });
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Pick<Agent, "autonomyLevel" | "dryRun" | "status" | "toolkit" | "skills" | "kpis">>) =>
+    mutationFn: (
+      patch: Partial<
+        Pick<
+          Agent,
+          | "autonomyLevel"
+          | "dryRun"
+          | "status"
+          | "toolkit"
+          | "skills"
+          | "kpis"
+          | "maxTasksPerDay"
+          | "maxTasksPerWeek"
+          | "maxTasksPerMonth"
+        >
+      >,
+    ) =>
       api.patch<Agent>(`/agents/${agentKey}`, patch),
     onSuccess: () => {
       setNotice(null);
@@ -391,6 +527,44 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
           {/* First, because "what is it doing" outranks "how is it configured"
               every time somebody opens this. */}
           <AgentWork agent={agent} />
+
+          {/*
+            Whether it picks work up at all — and until Aug 2026 there was no
+            control for it anywhere on this screen. Every specialist and most of
+            the board seed as a DRAFT and `runDueTasks` only starts a task for
+            an ACTIVE agent, so a queue against a draft was real work waiting on
+            a switch that did not exist in the interface. The boot log has been
+            saying "N queued task(s) belong to agents that are not Active" the
+            whole time.
+
+            Above autonomy on purpose: "is it working" comes before "how much
+            may it do while working".
+          */}
+          <section className="space-y-3">
+            <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Whether it works</h3>
+            <div className="flex flex-wrap gap-1.5">
+              {STATUSES.map((option) => (
+                <Button
+                  key={option.value}
+                  size="sm"
+                  variant={agent.status === option.value ? "primary" : "secondary"}
+                  disabled={save.isPending}
+                  onClick={() => save.mutate({ status: option.value })}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+            <p className="text-sm text-ink/55">{STATUSES.find((option) => option.value === agent.status)?.means}</p>
+            {agent.status !== "ACTIVE" && agent.work.queued > 0 && (
+              <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {agent.work.queued} task{agent.work.queued === 1 ? "" : "s"} {agent.work.queued === 1 ? "is" : "are"} queued against this
+                agent and none will start until it is Active.
+              </p>
+            )}
+          </section>
+
+          <AgentPace agent={agent} onSave={save.mutate} saving={save.isPending} />
 
           <section className="space-y-3">
             <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it may do unasked</h3>
@@ -462,6 +636,92 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
         </div>
       )}
     </Drawer>
+  );
+}
+
+/**
+ * How often this agent may pick work up.
+ *
+ * A different ceiling from the spending one and needed beside it: a budget
+ * says how much may be spent and nothing at all about how often, so an agent
+ * on cheap work can run all day inside its budget and still act far more than
+ * anybody meant. This is the pace.
+ *
+ * **The counts show whether or not a ceiling is set.** "12 today, no limit" is
+ * the number somebody needs in order to pick a limit, and a panel that only
+ * counted once a limit existed could not help them choose one.
+ *
+ * Blank means no ceiling and **0 means none at all** — which is the obvious way
+ * to stop an agent taking work without retiring it. They are text boxes rather
+ * than `<input type="number">` for the same reason the style panel's are: a
+ * spinner sitting on 0 reads as a limit somebody set, and blank has to be
+ * distinguishable from zero here more than anywhere else on this screen.
+ */
+function AgentPace({
+  agent,
+  onSave,
+  saving,
+}: {
+  agent: AgentDetail;
+  onSave: (patch: { maxTasksPerDay?: number | null; maxTasksPerWeek?: number | null; maxTasksPerMonth?: number | null }) => void;
+  saving: boolean;
+}) {
+  const FIELDS = [
+    { key: "maxTasksPerDay" as const, period: "DAY" as const, label: "a day" },
+    { key: "maxTasksPerWeek" as const, period: "WEEK" as const, label: "a week" },
+    { key: "maxTasksPerMonth" as const, period: "MONTH" as const, label: "a month" },
+  ];
+
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(FIELDS.map((field) => [field.key, agent[field.key] === null ? "" : String(agent[field.key])])),
+  );
+
+  const commit = (key: (typeof FIELDS)[number]["key"]) => {
+    const raw = draft[key]?.trim() ?? "";
+    // Blank clears the ceiling; anything that is not a whole number is not a
+    // ceiling and is put back rather than guessed at.
+    const next = raw === "" ? null : Number(raw);
+    if (next !== null && (!Number.isInteger(next) || next < 0)) {
+      setDraft((current) => ({ ...current, [key]: agent[key] === null ? "" : String(agent[key]) }));
+      return;
+    }
+    if (next === agent[key]) return;
+    onSave({ [key]: next });
+  };
+
+  return (
+    <section className="space-y-3">
+      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">How often it may work</h3>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {FIELDS.map((field) => {
+          const usage = agent.pace?.find((row) => row.period === field.period);
+          return (
+            <div key={field.key} className="space-y-1">
+              <label className="block font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+                Tasks in {field.label}
+              </label>
+              <input
+                value={draft[field.key] ?? ""}
+                disabled={saving}
+                placeholder="no limit"
+                onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
+                onBlur={() => commit(field.key)}
+                onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
+                className="w-full rounded-lg border border-line bg-white px-2 py-1 text-sm text-ink"
+              />
+              <p className="text-xs text-ink/40">
+                {usage ? `${usage.started} started` : "—"}
+                {usage?.limit === 0 ? " · taking none" : usage?.limit != null ? ` of ${usage.limit}` : " · no limit"}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-xs text-ink/40">
+        A ceiling on how often, not on how much — spending has its own under Costs. A task held by one of these stays queued and
+        starts when the period rolls over. Leave blank for no limit; 0 stops it taking work without retiring it.
+      </p>
+    </section>
   );
 }
 
