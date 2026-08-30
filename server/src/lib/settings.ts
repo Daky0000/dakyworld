@@ -487,6 +487,16 @@ export const SETTING = {
    * `Rehearsal.budgetUsd` carries a comment about.
    */
   CONSULT_PRIORITY_LIMITS: "agents.consultLimits",
+  /**
+   * Whether the weekly summary of unanswered agent questions is posted.
+   *
+   * On unless set to "false". It says nothing in a week with nothing waiting —
+   * a digest that arrives every week reporting no news is one people stop
+   * opening, and the week it matters is the week it is ignored.
+   */
+  WEEKLY_DIGEST: "agents.weeklyDigest",
+  /** When the last digest went out, as an ISO week. The tick's own guard. */
+  WEEKLY_DIGEST_SENT: "agents.weeklyDigest.sentWeek",
   AGENT_MAX_CALL_USD: "agents.maxCallUsd",
 
   /**

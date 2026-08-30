@@ -12,6 +12,8 @@ import { readMailboxOnce } from "./mailbox/watcher.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { ensureGapReviews, expireStaleHireRequests } from "./agents/hiring.js";
+import { postEscalationDigest } from "./agents/escalationDigest.js";
+import { SETTING, getSetting, setSetting } from "../lib/settings.js";
 import { expireStaleRequests } from "./approvals.js";
 import { raiseStandingWork } from "./agents/standingWork.js";
 import { restoreOrphanedWakes } from "./rehearsals/wake.js";
@@ -219,6 +221,36 @@ async function housekeepingTick(now: Date) {
   // would also make the queue a list of things that are not going to happen,
   // which is how a queue stops being read.
   await expireStaleRequests();
+
+  // The week's unanswered questions, once a week. On the daily tick rather
+  // than a timer of its own: this function already runs once a day and already
+  // owns the "have I done this yet today" guard, and a second scheduler is a
+  // second thing that can silently stop.
+  //
+  // Keyed on the ISO week rather than a day-of-week test. A container that
+  // happens to be restarting every Monday morning would post one digest per
+  // restart; a container that is down all Monday would post none at all.
+  const week = isoWeek(now);
+  if ((await getSetting(SETTING.WEEKLY_DIGEST_SENT)) !== week) {
+    const digest = await postEscalationDigest();
+    // Marked whether or not anything was posted. A quiet week is a week that
+    // has been checked, and re-checking it every day would be the same query
+    // for the same answer.
+    await setSetting(SETTING.WEEKLY_DIGEST_SENT, week);
+    if (digest.posted) console.log(`[scheduler] posted the weekly digest — ${digest.count} question(s) waiting`);
+    else if (digest.count > 0) console.log(`[scheduler] ${digest.count} agent question(s) waiting, and no Slack to say so on`);
+  }
+}
+
+/** `2026-W35`. Stable across a restart, unlike "is it Monday". */
+function isoWeek(date: Date): string {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  // ISO weeks run Monday to Sunday and belong to the year containing their
+  // Thursday, which is why this shifts to Thursday before reading the year.
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const start = Date.UTC(d.getUTCFullYear(), 0, 1);
+  const week = Math.ceil(((d.getTime() - start) / 86_400_000 + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
 export function startScheduler() {

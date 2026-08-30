@@ -2278,6 +2278,23 @@ enum AgentTaskOrigin {
   AGENT
 }
 
+/// Where a stop-and-ask has got to, once one has happened.
+///
+/// Null for a task that has never stopped to ask, which is most of them.
+/// `AgentTaskStatus` says what the *task* is doing; this says whether the
+/// question it raised has been dealt with, and the two come apart: answering
+/// an escalation puts the task back in the queue, so by the time anybody looks
+/// at the roster there is nothing left to say a question was ever asked.
+enum EscalationStatus {
+  /// Raised and waiting on a person.
+  PENDING
+  /// Somebody acted on it — answered, or ran it again.
+  ANSWERED
+  /// Read and deliberately left. Not an answer; an acknowledgement, so the
+  /// digest stops listing something somebody has already decided about.
+  CLOSED
+}
+
 enum AgentTaskStatus {
   /// Waiting for a runner. The normal resting state.
   QUEUED
@@ -2405,6 +2422,18 @@ model AgentTask {
   result        Json?
   /// Why it stopped short. Set only when BLOCKED.
   blockedReason String?
+
+  /// Whether the question this task raised has been dealt with.
+  ///
+  /// Written by `transition()` and nowhere else, for the same reason `status`
+  /// is: two writers of a state machine is a state machine nobody has written
+  /// down. Reaching BLOCKED sets it PENDING, leaving BLOCKED sets it ANSWERED,
+  /// and the close endpoint sets CLOSED.
+  ///
+  /// Null means this task has never stopped to ask. That is deliberately
+  /// distinct from ANSWERED — "never had a question" and "had one, dealt with"
+  /// are different facts, and the weekly digest counts only PENDING.
+  escalationStatus EscalationStatus?
   error         String?
 
   /// Where this task's escalation card was posted, so answering it anywhere
@@ -2471,6 +2500,8 @@ model AgentTask {
   @@index([parentId])
   /// The reaper's query: every RUNNING row whose heartbeat has gone quiet.
   @@index([status, heartbeatAt])
+  /// The digest's query: every question still waiting, oldest first.
+  @@index([escalationStatus, finishedAt])
 }
 
 /// Where a run had got to, so an interrupted one continues instead of starting again.

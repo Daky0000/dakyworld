@@ -1,4 +1,4 @@
-import type { AgentTaskStatus, Prisma } from "@prisma/client";
+import type { AgentTaskStatus, EscalationStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 
 /**
@@ -50,6 +50,30 @@ const ALLOWED: Record<AgentTaskStatus, readonly AgentTaskStatus[]> = {
   FAILED: ["QUEUED", "RUNNING", "CANCELLED"],
   CANCELLED: ["QUEUED", "RUNNING"],
 };
+
+/**
+ * What a move means for the question the task raised, if it raised one.
+ *
+ * Derived here rather than written by the callers, for exactly the reason
+ * `transition()` exists at all: escalations are raised by `escalate`, by
+ * `needSkill`, and by a task hitting its own spending ceiling, and they are
+ * settled by the browser, by two Slack paths and by a retry. Six writers of one
+ * flag is the state machine nobody wrote down, one layer up.
+ *
+ * Returns null when nothing about the escalation changed, so an ordinary
+ * QUEUED → RUNNING never touches the column.
+ */
+function escalationAfter(from: AgentTaskStatus, to: AgentTaskStatus): EscalationStatus | null {
+  // Every road into BLOCKED is a task that has stopped and needs a person. The
+  // three differ in what they need decided and not in whether somebody has to
+  // decide it, which is all this flag claims.
+  if (to === "BLOCKED") return "PENDING";
+  // And every road out is somebody having acted. Answering requeues, "Carry
+  // on" requeues, cancelling closes the task — in all of them the question is
+  // no longer sitting on the wall.
+  if (from === "BLOCKED") return "ANSWERED";
+  return null;
+}
 
 export class IllegalTransition extends Error {
   constructor(
@@ -122,13 +146,22 @@ export async function transition(taskId: string, request: TransitionRequest): Pr
   // Conditional on the status just read, so the row cannot move underneath us
   // between the read and the write. The same discipline the claim has always
   // used; it is here now so every caller inherits it.
+  // Written in the same statement as the status, so a task cannot be BLOCKED
+  // with nothing recording that it asked anything — the pair either both land
+  // or neither does. A caller that sets `escalationStatus` explicitly wins:
+  // the close endpoint is deliberately saying something this cannot derive.
+  const escalation = escalationAfter(current.status, request.to);
   const claimed = await prisma.agentTask.updateMany({
     where: {
       id: taskId,
       status: request.expect ? { in: [...request.expect] } : current.status,
       ...(request.guard ?? {}),
     },
-    data: { ...(request.data ?? {}), status: request.to },
+    data: {
+      ...(escalation ? { escalationStatus: escalation } : {}),
+      ...(request.data ?? {}),
+      status: request.to,
+    },
   });
 
   if (claimed.count === 0) {

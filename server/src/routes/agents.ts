@@ -11,6 +11,7 @@ import { clearCheckpoint } from "../services/agents/checkpoint.js";
 import { blockedTasks, recordOwnerAnswer } from "../services/agents/escalations.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
 import { AGENT_SEEDS, PROMPT_LAYERS, surplusToolkits } from "../services/agentRegistry.js";
+import { closeEscalation, openEscalations } from "../services/agents/escalationDigest.js";
 import { resolveBrief } from "../services/writers/brief.js";
 import { briefSettingKey, jobsOwnedBy, writerJob } from "../services/writers/registry.js";
 import { shippedDoctrine } from "../services/writers/shipped.js";
@@ -144,6 +145,28 @@ agentsRouter.get("/", async (_req, res, next) => {
   }
 });
 
+/**
+ * Every question waiting on a person, oldest first.
+ *
+ * The same rows the weekly Slack digest reads. **Slack must never be the only
+ * road** — a workspace nobody connected, a signing secret nobody pasted, an app
+ * somebody removed, and the symptom would be questions nobody can see. That
+ * rule is stated in `routes/slack.ts` for hiring and it holds here for exactly
+ * the same reason.
+ *
+ * **Mounted above `/:key`**, or `escalations` is read as an agent key and the
+ * answer is "No such agent." Every other literal route on this router is two
+ * segments (`/hiring/gaps`, `/memory/shared`, `/questions/blocked`) and is safe
+ * wherever it sits; a one-segment one is not.
+ */
+agentsRouter.get("/escalations", async (_req, res, next) => {
+  try {
+    res.json({ escalations: await openEscalations() });
+  } catch (err) {
+    next(err);
+  }
+});
+
 agentsRouter.get("/:key", async (req, res, next) => {
   try {
     const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
@@ -214,6 +237,31 @@ agentsRouter.get("/:key", async (req, res, next) => {
       /** True when it is mid-task, so the screen can say a change lands after this one. */
       busy: isBusy(agent.key),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * "I have read this and I am leaving it."
+ *
+ * Not an answer, and deliberately not a change of task status: the task stays
+ * BLOCKED because it is still stopped. What changes is that the digest stops
+ * raising it every week. Keeping those two facts apart is the whole reason
+ * `escalationStatus` is its own column rather than a reading of `status`.
+ */
+agentsRouter.post("/tasks/:id/escalation/close", async (req, res, next) => {
+  try {
+    const closed = await closeEscalation(req.params.id, {
+      userId: req.dbUser?.id ?? null,
+      who: req.dbUser?.name ?? req.dbUser?.email ?? null,
+    });
+    if (!closed) {
+      return res.status(409).json({
+        error: "That question is not waiting on anybody — it has been answered, closed already, or the task never stopped to ask.",
+      });
+    }
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
