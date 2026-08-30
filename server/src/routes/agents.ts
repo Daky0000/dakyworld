@@ -10,7 +10,7 @@ import { historyOf, recordCreated, transition } from "../services/agents/state.j
 import { clearCheckpoint } from "../services/agents/checkpoint.js";
 import { blockedTasks, recordOwnerAnswer } from "../services/agents/escalations.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
-import { AGENT_SEEDS, PROMPT_LAYERS } from "../services/agentRegistry.js";
+import { AGENT_SEEDS, PROMPT_LAYERS, surplusToolkits } from "../services/agentRegistry.js";
 import { resolveBrief } from "../services/writers/brief.js";
 import { briefSettingKey, jobsOwnedBy, writerJob } from "../services/writers/registry.js";
 import { shippedDoctrine } from "../services/writers/shipped.js";
@@ -120,6 +120,10 @@ agentsRouter.get("/", async (_req, res, next) => {
     // The roster is small; grouping it here keeps the page from re-deriving it.
     const byKey = new Map(agents.map((a) => [a.key, a.name]));
     res.json({
+      // Agents narrowed to one job that still hold a tool that job has no use
+      // for. One extra query over a handful of rows, and the only place this
+      // has ever been visible outside a boot log nobody reads.
+      surplusToolkits: await surplusToolkits(),
       agents: agents.map((a) => ({
         ...a,
         managerName: a.managerKey ? (byKey.get(a.managerKey) ?? null) : null,

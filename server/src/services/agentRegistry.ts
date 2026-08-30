@@ -1670,7 +1670,7 @@ ${SERVICE_CRAFT}`,
  * agent", so that re-wording an agent for any other reason later cannot
  * quietly reach into a live database on the next deploy.
  */
-const NARROWED = [
+export const NARROWED = [
   "cfo",
   "lead.orchestrator",
   "commercial.ops",
@@ -1692,26 +1692,150 @@ const NARROWED = [
  *
  * Nothing here is enforced and nothing is revoked — a toolkit is the Owner's
  * grant, and `POST /agents/:key/prompt/reset` deliberately never touches one
- * for the same reason. What this does is let the pass below *say* which agents
- * are now carrying a permission their narrowed job has no use for, so the
- * decision to untick it is made by a person looking at the Agents screen.
+ * for the same reason. What this does is *say* which agents are carrying a
+ * permission their narrowed job has no use for, so the decision to untick it is
+ * made by a person looking at the Agents screen.
+ *
+ * **`surplusToolkits()` is what says it, not `narrowSeededAgents()`.** The
+ * report used to be computed inside the marked pass, which meant it was
+ * produced exactly once — on the boot that carried the split — and never again.
+ * `agents.oneJobPass` has been set on the live database for months, so an entry
+ * added to this table reported nothing at all: the pass returns null before it
+ * reads a row. Seven of the fourteen narrowed agents had no entry here, and
+ * adding them would have changed nothing observable.
  */
-const NARROWED_TOOLKIT: Record<string, string[]> = {
+export const NARROWED_TOOLKIT: Record<string, string[]> = {
   cfo: ["finance.read", "careplan.read", "analytics.read", "payment.status"],
   "lead.orchestrator": ["lead.read", "lead.update", "audit.read"],
   "commercial.ops": ["proposal.draft", "document.render"],
   "careplan.manager": ["careplan.read", "invoice.draft", "time.read"],
-  "email.sequencer": ["email.draft", "email.send", "sequence.enrol", "sequence.stop"],
+  // `suppression.check` is not in this agent's seed and its row holds it, so the
+  // surplus report was recommending it be unticked — from the one agent on the
+  // roster whose job is to send sequences. An agent that sends must be able to
+  // ask whether the address has already opted out; that is not a permission
+  // its narrowed job stopped needing.
+  "email.sequencer": ["email.draft", "email.send", "sequence.enrol", "sequence.stop", "suppression.check"],
   "client.notifier": ["email.draft", "email.send", "client.read", "projects.read"],
   "design.ux": ["audit.read", "demo.read", "design.brief", "lead.read"],
+
+  // The seven below were in `NARROWED` from the start and had no entry, so the
+  // pass narrowed their wording and said nothing about what they were still
+  // holding — which is the half a person acts on.
+  //
+  // Written by hand, one at a time, against each agent's single deliverable.
+  // Deriving them from a mission and a tool description was considered and is
+  // the wrong shape: the judgement here is *which* of two plausible tools
+  // belongs to this deliverable and which belongs to the colleague it was split
+  // from, and a similarity score cannot make that call. Every line below is
+  // somebody's answer that can be argued with.
+
+  // Milestones and assignments. Its three tools are already the job.
+  "delivery.director": ["projects.read", "tasks.write", "time.read"],
+
+  // The operating numbers with their sources. Already narrow.
+  "analytics.engine": ["analytics.read", "finance.read", "crm.read"],
+
+  // A page or a patch. It keeps `audit.read` because a report is what tells it
+  // what to fix — but *running* an audit, photographing a homepage or scanning
+  // a prospect's DNS produce a different finished thing, and two of them spend
+  // money doing it. A demo is a page it ships, so both demo tools stay.
+  "dev.web": [
+    "web.page",
+    "demo.build",
+    "demo.read",
+    "github.read",
+    "github.issue",
+    "repo.read",
+    "repo.create",
+    "code.propose",
+    "code.merge",
+    "audit.read",
+    "projects.read",
+    "tasks.write",
+  ],
+
+  // Artwork. `content.draft` is the Copywriter's deliverable — a designer who
+  // needs words asks for them, which is the whole point of the split.
+  "design.graphic": ["design.brief", "image.generate", "document.render", "client.read"],
+
+  // The copy on the page. Reading a review is evidence; commissioning one is
+  // the audit team's job and costs money. Revenue figures are not what page
+  // copy is written from.
+  "content.writer": ["audit.read", "content.draft", "client.read", "projects.read"],
+
+  // Technical faults that stop a site ranking. It commissions and reads
+  // reviews, and `lead.read` stays because `audit.website` is addressed by
+  // lead. Security belongs to the Security Analyst, what a visitor *sees*
+  // belongs to the UX reviewer, and the words belong to the Copywriter.
+  "seo.specialist": ["audit.website", "audit.read", "company.audit", "lead.read"],
+
+  // The first message to a stranger. Deliberately the longest list here and it
+  // is not an oversight: the letter is argued from evidence this agent gathers
+  // itself, checked, humanised, and sent down whichever channel the lead can
+  // actually be reached on. What it does not do is write marketing copy
+  // (`content.draft`) or read the company's revenue.
+  "outreach.writer": [
+    "lead.read",
+    "lead.prepare",
+    "lead.prepareMany",
+    "company.audit",
+    "site.look",
+    "security.scan",
+    "content.factcheck",
+    "content.humanise",
+    "email.draft",
+    "email.polish",
+    "demo.read",
+    "audit.read",
+    "suppression.check",
+    "message.reach",
+    "message.draft",
+    "whatsapp.link",
+    "whatsapp.templates",
+  ],
 };
 
 export interface NarrowingResult {
   updated: string[];
   /** Left alone because the Owner has rewritten this one's prompt. */
   keptAsEdited: string[];
-  /** Agents holding a tool their narrowed job does not need. */
-  surplusTools: { key: string; name: string; tools: string[] }[];
+}
+
+export interface SurplusToolkit {
+  key: string;
+  name: string;
+  /** Held, and not on the list its narrowed job needs. */
+  tools: string[];
+}
+
+/**
+ * Which narrowed agents are carrying a tool their one job has no use for.
+ *
+ * A read. No marker, no write, nothing skipped — so it answers on every boot
+ * and on every request, which is the difference between this and the marked
+ * pass it came out of. Deliberately says nothing about agents outside
+ * `NARROWED_TOOLKIT`: an agent with no entry has not had this judgement made
+ * about it, and reporting its whole toolkit as surplus would be worse than
+ * silence.
+ *
+ * **It still never revokes.** That rule is unchanged and it is the reason this
+ * is a report at all: a grant taken away silently is invisible until the day
+ * something cannot be done.
+ */
+export async function surplusToolkits(): Promise<SurplusToolkit[]> {
+  const keys = Object.keys(NARROWED_TOOLKIT);
+  const agents = await prisma.agent.findMany({
+    where: { key: { in: keys } },
+    select: { key: true, name: true, toolkit: true },
+  });
+
+  const surplus: SurplusToolkit[] = [];
+  for (const agent of agents) {
+    const allowed = new Set(NARROWED_TOOLKIT[agent.key] ?? []);
+    const tools = agent.toolkit.filter((tool) => !allowed.has(tool));
+    if (tools.length > 0) surplus.push({ key: agent.key, name: agent.name, tools });
+  }
+  return surplus;
 }
 
 /**
@@ -2036,21 +2160,15 @@ async function resyncSeeds(marker: string, keys: readonly string[]): Promise<Nar
   if ((await getSetting(marker))?.trim()) return null;
   const existing = await prisma.agent.findMany({
     where: { key: { in: [...keys] } },
-    select: { key: true, name: true, promptEditedAt: true, toolkit: true },
+    select: { key: true, name: true, promptEditedAt: true },
   });
   const seeds = new Map(AGENT_SEEDS.map((seed) => [seed.key, seed]));
 
-  const result: NarrowingResult = { updated: [], keptAsEdited: [], surplusTools: [] };
+  const result: NarrowingResult = { updated: [], keptAsEdited: [] };
 
   for (const agent of existing) {
     const seed = seeds.get(agent.key);
     if (!seed) continue;
-
-    const allowed = NARROWED_TOOLKIT[agent.key];
-    if (allowed) {
-      const surplus = agent.toolkit.filter((tool) => !allowed.includes(tool));
-      if (surplus.length > 0) result.surplusTools.push({ key: agent.key, name: agent.name, tools: surplus });
-    }
 
     if (agent.promptEditedAt) {
       result.keptAsEdited.push(agent.key);

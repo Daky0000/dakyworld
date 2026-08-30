@@ -43,7 +43,7 @@ import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
-import { applyColdEmailPlaybook, applyOutreachDoctrine, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts } from "./services/agentRegistry.js";
+import { applyColdEmailPlaybook, applyOutreachDoctrine, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
 import { drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
@@ -366,14 +366,20 @@ ensureSystemRoles()
           }
 
           const narrowed = await narrowSeededAgents();
-          if (!narrowed) return;
-          if (narrowed.updated.length) {
+          if (narrowed?.updated.length) {
             console.log(`  → Narrowed ${narrowed.updated.length} agent(s) to one job each: ${narrowed.updated.join(", ")}`);
           }
-          if (narrowed.keptAsEdited.length) {
+          if (narrowed?.keptAsEdited.length) {
             console.log(`  → Left alone because you have rewritten their prompts: ${narrowed.keptAsEdited.join(", ")}`);
           }
-          for (const surplus of narrowed.surplusTools) {
+
+          // Said on every boot, and not inside the pass above. The pass runs
+          // once ever and has already run everywhere, so a surplus computed in
+          // there was reported on one boot months ago and never again — which
+          // is why seven of the fourteen narrowed agents could go without an
+          // entry and nothing anywhere said so. Nothing here revokes: the
+          // untick is the Owner's.
+          for (const surplus of await surplusToolkits()) {
             console.log(
               `  → ${surplus.name} still holds ${surplus.tools.join(", ")} — its narrowed job has no use for those. Untick them on the Agents screen if you agree.`,
             );

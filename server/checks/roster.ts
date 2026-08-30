@@ -24,7 +24,16 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AGENT_SEEDS, PROMPT_LAYERS, ensureAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts } from "../src/services/agentRegistry.js";
+import {
+  AGENT_SEEDS,
+  NARROWED,
+  NARROWED_TOOLKIT,
+  PROMPT_LAYERS,
+  ensureAgents,
+  reconcileSeedToolkits,
+  refreshUneditedSeedPrompts,
+  surplusToolkits,
+} from "../src/services/agentRegistry.js";
 import { invokeTool, matchesGlob } from "../src/services/tools/invoke.js";
 import { listAllTools } from "../src/services/tools/catalogue.js";
 import { WRITER_JOBS } from "../src/services/writers/registry.js";
@@ -298,6 +307,44 @@ if (offeredBefore) {
   });
 }
 clearSettingsCache();
+
+// --- 6a. The narrowed toolkits ----------------------------------------------
+//
+// `NARROWED_TOOLKIT` covered seven of the fourteen agents in `NARROWED`, and
+// the seven without an entry were silently exempt from the only report that
+// says an agent is still holding a permission its one job does not need.
+for (const key of Object.keys(NARROWED_TOOLKIT)) {
+  check((NARROWED as readonly string[]).includes(key), `${key} has a narrowed toolkit and is in NARROWED`);
+  for (const tool of NARROWED_TOOLKIT[key]) {
+    check(toolKeys.has(tool), `${key}: narrowed toolkit names ${tool}, which is a real tool`);
+  }
+}
+for (const key of NARROWED) {
+  check(Boolean(NARROWED_TOOLKIT[key]), `${key} was narrowed to one job, so it has a toolkit to be measured against`);
+}
+
+// The report has to survive the pass being over. It was computed inside
+// `resyncSeeds()`, which returns null the moment `agents.oneJobPass` is set —
+// so on every database that has already run the split it reported nothing, for
+// ever, and an entry added to the table changed nothing observable.
+const surplus = await surplusToolkits();
+console.log(
+  surplus.length
+    ? `
+${surplus.length} narrowed agent(s) hold a tool their one job does not need:`
+    : `
+No narrowed agent is holding a surplus tool.`,
+);
+for (const row of surplus) console.log(`  ${row.name}: ${row.tools.join(", ")}`);
+check(
+  surplus.every((row) => (NARROWED as readonly string[]).includes(row.key)),
+  "the surplus report only speaks about agents a judgement has been made about",
+);
+// Nothing here revokes, which is the rule that makes the whole table safe.
+for (const row of surplus) {
+  const held = await prisma.agent.findUniqueOrThrow({ where: { key: row.key }, select: { toolkit: true } });
+  check(row.tools.every((tool) => held.toolkit.includes(tool)), `${row.key}: reporting a surplus tool did not take it away`);
+}
 
 // --- 6b. The boundary, over the real gate ----------------------------------
 //
