@@ -1,5 +1,6 @@
 import type { AgentDepartment, AgentHireRequest, HireRequestStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
+import { remember, subjectOf } from "./memory.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { listAllTools } from "../tools/catalogue.js";
 import { sendSlackBlocks, slackConfigured, updateSlack } from "../../lib/slack.js";
@@ -709,9 +710,83 @@ export async function applyHire(requestId: string, decided: DecidedBy & { by?: s
     }
   }
 
+  await onboard(agent, request);
+
   console.log(`[hiring] ${agent.key} created — approved by ${decided.slackUserId ?? decided.userId ?? decided.by ?? "unknown"}`);
   await settleHireCard(requestId, decided.slackUserId ?? decided.userId ?? decided.by ?? null);
   return { agentKey: agent.key, requestId, gapId: request.gapId, resumedTaskId };
+}
+
+/**
+ * What a newly hired agent knows before its first task.
+ *
+ * A hire arrives with a prompt, a toolkit and no memory at all, so its first
+ * task is worked with less context than the same agent will have on its second
+ * — and the two facts that would help most are known at exactly this moment
+ * and nowhere afterwards: why it was employed, and who already does the
+ * nearest thing.
+ *
+ * **Both are facts from the hiring decision, not lessons anybody invented.**
+ * The gap is what an agent actually said was missing, in its own words. The
+ * overlaps are what `findOverlaps()` put on the card the person approved. An
+ * onboarding that summarised other agents' finished work would be this system
+ * telling a new colleague what it guessed their job was like, which is worse
+ * than silence.
+ *
+ * **`AGENT` scope against `self`, not `SHARED` against `company`.** `self` is
+ * recalled on every task for this agent and nobody else, which is exactly the
+ * reach these two want. Filing them as shared would put one agent's induction
+ * into all fifty prompts for ever.
+ *
+ * Never throws. An agent that exists without its induction is a small loss; a
+ * hire that half-happened because a memory write failed is a real one.
+ */
+async function onboard(agent: { key: string; name: string }, request: AgentHireRequest): Promise<void> {
+  try {
+    if (request.gapId) {
+      const gap = await prisma.agentGap.findUnique({ where: { id: request.gapId } });
+      if (gap) {
+        const askers = [...new Set([gap.requestedByKey, ...gap.requestedByKeys])];
+        await remember({
+          agentKey: agent.key,
+          kind: "FACT",
+          subject: subjectOf.self(),
+          content:
+            `You were employed because ${askers.length} agent(s) hit work needing somebody who could ${gap.skillNeeded}, ` +
+            `and found nobody on the roster to hand it to. They were: ${askers.join(", ")}. ` +
+            `That is the work you exist for; anything else is somebody else's and goes back with handOff.`,
+          importance: 5,
+        });
+      }
+    }
+
+    // Who already does some of this. The same calculation the approver read on
+    // the card, so the new agent's picture of the roster and the person's are
+    // the same picture.
+    const overlaps = await findOverlaps(request.mission, request.skills);
+    if (overlaps.length > 0) {
+      await remember({
+        agentKey: agent.key,
+        kind: "LESSON",
+        subject: subjectOf.self(),
+        content:
+          `Closest crafts to yours on the roster, from the check made when you were employed: ` +
+          // Names and a percentage, and deliberately not the matched terms.
+          // `findSecret()` reads a long run of slash-joined words as an encoded
+          // secret and refuses the whole memory — correctly, and it caught this
+          // exact string. The shared words were noise to the reader anyway; who
+          // and how close is the useful part.
+          `${overlaps.map((overlap) => `${overlap.name}, ${Math.round(overlap.score * 100)}% overlap`).join("; ")}. ` +
+          `Where a job sits between you and one of them, ask them with consult before deciding it is yours — ` +
+          `a duplicate of work somebody already does is the thing employing you was weighed against.`,
+        importance: 4,
+      });
+    }
+  } catch (err) {
+    // A hire that half-happened because a memory write failed is worse than an
+    // agent starting without its induction.
+    console.error(`[hiring] could not write ${agent.key}'s first memories:`, (err as Error).message);
+  }
 }
 
 /**

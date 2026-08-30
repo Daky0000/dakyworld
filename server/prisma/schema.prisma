@@ -1927,6 +1927,25 @@ model Agent {
 
   /// 0 observe · 1 draft · 2 recommend · 3 execute-with-policy · 4 autonomous · 5 delegated.
   autonomyLevel Int     @default(1)
+
+  /// How many tasks this agent may start in a day, a week and a month.
+  ///
+  /// A different ceiling from the spending one and needed alongside it: a
+  /// budget says how much may be spent and says nothing about how *often* an
+  /// agent acts, so an agent on cheap work can run all day inside its budget
+  /// and still be doing more than anybody meant it to. This is the pace.
+  ///
+  /// Null means no ceiling of that kind. **Zero means none at all** — a real
+  /// value somebody may deliberately want, and the reason nothing here uses
+  /// the usual `> 0` guard, which would read it as unset and quietly restore
+  /// no limit.
+  ///
+  /// Counted by calendar period in UTC, matching `budgets.periodStart` — a
+  /// ceiling that rolls over at a different instant from the one the reports
+  /// total against is one the reports cannot explain.
+  maxTasksPerDay   Int?
+  maxTasksPerWeek  Int?
+  maxTasksPerMonth Int?
   /// Sits above the autonomy level: on means nothing it decides takes effect.
   dryRun        Boolean @default(true)
 
@@ -2495,6 +2514,8 @@ model AgentTask {
   updatedAt DateTime @updatedAt
 
   @@index([agentKey, status])
+  /// The pace ceiling's query: what this agent has begun since a period started.
+  @@index([agentKey, startedAt])
   @@index([status, priority, scheduledFor])
   @@index([createdAt])
   @@index([parentId])

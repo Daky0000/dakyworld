@@ -282,6 +282,61 @@ console.log("\nWork already waiting holds up a rise");
   void old;
 }
 
+console.log("\nActivating a batch");
+{
+  // Every specialist ships as a draft and the roster is fifty-one, so the
+  // ordinary first act on this screen is fifty-one visits to a drawer.
+  const KEYS = ["check.bulk.a", "check.bulk.b"];
+  await prisma.agent.deleteMany({ where: { key: { in: KEYS } } });
+  for (const key of KEYS) {
+    await prisma.agent.create({
+      data: {
+        key,
+        name: key,
+        title: key,
+        tier: "SUB_AGENT",
+        department: "TECHNOLOGY",
+        status: "DRAFT",
+        mission: "Exists for one test run.",
+        custom: true,
+        boundaryViolations: 2,
+      },
+    });
+  }
+
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/agents/bulk`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ keys: KEYS, status: "ACTIVE" }),
+  });
+  check("a batch can be switched on", res.status === 200, `status ${res.status}`);
+  const body = (await res.json()) as { updated: number };
+  check("and it says how many moved", body.updated === 2, `${body.updated}`);
+  const rows = await prisma.agent.findMany({ where: { key: { in: KEYS } } });
+  check("they really are active", rows.every((row) => row.status === "ACTIVE"), rows.map((r) => r.status).join(","));
+  // Being set to Active *is* the human review the strikes were counting up to,
+  // exactly as on the single-agent route.
+  check("and their boundary strikes are cleared", rows.every((row) => row.boundaryViolations === 0), rows.map((r) => r.boundaryViolations).join(","));
+
+  // Status only. A bulk control over autonomy would be one click that widened
+  // the whole workforce, which is the thing this system is built not to have.
+  const widening = await fetch(`http://127.0.0.1:${PORT}/api/agents/bulk`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ keys: KEYS, status: "ACTIVE", autonomyLevel: 4, dryRun: false }),
+  });
+  check("autonomy cannot be set in bulk", widening.status === 200, `status ${widening.status}`);
+  const unchanged = await prisma.agent.findMany({ where: { key: { in: KEYS } } });
+  check("the level did not move", unchanged.every((row) => row.autonomyLevel === 1), unchanged.map((r) => r.autonomyLevel).join(","));
+  check("and dry run stayed on", unchanged.every((row) => row.dryRun), unchanged.map((r) => r.dryRun).join(","));
+
+  // `/bulk` is one segment on a router carrying `/:key`. Mounted after it,
+  // every request would be read as an agent called "bulk".
+  check("it was not read as an agent key", body.updated !== undefined);
+
+  await prisma.agent.deleteMany({ where: { key: { in: KEYS } } });
+}
+
 await reset();
 server.close();
 console.log(bad ? `\n${bad} PROBLEM(S)` : `\nAutonomy changes are recorded and the evidence adds up.`);

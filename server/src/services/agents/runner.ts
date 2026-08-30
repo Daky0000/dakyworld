@@ -23,6 +23,7 @@ import { recordCreated, transition } from "./state.js";
 import { heldByRehearsal } from "../rehearsals/policy.js";
 import { wakeOne } from "../rehearsals/wake.js";
 import { check, scopesForAgent, type BudgetState } from "../budgets.js";
+import { hasPace, paceFor } from "./pace.js";
 
 /**
  * What actually runs an agent.
@@ -2030,7 +2031,13 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
     },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     take: capacity * 8,
-    select: { id: true, agentKey: true },
+    select: {
+      id: true,
+      agentKey: true,
+      // Carried on the row that is already being read, so the pace check below
+      // costs a count and not a second lookup per task.
+      agent: { select: { key: true, name: true, maxTasksPerDay: true, maxTasksPerWeek: true, maxTasksPerMonth: true } },
+    },
   });
   if (due.length === 0) return 0;
 
@@ -2039,6 +2046,7 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
   const started: string[] = [];
   const takenThisTick = new Set<string>();
   let heldByBudget = 0;
+  let heldByPace = 0;
   for (const task of due) {
     if (started.length >= capacity) break;
     if (running.has(task.id)) continue;
@@ -2056,6 +2064,22 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
       continue;
     }
 
+    // How often, as opposed to how much. A budget says nothing about pace, so
+    // an agent on cheap work can run all day inside its ceiling and still act
+    // far more than anybody meant. Held in the same place and on the same
+    // terms: the task stays QUEUED with its place kept and begins on the tick
+    // after the period rolls over.
+    //
+    // The guard costs nothing for an agent with no ceilings — no query is made
+    // at all — which is every agent until somebody sets one.
+    if (hasPace(task.agent)) {
+      const pace = await paceFor(task.agent, now);
+      if (pace.atCeiling) {
+        heldByPace += 1;
+        continue;
+      }
+    }
+
     takenThisTick.add(task.agentKey);
     started.push(task.id);
     // Deliberately not awaited: the scheduler tick must not be held open for
@@ -2067,6 +2091,9 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
   // exactly like a workforce with nothing to do, and the whole point of a
   // ceiling somebody can live with is that they can tell when it has bitten.
   if (heldByBudget > 0) console.log(`[agent] ${heldByBudget} task(s) held: over a spending ceiling`);
+  // Said out loud for the same reason as the budget line above: a workforce
+  // that has quietly stopped looks exactly like a workforce with nothing to do.
+  if (heldByPace > 0) console.log(`[agent] ${heldByPace} task(s) held: their agent is at its task ceiling for the period`);
   return started.length;
 }
 

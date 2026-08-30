@@ -46,6 +46,9 @@ leadsRouter.use(
       // somebody who may look at leads cannot be told how many they are about
       // to be warned about.
       { path: /^\/bulk\/count$/, permission: "leads.view" },
+      // Removing lists in bulk can remove the leads in them, so it is gated as
+      // a lead delete rather than as an edit.
+      { path: /^\/groups\/bulk\/delete$/, permission: "leads.delete" },
     ],
   }),
 );
@@ -439,6 +442,62 @@ leadsRouter.patch("/groups/:id", async (req, res, next) => {
 });
 
 // Deleting a group never deletes leads — they fall back to "Ungrouped".
+/**
+ * Removes several lists at once, optionally with what is in them.
+ *
+ * A workbook import opens one list per worksheet, so a bad import is thirty-nine
+ * lists rather than one, and removing them one at a time is thirty-nine
+ * confirmations for a single decision.
+ *
+ * `expect` is the total number of leads across all of them when `withLeads` is
+ * set — the same exchange every other filter delete here makes, and it matters
+ * more in bulk because the number on the screen is a sum of thirty-nine that
+ * nobody is going to re-add in their head.
+ *
+ * Mounted above `/groups/:id`, or `bulk` is read as a list id.
+ */
+leadsRouter.post("/groups/bulk/delete", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        ids: z.array(z.string().cuid()).min(1).max(200),
+        /** Delete the leads too, rather than turning them loose. */
+        withLeads: z.boolean().default(false),
+        expect: z.number().int().min(0).optional(),
+      })
+      .parse(req.body);
+
+    if (!input.withLeads) {
+      const freed = await prisma.lead.updateMany({ where: { groupId: { in: input.ids } }, data: { groupId: null } });
+      const removed = await prisma.leadGroup.deleteMany({ where: { id: { in: input.ids } } });
+      return res.json({ listsRemoved: removed.count, leadsUngrouped: freed.count, deleted: 0, keptWithProposals: [] });
+    }
+
+    const result = await deleteLeads({
+      where: { groupId: { in: input.ids }, rehearsal: false },
+      expect: input.expect,
+    });
+
+    // A list holding a lead that had to be kept back keeps the list too, or
+    // the proposal loses the only record of which batch it came out of. Worked
+    // out per list rather than all-or-nothing: thirty-eight empty lists should
+    // still go because the thirty-ninth had a proposal in it.
+    const stillHolding = await prisma.lead.findMany({
+      where: { groupId: { in: input.ids } },
+      select: { groupId: true },
+      distinct: ["groupId"],
+    });
+    const keep = new Set(stillHolding.map((row) => row.groupId).filter((id): id is string => Boolean(id)));
+    const removable = input.ids.filter((id) => !keep.has(id));
+    const removed = await prisma.leadGroup.deleteMany({ where: { id: { in: removable } } });
+
+    res.json({ ...result, listsRemoved: removed.count, listsKept: [...keep] });
+  } catch (err) {
+    if (err instanceof BulkCountChanged) return res.status(409).json({ error: err.message, expected: err.expected, actual: err.actual });
+    next(err);
+  }
+});
+
 /**
  * Removes a list. `?withLeads=true` removes what is in it as well.
  *

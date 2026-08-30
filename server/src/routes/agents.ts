@@ -13,6 +13,7 @@ import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, re
 import { AGENT_SEEDS, PROMPT_LAYERS, surplusToolkits } from "../services/agentRegistry.js";
 import { closeEscalation, openEscalations } from "../services/agents/escalationDigest.js";
 import { pendingFor } from "../services/approvals.js";
+import { paceUsage } from "../services/agents/pace.js";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { resolveBrief } from "../services/writers/brief.js";
 import { briefSettingKey, jobsOwnedBy, writerJob } from "../services/writers/registry.js";
@@ -148,6 +149,54 @@ agentsRouter.get("/", async (_req, res, next) => {
 });
 
 /**
+ * Switch several agents on, off or out at once.
+ *
+ * The roster is fifty-one agents and every specialist ships as a draft, so the
+ * ordinary first act on this screen — "start the ones I want working" — was
+ * fifty-one visits to a drawer. Activating in bulk is the same decision made
+ * once.
+ *
+ * **Status only, and deliberately.** Autonomy and dry run decide whether
+ * software may act on a client without being asked; those are decided one
+ * agent at a time, with a reason, and they carry a guard that reads the work
+ * already waiting. A bulk control over them would be a single click that
+ * widened the whole workforce, which is exactly the thing this system is built
+ * not to have. Activating an agent only lets it pick up the queue it already
+ * has, at whatever autonomy it already holds — which for everything on the
+ * roster is level 1 with dry run on.
+ *
+ * Mounted above `/:key`: `bulk` is one segment and would otherwise be read as
+ * an agent key.
+ */
+agentsRouter.patch("/bulk", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        keys: z.array(z.string().max(64)).min(1).max(200),
+        status: z.enum(["DRAFT", "ACTIVE", "PAUSED", "RETIRED"]),
+      })
+      .parse(req.body);
+
+    const result = await prisma.agent.updateMany({
+      where: { key: { in: input.keys } },
+      // Switching one back on clears its boundary strikes, exactly as the
+      // single-agent route does — being set to Active *is* the human review
+      // those strikes were counting up to.
+      data: { status: input.status, ...(input.status === "ACTIVE" ? { boundaryViolations: 0 } : {}) },
+    });
+
+    // What is now able to start, which is the question somebody activating a
+    // batch actually has.
+    const queued = await prisma.agentTask.count({
+      where: { agentKey: { in: input.keys }, status: "QUEUED", agent: { status: "ACTIVE" } },
+    });
+    res.json({ updated: result.count, queuedNowStartable: queued });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Every question waiting on a person, oldest first.
  *
  * The same rows the weekly Slack digest reads. **Slack must never be the only
@@ -238,6 +287,15 @@ agentsRouter.get("/:key", async (req, res, next) => {
       resettable: !agent.custom,
       /** True when it is mid-task, so the screen can say a change lands after this one. */
       busy: isBusy(agent.key),
+      /**
+       * What it has started in each period, against its ceiling.
+       *
+       * Returned whether or not a ceiling is set: "12 today, no limit" is the
+       * number somebody needs in order to decide what the limit should be, and
+       * a screen that only shows a count once a limit exists cannot help them
+       * pick one.
+       */
+      pace: await paceUsage(agent),
     });
   } catch (err) {
     next(err);
@@ -362,6 +420,16 @@ const patchInput = z.object({
   /** 0 observe · 1 draft · 2 recommend · 3 execute-with-policy · 4 autonomous · 5 delegated. */
   autonomyLevel: z.number().int().min(0).max(5).optional(),
   dryRun: z.boolean().optional(),
+  /**
+   * How many tasks this agent may start in a day, a week and a month.
+   *
+   * `null` clears a ceiling; **0 is a ceiling of none**, which is the obvious
+   * way to stop an agent taking work without retiring it. Nullable rather than
+   * optional-only so the screen can turn one off.
+   */
+  maxTasksPerDay: z.number().int().min(0).max(10_000).nullish(),
+  maxTasksPerWeek: z.number().int().min(0).max(50_000).nullish(),
+  maxTasksPerMonth: z.number().int().min(0).max(200_000).nullish(),
   /**
    * Why the autonomy level or the dry-run flag is moving.
    *

@@ -39,7 +39,7 @@ async function reset() {
     await prisma.agentTask.deleteMany({ where: { leadId: { in: ids } } });
     await prisma.lead.deleteMany({ where: { id: { in: ids } } });
   }
-  await prisma.leadGroup.deleteMany({ where: { name: GROUP } });
+  await prisma.leadGroup.deleteMany({ where: { name: { startsWith: GROUP } } });
   await prisma.agent.deleteMany({ where: { key: "check.bulk.agent" } });
 }
 
@@ -171,6 +171,51 @@ console.log("\nRehearsal leads are not swept up");
   const all = await prisma.lead.count();
   check("a rehearsal lead is outside 'everything matching'", everything < all, `${everything} of ${all}`);
   await prisma.lead.delete({ where: { id: scratch.id } });
+}
+
+console.log("\nRemoving several lists at once");
+{
+  // A workbook import opens one list per worksheet, so a bad import is
+  // thirty-nine lists rather than one.
+  const lists = await Promise.all(
+    [1, 2, 3].map((n) => prisma.leadGroup.create({ data: { name: `${GROUP} ${n}`, slug: `bulk-check-list-${n}` } })),
+  );
+  for (const [i, list] of lists.entries()) {
+    await prisma.lead.create({ data: { contactName: `${MARK}-list-${i}`, groupId: list.id } as never });
+  }
+  // The third one holds a lead with a priced document on it.
+  const stuck = await prisma.lead.findFirstOrThrow({ where: { contactName: `${MARK}-list-2` } });
+  await prisma.proposal.create({
+    data: { leadId: stuck.id, title: "A priced document", serviceType: "Website Build", scopeSummary: "A page.", priceAmount: 500 } as never,
+  });
+
+  const ids = lists.map((list) => list.id);
+  const { deleteLeads: _unused } = await import("../src/services/leadBulk.js");
+  void _unused;
+
+  // Emptying is the default: the leads come out ungrouped and survive.
+  const first = await prisma.lead.updateMany({ where: { groupId: lists[0].id }, data: { groupId: null } });
+  check("emptying a list frees its leads rather than deleting them", first.count === 1, `${first.count}`);
+
+  // With the leads, over the real service the route calls.
+  const before = await countTarget({ where: buildWhere({ groupId: lists[1].id }) });
+  const result = await deleteLeads({ where: { groupId: { in: [lists[1].id, lists[2].id] }, rehearsal: false }, expect: before + 1 });
+  check("leads across several lists go in one call", result.deleted === 1, `${result.deleted}`);
+  check("and the one with a proposal is kept", result.keptWithProposals.length === 1, `${result.keptWithProposals.length}`);
+
+  // Worked out per list, not all-or-nothing: an empty list should still go
+  // because a different one had a proposal in it.
+  const stillHolding = await prisma.lead.findMany({
+    where: { groupId: { in: ids } },
+    select: { groupId: true },
+    distinct: ["groupId"],
+  });
+  const keep = new Set(stillHolding.map((row) => row.groupId));
+  check("only the list still holding something is kept", keep.size === 1 && keep.has(lists[2].id), `${[...keep]}`);
+
+  await prisma.proposal.deleteMany({ where: { leadId: stuck.id } });
+  await prisma.lead.deleteMany({ where: { contactName: { startsWith: `${MARK}-list` } } });
+  await prisma.leadGroup.deleteMany({ where: { id: { in: ids } } });
 }
 
 await reset();
