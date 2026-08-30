@@ -1089,6 +1089,44 @@ export interface PromptRegion {
 }
 
 /**
+ * Who never writes a sentence a client, a prospect or the public reads.
+ *
+ * Classified by mission and toolkit on 29 Aug 2026 — not by whether a tool is
+ * `outward`, which looked like the obvious signal and was wrong: a writer
+ * drafts through `message.draft` / `content.draft`, which are `outward: false`
+ * by design (sending is a separate, gated step), so that filter would have
+ * struck brand voice from `outreach.writer` and `content.writer` — the two
+ * agents that need it most.
+ *
+ * Every executive and every purely internal research/ops/technical role is
+ * here; every agent that drafts a proposal, an email, a page, a report or a
+ * caption a client or the public actually reads is deliberately not. Five
+ * were genuine judgement calls: `mail.room` and `delivery.handover` keep it
+ * (client email and a handover pack a client reads); `design.social` and
+ * `video.editor` keep it (a hook or a caption is prose, not layout);
+ * `design.graphic` and `billing.invoicer` drop it (print layout of existing
+ * content, and template-driven line items, neither is voice-governed prose).
+ */
+const NO_BRAND_VOICE = new Set([
+  // Executive and board — strategic reasoning over other agents' output, read-only toolkits.
+  "ceo", "board.chair", "cro", "cmo", "coo", "cto", "cfo", "cco",
+  // Revenue — pipeline, research and infrastructure, not writing.
+  "email.sequencer", "analytics.upsell", "lead.orchestrator", "lead.enricher", "lead.capture", "email.deliverability",
+  // Delivery — planning, not client correspondence.
+  "delivery.director",
+  // Finance — arithmetic and template documents.
+  "careplan.manager", "billing.invoicer", "finance.forecast",
+  // Marketing — technical audits and internal briefs, or layout of others' content.
+  "design.graphic", "review.look", "seo.specialist", "design.ux", "seo.local", "seo.keywords",
+  // Technology — nothing here is read by anybody outside the company.
+  "dev.web", "dev.hosting", "sec.analyst", "qa.tester", "dev.automation", "analytics.engine", "integration.manager",
+  // Client — analysis, not correspondence.
+  "analytics.churn",
+  // Risk and People — internal governance.
+  "risk.qa", "people.recruiter", "people.ops",
+]);
+
+/**
  * The prompt, in labelled pieces.
  *
  * `systemPrompt()` below is this joined together, so there is exactly one
@@ -1122,16 +1160,30 @@ export async function composePrompt(
       editable: false,
       text: agent.skills.length > 0 ? `What you are relied on for:\n${agent.skills.map((skill) => `- ${skill}`).join("\n")}` : "",
     },
-    { key: "brand", label: "Who Dakyworld is", source: "services/dakyworld.ts — the same for every agent.", editable: false, text: BRAND },
-    {
-      key: "contact",
-      label: "The company's details",
-      source: "Settings → System. Change it there and every agent and document follows.",
-      editable: false,
-      text: contactBlock(profile),
-    },
-    { key: "voice", label: "How it writes", source: "services/dakyworld.ts — the same for every agent.", editable: false, text: VOICE },
   ];
+
+  // Who Dakyworld is and how it writes — 390 tokens, identical on every
+  // agent's prompt whether or not it ever produces a sentence a client reads.
+  // An agent that only reads numbers or fixes a server has no use for "sign
+  // off as Dan" or the service catalogue's pitch, and paying for it on every
+  // one of its tasks bought nothing. Held to a deny-list rather than an
+  // allow-list: an agent the roster doesn't yet know about — one the Agent
+  // Creator hires tomorrow — defaults to *keeping* it, which costs tokens
+  // rather than silently shipping off-brand prose from a writer nobody added
+  // to a list.
+  if (!NO_BRAND_VOICE.has(agent.key)) {
+    regions.push({ key: "brand", label: "Who Dakyworld is", source: "services/dakyworld.ts — the same for every agent.", editable: false, text: BRAND });
+  }
+  regions.push({
+    key: "contact",
+    label: "The company's details",
+    source: "Settings → System. Change it there and every agent and document follows.",
+    editable: false,
+    text: contactBlock(profile),
+  });
+  if (!NO_BRAND_VOICE.has(agent.key)) {
+    regions.push({ key: "voice", label: "How it writes", source: "services/dakyworld.ts — the same for every agent.", editable: false, text: VOICE });
+  }
 
   // The two kinds are presented as two things, because they carry different
   // authority. What an agent worked out itself is a conclusion the record can
