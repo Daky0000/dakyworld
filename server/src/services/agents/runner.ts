@@ -24,6 +24,7 @@ import { heldByRehearsal } from "../rehearsals/policy.js";
 import { wakeOne } from "../rehearsals/wake.js";
 import { check, scopesForAgent, type BudgetState } from "../budgets.js";
 import { hasPace, paceFor } from "./pace.js";
+import { planFor } from "./retry.js";
 
 /**
  * What actually runs an agent.
@@ -1743,27 +1744,54 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         });
       } catch (err) {
         const message = err instanceof AnalystError ? err.message : (err as Error).message;
-        await step(task.id, "FAILED", message);
 
-        // A rate limit is not a broken task — it goes back in the queue unless
-        // it has already failed too many times. Its checkpoint is kept either
-        // way, so the retry continues the conversation rather than repeating it.
-        const retryable = err instanceof AnalystError && err.status === 429;
-        const attempts = task.attempts + 1;
-        if (retryable && attempts < MAX_ATTEMPTS) {
+        // Whose fault is this? A model provider being rate-limited, busy or
+        // unreachable is not a fact about this task, and ending a task for it
+        // throws away a conversation that was going fine. See `retry.ts` — the
+        // three answers are wait, ask, or fail, and only the last one ends
+        // anything.
+        const plan = planFor(err, task.retryCount);
+
+        if (plan.remedy === "wait") {
+          // PAUSED, in every way that matters: the checkpoint is kept, the
+          // agent is freed, the row stays QUEUED with a future `scheduledFor`
+          // that the tick honours, and `retryReason` says why — which is what
+          // the screens draw as "Paused, back at 14:35".
+          //
+          // Deliberately **not** counted against `attempts`. That budget is for
+          // runs that died; spending it on a busy vendor is how a morning of
+          // free-model rate limits used to fail a task for good.
+          await step(task.id, "PAUSED", plan.reason);
           await transition(task.id, {
             to: "QUEUED",
-            reason: `Rate-limited by the model provider; waiting five minutes (attempt ${task.attempts}).`,
+            reason: plan.reason,
             actor: "runner",
             expect: ["RUNNING"],
             data: {
-              scheduledFor: new Date(Date.now() + 5 * 60_000),
+              scheduledFor: new Date(Date.now() + plan.waitMinutes * 60_000),
+              retryCount: { increment: 1 },
+              retryReason: plan.reason,
               error: message,
               runOwner: null,
               startedAt: null,
             },
           });
           return { status: "QUEUED", summary: null };
+        }
+
+        await step(task.id, "FAILED", message);
+
+        if (plan.remedy === "ask") {
+          // A question, not a corpse. BLOCKED keeps the checkpoint, raises an
+          // escalation and puts the task on the list of things waiting for a
+          // person — and "Carry on" resumes the same conversation once the key,
+          // the credit or the provider is back.
+          return finishTask(task.id, "BLOCKED", {
+            blockedReason: plan.reason,
+            error: message,
+            costUsd: 0,
+            toolCalls: counters.toolCalls,
+          });
         }
 
         return finishTask(task.id, "FAILED", { error: message, costUsd: 0, toolCalls: counters.toolCalls });
@@ -1808,7 +1836,10 @@ async function interruptedTask(
       costUsd: data.costUsd.toFixed(6),
       toolCalls: data.toolCalls,
       dryRunCalls: data.dryRunCalls,
-      ...(data.progressed ? { attempts: 0 } : {}),
+      // A run that got further than the last one had a provider answer it, so
+      // the wait budget starts again too. Both counters follow the same test —
+      // progress — for the same reason: neither is a fact about the task.
+      ...(data.progressed ? { attempts: 0, retryCount: 0, retryReason: null } : {}),
     },
   });
   return { status: "QUEUED", summary: null };
@@ -1896,6 +1927,13 @@ async function finishTask(
       ...(data.costUsd !== undefined ? { costUsd: data.costUsd.toFixed(6) } : {}),
       ...(data.toolCalls !== undefined ? { toolCalls: data.toolCalls } : {}),
       ...(data.dryRunCalls !== undefined ? { dryRunCalls: data.dryRunCalls } : {}),
+      // The stall is over: this run reached an ending, which means a provider
+      // answered. Clearing it here rather than on the claim is deliberate —
+      // clearing on a claim would reset the wait budget on the very attempt the
+      // backoff exists to space out, and the run would poll a dead vendor for
+      // ever five minutes at a time.
+      retryCount: 0,
+      retryReason: null,
     },
   });
 

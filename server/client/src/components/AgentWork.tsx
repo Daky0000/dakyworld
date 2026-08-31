@@ -197,13 +197,23 @@ function Group({
                   <StatusDot tone={STATUS_TONE[task.status]} />
                   <span className="truncate text-sm font-medium">{task.title}</span>
                 </span>
-                {(task.summary || task.blockedReason || task.error) && (
+                {(task.pausedBecause || task.summary || task.blockedReason || task.error) && (
                   <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-ink/55">
-                    {task.blockedReason ?? task.error ?? task.summary}
+                    {task.pausedBecause ?? task.blockedReason ?? task.error ?? task.summary}
                   </span>
                 )}
                 <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">
-                  <span>{STATUS_LABEL[task.status]}</span>
+                  {/* Paused reads instead of "queued", not beside it. The
+                      status is the same and the news is not: this one is
+                      waiting on a vendor and will start itself. */}
+                  <span className={task.paused ? "text-amber-700" : undefined}>
+                    {task.paused ? "paused" : STATUS_LABEL[task.status]}
+                  </span>
+                  {task.paused && task.pausedUntil && (
+                    <span className="text-amber-700">
+                      back <RelativeTime value={task.pausedUntil} />
+                    </span>
+                  )}
                   {task.toolCalls > 0 && <span>{task.toolCalls} tool call{task.toolCalls === 1 ? "" : "s"}</span>}
                   {task.dryRunCalls > 0 && <span className="text-amber-700">{task.dryRunCalls} prepared</span>}
                   {task.delegated > 0 && <span>{task.delegated} delegated</span>}

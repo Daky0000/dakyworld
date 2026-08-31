@@ -32,6 +32,11 @@ const navItems: NavItem[] = [
     needs: "leads.view",
     children: [
       { to: "/leads", label: "All leads", end: true, needs: "leads.view" },
+      // Above Capture on purpose. Capture answers "how do we search"; a hunt
+      // answers "why that search", and the second is the one somebody should
+      // meet first — a search with no reason behind it is what fills a pipeline
+      // with businesses nobody can explain.
+      { to: "/hunts", label: "Hunts", needs: "leads.sources" },
       { to: "/lead-sources", label: "Capture", needs: "leads.sources" },
       { to: "/leads/import", label: "Import", needs: "leads.import" },
     ],

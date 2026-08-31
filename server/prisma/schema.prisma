@@ -356,6 +356,8 @@ model Lead {
   agentTasks   AgentTask[]
   /// Set when this lead is a rehearsal's scratch record. Deleted with it.
   rehearsalRun Rehearsal?
+  /// What each hunt decided about this business, and under which thesis.
+  verdicts     LeadVerdict[]
 
   /// Evidence bundles related to this lead, stored at `evidence:/${lead_id}/${source}` paths.
   evidence       Evidence[]
@@ -855,8 +857,10 @@ model ScraperSource {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  runs  ScraperRun[]
-  leads Lead[]
+  runs   ScraperRun[]
+  leads  Lead[]
+  /// The reasons this search exists. A source can serve more than one.
+  theses LeadThesis[]
 
   @@index([enabled, scheduleEnabled])
   @@index([leadGroupId])
@@ -897,6 +901,225 @@ model ScraperRun {
 
   @@index([sourceId, startedAt])
   @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Lead hunting — the reason a search was run
+// ---------------------------------------------------------------------------
+
+/// Why a hunt was run, and what would make a business found by it worth having.
+///
+/// A `ScraperSource` says *how* to search — an actor, an input, a schedule. It
+/// has never said *why*, and without a why there is nothing to judge a result
+/// against: a run either returned rows or it did not. That is how a pipeline
+/// fills up with four hundred businesses nobody can explain the presence of.
+///
+/// A thesis is the missing sentence. "Businesses trading well enough to be on
+/// Maps with no website at all" is a target; "they are already being found and
+/// have nowhere to send anyone" is the reason; "no website, or a social page
+/// standing in for one" is the test that decides whether a particular business
+/// actually fits. Every lead this brings in carries the thesis it was hunted
+/// under, and every one that does not fit is rejected against a written rule
+/// rather than a mood.
+///
+/// Seeded from `services/hunt/theses.ts` and then left alone, the same contract
+/// `AGENT_SEEDS` honours: a deploy adds a thesis that does not exist yet and
+/// never overwrites one the Owner has edited.
+model LeadThesis {
+  id  String @id @default(cuid())
+  /// Stable slug. The seed addresses it by this and never by name.
+  key String @unique
+
+  name String
+  /// Who we are looking for, in a sentence a person would say out loud.
+  target String
+  /// **Why this target.** The sentence that has to exist before a run spends
+  /// money, and the one shown against every lead it brings in.
+  rationale String
+  /// What Dakyworld would sell them if the thesis holds. A target with no offer
+  /// behind it is a list, not a pipeline.
+  offer String
+
+  /// The signals that mean a business fits, one per line, in plain words.
+  /// Read by the judge alongside the audit; each one that fires is named in the
+  /// verdict, so a score can always be taken apart.
+  qualifiers    String[] @default([])
+  /// The signals that mean it never will. Any one of these rejects outright,
+  /// whatever the score — a competitor, a company already on our books, a
+  /// business too small to buy anything.
+  disqualifiers String[] @default([])
+
+  /// The score a lead must reach against this thesis to be kept.
+  minScore Int @default(55)
+
+  /// How many businesses one hunt keeps. Deliberately small: every one of them
+  /// is audited, and an audit costs money and takes a minute.
+  leadsPerRun Int @default(5)
+  /// Local times a hunt starts, "HH:mm" in `timezone`. Two a day by default.
+  runTimes    String[] @default([])
+  timezone    String   @default("Africa/Accra")
+
+  /// The configured search this thesis hunts with. Null means the thesis is
+  /// written but has nothing to run yet, which is a state worth being able to
+  /// see rather than one to prevent.
+  source   ScraperSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  sourceId String?
+
+  /// What happens to a lead that qualifies: the priority its follow-up task is
+  /// raised at, and the agent it is handed to. Null hands routing back to the
+  /// Lead Lifecycle Manager.
+  routePriority Int     @default(2)
+  routeAgentKey String?
+
+  /// Whether a business that fails is deleted or merely marked.
+  ///
+  /// Deleting is the Owner's instruction and the default: an unqualified lead
+  /// left in the pipeline is noise every list has to filter past. The row that
+  /// records the rejection (`LeadVerdict`) outlives the lead deliberately, so
+  /// tomorrow's hunt recognises the same business and does not pay to audit it
+  /// twice.
+  deleteRejected Boolean @default(true)
+
+  enabled   Boolean   @default(false)
+  lastRunAt DateTime?
+  nextRunAt DateTime?
+
+  /// Bumped in the seed when the shipped wording changes.
+  seedRevision Int       @default(1)
+  /// Set the first time somebody edits a seeded thesis, so a deploy knows to
+  /// leave it alone.
+  editedAt     DateTime?
+  /// True for a thesis somebody wrote here rather than one the seed shipped.
+  custom       Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hunts    LeadHunt[]
+  verdicts LeadVerdict[]
+
+  @@index([enabled, nextRunAt])
+}
+
+enum LeadHuntStatus {
+  QUEUED
+  /// Capturing, or auditing what capture returned.
+  RUNNING
+  /// Every lead it kept was judged.
+  SUCCEEDED
+  /// It ran, and some of what it captured could not be judged.
+  PARTIAL
+  FAILED
+}
+
+/// One cycle of one thesis: search, audit, judge, route or delete.
+///
+/// Separate from `ScraperRun`, which records what Apify was asked and what came
+/// back. This records what was *decided*, which is a different question with a
+/// different lifetime — the scraper run can be pruned and the reasoning behind
+/// a lead being in the pipeline should not go with it.
+model LeadHunt {
+  id String @id @default(cuid())
+
+  thesis   LeadThesis @relation(fields: [thesisId], references: [id], onDelete: Cascade)
+  thesisId String
+
+  status  LeadHuntStatus    @default(QUEUED)
+  trigger ScraperRunTrigger @default(SCHEDULED)
+
+  /// The capture this hunt started, when it started one. Plain column rather
+  /// than a relation: run history is pruned on a retention window and a hunt
+  /// has to survive its scraper run being deleted.
+  scraperRunId String?
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  /// What the search returned before any judgement.
+  captured  Int @default(0)
+  /// How many of those were actually looked at — audited, screenshotted, read.
+  audited   Int @default(0)
+  qualified Int @default(0)
+  rejected  Int @default(0)
+  /// Businesses already judged under this thesis, skipped before they cost anything.
+  skipped   Int @default(0)
+  /// Follow-up tasks raised for the ones that qualified.
+  routed    Int @default(0)
+
+  /// Apify and model spend attributed to this cycle.
+  costUsd Decimal @default(0) @db.Decimal(10, 6)
+
+  /// What the hunt would say if asked how it went. One paragraph, for a person.
+  summary String?
+  error   String?
+
+  verdicts LeadVerdict[]
+
+  @@index([thesisId, startedAt])
+  @@index([status])
+}
+
+enum LeadVerdictKind {
+  QUALIFIED
+  REJECTED
+  /// Looked at and could not be decided — usually the site would not load.
+  /// Kept rather than deleted: an unreachable website is not evidence of a bad
+  /// business, and treating it as one quietly removes every company whose host
+  /// was having a bad afternoon.
+  UNDECIDED
+}
+
+/// What was decided about one business under one thesis, and why.
+///
+/// **This row outlives the lead on purpose.** A rejected business is deleted
+/// from the pipeline, and if that were the end of it the next hunt would find
+/// the same company tomorrow, pay to audit it again, and reject it again — for
+/// ever, twice a day. `dedupeKey` here is what the next hunt checks before it
+/// spends anything, which makes this the tombstone as well as the record.
+///
+/// It is also the answer to "why is this lead in my pipeline", which nothing
+/// else in the system could give: the thesis it was hunted under, the score,
+/// and the named signals that moved it.
+model LeadVerdict {
+  id String @id @default(cuid())
+
+  thesis   LeadThesis @relation(fields: [thesisId], references: [id], onDelete: Cascade)
+  thesisId String
+  hunt     LeadHunt?  @relation(fields: [huntId], references: [id], onDelete: SetNull)
+  huntId   String?
+
+  /// Null once a rejected lead has been deleted. The identity below is what
+  /// carries on.
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId String?
+
+  /// The business, as it was when it was judged. Copied rather than joined so
+  /// the record still reads after the lead is gone.
+  companyName String?
+  website     String?
+  city        String?
+  /// The same normalised identity `Lead.dedupeKey` carries. Unique per thesis:
+  /// one business is judged once under one thesis, and may be judged again
+  /// under a different one, which is a genuinely different question.
+  dedupeKey   String?
+
+  verdict LeadVerdictKind
+  score   Int             @default(0)
+  /// The signals that fired, each with the qualifier it matched and what was
+  /// seen: `[{ signal, matched, evidence, weight }]`.
+  signals Json?
+  /// One sentence a person can read without opening anything else.
+  reason  String
+
+  /// True when the lead was removed from the pipeline as a result.
+  deleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([thesisId, dedupeKey])
+  @@index([dedupeKey])
+  @@index([verdict, createdAt])
+  @@index([leadId])
 }
 
 // Quick capture creates a throwaway source per paste rather than reusing one,
@@ -2410,6 +2633,26 @@ model AgentTask {
   /// deploys is not a task that is failing.
   attempts   Int       @default(0)
 
+  /// How many times this run has been put down and picked back up because
+  /// something *outside* it was temporarily unavailable — a model provider
+  /// rate-limiting a free tier, a vendor returning 502, a request timing out.
+  ///
+  /// Deliberately a second counter rather than more room on `attempts`. Those
+  /// two are different facts with different remedies: `attempts` counts runs
+  /// that died, which at three is evidence something is wrong with the task,
+  /// while this counts a queue that was busy, which says nothing about the task
+  /// at all. Sharing one budget meant a morning of free-model rate limits could
+  /// spend a task's whole crash allowance and fail it for good — the exact
+  /// failure the retry existed to prevent.
+  ///
+  /// Reset to zero the moment a run gets a real answer out of a provider.
+  retryCount  Int       @default(0)
+  /// Why it is waiting, in the words a person would want: which vendor, what it
+  /// said, and when this comes back. Read with `scheduledFor`, which is the
+  /// "when" — a QUEUED task with a future `scheduledFor` and a reason here is
+  /// what the screens draw as **Paused**.
+  retryReason String?
+
   /// Touched by the running process on every checkpoint.
   ///
   /// `startedAt` said when a run began and nothing said whether it was still
@@ -2705,6 +2948,14 @@ enum AgentStepKind {
   /// The run stopped part-way and kept its place. Not a failure: the next
   /// runner picks the conversation up where this one left it.
   INTERRUPTED
+  /// Put down because something outside the run was unavailable — a model
+  /// provider rate-limiting a free tier, a vendor answering 502, a request
+  /// timing out — and picked up again a few minutes later.
+  ///
+  /// Deliberately not INTERRUPTED, which means a deploy or a crash took the
+  /// process away. This one is the far end being busy, and the difference
+  /// matters when somebody is reading a timeline asking why a morning was slow.
+  PAUSED
   /// A run continuing from a checkpoint rather than starting again.
   RESUMED
   /// Which model is doing the work, and every handover between them.

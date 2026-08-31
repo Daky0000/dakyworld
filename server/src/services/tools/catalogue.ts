@@ -31,6 +31,7 @@ import { handOverMessage, inboxSummary, markHandled } from "../mailbox/actions.j
 import { NEEDS_NO_REPLY } from "../mailbox/router.js";
 import { imapConfigured } from "../../lib/imap.js";
 import { runSource } from "../scraperRunner.js";
+import { hunt } from "../hunt/run.js";
 import { estimateCost } from "../captureCost.js";
 import { resolveActor, actorInput, checkForTask, TASK_KINDS, type CaptureTask, type Checked } from "../captureActors.js";
 import { readCaptureConfig } from "../captureConfig.js";
@@ -520,6 +521,115 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         remainingUsd: config.monthlyBudgetUsd == null ? null : Number((config.monthlyBudgetUsd - usage.spentUsd).toFixed(2)),
         cycleEnd: usage.cycleEnd,
       };
+    },
+  },
+
+  // --- Hunting: the reason a search was run ---------------------------------
+  {
+    key: "hunt.read",
+    name: "Read the hunt theses",
+    group: "Pipeline",
+    purpose:
+      "Every reason Dakyworld goes looking for anybody — who each hunt targets, why, what qualifies a business, and how the last few cycles went.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({ key: z.string().max(64).optional() }),
+    run: async (input) => {
+      const theses = await prisma.leadThesis.findMany({
+        where: input.key ? { key: input.key } : undefined,
+        orderBy: { name: "asc" },
+        include: { hunts: { orderBy: { startedAt: "desc" }, take: 3 } },
+      });
+      return theses.map((thesis) => ({
+        key: thesis.key,
+        name: thesis.name,
+        target: thesis.target,
+        whyThem: thesis.rationale,
+        whatWeWouldSellThem: thesis.offer,
+        fitsWhen: thesis.qualifiers,
+        ruledOutBy: thesis.disqualifiers,
+        keptAtOrAbove: thesis.minScore,
+        perRun: thesis.leadsPerRun,
+        runsAt: thesis.runTimes,
+        running: thesis.enabled,
+        nextRunAt: thesis.nextRunAt,
+        recent: thesis.hunts.map((hunt) => ({
+          at: hunt.startedAt,
+          status: hunt.status,
+          looked: hunt.audited,
+          fit: hunt.qualified,
+          rejected: hunt.rejected,
+          costUsd: Number(hunt.costUsd),
+          summary: hunt.summary,
+        })),
+      }));
+    },
+  },
+  {
+    key: "hunt.verdicts",
+    name: "Why a lead was kept or dropped",
+    group: "Pipeline",
+    purpose:
+      "The judgement behind a business being in the pipeline, or being deleted from it: the thesis it was hunted under, the score, and the signals that fired.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({
+      leadId: z.string().max(64).optional(),
+      thesisKey: z.string().max(64).optional(),
+      verdict: z.enum(["QUALIFIED", "REJECTED", "UNDECIDED"]).optional(),
+      limit: z.number().int().min(1).max(100).default(20),
+    }),
+    run: async (input) => {
+      const rows = await prisma.leadVerdict.findMany({
+        where: {
+          ...(input.leadId ? { leadId: input.leadId } : {}),
+          ...(input.thesisKey ? { thesis: { key: input.thesisKey } } : {}),
+          ...(input.verdict ? { verdict: input.verdict } : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        take: input.limit,
+        include: { thesis: { select: { key: true, name: true } } },
+      });
+      return rows.map((row) => ({
+        company: row.companyName,
+        website: row.website,
+        thesis: row.thesis.name,
+        verdict: row.verdict,
+        score: row.score,
+        why: row.reason,
+        stillInThePipeline: !row.deleted,
+        decidedAt: row.createdAt,
+      }));
+    },
+  },
+  {
+    key: "hunt.run",
+    name: "Run a hunt",
+    group: "Pipeline",
+    purpose:
+      "Search under one thesis, look at what comes back, and keep or drop each business against that thesis's own tests. Spends money on every call.",
+    scope: "charge",
+    requires: "apify",
+    spends: true,
+    outward: false,
+    input: z.object({ key: z.string().min(1).max(64) }),
+    preview: async (input) => {
+      const thesis = await prisma.leadThesis.findUnique({ where: { key: input.key } });
+      if (!thesis) return "There is no hunt with that key, so nothing would run.";
+      return (
+        `Hunt under "${thesis.name}": search, then look at up to ${thesis.leadsPerRun} business(es) — research, audit, ` +
+        `a picture of the homepage and a read of it — and judge each against ${thesis.qualifiers.length} test(s). ` +
+        `Anything scoring under ${thesis.minScore} is ${thesis.deleteRejected ? "deleted from the pipeline" : "marked disqualified"}.`
+      );
+    },
+    run: async (input) => {
+      const thesis = await prisma.leadThesis.findUnique({ where: { key: input.key }, select: { id: true } });
+      if (!thesis) throw new Error(`There is no hunt called ${input.key}.`);
+      return hunt(thesis.id, "MANUAL");
     },
   },
 

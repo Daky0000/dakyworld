@@ -28,9 +28,9 @@ import type { ToolContext, ToolDefinition, ToolResult } from "./types.js";
  */
 
 /** Below this an agent may prepare outward-facing work but not carry it out. */
-const EXECUTE_LEVEL = 3;
+export const EXECUTE_LEVEL = 3;
 /** Spending needs one level above executing: money is the harder mistake to undo. */
-const SPEND_LEVEL = 4;
+export const SPEND_LEVEL = 4;
 
 /**
  * Boundary crossings in a row before an agent is paused for somebody to look at.

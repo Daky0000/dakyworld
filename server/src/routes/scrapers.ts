@@ -20,6 +20,7 @@ import { SCRAPER_TEMPLATES } from "../services/scraperTemplates.js";
 import { buildDedupeKey, describeShape, mapRow, scoreLead, type Preset } from "../services/leadMapping.js";
 import { estimateCost } from "../services/captureCost.js";
 import { readCaptureConfig, unknownInputKeys } from "../services/captureConfig.js";
+import { diagnoseCapture } from "../services/captureDiagnosis.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
 export const scrapersRouter = Router();
@@ -126,6 +127,22 @@ scrapersRouter.get("/overview", async (_req, res, next) => {
         : null,
       concurrency: { running, limit: config.maxConcurrentRuns },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Why nothing is capturing — every silent cause asked in order.
+ *
+ * Its own endpoint rather than more fields on `/overview` because it makes
+ * several live calls to Apify and does real work; a screen that renders on
+ * every visit should not pay for that, and somebody asking this question is
+ * asking it deliberately.
+ */
+scrapersRouter.get("/diagnose", async (_req, res, next) => {
+  try {
+    res.json(await diagnoseCapture());
   } catch (err) {
     next(err);
   }

@@ -5,6 +5,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { Leads } from "./pages/Leads";
 import { LeadImport } from "./pages/LeadImport";
 import { LeadSources } from "./pages/LeadSources";
+import { Hunts } from "./pages/Hunts";
 import { Proposals } from "./pages/Proposals";
 import { Demos } from "./pages/Demos";
 import { Projects } from "./pages/Projects";
@@ -60,6 +61,7 @@ export default function App() {
         <Route path="/leads" element={<Guard needs="leads.view"><Leads /></Guard>} />
         <Route path="/leads/import" element={<Guard needs="leads.import"><LeadImport /></Guard>} />
         <Route path="/lead-sources" element={<Guard needs="leads.sources"><LeadSources /></Guard>} />
+        <Route path="/hunts" element={<Guard needs="leads.sources"><Hunts /></Guard>} />
         <Route path="/proposals" element={<Guard needs="proposals.view"><Proposals /></Guard>} />
         <Route path="/demos" element={<Guard needs="demos.view"><Demos /></Guard>} />
         <Route path="/projects" element={<Guard needs="projects.view"><Projects /></Guard>} />

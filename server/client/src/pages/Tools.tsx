@@ -399,6 +399,8 @@ function Connections() {
         </Button>
       </div>
 
+      <Presets />
+
       {servers.length === 0 ? (
         <EmptyState message="Nothing connected yet. The built-in tools work without this — a connection adds what this app doesn't do itself." />
       ) : (
@@ -667,5 +669,88 @@ function ConnectionDrawer({ open, server, onClose }: { open: boolean; server: Mc
         )}
       </div>
     </Drawer>
+  );
+}
+
+// --- Presets ---------------------------------------------------------------
+
+interface Preset {
+  key: string;
+  name: string;
+  url: string;
+  purpose: string;
+  scope: string;
+  spends: boolean;
+  outward: boolean;
+  note: string;
+  connected: boolean;
+  credentialReady: boolean;
+  credentialNote: string | null;
+}
+
+/**
+ * Servers whose risk has already been decided.
+ *
+ * A preset is not a shortcut for typing a URL. The three fields that actually
+ * matter on an MCP connection — scope, whether it spends, whether it reaches
+ * outside the company — are read from our own row rather than from anything the
+ * server says about itself, which is what stops a remote tool talking its way
+ * past the autonomy gate. Apify is the clearest case: its `actors` group starts
+ * real runs that cost real money, so the connection has to be marked as
+ * spending before an agent is pointed at it, and getting that wrong by hand is
+ * both easy and silent.
+ *
+ * Connected switched **off**, like every other connection: connecting a server
+ * and letting agents call it are two decisions.
+ */
+function Presets() {
+  const qc = useQueryClient();
+  const [note, setNote] = useState<string | null>(null);
+  const { data } = useQuery({ queryKey: ["mcp-presets"], queryFn: () => api.get<{ presets: Preset[] }>("/mcp/presets") });
+
+  const connect = useMutation({
+    mutationFn: (key: string) => api.post<{ note: string }>(`/mcp/presets/${key}`),
+    onSuccess: (result) => {
+      setNote(result.note);
+      void qc.invalidateQueries({ queryKey: ["mcp"] });
+      void qc.invalidateQueries({ queryKey: ["mcp-presets"] });
+      void qc.invalidateQueries({ queryKey: ["tools"] });
+    },
+    onError: (err: Error) => setNote(err.message),
+  });
+
+  const available = (data?.presets ?? []).filter((preset) => !preset.connected);
+  if (available.length === 0) return note ? <p className="text-sm text-ink/60">{note}</p> : null;
+
+  return (
+    <div className="space-y-2">
+      {available.map((preset) => (
+        <Card key={preset.key} className="border-dashed">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-display text-lg tracking-[-.02em]">{preset.name}</span>
+                {preset.spends && <Badge>$</Badge>}
+                <Badge tone="muted">{preset.scope}</Badge>
+              </div>
+              <p className="mt-1 text-sm text-ink/60">{preset.purpose}</p>
+              <p className="mt-1 text-sm text-ink/45">{preset.note}</p>
+              {preset.credentialNote && (
+                <p className={`mt-1 text-xs ${preset.credentialReady ? "text-ink/45" : "text-amber-700"}`}>{preset.credentialNote}</p>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={connect.isPending || !preset.credentialReady}
+              onClick={() => connect.mutate(preset.key)}
+            >
+              {connect.isPending ? "Connecting…" : `Connect ${preset.name}`}
+            </Button>
+          </div>
+        </Card>
+      ))}
+      {note && <p className="text-sm text-ink/60">{note}</p>}
+    </div>
   );
 }

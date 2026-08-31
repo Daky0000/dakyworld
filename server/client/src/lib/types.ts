@@ -1853,6 +1853,20 @@ export interface AgentTask {
   scheduledFor: string | null;
   dueAt: string | null;
   createdAt: string;
+  /**
+   * Waiting on a clock rather than on a runner.
+   *
+   * A paused task is QUEUED — it was put down because a model provider was
+   * rate-limiting, busy or unreachable, and it starts itself again. Worth its
+   * own field rather than left to each screen to derive: "queued" and "paused
+   * until 14:35 because the free tier is used up" are the same status and
+   * completely different news.
+   */
+  paused: boolean;
+  pausedUntil: string | null;
+  pausedBecause: string | null;
+  /** How many times this run has been put down for something outside it. */
+  pauses: number;
   agent: { key: string; name: string; title: string; avatar: string | null };
   steps: number;
   delegated: number;

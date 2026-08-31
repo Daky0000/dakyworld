@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { McpError, encryptAuthHeader, handshake } from "../lib/mcp.js";
 import { maskSecret } from "../lib/secrets.js";
+import { getApifyToken } from "../lib/apify.js";
 import { refreshServer } from "../services/tools/mcpTools.js";
 import { clearReadinessCache } from "../services/tools/readiness.js";
 import { gateBy } from "../middleware/permissionGate.js";
@@ -149,6 +150,152 @@ mcpRouter.post("/", async (req, res, next) => {
     });
     clearReadinessCache();
     res.status(201).json({ server: describe(server), error: lastError });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Servers worth connecting, with their URLs and their risk already decided.
+ *
+ * A preset is not a shortcut for typing. The three fields that actually matter
+ * on an MCP connection — `scope`, `spends`, `outward` — are read from **our**
+ * row rather than from anything the server says about itself, which means
+ * getting them wrong is how a remote tool talks its way past the autonomy gate.
+ * Apify's server is the clearest case in the catalogue: `actors` starts real
+ * runs that cost real money, so the connection has to be marked `charge` and
+ * `spends` before an agent is ever pointed at it. That judgement belongs here,
+ * once, rather than in a form somebody fills in from memory.
+ *
+ * `authFrom` names a credential this app already holds, so connecting does not
+ * mean going and finding a token that is sitting encrypted three screens away.
+ */
+const PRESETS = [
+  {
+    key: "apify",
+    name: "Apify",
+    // The tool groups the Owner asked for. `tools=` is Apify's own filter and
+    // it matters for cost as much as for clarity: an unfiltered connection
+    // exposes the entire store, and an agent browsing thousands of actors is
+    // an agent one confident step away from starting one.
+    url: "https://mcp.apify.com/?tools=actors,docs,runs,storage,tasks,apify/rag-web-browser",
+    purpose:
+      "Apify's own MCP server: search and read the actor store, start and inspect runs, read datasets and key-value stores, manage saved tasks, and browse the web for research with rag-web-browser.",
+    /**
+     * `charge`, not `read`, and this is the whole point of a preset.
+     *
+     * The `actors` group can start a run, and a run costs money. A connection
+     * marked `read` would let an agent below the spend level do exactly that,
+     * because the gate reads the scope from this row and nowhere else.
+     */
+    scope: "charge" as const,
+    spends: true,
+    // Nothing here is visible to a customer. It spends and it fetches; it does
+    // not write to anybody or publish anything.
+    outward: false,
+    authFrom: "apify" as const,
+    note:
+      "Complements the built-in capture tools rather than replacing them. The built-ins price a run before it starts, cap it with `maxTotalChargeUsd` and map results into leads; this is for the questions those cannot answer — what an actor's schema is, what a run actually returned, what an unfamiliar actor costs.",
+  },
+];
+
+mcpRouter.get("/presets", async (_req, res, next) => {
+  try {
+    const existing = await prisma.mcpServer.findMany({ select: { key: true } });
+    const taken = new Set(existing.map((server) => server.key));
+    const apifyToken = await getApifyToken();
+    res.json({
+      presets: PRESETS.map((preset) => ({
+        key: preset.key,
+        name: preset.name,
+        url: preset.url,
+        purpose: preset.purpose,
+        scope: preset.scope,
+        spends: preset.spends,
+        outward: preset.outward,
+        note: preset.note,
+        connected: taken.has(preset.key),
+        /** Whether the credential it needs is already stored here. */
+        credentialReady: preset.authFrom === "apify" ? Boolean(apifyToken) : false,
+        credentialNote:
+          preset.authFrom === "apify"
+            ? apifyToken
+              ? "Uses the Apify token already stored under Lead Sources → Connection."
+              : "Needs the Apify token. Add it under Lead Sources → Connection first, or paste a token here."
+            : null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Connects a preset, using a credential this app already holds.
+ *
+ * Created **switched off**, exactly like a hand-made connection: connecting a
+ * server and letting agents call it are two decisions, and a preset that
+ * enabled itself would collapse them into one for the one connection in the
+ * catalogue that can spend money.
+ */
+mcpRouter.post("/presets/:key", async (req, res, next) => {
+  try {
+    const preset = PRESETS.find((entry) => entry.key === req.params.key);
+    if (!preset) return res.status(404).json({ error: "There is no preset with that key." });
+    if (await prisma.mcpServer.findUnique({ where: { key: preset.key } })) {
+      return res.status(409).json({ error: `${preset.name} is already connected. Refresh it instead of adding it twice.` });
+    }
+
+    const { token } = z.object({ token: z.string().max(4000).optional() }).parse(req.body ?? {});
+    const credential = token?.trim() || (preset.authFrom === "apify" ? await getApifyToken() : null);
+    if (!credential) {
+      return res.status(400).json({
+        error: `${preset.name} needs a token. Add the Apify token under Lead Sources → Connection, or paste one with this request.`,
+      });
+    }
+
+    // Apify's MCP server takes the same personal API token as the REST API, as
+    // a bearer. Scheme included here rather than stored on the token, because
+    // `authHeader` is sent verbatim and a token that carried its own scheme
+    // would be unusable everywhere else.
+    const authHeader = `Bearer ${credential}`;
+
+    let tools: unknown[] = [];
+    let lastError: string | null = null;
+    let discoveredName: string | null = null;
+    try {
+      const result = await handshake(preset.url, authHeader);
+      tools = result.tools;
+      discoveredName = result.serverName;
+    } catch (err) {
+      lastError = err instanceof McpError ? err.message : (err as Error).message;
+    }
+
+    const server = await prisma.mcpServer.create({
+      data: {
+        key: preset.key,
+        name: discoveredName || preset.name,
+        purpose: preset.purpose,
+        url: preset.url,
+        authHeader: encryptAuthHeader(authHeader),
+        enabled: false,
+        scope: preset.scope,
+        spends: preset.spends,
+        outward: preset.outward,
+        tools: tools as never,
+        lastCheckedAt: new Date(),
+        lastError,
+      },
+    });
+    clearReadinessCache();
+    res.status(201).json({
+      server: describe(server),
+      error: lastError,
+      note: lastError
+        ? `Saved, but the handshake failed: ${lastError}. Fix that before switching it on — a connection nobody has seen answer should not be granted to anybody.`
+        : `Connected and switched off, offering ${tools.length} tool(s). Switch it on, then grant the ones you want on the Agents screen. ` +
+          `Calls through it are treated as spending money, so an agent below autonomy 4 will prepare them rather than make them.`,
+    });
   } catch (err) {
     next(err);
   }

@@ -4,6 +4,7 @@ import { apifyConfigured } from "../lib/apify.js";
 import { isValidTimezone, parseScheduleTime, safeZone, zonedDateParts, zonedTimeToUtc } from "../lib/timezone.js";
 import { CaptureBudgetError, CaptureBusyError, pruneRunHistory, resumeInterruptedRuns, runSource } from "./scraperRunner.js";
 import { readCaptureConfig } from "./captureConfig.js";
+import { runDueHunts } from "./hunt/run.js";
 import { billDuePlans } from "./carePlanBilling.js";
 import { dispatchDueEmails } from "./emailSender.js";
 import { dispatchDueMessages } from "./messageSender.js";
@@ -118,6 +119,12 @@ export async function tick(now = new Date()) {
     // is what works them, on the next tick rather than this one — deliberately,
     // so raising work and doing it stay separable.
     raiseStandingWork(now),
+    // The hunts. Deliberately its own job rather than part of `captureTick`:
+    // a hunt starts a capture, waits for it, then audits and judges what came
+    // back, which is minutes of work — and the whole point of settling these
+    // separately is that no one of them may hold up an invoice. `runDueHunts`
+    // returns as soon as it has started what is due; the cycles run behind it.
+    runDueHunts(now),
     // Rehearsals nobody is watching any more. The screen drains its own run
     // while it is open; this is the floor under that, and it is what puts a
     // woken agent's autonomy back when the tab was closed part-way.
@@ -295,7 +302,7 @@ export function startScheduler() {
   // nothing on screen connecting the two.
   void restoreOrphanedWakes().catch((err) => console.error("[scheduler] rehearsal wake restore failed:", err));
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
-  console.log("  → Scheduler running (lead capture, care plan billing, email, WhatsApp/SMS, agent tasks — checks every minute)");
+  console.log("  → Scheduler running (lead capture, lead hunts, care plan billing, email, WhatsApp/SMS, agent tasks — checks every minute)");
 }
 
 export function stopScheduler() {

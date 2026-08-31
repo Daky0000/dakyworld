@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { listAllTools, resolveTool } from "../services/tools/catalogue.js";
+import { findTool, listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
-import { permissionFor } from "../services/tools/invoke.js";
+import { EXECUTE_LEVEL, SPEND_LEVEL, permissionFor } from "../services/tools/invoke.js";
 import { authoredInstruction, composePrompt, isBusy, runTask, step } from "../services/agents/runner.js";
 import { historyOf, recordCreated, transition } from "../services/agents/state.js";
 
@@ -410,6 +410,179 @@ agentsRouter.get("/:key/autonomy", async (req, res, next) => {
         boundaryViolations: agent.boundaryViolations,
         waitingOnApproval: counted.NEEDS_APPROVAL ?? 0,
       },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Why this agent is still preparing work rather than doing it.
+ *
+ * The question this answers is one the Agents screen could not: **"I set it to
+ * Active and nothing happens for real."** Active and live are two different
+ * switches and always have been — `status` decides whether the agent may take
+ * work at all, `dryRun` decides whether anything it decides leaves the
+ * building, and `autonomyLevel` decides how far. Every agent seeds Active-able
+ * with dry run **on** and autonomy **1**, so an agent switched to Active does
+ * exactly what the design says it should: it prepares everything and carries
+ * out none of it.
+ *
+ * That is correct behaviour and it was invisible. So this asks the real gate —
+ * `permissionFor`, the same function the runner goes through on every call —
+ * once per tool the agent actually holds, and reports what it said. Nothing
+ * here re-implements the rules; if the answer is wrong, the runner is wrong
+ * too, which is the only way a diagnostic is worth reading.
+ */
+agentsRouter.get("/:key/gates", async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({
+      where: { key: req.params.key },
+      select: { key: true, name: true, status: true, dryRun: true, autonomyLevel: true, toolkit: true, boundaryViolations: true },
+    });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const held = agent.toolkit.map((key) => findTool(key)).filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
+
+    const tools = await Promise.all(
+      held.map(async (tool) => {
+        const permission = await permissionFor(tool, { agentKey: agent.key, userId: null, dryRun: false });
+        return {
+          key: tool.key,
+          name: tool.name,
+          scope: tool.scope,
+          spends: tool.spends,
+          outward: tool.outward,
+          state: !permission.allowed ? "refused" : permission.mustDryRun ? "prepares" : "does",
+          because: permission.reason,
+        };
+      }),
+    );
+
+    const prepares = tools.filter((tool) => tool.state === "prepares");
+    const refused = tools.filter((tool) => tool.state === "refused");
+    const live = tools.filter((tool) => tool.state === "does");
+
+    // The three switches, said as three plain sentences rather than as three
+    // fields somebody has to combine in their head.
+    const blockers: Array<{ switch: string; is: string; means: string; fix: string }> = [];
+    if (agent.status !== "ACTIVE") {
+      blockers.push({
+        switch: "Status",
+        is: agent.status,
+        means: `${agent.name} will not be given any work at all — queued tasks against it simply wait.`,
+        fix: "Set the status to Active.",
+      });
+    }
+    if (agent.dryRun) {
+      blockers.push({
+        switch: "Dry run",
+        is: "on",
+        means:
+          `This is the one that makes an Active agent still look idle. Everything it decides is prepared and nothing is carried out — ` +
+          `no email sent, no money spent, no record written. The work lands under Approvals instead.`,
+        fix: `Switch dry run off for ${agent.name}. Do that after reading a few of its prepared actions, not before.`,
+      });
+    }
+    if (agent.autonomyLevel < EXECUTE_LEVEL && held.some((tool) => tool.outward)) {
+      blockers.push({
+        switch: "Autonomy",
+        is: String(agent.autonomyLevel),
+        means: `Anything visible outside the company needs level ${EXECUTE_LEVEL}. Below that it is prepared however dry run is set.`,
+        fix: `Raise ${agent.name} to ${EXECUTE_LEVEL} if it should be able to act outside the company on its own.`,
+      });
+    }
+    if (agent.autonomyLevel < SPEND_LEVEL && held.some((tool) => tool.spends)) {
+      blockers.push({
+        switch: "Autonomy",
+        is: String(agent.autonomyLevel),
+        means: `Anything that spends money needs level ${SPEND_LEVEL}. Below that it is prepared however dry run is set.`,
+        fix: `Raise ${agent.name} to ${SPEND_LEVEL} if it should be able to spend without being asked.`,
+      });
+    }
+
+    res.json({
+      agent: { key: agent.key, name: agent.name, status: agent.status, dryRun: agent.dryRun, autonomyLevel: agent.autonomyLevel },
+      // The headline, in one sentence, because that is what somebody actually
+      // came here for.
+      verdict:
+        blockers.length === 0
+          ? `${agent.name} is live: everything it holds, it carries out.`
+          : agent.status !== "ACTIVE"
+            ? `${agent.name} is ${agent.status.toLowerCase()}, so nothing runs at all.`
+            : prepares.length === 0
+              ? `${agent.name} is Active and every tool it holds already runs for real.`
+              : `${agent.name} is Active but ${prepares.length} of its ${tools.length} tools only prepare. ${blockers[0].fix}`,
+      blockers,
+      counts: { does: live.length, prepares: prepares.length, refused: refused.length },
+      tools,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Active, out of dry run, and at a level that matches — in one deliberate step.
+ *
+ * Three switches had to be found and set in the right order for an agent to do
+ * anything, which is why so many end up Active and silently preparing. This is
+ * the same three writes, with the difference that the reply says what was just
+ * allowed rather than confirming a boolean, and that the reason is recorded on
+ * the autonomy history like any other widening.
+ *
+ * It does **not** default to the highest level. `level` is required and the
+ * answer names what each one buys, because "make it live" is not a decision
+ * about whether it may spend money.
+ */
+agentsRouter.post("/:key/go-live", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        level: z.number().int().min(1).max(5),
+        reason: z.string().max(600).optional(),
+      })
+      .parse(req.body ?? {});
+
+    const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    const held = agent.toolkit.map((key) => findTool(key)).filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
+    const spends = held.filter((tool) => tool.spends).map((tool) => tool.key);
+    const outward = held.filter((tool) => tool.outward).map((tool) => tool.key);
+
+    await prisma.agent.update({
+      where: { key: agent.key },
+      data: { status: "ACTIVE", dryRun: false, autonomyLevel: input.level },
+    });
+    await prisma.agentAutonomyChange.create({
+      data: {
+        agentKey: agent.key,
+        fromLevel: agent.autonomyLevel,
+        toLevel: input.level,
+        fromDryRun: agent.dryRun,
+        toDryRun: false,
+        reason: input.reason ?? "Set live from the Agents screen.",
+        actor: "owner",
+        actorId: req.dbUser?.id ?? null,
+      },
+    });
+
+    res.json({
+      agent: { key: agent.key, name: agent.name, status: "ACTIVE", dryRun: false, autonomyLevel: input.level },
+      nowAllowed: [
+        `${agent.name} takes queued work and carries out what it decides.`,
+        outward.length > 0
+          ? input.level >= EXECUTE_LEVEL
+            ? `It may act outside the company on its own: ${outward.join(", ")}.`
+            : `It still only prepares anything outside the company (${outward.join(", ")}) — that needs level ${EXECUTE_LEVEL}.`
+          : null,
+        spends.length > 0
+          ? input.level >= SPEND_LEVEL
+            ? `It may spend money on its own: ${spends.join(", ")}. The budget ceilings still apply and still stop it.`
+            : `It still only prepares anything that spends (${spends.join(", ")}) — that needs level ${SPEND_LEVEL}.`
+          : null,
+      ].filter(Boolean),
     });
   } catch (err) {
     next(err);
@@ -1078,6 +1251,8 @@ function taskSummary(task: {
   scheduledFor: Date | null;
   dueAt: Date | null;
   createdAt: Date;
+  retryCount: number;
+  retryReason: string | null;
   agent: { key: string; name: string; title: string; avatar: string | null };
   _count: { steps: number; children: number };
 }) {
@@ -1098,6 +1273,22 @@ function taskSummary(task: {
     scheduledFor: task.scheduledFor,
     dueAt: task.dueAt,
     createdAt: task.createdAt,
+    /**
+     * Waiting on a clock rather than on capacity.
+     *
+     * A QUEUED task with a future `scheduledFor` and a reason on it was put
+     * down because a model provider was rate-limiting, busy or unreachable —
+     * see services/agents/retry.ts. Derived here rather than left to each
+     * screen: "queued" and "paused because OpenRouter's free tier is used up
+     * until 14:35" are the same status and completely different news, and a
+     * screen that shows the first for the second is why a quiet morning looks
+     * like a broken one.
+     */
+    paused:
+      task.status === "QUEUED" && Boolean(task.retryReason) && Boolean(task.scheduledFor && task.scheduledFor > new Date()),
+    pausedUntil: task.scheduledFor,
+    pausedBecause: task.retryReason,
+    pauses: task.retryCount,
     agent: task.agent,
     steps: task._count.steps,
     delegated: task._count.children,
@@ -1128,7 +1319,13 @@ agentsRouter.get("/:key/tasks", async (req, res, next) => {
       note:
         agent.status !== "ACTIVE" && inState("QUEUED").length > 0
           ? `${agent.name} is a ${agent.status.toLowerCase()}, so nothing queued here will start until you set it to Active.`
-          : null,
+          : // A paused task looks exactly like a queued one and is not: it is
+            // waiting on a vendor rather than on a runner, and it will start
+            // itself. Said here so "nothing is happening" has an answer on the
+            // screen somebody is already looking at.
+            rows.filter((task) => task.paused).length > 0
+            ? `${rows.filter((task) => task.paused).length} task(s) are paused waiting for a model provider, and start again on their own. ${rows.find((task) => task.paused)?.pausedBecause ?? ""}`
+            : null,
       // Running first, because it is the only one that is changing while you look.
       running: inState("RUNNING"),
       queued: inState("QUEUED"),
@@ -1357,6 +1554,17 @@ agentsRouter.post("/tasks/:id/run", async (req, res, next) => {
 
     const resuming = Boolean(task.checkpoint) && !fresh;
     if (fresh) await clearCheckpoint(task.id);
+
+    // A person pressing Run on a paused task is saying "try it now". The wait
+    // budget starts again with them, and the clock it was waiting on is
+    // cleared — otherwise the next tick would find a QUEUED row with a future
+    // `scheduledFor` and put it straight back to sleep behind their back.
+    if (task.retryCount > 0 || task.retryReason) {
+      await prisma.agentTask.update({
+        where: { id: task.id },
+        data: { retryCount: 0, retryReason: null, scheduledFor: null },
+      });
+    }
 
     // Deliberately not awaited. The work belongs to the server, not to whoever
     // is looking at it: this returns immediately and the run carries on through

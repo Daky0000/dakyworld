@@ -106,6 +106,8 @@ export function LeadSources() {
 
       <ApifyConnection settings={settings} overview={overview} />
 
+      <WhyNothingRuns />
+
       {overview && (
         <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile
@@ -650,5 +652,90 @@ function ActorList({ actors, onPick }: { actors: ApifyActorSummary[]; onPick: (a
         </button>
       ))}
     </div>
+  );
+}
+
+// --- Why nothing runs ------------------------------------------------------
+
+interface CaptureCheck {
+  name: string;
+  state: "ok" | "warn" | "stop" | "unknown";
+  found: string;
+  fix: string | null;
+}
+
+/**
+ * The answer to "there is money in the Apify account and nothing happens".
+ *
+ * That sentence has at least nine causes in this system and every one of them
+ * is silent — a token that was revoked, a source switched on with no schedule,
+ * a monthly ceiling typed in months ago and forgotten, runs that fetch rows and
+ * file none because all of them are duplicates, or an *agent* in dry run that
+ * prepared the capture rather than starting it. Each is visible somewhere, on a
+ * different screen, and none of them announces itself.
+ *
+ * Behind a button rather than always on, because the diagnosis makes several
+ * live calls to Apify. Somebody asking this question is asking it deliberately.
+ *
+ * The credit line and the ceiling line are deliberately separate rows even
+ * though they look like the same fact. They are not: Apify refuses when *their*
+ * credit runs out, and this app refuses when *our* ceiling is reached, and the
+ * second is a number typed into Settings that has nothing to do with the
+ * balance. Reading them as one thing is the single most likely way to spend an
+ * afternoon topping up an account that was never the problem.
+ */
+function WhyNothingRuns() {
+  const [asked, setAsked] = useState(false);
+  const { data, isFetching, refetch } = useQuery({
+    queryKey: ["capture-diagnosis"],
+    enabled: asked,
+    queryFn: () => api.get<{ verdict: string; blocked: boolean; checks: CaptureCheck[] }>("/scrapers/diagnose"),
+  });
+
+  const tone = (state: CaptureCheck["state"]) =>
+    state === "stop" ? "bad" : state === "warn" ? "warn" : state === "unknown" ? "idle" : ("ok" as const);
+
+  return (
+    <Card className="mb-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Nothing capturing?</h2>
+          <p className="mt-1 text-sm text-ink/60">
+            Checks the token, the credit, our own spending ceiling, the schedules, the last runs and the agents that
+            would start one — and says which of them is the reason.
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          disabled={isFetching}
+          onClick={() => {
+            setAsked(true);
+            if (asked) void refetch();
+          }}
+        >
+          {isFetching ? "Checking…" : asked ? "Check again" : "Find out why"}
+        </Button>
+      </div>
+
+      {data && (
+        <div className="mt-4 space-y-3">
+          <p className={`text-sm ${data.blocked ? "font-medium text-red-700" : "text-ink/80"}`}>{data.verdict}</p>
+          <ul className="space-y-2">
+            {data.checks.map((check) => (
+              <li key={check.name} className="flex items-start gap-3 rounded border border-ink/10 p-3 text-sm">
+                <span className="pt-1">
+                  <StatusDot tone={tone(check.state)} />
+                </span>
+                <div className="min-w-0">
+                  <div className="font-medium">{check.name}</div>
+                  <p className="text-ink/70">{check.found}</p>
+                  {check.fix && <p className="mt-1 text-ink/55">{check.fix}</p>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
   );
 }

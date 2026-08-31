@@ -25,6 +25,7 @@ import { usersRouter } from "./routes/users.js";
 import { accessRouter } from "./routes/access.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { scrapersRouter } from "./routes/scrapers.js";
+import { huntsRouter } from "./routes/hunts.js";
 import { agentsRouter } from "./routes/agents.js";
 import { rehearsalsRouter } from "./routes/rehearsals.js";
 import { captureRouter } from "./routes/capture.js";
@@ -44,6 +45,7 @@ import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
+import { ensureTheses } from "./services/hunt/theses.js";
 import { applyColdEmailPlaybook, applyOutreachDoctrine, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
 import { drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
@@ -211,6 +213,7 @@ app.use("/api/users", usersRouter);
 app.use("/api/access", accessRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/scrapers", scrapersRouter);
+app.use("/api/hunts", huntsRouter);
 app.use("/api/agents", agentsRouter);
 // One workflow, one real website, nothing able to leave the building. Beside
 // the workforce rather than inside it: it is about all of them at once.
@@ -394,6 +397,20 @@ ensureSystemRoles()
           }
         })
         .catch((err) => console.error("Agent seed failed:", err));
+      // The reasons Dakyworld goes looking for anybody, and the searches they
+      // hunt with. Additive, and every one of them arrives **switched off** —
+      // enabling a hunt starts spending money twice a day, which is the
+      // Owner's decision and not a deploy's.
+      void ensureTheses()
+        .then(({ created, sources }) => {
+          if (created) {
+            console.log(
+              `  → Seeded ${created} lead hunt(s)${sources ? ` and ${sources} search(es)` : ""}, all switched off. ` +
+                `Turn one on under Leads → Hunts to start looking.`,
+            );
+          }
+        })
+        .catch((err) => console.error("Hunt seed failed:", err));
       // Every tag written into a lead before the registry existed. Without
       // this the Tags screen opens empty on a database full of tagged leads.
       void backfillTags()

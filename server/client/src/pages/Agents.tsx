@@ -594,6 +594,8 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
                 This agent can act without asking you. That is deliberate only if you set it.
               </p>
             )}
+
+            <WhyItOnlyPrepares agentKey={agent.key} />
           </section>
 
           {agent.skills.length > 0 && (
@@ -814,5 +816,125 @@ function ToolGrants({
         ))}
       </div>
     </section>
+  );
+}
+
+// --- Why an Active agent still only prepares -------------------------------
+
+interface Gate {
+  key: string;
+  name: string;
+  scope: string;
+  spends: boolean;
+  outward: boolean;
+  state: "does" | "prepares" | "refused";
+  because: string | null;
+}
+
+interface Gates {
+  agent: { key: string; name: string; status: string; dryRun: boolean; autonomyLevel: number };
+  verdict: string;
+  blockers: Array<{ switch: string; is: string; means: string; fix: string }>;
+  counts: { does: number; prepares: number; refused: number };
+  tools: Gate[];
+}
+
+/**
+ * "I set it to Active and nothing happens for real."
+ *
+ * Active and live are two different switches and always have been. `status`
+ * decides whether the agent is given work at all; `dryRun` decides whether
+ * anything it decides leaves the building; `autonomyLevel` decides how far.
+ * Every agent ships Active-able with dry run **on** and autonomy **1**, so an
+ * agent switched to Active does exactly what the design says: it prepares
+ * everything and carries out none of it, and the work piles up under Approvals.
+ *
+ * That is correct and it was invisible — three fields on one card, none of
+ * which says what the other two do to it. This asks the server, which asks the
+ * real gate (`permissionFor`, the same function the runner goes through on
+ * every call) once per tool the agent holds. Nothing here re-implements the
+ * rules, so it cannot drift from them: if this is wrong, the runner is wrong.
+ */
+function WhyItOnlyPrepares({ agentKey }: { agentKey: string }) {
+  const queryClient = useQueryClient();
+  const [level, setLevel] = useState(3);
+  const gates = useQuery({ queryKey: ["agent-gates", agentKey], queryFn: () => api.get<Gates>(`/agents/${agentKey}/gates`) });
+
+  const goLive = useMutation({
+    mutationFn: () => api.post<{ nowAllowed: string[] }>(`/agents/${agentKey}/go-live`, { level }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent", agentKey] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-gates", agentKey] });
+    },
+  });
+
+  if (!gates.data) return null;
+  const { verdict, blockers, counts, tools } = gates.data;
+  const preparing = tools.filter((tool) => tool.state === "prepares");
+
+  return (
+    <div className="mt-3 space-y-3 rounded border border-line bg-cream/60 p-3">
+      <p className="text-sm text-ink/80">{verdict}</p>
+
+      {blockers.length > 0 && (
+        <ul className="space-y-2 text-sm">
+          {blockers.map((blocker, at) => (
+            <li key={`${blocker.switch}-${at}`}>
+              <span className="font-medium">
+                {blocker.switch}: {blocker.is}
+              </span>
+              <span className="text-ink/65"> — {blocker.means}</span>
+              <span className="block text-ink/50">{blocker.fix}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {preparing.length > 0 && (
+        <details className="text-sm">
+          <summary className="cursor-pointer text-ink/60">
+            {counts.does} of its tools run for real, {counts.prepares} only prepare
+            {counts.refused > 0 && `, ${counts.refused} are refused outright`}
+          </summary>
+          <ul className="mt-2 space-y-1">
+            {tools.map((tool) => (
+              <li key={tool.key} className="flex items-start gap-2 text-xs">
+                <span className="w-20 shrink-0 font-mono text-ink/40">
+                  {tool.state === "does" ? "does" : tool.state === "prepares" ? "prepares" : "refused"}
+                </span>
+                <span className="min-w-0">
+                  <span className="font-mono text-ink/70">{tool.key}</span>
+                  {tool.because && <span className="text-ink/50"> — {tool.because}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {blockers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+          <span className="text-xs text-ink/50">Set it live at level</span>
+          {[2, 3, 4].map((option) => (
+            <Button key={option} size="sm" variant={level === option ? "primary" : "secondary"} onClick={() => setLevel(option)}>
+              {option}
+            </Button>
+          ))}
+          <Button size="sm" variant="danger" disabled={goLive.isPending} onClick={() => goLive.mutate()}>
+            {goLive.isPending ? "Setting live…" : "Active, out of dry run"}
+          </Button>
+        </div>
+      )}
+
+      {goLive.data && (
+        <ul className="space-y-1 text-sm text-ink/70">
+          {goLive.data.nowAllowed.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+      {goLive.error && <p className="text-sm text-red-700">{(goLive.error as Error).message}</p>}
+    </div>
   );
 }
