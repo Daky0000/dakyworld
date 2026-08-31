@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for Google Calendar — DEV_MODE is on, so no event is created and no invitation is sent.",
+  "output": { "devMode": true, "created": false, "note": "DEV_MODE is on. Nobody's calendar changed and nobody was invited." }
+}

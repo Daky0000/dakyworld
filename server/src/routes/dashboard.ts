@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
+import { gapsReadyToDecide } from "../services/agents/hiring.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
 export const dashboardRouter = Router();
@@ -57,6 +58,13 @@ dashboardRouter.get("/", async (_req, res, next) => {
       }),
     ]);
 
+    // Crafts nobody here has, asked for by enough separate agents to be an
+    // argument rather than an anecdote. On the revenue dashboard rather than
+    // buried on the Agents screen because every one of them is work that
+    // stopped: an agent hit a job, found nobody to hand it to, and said so.
+    // Read-only — deciding still happens on the Agent Creator's proposal.
+    const hiringGaps = await gapsReadyToDecide();
+
     res.json({
       revenueThisMonth: invoicesThisMonth._sum.amountTotal ?? 0,
       monthlyRecurringRevenue: activeCarePlans._sum.monthlyFee ?? 0,
@@ -82,6 +90,15 @@ dashboardRouter.get("/", async (_req, res, next) => {
               currency: nextBilling.currency,
             }
           : null,
+      },
+      hiringGaps: {
+        readyToDecide: hiringGaps.length,
+        // The ones with no review open on them are the ones nothing is
+        // carrying forward — the Agent Creator is a draft, retired, or its
+        // review was cancelled. Named separately because that is a different
+        // problem from a gap somebody has simply not decided yet.
+        unreviewed: hiringGaps.filter((gap) => gap.reviewTaskId === null).length,
+        gaps: hiringGaps,
       },
     });
   } catch (err) {

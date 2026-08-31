@@ -12,6 +12,7 @@ import { slackConfigured } from "../../lib/slack.js";
 import { githubConfigured } from "../../lib/github.js";
 import { calendarReady } from "../../lib/calendar.js";
 import { prisma } from "../../lib/prisma.js";
+import { DEV_MODE, devToolMock } from "./devMode.js";
 import type { ToolRequirement } from "./types.js";
 
 /**
@@ -28,6 +29,20 @@ export interface Readiness {
   ready: boolean;
   /** Why not, in one sentence, naming where the credential goes. */
   reason: string | null;
+  /**
+   * Ready only because `DEV_MODE` is standing in for an integration nobody
+   * connected — see `devMode.ts`. Never true on a deployment.
+   *
+   * `ready` is true and `reason` is filled at the same time, which is a shape
+   * nothing else here produces: the sentence is not a refusal, it is what the
+   * Tools screen prints instead of claiming a connection that does not exist.
+   * **`invoke.ts` reads this and returns the stand-in rather than running the
+   * tool.** Without that half, DEV_MODE would turn a clear "not configured"
+   * refusal into whatever an unconfigured client does when called — usually a
+   * crash, occasionally a real send through a half-set-up account — which is
+   * strictly worse than the refusal it replaced.
+   */
+  mocked?: boolean;
 }
 
 const ok: Readiness = { ready: true, reason: null };
@@ -45,7 +60,16 @@ export async function toolReadiness(requirement: ToolRequirement): Promise<Readi
   const cached = cache.get(requirement);
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.readiness;
 
-  const readiness = await compute(requirement);
+  let readiness = await compute(requirement);
+  // **The real check runs first, and only a "no" is stood in for.** A machine
+  // with a working mailer goes on sending real email with DEV_MODE set; only
+  // the integrations that genuinely have no credential are faked. Doing it the
+  // other way round — short-circuiting before `compute` — would be quicker and
+  // would mean a developer who has connected one vendor cannot test against it,
+  // and worse, could not tell which of the two they were talking to.
+  if (!readiness.ready && DEV_MODE) {
+    readiness = { ready: true, reason: devToolMock(requirement).readiness, mocked: true };
+  }
   cache.set(requirement, { at: Date.now(), readiness });
   return readiness;
 }

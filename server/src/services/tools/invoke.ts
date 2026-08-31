@@ -3,6 +3,7 @@ import { attribution } from "../../lib/runContext.js";
 import { SETTING, getSetting } from "../../lib/settings.js";
 import { resolveTool } from "./catalogue.js";
 import { check, scopesForTool } from "../budgets.js";
+import { devToolMock } from "./devMode.js";
 import { toolReadiness } from "./readiness.js";
 import type { ToolContext, ToolDefinition, ToolResult } from "./types.js";
 
@@ -498,6 +499,32 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
         durationMs,
       };
     }
+  }
+
+  // The other half of `DEV_MODE`, and it is not optional — see the note on
+  // `Readiness.mocked`. The readiness gate above let this through because
+  // nothing is connected and DEV_MODE is standing in; running the handler now
+  // would call a client with no credentials, which either throws something
+  // unrelated to what an agent did wrong or, on a half-configured account,
+  // really sends.
+  //
+  // Deliberately below every gate rather than above them. The grant, the
+  // autonomy level, the boundary and the schema all still decide, so a run
+  // with DEV_MODE on exercises the same refusals as a real one — the only
+  // thing standing in is the integration itself. And it is below the dry-run
+  // branch too: previewing a call is the *real* behaviour of an agent under
+  // its autonomy level, and a preview is worth having whether or not the
+  // credential exists.
+  //
+  // `ok: true` with `devMode` in the output, never a silent success: every
+  // stand-in carries a sentence saying nothing left the building, because an
+  // agent summarising "I sent it" about a mock is the one failure mode of this
+  // switch that reaches a person as a lie.
+  if (readiness.mocked) {
+    const output = devToolMock(tool.requires).output;
+    const durationMs = Date.now() - startedAt;
+    const callId = await record({ tool: key, options, ok: true, input: parsed.data, output, durationMs });
+    return { tool: key, callId, ok: true, output: output as never, dryRun: false, costUsd: 0, durationMs };
   }
 
   try {

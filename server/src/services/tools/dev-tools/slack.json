@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for Slack — DEV_MODE is on, so no card is posted.",
+  "output": { "devMode": true, "posted": false, "note": "DEV_MODE is on. Nothing reached a channel." }
+}

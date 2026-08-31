@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for Paystack — DEV_MODE is on, so no payment page is created.",
+  "output": { "devMode": true, "created": false, "note": "DEV_MODE is on. There is no hosted page behind this and no money moved." }
+}

@@ -150,6 +150,13 @@ export async function transition(taskId: string, request: TransitionRequest): Pr
   // with nothing recording that it asked anything — the pair either both land
   // or neither does. A caller that sets `escalationStatus` explicitly wins:
   // the close endpoint is deliberately saying something this cannot derive.
+  //
+  // `escalationResolvedAt` rides in the same statement for the same reason,
+  // and is derived rather than passed: a stamp written by a caller is a stamp
+  // one of the six roads out of BLOCKED will forget. Raising a question clears
+  // the previous one's stamp and note, so a task that stops twice reports the
+  // age of the question actually waiting rather than of the one already dealt
+  // with.
   const escalation = escalationAfter(current.status, request.to);
   const claimed = await prisma.agentTask.updateMany({
     where: {
@@ -158,7 +165,8 @@ export async function transition(taskId: string, request: TransitionRequest): Pr
       ...(request.guard ?? {}),
     },
     data: {
-      ...(escalation ? { escalationStatus: escalation } : {}),
+      ...(escalation === "PENDING" ? { escalationStatus: escalation, escalationResolvedAt: null, escalationNote: null } : {}),
+      ...(escalation === "ANSWERED" ? { escalationStatus: escalation, escalationResolvedAt: new Date() } : {}),
       ...(request.data ?? {}),
       status: request.to,
     },

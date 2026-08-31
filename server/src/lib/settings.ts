@@ -505,6 +505,15 @@ export const SETTING = {
   WEEKLY_DIGEST: "agents.weeklyDigest",
   /** When the last digest went out, as an ISO week. The tick's own guard. */
   WEEKLY_DIGEST_SENT: "agents.weeklyDigest.sentWeek",
+  /**
+   * When the last skill-gap notice went out, as an ISO week.
+   *
+   * Its own marker rather than sharing `WEEKLY_DIGEST_SENT`: the two notices
+   * are silent in different weeks — a week with questions and no gaps would
+   * mark the gap notice sent — and one marker for two messages means whichever
+   * runs first silences the other for the week.
+   */
+  GAP_NOTICE_SENT: "agents.gapNotice.sentWeek",
   AGENT_MAX_CALL_USD: "agents.maxCallUsd",
 
   /**

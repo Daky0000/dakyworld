@@ -27,6 +27,7 @@ import {
   HireRefused,
   applyHire,
   declineHire,
+  findOverlaps,
   hirePolicy,
   listHireRequests,
   openGaps,
@@ -310,13 +311,22 @@ agentsRouter.get("/:key", async (req, res, next) => {
  * BLOCKED because it is still stopped. What changes is that the digest stops
  * raising it every week. Keeping those two facts apart is the whole reason
  * `escalationStatus` is its own column rather than a reading of `status`.
+ *
+ * An optional `note` says why it was left. Optional rather than required: the
+ * button exists to take a dead question off the wall quickly, and a field
+ * somebody has to fill in first is a button they stop pressing.
  */
 agentsRouter.post("/tasks/:id/escalation/close", async (req, res, next) => {
   try {
-    const closed = await closeEscalation(req.params.id, {
-      userId: req.dbUser?.id ?? null,
-      who: req.dbUser?.name ?? req.dbUser?.email ?? null,
-    });
+    const note = typeof req.body?.note === "string" ? req.body.note : null;
+    const closed = await closeEscalation(
+      req.params.id,
+      {
+        userId: req.dbUser?.id ?? null,
+        who: req.dbUser?.name ?? req.dbUser?.email ?? null,
+      },
+      note,
+    );
     if (!closed) {
       return res.status(409).json({
         error: "That question is not waiting on anybody — it has been answered, closed already, or the task never stopped to ask.",
@@ -337,6 +347,130 @@ agentsRouter.post("/tasks/:id/escalation/close", async (req, res, next) => {
 agentsRouter.get("/:key/pending-actions", async (req, res, next) => {
   try {
     res.json({ pending: await pendingFor(req.params.key) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Everything a newly employed agent was told, and everything nobody told it.
+ *
+ * **A read, and only a read.** Nothing here writes a memory, grants a tool or
+ * changes a level. The induction itself happens once, inside `applyHire()`, at
+ * the one moment the two facts worth keeping actually exist — why this agent
+ * was employed, and who already does the nearest thing. This is the screen for
+ * looking at the result, on the day of the hire and a fortnight later when the
+ * question is why its first tasks went the way they did.
+ *
+ * **Its own finished work, not somebody else's.** `onboard()` deliberately
+ * writes no summary of other agents' tasks, and the reason holds here: a
+ * "lessons from similar agents" panel is this system guessing what a colleague's
+ * job is like and presenting the guess as induction. What an agent has finished
+ * *itself* is a fact, so that is what the last three lines are — empty for a
+ * new hire, which is the honest answer rather than a filled panel of other
+ * people's work.
+ *
+ * Deliberately not gated behind "was hired rather than seeded". A seeded agent
+ * has no gap and no hire request and simply says so, and there is no version of
+ * this page that is useful for one agent and forbidden for another.
+ *
+ * Two segments, so it sits safely below `/:key`.
+ */
+agentsRouter.get("/:key/onboarding", async (req, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
+    if (!agent) return res.status(404).json({ error: "No such agent." });
+
+    // The hire this agent came from, when it came from one. `createdAgentKey`
+    // rather than a relation: the request is a record of a decision and has to
+    // outlive the agent it created.
+    const hire = await prisma.agentHireRequest.findFirst({
+      where: { createdAgentKey: agent.key },
+      orderBy: { decidedAt: "desc" },
+    });
+    const gap = hire?.gapId ? await prisma.agentGap.findUnique({ where: { id: hire.gapId } }) : null;
+
+    const [induction, neighbours, finished, catalogue] = await Promise.all([
+      // The memories `onboard()` wrote, and any the Owner has added since.
+      // `AGENT` scope against `self` is exactly the reach the induction has —
+      // recalled on every task for this agent and nobody else.
+      prisma.agentMemory.findMany({
+        where: { scope: "AGENT", agentKey: agent.key, subject: "self" },
+        orderBy: [{ importance: "desc" }, { createdAt: "asc" }],
+        take: 20,
+        select: { id: true, kind: true, content: true, importance: true, useCount: true, createdAt: true },
+      }),
+      // The same calculation the approver read on the hire card, run against
+      // what this agent is now rather than what was proposed — so a mission
+      // rewritten since the hire moves the neighbours it should move.
+      findOverlaps(`${agent.title} ${agent.mission}`, agent.skills),
+      prisma.agentTask.findMany({
+        where: { agentKey: agent.key, status: "DONE", rehearsal: false },
+        orderBy: { finishedAt: "desc" },
+        take: 3,
+        select: { id: true, title: true, summary: true, finishedAt: true },
+      }),
+      listAllTools(),
+    ]);
+
+    // Granted, and whether the thing behind it is actually connected. A new
+    // agent whose one job needs an integration nobody has set up is the
+    // failure this answers before its first task rather than during it.
+    const granted = catalogue.filter((tool) => agent.toolkit.includes(tool.key));
+    const toolkit = await Promise.all(
+      granted.map(async (tool) => {
+        const readiness = await toolReadiness(tool.requires);
+        return {
+          key: tool.key,
+          name: tool.name,
+          purpose: tool.purpose,
+          outward: tool.outward,
+          spends: tool.spends,
+          ready: readiness.ready,
+          blockedReason: readiness.reason,
+        };
+      }),
+    );
+
+    res.json({
+      agent: {
+        key: agent.key,
+        name: agent.name,
+        title: agent.title,
+        mission: agent.mission,
+        status: agent.status,
+        autonomyLevel: agent.autonomyLevel,
+        dryRun: agent.dryRun,
+        managerKey: agent.managerKey,
+        createdAt: agent.createdAt,
+      },
+      /** Null for a seeded agent, which was never hired against a gap. */
+      hiredFor: hire
+        ? {
+            requestId: hire.id,
+            deliverable: hire.deliverable,
+            rationale: hire.rationale,
+            decidedAt: hire.decidedAt,
+            policy: hire.policy,
+            skillNeeded: gap?.skillNeeded ?? null,
+            askedBy: gap ? [...new Set([gap.requestedByKey, ...gap.requestedByKeys])] : [],
+            timesRequested: gap?.timesRequested ?? null,
+          }
+        : null,
+      /** What it will be told about itself on every task. */
+      induction,
+      /**
+       * The closest crafts on the roster, and the sentence that matters about
+       * them: where a job sits between this agent and one of these, it is a
+       * `consult` rather than a decision.
+       */
+      neighbours,
+      toolkit,
+      /** Its own last three, and empty for an agent that has not run yet. */
+      finished,
+      /** The compiled prompt is a separate, larger read — see `/prompt/compiled`. */
+      promptLayers: PROMPT_LAYERS,
+    });
   } catch (err) {
     next(err);
   }

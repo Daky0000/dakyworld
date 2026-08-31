@@ -64,6 +64,10 @@ toolsRouter.get("/catalogue", async (req, res, next) => {
           canPreview: Boolean(tool.preview),
           ready: readiness.ready,
           blockedReason: readiness.reason,
+          // Ready and mocked at once. Without this the screen would print
+          // twenty-six connected integrations on a laptop that has none, which
+          // is the misreading DEV_MODE most needs to avoid.
+          mocked: Boolean(readiness.mocked),
           ...(permission
             ? { granted: permission.allowed, mustDryRun: permission.mustDryRun, permissionNote: permission.reason }
             : {}),
@@ -77,6 +81,7 @@ toolsRouter.get("/catalogue", async (req, res, next) => {
       summary: {
         total: catalogue.length,
         ready: catalogue.filter((tool) => tool.ready).length,
+        mocked: catalogue.filter((tool) => tool.mocked).length,
         outward: catalogue.filter((tool) => tool.outward).length,
         spending: catalogue.filter((tool) => tool.spends).length,
       },

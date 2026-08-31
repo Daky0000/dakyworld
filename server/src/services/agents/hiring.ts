@@ -1139,6 +1139,121 @@ export async function openGaps() {
   });
 }
 
+/**
+ * How many separate agents have to have asked before a gap is an argument.
+ *
+ * One agent wanting a bookkeeper is a bad reason to employ one — it is as
+ * likely to be one awkward task, or an agent that did not know to look. Three
+ * agents on three different jobs wanting the same craft is the same fact
+ * arriving three times from three directions, which is the point at which it
+ * stops being an anecdote. `recordGap` already counts it that way: the set is
+ * `requestedByKeys`, so the same agent asking twice does not count twice.
+ *
+ * Not a setting. A number somebody can change is a number that gets changed to
+ * whatever makes today's queue look empty, and the count itself is on the
+ * screen beside every gap — so a person who disagrees with three can act on a
+ * gap at two by reading it.
+ */
+const ARGUMENT_FOR_HIRING = 3;
+
+export interface GapReadyToDecide {
+  id: string;
+  skillNeeded: string;
+  timesRequested: number;
+  requestedBy: string[];
+  status: string;
+  /** The Agent Creator's review, when one is still open on it. */
+  reviewTaskId: string | null;
+  openedAt: Date;
+  /** Whole days since the first agent asked. */
+  ageDays: number;
+}
+
+/**
+ * The gaps that have been asked for often enough to be worth a decision.
+ *
+ * **This does not decide anything and does not create anything.** Every gap
+ * already raises a review on the Agent Creator's queue the moment it is filed,
+ * and that is still the road a hire travels. What this answers is the question
+ * that road cannot: whether anybody is actually reading it. An Agent Creator
+ * that is DRAFT, retired, or simply queued behind other work leaves gaps
+ * accumulating with nothing visible about them anywhere except a Slack command
+ * somebody has to think to type.
+ *
+ * So it is a read, in two places — the dashboard and the weekly notice below —
+ * and both of them lead to the same review task rather than to a second way of
+ * hiring somebody.
+ */
+export async function gapsReadyToDecide(limit = 10): Promise<GapReadyToDecide[]> {
+  const gaps = await prisma.agentGap.findMany({
+    where: { status: { in: ["OPEN", "IN_REVIEW"] }, timesRequested: { gte: ARGUMENT_FOR_HIRING } },
+    orderBy: [{ timesRequested: "desc" }, { createdAt: "asc" }],
+    take: limit,
+  });
+
+  const now = Date.now();
+  return Promise.all(
+    gaps.map(async (gap) => ({
+      id: gap.id,
+      skillNeeded: gap.skillNeeded,
+      timesRequested: gap.timesRequested,
+      requestedBy: [...new Set([gap.requestedByKey, ...gap.requestedByKeys])],
+      status: gap.status,
+      reviewTaskId: await reviewTaskFor(gap.id),
+      openedAt: gap.createdAt,
+      ageDays: Math.floor((now - gap.createdAt.getTime()) / 86_400_000),
+    })),
+  );
+}
+
+/**
+ * Says once a week that crafts are piling up with nobody deciding on them.
+ *
+ * **Once a week, and silent when there is nothing.** The same rule the
+ * escalation digest keeps and for the same reason: a message every day about
+ * the same undecided gap is how a channel stops being read, and the week it
+ * matters is the week it is ignored. The scheduler owns the "have I sent this
+ * week's yet" marker.
+ *
+ * Deliberately not a card with buttons on it. Hiring is decided on the Agent
+ * Creator's proposal — which carries the design, the toolkit and the overlap
+ * check a person needs — and a shortcut from here would be a decision made
+ * without any of that in front of it.
+ */
+export async function postGapNotice(): Promise<{ posted: boolean; count: number }> {
+  const ready = await gapsReadyToDecide();
+  if (ready.length === 0) return { posted: false, count: 0 };
+  if (!(await slackConfigured())) return { posted: false, count: ready.length };
+
+  const text = `${ready.length} craft(s) ${ARGUMENT_FOR_HIRING} or more agents have asked for`;
+  const lines = ready.map((gap) => {
+    const age = gap.ageDays === 0 ? "opened today" : `${gap.ageDays}d old`;
+    const review = gap.reviewTaskId ? "the Agent Creator has it" : "*nothing is reviewing it*";
+    return `• *${gap.skillNeeded}* — ${gap.timesRequested} agents (${gap.requestedBy.join(", ")}) _(${age}, ${review})_`;
+  });
+
+  await sendSlackBlocks({
+    text,
+    blocks: [
+      { type: "header", text: { type: "plain_text", text, emoji: false } },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text:
+              `Each of these is work that stopped because nobody on the roster could take it. ` +
+              `\`/dakyworld gaps\` for the full list, or read the Agent Creator's review before deciding anything.`,
+          },
+        ],
+      },
+      { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+    ],
+  });
+
+  return { posted: true, count: ready.length };
+}
+
 export async function listHireRequests(status?: HireRequestStatus) {
   return prisma.agentHireRequest.findMany({
     where: status ? { status } : {},

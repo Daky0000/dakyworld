@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for Hubtel SMS — DEV_MODE is on, so no text is sent and nothing is billed.",
+  "output": { "devMode": true, "sent": false, "segments": 1, "note": "DEV_MODE is on. No text left and no credit was spent." }
+}

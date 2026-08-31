@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { attachUser, bootstrapOwner, requireAuth, scopeExternal, DEV_NO_AUTH, DEV_NO_AUTH_REFUSED } from "./middleware/auth.js";
+import { DEV_MODE, DEV_MODE_REFUSED } from "./services/tools/devMode.js";
 import { ensureStarterRoles, ensureSystemRoles } from "./lib/accessRoles.js";
 import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
@@ -428,6 +429,21 @@ ensureSystemRoles()
         console.warn(
           "  ⚠ DEV_NO_AUTH=true is set on a deployed service and is being IGNORED. " +
             "Login is enforced. Delete that variable — it does nothing here except sit one config change away from disabling authentication.",
+        );
+      }
+      if (DEV_MODE_REFUSED) {
+        // Same reasoning as the warning above it, and the consequence is
+        // arguably worse: honoured, this would report every integration as
+        // connected and answer every send with a fabricated success.
+        console.warn(
+          "  ⚠ DEV_MODE=true is set on a deployed service and is being IGNORED. " +
+            "Real integration checks are enforced. Delete that variable — honoured, it would fake every send this system makes.",
+        );
+      }
+      if (DEV_MODE) {
+        console.log(
+          "  → DEV_MODE=true: integrations nobody has connected are stood in for, and their tools return a mock instead of running " +
+            "(never honoured on a deployed service). A connected integration is still used for real.",
         );
       }
       if (DEV_NO_AUTH) {

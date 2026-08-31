@@ -78,23 +78,37 @@ export async function openEscalations(limit = 50): Promise<OpenEscalation[]> {
  * what changes is that nobody needs reminding about it every week. That
  * separation is the whole reason `escalationStatus` is its own column rather
  * than a reading of `status`.
+ *
+ * **The note is the one thing here nothing else can derive.** Answering a
+ * question leaves the answer on the brief and in the conversation, so there is
+ * always something to read afterwards. Closing one leaves nothing at all — and
+ * "why did nobody act on this" six weeks later is exactly the question the
+ * column exists to answer. `escalationResolvedAt` is stamped in the same write
+ * as the status for the same reason `transition()` stamps it: a timestamp
+ * written separately is a timestamp that can be missing.
  */
-export async function closeEscalation(taskId: string, by: { userId?: string | null; who?: string | null }): Promise<boolean> {
+export async function closeEscalation(
+  taskId: string,
+  by: { userId?: string | null; who?: string | null },
+  note?: string | null,
+): Promise<boolean> {
+  const text = note?.trim().slice(0, 1000) || null;
   const done = await prisma.agentTask.updateMany({
     where: { id: taskId, escalationStatus: "PENDING" },
-    data: { escalationStatus: "CLOSED" },
+    data: { escalationStatus: "CLOSED", escalationResolvedAt: new Date(), escalationNote: text },
   });
   if (done.count === 0) return false;
 
   // The history is the task's own, so the acknowledgement belongs on it — a
   // question that quietly stopped appearing with no record of who decided that
   // is the thing this feature exists to end.
+  const closed = by.who ? `Escalation closed by ${by.who} — read and left as it is.` : "Escalation closed — read and left as it is.";
   await prisma.agentTaskTransition.create({
     data: {
       taskId,
       from: "BLOCKED",
       to: "BLOCKED",
-      reason: by.who ? `Escalation closed by ${by.who} — read and left as it is.` : "Escalation closed — read and left as it is.",
+      reason: text ? `${closed} ${text}` : closed,
       actor: "owner",
       actorId: by.userId ?? null,
     },

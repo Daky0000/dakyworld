@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for Google — DEV_MODE is on, so no account is connected and nothing is read or written.",
+  "output": { "devMode": true, "note": "DEV_MODE is on. No Google account was reached." }
+}

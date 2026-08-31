@@ -1,0 +1,8 @@
+{
+  "readiness": "Standing in for Apify — DEV_MODE is on, so no actor runs and nothing is billed.",
+  "output": {
+    "devMode": true,
+    "items": [],
+    "note": "DEV_MODE is on. No actor was started, so this is an empty result rather than a business that could not be found."
+  }
+}

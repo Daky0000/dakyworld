@@ -2696,6 +2696,29 @@ model AgentTask {
   /// distinct from ANSWERED — "never had a question" and "had one, dealt with"
   /// are different facts, and the weekly digest counts only PENDING.
   escalationStatus EscalationStatus?
+
+  /// When the question stopped waiting on a person, and what they said about it.
+  ///
+  /// Deliberately two more columns on this row rather than a table of their
+  /// own. `escalationStatus` already lives here and is the single place the
+  /// digest reads; a second home for the same state is two rows that can
+  /// disagree about whether a question is still open, and the one that is
+  /// wrong is the one somebody acts on.
+  ///
+  /// `escalationResolvedAt` is stamped on every road out of PENDING — answered,
+  /// run again, cancelled, or read and left — and cleared again if the task
+  /// stops to ask a second time, because the age the digest reports has to be
+  /// the age of the *current* question. It is not `finishedAt`: a task can
+  /// finish long after its question was answered, and can be answered without
+  /// finishing at all.
+  ///
+  /// `escalationNote` is only ever filled by somebody deliberately saying
+  /// something the system could not derive — the sentence typed into "read and
+  /// left". An answer is already kept in full on the brief and in the
+  /// conversation, so copying it here would be a third copy that drifts.
+  escalationResolvedAt DateTime?
+  escalationNote       String?
+
   error         String?
 
   /// Where this task's escalation card was posted, so answering it anywhere

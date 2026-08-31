@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for the model vendors — DEV_MODE is on, so nothing is asked of a model.",
+  "output": { "devMode": true, "note": "DEV_MODE is on. No model was called, so anything downstream expecting written output gets none." }
+}

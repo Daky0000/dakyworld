@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for a connected MCP server — DEV_MODE is on, so no server is called.",
+  "output": { "devMode": true, "note": "DEV_MODE is on. No MCP server answered this." }
+}

@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for Stripe — DEV_MODE is on, so no charge is created.",
+  "output": { "devMode": true, "created": false, "note": "DEV_MODE is on. No payment object exists and no money moved." }
+}

@@ -15,6 +15,10 @@
  * to `Agent` for a hire, and it is driven here directly — a model can never
  * reach it, which is the whole safety story of the hiring loop.
  */
+import express from "express";
+import { attachUser, requireAuth } from "../src/middleware/auth.js";
+import { agentsRouter } from "../src/routes/agents.js";
+import { errorHandler } from "../src/middleware/errorHandler.js";
 import { applyHire, proposeHire } from "../src/services/agents/hiring.js";
 import { recall } from "../src/services/agents/memory.js";
 import { prisma } from "../src/lib/prisma.js";
@@ -26,6 +30,7 @@ function check(label: string, ok: boolean, detail?: string) {
   if (!ok) bad += 1;
 }
 
+const PORT = 4599;
 const HIRED_KEY = "check.onboard.hired";
 const ASKER_KEY = "check.onboard.asker";
 const NEIGHBOUR_KEY = "check.onboard.neighbour";
@@ -153,6 +158,60 @@ if (!proposal.requestId) {
   // Every hire lands here whichever way it was approved. AUTO decides who
   // exists; it never decides what they may do.
   check("and lands at autonomy 1 with dry run on", hired.autonomyLevel === 1 && hired.dryRun, `${hired.autonomyLevel} / ${hired.dryRun}`);
+
+  console.log("\nAnd the page a person reads it all back on");
+  {
+    // Two segments, so it sits safely below `/:key` — the same trap
+    // `/escalations` carries, and the reason this is driven over real HTTP
+    // rather than by calling a handler. Mounted the wrong way round it answers
+    // about an agent called "onboarding".
+    const app = express();
+    app.use(express.json());
+    app.use(attachUser);
+    app.use("/api", requireAuth);
+    app.use("/api/agents", agentsRouter);
+    app.use(errorHandler);
+    const server = app.listen(PORT, "127.0.0.1");
+    await new Promise((resolve) => server.once("listening", resolve));
+
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/agents/${HIRED_KEY}/onboarding`);
+    const body = (await res.json()) as {
+      agent?: { key?: string };
+      hiredFor?: { skillNeeded?: string; askedBy?: string[] } | null;
+      induction?: { content: string }[];
+      neighbours?: { name: string }[];
+      toolkit?: { key: string; ready: boolean }[];
+      finished?: unknown[];
+      error?: string;
+    };
+
+    check("GET /agents/:key/onboarding answers", res.status === 200, `status ${res.status} — ${body.error ?? ""}`);
+    check("and it is this agent", body.agent?.key === HIRED_KEY, JSON.stringify(body.agent).slice(0, 120));
+    check("it says why this one was employed", body.hiredFor?.skillNeeded === SKILL, `${body.hiredFor?.skillNeeded}`);
+    check("and who asked", Boolean(body.hiredFor?.askedBy?.includes(ASKER_KEY)), body.hiredFor?.askedBy?.join(", "));
+    check("the induction it will be told on every task is on the page", (body.induction?.length ?? 0) > 0, `${body.induction?.length}`);
+    check("so is whose craft is nearest", Boolean(body.neighbours?.some((one) => one.name === "Onboard Neighbour")), JSON.stringify(body.neighbours).slice(0, 160));
+    check("and its toolkit", Boolean(body.toolkit?.some((tool) => tool.key === "image.generate")), JSON.stringify(body.toolkit).slice(0, 160));
+
+    // The honest answer for a new hire, and the reason this panel is its *own*
+    // finished work rather than a summary of somebody else's: `onboard()`
+    // refuses to guess what a colleague's job is like, and a page that filled
+    // this with other agents' tasks would be that guess wearing a label.
+    check("a new hire has finished nothing, and the page says so", Array.isArray(body.finished) && body.finished.length === 0, JSON.stringify(body.finished));
+
+    // A seeded agent was never hired against a gap and simply says so. There
+    // is no version of this page that is useful for one agent and forbidden
+    // for another.
+    const neighbour = await fetch(`http://127.0.0.1:${PORT}/api/agents/${NEIGHBOUR_KEY}/onboarding`);
+    const seeded = (await neighbour.json()) as { hiredFor?: unknown; agent?: { key?: string } };
+    check("an agent nobody hired still has a page", neighbour.status === 200, `status ${neighbour.status}`);
+    check("and it says there was no gap behind it", seeded.hiredFor === null, JSON.stringify(seeded.hiredFor));
+
+    const missing = await fetch(`http://127.0.0.1:${PORT}/api/agents/no-such-agent/onboarding`);
+    check("an agent that does not exist is a 404", missing.status === 404, `status ${missing.status}`);
+
+    server.close();
+  }
 }
 
 await reset();

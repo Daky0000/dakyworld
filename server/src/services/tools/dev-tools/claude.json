@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for Anthropic — DEV_MODE is on, so nothing is asked of a model.",
+  "output": { "devMode": true, "note": "DEV_MODE is on. No model was called." }
+}

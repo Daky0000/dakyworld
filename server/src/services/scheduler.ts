@@ -12,7 +12,7 @@ import { runDueSequences } from "./emailSequences.js";
 import { readMailboxOnce } from "./mailbox/watcher.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
-import { ensureGapReviews, expireStaleHireRequests } from "./agents/hiring.js";
+import { ensureGapReviews, expireStaleHireRequests, postGapNotice } from "./agents/hiring.js";
 import { postEscalationDigest } from "./agents/escalationDigest.js";
 import { SETTING, getSetting, setSetting } from "../lib/settings.js";
 import { expireStaleRequests, staleByAgent } from "./approvals.js";
@@ -268,6 +268,25 @@ async function housekeepingTick(now: Date) {
     await setSetting(SETTING.WEEKLY_DIGEST_SENT, week);
     if (digest.posted) console.log(`[scheduler] posted the weekly digest — ${digest.count} question(s) waiting`);
     else if (digest.count > 0) console.log(`[scheduler] ${digest.count} agent question(s) waiting, and no Slack to say so on`);
+  }
+
+  // The crafts enough separate agents have asked for that the answer is
+  // somebody's decision rather than a queue.
+  //
+  // A second weekly message rather than a section on the digest above, and
+  // that is deliberate: the digest is questions waiting on the Owner *now*,
+  // and a week with no questions must still be a week the piling-up gaps are
+  // said out loud. Its own sent-marker for the same reason — see
+  // `GAP_NOTICE_SENT`.
+  //
+  // Every gap here already has a review on the Agent Creator's queue, raised
+  // when it was filed. This says nothing new about any one of them; what it
+  // says is that they are accumulating, which no single review can.
+  if ((await getSetting(SETTING.GAP_NOTICE_SENT)) !== week) {
+    const notice = await postGapNotice();
+    await setSetting(SETTING.GAP_NOTICE_SENT, week);
+    if (notice.posted) console.log(`[scheduler] posted the skill-gap notice — ${notice.count} craft(s) waiting on a decision`);
+    else if (notice.count > 0) console.log(`[scheduler] ${notice.count} skill gap(s) waiting on a decision, and no Slack to say so on`);
   }
 }
 

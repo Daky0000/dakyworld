@@ -1,0 +1,9 @@
+{
+  "readiness": "Standing in for the mail server — DEV_MODE is on, so nothing is actually sent.",
+  "output": {
+    "devMode": true,
+    "sent": false,
+    "messageId": "dev-mode@dakyworld.local",
+    "note": "DEV_MODE is on. The message was composed and handed to a stand-in; no mail server saw it and nobody received it."
+  }
+}

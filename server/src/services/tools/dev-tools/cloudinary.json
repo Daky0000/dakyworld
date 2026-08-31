@@ -1,0 +1,4 @@
+{
+  "readiness": "Standing in for Cloudinary — DEV_MODE is on, so nothing is uploaded.",
+  "output": { "devMode": true, "url": "https://example.invalid/dev-mode-placeholder.png", "note": "DEV_MODE is on. That address hosts nothing." }
+}

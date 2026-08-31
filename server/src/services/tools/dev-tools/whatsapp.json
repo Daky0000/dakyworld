@@ -1,0 +1,9 @@
+{
+  "readiness": "Standing in for WhatsApp — DEV_MODE is on, so no message leaves and no template is checked.",
+  "output": {
+    "devMode": true,
+    "sent": false,
+    "wamid": "dev-mode-wamid",
+    "note": "DEV_MODE is on. Meta was never called, so this says nothing about whether the template is approved or the 24-hour window is open."
+  }
+}
