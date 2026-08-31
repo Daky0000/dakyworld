@@ -114,6 +114,17 @@ const TEMPORARY_PHRASES = [
  * for two and a half hours before blocking with the same sentence it had at the
  * start. Matching the words rather than the number is what makes the difference,
  * which is also why this list is consulted before the status.
+ *
+ * **But only where the status has not already answered the question.** These
+ * match anywhere in the message, and the message carries the vendor's own prose
+ * — `describeRejection` puts up to 300 characters of the response body into it.
+ * Two of the three most likely failures in this deployment say one of these
+ * words *inside a plain rate limit*: OpenRouter answers a free-tier day limit
+ * with "Add 10 credits to unlock 1000 free model requests per day", and Google
+ * answers one with "Quota exceeded for quota metric". Both were being read as
+ * "the account is out of money", which blocked the task, posted an escalation
+ * card and waited for a person — for a limit that clears on its own. See
+ * `RATE_LIMITED_ANYWAY` below for the rule that stops it.
  */
 const ANSWERABLE_PHRASES: Array<{ match: string; say: string }> = [
   { match: "no model is connected", say: "No model provider is connected, so nothing can run this. Add a key under Settings → AI models." },
@@ -128,6 +139,22 @@ const ANSWERABLE_PHRASES: Array<{ match: string; say: string }> = [
   { match: "refused the request shape", say: "The model refused the shape of the request. This is a fault in the app, not in the task." },
 ];
 
+/**
+ * A 429 is a rate limit whoever said it and whatever else the body mentions.
+ *
+ * The one case where the status has to beat the words. Every other status this
+ * file sees is ambiguous — a 503 is "busy" from one vendor and "no key" from
+ * this codebase — which is why `ANSWERABLE_PHRASES` is consulted first. 429 is
+ * not ambiguous: it means the far end is turning us away for asking too often,
+ * and the fix for that is a clock, never a person. Reading a vendor's own
+ * suggestion to buy credit as evidence the account is empty is how a limit that
+ * clears in five minutes came to stop a task until somebody noticed it.
+ */
+function rateLimited(status: number | null, lower: string): boolean {
+  if (status === 429) return true;
+  return /rate.?limit|too many requests|requests per (?:day|minute|hour)/.test(lower);
+}
+
 export function planFor(err: unknown, waitsSoFar: number): RetryPlan {
   const message = ((err as Error)?.message ?? String(err)).trim();
   const lower = message.toLowerCase();
@@ -137,7 +164,10 @@ export function planFor(err: unknown, waitsSoFar: number): RetryPlan {
   // status that reads as temporary and means "there is no key", which no amount
   // of waiting fixes. Reading the words before the number is what keeps a
   // missing key from being retried for two hours and then blocked anyway.
-  const answerable = ANSWERABLE_PHRASES.find((entry) => lower.includes(entry.match));
+  //
+  // Skipped entirely for a rate limit, because there the words are the vendor's
+  // and the number is ours. See `rateLimited`.
+  const answerable = rateLimited(status, lower) ? undefined : ANSWERABLE_PHRASES.find((entry) => lower.includes(entry.match));
   if (answerable) {
     return { remedy: "ask", waitMinutes: 0, reason: `${answerable.say} (${message})` };
   }

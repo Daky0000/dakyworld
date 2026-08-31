@@ -37,6 +37,14 @@ import type { Counters } from "./runner.js";
  * `dryRun` and `refusedReason`, which is exactly the tool half; `AgentTaskStep`
  * carries one row per consult, delegation, hand-off and gap. Those two are the
  * ledgers that hold the facts, so those two are what this reads.
+ *
+ * **A step that failed is not a thing that happened.** Both ledgers are read
+ * for what succeeded: `ToolCall` rows carrying a `refusedReason` are counted as
+ * refusals rather than as calls, and a step marked `ok: false` is not counted
+ * at all. The case that makes this load-bearing is a consult whose model call
+ * failed — the step is written so the timeline shows the question was put, and
+ * counting it would charge a resumed task for a vendor outage, which is the
+ * exact thing the consult tool stopped doing.
  */
 
 export interface Reconciliation {
@@ -58,7 +66,19 @@ async function ledgerTallies(taskId: string) {
     }),
     prisma.agentTaskStep.groupBy({
       by: ["kind"],
-      where: { taskId },
+      // Everything except a step that says it failed, because a `CONSULTED`
+      // step is now written for a colleague nobody could reach as well as for
+      // one who answered — the timeline should show that the question was put.
+      // Counting those here would put the allowance back the same way the
+      // consult tool used to spend it: a resumed task charged for an outage,
+      // through the reconciliation rather than through the tool.
+      //
+      // **Spelt as an OR, not as `ok: { not: false }`.** `ok` is nullable and
+      // `step()` writes null unless a caller says otherwise, so every
+      // delegation, hand-off and gap on the timeline has one — and SQL's
+      // `ok <> false` is *unknown* for a null, which drops the row. That
+      // version excluded almost the whole ledger and reconciled nothing.
+      where: { taskId, OR: [{ ok: null }, { ok: true }] },
       _count: true,
     }),
   ]);

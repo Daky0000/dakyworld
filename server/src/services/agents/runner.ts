@@ -824,7 +824,10 @@ function restoreConsultedBy(stored: Record<string, unknown> | undefined): Record
  */
 async function priorConsult(taskId: string, colleagueKey: string, question: string): Promise<string | null> {
   const steps = await prisma.agentTaskStep.findMany({
-    where: { taskId, kind: "CONSULTED" },
+    // `ok: true` because a consult nobody answered is also written down — the
+    // timeline should show that the question was put — and handing that back
+    // as an opinion is exactly what this cache must never do.
+    where: { taskId, kind: "CONSULTED", ok: true },
     orderBy: { seq: "desc" },
     take: 20,
     select: { data: true },
@@ -1179,6 +1182,31 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       }
 
       const answer = await askColleague(colleague, agent, task, question);
+
+      // Nobody answered, so nothing is spent and nothing is remembered.
+      //
+      // A vendor being rate-limited is not this colleague's opinion, and it is
+      // not this task's fault either. Charged as a consult it would take a
+      // third of the allowance for an outage; written to the timeline with an
+      // `answer` it would be handed straight back by `priorConsult` on every
+      // later ask, so the agent could never reach this colleague again for the
+      // life of the task. Recorded as a failed step so the timeline still shows
+      // that the question was put.
+      if (!answer.answered) {
+        await step(task.id, "CONSULTED", `Could not reach ${colleague.name}: ${question.slice(0, 200)}`, {
+          ok: false,
+          data: { agentKey: colleague.key, question, reachable: false, priority },
+        });
+        return {
+          content:
+            `${answer.text}
+
+(Nobody answered, so this did not spend a consult — you may ask again. ` +
+            `If they stay unreachable, decide with what you have or escalate.)`,
+          isError: true,
+        };
+      }
+
       counters.consulted += 1;
       counters.consultedBy[priority] += 1;
       const after = remainingConsults(counters, limit);
@@ -1334,7 +1362,7 @@ async function askColleague(
   asker: Agent,
   task: AgentTask,
   question: string,
-): Promise<{ text: string; provider: string }> {
+): Promise<{ text: string; provider: string; answered: boolean }> {
   // Their memories of the subjects *this* task is about — which is the whole
   // value of asking a colleague rather than asking the same model twice. The
   // SEO Specialist answering about this lead has read what it concluded about
@@ -1366,12 +1394,17 @@ async function askColleague(
       maxTokens: 1200,
     });
     const caveat = result.data.confident ? "" : `\n\n(Not confident.${result.data.wouldNeed ? ` Would need: ${result.data.wouldNeed}` : ""})`;
-    return { text: `${result.data.answer}${caveat}`, provider: result.provider };
+    return { text: `${result.data.answer}${caveat}`, provider: result.provider, answered: true };
   } catch (err) {
     // A colleague who cannot be reached is a colleague who cannot be reached.
     // Reported as an answer rather than thrown, because the asking agent still
     // has a task to finish and "I could not get hold of them" is information.
-    return { text: `[${colleague.name} could not be reached: ${(err as Error).message}]`, provider: "none" };
+    //
+    // `answered: false` is what stops it being treated as one. Nobody gave an
+    // opinion here, so the caller must not spend a consult on it and must not
+    // let `priorConsult` hand this sentence back for the rest of the task as
+    // though it were what this colleague thinks.
+    return { text: `[${colleague.name} could not be reached: ${(err as Error).message}]`, provider: "none", answered: false };
   }
 }
 
@@ -1822,8 +1855,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             const row = await prisma.agentTask.findUnique({ where: { id: task.id }, select: { budgetUsd: true } });
             const ceiling = row?.budgetUsd == null ? null : Number(row.budgetUsd.toString());
             if (ceiling === null || ceiling <= 0) return null;
-            const spent = await prisma.llmCall.aggregate({ where: { taskId: task.id }, _sum: { costUsd: true } });
-            const spentUsd = Number((spent._sum.costUsd ?? 0).toString());
+            const spentUsd = await spendOn(task.id);
             return spentUsd / ceiling >= EASE_OFF_AT ? "medium" : null;
           },
           resume: saved?.state ?? null,
@@ -1875,8 +1907,10 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             const ceiling = row?.budgetUsd === null || row?.budgetUsd === undefined ? null : Number(row.budgetUsd.toString());
             if (ceiling === null || ceiling <= 0) return false;
 
-            const spent = await prisma.llmCall.aggregate({ where: { taskId: task.id }, _sum: { costUsd: true } });
-            const spentUsd = Number((spent._sum.costUsd ?? 0).toString());
+            // The same sum the ending writes down, so a task cannot be stopped at
+            // one number and recorded at another. A screenshot or an Apify run
+            // is money against this ceiling exactly as a model turn is.
+            const spentUsd = await spendOn(task.id);
             if (spentUsd < ceiling) return false;
 
             stoppedByBudget = {
@@ -1905,7 +1939,6 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           const ceiling = stoppedByBudget as BudgetState;
           return finishTask(task.id, "BLOCKED", {
             blockedReason: `This task has spent $${ceiling.spentUsd.toFixed(2)}, which is at or past the $${(ceiling.hardLimitUsd ?? 0).toFixed(2)} ceiling set on it. Its place is kept — raise the ceiling and carry on, or leave it here.`,
-            costUsd: result.costUsd,
             toolCalls: counters.toolCalls,
             dryRunCalls: counters.dryRun,
           });
@@ -1914,7 +1947,6 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         // Stopped on request with its place kept. Not an outcome — an intermission.
         if (result.stoppedBecause === "interrupted") {
           return interruptedTask(task.id, runOwner, {
-            costUsd: result.costUsd,
             toolCalls: counters.toolCalls,
             dryRunCalls: counters.dryRun,
             progressed: result.state.iteration > startedFrom,
@@ -1959,7 +1991,6 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           return finishTask(task.id, "BLOCKED", {
             summary,
             blockedReason: counters.escalated,
-            costUsd: result.costUsd,
             toolCalls: counters.toolCalls,
             dryRunCalls: counters.dryRun,
           });
@@ -1986,7 +2017,6 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             consulted: counters.consulted,
             gapsRaised: counters.gapsRaised,
           },
-          costUsd: result.costUsd,
           toolCalls: counters.toolCalls,
           dryRunCalls: counters.dryRun,
         });
@@ -2037,12 +2067,11 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           return finishTask(task.id, "BLOCKED", {
             blockedReason: plan.reason,
             error: message,
-            costUsd: 0,
             toolCalls: counters.toolCalls,
           });
         }
 
-        return finishTask(task.id, "FAILED", { error: message, costUsd: 0, toolCalls: counters.toolCalls });
+        return finishTask(task.id, "FAILED", { error: message, toolCalls: counters.toolCalls });
       }
     });
   } finally {
@@ -2064,8 +2093,12 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
 async function interruptedTask(
   taskId: string,
   runOwner: string,
-  data: { costUsd: number; toolCalls: number; dryRunCalls: number; progressed: boolean },
+  data: { toolCalls: number; dryRunCalls: number; progressed: boolean },
 ): Promise<RunOutcome> {
+  // From the ledger, for the same reason `finishTask` reads it there: an
+  // interrupted run is the one most likely to have spent money inside a tool
+  // handler that the loop's own tally never saw.
+  const spentUsd = await spendOn(taskId);
   await step(taskId, "INTERRUPTED", "Stopped part-way and kept its place. It carries on from here rather than starting again.");
   // Matched on the owner: a run that was reaped while it was stopping must not
   // drag the task that replaced it back into the queue.
@@ -2081,7 +2114,7 @@ async function interruptedTask(
       runOwner: null,
       startedAt: null,
       interruptRequested: false,
-      costUsd: data.costUsd.toFixed(6),
+      costUsd: spentUsd.toFixed(6),
       toolCalls: data.toolCalls,
       dryRunCalls: data.dryRunCalls,
       // A run that got further than the last one had a provider answer it, so
@@ -2091,6 +2124,29 @@ async function interruptedTask(
     },
   });
   return { status: "QUEUED", summary: null };
+}
+
+/**
+ * What one task has actually cost, from the ledgers rather than from a tally.
+ *
+ * Both ledgers, because both are real money: `LlmCall` carries every model call
+ * made anywhere under this task's run context — including the ones inside tool
+ * handlers, which is most of the writing this company does — and `ToolCall`
+ * carries what the paid tools themselves charged, which is Apify runs and
+ * screenshots and is not a model call at all.
+ *
+ * Read at every ending rather than threaded through the call sites. A number
+ * passed in is a number one of the five roads out of a run will get wrong, and
+ * four of them already did: the two `catch` paths passed a literal zero, and
+ * the three success paths passed the agent loop's own tally, which knows only
+ * about the turns the loop itself took.
+ */
+export async function spendOn(taskId: string): Promise<number> {
+  const [models, tools] = await Promise.all([
+    prisma.llmCall.aggregate({ where: { taskId }, _sum: { costUsd: true } }),
+    prisma.toolCall.aggregate({ where: { taskId }, _sum: { costUsd: true } }),
+  ]);
+  return Number((models._sum.costUsd ?? 0).toString()) + Number((tools._sum.costUsd ?? 0).toString());
 }
 
 /**
@@ -2130,7 +2186,6 @@ async function finishTask(
     result?: unknown;
     blockedReason?: string;
     error?: string;
-    costUsd?: number;
     toolCalls?: number;
     dryRunCalls?: number;
   },
@@ -2144,10 +2199,24 @@ async function finishTask(
   // which is every short task. `LlmCall` carries a `taskId` as of this pass, is
   // written by every model call whoever made it, and accumulates across
   // resumes because each run appends its own rows. It is simply the truth.
+  //
+  // **The money is read from here too, and used to be passed in.** That was
+  // wrong in both directions. On the way out of the `catch` below the callers
+  // pass a literal `costUsd: 0`, so a task that spent three dollars over ten
+  // turns and then hit a broken vendor recorded nothing — on the same row as
+  // truthful token counts. And on the way out of a successful run they pass
+  // the agent loop's own tally, which counts only the turns the loop itself
+  // made: every model call inside a tool handler — a writer, a consult, a
+  // sub-analyst — is on the ledger against this task and was on nobody's bill.
+  // `AgentTask.costUsd` is not decoration: the Agents screen totals it for the
+  // month, and `rehearsals/run.ts` sums it to decide whether a rehearsal has
+  // spent its budget. An understated number there is a ceiling that does not
+  // hold.
   const spent = await prisma.llmCall.aggregate({
     where: { taskId },
     _sum: { inputTokens: true, outputTokens: true },
   });
+  const spentUsd = await spendOn(taskId);
 
   if (FINISHED_FOR_GOOD.includes(status)) await clearCheckpoint(taskId);
 
@@ -2172,7 +2241,7 @@ async function finishTask(
       error: data.error ?? null,
       inputTokens: spent._sum.inputTokens ?? 0,
       outputTokens: spent._sum.outputTokens ?? 0,
-      ...(data.costUsd !== undefined ? { costUsd: data.costUsd.toFixed(6) } : {}),
+      costUsd: spentUsd.toFixed(6),
       ...(data.toolCalls !== undefined ? { toolCalls: data.toolCalls } : {}),
       ...(data.dryRunCalls !== undefined ? { dryRunCalls: data.dryRunCalls } : {}),
       // The stall is over: this run reached an ending, which means a provider
