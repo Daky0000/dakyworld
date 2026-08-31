@@ -20,6 +20,8 @@
  * No database, no key, no network.
  */
 import { releaseOldAnswers } from "../src/lib/claudeAgent.js";
+import { trimToFit } from "../src/services/agents/checkpoint.js";
+import { prisma } from "../src/lib/prisma.js";
 
 let bad = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -113,6 +115,42 @@ console.log("\nA conversation of nothing but huge answers still terminates");
   check("it releases what it can and stops", released === 2, `${released}`);
   check("and the pairs survive even then", idsIn(messages).length === 4, idsIn(messages).join(", "));
 }
+
+console.log("\nAnd the same rule again, one layer down, on what is written to the row");
+{
+  // `trimToFit` is the checkpoint's own ceiling. It runs after every model turn
+  // *and* every tool call, so it is the cheapest thing here that is paid for
+  // most often — which is why it measures before it copies, and subtracts each
+  // trim from a running total rather than re-serialising the whole conversation
+  // once per block. Both of those are only safe if it still leaves the caller's
+  // own messages alone, so that is what is asserted.
+  const small = conversation(2, 100);
+  const before = JSON.stringify(small);
+  const kept = trimToFit(small as never);
+  check("a conversation under the ceiling comes back whole", JSON.stringify(kept) === before);
+  check("and the caller's own copy is untouched", JSON.stringify(small) === before);
+
+  const big = conversation(30, 400_000);
+  const bigBefore = JSON.stringify(big);
+  const trimmed = trimToFit(big as never) as unknown as Message[];
+  const size = JSON.stringify(trimmed).length;
+  check("a conversation over it comes back under it", size <= 3_000_000, String(size));
+  // The one that would corrupt a run rather than merely waste one: the loop is
+  // still holding these messages, and writing the row must not reach into them.
+  check("and the live conversation is still the live conversation", JSON.stringify(big) === bigBefore);
+  check("no message was dropped", trimmed.length === big.length, String(trimmed.length));
+  check("every call still has its answer", idsIn(trimmed as never).length === 60, String(idsIn(trimmed as never).length));
+
+  // Oldest first, so the turns the model is actually still reasoning from are
+  // the ones that survive.
+  const answers = trimmed
+    .filter((message) => message.role === "user")
+    .map((message) => String((message.content as { content?: unknown }[])[0]?.content ?? ""));
+  check("the oldest answer is the one let go of", answers[0].startsWith("[This result was trimmed"), answers[0].slice(0, 40));
+  check("and the newest is untouched", answers[answers.length - 1].length > 1000, String(answers[answers.length - 1].length));
+}
+
+await prisma.$disconnect();
 
 console.log(bad ? `\n${bad} PROBLEM(S)` : `\nOld answers are let go of once, not every turn, and the conversation stays sendable.`);
 process.exitCode = bad ? 1 : 0;

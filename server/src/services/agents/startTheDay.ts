@@ -26,10 +26,11 @@ import { hunt } from "../hunt/run.js";
  * - **`nextRunAt` is advanced**, exactly as a real firing would, so bringing a
  *   slot forward spends it rather than adding one. Press it at 07:29 and the
  *   07:30 run does not also happen.
- * - **Paused tasks are woken.** A task waiting five minutes on a rate limit is
- *   waiting on a clock too, and "act now" means that clock as well. The wait
- *   budget is reset, because the person pressing this is the one deciding to
- *   try again.
+ * - **Paused tasks are woken; scheduled ones are not.** A task waiting five
+ *   minutes on a rate limit is waiting on a clock too, and "act now" means that
+ *   clock as well. The wait budget is reset, because the person pressing this is
+ *   the one deciding to try again. A task somebody scheduled for Tuesday is a
+ *   different thing wearing the same column, and is left where it is.
  *
  * Hunts are **opt-in** on this button rather than included by default. Standing
  * work costs model tokens; a hunt starts an Apify capture and audits five
@@ -103,15 +104,23 @@ export async function startTheDay(options: { includeHunts?: boolean } = {}): Pro
     raised += 1;
   }
 
-  // 2. Anything already queued for later, and anything paused on a vendor.
+  // 2. Anything paused on a vendor.
   //
-  // A task with a future `scheduledFor` is waiting on a clock, and this is the
-  // clock being moved. `retryCount` goes back to zero with it: the person
-  // pressing this is deciding to try again, so the backoff starts afresh
-  // rather than jumping to the forty-minute rung.
+  // A task put down because a model provider was rate-limiting is waiting on a
+  // clock, and this is the clock being moved. `retryCount` goes back to zero
+  // with it: the person pressing this is deciding to try again, so the backoff
+  // starts afresh rather than jumping to the forty-minute rung.
+  //
+  // **`retryReason` is what separates a pause from an appointment**, and
+  // without it this woke both. A future `scheduledFor` is also how the Owner
+  // says "run this on Tuesday" — `POST /agents/:key/tasks` takes one — and
+  // Tuesday's task was being started this morning by a button whose whole
+  // promise is that it does what the scheduler would have done and nothing it
+  // would not. Only `retry.ts` writes the pair, so the pair is the test; it is
+  // the same predicate `isPaused` reads and the screens draw.
   const woken = (
     await prisma.agentTask.updateMany({
-      where: { status: "QUEUED", scheduledFor: { gt: now } },
+      where: { status: "QUEUED", scheduledFor: { gt: now }, retryReason: { not: null } },
       data: { scheduledFor: null, retryCount: 0, retryReason: null },
     })
   ).count;

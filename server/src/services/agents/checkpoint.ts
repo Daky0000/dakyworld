@@ -46,18 +46,39 @@ export interface StoredCheckpoint {
  * `tool_use_id` and its position all survive, so the conversation stays valid.
  * Recent turns are trimmed last because they are the ones the model is
  * actually still reasoning from.
+ *
+ * **Measured before it is copied, and measured once per trim rather than per
+ * block.** This runs after every model turn *and* every tool call, so a
+ * sixteen-turn task pays for it fifty-odd times — and the first version paid
+ * three full serialisations of a conversation that may be three megabytes
+ * before it had established there was nothing to do, then re-serialised the
+ * whole thing after every single block it trimmed. The size of a JSON document
+ * is the size of its parts, so a trim's saving can be subtracted from a running
+ * total instead; the deep copy is made only when something is actually going to
+ * be changed, because the caller's `messages` must not be mutated — it is the
+ * live conversation the loop is still turning.
+ *
+ * Exported for `checks/conversationTrim.ts`, which is where the rule this obeys
+ * is already written down.
  */
-function trimToFit(messages: AgentCheckpointState["messages"]): AgentCheckpointState["messages"] {
+export function trimToFit(messages: AgentCheckpointState["messages"]): AgentCheckpointState["messages"] {
+  let size = JSON.stringify(messages).length;
+  if (size <= MAX_JSON) return messages;
+
   const copy = JSON.parse(JSON.stringify(messages)) as AgentCheckpointState["messages"];
-  if (JSON.stringify(copy).length <= MAX_JSON) return copy;
+  const replacement = JSON.stringify(TRIMMED).length;
 
   for (const message of copy) {
     if (!Array.isArray(message.content)) continue;
     for (const block of message.content as { type?: string; content?: unknown }[]) {
       if (block?.type !== "tool_result") continue;
       if (typeof block.content === "string" && block.content === TRIMMED) continue;
+      // What this block costs today, as it is serialised — which is the only
+      // measure that matches the number being compared against.
+      const was = JSON.stringify(block.content ?? null).length;
       block.content = TRIMMED;
-      if (JSON.stringify(copy).length <= MAX_JSON) return copy;
+      size -= was - replacement;
+      if (size <= MAX_JSON) return copy;
     }
   }
   return copy;

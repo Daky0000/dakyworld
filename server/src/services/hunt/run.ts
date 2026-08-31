@@ -228,6 +228,10 @@ async function cycle(thesis: LeadThesis, record: LeadHunt): Promise<HuntOutcome>
   let rejected = 0;
   let routed = 0;
   let undecided = 0;
+  // Businesses the judge could not be asked about at all — counted, because a
+  // silent `continue` here is how five businesses looked at became a hunt that
+  // reported on two and called itself a success.
+  let unjudgeable = 0;
   const toDelete: string[] = [];
 
   for (const lead of batch) {
@@ -257,6 +261,7 @@ async function cycle(thesis: LeadThesis, record: LeadHunt): Promise<HuntOutcome>
       // where it is and the next hunt tries again — the one outcome that is
       // never allowed here is deleting a business because a model was down.
       console.error(`[hunt] could not judge ${lead.id}:`, (err as Error).message);
+      unjudgeable += 1;
       continue;
     }
     costUsd += verdict.costUsd;
@@ -293,23 +298,25 @@ async function cycle(thesis: LeadThesis, record: LeadHunt): Promise<HuntOutcome>
     }
   }
 
-  const audited = batch.length;
-  const summary = [
-    `Looked at ${audited} business${audited === 1 ? "" : "es"} under "${thesis.name}".`,
-    `${qualified} fit, ${rejected} did not${undecided > 0 ? `, ${undecided} could not be decided` : ""}.`,
-    deleted > 0 ? `${deleted} removed from the pipeline.` : null,
-    keptBack.length > 0 ? `Kept back because a proposal names them: ${keptBack.join(", ")}.` : null,
-    routed > 0 ? `${routed} handed on for the next step.` : null,
-    skipped > 0 ? `${skipped} skipped — already judged under this thesis.` : null,
-    `About $${costUsd.toFixed(2)} spent.`,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const report = huntReport({
+    thesisName: thesis.name,
+    looked: batch.length,
+    qualified,
+    rejected,
+    undecided,
+    unjudgeable,
+    deleted,
+    keptBack,
+    routed,
+    skipped,
+    costUsd,
+  });
+  const { audited, summary } = report;
 
   await prisma.leadHunt.update({
     where: { id: record.id },
     data: {
-      status: undecided > 0 ? "PARTIAL" : "SUCCEEDED",
+      status: report.status,
       finishedAt: new Date(),
       audited,
       qualified,
@@ -321,6 +328,61 @@ async function cycle(thesis: LeadThesis, record: LeadHunt): Promise<HuntOutcome>
   });
 
   return { huntId: record.id, captured, audited, qualified, rejected, skipped, routed, costUsd, summary };
+}
+
+/**
+ * What a finished cycle says about itself.
+ *
+ * Its own function because it is the half of a hunt that has to be honest and
+ * the half that cannot be exercised any other way: everything above it needs
+ * Apify, a screenshot and a model, and this needs nothing. Two rules live here.
+ *
+ * **`audited` is what was judged, not what was paid to be looked at.** A
+ * business whose judge call threw cost money at Apify and produced no verdict.
+ * Counting it would make qualified + rejected + undecided fail to add up to
+ * audited, which is the arithmetic somebody reading the screen does first —
+ * and the missing ones would be invisible.
+ *
+ * **Anything unfinished makes the run PARTIAL.** A hunt that judged two of
+ * five and called itself SUCCEEDED is how a model being unreachable for an
+ * afternoon comes to look exactly like a thesis nobody qualifies under. The
+ * leads keep their place and no verdict is written against them, so the next
+ * hunt looks again — but the run has to say so.
+ */
+export function huntReport(counts: {
+  thesisName: string;
+  /** How many businesses this cycle set out to judge. */
+  looked: number;
+  qualified: number;
+  rejected: number;
+  /** The judge ran and could not decide. A finding about the evidence. */
+  undecided: number;
+  /** The judge could not be asked. Not a finding about anything. */
+  unjudgeable: number;
+  deleted: number;
+  keptBack: string[];
+  routed: number;
+  skipped: number;
+  costUsd: number;
+}): { status: "SUCCEEDED" | "PARTIAL"; audited: number; summary: string } {
+  const { thesisName, looked, qualified, rejected, undecided, unjudgeable, deleted, keptBack, routed, skipped, costUsd } = counts;
+  const audited = Math.max(0, looked - unjudgeable);
+  const summary = [
+    `Looked at ${looked} business${looked === 1 ? "" : "es"} under "${thesisName}".`,
+    `${qualified} fit, ${rejected} did not${undecided > 0 ? `, ${undecided} could not be decided` : ""}.`,
+    unjudgeable > 0
+      ? `${unjudgeable} could not be judged at all — the model was not reachable. They keep their place and the next hunt looks again.`
+      : null,
+    deleted > 0 ? `${deleted} removed from the pipeline.` : null,
+    keptBack.length > 0 ? `Kept back because a proposal names them: ${keptBack.join(", ")}.` : null,
+    routed > 0 ? `${routed} handed on for the next step.` : null,
+    skipped > 0 ? `${skipped} skipped — already judged under this thesis.` : null,
+    `About $${costUsd.toFixed(2)} spent.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return { status: undecided > 0 || unjudgeable > 0 ? "PARTIAL" : "SUCCEEDED", audited, summary };
 }
 
 // --- The pieces ------------------------------------------------------------

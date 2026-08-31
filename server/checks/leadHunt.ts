@@ -31,7 +31,7 @@ import { AnalystError } from "../src/lib/claude.js";
 import { SIGNALS, parseQualifier } from "../src/services/hunt/signals.js";
 import type { SignalEvidence } from "../src/services/hunt/signals.js";
 import { judge, settle, type JudgedSignal } from "../src/services/hunt/judge.js";
-import { nextHuntAt } from "../src/services/hunt/run.js";
+import { huntReport, nextHuntAt } from "../src/services/hunt/run.js";
 import { THESIS_SEEDS } from "../src/services/hunt/theses.js";
 import { MAX_WAITS, planFor, waitMinutesFor } from "../src/services/agents/retry.js";
 import type { CompanyAudit } from "../src/services/companyAudit.js";
@@ -293,6 +293,40 @@ console.log("\nThe record that outlives the lead");
 }
 
 // --- 7. Paused, not stopped -------------------------------------------------
+
+console.log("\nWhat a finished hunt says about itself");
+{
+  const base = { thesisName: "Ghana restaurants", deleted: 0, keptBack: [] as string[], routed: 0, skipped: 0, costUsd: 1.5 };
+
+  const clean = huntReport({ ...base, looked: 5, qualified: 2, rejected: 3, undecided: 0, unjudgeable: 0 });
+  check("five judged is a success", clean.status === "SUCCEEDED", clean.status);
+  check("and all five were audited", clean.audited === 5, String(clean.audited));
+  check("the numbers add up", clean.audited === 2 + 3, clean.summary);
+
+  // The defect. Three judge calls threw, so three businesses were paid for at
+  // Apify, produced no verdict, and were counted as audited anyway - leaving a
+  // run that reported "5 looked at, 0 fit, 2 did not" and called itself a
+  // success. A model down for an afternoon read as a thesis nobody qualifies
+  // under, which is the opposite of what it was.
+  const outage = huntReport({ ...base, looked: 5, qualified: 0, rejected: 2, undecided: 0, unjudgeable: 3 });
+  check("a run with unreachable judges is partial", outage.status === "PARTIAL", outage.status);
+  check("only what was judged is counted as audited", outage.audited === 2, String(outage.audited));
+  check("and it says the other three could not be judged", outage.summary.includes("3 could not be judged at all"), outage.summary);
+  check("in words that say they are not lost", outage.summary.includes("next hunt looks again"), outage.summary);
+
+  // The one it must not be confused with. UNDECIDED is the judge running and
+  // finding that the evidence will not answer the question - that *is* a
+  // verdict about the business, it is written down, and the business was
+  // audited.
+  const cannotTell = huntReport({ ...base, looked: 5, qualified: 1, rejected: 1, undecided: 3, unjudgeable: 0 });
+  check("a run that could not decide is also partial", cannotTell.status === "PARTIAL", cannotTell.status);
+  check("but those five were all audited", cannotTell.audited === 5, String(cannotTell.audited));
+  check("and it says so in the verdict line", cannotTell.summary.includes("3 could not be decided"), cannotTell.summary);
+  check("without claiming the model was unreachable", !cannotTell.summary.includes("not reachable"), cannotTell.summary);
+
+  const nothingLeft = huntReport({ ...base, looked: 2, qualified: 0, rejected: 0, undecided: 0, unjudgeable: 2 });
+  check("a run where nothing could be judged audits nothing", nothingLeft.audited === 0, String(nothingLeft.audited));
+}
 
 console.log("\nWhat happens when a model provider will not answer");
 {
