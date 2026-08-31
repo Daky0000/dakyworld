@@ -3,7 +3,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Agent, AgentTask, AgentStepKind } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
-import { SETTING, getSetting } from "../../lib/settings.js";
+import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { clipToolResult, runAgentLoop, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
 import { clearCheckpoint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
 import { reconcileCounters } from "./checkpoint-journal.js";
@@ -2147,6 +2147,76 @@ export async function spendOn(taskId: string): Promise<number> {
     prisma.toolCall.aggregate({ where: { taskId }, _sum: { costUsd: true } }),
   ]);
   return Number((models._sum.costUsd ?? 0).toString()) + Number((tools._sum.costUsd ?? 0).toString());
+}
+
+/**
+ * Puts every task's recorded cost back in step with the ledgers, once.
+ *
+ * `finishTask` reads the money from `spendOn` now, but only for runs that end
+ * from here on. Every row already on the database was written from whatever
+ * its caller passed — a literal zero on both failure paths, and the agent
+ * loop's own tally on the success ones — and the Agents screen totals thirty
+ * days of those, while `rehearsals/run.ts` sums them to decide whether a run
+ * has spent its budget. Waiting a month for the number to become honest is not
+ * a fix.
+ *
+ * Three things it deliberately does not do. It does not touch a task with
+ * nothing on either ledger, because zero spend and no evidence are the same
+ * row and inventing a difference between them helps nobody. It does not lower
+ * a figure that is already higher than the ledgers know about — that is a
+ * fact from somewhere this cannot see, and the safe direction for a ceiling is
+ * upward. And it never runs twice: `SETTING.AGENT_COST_BACKFILL` marks it, the
+ * same mechanism as the other one-off passes, so a row corrected here and then
+ * legitimately re-run later is not corrected back.
+ */
+export async function backfillTaskCosts(): Promise<{ corrected: number; addedUsd: number } | null> {
+  if ((await getSetting(SETTING.AGENT_COST_BACKFILL))?.trim()) return null;
+
+  // Grouped rather than one query per task: a database with ten thousand tasks
+  // on it would otherwise pay twenty thousand round trips for a pass that runs
+  // once and usually changes a handful of rows.
+  const [models, tools] = await Promise.all([
+    prisma.llmCall.groupBy({ by: ["taskId"], where: { taskId: { not: null } }, _sum: { costUsd: true } }),
+    prisma.toolCall.groupBy({ by: ["taskId"], where: { taskId: { not: null } }, _sum: { costUsd: true } }),
+  ]);
+
+  const truth = new Map<string, number>();
+  for (const rows of [models, tools]) {
+    for (const row of rows) {
+      if (!row.taskId) continue;
+      truth.set(row.taskId, (truth.get(row.taskId) ?? 0) + Number((row._sum.costUsd ?? 0).toString()));
+    }
+  }
+  if (truth.size === 0) {
+    await setSetting(SETTING.AGENT_COST_BACKFILL, new Date().toISOString());
+    return { corrected: 0, addedUsd: 0 };
+  }
+
+  // Read in batches. This runs at boot on a database that has been working for
+  // months, and a single `IN` carrying every task id it has ever ledgered is a
+  // statement nobody sized for.
+  const ids = [...truth.keys()];
+  let corrected = 0;
+  let addedUsd = 0;
+  for (let at = 0; at < ids.length; at += 500) {
+    const recorded = await prisma.agentTask.findMany({
+      where: { id: { in: ids.slice(at, at + 500) } },
+      select: { id: true, costUsd: true },
+    });
+    for (const task of recorded) {
+      const actual = truth.get(task.id) ?? 0;
+      const stored = Number(task.costUsd.toString());
+      // A tenth of a cent, which is below the resolution anything on a screen
+      // prints. Rewriting a row to move it by less than that is churn.
+      if (actual - stored < 0.001) continue;
+      await prisma.agentTask.update({ where: { id: task.id }, data: { costUsd: actual.toFixed(6) } });
+      corrected += 1;
+      addedUsd += actual - stored;
+    }
+  }
+
+  await setSetting(SETTING.AGENT_COST_BACKFILL, new Date().toISOString());
+  return { corrected, addedUsd };
 }
 
 /**

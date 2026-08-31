@@ -444,6 +444,19 @@ export const SETTING = {
    */
   AGENT_OUTREACH_PRIOR: "agents.outreachDoctrine.replaced",
   /**
+   * The date every task's recorded cost was put back in step with the ledgers,
+   * or blank if it has not been.
+   *
+   * `AgentTask.costUsd` used to be written from whatever the caller passed
+   * `finishTask` — a literal zero on both failure paths, and the agent loop's
+   * own tally on the success ones, which never counted a model call made inside
+   * a tool handler. It is read from `LlmCall` and `ToolCall` now, but only for
+   * runs that have ended since; every row already on the database still carries
+   * the understated number, and the Agents screen totals thirty days of them.
+   * One pass, marked here, so a fixed number does not take a month to arrive.
+   */
+  AGENT_COST_BACKFILL: "agents.costBackfill",
+  /**
    * Every tool that has ever been offered to an agent, as {agentKey: [toolKey]}.
    *
    * `ensureAgents()` only ever creates, so a tool added to a seed after that

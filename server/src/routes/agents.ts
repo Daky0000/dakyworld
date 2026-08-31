@@ -7,6 +7,7 @@ import { EXECUTE_LEVEL, SPEND_LEVEL, permissionFor } from "../services/tools/inv
 import { startTheDay } from "../services/agents/startTheDay.js";
 import { authoredInstruction, composePrompt, isBusy, runTask, step } from "../services/agents/runner.js";
 import { historyOf, recordCreated, transition } from "../services/agents/state.js";
+import { isPaused } from "../services/agents/retry.js";
 
 import { MAX_ITERATIONS } from "../lib/claudeAgent.js";
 import { clearCheckpoint } from "../services/agents/checkpoint.js";
@@ -1444,9 +1445,14 @@ function taskSummary(task: {
      * until 14:35" are the same status and completely different news, and a
      * screen that shows the first for the second is why a quiet morning looks
      * like a broken one.
+     *
+     * `isPaused` rather than the same three conditions written out again.
+     * `retry.ts` owns what a pause is — it is the file that creates one — and
+     * two correct copies of that rule are one copy away from two different
+     * rules, with the screen quietly disagreeing with the runner about whether
+     * a task is waiting.
      */
-    paused:
-      task.status === "QUEUED" && Boolean(task.retryReason) && Boolean(task.scheduledFor && task.scheduledFor > new Date()),
+    paused: isPaused(task),
     pausedUntil: task.scheduledFor,
     pausedBecause: task.retryReason,
     pauses: task.retryCount,

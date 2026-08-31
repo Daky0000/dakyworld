@@ -34,7 +34,7 @@
  */
 import { AnalystError } from "../src/lib/claude.js";
 import { planFor } from "../src/services/agents/retry.js";
-import { runTask, spendOn, workflowTools } from "../src/services/agents/runner.js";
+import { backfillTaskCosts, runTask, spendOn, workflowTools } from "../src/services/agents/runner.js";
 import { reconcileCounters } from "../src/services/agents/checkpoint-journal.js";
 import { clearSettingsCache, SETTING } from "../src/lib/settings.js";
 import { prisma } from "../src/lib/prisma.js";
@@ -354,7 +354,55 @@ console.log("\nA colleague nobody could reach is not an opinion");
   }
 }
 
+console.log("\nAnd the rows already written are put right");
+{
+  // Runs once and only upward, so the two negatives are the assertions worth
+  // having: a task with nothing on either ledger is left alone rather than
+  // being invented a zero, and a figure already higher than the ledgers know
+  // about is a fact from somewhere this cannot see and is not lowered.
+  await prisma.appSetting.deleteMany({ where: { key: SETTING.AGENT_COST_BACKFILL } });
+  clearSettingsCache();
+
+  const understated = await prisma.agentTask.create({
+    data: { agentKey: AGENT_KEY, title: "understated", brief: "b", status: "FAILED", costUsd: "0" },
+  });
+  const overstated = await prisma.agentTask.create({
+    data: { agentKey: AGENT_KEY, title: "overstated", brief: "b", status: "DONE", costUsd: "5.000000" },
+  });
+  const evidenceless = await prisma.agentTask.create({
+    data: { agentKey: AGENT_KEY, title: "no evidence", brief: "b", status: "DONE", costUsd: "0.750000" },
+  });
+  for (const [id, cost] of [
+    [understated.id, "2.000000"],
+    [overstated.id, "1.000000"],
+  ] as const) {
+    await prisma.llmCall.create({
+      data: { purpose: "backfill", model: "check", taskId: id, agentKey: AGENT_KEY, inputTokens: 1, outputTokens: 1, costUsd: cost, durationMs: 1, ok: true },
+    });
+  }
+  await prisma.toolCall.create({
+    data: { tool: "capture.run", taskId: understated.id, agentKey: AGENT_KEY, ok: true, costUsd: "0.500000", durationMs: 1 },
+  });
+
+  const result = await backfillTaskCosts();
+  const read = async (id: string) => Number((await prisma.agentTask.findUniqueOrThrow({ where: { id } })).costUsd);
+  check("a task recorded as free is put right", (await read(understated.id)) === 2.5, `${await read(understated.id)}`);
+  check("a task already ahead of the ledgers is left alone", (await read(overstated.id)) === 5, `${await read(overstated.id)}`);
+  check("and one with no evidence either way is untouched", (await read(evidenceless.id)) === 0.75, `${await read(evidenceless.id)}`);
+  check("it says what it moved", (result?.corrected ?? 0) >= 1, JSON.stringify(result));
+
+  // Once ever. A row corrected here and then legitimately re-run later must
+  // not be corrected back on the next boot.
+  await prisma.agentTask.update({ where: { id: understated.id }, data: { costUsd: "9.000000" } });
+  check("a second boot does nothing", (await backfillTaskCosts()) === null);
+  check("and leaves the later figure standing", (await read(understated.id)) === 9, `${await read(understated.id)}`);
+
+  await prisma.appSetting.deleteMany({ where: { key: SETTING.AGENT_COST_BACKFILL } });
+  clearSettingsCache();
+}
+
 await reset();
+await prisma.appSetting.deleteMany({ where: { key: SETTING.AGENT_COST_BACKFILL } });
 await prisma.$disconnect();
 
 console.log(bad === 0 ? "\nAll good.\n" : `\n${bad} problem(s).\n`);

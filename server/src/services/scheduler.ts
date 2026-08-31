@@ -12,6 +12,8 @@ import { runDueSequences } from "./emailSequences.js";
 import { readMailboxOnce } from "./mailbox/watcher.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
+import { pruneMemories } from "./agents/memory.js";
+import { refreshStaleServers } from "./tools/mcpTools.js";
 import { ensureGapReviews, expireStaleHireRequests, postGapNotice } from "./agents/hiring.js";
 import { postEscalationDigest } from "./agents/escalationDigest.js";
 import { SETTING, getSetting, setSetting } from "../lib/settings.js";
@@ -212,6 +214,30 @@ async function housekeepingTick(now: Date) {
   // after anybody was going to continue one.
   const staleCheckpoints = await pruneCheckpoints();
   if (staleCheckpoints) console.log(`[scheduler] cleared ${staleCheckpoints} stale agent checkpoint(s)`);
+
+  // What an agent has stopped needing to remember.
+  //
+  // Written when the runtime shipped and never called, which is the shape of
+  // defect this codebase keeps finding: correct, documented, and on nobody's
+  // schedule. It matters because recall has a ceiling — `RECALL_LIMIT` is 24
+  // per task — so a memory an agent has never once used does not sit
+  // harmlessly, it takes a place from one that would have been useful. Only an
+  // agent's own weakly-held, never-recalled conclusions from six months ago;
+  // shared memories are never swept, because "nothing has come up about it"
+  // is not evidence a house rule stopped being true.
+  const forgotten = await pruneMemories();
+  if (forgotten) console.log(`[scheduler] cleared ${forgotten} agent memory/memories nothing had recalled`);
+
+  // Tool lists from connected MCP servers, where the cached one has gone old.
+  //
+  // Its own doc says "fire-and-forget from a route", and no route fired it —
+  // so a server's advertised tools were read once, when it was connected, and
+  // never again. A tool the server has since added is one no agent can be
+  // granted; one it has removed is a grant that fails at the moment it is
+  // used. Never revokes on a failed refresh: `refreshServer` keeps the
+  // previous list when a server is briefly unreachable, for that reason.
+  const refreshed = await refreshStaleServers();
+  if (refreshed) console.log(`[scheduler] refreshed the tool list on ${refreshed} MCP server(s)`);
 
   // Hiring cards nobody answered. They have to expire rather than sit PENDING
   // for ever: pending proposals are *counted*, so five forgotten ones would

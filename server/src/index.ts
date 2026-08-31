@@ -48,7 +48,7 @@ import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureTheses } from "./services/hunt/theses.js";
 import { applyColdEmailPlaybook, applyOutreachDoctrine, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
-import { drainRunningTasks } from "./services/agents/runner.js";
+import { backfillTaskCosts, drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
 import { WebsiteError } from "./services/website/site.js";
@@ -374,6 +374,16 @@ ensureSystemRoles()
             console.log(
               `  → ${total} queued task(s) belong to ${stalled.length} agent(s) that are not Active and will not start: ` +
                 `${stalled.map((row) => row.agentKey).join(", ")}. Activate them on the Agents screen, or cancel the work.`,
+            );
+          }
+
+          // Every task's recorded cost, put back in step with the ledgers.
+          // Runs once; see `backfillTaskCosts`.
+          const costs = await backfillTaskCosts();
+          if (costs && costs.corrected > 0) {
+            console.log(
+              `  → Corrected the recorded cost of ${costs.corrected} finished task(s) against the model and tool ledgers ` +
+                `(+$${costs.addedUsd.toFixed(2)} that had been recorded as free)`,
             );
           }
 
