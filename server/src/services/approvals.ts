@@ -166,6 +166,62 @@ export async function staleByAgent(olderThanHours = 48) {
   });
 }
 
+export interface StaleAgent {
+  agentKey: string;
+  agentName: string;
+  waiting: number;
+  /** Whole hours the oldest of them has been waiting. */
+  oldestHours: number;
+  /** The oldest one itself, so the flag leads somewhere rather than only counting. */
+  oldest: { id: string; tool: string; wouldDo: string } | null;
+}
+
+/**
+ * The same sweep, as something a screen can show rather than only a log line.
+ *
+ * `staleByAgent` has run on the housekeeping tick since it was written and its
+ * whole output was `console.log`, which answers nobody's question: a person
+ * reading the Approvals queue cannot see that eleven of the cards in front of
+ * them belong to one agent nobody has read in three days. Counting them per
+ * agent is the point — eleven spread across the workforce is a busy week, and
+ * eleven against one agent is an agent nobody is reading.
+ *
+ * **Still not posted to Slack.** A message every day about the same undecided
+ * card is how a channel stops being read; the approval card was already posted
+ * once, when the action was prepared, and that is the notification. This is for
+ * the screen and for the log.
+ */
+export async function flagStalePreparedActions(olderThanHours = 48): Promise<StaleAgent[]> {
+  const rows = await staleByAgent(olderThanHours);
+  if (rows.length === 0) return [];
+
+  const cutoff = new Date(Date.now() - olderThanHours * 3_600_000);
+  const agents = await prisma.agent.findMany({
+    where: { key: { in: rows.map((row) => row.agentKey) } },
+    select: { key: true, name: true },
+  });
+  const nameOf = new Map(agents.map((agent) => [agent.key, agent.name]));
+
+  const now = Date.now();
+  const flagged = await Promise.all(
+    rows.map(async (row) => {
+      const oldest = await prisma.actionRequest.findFirst({
+        where: { ...pendingWhere(row.agentKey), createdAt: { lt: cutoff } },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, tool: true, wouldDo: true, createdAt: true },
+      });
+      return {
+        agentKey: row.agentKey,
+        agentName: nameOf.get(row.agentKey) ?? row.agentKey,
+        waiting: row._count,
+        oldestHours: oldest ? Math.floor((now - oldest.createdAt.getTime()) / 3_600_000) : olderThanHours,
+        oldest: oldest ? { id: oldest.id, tool: oldest.tool, wouldDo: oldest.wouldDo } : null,
+      };
+    }),
+  );
+  return flagged.sort((a, b) => b.oldestHours - a.oldestHours);
+}
+
 /**
  * What this would do, worked out again now rather than when it was proposed.
  *

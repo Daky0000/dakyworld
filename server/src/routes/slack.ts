@@ -23,7 +23,7 @@ import {
   type HirePolicy,
 } from "../services/agents/hiring.js";
 import { ApprovalRefused, approve, decline } from "../services/approvals.js";
-import { APPROVAL_ACTIONS, settleApprovalCard } from "../services/approvalCards.js";
+import { APPROVAL_ACTIONS, DECLINE_VIEW, settleApprovalCard } from "../services/approvalCards.js";
 
 /**
  * Slack talking back.
@@ -125,6 +125,36 @@ slackRouter.post("/actions", async (req, res, next) => {
     // Somebody typed an answer into the dialog and pressed Send.
     if (interaction.type === "view_submission") {
       const view = interaction.view;
+
+      // Declining a prepared action, with the reason typed in.
+      //
+      // Answered synchronously like the escalation dialog below and for the
+      // same reason: Slack shows an error inline on a `response_action` and
+      // closes the dialog on an empty 200, so a refusal that is not returned
+      // *now* looks exactly like an acceptance.
+      if (view?.callback_id === DECLINE_VIEW.callbackId) {
+        const requestId = view.private_metadata ?? "";
+        const reason = view.state?.values?.[DECLINE_VIEW.blockId]?.[DECLINE_VIEW.actionId]?.value ?? "";
+        if (!(await mayDecideFromSlack(userId))) {
+          return res.json({
+            response_action: "errors",
+            errors: { [DECLINE_VIEW.blockId]: "You are not on the list of people who can decide these." },
+          });
+        }
+        if (!reason.trim()) {
+          return res.json({
+            response_action: "errors",
+            errors: { [DECLINE_VIEW.blockId]: "Say why, or use the plain Decline button instead." },
+          });
+        }
+        res.status(200).send("");
+        void (async () => {
+          const outcome = await decline(requestId, { slackUserId: userId, note: `Declined in Slack by ${who}: ${reason.trim()}` });
+          if (!outcome.alreadySettled) await settleApprovalCard(outcome.request, who);
+        })().catch((err) => console.error("[slack] could not decline that action:", (err as Error).message));
+        return;
+      }
+
       if (view?.callback_id !== ANSWER_VIEW.callbackId) return res.status(200).send("");
       const taskId = view.private_metadata ?? "";
       const typed = view.state?.values?.[ANSWER_VIEW.blockId]?.[ANSWER_VIEW.actionId]?.value ?? "";
@@ -159,7 +189,12 @@ slackRouter.post("/actions", async (req, res, next) => {
     // is dead three seconds after the click, so opening the dialog *after*
     // answering Slack means it never opens — and it fails silently, which is
     // the worst shape a failure can have here.
-    if (action?.action_id === TASK_ACTIONS.answer && interaction.trigger_id && action.value) {
+    if (
+      (action?.action_id === TASK_ACTIONS.answer || action?.action_id === APPROVAL_ACTIONS.declineWithReason) &&
+      interaction.trigger_id &&
+      action.value
+    ) {
+      const declining = action.action_id === APPROVAL_ACTIONS.declineWithReason;
       if (!(await mayDecideFromSlack(userId))) {
         res.status(200).send("");
         await notAllowed(responseUrl);
@@ -167,17 +202,21 @@ slackRouter.post("/actions", async (req, res, next) => {
       }
       let opened = false;
       try {
-        opened = await openSlackModal(interaction.trigger_id, answerView(action.value));
+        opened = await openSlackModal(interaction.trigger_id, declining ? declineView(action.value) : answerView(action.value));
       } catch (err) {
-        console.error("[slack] could not open the answer dialog:", (err as Error).message);
+        console.error("[slack] could not open the dialog:", (err as Error).message);
       }
       res.status(200).send("");
       if (!opened) {
-        // A webhook-only Slack has no API to open a dialog with, so the
-        // command that does the same job is offered instead of nothing.
+        // A webhook-only Slack has no API to open a dialog with, so the thing
+        // that does the same job is offered instead of nothing. For a decline
+        // that is the plain button sitting beside it on the same card — the
+        // reason is the part that is lost, not the decision.
         await replyToInteraction(
           responseUrl ?? "",
-          `Typing an answer here needs a bot token. Either add one under Settings → Alerts, or answer with \`/dakyworld answer ${action.value} your answer\`.`,
+          declining
+            ? "Typing a reason here needs a bot token. Either add one under Settings → Alerts, or use the plain Decline button on this card and add the reason under Approvals."
+            : `Typing an answer here needs a bot token. Either add one under Settings → Alerts, or answer with \`/dakyworld answer ${action.value} your answer\`.`,
         ).catch(() => undefined);
       }
       return;
@@ -225,6 +264,38 @@ function answerView(taskId: string) {
           multiline: true,
           max_length: 2000,
           placeholder: { type: "plain_text", text: "Say what you want done. It carries on from where it stopped." },
+        },
+      },
+    ],
+  };
+}
+
+/** The dialog the approval card's "Decline with a reason…" button opens. */
+function declineView(requestId: string) {
+  return {
+    type: "modal",
+    callback_id: DECLINE_VIEW.callbackId,
+    // The request travels with the dialog rather than in a map on this server,
+    // for the same reason the escalation's task id does: a deploy between
+    // opening the dialog and sending it must not lose it.
+    private_metadata: requestId,
+    title: { type: "plain_text", text: "Decline this" },
+    submit: { type: "plain_text", text: "Decline" },
+    close: { type: "plain_text", text: "Cancel" },
+    blocks: [
+      {
+        type: "input",
+        block_id: DECLINE_VIEW.blockId,
+        label: { type: "plain_text", text: "Why not?" },
+        element: {
+          type: "plain_text_input",
+          action_id: DECLINE_VIEW.actionId,
+          multiline: true,
+          max_length: 1000,
+          placeholder: {
+            type: "plain_text",
+            text: "The agent is told this when it next picks the task up, so say what would have made it right.",
+          },
         },
       },
     ],

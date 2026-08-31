@@ -22,7 +22,21 @@ import { resolveTool } from "./tools/catalogue.js";
 export const APPROVAL_ACTIONS = {
   approve: "dky_action_approve",
   decline: "dky_action_decline",
+  /** Decline and say why. Opens a dialog where there is a bot token. */
+  declineWithReason: "dky_action_decline_why",
 } as const;
+
+/**
+ * The decline dialog's identifiers, for `view_submission`.
+ *
+ * The same shape as an escalation's answer dialog and for the same reason: a
+ * decision typed on a phone is the commonest way any of these get answered, and
+ * a reason is the half that reaches the agent. `decline()` already carries a
+ * note onto the request and onto the task's timeline — what was missing was
+ * anywhere to type one from Slack, so every Slack decline read as "no" with no
+ * explanation, to an agent that will prepare the same thing again tomorrow.
+ */
+export const DECLINE_VIEW = { callbackId: "dky_action_decline_view", blockId: "reason", actionId: "text" } as const;
 
 function button(text: string, actionId: string, value: string, style?: "primary" | "danger") {
   return { type: "button", text: { type: "plain_text", text, emoji: true }, action_id: actionId, value, ...(style ? { style } : {}) };
@@ -70,7 +84,15 @@ async function approvalBlocks(request: ActionRequest, decidedBy: string | null):
   if (request.status === "PENDING") {
     blocks.push({
       type: "actions",
-      elements: [button("Approve — do it", APPROVAL_ACTIONS.approve, request.id, "primary"), button("Decline", APPROVAL_ACTIONS.decline, request.id, "danger")],
+      elements: [
+        button("Approve — do it", APPROVAL_ACTIONS.approve, request.id, "primary"),
+        button("Decline", APPROVAL_ACTIONS.decline, request.id, "danger"),
+        // Third rather than instead of, deliberately. The two-tap decline has
+        // to stay: a card answered on a phone between other things is the case
+        // this queue lives or dies on, and making every refusal require typing
+        // is how a queue stops being answered at all.
+        button("Decline with a reason…", APPROVAL_ACTIONS.declineWithReason, request.id),
+      ],
     });
   }
 

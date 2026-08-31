@@ -15,7 +15,7 @@ import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { ensureGapReviews, expireStaleHireRequests, postGapNotice } from "./agents/hiring.js";
 import { postEscalationDigest } from "./agents/escalationDigest.js";
 import { SETTING, getSetting, setSetting } from "../lib/settings.js";
-import { expireStaleRequests, staleByAgent } from "./approvals.js";
+import { expireStaleRequests, flagStalePreparedActions } from "./approvals.js";
 import { raiseStandingWork } from "./agents/standingWork.js";
 import { restoreOrphanedWakes } from "./rehearsals/wake.js";
 import { settleIdleRehearsals } from "./rehearsals/run.js";
@@ -245,9 +245,10 @@ async function housekeepingTick(now: Date) {
   // Said in the log rather than posted. A Slack message every day about the
   // same undecided card is how the channel stops being read, and the weekly
   // digest already carries the questions that genuinely need chasing.
-  for (const row of await staleByAgent()) {
+  for (const row of await flagStalePreparedActions()) {
     console.log(
-      `[scheduler] ${row.agentKey} has ${row._count} prepared action(s) waiting more than 48 hours — decide them under Approvals.`,
+      `[scheduler] ${row.agentName} (${row.agentKey}) has ${row.waiting} prepared action(s) waiting — the oldest ` +
+        `${row.oldestHours}h: ${row.oldest?.wouldDo?.slice(0, 120) ?? row.oldest?.tool ?? "unknown"}. Decide them under Approvals.`,
     );
   }
 

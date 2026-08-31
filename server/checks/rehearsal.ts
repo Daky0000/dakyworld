@@ -81,7 +81,7 @@ const ALL_KEYS = [AGENT_KEY, MANAGER_KEY, SIDEWAYS_KEY];
 const MARK = "rehearsalcheck";
 
 function freshCounters(): Counters {
-  return { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
+  return { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, consultedBy: { low: 0, medium: 0, high: 0 }, handedOff: 0, gapsRaised: 0 };
 }
 
 /**

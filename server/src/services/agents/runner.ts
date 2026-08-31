@@ -6,6 +6,7 @@ import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting } from "../../lib/settings.js";
 import { clipToolResult, runAgentLoop, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
 import { clearCheckpoint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import { reconcileCounters } from "./checkpoint-journal.js";
 import { AnalystError } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
 import type { ToolDefinition } from "../tools/types.js";
@@ -150,12 +151,85 @@ const MAX_HANDOFFS = 2;
  * it wrong is expensive, which is exactly the task somebody marked urgent.
  * `AgentTask.priority` already exists and already drives the order the runner
  * picks in, so this needs no new field and no new vocabulary.
- *
- * The count itself stays a single `consulted` on `Counters`. Splitting it per
- * priority would change the checkpoint's shape for nothing — a task has one
- * priority, so only the ceiling varies.
  */
 const CONSULT_LIMITS: Record<number, number> = { 1: 5, 2: 3, 3: 2 };
+
+/**
+ * How much of a task's own budget may go before it finishes on the cheap model.
+ *
+ * Below the hard stop rather than at it, deliberately: at 100% the run is over,
+ * and a downgrade that only ever fires at the moment work stops saves nothing.
+ * Four fifths leaves enough turns for the change to be worth its one cache miss.
+ */
+const EASE_OFF_AT = 0.8;
+
+/**
+ * How much history `readHistory` hands back before being asked for more.
+ *
+ * Was forty, which is a whole dossier: every review, letter, call, proposal and
+ * note on a company, re-sent with every turn after it for the rest of the run.
+ * A tool result is not paid for once — the same reasoning as
+ * `TOOL_RESULT_MAX_CHARS`, and this is the tool most able to fill it.
+ *
+ * Ten rather than forty because the brief already carries the headlines, and
+ * `renderDossier` says how many entries it held back — so an agent that needs
+ * the older ones can see that they exist and ask. The ceiling is unchanged: a
+ * hundred is still there for the agent that knows what it is looking for.
+ */
+const HISTORY_DEFAULT = 10;
+
+/**
+ * How urgent the *question* is, which is not the same as how urgent the task is.
+ *
+ * A task's priority sets how many colleagues may be asked at all. This splits
+ * that allowance by what each question is for, so an agent that spends its
+ * whole budget on nice-to-know questions cannot then find it has none left for
+ * the one that decides the work.
+ *
+ * **The agent declares this, and it can only ever spend its own budget faster.**
+ * That is the whole design constraint and it is worth being explicit about,
+ * because the obvious version of this feature is a security hole: if a declared
+ * priority *raised* a ceiling, every agent would learn to mark every question
+ * "high" and the cap would be advisory. So the ceilings below are shares of the
+ * task's own allowance, `sharesOf()` never lets them sum to more than it, and
+ * `remainingConsults()` — the number actually enforced — is the total, not the
+ * share. Declaring "high" buys the right to spend the *whole* allowance on
+ * decisive questions; it never buys a larger one.
+ */
+export const CONSULT_PRIORITIES = ["low", "medium", "high"] as const;
+export type ConsultPriority = (typeof CONSULT_PRIORITIES)[number];
+
+/**
+ * The share of a task's consult allowance each kind of question may take.
+ *
+ * Rounded up, so a task allowed two consults can still ask one low-priority
+ * question rather than being told its low budget is zero — a floor of one is
+ * what stops the split turning a working cap into a refusal.
+ */
+const CONSULT_SHARES: Record<ConsultPriority, number> = { low: 0.34, medium: 0.67, high: 1 };
+
+export function sharesOf(limit: number): Record<ConsultPriority, number> {
+  if (limit <= 0) return { low: 0, medium: 0, high: 0 };
+  return {
+    low: Math.max(1, Math.ceil(limit * CONSULT_SHARES.low)),
+    medium: Math.max(1, Math.ceil(limit * CONSULT_SHARES.medium)),
+    high: limit,
+  };
+}
+
+/** What is left overall, and per kind of question. Never negative. */
+export function remainingConsults(counters: Counters, limit: number) {
+  const shares = sharesOf(limit);
+  const spent = CONSULT_PRIORITIES.reduce((total, level) => total + counters.consultedBy[level], 0);
+  return {
+    total: Math.max(0, limit - spent),
+    byPriority: {
+      low: Math.max(0, Math.min(shares.low - counters.consultedBy.low, limit - spent)),
+      medium: Math.max(0, Math.min(shares.medium - counters.consultedBy.medium, limit - spent)),
+      high: Math.max(0, Math.min(shares.high - counters.consultedBy.high, limit - spent)),
+    },
+  };
+}
 
 /**
  * Exported for `checks/agentBriefing.ts`. Zero being a real limit rather than
@@ -652,8 +726,19 @@ export interface Counters {
   refused: number;
   escalated: string | null;
   delegated: number;
-  /** Questions asked of colleagues. Capped by priority — see `CONSULT_LIMITS`. */
+  /**
+   * Questions asked of colleagues. Capped by the task's priority — see
+   * `CONSULT_LIMITS` — and split by the question's own priority below.
+   *
+   * Kept as the total as well as the split. It is what every existing reader
+   * uses (the summary line, the finished-task record, the checkpoint written by
+   * an older deploy) and it is the number the cap is actually enforced on, so
+   * deriving it on every read would be three call sites that can disagree about
+   * one fact.
+   */
   consulted: number;
+  /** The same questions, by how decisive the agent said each one was. */
+  consultedBy: Record<ConsultPriority, number>;
   /** Work handed sideways to an agent that is not a report. */
   handedOff: number;
   /** Gaps raised: "nobody here can do this". */
@@ -680,9 +765,33 @@ function restoreCounters(stored: Record<string, unknown> | undefined): Counters 
     escalated: typeof stored?.escalated === "string" ? stored.escalated : null,
     delegated: number(stored?.delegated),
     consulted: number(stored?.consulted),
+    consultedBy: restoreConsultedBy(stored),
     handedOff: number(stored?.handedOff),
     gapsRaised: number(stored?.gapsRaised),
   };
+}
+
+/**
+ * The per-question split, from a checkpoint that may predate it.
+ *
+ * **An older checkpoint has a total and no split**, and the two have to agree
+ * or the cap is enforced against a number that says nothing was asked. Falling
+ * back to zeroes would hand a resumed task its whole allowance back; putting the
+ * lost total under `medium` keeps the total honest and only loses which kind of
+ * question it was, which is the half nothing enforces.
+ */
+function restoreConsultedBy(stored: Record<string, unknown> | undefined): Record<ConsultPriority, number> {
+  const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  const raw = stored?.consultedBy as Record<string, unknown> | undefined;
+  const split = {
+    low: number(raw?.low),
+    medium: number(raw?.medium),
+    high: number(raw?.high),
+  };
+  const total = number(stored?.consulted);
+  const inSplit = split.low + split.medium + split.high;
+  if (inSplit < total) split.medium += total - inSplit;
+  return split;
 }
 
 /**
@@ -700,6 +809,36 @@ function restoreCounters(stored: Record<string, unknown> | undefined): Counters 
  * harness* would be a check that goes on passing after this function stops
  * doing it.
  */
+/**
+ * The answer this colleague already gave to this exact question on this task.
+ *
+ * Read from `AgentTaskStep` rather than kept in the checkpoint, and that is the
+ * whole reason it works: the timeline outlives the conversation. A run that was
+ * interrupted, trimmed, or resumed on a different vendor has lost the turn the
+ * answer was in and will ask again — which is the commonest case this catches,
+ * and the one a cache living inside the conversation could never see.
+ *
+ * Matched on the exact question text. A fuzzy match would return one colleague's
+ * answer to a question they were not asked, which is worse than paying for the
+ * second call: the whole point of `consult` is that the opinion is theirs.
+ */
+async function priorConsult(taskId: string, colleagueKey: string, question: string): Promise<string | null> {
+  const steps = await prisma.agentTaskStep.findMany({
+    where: { taskId, kind: "CONSULTED" },
+    orderBy: { seq: "desc" },
+    take: 20,
+    select: { data: true },
+  });
+  for (const entry of steps) {
+    const data = entry.data as { agentKey?: unknown; question?: unknown; answer?: unknown } | null;
+    if (data?.agentKey !== colleagueKey) continue;
+    if (typeof data.question !== "string" || data.question !== question) continue;
+    if (typeof data.answer !== "string" || data.answer.length === 0) continue;
+    return data.answer;
+  }
+  return null;
+}
+
 export function workflowTools(agent: Agent, task: AgentTask, counters: Counters): AgentTool[] {
   const escalate: AgentTool = {
     name: "escalate",
@@ -836,15 +975,25 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       "Read the full history of this company — every review, letter, call, proposal, invoice and note, in order. The task brief already carries the headlines; use this when you need the detail, the wording of what was sent, or anything older than the last few entries.",
     inputSchema: zodToJsonSchema(
       z.object({
-        limit: z.number().int().min(5).max(100).default(40).describe("How many entries back to go."),
+        limit: z
+          .number()
+          .int()
+          .min(5)
+          .max(100)
+          .default(HISTORY_DEFAULT)
+          .describe(
+            `How many entries back to go. ${HISTORY_DEFAULT} is usually plenty and is what you get by default; ask for more only when you know the thing you are looking for is older than that.`,
+          ),
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
     run: async (input) => {
       const [subject] = taskSubjects(task);
       if (!subject) return { content: "This task isn't about a particular company, so there is no history to read.", isError: true };
-      const limit = typeof input.limit === "number" ? input.limit : 40;
-      const markdown = await renderDossier(subject, { limit });
+      const limit = typeof input.limit === "number" ? input.limit : HISTORY_DEFAULT;
+      // `moreAvailable` names this tool rather than the Owner's, so an agent
+      // told there are older entries is told how *it* can get them.
+      const markdown = await renderDossier(subject, { limit, moreAvailable: true, readWith: "readHistory" });
       return { content: markdown };
     },
   };
@@ -961,12 +1110,26 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       z.object({
         agentKey: z.string().max(64).describe("Who to ask. Find one with findAgent first."),
         question: z.string().min(10).max(1200).describe("One specific question. They cannot see your conversation, so give them the facts they need to answer it."),
+        priority: z
+          .enum(CONSULT_PRIORITIES)
+          .default("medium")
+          .describe(
+            "How much this answer decides. 'high' is a question you cannot finish the work without; 'medium' would change how you do it; 'low' is worth knowing. This does not buy you extra questions — it decides which part of the same allowance this one comes out of, and 'high' can spend all of it.",
+          ),
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
     run: async (input) => {
       const limit = await consultLimitFor(task);
-      if (counters.consulted >= limit) {
+      const priority: ConsultPriority = CONSULT_PRIORITIES.includes(input.priority as ConsultPriority)
+        ? (input.priority as ConsultPriority)
+        : "medium";
+      const left = remainingConsults(counters, limit);
+
+      // The total first, because it is the cap the task actually has. A share
+      // running out is a smaller thing than the allowance running out, and
+      // saying the wrong one of those sends an agent looking for a setting.
+      if (left.total <= 0) {
         return {
           content:
             limit === 0
@@ -975,6 +1138,15 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
           isError: true,
         };
       }
+      if (left.byPriority[priority] <= 0) {
+        return {
+          content:
+            `You have spent this task's allowance for ${priority}-priority questions, though ${left.total} consult(s) remain overall. ` +
+            `If this question genuinely decides whether the work can be finished, ask it again as \`high\`; if it does not, decide with what you have.`,
+          isError: true,
+        };
+      }
+
       const key = String(input.agentKey ?? "");
       if (key === agent.key) return { content: "You cannot consult yourself.", isError: true };
 
@@ -983,12 +1155,36 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
       if (colleague.status === "RETIRED") return { content: `${colleague.name} is retired and no longer answers.`, isError: true };
 
       const question = String(input.question ?? "").slice(0, 1200);
+
+      // Already asked, on this task, of this colleague.
+      //
+      // A model turn is the expensive part of a consult and an agent that
+      // re-asks is common — it happens most on a resume, where the answer is in
+      // a conversation that got trimmed, and after a hand-off, where the same
+      // judgement comes up twice. Answered from the timeline rather than from a
+      // second model call, and **it does not spend a consult**: charging for an
+      // answer already given would make the cache worse than useless.
+      //
+      // Exact question only, deliberately. Two similar questions can want
+      // genuinely different answers, and a fuzzy match here would put words in
+      // a colleague's mouth — which is precisely what `consult` exists not to do.
+      const asked = await priorConsult(task.id, colleague.key, question);
+      if (asked) {
+        return {
+          content:
+            `You have already asked ${colleague.name} this on this task, and they said:\n\n${asked}\n\n` +
+            `(Their earlier answer, not a new one — it cost you nothing and did not spend a consult. ` +
+            `If you need something different from them, ask a different question.)`,
+        };
+      }
+
       const answer = await askColleague(colleague, agent, task, question);
       counters.consulted += 1;
-      const left = limit - counters.consulted;
+      counters.consultedBy[priority] += 1;
+      const after = remainingConsults(counters, limit);
       await step(task.id, "CONSULTED", `Asked ${colleague.name}: ${question.slice(0, 200)}`, {
         ok: true,
-        data: { agentKey: colleague.key, question, answer: answer.text, answeredBy: answer.provider },
+        data: { agentKey: colleague.key, question, answer: answer.text, answeredBy: answer.provider, priority },
       });
       return {
         content:
@@ -997,7 +1193,11 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
           `If they contradict the record in front of you, the record wins and you should say so. ` +
           // Said here rather than discovered by being refused: an agent that
           // knows it has one question left spends it on the one that matters.
-          `${left > 0 ? `You may ask ${left} more colleague(s) on this task.` : `That was your last consult on this task.`})`,
+          `${
+            after.total > 0
+              ? `You may ask ${after.total} more colleague(s) on this task — ${after.byPriority.high} more as high, ${after.byPriority.medium} as medium, ${after.byPriority.low} as low.`
+              : `That was your last consult on this task.`
+          })`,
       };
     },
   };
@@ -1533,19 +1733,48 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       }
 
       const saved = await loadCheckpoint(task.id);
-      const counters: Counters = saved
+      let counters: Counters = saved
         ? restoreCounters(saved.counters)
-        : { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
+        : {
+            toolCalls: 0,
+            dryRun: 0,
+            refused: 0,
+            escalated: null,
+            delegated: 0,
+            consulted: 0,
+            consultedBy: { low: 0, medium: 0, high: 0 },
+            handedOff: 0,
+            gapsRaised: 0,
+          };
       // A resume must not carry the escalation that ended the last run, or the
       // task would go straight back to BLOCKED without doing anything. What the
       // Owner answered is already in the conversation by this point.
       counters.escalated = null;
       const startedFrom = saved?.state.iteration ?? 0;
 
+      // Only on a resume, because only a resume can be behind. A first run has
+      // no ledger to be out of step with, and asking for one would be two
+      // queries per task to prove that nothing has happened yet.
+      const reconciled = saved ? await reconcileCounters(task.id, counters) : null;
+      if (reconciled) counters = reconciled.counters;
+
       if (saved) {
         await step(task.id, "RESUMED", `${agent.name} picked this up where it left off, ${startedFrom} step(s) in.`, {
-          data: { iteration: startedFrom, toolCalls: counters.toolCalls },
+          data: { iteration: startedFrom, toolCalls: counters.toolCalls, corrections: reconciled?.corrections ?? [] },
         });
+        // On the timeline in its own right when it found something, because a
+        // resumed agent quietly holding fewer consults than it expects is
+        // otherwise a mystery: it did the work, the process died before the
+        // checkpoint, and nothing anywhere says so.
+        if (reconciled && reconciled.corrections.length > 0) {
+          await step(
+            task.id,
+            "NOTED",
+            `Its tallies were behind what the record shows, and have been put back in step — ${reconciled.corrections.join("; ")}. ` +
+              `That is a run that did the work and died before it could write down that it had.`,
+            { data: { corrections: reconciled.corrections } },
+          );
+        }
       } else {
         await step(task.id, "STARTED", `${agent.name} picked this up.`);
       }
@@ -1578,6 +1807,25 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           prompt: brief,
           tools,
           effort: await effortUnderBudget(agent),
+          // The same ceiling `shouldStop` enforces, read one step earlier.
+          //
+          // A task's budget used to be a cliff: sixteen turns at full effort
+          // and then a stop. The last turns of a run are the ones least worth
+          // paying headline rates for — the research is done, the judgement is
+          // made, and what is left is assembling an answer — so a run that is
+          // nearly out of money finishes on the cheaper model rather than
+          // stopping halfway through a sentence.
+          //
+          // Only downward, only once, and only for a task that has a ceiling of
+          // its own. A task with no `budgetUsd` is unchanged.
+          easeOff: async () => {
+            const row = await prisma.agentTask.findUnique({ where: { id: task.id }, select: { budgetUsd: true } });
+            const ceiling = row?.budgetUsd == null ? null : Number(row.budgetUsd.toString());
+            if (ceiling === null || ceiling <= 0) return null;
+            const spent = await prisma.llmCall.aggregate({ where: { taskId: task.id }, _sum: { costUsd: true } });
+            const spentUsd = Number((spent._sum.costUsd ?? 0).toString());
+            return spentUsd / ceiling >= EASE_OFF_AT ? "medium" : null;
+          },
           resume: saved?.state ?? null,
           // What it said on the way, written down as it says it.
           //

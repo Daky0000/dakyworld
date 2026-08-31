@@ -147,7 +147,7 @@ export interface AgentRunResult {
  * Counted across resumes, never per run: a task interrupted five times must
  * not get five times the budget.
  */
-const MAX_ITERATIONS = 16;
+export const MAX_ITERATIONS = 16;
 /** Under the SDK's HTTP timeout for a non-streaming call. */
 const MAX_TOKENS = 16_000;
 
@@ -214,6 +214,71 @@ export function clipToolResult(content: string, max = TOOL_RESULT_MAX_CHARS): st
   return `${content.slice(0, max)}
 
 [Cut off here: this answer was ${content.length.toLocaleString("en-GB")} characters and you have been shown the first ${max.toLocaleString("en-GB")}. There is more that you have not seen. Ask again with a narrower filter, a smaller limit or a specific id rather than assuming this is all of it.]`;
+}
+
+/**
+ * How large the conversation may get before its oldest answers are let go.
+ *
+ * A turn re-sends everything before it, so a tool result read on turn two is
+ * still being paid for on turn twelve. `clipToolResult` caps any single answer;
+ * this caps the pile of them.
+ *
+ * **Two numbers, not one, and that is the whole design.** Trimming at a single
+ * ceiling would trim on every turn once it was crossed — and the prompt cache is
+ * keyed on an exact prefix, so rewriting the front of the conversation every
+ * turn would mean paying full input rate for all of it, every turn. That is the
+ * opposite of what this is for. So it fires at the ceiling and cuts back to
+ * `TRIM_DOWN_TO`, which buys several turns of a stable prefix before it can
+ * fire again.
+ *
+ * The ceiling is characters rather than tokens because that is what can be
+ * measured here without a second API call, and roughly four characters to the
+ * token makes 120,000 about 30,000 tokens of conversation — well inside every
+ * vendor's window, and well past the point where old tool output is earning its
+ * place.
+ */
+const CONVERSATION_MAX_CHARS = 120_000;
+const TRIM_DOWN_TO = 70_000;
+
+/** What an oldest answer says once it has been let go of. */
+const RELEASED =
+  "[This answer has been let go of to keep the conversation affordable. You read it at the time and acted on it; " +
+  "what you concluded is in your own replies above. If you need the detail again, call the tool again.]";
+
+/**
+ * Lets go of the oldest tool results once the conversation is too big to keep
+ * re-sending, and says what it did.
+ *
+ * **Only `tool_result` content, and only its text.** The block, its
+ * `tool_use_id` and its position all survive — deleting a message would
+ * separate a `tool_use` from its result and the next request would be rejected
+ * outright. The same rule `saveCheckpoint`'s `trimToFit` follows, for the same
+ * reason, and this is deliberately the same technique applied to what is sent
+ * rather than to what is stored.
+ *
+ * Oldest first, because the recent turns are the ones the model is still
+ * reasoning from. Mutates in place: what is sent and what is checkpointed have
+ * to be the same conversation, or a resume would restore text this just decided
+ * was not worth re-sending.
+ *
+ * Returns how many it released, or 0 when the conversation is small enough to
+ * leave alone — which is the ordinary case and costs one `JSON.stringify`.
+ */
+export function releaseOldAnswers(messages: Anthropic.Beta.BetaMessageParam[]): number {
+  if (JSON.stringify(messages).length <= CONVERSATION_MAX_CHARS) return 0;
+
+  let released = 0;
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content as { type?: string; content?: unknown }[]) {
+      if (block?.type !== "tool_result") continue;
+      if (typeof block.content === "string" && block.content === RELEASED) continue;
+      block.content = RELEASED;
+      released += 1;
+      if (JSON.stringify(messages).length <= TRIM_DOWN_TO) return released;
+    }
+  }
+  return released;
 }
 
 /**
@@ -917,6 +982,19 @@ export interface AgentRunRequest {
   prompt: string;
   tools: AgentTool[];
   effort?: Effort;
+  /**
+   * Asked between turns whether this run should carry on more cheaply.
+   *
+   * Returns the effort to drop to, or null to leave it alone. Checked where
+   * `shouldStop` is checked — between turns, with the conversation whole —
+   * because the effort decides which model serves the *next* turn and changing
+   * it anywhere else would split one turn across two models.
+   *
+   * **It can only ever lower.** A callback that could raise the effort would be
+   * a way to spend more than the caller budgeted for, decided by something
+   * other than the caller.
+   */
+  easeOff?: () => Promise<Effort | null>;
   /** Called as each turn completes, so a running task shows progress. */
   onText?: (text: string) => Promise<void>;
   onToolCall?: (call: { name: string; input: Record<string, unknown>; outcome: AgentToolOutcome }) => Promise<void>;
@@ -966,7 +1044,7 @@ export interface AgentRunRequest {
  * because the first run's tokens were already billed by the first run.
  */
 export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunResult> {
-  const effort = request.effort ?? "medium";
+  let effort = request.effort ?? "medium";
 
   // Who runs this conversation, in the order they will be asked.
   //
@@ -1137,6 +1215,33 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     }
   };
 
+  /**
+   * Drops the effort for the rest of the run, once, when the caller says so.
+   *
+   * **It costs one cache miss and that is the trade.** The effort decides which
+   * model serves a turn, and a different model is a different prompt cache — so
+   * the turn after a downgrade re-pays for the whole conversation. That is
+   * worth it because it happens at most once per run and every turn after it is
+   * cheaper: a long task that changes model on turn nine pays one prefix and
+   * saves eight. It would not be worth it per turn, which is why this only ever
+   * moves in one direction and never moves back.
+   */
+  const ORDER: Effort[] = ["low", "medium", "high"];
+  const easeOffIfAsked = async () => {
+    if (!request.easeOff) return;
+    let wanted: Effort | null = null;
+    try {
+      wanted = await request.easeOff();
+    } catch {
+      // A failed check is not a reason to change how a run is being paid for.
+      return;
+    }
+    if (!wanted || ORDER.indexOf(wanted) >= ORDER.indexOf(effort)) return;
+    const was = effort;
+    effort = wanted;
+    await saying(`Carrying on at ${wanted} effort rather than ${was} — this run is close to its ceiling.`);
+  };
+
   const stopWanted = async (): Promise<boolean> => {
     if (!request.shouldStop) return false;
     try {
@@ -1202,6 +1307,18 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
 
   while (iteration < MAX_ITERATIONS) {
     if (await stopWanted()) return interrupted();
+    // Between turns, beside the stop check and for the same reason: this is a
+    // point where the conversation is whole.
+    await easeOffIfAsked();
+
+    // Before the turn is built, so what is sent and what is checkpointed are
+    // the same conversation. Silent in the ordinary case; announced when it
+    // fires, because an agent that can no longer see what a tool told it on
+    // turn three should have that said out loud somewhere a person can read.
+    const released = releaseOldAnswers(messages);
+    if (released > 0) {
+      await saying(`Let go of ${released} older tool answer(s) to keep this conversation affordable — what was concluded from them is still in the replies.`);
+    }
 
     // Two ways into a turn: a fresh one from the model, or the half-finished
     // one a previous process left behind. The second skips the model call —

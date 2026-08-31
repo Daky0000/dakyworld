@@ -8,6 +8,7 @@ import { startTheDay } from "../services/agents/startTheDay.js";
 import { authoredInstruction, composePrompt, isBusy, runTask, step } from "../services/agents/runner.js";
 import { historyOf, recordCreated, transition } from "../services/agents/state.js";
 
+import { MAX_ITERATIONS } from "../lib/claudeAgent.js";
 import { clearCheckpoint } from "../services/agents/checkpoint.js";
 import { blockedTasks, recordOwnerAnswer } from "../services/agents/escalations.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
@@ -1630,6 +1631,45 @@ agentsRouter.get("/tasks/:id", async (req, res, next) => {
         modelCalls: modelCalls._count,
         costUsd: task.costUsd,
       },
+      /**
+       * Where this run stands against its own ceiling, and what it is spending
+       * per turn.
+       *
+       * **Every number is summed from the `LlmCall` ledger**, not stored — the
+       * same reason `/autonomy` sums rather than counting: `recordLlmCall` is
+       * allowed to fail silently, so a counter would drift the first time a
+       * write failed, and a meter that has quietly lost count is worse than no
+       * meter.
+       *
+       * `willEaseOff` and `wouldStop` are the two things that will happen to
+       * this run without anybody doing anything, said before they happen rather
+       * than discovered afterwards: at four fifths it finishes on the cheaper
+       * model, and at its ceiling it stops. A ceiling of null means neither.
+       *
+       * `estimatedToFinish` is deliberately null rather than zero when there is
+       * nothing to estimate from. A projection built on one turn is not a
+       * projection, and printing 0 would read as "nothing left to pay".
+       */
+      budget: (() => {
+        const ceiling = task.budgetUsd == null ? null : Number(task.budgetUsd.toString());
+        const spentUsd = Number((modelCalls._sum.costUsd ?? 0).toString());
+        const perCall = modelCalls._count > 0 ? spentUsd / modelCalls._count : null;
+        const iterations = task.checkpoint?.iteration ?? 0;
+        // Turns left before the loop's own iteration cap, which is the only
+        // honest basis for "how much more will this cost" — a run does not stop
+        // when it runs out of guesses, it stops when it runs out of turns.
+        const turnsLeft = Math.max(0, MAX_ITERATIONS - iterations);
+        return {
+          ceilingUsd: ceiling !== null && ceiling > 0 ? ceiling : null,
+          spentUsd,
+          remainingUsd: ceiling !== null && ceiling > 0 ? Math.max(0, ceiling - spentUsd) : null,
+          fraction: ceiling !== null && ceiling > 0 ? spentUsd / ceiling : null,
+          averageCallUsd: perCall,
+          estimatedToFinishUsd: perCall !== null && modelCalls._count > 1 ? perCall * turnsLeft : null,
+          willEaseOffAt: ceiling !== null && ceiling > 0 ? ceiling * 0.8 : null,
+          easedOff: ceiling !== null && ceiling > 0 && spentUsd >= ceiling * 0.8,
+        };
+      })(),
       // What a resume would carry on from. Shown because "it will continue
       // where it stopped" is only reassuring if you can see that there is
       // something to continue from.

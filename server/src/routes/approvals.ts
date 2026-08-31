@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { ApprovalRefused, approve, countPending, decline, freshPreview, listRequests } from "../services/approvals.js";
+import { ApprovalRefused, approve, countPending, decline, flagStalePreparedActions, freshPreview, listRequests } from "../services/approvals.js";
 import { settleApprovalCard } from "../services/approvalCards.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
@@ -36,18 +36,25 @@ approvalsRouter.get("/", async (req, res, next) => {
       .parse(req.query.status ?? "PENDING");
 
     const requests = await listRequests(status === "ALL" ? "ALL" : status);
-    const [pending, counts] = await Promise.all([
+    const [pending, counts, stale] = await Promise.all([
       countPending(),
       // Rehearsal specimens are excluded here as well as from the list. A tab
       // reading "42 declined" that shows nothing when opened is worse than no
       // number at all.
       prisma.actionRequest.groupBy({ by: ["status"], where: { rehearsal: false }, _count: true }),
+      // Which agents have work nobody has read in two days. The sweep behind
+      // this has run on the housekeeping tick for months and said so only in
+      // the log, where it answered nobody's question — a person looking at the
+      // queue could not see that eleven of these cards belong to one agent.
+      flagStalePreparedActions(),
     ]);
 
     res.json({
       requests,
       pending,
       counts: Object.fromEntries(counts.map((row) => [row.status, row._count])),
+      /** Agents whose prepared work has been waiting more than 48 hours. */
+      stale,
     });
   } catch (err) {
     next(err);

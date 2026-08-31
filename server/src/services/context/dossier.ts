@@ -432,6 +432,16 @@ export interface DossierOptions {
   brief?: boolean;
   /** Said at the end, when there is a tool that can fetch the rest. */
   moreAvailable?: boolean;
+  /**
+   * Which tool to name when saying the rest can be fetched.
+   *
+   * Defaults to `context.read`, which is the Owner's road in. An agent's is
+   * `readHistory`, and naming the wrong one is worse than naming none: it tells
+   * a model to call something it has not been granted, and what comes back is a
+   * refusal about a tool that does not exist rather than the history it asked
+   * for.
+   */
+  readWith?: string;
 }
 
 /**
@@ -479,7 +489,7 @@ export async function renderDossier(subjectKey: string, options: DossierOptions 
   if (hidden > 0) {
     lines.push(
       options.moreAvailable
-        ? `_${hidden} older entr${hidden === 1 ? "y is" : "ies are"} not shown. Use \`context.read\` with a larger limit to see them._`
+        ? `_${hidden} older entr${hidden === 1 ? "y is" : "ies are"} not shown. Use \`${options.readWith ?? "context.read"}\` with a larger limit to see them._`
         : `_${hidden} older entr${hidden === 1 ? "y" : "ies"} not shown._`,
     );
   }

@@ -14,12 +14,12 @@
  *
  * Database only. No key, no network.
  */
-import { consultLimitFor, likelyToolsLine, toolsFor, type Counters } from "../src/services/agents/runner.js";
+import { consultLimitFor, likelyToolsLine, remainingConsults, sharesOf, toolsFor, type Counters } from "../src/services/agents/runner.js";
 import { SETTING, clearSettingsCache, setSetting } from "../src/lib/settings.js";
 import { prisma } from "../src/lib/prisma.js";
 
 function freshCounters(): Counters {
-  return { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, handedOff: 0, gapsRaised: 0 };
+  return { toolCalls: 0, dryRun: 0, refused: 0, escalated: null, delegated: 0, consulted: 0, consultedBy: { low: 0, medium: 0, high: 0 }, handedOff: 0, gapsRaised: 0 };
 }
 
 let bad = 0;
@@ -138,6 +138,63 @@ console.log("\nThe consult ceiling");
 
   await prisma.appSetting.deleteMany({ where: { key: SETTING.CONSULT_PRIORITY_LIMITS } });
   clearSettingsCache();
+}
+
+console.log("\nThe ceiling split by how decisive a question is");
+{
+  // The property that matters, and the one an obvious implementation of this
+  // gets wrong: an agent declares its own question's priority, so if declaring
+  // one could *raise* a ceiling then every agent would learn to mark every
+  // question urgent and the cap would be advisory. The shares are shares of the
+  // task's own allowance, and `high` is the whole of it — never more.
+  for (const limit of [0, 1, 2, 3, 5, 7]) {
+    const shares = sharesOf(limit);
+    check(
+      `a limit of ${limit} is never exceeded by any single share`,
+      shares.low <= limit && shares.medium <= limit && shares.high <= limit,
+      JSON.stringify(shares),
+    );
+  }
+  check("no consults at all means no share of anything", JSON.stringify(sharesOf(0)) === JSON.stringify({ low: 0, medium: 0, high: 0 }));
+  // A floor of one: splitting a working cap of two would otherwise tell an
+  // agent its low budget is zero — a cap turned into a refusal by arithmetic.
+  check("a small allowance still leaves room for one of each", sharesOf(2).low >= 1 && sharesOf(2).medium >= 1, JSON.stringify(sharesOf(2)));
+  check("and high can always spend all of it", sharesOf(2).high === 2 && sharesOf(5).high === 5);
+
+  const spent = (low: number, medium: number, high: number): Counters => ({
+    ...freshCounters(),
+    consulted: low + medium + high,
+    consultedBy: { low, medium, high },
+  });
+
+  const fresh = remainingConsults(freshCounters(), 3);
+  check("a fresh task has its whole allowance", fresh.total === 3, `${fresh.total}`);
+
+  // The total is what is enforced. A share cannot let an agent past it, which
+  // is the other half of the same property.
+  const nearlyDone = remainingConsults(spent(0, 0, 3), 3);
+  check("spending it all on high questions leaves nothing", nearlyDone.total === 0, `${nearlyDone.total}`);
+  check("and no share survives the total running out", nearlyDone.byPriority.low === 0 && nearlyDone.byPriority.medium === 0, JSON.stringify(nearlyDone.byPriority));
+
+  // The thing the split is for: a task that spent its budget on nice-to-know
+  // questions has none left for them, and still has its decisive ones.
+  //
+  // Two low questions, not one — at a limit of three the low share is two, so
+  // spending one leaves one and proves nothing. The number is read from
+  // `sharesOf` rather than written down here, or this becomes a test of the
+  // arithmetic rather than of the property.
+  const lowShare = sharesOf(3).low;
+  const chatty = remainingConsults(spent(lowShare, 0, 0), 3);
+  check("spending the low share exhausts low", chatty.byPriority.low === 0, JSON.stringify(chatty.byPriority));
+  check(
+    "and leaves the decisive questions available",
+    chatty.byPriority.high > 0 && chatty.total === 3 - lowShare,
+    JSON.stringify(chatty),
+  );
+
+  // Never negative, whatever a checkpoint written by an older deploy holds.
+  const overspent = remainingConsults(spent(9, 9, 9), 3);
+  check("an over-counted task reports nothing left rather than a negative", overspent.total === 0 && overspent.byPriority.high === 0, JSON.stringify(overspent));
 }
 
 console.log(bad ? `\n${bad} PROBLEM(S)` : `\nThe brief says what it should and the ceiling is the ceiling.`);
