@@ -24,7 +24,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 const ORIGIN = "https://dakyworld.com";
 const SHARE_IMAGE = `${ORIGIN}/assets/brand/og-share.png`;
 const SHARE_IMAGE_ALT =
-  "Dakyworld — your outsourced IT department. Websites, security, email, cloud, automation and integrations, managed for one monthly fee.";
+  "Dakyworld — your outsourced digital systems and automation team. Websites, automation and AI, integrations and training for growing businesses.";
 
 /**
  * Search-engine ownership verification. Both are the `content` value of the
@@ -64,7 +64,8 @@ const COMPANY = {
   region: "Ashanti",
   country: "GH",
   founder: "Dan Kwame Ayipah",
-  positioning: "Your outsourced IT department for growing businesses in Ghana and West Africa.",
+  positioning:
+    "Your outsourced digital systems and automation team for growing businesses in Ghana and West Africa.",
   currency: "GHS",
   /**
    * Deliberately empty. `sameAs` is how a search engine ties this site to a
@@ -91,7 +92,7 @@ const PAGES = [
     path: "/",
     priority: "1.0",
     changefreq: "weekly",
-    keywords: "outsourced IT department Ghana, managed IT services Kumasi, IT support for businesses Ghana, website management, business automation",
+    keywords: "digital systems partner Ghana, business automation Kumasi, website design Ghana, workflow automation, systems integration",
     schema: ["organization", "website", "localbusiness"],
   },
   {
@@ -99,8 +100,8 @@ const PAGES = [
     path: "/services",
     priority: "0.9",
     changefreq: "monthly",
-    breadcrumb: [["Coverage", "/services"]],
-    keywords: "IT services Ghana, website management, cybersecurity, cloud and email management, business automation, systems integration, IT training",
+    breadcrumb: [["Services", "/services"]],
+    keywords: "web design Ghana, workflow automation, AI for business Ghana, CRM integration, WhatsApp lead capture, team training",
     schema: ["services"],
   },
   {
@@ -109,7 +110,7 @@ const PAGES = [
     priority: "0.9",
     changefreq: "monthly",
     breadcrumb: [["Pricing", "/pricing"]],
-    keywords: "IT support pricing Ghana, managed IT retainer cost, website build cost Ghana, IT services pricing",
+    keywords: "digital systems pricing Ghana, monthly partnership cost, website build cost Ghana, automation project pricing",
     schema: ["webpage"],
   },
   {
@@ -117,13 +118,13 @@ const PAGES = [
     path: "/monthly-support",
     priority: "0.8",
     changefreq: "monthly",
-    breadcrumb: [["Pricing", "/pricing"], ["Monthly Support", "/monthly-support"]],
-    keywords: "monthly IT support Ghana, managed IT retainer, outsourced IT department, ongoing technology management",
+    breadcrumb: [["Pricing", "/pricing"], ["Monthly Partnerships", "/monthly-support"]],
+    keywords: "monthly digital systems partnership Ghana, ongoing website improvement, automation partnership, CRM and integration support",
     schema: ["service"],
     service: {
-      name: "Monthly Technology Support",
+      name: "Monthly Digital Systems Partnerships",
       description:
-        "Ongoing outsourced IT: website, security, backups, email and cloud, automation and integrations, managed for a monthly fee.",
+        "Ongoing improvement of the website, customer journey, workflow automation and connected business systems, under a written scope and a defined monthly capacity.",
     },
   },
   {
@@ -132,11 +133,11 @@ const PAGES = [
     priority: "0.8",
     changefreq: "monthly",
     breadcrumb: [["Pricing", "/pricing"], ["One-Time Projects", "/one-time-projects"]],
-    keywords: "one-time digital projects, website design Ghana, brand identity design, technology training, IT consulting Kumasi",
+    keywords: "one-time digital projects, website build Ghana, workflow automation project, systems integration project, AI training Kumasi",
     schema: ["service"],
     service: {
-      name: "One-Time Digital Projects",
-      description: "Focused projects with a defined outcome: foundation builds, brand identity and design, training and technology advisory.",
+      name: "One-Time Digital Systems Projects",
+      description: "Focused projects with a defined outcome: website and digital foundation builds, workflow automation and systems connection, connected growth system builds, and AI, automation and digital systems advisory.",
     },
   },
   {
@@ -144,12 +145,12 @@ const PAGES = [
     path: "/foundation-build",
     priority: "0.8",
     changefreq: "monthly",
-    breadcrumb: [["Pricing", "/pricing"], ["One-Time Projects", "/one-time-projects"], ["Digital Foundation Build", "/foundation-build"]],
-    keywords: "digital foundation build, business website build Ghana, secure business email setup, cloud systems setup, IT foundation",
+    breadcrumb: [["Pricing", "/pricing"], ["One-Time Projects", "/one-time-projects"], ["Website & Digital Foundation Build", "/foundation-build"]],
+    keywords: "website and digital foundation build, business website build Ghana, lead capture setup, enquiry form and WhatsApp connection",
     schema: ["service"],
     service: {
-      name: "Digital Foundation Build",
-      description: "A secure, reliable digital foundation: website, business email, cloud systems, security and backups, set up properly once.",
+      name: "Website & Digital Foundation Build",
+      description: "A defined project to build the customer-facing digital foundation: website, page structure, enquiry forms, lead connections, analytics and team handover.",
     },
   },
   {
@@ -158,7 +159,7 @@ const PAGES = [
     priority: "0.7",
     changefreq: "monthly",
     breadcrumb: [["Work", "/work"]],
-    keywords: "IT case studies Ghana, security project, mobile commerce, business automation results",
+    keywords: "digital systems case studies Ghana, customer journey improvement, mobile commerce, business automation results",
     schema: ["collection"],
   },
   {
@@ -166,8 +167,8 @@ const PAGES = [
     path: "/how-we-work",
     priority: "0.7",
     changefreq: "monthly",
-    breadcrumb: [["Process", "/how-we-work"]],
-    keywords: "how outsourced IT works, IT onboarding process, IT service levels, IT response times",
+    breadcrumb: [["How We Work", "/how-we-work"]],
+    keywords: "how Dakyworld works, digital project process, written scope and proposal, monthly partnership process",
     schema: ["webpage"],
   },
   {
@@ -176,7 +177,7 @@ const PAGES = [
     priority: "0.7",
     changefreq: "monthly",
     breadcrumb: [["About", "/about"]],
-    keywords: "about Dakyworld, IT company Kumasi, Dan Kwame Ayipah, IT company Ghana",
+    keywords: "about Dakyworld, digital systems company Kumasi, Dan Kwame Ayipah, automation company Ghana",
     schema: ["about"],
   },
   {
@@ -185,7 +186,7 @@ const PAGES = [
     priority: "0.6",
     changefreq: "weekly",
     breadcrumb: [["Insights", "/insights"]],
-    keywords: "IT insights Ghana, business technology advice, automation and AI for business, cybersecurity guidance",
+    keywords: "digital systems insights Ghana, business automation advice, AI for growing businesses, customer journey guidance",
     schema: ["blog"],
   },
   {
@@ -194,7 +195,7 @@ const PAGES = [
     priority: "0.8",
     changefreq: "monthly",
     breadcrumb: [["Contact", "/contact"]],
-    keywords: "contact Dakyworld, IT support Kumasi, hire IT company Ghana, technology consultation",
+    keywords: "contact Dakyworld, digital systems consultation Kumasi, hire automation partner Ghana, website enquiry",
     schema: ["contact"],
   },
   {
@@ -280,7 +281,7 @@ const localBusiness = {
   description: COMPANY.positioning,
   email: COMPANY.email,
   telephone: COMPANY.phone,
-  priceRange: "GHS 5,000 – GHS 35,000+",
+  priceRange: "GHS 3,000 – GHS 35,000+",
   currenciesAccepted: COMPANY.currency,
   address: {
     "@type": "PostalAddress",
@@ -305,15 +306,12 @@ const website = {
   publisher: { "@id": `${ORIGIN}/#organization` },
 };
 
-/** The seven lines the site itself lists under Coverage. */
+/** The four lines the site itself lists under Services. */
 const SERVICE_CATALOGUE = [
-  ["Website design and management", "Building, hosting and maintaining the website a business runs on."],
-  ["Security and backups", "Protecting systems and data, and keeping a recoverable copy of both."],
-  ["Email and cloud workspace", "Business email, file storage and the tools a team works in."],
-  ["Automation and AI", "Removing manual admin from the work that repeats."],
-  ["Systems integration", "Making the tools a business already pays for talk to each other."],
-  ["Branding and design", "Identity and the material that carries it."],
-  ["Training and technology advisory", "Teaching the team, and advising on what to buy and what to skip."],
+  ["Websites and web platforms", "Websites, landing pages, e-commerce journeys, customer portals and internal web tools."],
+  ["Automation and AI", "Practical workflows and AI-assisted systems that remove the work that repeats."],
+  ["Integrations and business systems", "Making the website, CRM, forms, WhatsApp, payments and calendars move information without a person moving it."],
+  ["Training and consulting", "Workshops, AI-adoption support, workflow reviews and leadership guidance."],
 ];
 
 function schemaFor(page, title, description) {
@@ -328,7 +326,7 @@ function schemaFor(page, title, description) {
       graph.push({
         "@type": "OfferCatalog",
         "@id": `${url}#catalogue`,
-        name: "What Dakyworld covers",
+        name: "What Dakyworld does",
         url,
         provider: { "@id": `${ORIGIN}/#organization` },
         itemListElement: SERVICE_CATALOGUE.map(([name, text], index) => ({
@@ -345,7 +343,7 @@ function schemaFor(page, title, description) {
         name: page.service.name,
         description: page.service.description,
         url,
-        serviceType: "Information technology services",
+        serviceType: "Digital systems and automation services",
         provider: { "@id": `${ORIGIN}/#organization` },
         areaServed: [
           { "@type": "Country", name: "Ghana" },

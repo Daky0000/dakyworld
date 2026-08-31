@@ -30,16 +30,16 @@ const END = "<!-- END BREADCRUMB -->";
 /** Same trails as PAGES in build-seo.mjs. Home is prepended; the last crumb is the page itself. */
 const TRAILS = {
   "about.html": [["About", "/about"]],
-  "services.html": [["Coverage", "/services"]],
+  "services.html": [["Services", "/services"]],
   "work.html": [["Work", "/work"]],
-  "how-we-work.html": [["Process", "/how-we-work"]],
+  "how-we-work.html": [["How We Work", "/how-we-work"]],
   "pricing.html": [["Pricing", "/pricing"]],
-  "monthly-support.html": [["Pricing", "/pricing"], ["Monthly Support", "/monthly-support"]],
+  "monthly-support.html": [["Pricing", "/pricing"], ["Monthly Partnerships", "/monthly-support"]],
   "one-time-projects.html": [["Pricing", "/pricing"], ["One-Time Projects", "/one-time-projects"]],
   "foundation-build.html": [
     ["Pricing", "/pricing"],
     ["One-Time Projects", "/one-time-projects"],
-    ["Digital Foundation Build", "/foundation-build"],
+    ["Website & Digital Foundation Build", "/foundation-build"],
   ],
   "insights.html": [["Insights", "/insights"]],
   "contact.html": [["Contact", "/contact"]],

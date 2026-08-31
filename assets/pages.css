@@ -416,6 +416,7 @@
 .article-image.web{--glow:#6c7cff}
 .article-image.cloud{--glow:#4b8cff}
 .article-image.business{--glow:#d7f06c}
+.article-image.integrations{--glow:#67dfff}
 .article-icon{
   position:absolute;z-index:2;left:25px;bottom:22px;width:48px;height:48px;
   border-radius:15px;display:grid;place-items:center;
@@ -516,3 +517,24 @@
 @media(prefers-reduced-motion:reduce){
   .contact-orb{animation:none!important}
 }
+
+/* Four project options rather than three: two rows of two reads better
+   than three-plus-one, and each card carries a list. */
+.addon-grid--4{grid-template-columns:repeat(2,1fr)}
+@media(max-width:680px){
+  .addon-grid--4{grid-template-columns:1fr}
+}
+
+/* Founding Partner rates inside a .plan column. */
+.plan .price-was{
+  display:block;margin:22px 0 0;font-family:"Space Grotesk",sans-serif;
+  font-size:20px;letter-spacing:-.03em;color:#8993a6;
+  text-decoration:line-through;text-decoration-thickness:1px;
+}
+.plan .price-was + .price{margin-top:4px}
+.plan .price-note{
+  margin:12px 0 0;font-size:11px;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--blue);
+}
+.plan .price-after{margin:22px 0 0;font-size:13px;line-height:1.7;color:#7b8797}
+.plan .price-after strong{color:var(--ink);font-weight:600}

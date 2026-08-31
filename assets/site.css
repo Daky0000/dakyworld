@@ -1124,3 +1124,63 @@ a.v:hover{color:var(--blue)}
   left:-9999px;top:auto;
   width:1px;height:1px;overflow:hidden;
 }
+
+/* -- Founding Partner rates -------------------------------------------
+   A struck-through standard rate above the price, and the line that says
+   why the number below it is lower. Both sit inside .price-card and
+   .plan, so the two pricing layouts share one treatment. */
+.price-was{
+  display:block;margin:22px 0 0;font-family:"Space Grotesk",sans-serif;
+  font-size:20px;letter-spacing:-.03em;color:#8993a6;
+  text-decoration:line-through;text-decoration-thickness:1px;
+}
+.price-was + .price{margin-top:4px}
+.price-note{
+  margin:0 0 16px;font-size:12px;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--blue);
+}
+.price-after{margin:18px 0 0;font-size:13px;line-height:1.7;color:#8993a6}
+.price-after strong{color:var(--ink);font-weight:600}
+
+/* Five arrangement cards: three, then two centred beneath them. */
+.arrange-grid--5{grid-template-columns:repeat(6,1fr)}
+.arrange-grid--5 > *{grid-column:span 2}
+.arrange-grid--5 > *:nth-child(4){grid-column:2/span 2}
+.arrange-grid--5 > *:nth-child(5){grid-column:4/span 2}
+@media(max-width:950px){
+  .arrange-grid--5{grid-template-columns:1fr}
+  .arrange-grid--5 > *,
+  .arrange-grid--5 > *:nth-child(4),
+  .arrange-grid--5 > *:nth-child(5){grid-column:auto}
+}
+
+/* -- Numbered service rows: a lead line, a list and a "best for" ------- */
+.spec-body p + p,
+.spec-body ul + p{margin-top:14px}
+.spec-body p.spec-lead{
+  font-family:"Space Grotesk",sans-serif;font-size:19px;line-height:1.35;
+  letter-spacing:-.03em;color:var(--ink);
+}
+.spec-body ul{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:8px}
+.spec-body li{position:relative;padding-left:16px;font-size:14px;line-height:1.65;color:#4f5a70}
+.spec-body li:before{
+  content:"";position:absolute;left:0;top:8px;width:6px;height:6px;
+  border-radius:50%;background:var(--blue);
+}
+
+/* A bullet list on a dark band. `.features` lives in pages.css, which the
+   homepage does not load, so a list marked up with it there rendered as
+   run-together text with no bullets at all. */
+.band-list{list-style:none;padding:0;margin:34px 0 0;display:grid;gap:11px;max-width:1040px}
+.band-list li{position:relative;padding-left:19px;color:rgba(255,255,255,.72);font-size:15px;line-height:1.6}
+.band-list li:before{
+  content:"";position:absolute;left:0;top:9px;width:6px;height:6px;
+  border-radius:50%;background:var(--lime);
+}
+
+/* Four monthly-partnership cards read better as two rows of two than as
+   three and a stray. */
+.governance-grid--4{grid-template-columns:repeat(2,1fr)}
+@media(max-width:950px){
+  .governance-grid--4{grid-template-columns:1fr}
+}
