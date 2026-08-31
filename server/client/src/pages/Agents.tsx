@@ -126,7 +126,12 @@ export function Agents() {
         eyebrow="Workforce"
         title="Agents"
         subtitle="Every agent is a job with a mission, a manager and a ceiling on what it may do unasked. Nothing here acts on its own until you raise it."
-        action={<Button onClick={() => setHiring(true)}>Hire a specialist</Button>}
+        action={
+          <div className="flex items-center gap-2">
+            <StartTheDay />
+            <Button onClick={() => setHiring(true)}>Hire a specialist</Button>
+          </div>
+        }
       />
 
       {/* The only number that really matters is how much can act unattended. */}
@@ -935,6 +940,76 @@ function WhyItOnlyPrepares({ agentKey }: { agentKey: string }) {
         </ul>
       )}
       {goLive.error && <p className="text-sm text-red-700">{(goLive.error as Error).message}</p>}
+    </div>
+  );
+}
+
+// --- Start the day ---------------------------------------------------------
+
+interface DayStarted {
+  raised: number;
+  woken: number;
+  started: number;
+  hunts: number;
+  asleep: string[];
+  summary: string;
+}
+
+/**
+ * The clock, brought forward by hand.
+ *
+ * Standing work comes round at 08:00 and a hunt at 07:30, which is the right
+ * way for this to run and the wrong way to watch it. Somebody who has just set
+ * an agent live wants to see what it does, and the honest answer today is
+ * "wait until tomorrow morning".
+ *
+ * It moves the time, not the rules — a draft agent stays asleep, every ceiling
+ * still applies, and a slot brought forward is spent rather than added. The
+ * reply says what actually happened, including who was left asleep and why,
+ * because "started: true" for a floor of drafts is the reply that wastes an
+ * afternoon.
+ *
+ * Hunts are a separate tick-box on purpose: standing work costs model tokens,
+ * and a hunt starts an Apify capture and audits five businesses.
+ */
+function StartTheDay() {
+  const queryClient = useQueryClient();
+  const [withHunts, setWithHunts] = useState(false);
+  const [result, setResult] = useState<DayStarted | null>(null);
+
+  const start = useMutation({
+    mutationFn: () => api.post<DayStarted>("/agents/start-the-day", { hunts: withHunts }),
+    onSuccess: (data) => {
+      setResult(data);
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+    },
+  });
+
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-2">
+        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-ink/50" title="A hunt starts an Apify capture and audits five businesses. That costs money.">
+          <input type="checkbox" checked={withHunts} onChange={(event) => setWithHunts(event.target.checked)} />
+          hunts too
+        </label>
+        <Button variant="accent" disabled={start.isPending} onClick={() => start.mutate()}>
+          {start.isPending ? "Starting…" : "Run agents now"}
+        </Button>
+      </div>
+
+      {(result || start.error) && (
+        <div className="absolute right-0 z-10 mt-2 w-80 border border-line bg-white p-3 text-sm shadow-lg">
+          {start.error ? (
+            <p className="text-red-700">{(start.error as Error).message}</p>
+          ) : (
+            <p className="text-ink/75">{result?.summary}</p>
+          )}
+          <button className="mt-2 text-xs text-ink/45 hover:text-ink" onClick={() => setResult(null)}>
+            Close
+          </button>
+        </div>
+      )}
     </div>
   );
 }

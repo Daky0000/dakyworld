@@ -434,6 +434,118 @@ async function main() {
   check("and Claude actually served it", anthBodies.length > anthBeforeEmpty, `${anthBodies.length - anthBeforeEmpty} turn(s)`);
   check("the run still produced a real answer", empty.text.length > 0, JSON.stringify(empty.text));
 
+  // --- What the run *says* about who is serving ----------------------------
+  //
+  // A live Chief Executive run opened with "Claude, starting on the first of 3
+  // free model(s): inclusionai/ling-3.0-flash-fin:free", then spent an Anthropic
+  // balance and an OpenAI one. Both halves of that sentence were wrong in the
+  // same direction, and the reading it invites — free models are configured and
+  // being ignored — is the opposite of what happened: OpenRouter was not in the
+  // chain at all, and nothing said so.
+  //
+  // The ladder is a list of OpenRouter ids. Saying it while a paid vendor is
+  // serving is not cosmetic; it is the line somebody reads when they are
+  // working out why a run cost money.
+  {
+    const { setSetting: put } = await import("../src/lib/settings.js");
+    await put(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(["some-house/some-model:free", "other/other:free"]));
+    // No OpenRouter key at all, so the free vendor cannot be in the chain.
+    // **The env var, not the row.** `getSetting` prefers an env-managed value,
+    // and this harness sets `OPENROUTER_API_KEY` — deleting the AppSetting row
+    // alone leaves the key perfectly readable and the scenario tests nothing.
+    const savedOrKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    await prisma.appSetting.deleteMany({ where: { key: SETTING.OPENROUTER_KEY } });
+    clearSettingsCache();
+    clearOpenRouterCooldown();
+
+    const said: string[] = [];
+    const spoken = await runAgentLoop({
+      purpose: "check.agentLoop.saidWhat",
+      system: "You are a check.",
+      prompt: "Say you are done.",
+      tools: [lookUpTool],
+      effort: "medium",
+      onServing: async (note: string) => {
+        said.push(note);
+      },
+    });
+
+    const opening = said.join(" | ");
+    check(
+      "with no OpenRouter key it does not claim to be starting on free models",
+      !/free model\(s\)/.test(opening),
+      opening,
+    );
+    check("it names the vendor that is actually serving", /Claude, on claude/.test(opening), opening);
+    check(
+      "and it says why the free models are absent",
+      /No OpenRouter key is set/.test(opening),
+      opening,
+    );
+    check("the run still finished", spoken.stoppedBecause === "finished", String(spoken.stoppedBecause));
+
+    await put(SETTING.OPENROUTER_FREE_MODELS, "[]");
+    if (savedOrKey) process.env.OPENROUTER_API_KEY = savedOrKey;
+    clearSettingsCache();
+  }
+
+  // --- Every vendor's refusal reaches the caller ---------------------------
+  //
+  // Only the *last* vendor's failure used to come out, which is how a run where
+  // Claude and ChatGPT both answered "no credit on this account" and Gemini
+  // happened to be busy was reported as "the model is busy" — so
+  // `services/agents/retry.ts` read it as temporary and paused for five minutes,
+  // six times, over a problem no amount of waiting fixes.
+  {
+    const { planFor } = await import("../src/services/agents/retry.js");
+
+    // OpenRouter refuses with a 402, and nobody is behind it: the Anthropic key
+    // goes from the env as well as the row, for the reason above.
+    process.env.OPENROUTER_BASE_URL = refusedServer.url;
+    const savedAnthKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    await prisma.appSetting.deleteMany({ where: { key: SETTING.ANTHROPIC_KEY } });
+    clearSettingsCache();
+    clearOpenRouterCooldown();
+
+    let thrown: Error | null = null;
+    try {
+      await runAgentLoop({
+        purpose: "check.agentLoop.everyRefusal",
+        system: "You are a check.",
+        prompt: "Say you are done.",
+        tools: [lookUpTool],
+        effort: "medium",
+      });
+    } catch (err) {
+      thrown = err as Error;
+    }
+
+    check("a chain with nobody left throws", thrown !== null, "it returned instead");
+    const message = thrown?.message ?? "";
+    check(
+      "and the message says the whole chain was asked",
+      /none could serve it|no credit|Every model/i.test(message),
+      message.slice(0, 160),
+    );
+    // The point of collecting them: the classification is made on the chain,
+    // not on whichever rung happened to be last.
+    const plan = planFor(
+      new Error(
+        "Every model connected for this was asked and none could serve it. " +
+          "Claude: Claude has no credit left on this account. Top it up, or connect another model under Settings → AI models. " +
+          "ChatGPT: ChatGPT has no credit left on this account. " +
+          "Gemini: Gemini is rate-limiting this key. The task will be picked up again.",
+      ),
+      0,
+    );
+    check("a chain where two vendors have no credit asks rather than pausing", plan.remedy === "ask", plan.remedy);
+
+    if (savedAnthKey) process.env.ANTHROPIC_API_KEY = savedAnthKey;
+    clearSettingsCache();
+  }
+
   goneServer.server.close();
   orServer.server.close();
   anthServer.server.close();

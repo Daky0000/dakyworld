@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { findTool, listAllTools, resolveTool } from "../services/tools/catalogue.js";
 import { toolReadiness } from "../services/tools/readiness.js";
 import { EXECUTE_LEVEL, SPEND_LEVEL, permissionFor } from "../services/tools/invoke.js";
+import { startTheDay } from "../services/agents/startTheDay.js";
 import { authoredInstruction, composePrompt, isBusy, runTask, step } from "../services/agents/runner.js";
 import { historyOf, recordCreated, transition } from "../services/agents/state.js";
 
@@ -411,6 +412,31 @@ agentsRouter.get("/:key/autonomy", async (req, res, next) => {
         waitingOnApproval: counted.NEEDS_APPROVAL ?? 0,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * "Start the day" — the clock, brought forward by a person.
+ *
+ * Everything here runs on a schedule, which is right for running it and wrong
+ * for *watching* it: somebody who has just set an agent live wants to see what
+ * happens, and "come back at half past seven" is not an answer.
+ *
+ * This does exactly what the scheduler would have done at the next slot, using
+ * the same functions and the same guards — see `services/agents/startTheDay.ts`.
+ * It moves the time, not the rules: a draft agent stays asleep, every ceiling
+ * still applies, and a slot brought forward is spent rather than added.
+ *
+ * `hunts` is opt-in, because a hunt starts an Apify capture and audits five
+ * businesses. Standing work costs tokens; that costs money on a card, and
+ * "start the day" must not quietly mean it.
+ */
+agentsRouter.post("/start-the-day", async (req, res, next) => {
+  try {
+    const { hunts } = z.object({ hunts: z.boolean().default(false) }).parse(req.body ?? {});
+    res.json(await startTheDay({ includeHunts: hunts }));
   } catch (err) {
     next(err);
   }

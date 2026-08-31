@@ -371,6 +371,25 @@ export function clearOpenRouterCooldown(): void {
   openRouterRefusedUntil = 0;
 }
 
+/**
+ * Whether the free vendor is sitting out, and until when.
+ *
+ * The cooldown is right and it was **invisible**, which made it the best
+ * available explanation for "I believed the free models were available and they
+ * are not kicking in": a key-level refusal takes OpenRouter out of the chain for
+ * fifteen minutes, every agent run in that window starts on a paid vendor, and
+ * nothing on any screen said so. Reported by
+ * `GET /api/settings/models/openrouter/free` so the answer is where somebody
+ * would look for it.
+ *
+ * Process-local, like the cooldown itself. A restart clears it, which is worth
+ * saying on the screen rather than leaving somebody to discover.
+ */
+export function openRouterCooldown(): { cooling: boolean; until: string | null } {
+  const cooling = Date.now() < openRouterRefusedUntil;
+  return { cooling, until: cooling ? new Date(openRouterRefusedUntil).toISOString() : null };
+}
+
 /** As generous as the Anthropic SDK's own default for a non-streaming turn. */
 const TURN_TIMEOUT_MS = 600_000;
 
@@ -961,7 +980,27 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   // A vendor whose key was refused recently sits its cooldown out rather than
   // costing every resume behind this one a wasted call against a dead balance.
   const candidates: AgentVendor[] = [];
-  if ((await providerConfigured("openrouter")) && Date.now() >= openRouterRefusedUntil) candidates.push("openrouter");
+  /**
+   * Why the free vendor is not first, when it is not.
+   *
+   * Said out loud because the alternative is what actually happened on a live
+   * Chief Executive run: OpenRouter was absent, the line underneath announced
+   * "starting on the first of 3 free model(s)", and the run then spent two paid
+   * balances. Nothing anywhere said the free vendor had been skipped, so the
+   * only reading available was that free models were configured and being
+   * ignored.
+   */
+  let freeSkipped: string | null = null;
+  if (!(await providerConfigured("openrouter"))) {
+    freeSkipped = "No OpenRouter key is set, so there are no free models in this chain. Add one under Settings → AI models — it is where every free model lives.";
+  } else if (Date.now() < openRouterRefusedUntil) {
+    const until = new Date(openRouterRefusedUntil);
+    freeSkipped =
+      `OpenRouter rejected its key recently, so the free models are sitting out until ${until.toISOString().slice(11, 16)} UTC ` +
+      `and this run starts on a paid vendor. Check the key under Settings → AI models.`;
+  } else {
+    candidates.push("openrouter");
+  }
   for (const paid of PAID_AGENT_CHAIN) {
     if (await providerConfigured(paid)) candidates.push(paid);
   }
@@ -973,6 +1012,19 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   }
   let at = 0;
   let serving: AgentVendor = candidates[at];
+
+  /**
+   * What each vendor said on the way down the chain.
+   *
+   * Only the **last** vendor's failure used to reach the caller, and that is
+   * how a run where Claude and ChatGPT both answered "no credit on this
+   * account" and Gemini happened to be busy came out as "the model is busy" —
+   * so `services/agents/retry.ts` read it as temporary and paused for five
+   * minutes, six times, over a problem no amount of waiting fixes.
+   *
+   * The chain's own summary is the truth; the last rung is a detail of it.
+   */
+  const refusals: string[] = [];
 
   /**
    * Say who is serving, to the console and to whoever is watching.
@@ -1134,8 +1186,16 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   // minutes before it answers or gives up -- and "OpenRouter, on
   // <slug>" is the difference between a screen that is working and a screen
   // that has hung.
+  // `serving === "openrouter"` is the whole of the guard, and it was missing.
+  //
+  // The ladder is a list of OpenRouter model ids. Announcing it while Anthropic
+  // is serving is not a cosmetic slip: it is the sentence somebody reads when
+  // they are trying to work out why a run cost money, and it says the opposite
+  // of what happened. The `model` line three lines below has carried this exact
+  // guard since the ladder shipped; this one did not.
+  if (freeSkipped) await saying(freeSkipped);
   await saying(
-    ladder.length > 0
+    serving === "openrouter" && ladder.length > 0
       ? `${PROVIDERS[serving].name}, starting on the first of ${ladder.length} free model(s): ${ladder[0]}.`
       : `${PROVIDERS[serving].name}, on ${model}.`,
   );
@@ -1281,6 +1341,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           if (serving === "openrouter" && KEY_LEVEL_STATUSES.includes(status)) {
             openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
           }
+          refusals.push(`${PROVIDERS[serving].name}: ${describeTurnFailure(serving, status, climbing ? ladder[rung] : await modelForVendor(serving, effort), err)}`);
           await saying(
             climbing
               ? `every free model was tried (last: ${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`
@@ -1291,12 +1352,28 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           continue;
         }
 
-        const message = describeTurnFailure(
+        const last = describeTurnFailure(
           serving,
           status,
           climbing ? ladder[rung] : await modelForVendor(serving, effort),
           err,
         );
+        // Everybody who was asked, in one sentence, with the skipped free
+        // vendor included. This is the string `retry.ts` classifies, and a
+        // classification made on one rung of a four-rung chain is a guess.
+        //
+        // `freeSkipped` is deliberately **not** appended here, though it reads
+        // as though it belongs. That advisory ends "under Settings → AI
+        // models", which is this codebase's own signal to `retry.ts` that a
+        // person must go and configure something — so gluing it onto every
+        // failure would turn every genuine rate limit on a deployment with no
+        // OpenRouter key into a blocked task instead of a five-minute pause.
+        // It is said as its own line at the top of the run, which is where
+        // somebody reads it.
+        const message =
+          refusals.length > 0
+            ? `Every model connected for this was asked and none could serve it. ${[...refusals, `${PROVIDERS[serving].name}: ${last}`].join(" ")}`
+            : last;
         // The conversation up to here is intact and worth keeping: a rate
         // limit is a task that resumes in five minutes, not one that starts
         // again.

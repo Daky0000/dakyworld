@@ -7,6 +7,7 @@ import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "..
 import { maskSecret } from "../lib/secrets.js";
 import { ImapError, imapConfigured, readImapConfig, suggestFromSmtp, verifyImap } from "../lib/imap.js";
 import { restartWatcher, watcherStatus } from "../services/mailbox/watcher.js";
+import { openRouterCooldown } from "../lib/claudeAgent.js";
 import { ApifyError, clearApifyCaches, getAccount, getActorPricing, getActorSchema, getMonthlyUsage } from "../lib/apify.js";
 import { DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS, screenshotActorId } from "../services/screenshotActors.js";
 import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
@@ -867,11 +868,18 @@ settingsRouter.get("/models/openrouter/free", async (_req, res, next) => {
     // whether they are ours or the Owner's, and an empty ladder reads as
     // unconfigured when it means switched off.
     const source = await freeLadderSource();
+    // Whether the free vendor is in the chain **right now**, which is a
+    // different question from whether it is configured and is the one somebody
+    // is actually asking when they say the free models are not kicking in. A
+    // key-level refusal takes OpenRouter out for fifteen minutes and nothing
+    // said so — see `openRouterCooldown`.
+    const cooldown = openRouterCooldown();
     if (!apiKey) {
       return res.json({
         connected: false,
         ladder,
         source,
+        cooldown,
         max: FREE_LADDER_MAX,
         models: [],
         stale: [],
@@ -895,6 +903,10 @@ settingsRouter.get("/models/openrouter/free", async (_req, res, next) => {
       connected: true,
       ladder,
       source,
+      cooldown,
+      note: cooldown.cooling
+        ? `OpenRouter rejected its key recently, so the free models are out of the chain until ${cooldown.until?.slice(11, 16)} UTC and agent runs are starting on a paid vendor. Check the key below; a restart also clears it.`
+        : null,
       max: FREE_LADDER_MAX,
       // Tool-capable first: an agent turn sends tool definitions, and a model
       // that cannot take them works for writing and fails every agent task.
