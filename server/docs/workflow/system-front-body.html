@@ -1,0 +1,168 @@
+<!-- =========================================================================
+     Front matter for the compiled volume.
+     Page numbers are tokens of the form P-colon-key in double braces, filled by
+     build-system-volume.py once every book has been printed and measured.
+     ========================================================================= -->
+<div class="cover">
+  <img class="lockup" src="__LOGO_DARK__" alt="Dakyworld">
+  <div class="rule"><i></i><i></i></div>
+  <h1>The Dakyworld&nbsp;OS agent system</h1>
+  <p class="sub">Every agent, every tool, every instruction and every workflow &mdash; the whole workforce in one volume, with the process it follows in each scenario.</p>
+
+  <div class="contents">
+    <div class="col">
+      <b>Book One</b>
+      The Agent Master Workflow<br>
+      A stranger to a paying client, in nine stages<br>
+      <br>
+      <b>Book Two</b>
+      How the workforce runs<br>
+      The machine: tasks, the clock, every process
+    </div>
+    <div class="col">
+      <b>Book Three</b>
+      What runs now<br>
+      The mechanisms added after the books above<br>
+      <br>
+      <b>Book Four</b>
+      The complete reference<br>
+      Every agent's instruction and every tool, in full
+    </div>
+    <div class="col">
+      <b>Find it fast</b>
+      Contents &mdash; page {{P:contents}}<br>
+      Where to find each scenario &mdash; page {{P:scenarios}}<br>
+      The roster &mdash; page {{P:roster}}<br>
+      The tool catalogue &mdash; page {{P:catalogue}}
+    </div>
+  </div>
+
+  <div class="meta">
+    <span>The workforce<b>__AGENTCOUNT__ agents</b></span>
+    <span>What they may call<b>__TOOLCOUNT__ tools</b></span>
+    <span>Compiled<b>__BUILTDATE__</b></span>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">Before anything else</div>
+    <h2>What this volume is</h2>
+    <p class="lede">Four documents about one system, bound in the order they are worth reading. Each was written to answer a different question, and each is generated from the code it describes rather than maintained by hand &mdash; the roster, the toolkit grants, the writing jobs, the clock and the model routing are all read out of the source at build time.</p>
+  </div>
+
+  <div class="stats">
+    <div class="s"><b>__AGENTCOUNT__</b><span>Agents</span><i>One deliverable each. Nobody does two jobs.</i></div>
+    <div class="s"><b>__TOOLCOUNT__</b><span>Tools</span><i>__OUTWARD__ reach outside the company; __SPENDING__ spend money.</i></div>
+    <div class="s"><b>__LAYERCOUNT__</b><span>Prompt layers</span><i>Per agent, editable, read fresh on every task.</i></div>
+    <div class="s"><b>{{P:total}}</b><span>Pages</span><i>Four books, this front matter included.</i></div>
+  </div>
+
+  <table>
+    <thead><tr><th style="width:30mm">Book</th><th style="width:52mm">What it answers</th><th>Read it when</th><th class="num" style="width:16mm">Page</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>One</b><div class="mono" style="font-size:6.8pt;color:var(--muted)">agent-master-workflow</div></td>
+        <td>How does a stranger become a paying client?</td>
+        <td>You want the business flow: what starts each action, who owns it, which tools it calls, what gate it passes, what ends it, and what makes it stop and ask.</td>
+        <td class="num">{{P:book1}}</td>
+      </tr>
+      <tr>
+        <td><b>Two</b><div class="mono" style="font-size:6.8pt;color:var(--muted)">agent-operations</div></td>
+        <td>What actually happens, and when?</td>
+        <td>You want the machine: what an agent is, what it may call, one task turn by turn, everything that runs on the clock, and every process end to end.</td>
+        <td class="num">{{P:book2}}</td>
+      </tr>
+      <tr>
+        <td><b>Three</b><div class="mono" style="font-size:6.8pt;color:var(--muted)">Part 07, new here</div></td>
+        <td>What changed after the two books above were written?</td>
+        <td>You are working with the system as it stands today: prompts, free models, boundaries, pace, autonomy records and unanswered questions.</td>
+        <td class="num">{{P:book3}}</td>
+      </tr>
+      <tr>
+        <td><b>Four</b><div class="mono" style="font-size:6.8pt;color:var(--muted)">dakyworld-os-reference</div></td>
+        <td>What exactly is each agent told, and what exactly does each tool do?</td>
+        <td>You are editing an agent, granting a tool, or checking what a writer runs on. Every instruction printed in full, nothing summarised.</td>
+        <td class="num">{{P:book4}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <h4>The one sentence that explains the whole design</h4>
+    <p><b>An agent proposes; the gate decides; a person approves what leaves the building.</b> Every agent seeds at autonomy level 1 with dry run switched on &mdash; it can research, read, reason, draft and prepare, and nothing it decides takes effect until somebody raises that level or approves that specific action. Everything else in these four books exists to make that promise true in code rather than in a prompt.</p>
+  </div>
+
+  <h3 class="band">Where the books overlap, and which one wins</h3>
+  <p>Books One and Two were built on 18 and 25 August 2026 and describe the system as it stood then; their generated tables &mdash; the roster, the catalogue, the clock, the writing jobs &mdash; were rebuilt for this volume and are current. Book Three is written against the code as of __BUILTDATE__ and is the authority wherever it contradicts an earlier page: it exists because the mechanisms it describes did not exist when the earlier prose was written. Book Four is generated in full and is the authority on any agent's actual instruction or any tool's actual arguments.</p>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">The index that matters</div>
+    <h2>Where to find each scenario</h2>
+    <p class="lede">Every process the workforce runs, and the page where its sequence is set out. Where two books cover the same scenario, the first is the narrative and the second is the mechanism.</p>
+  </div>
+
+  <h3 class="band">Getting work in</h3>
+  <table class="tight">
+    <thead><tr><th style="width:66mm">Scenario</th><th>Where it is written out</th><th class="num" style="width:14mm">Page</th></tr></thead>
+    <tbody>
+      <tr><td><b>A business nobody has heard of becomes a lead</b></td><td>Book One &mdash; three doors: scheduled capture, the website form, a spreadsheet</td><td class="num">{{P:capture1}}</td></tr>
+      <tr><td>&nbsp;&nbsp;&nbsp;the same thing, as machinery</td><td>Book Two 05.2 &mdash; capture, actor pricing, what the intake writes</td><td class="num">{{P:capture2}}</td></tr>
+      <tr><td><b>Deciding who is worth writing to</b></td><td>Book One &mdash; scoring, qualifying and routing a lead</td><td class="num">{{P:qualify}}</td></tr>
+      <tr><td><b>The first cold email, and the four that follow it</b></td><td>Book One &mdash; the sequence, and the seven triggers one can start on</td><td class="num">{{P:outreach}}</td></tr>
+      <tr><td><b>A lead with a phone number and no email</b></td><td>Book Two 05.4 &mdash; WhatsApp and SMS, and the 24-hour window</td><td class="num">{{P:phone}}</td></tr>
+      <tr><td><b>A reply arrives in the mailbox</b></td><td>Book Two 05.3 &mdash; the mail room, from arriving to being somebody's job</td><td class="num">{{P:mailroom}}</td></tr>
+    </tbody>
+  </table>
+
+  <h3 class="band">Turning it into money</h3>
+  <table class="tight">
+    <thead><tr><th style="width:66mm">Scenario</th><th>Where it is written out</th><th class="num" style="width:14mm">Page</th></tr></thead>
+    <tbody>
+      <tr><td><b>Turning a conversation into a number</b></td><td>Book One &mdash; scoping, pricing and the proposal</td><td class="num">{{P:proposal}}</td></tr>
+      <tr><td><b>From a signature to a plan</b></td><td>Book One &mdash; what happens the moment a proposal is accepted</td><td class="num">{{P:signature}}</td></tr>
+      <tr><td><b>The specialists do the work</b></td><td>Book One &mdash; the build lane and the studio lane</td><td class="num">{{P:delivery}}</td></tr>
+      <tr><td><b>Finishing properly</b></td><td>Book One &mdash; handover, and what a client is left holding</td><td class="num">{{P:handover}}</td></tr>
+      <tr><td><b>Getting paid, and chasing it</b></td><td>Book One &mdash; invoicing and collection</td><td class="num">{{P:invoice}}</td></tr>
+      <tr><td><b>Where a one-off project is meant to lead</b></td><td>Book One &mdash; the retainer, and the support loop that follows</td><td class="num">{{P:retainer}}</td></tr>
+    </tbody>
+  </table>
+
+  <h3 class="band">How the machine itself behaves</h3>
+  <table class="tight">
+    <thead><tr><th style="width:66mm">Scenario</th><th>Where it is written out</th><th class="num" style="width:14mm">Page</th></tr></thead>
+    <tbody>
+      <tr><td><b>One task, from raised to read</b></td><td>Book Two 03 &mdash; the claim, the loop turn by turn, checkpoints, five end states</td><td class="num">{{P:task}}</td></tr>
+      <tr><td><b>Everything that happens without anybody asking</b></td><td>Book Two 04 &mdash; the clock: every minute, once a day, and the boot order</td><td class="num">{{P:clock}}</td></tr>
+      <tr><td><b>What an agent may call, and what stops it</b></td><td>Book Two 02 &mdash; the catalogue, the gate, the autonomy ladder</td><td class="num">{{P:gate}}</td></tr>
+      <tr><td><b>Something is waiting for a person</b></td><td>Book Two 05.5 &mdash; approvals, the other half of a preview</td><td class="num">{{P:approvals}}</td></tr>
+      <tr><td><b>An agent stops and asks, and nobody answers</b></td><td>Book Three 07.8 &mdash; the card, the weekly digest, the screen that is never Slack</td><td class="num">{{P:escalations}}</td></tr>
+      <tr><td><b>The workforce hires itself</b></td><td>Book Two 05.6 &mdash; a missing craft, a Slack decision, a new agent</td><td class="num">{{P:hiring}}</td></tr>
+      <tr><td>&nbsp;&nbsp;&nbsp;what the new agent knows on day one</td><td>Book Three 07.9 &mdash; the induction, and the task that was waiting</td><td class="num">{{P:induction}}</td></tr>
+      <tr><td><b>Watching the whole workforce work</b></td><td>Book Two 05.7 &mdash; rehearsals against one real website</td><td class="num">{{P:rehearsal1}}</td></tr>
+      <tr><td>&nbsp;&nbsp;&nbsp;how it wakes agents and puts them back</td><td>Book Three 07.5 &mdash; drafts woken, paused never, three columns</td><td class="num">{{P:rehearsal2}}</td></tr>
+      <tr><td><b>What it may spend before it stops itself</b></td><td>Book Two 05.8 &mdash; budgets, and warn &rarr; downgrade &rarr; approve &rarr; pause</td><td class="num">{{P:budgets}}</td></tr>
+      <tr><td>&nbsp;&nbsp;&nbsp;and how often it may act at all</td><td>Book Three 07.6 &mdash; pace ceilings, by day, week and month</td><td class="num">{{P:pace}}</td></tr>
+      <tr><td><b>A vendor is down, or busy, or refuses</b></td><td>Book Two 05.9 &mdash; model routing; Book Three 07.2 &mdash; free rungs and the paid floor</td><td class="num">{{P:routing}}</td></tr>
+      <tr><td><b>Who writes what, and on which doctrine</b></td><td>Book Two 05.10, and Book Four for each brief in full</td><td class="num">{{P:writers}}</td></tr>
+      <tr><td><b>One ordinary day with all of it switched on</b></td><td>Book Two 06 &mdash; hour by hour, and what a person still decides</td><td class="num">{{P:day}}</td></tr>
+    </tbody>
+  </table>
+
+  <h3 class="band">Setting it up, and changing it safely</h3>
+  <table class="tight">
+    <thead><tr><th style="width:66mm">Scenario</th><th>Where it is written out</th><th class="num" style="width:14mm">Page</th></tr></thead>
+    <tbody>
+      <tr><td><b>What an agent is actually told, word for word</b></td><td>Book Three 07.1 &mdash; the regions and the four passes; Book Four for every agent's own text</td><td class="num">{{P:prompt}}</td></tr>
+      <tr><td><b>Switching agents on, one or fifty</b></td><td>Book Three 07.5 &mdash; bulk status, and why autonomy is never bulk</td><td class="num">{{P:activate}}</td></tr>
+      <tr><td><b>Deciding an agent may act without being asked</b></td><td>Book Three 07.7 &mdash; the history, the evidence, and the queue read first</td><td class="num">{{P:autonomy}}</td></tr>
+      <tr><td><b>Work an agent must not touch</b></td><td>Book Three 07.4 &mdash; boundaries by tool and by subject, and three strikes</td><td class="num">{{P:boundaries}}</td></tr>
+      <tr><td><b>Commissioning it from cold</b></td><td>Book One &mdash; what must be connected before each part runs</td><td class="num">{{P:commission}}</td></tr>
+      <tr><td><b>Every agent, and what it may reach</b></td><td>Book Four &mdash; the roster, with every grant</td><td class="num">{{P:roster}}</td></tr>
+      <tr><td><b>Every tool, its arguments and what it costs to be wrong</b></td><td>Book Four &mdash; the catalogue</td><td class="num">{{P:catalogue}}</td></tr>
+      <tr><td><b>A symptom at a desk, and what it means</b></td><td>Book Three 07.10 &mdash; eight things you will see, and what to do</td><td class="num">{{P:symptoms}}</td></tr>
+    </tbody>
+  </table>
+</div>

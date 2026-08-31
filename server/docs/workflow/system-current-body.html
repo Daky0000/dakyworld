@@ -1,0 +1,299 @@
+<!-- =========================================================================
+     PART 07 — What runs now
+     The three books before this one were built on 18, 21 and 25 August 2026.
+     This part is what changed after that date and is therefore missing from
+     all three. Every claim in it is written against the code it describes.
+     ========================================================================= -->
+<div class="part">
+  <div class="no">Part 07</div>
+  <h2>What runs now</h2>
+  <p class="lede">The workforce changed between 26 and 30 August 2026 in five places that matter to anybody using it: what an agent is told, who serves the model call, what it may do about a particular subject, how often it may act, and what a person has to decide before it acts more. This part is that difference.</p>
+  <div class="in">
+    <b>In this part</b>
+    07.1 &middot; The prompt, as it is assembled today<br>
+    07.2 &middot; Free models first, and a paid floor of three<br>
+    07.3 &middot; What an agent is told about this task<br>
+    07.4 &middot; Boundaries: what, and about whom<br>
+    07.5 &middot; Switching the workforce on<br>
+    07.6 &middot; Pace &mdash; how often, as against how much<br>
+    07.7 &middot; Autonomy as a decision with a record<br>
+    07.8 &middot; A question that was never answered<br>
+    07.9 &middot; The induction of a hired agent<br>
+    07.10 &middot; What all of it changes at a desk
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.1</div>
+    <h2>The prompt, as it is assembled today</h2>
+    <p class="lede">An agent's instruction is not one block of text. It is __REGIONCOUNT__ labelled regions assembled per task, of which exactly one is a person's own writing; the other eight are read from live state, and editing a copy of any of them would either be overwritten on the next run or quietly diverge from what the rest of the roster is told.</p>
+  </div>
+
+  <p>The regions are what the Prompt screen shows and what <code>composePrompt()</code> in <code>services/agents/runner.ts</code> builds. Two of them are new since the earlier books, and one of the two is the reason the others were relabelled.</p>
+
+  __REGIONTABLE__
+
+  <h3 class="band">The __LAYERCOUNT__ layers now carry headings</h3>
+  <p>An agent nobody has rewritten is instructed by the __LAYERCOUNT__ shipped sections, joined in order. Until 29 August they were joined as __LAYERCOUNT__ anonymous paragraphs &mdash; a wall in which the rule about money, the definition of finished and the description of the craft all looked alike. They are now joined under headings (<code>LAYER_HEADINGS</code> in <code>services/agents/authored.ts</code>), at a cost of roughly thirty tokens:</p>
+
+  __HEADINGTABLE__
+
+  <div class="callout">
+    <h4>The words did not change &mdash; the layout did</h4>
+    <p>This is presentation, not rewriting. An agent whose wording the Owner has replaced outright is still returned exactly as written, unheadinged and untouched, because the whole point of that field is that a person's prose reaches the model as their prose.</p>
+  </div>
+
+  <h3 class="band">METHOD &mdash; four passes, one copy, every agent</h3>
+  <p>The reason both changes were needed at all is 07.2: every agent turn now starts on a free model. A strong model reads a paragraph of craft doctrine and infers the procedure &mdash; look at the record before forming a view, put a source under a figure, read the draft back before handing it over. A weaker one does the thing the paragraph talks about and skips the procedure nobody wrote down, and the failure reads as carelessness rather than as a missing instruction: an agent that answered from the brief without opening the record, a number with nothing under it, a letter nobody checked.</p>
+
+  <div class="seq">
+    <div class="r"><div class="n">1</div><div><div class="t">Establish</div><div class="d">Get what is actually on the record in front of you before forming a view &mdash; the lead, the client, the project, the thread. A brief is somebody's summary of a record, not the record. Where a fact cannot be got, write down that it could not, rather than working around the hole quietly.</div></div></div>
+    <div class="r"><div class="n">2</div><div><div class="t">Decide</div><div class="d">Say what was concluded and name the one or two facts that decided it. A conclusion with no fact under it is a preference, and the next person to read it has to derive it again from scratch.</div></div></div>
+    <div class="r"><div class="n">3</div><div><div class="t">Produce</div><div class="d">One finished thing, of the kind named under <i>What you produce</i>. Finished means somebody could use it as it stands &mdash; not an outline of it, not a description of what it would contain.</div></div></div>
+    <div class="r"><div class="n">4</div><div><div class="t">Verify</div><div class="d">Read the work back against the record: every figure to its source, every name as the record spells it, every claim to the thing that supports it. Then say, in one line, which part of it you are least sure of &mdash; that line is worth more to the reader than another paragraph of the work itself.</div></div></div>
+  </div>
+
+  <p><b>Working runs only.</b> A colleague answering a <code>consult</code> is answering one question, not producing a finished thing, and does not get these four. And METHOD deliberately says nothing about tools, escalation, memory or who to ask: all four already have paragraphs in the working region, and a prompt that says the same thing twice in two sets of words is how a model averages two instructions into neither. It is a region rather than a seed field precisely so that it also reaches the agents the Agent Creator hires.</p>
+
+  <p><b>Every seed's process is a numbered workflow now.</b> 48 of the __AGENTCOUNT__ were rewritten by hand on 29 August: the first step names what to read, the judgement that was already there is kept sentence for sentence, and what was added is the order &mdash; and the step that was missing. <code>outreach.writer</code> and <code>outreach.followup</code> are deliberately untouched: their process <i>is</i> the cold email and follow-up doctrine, which is prose for a reason.</p>
+
+  <div class="callout">
+    <h4>How a prompt change reaches a live database</h4>
+    <p><code>ensureAgents()</code> only ever creates, so re-wording a seed changes nothing on a database that already has that agent. <code>refreshUneditedSeedPrompts()</code> runs on every boot and carries a changed seed onto any agent whose wording the Owner has <b>not</b> rewritten &mdash; 48 of them on the first boot after the rewrite, in production. That is the mechanism for any future prompt change; a second marked one-off pass is not needed and should not be added.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.2</div>
+    <h2>Free models first, and a paid floor of three</h2>
+    <p class="lede">OpenRouter publishes models that cost nothing per token. They are real models and they are also the least reliable thing available: a free endpoint is shared, so it queues, rate-limits, and some of the time simply does not answer. One of them as <i>the</i> model is a system that stops working at busy times. Three in a row with a paid floor behind them is a system that costs nothing most days and never stops.</p>
+  </div>
+
+  <div class="chain">
+    <div class="c"><div><b>Rungs 1&ndash;3 &middot; free</b><span class="file">openrouter.freeModels &middot; freeLadder()</span></div><p>Three free, tool-capable models taken from the account's own catalogue, tried in order. One attempt each and a short clock &mdash; 60 seconds for one-shot work, 120 for an agent turn. Waiting out a queue is right when the vendor is the only one who can do this and wrong when the next free model is one line down.</p></div>
+    <div class="c model"><div><b>Floor 1 &middot; Claude</b><span class="file">Anthropic SDK</span></div><p>The first paid vendor, and the one that keeps the patient behaviour: four attempts and ninety seconds of backoff.</p></div>
+    <div class="c model"><div><b>Floor 2 &middot; ChatGPT</b><span class="file">OpenAI chat completions</span></div><p>A floor of one under a ladder built entirely out of endpoints that fail is a single point of failure in the place least able to afford one: a run that survived three busy free models and then met a rate-limited Claude died with two connected vendors sitting unasked.</p></div>
+    <div class="c model"><div><b>Floor 3 &middot; Gemini</b><span class="file">:generateContent</span></div><p>The agent loop speaks all three wires and translates each into its own Anthropic-shaped state, so a conversation can start on a free rung and finish on Gemini with its checkpoint intact.</p></div>
+  </div>
+
+  <h3 class="band">The rules that make it safe</h3>
+  <div class="seq">
+    <div class="r"><div class="n">01</div><div><div class="t">It is on by default</div><div class="d">It shipped as an opt-in on 28 August and was switched on by default the next day. An opt-in nobody has opted into is a feature that does nothing: a deployment that never opened the Settings screen was paying for every agent turn while three free models sat there.</div></div></div>
+    <div class="r"><div class="n">02</div><div><div class="t">Unset, empty and unreadable are three different states</div><div class="d">Unset is the shipped ladder. A stored empty list is free models deliberately off, and must survive a deploy. An unreadable row falls back to the shipped ladder rather than quietly starting to pay for things. Conflating any two of them is a money bug.</div></div></div>
+    <div class="r"><div class="n">03</div><div><div class="t">The ladder is refreshed from the account, not from a source file</div><div class="d">A free slug written down in a source file is the most perishable id OpenRouter publishes. The shipped seed is replaced at the first boot with a key by the three best free tool-capable models the account's own catalogue lists &mdash; and a model without tool support writes perfectly well and fails every agent task.</div></div></div>
+    <div class="r"><div class="n">04</div><div><div class="t">The ladder replaces OpenRouter's model &mdash; it does not precede it</div><div class="d">Slipping a paid call in between the free rungs and the floor would be a bill nobody asked for at exactly the moment free capacity was short. Switched off, nothing else about the model layer changes.</div></div></div>
+    <div class="r"><div class="n">05</div><div><div class="t">A key-level refusal does not climb</div><div class="d">401, 402 and 403 are true of every model on the account, so climbing is three calls into the same wall and a slower failure. 400, 404, 429, 5xx and silence are true of that model and say nothing about the next one.</div></div></div>
+    <div class="r"><div class="n">06</div><div><div class="t">A rung is priced at zero, from the ladder rather than from the id</div><div class="d">Most free ids end in <code>:free</code> and not all do, and a naming convention is not a price. Left unpriced a rung would fall through to the floor rate, which is deliberately the dearest known &mdash; so a free day would read as the most expensive one this company has ever had and trip every ceiling on money nobody spent.</div></div></div>
+    <div class="r stop"><div class="n">07</div><div><div class="t">A turn that says nothing is not a finished turn</div><div class="d">A model that returns neither text nor a tool call is what a busy or degraded endpoint does instead of a clean error, and the loop used to accept it as finished because nothing threw &mdash; a task reporting success having done, and said, nothing at all. It is now treated exactly like a failed rung: climb the ladder, hand to the floor, and give up only when nobody is left to ask, keeping the conversation so a re-run continues rather than starts over.</div></div></div>
+  </div>
+
+  <div class="callout">
+    <h4>A refusal is still never routed around</h4>
+    <p>Everything above is about a vendor that <i>could not</i> answer. A model that <i>declines</i> is answering, and asking the next one until somebody agrees is how a policy gets laundered. That distinction predates the ladder and survives it.</p>
+  </div>
+
+  <div class="callout warn">
+    <h4>Two defects this uncovered, both invisible and both live</h4>
+    <p>The model name in the agent loop was resolved once from whichever vendor came first, so <b>every handover to Claude was asking Anthropic for OpenRouter's model id</b> &mdash; the failover that exists to save a run would have died on the model name. It survived testing because the fake Anthropic echoes a Claude id whatever it is asked for, so &ldquo;Claude finished the run&rdquo; passed while the request said otherwise; the check now reads the model out of the request body. And the vendor address was captured at import in one half of the model layer and read per call in the other, so a harness repointing a vendor got a frozen address in one half and a live one in the other &mdash; a check that passes while testing nothing, and on a machine with a real key one that spends money. There is one function for it now, imported by both halves: two correct copies of the same fact are one copy away from two different facts.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.3</div>
+    <h2>What an agent is told about this task</h2>
+    <p class="lede">Two things were added to the top of a run, both cheap, both aimed at the same waste: a model working out from scratch, on every task, what it could simply have been told.</p>
+  </div>
+
+  <h3 class="band">Which of its tools this brief is probably about</h3>
+  <p>An agent is handed everything its toolkit grants, with a catalogue description each &mdash; eighteen of them for the Cold Lead Writer &mdash; and no indication of which the brief calls for. The three whose purpose most overlaps the task's own words are now named in a sentence on the brief.</p>
+
+  <div class="step">
+    <header><span class="id">LIKELY</span><h4>Scored, never filtered</h4><span class="who">runner.ts &middot; likelyTools()</span></header>
+    <dl>
+      <dt>What it does</dt><dd>Ranks the granted tools against the words of the title and brief, keeps the best three, and writes them onto the brief under the line: <i>this is a guess from the wording and nothing more &mdash; your whole toolkit is available, and if the right tool is not in this list, use it anyway.</i></dd>
+      <dt>What it never does</dt><dd>Remove or reorder anything. A tool the model cannot see is a tool it cannot use, so a bad ranking would be a silent loss of capability rather than a worse suggestion.</dd>
+      <dt>Zero overlap</dt><dd>Says nothing at all. Three tools the task never mentioned, presented as the likely ones, is a wrong answer where there was previously an honest absence.</dd>
+      <dt>On the brief</dt><dd class="stop">Deliberately not in the system prompt, which carries a cache breakpoint and is identical for every task this agent runs. Per-task text there would write a new cache entry each time and read none &mdash; the expensive half of caching with none of the saving.</dd>
+    </dl>
+  </div>
+
+  <h3 class="band">How many colleagues one task may ask</h3>
+  <p>Three consults is a hard question being worked properly; ten is an agent canvassing the building instead of deciding, at a model call each. One number for every task was wrong in one direction only &mdash; too few for the rare task where being wrong is expensive, which is exactly the task somebody marked urgent. The ceiling now varies by the priority the task already carries, and needs no new field and no new vocabulary to do it:</p>
+
+  __CONSULTTABLE__
+
+  <p>It is overridable as a setting, where zero is a real limit rather than an unset value: no consults at this priority is something somebody may deliberately want, and the usual guard would hand them the default back without saying so. An unreadable override is treated as no override &mdash; a hand-edited setting must not stop the workforce consulting. The count itself stays one number on the checkpoint: a task has one priority, so only the ceiling varies.</p>
+
+  <h3 class="band">Down the chart before sideways across it</h3>
+  <p>An agent may <code>delegate</code> to its own reports as often as the work needs, and gets two <code>handOff</code>s across the chart on a whole task. When the roster search finds a match sitting under one of the agent's own reports, it now says so &mdash; and says to delegate to that report and let them route it. A search that named only the craftsman left an executive with two hand-offs and no route, which is how a whole-floor run spent both on specialists and never asked the three directors who own those lanes.</p>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.4</div>
+    <h2>Boundaries: what, and about whom</h2>
+    <p class="lede">Every agent carries a list of work it is explicitly not responsible for. Until August 2026 that list was correct, shipped, documented and unreachable &mdash; nothing ever wrote the column, so the gate read an empty array on every agent on every database and the enforcement had never once fired.</p>
+  </div>
+
+  <div class="two">
+    <div class="step gate">
+      <header><span class="id">A</span><h4>What is being done</h4></header>
+      <dl>
+        <dt>Written as</dt><dd>Tool-key globs, where <code>*</code> is the only wildcard and matches any run of characters, including none.</dd>
+        <dt>Why a glob</dt><dd>The first version compiled each pattern as a regex, which is wrong twice: the unescaped dot in <code>lead.update</code> also matches any character, and a pattern carrying a bracket &mdash; which the Agent Creator can write, since a hired agent's boundaries come from an approved design rather than from a seed &mdash; throws out of the permission gate that every tool call in the system passes through.</dd>
+      </dl>
+    </div>
+    <div class="step gate">
+      <header><span class="id">B</span><h4>Who it is being done about</h4></header>
+      <dl>
+        <dt>Written as</dt><dd>Subjects &mdash; lead, client, project, proposal, invoice &mdash; matched against the records the task hangs off.</dd>
+        <dt>Why it is separate</dt><dd>A tool key cannot say this. <code>email.draft</code> is the right tool for a stranger and for a client of two years, and what separates them is the record behind the task. A task carrying both a lead and a client is a crossing rather than an excuse: a lead that is also a client is a client, and the point of the boundary is that the Cold Lead Writer must not open a first message to one.</dd>
+        <dt>Cost</dt><dd>Read only when an agent actually declares one, so every other agent pays nothing for the feature. A call with no task behind it is never refused &mdash; there is no subject to be wrong about.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <h3 class="band">Three crossings in a row, and the word &ldquo;row&rdquo; is load-bearing</h3>
+  <p>A crossing is refused, counted and named. On the third <b>consecutive</b> one the agent is paused, and the message says which pattern was crossed and on which tool &mdash; because a paused agent whose card says nothing about why is the &ldquo;fixable setting rendering as <i>Something went wrong</i>&rdquo; failure this system has a standing rule against, and the fix is more often to correct the boundary than to scold the agent. The count is cleared by the agent's next allowed call, and by setting it back to Active, which <i>is</i> the human review those strikes were counting up to. Without that reset it was a lifetime tally: an agent crossing once a quarter was silently paused on its third occasion, months apart, under a message claiming three consecutive violations. A count that never resets is not a strike system, it is a slow fuse.</p>
+
+  <div class="callout warn">
+    <h4>Surplus toolkits are now reported on every boot</h4>
+    <p>When an agent was narrowed to one deliverable, the tools its old scope needed were left on its record on purpose &mdash; silently revoking a grant is invisible until the day something cannot be done, so the untick is a person's. The report naming them, though, was computed inside a marked one-off pass, so it ran exactly once, on the boot that carried the split, and never again. It is a plain read now, called at boot and returned with the roster so the Agents screen can show it. Ten narrowed agents are currently holding a tool their one job no longer needs, and until 30 August nothing anywhere had said so.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.5</div>
+    <h2>Switching the workforce on</h2>
+    <p class="lede">Every specialist ships as a draft, and a draft picks nothing up. On a roster of __AGENTCOUNT__ that made the ordinary first act &mdash; start the ones I want working &mdash; __AGENTCOUNT__ visits to a drawer.</p>
+  </div>
+
+  <div class="step">
+    <header><span class="id">BULK</span><h4>Status, and only status</h4><span class="who">PATCH /api/agents/bulk</span></header>
+    <dl>
+      <dt>Does</dt><dd>Sets Draft, Active, Paused or Retired on up to 200 agents at once, clears their boundary strikes when the new status is Active, and answers with how many queued tasks can now actually start &mdash; which is the question somebody activating a batch is really asking.</dd>
+      <dt>Never does</dt><dd class="stop">Autonomy or dry run. Those decide whether software may act on a client without being asked; they are decided one agent at a time, with a reason, behind the guard in 07.7. A bulk control over them would be a single click that widened the whole workforce &mdash; exactly the thing this system is built not to have.</dd>
+      <dt>Means</dt><dd>Activating an agent only lets it pick up the queue it already has, at whatever autonomy it already holds &mdash; which, for everything on the roster as shipped, is level 1 with dry run on.</dd>
+    </dl>
+  </div>
+
+  <h3 class="band">A rehearsal wakes what it needs and puts it back</h3>
+  <p>The same problem met anybody opening the Rehearsal screen: greyed-out workflows and an instruction to switch eleven agents on by hand, which is not a test of the workforce but an errand standing in front of one &mdash; and which leaves behind a floor of agents switched on because of a test, quietly taking real work.</p>
+  <div class="seq">
+    <div class="r"><div class="n">1</div><div><div class="t">A draft is woken; a paused agent is not</div><div class="d">A draft has simply never been switched on. Pausing is something a person <i>did</i> &mdash; it is precisely how the Owner stops an agent's standing work. Retired is the same, more so. Both are refused with the reason said out loud.</div></div></div>
+    <div class="r"><div class="n">2</div><div><div class="t">Waking is three columns, not one</div><div class="d">Status, autonomy level and dry run. An agent set Active on a card that still says level 1 with dry run on is an agent that turns up, is handed the work, and is refused every tool it owns.</div></div></div>
+    <div class="r"><div class="n">3</div><div><div class="t">Only what it woke is put back</div><div class="d">An agent that was already active keeps the level and the dry-run flag the Owner gave it. A run may therefore still contain an agent that prepared everything and carried out nothing &mdash; a true fact about the setup rather than a fault, which is why every prepared call now carries the sentence saying which gate held it.</div></div></div>
+    <div class="r"><div class="n">4</div><div><div class="t">What was woken is written down before anything is woken</div><div class="d">On the rehearsal's own row. A process dying mid-rehearsal would otherwise leave the floor switched on with nothing anywhere recording that it should not be &mdash; the failure mode where a test quietly changes how the business runs. A boot-time sweep restores anything orphaned.</div></div></div>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.6</div>
+    <h2>Pace &mdash; how often, as against how much</h2>
+    <p class="lede">The spending ceilings answer <i>how much money</i> and say nothing about <i>how often</i>. Those come apart: an agent doing cheap work &mdash; reading records, filing tasks, drafting short things &mdash; can run all day well inside its budget and still act far more than anybody meant it to, and the only signal is a timeline nobody is watching.</p>
+  </div>
+
+  <dl class="kv">
+    <dt>Ceilings</dt><dd>Per day, per week and per month, set on the agent. A pace ceiling is the one somebody sets when they mean &ldquo;try this, but not fifty times&rdquo;.</dd>
+    <dt>Periods</dt><dd>Calendar periods in UTC, matching the spending ceilings exactly, and for the reason written there: a ceiling that rolls over at a different instant from the one the reports total against is a ceiling the reports cannot explain. A week starts Monday &mdash; the same ISO week the escalation digest is keyed on.</dd>
+    <dt>What counts</dt><dd>A task whose start time falls inside the period. That time is rewritten on every claim, including a resume, so a task begun yesterday and continued today counts once, today. Deliberately kinder than counting pickups: a deploy interrupting a run five times is infrastructure, not the agent doing five things, and a quota that punished it would empty itself on a bad afternoon.</dd>
+    <dt>Where it stops</dt><dd>In the runner's due-task pass, beside the budget check &mdash; the one place where stopping is free, because nothing has started and nothing is half-done.</dd>
+    <dt>What it looks like</dt><dd>The task stays <span class="badge hold">QUEUED</span> with its place kept, and begins on the tick after the period rolls over. Being at a ceiling is the guardrail working: it is not an error, and it does not change the task's status.</dd>
+  </dl>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.7</div>
+    <h2>Autonomy as a decision with a record</h2>
+    <p class="lede">The question an autonomy decision needs answered is <i>has this one earned it</i>, and before 30 August there was nowhere to look: the roster showed a level and a dry-run tick and nothing behind either.</p>
+  </div>
+
+  <div class="two">
+    <div class="step">
+      <header><span class="id">HISTORY</span><h4>Every change, kept</h4></header>
+      <p>Who changed the level or the dry-run flag, from what to what, when, and why. Raising what software may do to a client without being asked is a decision, and a decision with no record is one nobody can review, defend or reverse.</p>
+    </div>
+    <div class="step">
+      <header><span class="id">EVIDENCE</span><h4>Summed, never counted</h4></header>
+      <p>Tasks by end state, tool calls, how many of them were previews, refusals, and how often this agent stopped to ask &mdash; all summed from ledgers that already exist. Accounting is explicitly allowed to fail silently so that it never breaks the work it accounts for, which means a stored counter would drift the first time a write failed. A promotion argued from a counter that has quietly lost count is the worst version of this feature.</p>
+    </div>
+  </div>
+
+  <p>Stopping to ask is counted off the transition into <span class="badge hold">BLOCKED</span> rather than off a task's current status, or a task that was blocked, answered and finished would read as never having stopped to ask at all. And an agent nobody has given work to reads as <i>no evidence</i> rather than as a row of zeroes: a window with none of something is not a zero, and an agent with no history is a very different thing from one that fails everything. Nothing on that screen promotes anything &mdash; the change itself goes through the ordinary route, gated on the same permission as before, and now leaves a history entry.</p>
+
+  <div class="callout">
+    <h4>The queue is read before the level is raised</h4>
+    <p>An agent at level 1 with dry run on has been <i>preparing</i> work all along &mdash; that is what dry run is for &mdash; and every prepared action is a decision somebody has not made yet. Raising the level does not carry those out, but it does mean the next one like them happens without being asked. Deciding that while a queue of exactly that thing sits unread is the shape of the mistake this guards against, so the prepared actions the agent is holding, oldest first and with the hours each has waited, are put in front of whoever is changing the level. A separate sweep reports prepared actions nobody has looked at for two days, by agent. A rehearsal's prepared actions are excluded from all of it: they are specimens rather than proposals.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.8</div>
+    <h2>A question that was never answered</h2>
+    <p class="lede">An escalation is posted to Slack the moment it happens. That card is the right thing for the first hour and the wrong thing for the second week: it scrolls away, and a question nobody ever answered was indistinguishable from one that was, because nothing anywhere counted them &mdash; while stopping to ask is the most important thing an agent ever does.</p>
+  </div>
+
+  <div class="chain">
+    <div class="c"><div><b>The agent stops</b><span class="file">escalate</span></div><p>The task goes to <span class="badge hold">BLOCKED</span>, keeps its checkpoint, and the question is marked as waiting on a person rather than merely existing in a status.</p></div>
+    <div class="c"><div><b>A card, immediately</b><span class="file">agents/escalationCards.ts</span></div><p>Posted to Slack and answerable there. Answering appends to the conversation the agent will rejoin as well as to the brief on the record, or it resumes at the moment it asked and asks again.</p></div>
+    <div class="c"><div><b>A digest, weekly</b><span class="file">agents/escalationDigest.ts</span></div><p>Every question still waiting, oldest first. A question older than seven days has stopped being a question and become a problem, and is named as one.</p></div>
+    <div class="c code"><div><b>And a screen, always</b><span class="file">GET /api/agents/escalations</span></div><p>The same rows, without Slack. A workspace nobody connected, a secret nobody pasted, an app somebody removed &mdash; and the symptom would be questions nobody can see. Slack is never the only road.</p></div>
+  </div>
+
+  <p>Rehearsal questions are excluded from both the digest and the screen, for the same reason a rehearsal posts no cards: it is a test, and a test's questions are read on the rehearsal screen beside the run that raised them.</p>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.9</div>
+    <h2>The induction of a hired agent</h2>
+    <p class="lede">A hire arrives with a prompt, a toolkit and no memory at all, so its first task is worked with less context than the same agent will have on its second &mdash; and the two facts that would help most are known at exactly that moment and nowhere afterwards.</p>
+  </div>
+
+  <div class="two">
+    <div class="step auto">
+      <header><span class="id">FACT</span><h4>Why you were employed</h4></header>
+      <p>The craft an agent actually said was missing, in its own words, and which agents said it. &ldquo;That is the work you exist for; anything else is somebody else's and goes back with <code>handOff</code>.&rdquo;</p>
+    </div>
+    <div class="step auto">
+      <header><span class="id">LESSON</span><h4>Who already does some of this</h4></header>
+      <p>The closest crafts on the roster, with a percentage each &mdash; the same calculation the approver read on the hire card, so the new agent's picture of the roster and the person's are the same picture. Where a job sits between them, ask before deciding it is yours.</p>
+    </div>
+  </div>
+
+  <p>Both are facts from the hiring decision rather than lessons anybody invented: an induction that summarised other agents' finished work would be this system telling a new colleague what it guessed their job was like, which is worse than silence. Both are filed as the agent's <b>own</b> memory against <i>self</i> &mdash; recalled on every task for this agent and nobody else. Filed as shared, they would put one agent's induction into all __AGENTCOUNT__ prompts for ever. And the write never throws: an agent that exists without its induction is a small loss, while a hire that half-happened because a memory write failed is a real one.</p>
+
+  <div class="callout">
+    <h4>And the task that was waiting is told</h4>
+    <p>The point of the whole loop. A task that stopped because nobody could do this is requeued with the news on its brief and in the conversation it will rejoin &mdash; the new agent named, with its key and its mission, and instructions to hand the work over or ask them a question and carry on with its own part. Left out, a filled gap is a new agent nobody thinks to use and a blocked task that stays blocked.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-head">
+    <div class="no">07.10</div>
+    <h2>What all of it changes at a desk</h2>
+    <p class="lede">The same mechanisms, read as symptoms a person actually meets.</p>
+  </div>
+
+  <table class="tight">
+    <thead><tr><th style="width:54mm">What you see</th><th>What it is, and what to do</th></tr></thead>
+    <tbody>
+      <tr><td><b>A task sits QUEUED and nothing is wrong</b></td><td>A pace ceiling, a spending ceiling, or an agent still in Draft. All three keep the task's place; the first two clear themselves when the period rolls over.</td></tr>
+      <tr><td><b>An agent is Paused and nobody paused it</b></td><td>Three boundary crossings in a row. The message names the pattern and the last tool. Either the boundary is wrong or the work is being sent to the wrong agent &mdash; setting it back to Active clears the count, and is the review.</td></tr>
+      <tr><td><b>&ldquo;Pending a person's approval&rdquo; on work you never saw</b></td><td>The gate held an outward or spending call and the task finished at <span class="badge hold">NEEDS_APPROVAL</span>. Every prepared call now carries the sentence explaining which gate held it, on the timeline and on the rehearsal screen.</td></tr>
+      <tr><td><b>A run started free and finished on Gemini</b></td><td>Working as designed: three free rungs, then Claude, ChatGPT, Gemini. The checkpoint carries across all of them, so the run continues rather than starting again.</td></tr>
+      <tr><td><b>A task &ldquo;succeeded&rdquo; having said nothing</b></td><td>Fixed. An empty turn is treated as a failed rung: climb, hand to the floor, and fail honestly if nobody is left &mdash; keeping the conversation so a re-run continues.</td></tr>
+      <tr><td><b>An agent holding a tool it no longer needs</b></td><td>Reported at every boot and with the roster. Unticking it is a person's call, deliberately: silently revoking a grant is invisible until the day something cannot be done.</td></tr>
+      <tr><td><b>A question in Slack nobody answered</b></td><td>It is on the weekly digest and on the Agents screen from the moment it was asked, with its age in days. Answering it resumes the task from where it stopped.</td></tr>
+      <tr><td><b>You want more of the workforce working</b></td><td>Activate in bulk; the reply says how many queued tasks can now start. Autonomy stays one agent at a time, with the waiting-approvals queue in front of you when you change it.</td></tr>
+    </tbody>
+  </table>
+</div>

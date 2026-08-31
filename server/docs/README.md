@@ -1,5 +1,53 @@
 # docs
 
+## The whole agent system, in one volume
+
+`Dakyworld-OS-Agent-System.pdf` — the three documents below bound in reading
+order, with front matter and a fourth book that did not exist before. It is the
+one to hand somebody who asks how the agent system works, and it is also copied
+to the repository's parent folder, beside the other compiled documents.
+
+- **Front matter** — a cover, what each book answers and when to read it, and
+  **the scenario index**: every process the workforce runs and the page its
+  sequence is set out on, from a business nobody has heard of becoming a lead to
+  an agent being allowed to act without being asked. Its page numbers are found
+  by searching the printed books, never typed.
+- **Book One** — the Agent Master Workflow, the business flow.
+- **Book Two** — How the workforce runs, the machine.
+- **Book Three** — *What runs now*, written for this volume. The two books above
+  were built on 18 and 25 August 2026 and their prose describes the system as it
+  stood then; this is what changed between 26 and 30 August — the prompt
+  regions and the four passes of `METHOD`, the free-model ladder and its paid
+  floor, boundaries by subject, pace ceilings, the autonomy record, the
+  escalation digest, and a hired agent's induction. Its prose lives in
+  `workflow/system-current-body.html` and its tables are generated.
+- **Book Four** — the complete reference, every instruction and every tool.
+
+```bash
+# from server/
+npx tsx build-workflow-doc.ts      # Book One   -> docs/agent-master-workflow.html
+npx tsx build-operations-doc.ts    # Book Two   -> docs/agent-operations.html
+npx tsx build-reference-doc.ts     # Book Four  -> docs/dakyworld-os-reference.html
+npx tsx build-system-doc.ts        # front matter + Book Three
+
+# print each of the five to PDF with the Chrome line below, then bind:
+python build-system-volume.py      # -> docs/Dakyworld-OS-Agent-System.pdf
+```
+
+`build-system-volume.py` prints the front matter itself, so the order is: print
+the four standing books, then run it. It measures every book, finds each
+scenario's section by **searching for the words of its heading**, writes the
+page numbers into the front matter, reprints it, merges all five and builds the
+bookmark tree. A heading that has been reworded fails the build by name rather
+than printing a page number that has silently drifted — fix the phrase in
+`ANCHORS` and re-run.
+
+190 pages with 16 sparse ones is the expected shape. Two things it will refuse
+to do, both deliberate: bind when the front matter has already been filled in
+(re-run `build-system-doc.ts` first, or the numbers are last week's), and bind
+when the front matter changes length once the numbers replace the tokens —
+which would put every page number after it one out.
+
 ## How the workforce runs
 
 `agent-operations.pdf` — the operating picture of the agent system. Where the

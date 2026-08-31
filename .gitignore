@@ -15,5 +15,14 @@ server/prisma/dev.db
 server/docs/agent-master-workflow.html
 # Same for the complete reference — the PDF is tracked, the intermediate is not.
 server/docs/dakyworld-os-reference.html
+# The same for the operations picture and the two fragments of the bound
+# volume: sources in docs/workflow/ and the PDFs are tracked, the intermediates
+# carry the base64 fonts and are not.
+server/docs/agent-system-front.html
+server/docs/agent-system-current.html
+# Python bytecode from the doc-binding script.
+server/__pycache__/
 # Rendered demo documents — regenerate with `npm run demo:docs`.
 server/tmp/
+# The volume's own cover and index — an intermediate the binder reprints.
+server/docs/agent-system-front.pdf
