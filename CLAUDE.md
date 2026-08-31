@@ -54,6 +54,14 @@ typechecks them. Everything else is still `npx tsc --noEmit` in both `server/`
 and `server/client/` plus a real build — do not claim a change is "tested" on
 the strength of a passing build.
 
+**`npm run checks` does not load `.env`, and every check needs
+`DATABASE_URL`.** `checks/run.ts` passes `process.env` through unchanged and
+nothing in the check files calls `dotenv` — only `src/index.ts` does — so
+running one directly with `npx tsx checks/<name>.ts` fails on
+*"Environment variable not found: DATABASE_URL"*, which reads exactly like a
+broken database rather than a missing variable. Source it first:
+`set -a; . ./.env; set +a`.
+
 `checks/` is not `tmp/`. `tmp/` is gitignored and holds the throwaway harness
 written to prove one change worked on one afternoon; several of those are
 excellent and none of them runs again unless somebody remembers it exists.
@@ -1413,6 +1421,63 @@ conversation instead of starting one.
   keep it, which is what makes "Carry on" mean carry on. `pruneCheckpoints()`
   sweeps them after 30 days.
 
+**"Start the day" moves the time, and only the time** —
+`services/agents/startTheDay.ts`. Every ceiling still applies and a draft
+agent stays asleep, which the doc has always said. What it also did was wake
+**every** QUEUED task with a future `scheduledFor` — and two different things
+wear that column: a task `retry.ts` put down for five minutes on a rate limit,
+and a task the Owner scheduled for Tuesday through `POST /agents/:key/tasks`.
+Pressing the button on Monday started Tuesday's work with nothing anywhere
+saying so. `retryReason` separates them, because `retry.ts` is the only thing
+that writes the pair; it is the same predicate `isPaused` reads, and
+`routes/agents.ts` imports that rather than writing its three conditions out a
+second time. `checks/startTheDay.ts` covers it.
+
+**A business the judge could not be asked about is not a business that was
+judged** — `huntReport()` in `services/hunt/run.ts`. The `catch` around
+`judge()` is right and stays: a lead must never be deleted because a model was
+down, so it keeps its place with no verdict against it and the next hunt looks
+again. What was wrong is that it `continue`d silently while `audited` stayed at
+the whole batch, so five looked at with three judge calls thrown came out as
+"Looked at 5. 0 fit, 2 did not" and status SUCCEEDED — a vendor down for an
+afternoon reading exactly like a thesis nobody qualifies under. Those three are
+counted, named, excluded from `audited` so the three numbers add up, and the
+run is PARTIAL. **UNDECIDED is not the same thing**: that is the judge running
+and finding the evidence will not answer the question, which is a verdict about
+the business and was audited. The reporting is its own function because
+everything above it in `cycle` needs Apify, a screenshot and a model, and this
+needs nothing.
+
+**`trimToFit` measures before it copies** — `services/agents/checkpoint.ts`.
+It runs after every model turn *and* every tool call, so a sixteen-turn task
+pays for it fifty-odd times, and it was deep-copying and serialising a
+conversation that may be three megabytes before establishing there was nothing
+to do — then re-serialising the whole thing after every block it trimmed. A
+JSON document is the size of its parts, so a trim's saving is subtracted from a
+running total instead. Measured on a 40-turn conversation: 4.0ms → 1.7ms under
+the ceiling, 118.8ms → 18.4ms over it. The copy is made only when something is
+about to change, because the caller's `messages` is the live conversation the
+loop is still turning — asserted in `checks/conversationTrim.ts`.
+
+**Two sweeps were written and put on nobody's schedule**, both on the daily
+housekeeping tick now. `pruneMemories()` matters because recall has a ceiling
+of 24 per task, so an agent's memory that nothing has ever pulled up does not
+sit there harmlessly — it takes the place of one that would have been useful.
+Only an agent's own weakly-held, never-recalled conclusions older than six
+months; a shared memory is never swept, because "nothing has come up about it"
+is not evidence a house rule stopped being true. `refreshStaleServers()` says
+*"fire-and-forget from a route"* in its own doc and no route fired it, so a
+connected MCP server's advertised tools were read once and never again.
+
+**`maxCallSpend()` is a ceiling nothing enforces and nothing can set.**
+`agents.maxCallUsd` is read by that one function, the function is called by
+nothing, and no route exposes the setting — so it is unreachable in both
+directions. Enforcing it properly needs a pre-call estimate the catalogue does
+not have (only `capture.run` can price itself ahead, and only inside its
+`preview`, as a sentence). Left as a finding rather than a half-built guard;
+the precedent for the other direction is the three permission keys that were
+**deleted rather than shipped** because no route could enforce them.
+
 **One id gathers a run** — `traceId` on `AgentTask`, stamped on every
 `ToolCall`, `LlmCall` and `AgentTaskTransition` it causes. Every one of those
 facts was already being written down and none of them joined up: `ToolCall` had
@@ -1452,6 +1517,34 @@ lands in `AgentTaskTransition` with a reason and an actor.
   checkpoint is deleted for DONE and NEEDS_APPROVAL, so it could only ever
   answer for runs that failed — and a task short enough never to save its place
   does not write one at all.
+- **And so does the money** — `spendOn()`, both ledgers, at every ending. It
+  was passed in by the caller, which was wrong in both directions: the two
+  `catch` paths passed a literal zero, so a task that had spent three dollars
+  and then met a broken vendor wrote $0.00 beside truthful token counts on the
+  same row; and the success paths passed the agent loop's own tally, which
+  counts only the turns the loop itself took, so every model call inside a tool
+  handler — a writer, a consult, a sub-analyst — was billed to nobody.
+  `ToolCall.costUsd` is in the sum too: an Apify run is money against a ceiling
+  exactly as a model turn is. `AgentTask.costUsd` is not decoration — the
+  Agents screen totals thirty days of it and `rehearsals/run.ts` sums it
+  against a budget — and the same sum enforces the task's own ceiling in
+  `shouldStop`, so a run cannot be stopped at one number and recorded at
+  another. `backfillTaskCosts()` corrected the rows written before this, once,
+  marked by `agents.costBackfill`.
+- **Nothing outside the task is charged to it.** Three faults shared that
+  shape and all three are in `checks/agentSpendAndOutages.ts`. A 429 skips
+  `retry.ts`'s answerable-phrase sweep entirely, because the message carries up
+  to 300 characters of the vendor's own prose and both OpenRouter ("Add 10
+  credits to unlock…") and Google ("Quota exceeded for quota metric") say one
+  of those words inside a plain rate limit — the two likeliest failures here
+  were blocking the task and posting an escalation card for a limit that clears
+  in five minutes. A consult whose model call fails spends no consult and is
+  written to the timeline as a failed step, so `priorConsult` cannot hand the
+  error back as that colleague's opinion for the rest of the task, and
+  `reconcileCounters` skips it on resume rather than charging for it there
+  instead. That skip is spelt `OR: [{ ok: null }, { ok: true }]`: `ok` is
+  nullable and `step()` writes null unless told otherwise, so `ok: { not: false }`
+  is *unknown* for almost every row and drops the whole ledger.
 
 **An outward tool call can be asked for twice and happen once** —
 `InvokeOptions.idempotencyKey`, derived by the runner as
