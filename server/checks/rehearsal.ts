@@ -50,6 +50,7 @@
  *   npx tsx checks/rehearsal.ts
  */
 import { prisma } from "../src/lib/prisma.js";
+import { ensureAgents } from "../src/services/agentRegistry.js";
 import { permissionFor } from "../src/services/tools/invoke.js";
 import { findTool, TOOLS } from "../src/services/tools/catalogue.js";
 import { enrol } from "../src/services/emailSequences.js";
@@ -981,6 +982,16 @@ async function needSkillDoesNotLeakFromARehearsal() {
  */
 async function everyScenarioStartsWithSomebody() {
   console.log("\nThe workflow catalogue");
+
+  // The roster this asks about is the seeded one, and nothing in this file
+  // creates it — `makeAgents()` above builds the handful of harness agents the
+  // gate sections need and no more. So on a clean database every scenario's
+  // starting agent was missing and this failed; on a database a previous run
+  // had seeded it passed. It was green on the second run of the day only.
+  //
+  // `ensureAgents()` only ever creates, so it is idempotent and leaves an
+  // Owner's own edits alone.
+  await ensureAgents();
 
   const keys = [...new Set(SCENARIOS.map((scenario) => scenario.startAgent))];
   const found = await prisma.agent.findMany({ where: { key: { in: keys } }, select: { key: true } });

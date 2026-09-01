@@ -47,7 +47,7 @@ import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureTheses } from "./services/hunt/theses.js";
-import { applyColdEmailPlaybook, applyOutreachDoctrine, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
+import { COMMISSIONED_AUTONOMY, applyColdEmailPlaybook, applyOutreachDoctrine, commissionWorkforce, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
 import { backfillTaskCosts, drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
@@ -385,6 +385,26 @@ ensureSystemRoles()
               `  → Corrected the recorded cost of ${costs.corrected} finished task(s) against the model and tool ledgers ` +
                 `(+$${costs.addedUsd.toFixed(2)} that had been recorded as free)`,
             );
+          }
+
+          // The workforce, put to work. Once ever, and only over agents still
+          // in the state they shipped in — see `commissionWorkforce`. Placed
+          // after the toolkit reconcile and the wording passes on purpose: an
+          // agent should be switched on holding the tools its seed names and
+          // running this deploy's wording, not last deploy's.
+          const commissioned = await commissionWorkforce();
+          if (commissioned?.woke.length) {
+            console.log(
+              `  → Commissioned ${commissioned.woke.length} agent(s): switched on, out of dry run, at autonomy ${COMMISSIONED_AUTONOMY}. ` +
+                `Everything that leaves the company or spends money is still prepared and sent to Slack for you to approve.`,
+            );
+          }
+          if (commissioned?.leftAlone.length) {
+            const grouped = new Map<string, string[]>();
+            for (const row of commissioned.leftAlone) grouped.set(row.because, [...(grouped.get(row.because) ?? []), row.key]);
+            for (const [because, keys] of grouped) {
+              console.log(`  → Left as you had them (${because}): ${keys.join(", ")}`);
+            }
           }
 
           const narrowed = await narrowSeededAgents();

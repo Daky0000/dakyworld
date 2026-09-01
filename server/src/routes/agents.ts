@@ -13,7 +13,7 @@ import { MAX_ITERATIONS } from "../lib/claudeAgent.js";
 import { clearCheckpoint } from "../services/agents/checkpoint.js";
 import { blockedTasks, recordOwnerAnswer } from "../services/agents/escalations.js";
 import { MemoryRefused, editMemory, forget, listMemories, listSharedMemories, recall, remember } from "../services/agents/memory.js";
-import { AGENT_SEEDS, PROMPT_LAYERS, surplusToolkits } from "../services/agentRegistry.js";
+import { AGENT_SEEDS, COMMISSIONED_AUTONOMY, PROMPT_LAYERS, commissionWorkforce, surplusToolkits } from "../services/agentRegistry.js";
 import { closeEscalation, openEscalations } from "../services/agents/escalationDigest.js";
 import { pendingFor } from "../services/approvals.js";
 import { paceUsage } from "../services/agents/pace.js";
@@ -86,6 +86,10 @@ agentsRouter.use(
       { path: /^\/[^/]+\/schedules/, permission: "agents.edit" },
       { path: /^\/schedules\//, permission: "agents.edit" },
       { path: /^\/[^/]+\/feedback$/, permission: "agents.edit" },
+      // Switching the workforce on is an autonomy decision, not an edit to
+      // what an agent is told — so it is gated where every other move of the
+      // level and the dry-run flag is.
+      { path: /^\/commission$/, method: "POST", permission: "agents.autonomy" },
     ],
   }),
 );
@@ -102,6 +106,33 @@ const DEPARTMENTS = [
   "PEOPLE",
 ] as const;
 
+
+/**
+ * Commission whatever is still asleep — the button behind the boot-time pass.
+ *
+ * Two reasons this exists as well as the boot pass. A hire lands ACTIVE at
+ * autonomy 1 with dry run on, so an agent employed after the pass has already
+ * run is asleep in the two ways that are left and the marked pass will never
+ * look at it again. And a founder who wants to see the state of the roster
+ * change should not have to redeploy to do it.
+ *
+ * Bound by the same rule as the pass: it can only reach an agent still in the
+ * state it shipped in, so it can never overrule a decision already made.
+ */
+agentsRouter.post("/commission", async (_req, res, next) => {
+  try {
+    const result = await commissionWorkforce({ force: true });
+    res.json({
+      ...result,
+      autonomy: COMMISSIONED_AUTONOMY,
+      means:
+        `Switched on and out of dry run, at autonomy ${COMMISSIONED_AUTONOMY}. Anything that leaves the company or ` +
+        `spends money is still prepared rather than done, and arrives in Slack for you to approve.`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 agentsRouter.get("/", async (_req, res, next) => {
   try {

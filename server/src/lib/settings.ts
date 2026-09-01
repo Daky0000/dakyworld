@@ -473,6 +473,20 @@ export const SETTING = {
    */
   AGENT_TOOLKIT_OFFERED: "agents.toolkitOffered",
   /**
+   * The one-off pass that puts the workforce to work.
+   *
+   * Every agent ships DRAFT at autonomy 1 with dry run on, which is three
+   * separate ways of doing nothing: a draft picks no task up, autonomy 1 holds
+   * every outward and spending call at a preview, and dry run holds every
+   * internal write there too. A deployment nobody clicked through was a roster
+   * of fifty-six agents and an empty timeline.
+   *
+   * Marked so it runs once ever, like the one-job split: commissioning is a
+   * decision about how the business runs, and a pass that reasserted it on
+   * every boot would undo the Owner pausing an agent.
+   */
+  AGENT_COMMISSIONED: "agents.commissioned",
+  /**
    * Hard ceiling on what one tool call may spend, in USD. The tool layer
    * refuses anything above it rather than trusting an agent's arithmetic.
    */

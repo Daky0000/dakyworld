@@ -589,7 +589,7 @@ ${BUILD_CRAFT}`,
     mission: "Keep clients informed, satisfied, retained and moving toward measurable outcomes.",
     responsibilities: ["Client reports", "Health scores", "Renewal plans", "Feedback requests"],
     kpis: ["Retention", "Health score", "Renewal rate", "Response time"],
-    toolkit: ["client.read", "careplan.read", "projects.read", "email.draft"],
+    toolkit: ["inbox.read", "inbox.handled", "client.read", "careplan.read", "projects.read", "email.draft"],
     escalationPolicy: "Never promises a date or outcome the project data does not support.",
     prompt: layers({
       role: "You are the Dakyworld Client Success Director.",
@@ -1240,6 +1240,8 @@ ${INTERFACE_CRAFT}`,
         // checks that keep a claim honest. No sending: a proposal leaves the
         // building under a person's name.
         toolkit: [
+          "inbox.read",
+          "inbox.handled",
           "proposal.draft",
           "content.draft",
           "content.factcheck",
@@ -1373,7 +1375,7 @@ ${OFFER_CRAFT}`,
           "Escalation and handover notes",
         ],
         kpis: ["First response time", "First-contact resolution", "SLA breaches", "Reopened tickets"],
-        toolkit: ["client.read", "projects.read", "tasks.write", "email.draft", "careplan.read"],
+        toolkit: ["inbox.read", "inbox.handled", "client.read", "projects.read", "tasks.write", "email.draft", "careplan.read"],
         escalationPolicy:
           "A security incident, a data question or anything touching money goes up immediately rather than being answered. Never promises a fix time the project data does not support.",
         process: `1. Acknowledge first, in a sentence, so the person knows it landed. Silence is what reads as nothing happening.
@@ -1519,6 +1521,8 @@ ${PROSPECT_CRAFT}`,
         ],
         kpis: ["Invoices raised", "Queried invoices", "Days from delivery to invoice", "Corrections after issue"],
         toolkit: [
+          "inbox.read",
+          "inbox.handled",
           "invoice.draft",
           "document.render",
           "client.read",
@@ -1568,6 +1572,8 @@ ${MONEY_CRAFT}`,
         // the other half: chasing somebody without handing them a way to pay is
         // the reason a chase has to be repeated.
         toolkit: [
+          "inbox.read",
+          "inbox.handled",
           "finance.read",
           "client.read",
           "email.draft",
@@ -1997,6 +2003,8 @@ ${INTERFACE_CRAFT}`,
         ],
         kpis: ["Reply rate on follow-ups", "Unsubscribes and complaints", "Sequences stopped early", "Meetings booked from a follow-up"],
         toolkit: [
+          "inbox.read",
+          "inbox.handled",
           "lead.read",
           "audit.read",
           "email.draft",
@@ -2680,4 +2688,139 @@ export async function ensureAgents(): Promise<number> {
     skipDuplicates: true,
   });
   return missing.length;
+}
+
+/**
+ * The autonomy a commissioned agent lands on, and why it is 2 rather than 3.
+ *
+ * `EXECUTE_LEVEL` is 3 and `SPEND_LEVEL` is 4, so an agent at 2 has every
+ * outward and every spending call held at a preview — which is not a
+ * limitation here, it is the whole design. A held call files an `ActionRequest`
+ * and posts it to Slack with an Approve button that carries the work out
+ * exactly as prepared. So level 2 is the setting on which the founder is asked
+ * about everything that leaves the building or costs money, and about nothing
+ * else.
+ *
+ * Proved rather than asserted: `checks/commissioning.ts` walks the whole
+ * catalogue at this card and fails if a single outward or spending tool would
+ * act unsupervised.
+ */
+export const COMMISSIONED_AUTONOMY = 2;
+
+export interface Commissioning {
+  /** Put to work by this pass. */
+  woke: string[];
+  /**
+   * Left exactly as found, with the reason. An agent the Owner has already
+   * moved — paused, retired, raised, taken out of dry run, or switched on —
+   * has had a decision made about it, and this is not the place to overrule
+   * one.
+   */
+  leftAlone: { key: string; because: string }[];
+  /** True the first time this ran, so the boot log can explain itself once. */
+  firstRun: boolean;
+}
+
+/**
+ * Puts the workforce to work, once, without overruling a single decision the
+ * Owner has made.
+ *
+ * The shipped state of every agent is three separate ways of doing nothing:
+ * DRAFT means `runDueTasks` never claims a task for it, autonomy 1 means every
+ * outward and spending call is a preview, and dry run means every *internal*
+ * write is a preview too. Each of those is the right default for an agent
+ * nobody has looked at. All three together, on all fifty-six, is a workforce
+ * that cannot do anything at all — and the symptom is not an error anywhere,
+ * it is an empty timeline and a queue that never moves.
+ *
+ * What this changes, and it is only ever these three columns:
+ *
+ * - **DRAFT → ACTIVE**, so the agent picks its queue up.
+ * - **dry run off**, so its work on our own records actually happens.
+ * - **autonomy 1 → 2**, which changes nothing about what may leave the
+ *   building — 3 is where that starts — and everything about whether a held
+ *   call is a dead end or a question. See `COMMISSIONED_AUTONOMY`.
+ *
+ * **Three things it will not do**, each of them the difference between a
+ * commissioning pass and a pass that quietly rewrites the workforce:
+ *
+ * 1. **It only ever touches an agent still in the state it shipped in** —
+ *    DRAFT, level 1, dry run on. Any other combination is somebody's decision.
+ *    A paused agent stays paused, a retired one stays retired, an agent
+ *    already raised to 4 keeps 4, and one deliberately left at level 1 with
+ *    dry run off is left there.
+ * 2. **It never lowers anything.** There is no state it can move an agent into
+ *    that is more restrictive than the one it found.
+ * 3. **It runs once ever**, behind a marker, exactly as the one-job split
+ *    does. A pass that reasserted this on every boot would switch a paused
+ *    agent back on every time somebody deployed, which is the one behaviour
+ *    that would make pausing useless.
+ *
+ * Every move is written to `AgentAutonomyChange` with the actor
+ * `commissioning`, because "who put this agent on level 2" has to have an
+ * answer — the same reason the rehearsal's wake writes its lifts down.
+ *
+ * `force` re-runs it for agents that have arrived since — a hire lands ACTIVE
+ * at autonomy 1 with dry run on, so it is asleep in the two ways that are left
+ * — and is what the Agents screen's own button calls. It is still bound by
+ * rule 1: a re-run cannot reach an agent somebody has configured.
+ */
+export async function commissionWorkforce(options: { force?: boolean } = {}): Promise<Commissioning | null> {
+  const marker = SETTING.AGENT_COMMISSIONED;
+  const alreadyRun = Boolean(await getSetting(marker));
+  if (alreadyRun && !options.force) return null;
+
+  const agents = await prisma.agent.findMany({
+    select: { key: true, name: true, status: true, autonomyLevel: true, dryRun: true },
+    orderBy: { key: "asc" },
+  });
+
+  const woke: string[] = [];
+  const leftAlone: { key: string; because: string }[] = [];
+
+  for (const agent of agents) {
+    // Rule 1, stated as one condition rather than four, so there is no way to
+    // widen it by accident. Anything that is not *exactly* the shipped state
+    // is a decision somebody made.
+    const asShipped = agent.status === "DRAFT" && agent.autonomyLevel === 1 && agent.dryRun;
+    if (!asShipped) {
+      const because =
+        agent.status === "PAUSED"
+          ? "you paused it"
+          : agent.status === "RETIRED"
+            ? "it is retired"
+            : agent.status === "ACTIVE" && agent.autonomyLevel === 1 && agent.dryRun
+              ? "you had already switched it on; its level and dry run are yours"
+              : "you have already set its level or its dry run";
+      leftAlone.push({ key: agent.key, because });
+      continue;
+    }
+
+    // The three columns and the history entry in one transaction. An agent
+    // switched on with no record of who did it is the hole `AgentAutonomyChange`
+    // exists to close.
+    await prisma.$transaction([
+      prisma.agent.update({
+        where: { key: agent.key },
+        data: { status: "ACTIVE", autonomyLevel: COMMISSIONED_AUTONOMY, dryRun: false },
+      }),
+      prisma.agentAutonomyChange.create({
+        data: {
+          agentKey: agent.key,
+          fromLevel: agent.autonomyLevel,
+          toLevel: COMMISSIONED_AUTONOMY,
+          fromDryRun: agent.dryRun,
+          toDryRun: false,
+          reason:
+            `Commissioned: switched on and taken out of dry run, at autonomy ${COMMISSIONED_AUTONOMY} so that everything ` +
+            `leaving the company or spending money is still prepared for you to approve in Slack.`,
+          actor: "commissioning",
+        },
+      }),
+    ]);
+    woke.push(agent.key);
+  }
+
+  if (!alreadyRun) await setSetting(marker, new Date().toISOString());
+  return { woke, leftAlone, firstRun: !alreadyRun };
 }

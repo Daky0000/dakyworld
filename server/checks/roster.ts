@@ -45,6 +45,27 @@ import { SETTING, clearSettingsCache } from "../src/lib/settings.js";
 
 const src = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
+/**
+ * The roster, before anything asks the database a question about it.
+ *
+ * This used to sit two thirds of the way down, immediately above the reconcile
+ * section that obviously needed it — and section 5 below, which edits an
+ * agent's wording and then asserts that the edit reaches the deliverable, ran
+ * first. On a database that already held the roster it passed; on a clean one
+ * the agents did not exist yet, `restore` came back empty, nothing was edited,
+ * and all twenty-one of those assertions failed reporting the shipped wording.
+ *
+ * So the file was green on the second run of the day and red on the first, and
+ * the twenty-one assertions were only ever exercised against state a previous
+ * run had left behind. Same trap this file's own reconcile section is
+ * documented for: restoring a row is not restoring the state.
+ *
+ * `ensureAgents()` only ever creates, so calling it here is idempotent and
+ * costs a single query on a database that already has them.
+ */
+console.log(`Seeding into the local database…`);
+console.log(`  added ${await ensureAgents()}`);
+
 let bad = 0;
 function check(ok: boolean, label: string) {
   if (ok) return;
@@ -199,7 +220,14 @@ const owners = [...new Set(WRITER_JOBS.map((job) => job.agentKey))];
 const restore: { key: string; promptText: string | null; promptEditedAt: Date | null }[] = [];
 for (const key of owners) {
   const before = await prisma.agent.findUnique({ where: { key }, select: { promptText: true, promptEditedAt: true } });
-  if (!before) continue;
+  // Said out loud rather than skipped. A silent `continue` here is what let
+  // this whole section pass vacuously: with no agent there is nothing to edit,
+  // so every job below falls through to the shipped wording and reports it as
+  // a failure of the writer layer rather than of the roster.
+  if (!before) {
+    check(false, `${key}: owns a writer job but is not on the roster at all`);
+    continue;
+  }
   restore.push({ key, ...before });
   await prisma.agent.update({
     where: { key },
@@ -230,8 +258,7 @@ for (const [key, agents] of owned) {
 }
 
 // --- 6. The reconcile, against a database ----------------------------------
-console.log(`\nSeeding into the local database…`);
-console.log(`  added ${await ensureAgents()}`);
+// The roster was seeded at the top of the file, before section 5 needed it.
 
 // A fresh database is created *from* the seeds, so it already holds everything
 // and a reconcile over it proves nothing. The case that matters is the live
