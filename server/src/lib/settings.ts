@@ -487,6 +487,41 @@ export const SETTING = {
    */
   AGENT_COMMISSIONED: "agents.commissioned",
   /**
+   * The one-off pass that switches every remaining agent on.
+   *
+   * Separate from `AGENT_COMMISSIONED` above, and needed because that pass is
+   * deliberately unable to reach most of the roster. Commissioning only ever
+   * touches an agent still in *exactly* the state it shipped in — DRAFT, level
+   * 1, dry run on — so that it can never overrule a decision. On the live
+   * service that guard held on fifty-four of fifty-six agents: something had
+   * moved one of the other two columns on each of them, and the pass reported
+   * "left as you had them" and left the whole workforce asleep. The reason it
+   * gave was accurate and the outcome was a floor of drafts.
+   *
+   * So this pass answers the Owner asking for the workforce to be on, and it
+   * is the narrowest thing that can: it writes `status` and nothing else. What
+   * an agent may do once it is awake — its autonomy level and its dry run —
+   * stays exactly as found, so nothing here widens what can leave the company
+   * or spend money.
+   *
+   * Marked so it runs once ever, for the same reason commissioning is: pausing
+   * an agent has to survive the next deploy.
+   */
+  AGENT_WORKFORCE_ACTIVE: "agents.workforceActive",
+  /**
+   * The one-off pass that gives the lead chain its standing work.
+   *
+   * `AgentSchedule` is what turns a workforce that *can* act into one that
+   * does, and nothing ever seeded a row into it — so a live database could
+   * hold fifty-six willing agents, tens of thousands of captured leads, and no
+   * reason for any of them to begin. "Run agents now" looped over zero
+   * schedules and honestly reported zero.
+   *
+   * Additive and marked: a schedule the Owner has since edited, disabled or
+   * deleted is never written back.
+   */
+  AGENT_STANDING_WORK: "agents.standingWork",
+  /**
    * Hard ceiling on what one tool call may spend, in USD. The tool layer
    * refuses anything above it rather than trusting an agent's arithmetic.
    */

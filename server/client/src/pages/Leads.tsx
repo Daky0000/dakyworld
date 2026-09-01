@@ -272,6 +272,36 @@ export function Leads() {
 
   const [deleteResult, setDeleteResult] = useState<string | null>(null);
 
+  /**
+   * Lists with nothing in them.
+   *
+   * Its own request rather than counted off `stats.groups`, because that count
+   * would include the lists a capture source still writes into — which are
+   * empty every time before a source's first run — and a button offering to
+   * remove eleven that removes eight is a button nobody trusts twice.
+   */
+  const { data: emptyLists } = useQuery({
+    queryKey: ["empty-lists"],
+    queryFn: () => api.get<{ removable: { id: string; name: string }[]; keptFeeding: { id: string; name: string }[] }>("/leads/groups/empty"),
+  });
+
+  const sweepEmpty = useMutation({
+    mutationFn: () => api.post<{ listsRemoved: number; keptFeeding: { name: string }[] }>("/leads/groups/empty/delete", {}),
+    onMutate: () => setDeleteResult(null),
+    onSuccess: (result) => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: ["empty-lists"] });
+      setDeleteResult(
+        `Removed ${result.listsRemoved} empty list${result.listsRemoved === 1 ? "" : "s"}.` +
+          (result.keptFeeding.length
+            ? ` Kept ${result.keptFeeding.length}: a capture source still writes into ${result.keptFeeding.length === 1 ? "it" : "them"} ` +
+              `(${result.keptFeeding.map((list) => list.name).join(", ")}).`
+            : ""),
+      );
+    },
+    onError: (err: Error) => setDeleteResult(err.message),
+  });
+
   const deleteLists = useMutation({
     mutationFn: (body: { ids: string[]; withLeads: boolean; expect?: number }) =>
       api.post<{ listsRemoved: number; leadsUngrouped?: number; deleted: number; keptWithProposals: { name: string }[] }>(
@@ -540,6 +570,30 @@ export function Leads() {
             setAllMatching(false);
           }}
         />
+      )}
+
+      {/* The grouped view pages at twenty-five blocks and has no pager, so on a
+          database carrying a bad import's residue the tickboxes can only ever
+          reach the first twenty-five. This one acts on all of them. */}
+      {emptyLists && emptyLists.removable.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink/70">
+          <span>
+            {emptyLists.removable.length} list{emptyLists.removable.length === 1 ? "" : "s"} {emptyLists.removable.length === 1 ? "has" : "have"} nothing in
+            {emptyLists.removable.length === 1 ? " it" : " them"}.
+            {emptyLists.keptFeeding.length > 0 && (
+              <> Another {emptyLists.keptFeeding.length} {emptyLists.keptFeeding.length === 1 ? "is" : "are"} empty and being captured into, so {emptyLists.keptFeeding.length === 1 ? "it stays" : "they stay"}.</>
+            )}
+          </span>
+          <Button
+            variant="ghost"
+            disabled={sweepEmpty.isPending}
+            onClick={() => {
+              if (confirm(`Remove ${emptyLists.removable.length} empty list(s)? No leads are deleted — there are none in them.`)) sweepEmpty.mutate();
+            }}
+          >
+            {sweepEmpty.isPending ? "Removing…" : "Remove them"}
+          </Button>
+        </div>
       )}
 
       {pickedLists.size > 0 && (

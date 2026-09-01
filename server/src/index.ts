@@ -41,6 +41,7 @@ import { websiteRouter } from "./routes/website.js";
 import { apiRateLimit, forceHttps, securityHeaders, webhookRateLimit } from "./middleware/security.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
+import { ensureStandingWork } from "./services/agents/standingWork.js";
 import { SETTING } from "./lib/settings.js";
 import { ensureFreeLadder } from "./lib/models/call.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
@@ -49,7 +50,7 @@ import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureTheses } from "./services/hunt/theses.js";
-import { COMMISSIONED_AUTONOMY, applyColdEmailPlaybook, applyOutreachDoctrine, commissionWorkforce, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
+import { COMMISSIONED_AUTONOMY, activateWorkforce, applyColdEmailPlaybook, applyOutreachDoctrine, commissionWorkforce, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
 import { backfillTaskCosts, drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
@@ -408,6 +409,55 @@ ensureSystemRoles()
               console.log(`  → Left as you had them (${because}): ${keys.join(", ")}`);
             }
           }
+
+          // And the rest of them, once, because the pass above cannot reach
+          // most of a roster somebody has already touched — see
+          // `activateWorkforce`. Status only: what an agent may actually carry
+          // out is still whatever its autonomy level and dry run say.
+          const activated = await activateWorkforce();
+          if (activated?.woke.length) {
+            console.log(
+              `  → Switched on ${activated.woke.length} agent(s) that were still drafts, so they can be given work: ` +
+                `${activated.woke.join(", ")}. Their autonomy level and dry run were not changed.`,
+            );
+          }
+          if (activated?.unpaused.length) {
+            console.log(`  → Switched ${activated.unpaused.length} paused agent(s) back on: ${activated.unpaused.join(", ")}`);
+          }
+          if (activated?.retired.length) {
+            console.log(`  → Left retired: ${activated.retired.join(", ")}`);
+          }
+
+          // The reason any of them has to start in the morning. Nothing ever
+          // wrote an `AgentSchedule`, so a workforce that could work had
+          // nothing standing to work on — see `ensureStandingWork`.
+          const standing = await ensureStandingWork();
+          if (standing?.created.length) {
+            for (const row of standing.created) {
+              console.log(`  → Standing work for ${row.agentKey}: "${row.title}", next at ${row.nextRunAt?.toISOString() ?? "never"}`);
+            }
+          }
+          for (const row of standing?.skipped ?? []) {
+            console.log(`  → No standing work seeded for ${row.agentKey}: ${row.because}`);
+          }
+
+          // What is actually on this database, in one line.
+          //
+          // Every question that reached the Owner as "why is the screen empty"
+          // needed exactly these five numbers, and there was nowhere to read
+          // them without a login and four screens. A count is cheap and a boot
+          // is rare.
+          const [leadCount, listCount, emptyListCount, activeAgents, schedules] = await Promise.all([
+            prisma.lead.count({ where: { rehearsal: false } }),
+            prisma.leadGroup.count(),
+            prisma.leadGroup.count({ where: { leads: { none: {} } } }),
+            prisma.agent.count({ where: { status: "ACTIVE" } }),
+            prisma.agentSchedule.count({ where: { enabled: true } }),
+          ]);
+          console.log(
+            `  → On the books: ${leadCount.toLocaleString()} lead(s) in ${listCount} list(s) (${emptyListCount} empty), ` +
+              `${activeAgents} active agent(s), ${schedules} standing job(s).`,
+          );
 
           // Whether a decision can actually reach anybody, said at boot rather
           // than only on a screen somebody has to open.

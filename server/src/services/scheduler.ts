@@ -19,6 +19,7 @@ import { postEscalationDigest } from "./agents/escalationDigest.js";
 import { SETTING, getSetting, setSetting } from "../lib/settings.js";
 import { expireStaleRequests, flagStalePreparedActions } from "./approvals.js";
 import { raiseStandingWork } from "./agents/standingWork.js";
+import { removeEmptyLists } from "./leadLists.js";
 import { restoreOrphanedWakes } from "./rehearsals/wake.js";
 import { settleIdleRehearsals } from "./rehearsals/run.js";
 import { purgeExpiredSessions } from "../lib/session.js";
@@ -209,6 +210,25 @@ async function housekeepingTick(now: Date) {
   // system has ever issued.
   const dropped = await purgeExpiredSessions();
   if (dropped) console.log(`[scheduler] cleared ${dropped} expired session(s)`);
+
+  // Lists with nothing in them.
+  //
+  // A scrape opens one to capture into, a workbook import opens one per
+  // worksheet, and a batch deleted for being the wrong town leaves its list
+  // standing empty behind it — so the residue accumulates from ordinary use and
+  // nothing ever removed it. It is worse than untidy: the grouped view pages at
+  // twenty-five blocks with no pager, so enough empty lists push the real ones
+  // off the screen.
+  //
+  // Deliberately narrower than the button on the Leads screen. Only lists a
+  // machine opened, and only ones older than an hour — making a list and then
+  // filling it is two actions with a gap between them, and a sweep that runs in
+  // that gap deletes the thing somebody is in the middle of using. A list a
+  // person named is never removed behind their back, however empty it is.
+  const emptyLists = await removeEmptyLists({ autoOnly: true, olderThanMs: 60 * 60_000 });
+  if (emptyLists.removable.length) {
+    console.log(`[scheduler] removed ${emptyLists.removable.length} empty list(s) nothing had captured into`);
+  }
 
   // Conversations kept so a blocked or failed task could be continued, long
   // after anybody was going to continue one.

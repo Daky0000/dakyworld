@@ -2824,3 +2824,102 @@ export async function commissionWorkforce(options: { force?: boolean } = {}): Pr
   if (!alreadyRun) await setSetting(marker, new Date().toISOString());
   return { woke, leftAlone, firstRun: !alreadyRun };
 }
+
+export interface WorkforceActivation {
+  /** Switched from DRAFT to ACTIVE. */
+  woke: string[];
+  /**
+   * Switched from PAUSED to ACTIVE, named separately because each of these
+   * overrules somebody's off-switch and that should be readable in the log
+   * rather than folded into a total.
+   */
+  unpaused: string[];
+  /** Left retired. Retiring an agent is decommissioning it, not resting it. */
+  retired: string[];
+  /** True the first time this ran. */
+  firstRun: boolean;
+}
+
+/**
+ * Switches on every agent that is not retired, once, and changes nothing else.
+ *
+ * `commissionWorkforce` above is the careful version of this and it is the
+ * right default: it will only touch an agent still in exactly the state it
+ * shipped in, so it can never overrule a decision somebody made. The cost of
+ * that guard is that it cannot reach an agent whose autonomy or dry run has
+ * been moved even once — and on the live service that was fifty-four of
+ * fifty-six. The pass ran, reported "left as you had them" against nearly the
+ * whole roster, and left a floor of drafts behind a message that read like
+ * success.
+ *
+ * This is the blunt instrument for when the Owner has looked at that and asked
+ * for the workforce to be on. It is deliberately the narrowest blunt
+ * instrument available:
+ *
+ * - **It writes `status` and nothing else.** Autonomy and dry run are what
+ *   decide whether an agent's work reaches a customer or a card; both are left
+ *   exactly as found, so no agent comes out of this able to do more than it
+ *   could before — only able to be *given* something.
+ * - **RETIRED is left alone.** Draft is "not looked at yet" and paused is
+ *   "stopped for now"; retired is a job that no longer exists, and restarting
+ *   one is not what "switch the workforce on" means.
+ * - **It runs once ever**, behind its own marker. A pass that reasserted this
+ *   on every boot would make pausing an agent useless, which is the objection
+ *   `commissionWorkforce` documents and it applies here unchanged.
+ *
+ * Every move is written to `AgentAutonomyChange` with the actor `activation`.
+ * The level and dry-run columns on that row are the *unchanged* values, which
+ * is the honest record: this pass moved neither, and writing a change that did
+ * not happen would put a lie in the one table that answers "who did this".
+ */
+export async function activateWorkforce(options: { force?: boolean } = {}): Promise<WorkforceActivation | null> {
+  const marker = SETTING.AGENT_WORKFORCE_ACTIVE;
+  const alreadyRun = Boolean(await getSetting(marker));
+  if (alreadyRun && !options.force) return null;
+
+  const agents = await prisma.agent.findMany({
+    select: { key: true, status: true, autonomyLevel: true, dryRun: true },
+    orderBy: { key: "asc" },
+  });
+
+  const woke: string[] = [];
+  const unpaused: string[] = [];
+  const retired: string[] = [];
+
+  for (const agent of agents) {
+    if (agent.status === "ACTIVE") continue;
+    if (agent.status === "RETIRED") {
+      retired.push(agent.key);
+      continue;
+    }
+
+    const wasPaused = agent.status === "PAUSED";
+    await prisma.$transaction([
+      prisma.agent.update({
+        where: { key: agent.key },
+        // `boundaryViolations` is cleared for the same reason the PATCH route
+        // clears it on an activation: a suspension count is about the run that
+        // earned it, and carrying one into a fresh start would suspend an agent
+        // for something nobody can see any more.
+        data: { status: "ACTIVE", boundaryViolations: 0 },
+      }),
+      prisma.agentAutonomyChange.create({
+        data: {
+          agentKey: agent.key,
+          fromLevel: agent.autonomyLevel,
+          toLevel: agent.autonomyLevel,
+          fromDryRun: agent.dryRun,
+          toDryRun: agent.dryRun,
+          reason:
+            `Switched on${wasPaused ? " from paused" : ""} so it can be given work. Its autonomy level and dry run ` +
+            `were not changed, so what it may actually carry out is exactly what it was before.`,
+          actor: "activation",
+        },
+      }),
+    ]);
+    (wasPaused ? unpaused : woke).push(agent.key);
+  }
+
+  if (!alreadyRun) await setSetting(marker, new Date().toISOString());
+  return { woke, unpaused, retired, firstRun: !alreadyRun };
+}

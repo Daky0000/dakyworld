@@ -20,6 +20,7 @@ import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, prepareLeads, sto
 import { demoUrl } from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
 import { leadIdsMatchingCustomFields, searchClauses } from "../services/leadSearch.js";
+import { findEmptyLists, removeEmptyLists } from "../services/leadLists.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
 export const leadsRouter = Router();
@@ -49,6 +50,9 @@ leadsRouter.use(
       // Removing lists in bulk can remove the leads in them, so it is gated as
       // a lead delete rather than as an edit.
       { path: /^\/groups\/bulk\/delete$/, permission: "leads.delete" },
+      // Same reasoning: it removes lists. It cannot reach a lead — an empty
+      // list has none — but it is a delete and is gated as one.
+      { path: /^\/groups\/empty\/delete$/, permission: "leads.delete" },
     ],
   }),
 );
@@ -436,6 +440,43 @@ leadsRouter.patch("/groups/:id", async (req, res, next) => {
       data: { ...data, ...(data.tags ? { tags: await registerTags(data.tags, { autoCreated: false }) } : {}) },
     });
     res.json(group);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Every list with nothing in it, and whether it can go.
+ *
+ * Mounted above `/groups/:id`, or `empty` is read as a list id.
+ *
+ * Its own endpoint rather than something read off `/stats`: the grouped view
+ * pages at twenty-five blocks and has no pager, so on a database carrying a bad
+ * import's residue the Owner can see the first twenty-five empty lists and tick
+ * none of the rest. A count that is the truth about all of them is the thing
+ * the button needs.
+ */
+leadsRouter.get("/groups/empty", async (_req, res, next) => {
+  try {
+    res.json(await findEmptyLists());
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Removes them all, however many there are.
+ *
+ * No `expect` exchange, unlike every other delete on this router: those carry
+ * one because they destroy leads, and by definition there is nothing inside
+ * these to lose. What it will not touch is a list a capture source still writes
+ * into — see `services/leadLists.ts` — and those come back named, because a
+ * button that silently did less than it said is worse than one that refused.
+ */
+leadsRouter.post("/groups/empty/delete", async (_req, res, next) => {
+  try {
+    const swept = await removeEmptyLists();
+    res.json({ listsRemoved: swept.removable.length, keptFeeding: swept.keptFeeding });
   } catch (err) {
     next(err);
   }
