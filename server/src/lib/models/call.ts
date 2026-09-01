@@ -5,6 +5,11 @@ import { SETTING, getSetting, setSetting } from "../settings.js";
 import {
   FREE_MODELS,
   JOBS,
+  freeLadderFor,
+  imageFunctionUrl,
+  imageModelInfo,
+  imageStatusUrl,
+  nvidiaImageModel,
   PROVIDERS,
   PROVIDER_PRICING,
   freeModel,
@@ -1230,88 +1235,283 @@ export interface ImageResult {
   /** Data URLs. The vendor returns base64 for these models, not links. */
   images: string[];
   costUsd: number;
+  /** Set when the chosen vendor could not draw and something else did. */
+  fallbackNote: string | null;
+}
+
+/** What one vendor's attempt produced, before it is priced and recorded. */
+interface Drawing {
+  /** Data URLs, ready to put in an `<img src>`. */
+  images: string[];
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /**
- * Draws a picture.
+ * Draws a picture, asking whoever serves the `image` job and moving on to the
+ * next one that can if they cannot.
  *
  * Separate from `callModel` because an image is not a completion in any shape
  * the text path could carry: no schema, no tokens in the sense the ledger
  * means, and bytes rather than a reply. The routing is the same idea though —
  * the caller asks for a picture and the settings decide who draws it.
  *
+ * **This used to be one vendor with no chain, and that was a fact about this
+ * app rather than about the world.** It spoke OpenAI's images API and refused
+ * everything else outright, so the routing had to name ChatGPT and only
+ * ChatGPT or it would have offered a route that never served. The result was
+ * that the one job in the system costing real money on every single call was
+ * also the one job with no free option and no fallback: no ChatGPT key meant
+ * no pictures at all, and a rate-limited ChatGPT meant an ad concept lost
+ * with nothing else to ask.
+ *
+ * There are two wires now — OpenAI's `/images/generations`, and NVIDIA's Cloud
+ * Functions, which are free — and the rules are the ones `callModel` already
+ * uses: only vendors that declare the job are in the chain, a content refusal
+ * is carried straight out and never retried on a second vendor, and the result
+ * says who actually drew it.
+ *
  * The bytes come back as base64 and go out as data URLs rather than being
  * written to disk: Railway's filesystem is ephemeral, so a file written at
  * runtime reverts on the next deploy and *looks like it worked*.
  */
 export async function generateImage(request: ImageRequest): Promise<ImageResult> {
-  const route = await routeFor("image");
-  if (route.serving !== "openai") {
-    throw new AnalystError(
-      503,
-      route.note ?? `Images are routed to ${PROVIDERS[route.chosen].name}, which this app cannot ask for a picture.`,
-    );
+  const { chosen, chain } = await serveChain("image");
+  if (chain.length === 0) {
+    const route = await routeFor("image");
+    throw new AnalystError(503, route.note ?? "No model is connected for images. Add an NVIDIA or ChatGPT key under Settings → AI models.");
   }
 
+  const tried: string[] = [];
+  const failures: AnalystError[] = [];
+
+  for (const serving of chain) {
+    // Every model this vendor should be asked for. NVIDIA has a ladder; ChatGPT
+    // has the one image model its own setting names.
+    const models = serving === "nvidia" ? await freeLadderFor("image") : [await imageModel()];
+    // A ladder switched off deliberately still leaves the vendor's own model,
+    // exactly as the text path does.
+    const attempts = models.length > 0 ? models : [await nvidiaImageModel()];
+
+    for (const model of attempts) {
+      const startedAt = Date.now();
+      try {
+        const drawn = serving === "nvidia" ? await drawWithNvidia(model, request) : await drawWithOpenAI(model, request);
+        if (drawn.images.length === 0) throw new AttemptFailed(new AnalystError(502, "The image service returned no pictures."), true, "returned nothing usable");
+
+        const rate = await rateForModel(model);
+        const costUsd = costOf(rate, { inputTokens: drawn.inputTokens, outputTokens: drawn.outputTokens });
+        await recordLlmCall({
+          purpose: request.purpose,
+          model,
+          inputTokens: drawn.inputTokens,
+          outputTokens: drawn.outputTokens,
+          costUsd,
+          durationMs: Date.now() - startedAt,
+          ok: true,
+        });
+        return {
+          provider: serving,
+          model,
+          images: drawn.images,
+          costUsd,
+          fallbackNote: tried.length > 0 ? `${tried.join("; ")}, so ${PROVIDERS[serving].name} drew it instead.` : null,
+        };
+      } catch (err) {
+        const failed =
+          err instanceof AttemptFailed
+            ? err
+            : err instanceof ProviderError
+              ? new AttemptFailed(new AnalystError(err.failure.status, err.failure.detail), err.failure.status !== 422, whyFailed(err.failure.status))
+              : new AttemptFailed(new AnalystError(502, `${PROVIDERS[serving].name} failed: ${(err as Error).message}`), true, "failed");
+
+        await recordLlmCall({
+          purpose: request.purpose,
+          model,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          durationMs: Date.now() - startedAt,
+          ok: false,
+          error: failed.error.message,
+        });
+
+        // A vendor that declined the *content* has told us something about the
+        // request, and asking a second model until one says yes is shopping
+        // for a yes. Everything else is worth handing on.
+        if (!failed.failover) throw failed.error;
+        tried.push(`${model} ${failed.why}`);
+        failures.push(failed.error);
+      }
+    }
+  }
+
+  const last = failures.at(-1);
+  throw new AnalystError(
+    last?.status ?? 502,
+    `The picture could not be drawn. ${tried.join("; ")}. Last error: ${last?.message ?? "unknown"}`,
+  );
+}
+
+/** ChatGPT's images API. Costs money and is the floor under the free ones. */
+async function drawWithOpenAI(model: string, request: ImageRequest): Promise<Drawing> {
   const apiKey = await providerKey("openai");
-  if (!apiKey) throw new AnalystError(503, "No ChatGPT key is set. Add one under Settings → AI models.");
+  if (!apiKey) throw new AttemptFailed(new AnalystError(503, "No ChatGPT key is set. Add one under Settings → AI models."), true, "not connected");
 
-  const model = await imageModel();
-  const startedAt = Date.now();
-
-  let body: Record<string, unknown>;
-  try {
-    body = await post(
-      `${base("openai")}/images/generations`,
-      { authorization: `Bearer ${apiKey}` },
-      {
-        model,
-        prompt: request.prompt,
-        n: Math.min(Math.max(request.count ?? 1, 1), 4),
-        size: request.size ?? "1024x1024",
-        ...(request.quality && request.quality !== "auto" ? { quality: request.quality } : {}),
-      },
-      "OpenAI",
-    );
-  } catch (err) {
-    const failure = err instanceof ProviderError ? err.failure : { status: 502, detail: (err as Error).message };
-    await recordLlmCall({
-      purpose: request.purpose,
+  const body = await post(
+    `${base("openai")}/images/generations`,
+    { authorization: `Bearer ${apiKey}` },
+    {
       model,
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
-      durationMs: Date.now() - startedAt,
-      ok: false,
-      error: failure.detail,
-    });
-    throw new AnalystError(failure.status, failure.detail);
-  }
+      prompt: request.prompt,
+      n: Math.min(Math.max(request.count ?? 1, 1), 4),
+      size: request.size ?? "1024x1024",
+      ...(request.quality && request.quality !== "auto" ? { quality: request.quality } : {}),
+    },
+    "OpenAI",
+  );
 
   const data = (body.data as { b64_json?: string; url?: string }[] | undefined) ?? [];
   const usage = (body.usage ?? {}) as { input_tokens?: number; output_tokens?: number };
-  const rate = await rateForModel(model);
-  const costUsd = costOf(rate, { inputTokens: usage.input_tokens ?? 0, outputTokens: usage.output_tokens ?? 0 });
-
-  await recordLlmCall({
-    purpose: request.purpose,
-    model,
+  return {
+    images: data.map((entry) => (entry.b64_json ? `data:image/png;base64,${entry.b64_json}` : (entry.url ?? ""))).filter(Boolean),
     inputTokens: usage.input_tokens ?? 0,
     outputTokens: usage.output_tokens ?? 0,
-    costUsd,
-    durationMs: Date.now() - startedAt,
-    ok: data.length > 0,
-    error: data.length > 0 ? undefined : "The image service returned no pictures.",
-  });
-
-  return {
-    provider: "openai",
-    model,
-    images: data
-      .map((entry) => (entry.b64_json ? `data:image/png;base64,${entry.b64_json}` : (entry.url ?? "")))
-      .filter(Boolean),
-    costUsd,
   };
+}
+
+/**
+ * NVIDIA's free image models, which are Cloud Functions rather than an API.
+ *
+ * Four things about this wire that each cost an experiment to find, and each
+ * of which looks like a working request until you check the picture:
+ *
+ * - **The address is a function id, not a slug.** The documented friendly path
+ *   (`ai.api.nvidia.com/v1/genai/black-forest-labs/…`) either holds the
+ *   connection open indefinitely or answers "Not found for account". The NVCF
+ *   id works. That is why an image model this app does not know is refused
+ *   rather than attempted: on the text wire a slug is the address, and here
+ *   the address is a UUID nobody can guess.
+ * - **`width` and `height` are honoured; `aspect_ratio` is accepted and
+ *   ignored.** `aspect_ratio: "3:2"` returns 200 and a 1024x1024 image, while
+ *   `"16:9"` is a 422 — so the parameter that looks like it works is the one
+ *   that does not. The caller's `size` is translated to width and height, and
+ *   `aspect_ratio` is never sent.
+ * - **Nothing else may be sent.** `steps`, `cfg_scale`, `mode`, `n` and the
+ *   OpenAI-shaped fields are each a 422 whose entire body is "Inference
+ *   error", with no field named. The body is deliberately the smallest one
+ *   that works.
+ * - **One picture per call**, so a caller asking for four gets four calls.
+ *   Capped low, because each is a real request against shared free capacity.
+ *
+ * A queued request answers **202** with an `nvcf-reqid` and is polled. That is
+ * the ordinary path under load rather than an error, and treating it as one
+ * would read as "the free model failed" every time it was busy.
+ */
+async function drawWithNvidia(model: string, request: ImageRequest): Promise<Drawing> {
+  const apiKey = await providerKey("nvidia");
+  if (!apiKey) throw new AttemptFailed(new AnalystError(503, "No NVIDIA key is set. Add one under Settings → AI models — it is where the free image models live."), true, "not connected");
+
+  const url = imageFunctionUrl(model);
+  if (!url) {
+    // Named rather than attempted. See the note above about the address.
+    throw new AttemptFailed(
+      new AnalystError(400, `“${model}” is not an NVIDIA image model this app knows how to reach. Pick one from Settings → AI models → Free AI models → Images.`),
+      true,
+      "has no known endpoint",
+    );
+  }
+
+  const { width, height } = imageSize(request.size);
+  const images: string[] = [];
+  const wanted = Math.min(Math.max(request.count ?? 1, 1), NVIDIA_IMAGE_MAX);
+
+  for (let index = 0; index < wanted; index++) {
+    const artifact = await drawOne(url, apiKey, { prompt: request.prompt, width, height });
+    if (artifact) images.push(artifact);
+  }
+
+  // No token usage on this wire at all, which is correct rather than missing:
+  // there are none, and it is free. `isFreeModel` prices it at zero so the
+  // ledger records a real row for a real call rather than nothing.
+  return { images, inputTokens: 0, outputTokens: 0 };
+}
+
+/** How many pictures one call may ask a free endpoint for, one at a time. */
+const NVIDIA_IMAGE_MAX = 4;
+
+/** How long to wait for a queued NVCF request before giving up on this rung. */
+const NVCF_POLL_ATTEMPTS = 12;
+const NVCF_POLL_MS = 5000;
+
+async function drawOne(url: string, apiKey: string, body: Record<string, unknown>): Promise<string | null> {
+  const headers = {
+    authorization: `Bearer ${apiKey}`,
+    "content-type": "application/json",
+    accept: "application/json",
+    // Asks the gateway to hold the request open rather than queue it, which
+    // turns most calls into a single round trip.
+    "nvcf-poll-seconds": "60",
+  };
+
+  let response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
+
+  // 202 is "queued", not "failed" — the ordinary answer under load.
+  let requestId = response.headers.get("nvcf-reqid");
+  for (let attempt = 0; response.status === 202 && requestId && attempt < NVCF_POLL_ATTEMPTS; attempt++) {
+    await pause(NVCF_POLL_MS);
+    response = await fetch(imageStatusUrl(requestId), { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  }
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new ProviderError({
+      status: response.status,
+      kind: response.status === 401 || response.status === 403 ? "auth" : response.status === 429 ? "rate" : "empty",
+      // The body is "Inference error" and nothing else on a 422 here, so the
+      // sentence has to carry what this app knows that the vendor did not say.
+      detail:
+        response.status === 422
+          ? `NVIDIA could not draw that (422). Its own message is only "Inference error"; on this wire that is usually the prompt being declined rather than anything being broken.`
+          : `NVIDIA returned ${response.status}: ${(extractError(text) ?? text).slice(0, 300)}`,
+      retryAfterMs: retryAfterMs(response),
+    });
+  }
+
+  let payload: { artifacts?: { base64?: unknown; finishReason?: unknown }[] };
+  try {
+    payload = JSON.parse(text) as typeof payload;
+  } catch {
+    throw new ProviderError({ status: 502, kind: "parse", detail: "NVIDIA returned something that was not JSON." });
+  }
+
+  const artifact = payload.artifacts?.[0];
+  // A declined prompt comes back 200 with a finish reason rather than an
+  // error, which would otherwise be read as "the model produced nothing" and
+  // handed to a paid vendor to be declined again.
+  const finish = typeof artifact?.finishReason === "string" ? artifact.finishReason : "SUCCESS";
+  if (finish !== "SUCCESS") {
+    throw new ProviderError({ status: 422, kind: "refusal", detail: `NVIDIA declined to draw this (${finish}). Rephrase the prompt.` });
+  }
+  if (typeof artifact?.base64 !== "string" || !artifact.base64) return null;
+  // JPEG, not PNG — the prefix has to match the bytes or every browser shows a
+  // broken image for a picture that arrived perfectly well.
+  return `data:image/jpeg;base64,${artifact.base64}`;
+}
+
+/**
+ * The caller's `size` as the two numbers this wire wants.
+ *
+ * `auto` and anything unparseable become a square, which is what every caller
+ * in this app asks for anyway. Clamped to what the model will accept: it
+ * refuses sizes it does not like with the same unhelpful 422 as everything
+ * else, so the clamp is what stops a caller's typo reading as a dead endpoint.
+ */
+function imageSize(size: string | undefined): { width: number; height: number } {
+  const match = /^(\d{3,4})x(\d{3,4})$/.exec((size ?? "").trim());
+  if (!match) return { width: 1024, height: 1024 };
+  const clamp = (value: number) => Math.min(Math.max(Math.round(value / 64) * 64, 512), 1536);
+  return { width: clamp(Number(match[1])), height: clamp(Number(match[2])) };
 }
 
 // --- Verifying a key --------------------------------------------------------

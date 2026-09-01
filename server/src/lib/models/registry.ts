@@ -169,12 +169,22 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     job: "image",
     name: "Images",
     phrase: "images",
-    blurb: "Pictures for ads, social posts and mock-ups.",
-    defaultProvider: "openai",
-    // Itself, because it is the only vendor here that draws. `standInsFor`
-    // filters candidates by what they declare, so naming anybody else would
-    // be filtered out anyway — saying it plainly beats a line that reads like
-    // a fallback exists when none does.
+    blurb: "Pictures for ads, social posts and mock-ups. Drawn free on NVIDIA, with ChatGPT behind it.",
+    // **Free first, like every other job**, as of 1 Sep 2026. It was ChatGPT
+    // and only ChatGPT, with a comment explaining that naming anybody else
+    // would be a fallback that does not exist — which was true, and was a fact
+    // about this app rather than about the world: `generateImage` spoke one
+    // vendor's images API and refused everything else outright. So the one job
+    // in the system that costs real money per call was also the one job with
+    // no alternative and no chain, and a missing ChatGPT key meant no pictures
+    // at all rather than free ones.
+    defaultProvider: "nvidia",
+    // A real fallback now, and the reason the chain matters here more than
+    // anywhere else: a free image endpoint is the least reliable thing in the
+    // system — three of the four in `IMAGE_MODELS` would not serve at all when
+    // this was written — and the work behind a picture (an ad concept, a
+    // mock-up somebody is waiting on) is worth paying for when free capacity
+    // is short.
     fallback: "openai",
   },
   html: {
@@ -428,6 +438,129 @@ export function isNvidiaModel(id: string): boolean {
   return FREE_BY_ID.has(id);
 }
 
+// --- The free image models --------------------------------------------------
+
+/**
+ * One free NVIDIA image model, and what it is actually called at.
+ *
+ * These are **not** in `FREE_MODELS` and must not be: they live on a different
+ * host, speak a different wire, and cannot serve a single one of the text jobs.
+ * Putting them in one list would let somebody pick FLUX for the `triage` job
+ * from a dropdown, which is exactly the kind of route that looks saved and
+ * never once serves.
+ *
+ * **Addressed by function id, not by slug.** NVIDIA serves these through Cloud
+ * Functions (`/v2/nvcf/pexec/functions/<id>`) rather than through the
+ * OpenAI-shaped catalogue, and the friendly path on `ai.api.nvidia.com` either
+ * hangs or 404s "Not found for account". The id is what actually works, so the
+ * id is what is written down; `id` here is a name for people.
+ */
+export interface ImageModel {
+  /** What the Owner picks and what is stored. */
+  id: string;
+  /** What it is called on screen. */
+  name: string;
+  /** Who built it. */
+  house: string;
+  /** What it is for, in one line. */
+  blurb: string;
+  /** The NVCF function this actually invokes. */
+  functionId: string;
+  /** When this was last proved against the endpoint. */
+  checked: string;
+  /** Set when the endpoint would not serve, with what it said. */
+  down?: string;
+}
+
+/**
+ * Every free NVIDIA image model this app has verified.
+ *
+ * One of the four serves today. The other three are listed as ACTIVE functions
+ * on the account and answer **504** or hang — which is capacity rather than a
+ * dead slug, and is exactly why they are kept here rather than deleted: the
+ * Owner can put one back in the ladder from the Settings screen the moment it
+ * starts serving again. None of them is in the shipped ladder.
+ */
+export const IMAGE_MODELS: ImageModel[] = [
+  {
+    id: "black-forest-labs/flux.2-klein-4b",
+    name: "FLUX.2 Klein 4B",
+    house: "Black Forest Labs",
+    blurb: "Fast text-to-image. Returns a 1024px JPEG in a few seconds, and honours width and height.",
+    functionId: "f67e96d8-1c4e-422e-a913-90f00e19aa9a",
+    checked: "2026-09-01",
+  },
+  {
+    id: "black-forest-labs/flux.1-schnell",
+    name: "FLUX.1 Schnell",
+    house: "Black Forest Labs",
+    blurb: "The fast FLUX.1 variant, built for few-step generation.",
+    functionId: "105fe02c-924b-4dfa-9797-92d89c3936ad",
+    checked: "2026-09-01",
+    down: "504 Gateway Timeout after a minute, twice. The function is ACTIVE on the account, so this is capacity rather than a retired model — worth trying again another day.",
+  },
+  {
+    id: "black-forest-labs/flux.1-dev",
+    name: "FLUX.1 Dev",
+    house: "Black Forest Labs",
+    blurb: "The higher-quality, slower FLUX.1 variant.",
+    functionId: "0c474133-6fd2-42f6-be29-8ebbbaeaaeb2",
+    checked: "2026-09-01",
+    down: "504 Gateway Timeout after a minute. Same capacity story as Schnell.",
+  },
+  {
+    id: "nvidia/cosmos3-super-text2image",
+    name: "Cosmos 3 Super",
+    house: "NVIDIA",
+    blurb: "NVIDIA's own text-to-image model.",
+    functionId: "f65a2585-3b67-46ce-a431-af764d93e954",
+    checked: "2026-09-01",
+    down: "Never answered — held the connection open past three minutes. The expensive failure shape, so it is kept out of the shipped ladder.",
+  },
+];
+
+export const IMAGE_MODEL_IDS = IMAGE_MODELS.map((model) => model.id);
+
+const IMAGE_BY_ID = new Map(IMAGE_MODELS.map((model) => [model.id, model]));
+
+/** What this app knows about a free image model, or null for one it has never checked. */
+export function imageModelInfo(id: string): ImageModel | null {
+  return IMAGE_BY_ID.get(id) ?? null;
+}
+
+/**
+ * Where a free image model is invoked.
+ *
+ * Null for an id this app has not got a function for — which is the whole
+ * reason a typed id cannot be honoured here the way a typed chat model can.
+ * On the text wire a slug is the address; here the address is a UUID nobody
+ * can guess, so an unknown image model is refused rather than attempted.
+ */
+export function imageFunctionUrl(id: string): string | null {
+  const model = IMAGE_BY_ID.get(id);
+  if (!model) return null;
+  return `${nvcfBase()}/v2/nvcf/pexec/functions/${model.functionId}`;
+}
+
+/** Where a queued NVCF request is polled. */
+export function imageStatusUrl(requestId: string): string {
+  return `${nvcfBase()}/v2/nvcf/pexec/status/${requestId}`;
+}
+
+/**
+ * NVIDIA Cloud Functions, which is a **different host** from the chat wire.
+ *
+ * `integrate.api.nvidia.com` serves the OpenAI-shaped catalogue and knows
+ * nothing about these; `ai.api.nvidia.com/v1/genai/...` is the documented
+ * friendly path and either hangs or answers "Not found for account" here. So
+ * this is its own base with its own override, rather than a path under
+ * `vendorBase("nvidia")` — one function, read per call, for the same reason
+ * `vendorBase` is one function.
+ */
+export function nvcfBase(): string {
+  return (process.env.NVCF_BASE_URL || "https://api.nvcf.nvidia.com").replace(/\/$/, "");
+}
+
 export interface ProviderDefinition {
   key: ProviderKey;
   /** What the Owner calls it. "ChatGPT", not "OpenAI's chat completions API". */
@@ -570,12 +703,14 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     economyModel: "openai/gpt-oss-20b",
     console: "https://build.nvidia.com/settings/api-keys",
     keyHint: "nvapi-…",
-    // Every job except `image`. Drawing a picture goes through an images API
-    // this app only wires up for ChatGPT (`generateImage` refuses anything
-    // else), so listing `image` here would put a route in the dropdown that
-    // looks saved and never once serves. NVIDIA does host image models; none
-    // of them is on this wire.
-    jobs: ["text", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
+    // **Every job, `image` included as of 1 Sep 2026.** It was excluded on the
+    // true-at-the-time reasoning that `generateImage` only spoke OpenAI's
+    // images API, so listing it would put a route in the dropdown that looks
+    // saved and never once serves. That is still the rule; what changed is
+    // that the app now speaks a second image wire. NVIDIA's image models are
+    // not on this vendor's chat host at all — they are Cloud Functions on
+    // `api.nvcf.nvidia.com`, addressed by function id. See `IMAGE_MODELS`.
+    jobs: ["text", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision"],
     // The dropdown offers what this app has actually verified against the
     // endpoint, which is a narrower list than NVIDIA's catalogue on purpose —
     // see `FREE_MODELS`. Anything else can still be typed.
@@ -817,10 +952,18 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // exactly this.
   triage: ["openai/gpt-oss-20b", "google/diffusiongemma-26b-a4b-it", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 
-  // Not on this vendor at all: drawing a picture goes through an images API
-  // `generateImage` only wires up for ChatGPT. Empty rather than absent, so
-  // that a screen listing the ladders shows the job and says so.
-  image: [],
+  // **One rung, not three, and that is the honest number.** Four free image
+  // models are listed as ACTIVE on the account and exactly one of them serves;
+  // the other three answer 504 or hold the connection open past three minutes.
+  // A ladder padded out to three with endpoints known not to serve is two
+  // wasted attempts and a minute of somebody waiting before the paid vendor is
+  // asked. They are in `IMAGE_MODELS` and one click away on the Settings
+  // screen for the day they come back.
+  //
+  // Note these are **image** model ids, from `IMAGE_MODELS` — not the chat
+  // catalogue. The two lists never mix: a rung here is a Cloud Function on a
+  // different host, and it cannot serve a single one of the text jobs.
+  image: ["black-forest-labs/flux.2-klein-4b"],
 
   // A complete page is a coding job. Kimi K3 is built for long-horizon coding,
   // Nemotron Super for coding and planning, and GPT-OSS 120B reasons its way
@@ -989,6 +1132,10 @@ export async function freeLadderSource(key: LadderKey): Promise<LadderSource> {
  */
 export async function isFreeModel(model: string): Promise<boolean> {
   if (isNvidiaModel(model)) return true;
+  // The image catalogue is a separate list on a separate host, and it is just
+  // as free. Left out, every picture drawn on NVIDIA would be recorded at the
+  // unknown-model floor rate.
+  if (imageModelInfo(model)) return true;
   const stored = await readFreeLadders();
   for (const key of LADDER_KEYS) {
     const ladder = stored[key] ?? FREE_LADDER_BY_JOB[key];
@@ -1082,7 +1229,20 @@ export function vendorBase(vendor: Exclude<ProviderKey, "anthropic">): string {
   return fromEnv?.replace(/\/$/, "") || fallback;
 }
 
-/** The image model, which is a different model from the same vendor. */
+/**
+ * NVIDIA's image model when the `image` ladder has been switched off.
+ *
+ * The same shape as `openRouterAttempts` returning the vendor's own model with
+ * no ladder: turning free models off for a job must leave that vendor usable
+ * rather than unreachable. There is no per-vendor setting behind this because
+ * there is nothing to choose between — the one image model that serves is the
+ * one the shipped ladder names.
+ */
+export async function nvidiaImageModel(): Promise<string> {
+  return FREE_LADDER_BY_JOB.image[0] ?? IMAGE_MODEL_IDS[0]!;
+}
+
+/** The ChatGPT image model, which is a different model from the same vendor. */
 export async function imageModel(): Promise<string> {
   const configured = (await getSetting(SETTING.OPENAI_IMAGE_MODEL))?.trim();
   return configured || "gpt-image-1.5";
@@ -1392,6 +1552,15 @@ export const PROVIDER_PRICING: Record<string, ModelRate> = {
   "meta/llama-3.2-90b-vision-instruct": { inputPerMTok: 0, outputPerMTok: 0 },
   "google/gemma-4-31b-it": { inputPerMTok: 0, outputPerMTok: 0 },
   "mistralai/mistral-nemotron": { inputPerMTok: 0, outputPerMTok: 0 },
+
+  // The free image models. Zero for the same reason and with the same danger:
+  // an unpriced model is charged at the floor rate, and an image call reports
+  // no token usage at all, so a picture drawn for nothing would be recorded at
+  // whatever the dearest known rate makes of zero tokens.
+  "black-forest-labs/flux.2-klein-4b": { inputPerMTok: 0, outputPerMTok: 0 },
+  "black-forest-labs/flux.1-schnell": { inputPerMTok: 0, outputPerMTok: 0 },
+  "black-forest-labs/flux.1-dev": { inputPerMTok: 0, outputPerMTok: 0 },
+  "nvidia/cosmos3-super-text2image": { inputPerMTok: 0, outputPerMTok: 0 },
 };
 
 /**

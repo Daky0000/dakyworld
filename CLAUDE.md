@@ -261,6 +261,49 @@ now **one** function, `vendorBase()` in `registry.ts`, imported by both halves:
 two correct copies of the same fact are one copy away from two different facts,
 and this pair has already been there once.
 
+**Images route like everything else now, and used to be the one job that did
+not** (1 Sep 2026). `generateImage` spoke OpenAI's `/images/generations` and
+refused every other vendor outright, so the routing had to name ChatGPT and
+only ChatGPT -- correct at the time, because a route that never serves is worse
+than no route. The consequence was that the one job costing real money on every
+single call was also the one with no free option and no fallback: no ChatGPT
+key meant no pictures at all, and a rate-limited ChatGPT lost the ad concept
+with nothing else to ask.
+
+There are two wires now. `drawWithNvidia()` is free and first;
+`drawWithOpenAI()` is the floor. Four things about NVIDIA's image wire, each of
+which looks like a working request until you open the picture:
+
+- **They are Cloud Functions, not an API.** `api.nvcf.nvidia.com/v2/nvcf/pexec/
+  functions/<uuid>` -- the documented friendly path on `ai.api.nvidia.com`
+  either hangs or answers "Not found for account", and the OpenAI-shaped
+  catalogue does not list them at all. So `IMAGE_MODELS` is a **second
+  catalogue**, deliberately not merged into `FREE_MODELS`: one dropdown holding
+  both is how somebody picks FLUX for reading the post. `checks/freeModels.ts`
+  asserts they do not overlap.
+- **An unknown image model is refused rather than attempted.** On the text wire
+  a slug is the address; here the address is a UUID nobody can guess.
+- **`width`/`height` are honoured and `aspect_ratio` is accepted and ignored.**
+  `aspect_ratio: "3:2"` returns 200 and a 1024x1024 image; `"16:9"` is a 422.
+  The parameter that looks like it works is the one that does not, so the
+  caller's `size` becomes width and height and `aspect_ratio` is never sent.
+  Anything else -- `steps`, `cfg_scale`, `mode`, `n` -- is a 422 whose entire
+  body is "Inference error", naming no field.
+- **202 is queued, not failed**, and is polled on `nvcf-reqid`. Treating it as
+  an error would read as "the free model failed" every time it was busy. And a
+  declined prompt comes back **200** with a `finishReason` that is not
+  `SUCCESS`, which is turned into a 422 here -- otherwise it reads as "produced
+  nothing" and is handed to a paid vendor to be declined again.
+- **The bytes are JPEG.** A `data:image/png` prefix on them is a broken image
+  in every browser for a picture that arrived perfectly well.
+
+One of the four models serves; the other three are ACTIVE on the account and
+answer 504 or hang, so the shipped ladder is **one rung, not three** -- padding
+it out with endpoints known not to serve is two wasted attempts and a minute of
+somebody waiting before the paid vendor is asked. `tmp/nvidiaImage.ts` writes
+what comes back to a file, because a base64 string of the right length is not
+evidence that anything was drawn.
+
 **The chain is not decoration — a two-step fallback had a hole in it.** `vision`
 is routed to ChatGPT and fell back to Claude only, so a deployment holding a
 Gemini key and nothing else had *no model at all* for looking at a page: the

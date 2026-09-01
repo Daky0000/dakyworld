@@ -307,7 +307,7 @@ async function main() {
   const { prisma } = await import("../src/lib/prisma.js");
   const { clearSettingsCache, SETTING, setSetting } = await import("../src/lib/settings.js");
   const { callModel } = await import("../src/lib/models/call.js");
-  const { FREE_LADDER_BY_JOB, FREE_MODELS, freeLadderFor, freeLadderSource, isFreeModel, FREE_LADDER_MAX, PAID_AGENT_CHAIN } = await import("../src/lib/models/registry.js");
+  const { FREE_LADDER_BY_JOB, FREE_MODELS, IMAGE_MODELS, freeLadderFor, freeLadderSource, isFreeModel, FREE_LADDER_MAX, PAID_AGENT_CHAIN } = await import("../src/lib/models/registry.js");
 
   // The ladders are stored per job now, so a scenario that wants "these three
   // rungs" has to say which job. Both halves of the model layer are driven
@@ -410,22 +410,37 @@ async function main() {
   // `created` and `owned_by` and nothing else. Membership of `FREE_MODELS` —
   // where every flag was proved against the endpoint on a recorded date — is
   // the only guarantee there is, which is exactly why it is asserted here.
+  //
+  // **Two catalogues, and the `image` job reads the other one.** Image models
+  // are Cloud Functions on a different host, addressed by function id; they
+  // cannot serve a single text job and no text model can draw. Checking the
+  // image ladder against the chat catalogue is how a correct ladder gets
+  // reported as three retired models.
   const known = new Set(FREE_MODELS.map((model) => model.id));
+  const knownImages = new Set(IMAGE_MODELS.map((model) => model.id));
   for (const [job, rungs] of Object.entries(FREE_LADDER_BY_JOB)) {
+    const catalogue = job === "image" ? knownImages : known;
     check(
       `every shipped rung for ${job} is a model this app has verified`,
-      rungs.every((id) => known.has(id)),
-      rungs.filter((id) => !known.has(id)).join(", ") || "all known",
+      rungs.every((id) => catalogue.has(id)),
+      rungs.filter((id) => !catalogue.has(id)).join(", ") || "all known",
     );
   }
-  const priced = await Promise.all(FREE_MODELS.map((model) => isFreeModel(model.id)));
-  check("and every verified model is priced at zero", priced.every(Boolean));
+  // Neither list may leak into the other. A text model in the image ladder is
+  // a picture nobody can draw; an image model in a text ladder is a 422 on
+  // every call, and both look like a configuration that saved perfectly well.
+  check(
+    "the two catalogues do not overlap",
+    IMAGE_MODELS.every((model) => !known.has(model.id)) && FREE_MODELS.every((model) => !knownImages.has(model.id)),
+  );
+  const priced = await Promise.all([...FREE_MODELS, ...IMAGE_MODELS].map((model) => isFreeModel(model.id)));
+  check("and every verified model is priced at zero, pictures included", priced.every(Boolean));
 
   // 10. **Nothing that is known not to serve is in a shipped ladder.** Two
   // models in the catalogue would not answer when this app last checked, and a
   // first rung that times out costs every call sixty seconds before anything
   // useful happens — which is worse than not having it at all.
-  const down = new Set(FREE_MODELS.filter((model) => model.down).map((model) => model.id));
+  const down = new Set([...FREE_MODELS, ...IMAGE_MODELS].filter((model) => model.down).map((model) => model.id));
   check(
     "no shipped ladder starts on a model that would not serve",
     Object.values(FREE_LADDER_BY_JOB).every((rungs) => rungs.every((id) => !down.has(id))),

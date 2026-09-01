@@ -28,6 +28,7 @@ import {
   PROVIDER_KEYS,
   describeProviders,
   describeRouting,
+  IMAGE_MODELS,
   LADDER_KEYS,
   freeLadderFor,
   freeLadderSource,
@@ -969,16 +970,30 @@ settingsRouter.get("/models/nvidia/free", async (_req, res, next) => {
         // same whether they are ours or the Owner's, and an empty ladder reads
         // as unconfigured when it means switched off.
         source: await freeLadderSource(key),
-        stale: byId
-          ? ladder
-              .map((id) => {
-                const found = byId.get(id);
-                if (!found) return { id, why: "NVIDIA no longer lists this model." };
-                if (found.down) return { id, why: found.down };
-                return null;
-              })
-              .filter((entry): entry is { id: string; why: string } => entry !== null)
-          : [],
+        // Images are checked against their own catalogue. Checked against the
+        // chat one they would every single one read as "NVIDIA no longer lists
+        // this model", which is the most alarming possible way to say that two
+        // lists are different lists.
+        stale:
+          key === "image"
+            ? ladder
+                .map((id) => {
+                  const found = IMAGE_MODELS.find((model) => model.id === id);
+                  if (!found) return { id, why: "This app has no endpoint for that image model — pick one from the list." };
+                  if (found.down) return { id, why: found.down };
+                  return null;
+                })
+                .filter((entry): entry is { id: string; why: string } => entry !== null)
+            : byId
+              ? ladder
+                  .map((id) => {
+                    const found = byId.get(id);
+                    if (!found) return { id, why: "NVIDIA no longer lists this model." };
+                    if (found.down) return { id, why: found.down };
+                    return null;
+                  })
+                  .filter((entry): entry is { id: string; why: string } => entry !== null)
+              : [],
       };
     };
 
@@ -988,6 +1003,7 @@ settingsRouter.get("/models/nvidia/free", async (_req, res, next) => {
         cooldown,
         max: FREE_LADDER_MAX,
         models: [],
+        imageModels: IMAGE_MODELS,
         ladders: await Promise.all(LADDER_KEYS.map((key) => ladderFor(key, null))),
         note: "Connect an NVIDIA key first — whether a model is still listed is read from your own account. The ladders below are the shipped ones and are what will be used until then.",
       });
@@ -1008,6 +1024,11 @@ settingsRouter.get("/models/nvidia/free", async (_req, res, next) => {
       // id of, because the capability columns beside it are the reason to pick
       // one row over another.
       models,
+      // A separate list, because they are separate models on a separate host
+      // and neither can do the other's job. NVIDIA's chat catalogue does not
+      // list them at all — they are Cloud Functions — so this is what this app
+      // has verified rather than what the account returns.
+      imageModels: IMAGE_MODELS,
       ladders: await Promise.all(LADDER_KEYS.map((key) => ladderFor(key, byId))),
     });
   } catch (err) {
@@ -1087,6 +1108,31 @@ settingsRouter.put("/models/nvidia/free", async (req, res, next) => {
 
     const apiKey = await providerKey("nvidia");
     if (!apiKey) return res.status(400).json({ error: "Connect an NVIDIA key first — a model can only be checked against your own account." });
+
+    // Images are their own catalogue, and an id outside it has no address at
+    // all: these are Cloud Functions, and the endpoint is a UUID this app
+    // holds rather than a slug anybody can type. So this one is refused rather
+    // than saved with a warning — unlike a chat model, there is nothing to try.
+    if (job === "image") {
+      for (const id of wanted) {
+        const found = IMAGE_MODELS.find((model) => model.id === id);
+        if (!found) {
+          return res.status(400).json({ error: `“${id}” is not an image model this app can reach. Pick one from the list — NVIDIA serves these as Cloud Functions, so the endpoint has to be one this app already holds.` });
+        }
+      }
+      stored[job] = wanted;
+      await writeLadders(stored);
+      const notServing = wanted.filter((id) => IMAGE_MODELS.find((model) => model.id === id)?.down);
+      return res.json({
+        job,
+        ladder: wanted,
+        source: await freeLadderSource(job),
+        note:
+          notServing.length > 0
+            ? `Saved. ${notServing.join(", ")} would not serve when this app last checked, so ${notServing.length === 1 ? "that rung" : "those rungs"} may cost a wasted attempt before the next one is asked.`
+            : "Saved. Pictures are drawn free on NVIDIA, and ChatGPT draws anything all of these refuse.",
+      });
+    }
 
     const models = await listNvidiaModels(apiKey);
     const byId = new Map(models.map((model) => [model.id, model]));

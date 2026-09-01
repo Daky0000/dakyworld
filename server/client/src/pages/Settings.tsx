@@ -1403,11 +1403,27 @@ interface JobLadder {
   stale: Array<{ id: string; why: string }>;
 }
 
+interface ImageModelRow {
+  id: string;
+  name: string;
+  house: string;
+  blurb: string;
+  /** Set when this app probed the endpoint and it would not serve. */
+  down: string | null;
+}
+
 interface FreeLadderReport {
   connected: boolean;
   cooldown: { cooling: boolean; until: string | null };
   max: number;
   models: FreeModelRow[];
+  /**
+   * The free image models, which are a separate catalogue on a separate host.
+   *
+   * Not merged into `models`: neither list can do the other's job, and one
+   * dropdown holding both is how somebody picks FLUX for reading the post.
+   */
+  imageModels: ImageModelRow[];
   ladders: JobLadder[];
   note?: string | null;
 }
@@ -1440,14 +1456,31 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
 
   const ladders = report.data?.ladders ?? [];
   const max = report.data?.max ?? 3;
-  const models = report.data?.models ?? [];
-  const byId = new Map(models.map((model) => [model.id, model]));
+  const chatModels = report.data?.models ?? [];
+  // Images are drawn by a different set of models on a different host, so the
+  // picker changes with the job rather than showing one list that is wrong for
+  // one of the rows.
+  const imageModels: FreeModelRow[] = (report.data?.imageModels ?? []).map((model) => ({
+    id: model.id,
+    name: model.name,
+    house: model.house,
+    blurb: model.blurb,
+    listed: true,
+    free: true,
+    tools: false,
+    vision: false,
+    schema: null,
+    down: model.down,
+    known: true,
+  }));
+  const byId = new Map([...chatModels, ...imageModels].map((model) => [model.id, model]));
 
   // Which job is being edited. Defaults to the loop that runs the workforce,
   // because it is the one that runs most often and the one somebody opening
   // this panel is usually here about.
   const [job, setJob] = useState<string>("agent");
   const current = ladders.find((entry) => entry.key === job) ?? null;
+  const models = job === "image" ? imageModels : chatModels;
 
   // The edit in progress, or null when what is shown is what is saved. Reset
   // on every job change, because carrying a half-made edit from one job's
@@ -1483,9 +1516,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
   };
 
   const source = current?.source ?? "shipped";
-  // `image` is the one job with nothing to pick: drawing a picture goes
-  // through an images API that only ChatGPT is wired up for.
-  const servable = current !== null && (current.ladder.length > 0 || source !== "shipped" || job !== "image");
+  const servable = current !== null;
   const onShipped = ladders.filter((entry) => entry.source === "shipped").length;
 
   return (
@@ -1655,10 +1686,16 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
                       every flag here was proved against the endpoint. */}
                   <span className="flex shrink-0 flex-wrap justify-end gap-1">
                     {model.down && <Badge tone="muted">not serving</Badge>}
-                    {!model.known && <Badge tone="muted">unchecked</Badge>}
-                    {model.vision && <Badge tone="positive">sees images</Badge>}
-                    {model.known && (model.tools ? <Badge tone="positive">tools</Badge> : <Badge tone="muted">no tools</Badge>)}
-                    {model.known && model.schema !== "enforced" && <Badge tone="muted">loose schema</Badge>}
+                    {job === "image" ? (
+                      <Badge tone="positive">draws</Badge>
+                    ) : (
+                      <>
+                        {!model.known && <Badge tone="muted">unchecked</Badge>}
+                        {model.vision && <Badge tone="positive">sees images</Badge>}
+                        {model.known && (model.tools ? <Badge tone="positive">tools</Badge> : <Badge tone="muted">no tools</Badge>)}
+                        {model.known && model.schema !== "enforced" && <Badge tone="muted">loose schema</Badge>}
+                      </>
+                    )}
                   </span>
                 </button>
               );
