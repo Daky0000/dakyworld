@@ -562,7 +562,7 @@ export function likelyToolsLine(likely: GrantedTools["likely"]): string {
  * ranking the tools never costs the agent one. A test of `likelyTools()` alone
  * would go on passing after somebody made the ranking filter.
  */
-export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters): Promise<GrantedTools> {
+export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters, consultLimit?: number): Promise<GrantedTools> {
   const catalogue = await listAllTools();
   const granted = catalogue.filter((tool) => agent.toolkit.includes(tool.key));
 
@@ -706,7 +706,7 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
   }
 
   return {
-    tools: [...tools, ...workflowTools(agent, task, counters)],
+    tools: [...tools, ...workflowTools(agent, task, counters, consultLimit)],
     // Ranked over the catalogue entries rather than the wrapped `tools`: the
     // wrapper renames every key for the API (`lead.read` becomes `lead__read`)
     // and folds the purpose into a longer description, and scoring that text
@@ -842,7 +842,68 @@ async function priorConsult(taskId: string, colleagueKey: string, question: stri
   return null;
 }
 
-export function workflowTools(agent: Agent, task: AgentTask, counters: Counters): AgentTool[] {
+/**
+ * Which of the workflow tools this agent could actually use, on this task, now.
+ *
+ * The nine tools every agent carries — escalate, remember, the two history
+ * ones, delegate and the four collaboration ones — cost about 2,100 tokens of
+ * schema. The agent's *own* granted tools average 711. So on a typical turn the
+ * scaffolding for working with colleagues is three times the weight of the job,
+ * and a good part of it is provably unusable before the turn begins:
+ *
+ * - `addToHistory` and `readHistory` both refuse outright when the task is not
+ *   about a lead, a client or a project — there is no company to have a history.
+ * - `consult` refuses once the task's allowance is spent.
+ * - `handOff` refuses once `MAX_HANDOFFS` are gone.
+ *
+ * Sending a tool whose only possible answer is "no" costs its schema on every
+ * turn and buys a refusal. So it is not sent, and the prompt does not mention
+ * it — which is the half that matters, because a prompt naming a tool that is
+ * not there spends a whole turn on a call that cannot resolve, and that costs
+ * far more than the schema ever saved.
+ *
+ * **Read once, at the start of the run, and stable for the whole of it.**
+ * `toolsFor` is called once per claim, before the loop, so the tool list does
+ * not change under a conversation — which is what keeps the prompt cache's
+ * breakpoint on the last tool definition valid from the first turn to the last.
+ * A resumed run recomputes it from the restored counters, which is exactly when
+ * the saving is largest: a task that has already spent its consults and its
+ * hand-offs carries neither for the rest of its life.
+ *
+ * Everything omitted here is omitted because the tool itself would refuse. This
+ * never removes a capability an agent has.
+ */
+export interface WorkflowAvailability {
+  /** `addToHistory` and `readHistory`: is there a company to have a history? */
+  history: boolean;
+  consult: boolean;
+  handOff: boolean;
+  /** A specialist has nobody under it, so delegation would only ever fail. */
+  delegate: boolean;
+}
+
+/** Everything on. What the Agents screen shows, and the default where no task is in hand. */
+export const ALL_WORKFLOW: WorkflowAvailability = { history: true, consult: true, handOff: true, delegate: true };
+
+export function workflowAvailability(
+  agent: Pick<Agent, "tier">,
+  task: Pick<AgentTask, "leadId" | "clientId" | "projectId" | "proposalId" | "invoiceId">,
+  counters: Counters,
+  consultLimit?: number,
+): WorkflowAvailability {
+  return {
+    history: taskSubjects(task).length > 0,
+    // Undefined means the caller could not work the ceiling out — a sync caller,
+    // or a check. Keeping the tool is the safe direction: the worst case is the
+    // schema this was trying to save, and the alternative is an agent silently
+    // unable to ask anybody anything.
+    consult: consultLimit === undefined || remainingConsults(counters, consultLimit).total > 0,
+    handOff: counters.handedOff < MAX_HANDOFFS,
+    delegate: agent.tier !== "SUB_AGENT",
+  };
+}
+
+export function workflowTools(agent: Agent, task: AgentTask, counters: Counters, consultLimit?: number): AgentTool[] {
   const escalate: AgentTool = {
     name: "escalate",
     description:
@@ -1334,13 +1395,20 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters)
     },
   };
 
-  // A specialist has nobody under it, so delegation would only ever fail.
-  // Everything else here is for every agent: an agent that cannot look for a
-  // colleague, ask one, or say that nobody exists is an agent that guesses.
-  const hasReports = agent.tier !== "SUB_AGENT";
-  const collaboration = [findAgentTool, consult, handOff, needSkill];
-  const always = [escalate, rememberTool, noteTool, historyTool];
-  return hasReports ? [...always, delegate, ...collaboration] : [...always, ...collaboration];
+  // `findAgent` and `needSkill` are on every turn of every task and are never
+  // pruned: an agent that cannot *look* for a colleague reports a gap for a
+  // craft that has been on the roster since March, and `needSkill` is the only
+  // road to the Agent Creator. Both are cheap. What is pruned is only ever a
+  // tool that would refuse — see `workflowAvailability`.
+  const can = workflowAvailability(agent, task, counters, consultLimit);
+  const tools: AgentTool[] = [escalate, rememberTool];
+  if (can.history) tools.push(noteTool, historyTool);
+  if (can.delegate) tools.push(delegate);
+  tools.push(findAgentTool);
+  if (can.consult) tools.push(consult);
+  if (can.handOff) tools.push(handOff);
+  tools.push(needSkill);
+  return tools;
 }
 
 /**
@@ -1470,6 +1538,58 @@ const METHOD = `How you work, whatever the task is. Four passes, in this order, 
 3. **Produce.** One finished thing, of the kind named under "What you produce" below. Finished means somebody could use it as it stands — not an outline of it, not a description of what it would contain.
 4. **Verify.** Read back what you produced against the record: every figure to its source, every name as the record spells it, every claim to the thing that supports it. Then say, in one line, which part of it you are least sure of. That line is worth more to the person reading than another paragraph of the work itself.`;
 
+/**
+ * The two paragraphs about the company's own record, which only mean anything
+ * when there is a company.
+ *
+ * Kept as a constant rather than inlined so that the tools and the prompt are
+ * dropped by the same condition, in the same place, and cannot drift apart.
+ */
+const HISTORY_ETIQUETTE = `- **What happened and what you concluded are two different records, and they are not interchangeable.** \`addToHistory\` is the company's own account of a client — a call and what was agreed, a decision and why, what came of something we did — and every agent that opens them next reads it as evidence. \`remember\` is your own conclusion, and the record can overrule it. Writing an opinion into the history dresses it up as a fact for somebody who was not there; writing an event into your memory keeps it from the colleague who needs it.
+- The brief carries the headlines of that history. \`readHistory\` gets you the rest — the wording of what was actually sent, what they said back, anything older. Read it before writing to somebody we have written to before.
+`;
+
+/**
+ * The routing ladder, numbered over the steps this agent can actually take.
+ *
+ * The numbering is rebuilt rather than having gaps punched in it. "Stop at the
+ * first step that answers" is an instruction about an ordered list, and a list
+ * that runs 1, 2, 4 invites a model to wonder what 3 was and to try to reach
+ * it — which is a turn spent on a tool that is not there.
+ *
+ * `findAgent` is always first and `needSkill` always last, because those two
+ * are never pruned: looking is free and is what stops an agent reporting a gap
+ * for a craft the roster already has, and `needSkill` is the only road to the
+ * Agent Creator.
+ */
+function routingSteps(can: WorkflowAvailability): string {
+  const steps: string[] = [
+    "`findAgent` — look for somebody whose craft this is. Do this *before* attempting anything outside your own job, not after producing something you are unsure of.",
+  ];
+  if (can.consult) {
+    steps.push(
+      "`consult` — you keep the work and want their judgement on one question inside their craft. They answer from their own instructions and their own memory of this client, so ask them the thing only they would know. Their answer is an opinion, not a checked fact: where it contradicts the record in front of you, the record wins and you say so.",
+    );
+  }
+  if (can.handOff && can.delegate) {
+    steps.push(
+      `\`handOff\` (or \`delegate\`, if they report to you) — the work itself is theirs. Write the brief as if to somebody who was not here, because they were not. **Down the chart before sideways across it.** You may delegate to your own reports as often as the work needs; you get ${MAX_HANDOFFS} hand-offs on a whole task and no more. So when \`findAgent\` says a match sits under one of your reports, delegate to that report and let them route it — handing sideways to the specialist yourself spends a hand-off, skips the person who owns that lane, and leaves you with one move left for everything else the task still needs.`,
+    );
+  } else if (can.handOff) {
+    steps.push(
+      `\`handOff\` — the work itself is theirs rather than yours. It goes sideways across the chart, so write the brief as if to somebody who was not here, because they were not, and say why it is their craft. You get ${MAX_HANDOFFS} of these on a whole task and no more.`,
+    );
+  } else if (can.delegate) {
+    steps.push(
+      "`delegate` — the work itself is one of your reports'. Write the brief as if to somebody who was not here, because they were not. You may delegate as often as the work needs. You have no hand-offs left, so anything that belongs to an agent outside your own chart is now an escalation rather than a move you can make.",
+    );
+  }
+  steps.push(
+    "`needSkill` — only when `findAgent` found nobody. It records that Dakyworld has no such craft; the Agent Creator reads it and a person decides whether to employ somebody. It is not a way to put down work that is actually yours, and a gap raised for something a colleague already does is worse than useless — it argues for hiring a duplicate.",
+  );
+  return steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
+}
+
 /** One labelled block of the assembled prompt. */
 export interface PromptRegion {
   key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "method" | "working";
@@ -1546,13 +1666,21 @@ const NO_BRAND_VOICE = new Set([
 export async function composePrompt(
   agent: Agent,
   memories: Recalled[],
-  options: { working?: boolean } = {},
+  options: { working?: boolean; can?: WorkflowAvailability } = {},
 ): Promise<PromptRegion[]> {
   // `working: false` is a colleague being asked a question rather than an agent
   // holding a task. Everything about who they are and what they know still
   // applies; everything about tools, dry run and who to hand work to does not,
   // and printing it would tell somebody with no tools how to use them.
   const working = options.working !== false;
+  // What this agent can actually reach on this task. Defaults to everything,
+  // which is right for the Agents screen — it is showing what an agent is,
+  // not what one turn of one task happens to have left. The runner passes the
+  // real answer so the prompt never names a tool that was not sent: a
+  // paragraph telling an agent to consult a colleague, with no `consult` in
+  // the tool list, costs a whole turn on a call that cannot resolve, which is
+  // far more than the schema it saved.
+  const can = options.can ?? ALL_WORKFLOW;
   const profile = await companyProfile();
 
   const regions: PromptRegion[] = [
@@ -1651,17 +1779,12 @@ export async function composePrompt(
 - Some of your tools will answer "PREPARED, NOT DONE". That is not a failure — it means your autonomy level requires a person to approve that kind of action. Carry on and prepare the rest of the work so there is one thing to approve rather than five.
 - Some will be refused outright. That is also information: work around it, or escalate.
 - Use \`remember\` for a decision worth having next time, and for what came of it. Never write down a credential. Share one with the whole company only when it is a fact about how Dakyworld works that every agent would need — your own conclusions stay yours.
-- **What happened and what you concluded are two different records, and they are not interchangeable.** \`addToHistory\` is the company's own account of a client — a call and what was agreed, a decision and why, what came of something we did — and every agent that opens them next reads it as evidence. \`remember\` is your own conclusion, and the record can overrule it. Writing an opinion into the history dresses it up as a fact for somebody who was not there; writing an event into your memory keeps it from the colleague who needs it.
-- The brief carries the headlines of that history. \`readHistory\` gets you the rest — the wording of what was actually sent, what they said back, anything older. Read it before writing to somebody we have written to before.
-- Use \`escalate\` the moment you are unsure, or the work touches money, scope, security, a live system or a public claim. Stopping is not failing.
+${can.history ? HISTORY_ETIQUETTE : ""}- Use \`escalate\` the moment you are unsure, or the work touches money, scope, security, a live system or a public claim. Stopping is not failing.
 - When you are done, say what you did, what you found, and what a person should do next — in plain English, in a few sentences. That final message is what gets read.
 
 You are not working alone. There are ${await rosterSize()} agents here, each with one craft, and the difference between a good outcome and a mediocre one is usually whether the right one was asked. **When the work needs a craft that is not yours, the answer is never to attempt it anyway.** Work through it in this order, and stop at the first step that answers:
 
-1. \`findAgent\` — look for somebody whose craft this is. Do this *before* attempting anything outside your own job, not after producing something you are unsure of.
-2. \`consult\` — you keep the work and want their judgement on one question inside their craft. They answer from their own instructions and their own memory of this client, so ask them the thing only they would know. Their answer is an opinion, not a checked fact: where it contradicts the record in front of you, the record wins and you say so.
-3. \`handOff\` (or \`delegate\`, if they report to you) — the work itself is theirs. Write the brief as if to somebody who was not here, because they were not. **Down the chart before sideways across it.** You may delegate to your own reports as often as the work needs; you get ${MAX_HANDOFFS} hand-offs on a whole task and no more. So when \`findAgent\` says a match sits under one of your reports, delegate to that report and let them route it — handing sideways to the specialist yourself spends a hand-off, skips the person who owns that lane, and leaves you with one move left for everything else the task still needs.
-4. \`needSkill\` — only when \`findAgent\` found nobody. It records that Dakyworld has no such craft; the Agent Creator reads it and a person decides whether to employ somebody. It is not a way to put down work that is actually yours, and a gap raised for something a colleague already does is worse than useless — it argues for hiring a duplicate.
+${routingSteps(can)}
 
 Asking is cheap and being wrong in public is not. An agent that consulted a colleague and changed its mind has done the job properly; say in your summary who you asked and what it changed.`,
     });
@@ -1670,7 +1793,7 @@ Asking is cheap and being wrong in public is not. An agent that consulted a coll
   return regions;
 }
 
-async function systemPrompt(agent: Agent, memories: Recalled[], options: { working?: boolean } = {}): Promise<string> {
+async function systemPrompt(agent: Agent, memories: Recalled[], options: { working?: boolean; can?: WorkflowAvailability } = {}): Promise<string> {
   const regions = await composePrompt(agent, memories, options);
   return regions
     .map((region) => region.text)
@@ -1813,9 +1936,15 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       }
 
       const memories = await recall(agent.key, taskSubjects(task));
+      // One answer, given to both. The prompt describing a step the tool list
+      // does not carry is worse than either sending the tool or dropping the
+      // paragraph — it spends a turn on a call that cannot resolve — so the
+      // ceiling is worked out once here and handed to each of them.
+      const consultLimit = await consultLimitFor(task);
+      const can = workflowAvailability(agent, task, counters, consultLimit);
       const [system, granted, described] = await Promise.all([
-        systemPrompt(agent, memories),
-        toolsFor(agent, task, counters),
+        systemPrompt(agent, memories, { can }),
+        toolsFor(agent, task, counters, consultLimit),
         describeTask(task),
       ]);
       const tools = granted.tools;
