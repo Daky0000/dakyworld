@@ -33,6 +33,8 @@ import { captureRouter } from "./routes/capture.js";
 import { toolsRouter } from "./routes/tools.js";
 import { costsRouter } from "./routes/costs.js";
 import { approvalsRouter } from "./routes/approvals.js";
+import { slackHealth } from "./services/slackHealth.js";
+import { countPending } from "./services/approvals.js";
 import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
 import { websiteRouter } from "./routes/website.js";
@@ -405,6 +407,37 @@ ensureSystemRoles()
             for (const [because, keys] of grouped) {
               console.log(`  → Left as you had them (${because}): ${keys.join(", ")}`);
             }
+          }
+
+          // Whether a decision can actually reach anybody, said at boot rather
+          // than only on a screen somebody has to open.
+          //
+          // This matters more now than it did. Before commissioning, an agent
+          // held every outward call at a preview *and* never picked a task up,
+          // so an unreachable Slack was one of several reasons nothing
+          // happened. Now the workforce works, and the approval queue is the
+          // one thing standing between prepared work and a customer — so if
+          // nothing can carry a decision, the symptom is a queue that fills up
+          // silently while every screen says the agents are running fine.
+          //
+          // `slackHealth()` never posts. It reads configuration and the record
+          // of what has verified, which is why it is safe on every boot.
+          const slack = await slackHealth();
+          const waiting = await countPending();
+          if (!slack.ready) {
+            console.log(
+              `  → Slack cannot carry a decision yet, so approvals will wait in the app instead: ${slack.problems[0]}`,
+            );
+            if (slack.problems.length > 1) {
+              console.log(`     …and ${slack.problems.length - 1} more, listed under Settings → Alerts.`);
+            }
+          }
+          if (waiting > 0) {
+            console.log(
+              `  → ${waiting} action(s) prepared by an agent are waiting for you to decide` +
+                `${slack.ready ? " — the cards are in Slack" : ", and nothing can post them to Slack yet"}. ` +
+                `They expire after a week.`,
+            );
           }
 
           const narrowed = await narrowSeededAgents();
