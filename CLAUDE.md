@@ -339,6 +339,20 @@ spent it.
 - `checks/promptCache.ts` drives the real loop against a fake Anthropic on
   localhost and asserts on **what went over the wire**, because a correct
   `withCacheBreakpoints()` that nothing calls is precisely the bug that was here.
+- **None of it applies to the chat-completions wire, and that is a finding
+  rather than a fix.** `chatCompletionsTurn()` sends no `cache_control` and
+  reads no cache figures back — it takes `prompt_tokens` and
+  `completion_tokens` and nothing else — so OpenRouter and ChatGPT turns record
+  zero reads and zero writes however large the prompt. Deliberately left alone:
+  the ladder puts every agent turn on a *free* rung first, where a full prompt
+  costs nothing but latency, and the paid Claude floor goes through the SDK,
+  which caches properly. Adding it would mean sending content-parts arrays
+  through a wire that fronts arbitrary models, several of which do not accept
+  the parameter, to save money on the one path that has none to save. Two
+  consequences to know about: the cost screen's cache tile reads 0% for those
+  turns and shows amber for a path where caching was never possible, and
+  reducing the *constant weight* of a prompt — see the tool pruning under the
+  agent runtime — is the only lever that helps there.
 
 **An agent turn is priced by what the work is, not by what an agent is.**
 `modelForEffort()` sends `low` and `medium` to `MODEL_ECONOMY` (Sonnet 5,
@@ -1357,6 +1371,112 @@ the row is already there, so `audit.website` and `audit.read` have to be ticked
 by hand on the Agents screen for the SEO Specialist, the Copywriter, the Web
 Developer and the Cold Lead Writer. Check that before concluding an agent
 cannot do something.
+
+**The workforce is commissioned, once, and the shipped defaults are still what
+a new agent arrives on** — `commissionWorkforce()` in `agentRegistry.ts`,
+`COMMISSIONED_AUTONOMY` (2), `POST /agents/commission`. An agent ships DRAFT at
+autonomy 1 with dry run on, which is three separate ways of doing nothing:
+`runDueTasks` claims nothing for a draft, autonomy 1 holds every outward and
+spending call at a preview, and dry run holds every *internal* write there too.
+Each is the right default for an agent nobody has looked at. All three on all
+fifty-six is a roster with an empty timeline and no error anywhere to explain
+it — which is what a deployment nobody clicked through actually was.
+
+- **Level 2 is what makes "switch the workforce on" and "approve everything
+  that leaves the building" the same setting** rather than opposite ones. It is
+  below both `EXECUTE_LEVEL` (3) and `SPEND_LEVEL` (4), so 46 of the 72 tools
+  do real work and **not one outward or spending tool acts unsupervised** —
+  each is held, files an `ActionRequest`, and posts to Slack with an Approve
+  button that carries it out exactly as prepared. Walked over the whole
+  catalogue in `checks/commissioning.ts`, not a sample, because the failure
+  worth catching is a tool added next month whose flags nobody checked.
+- **It only ever touches an agent still in the state it shipped in.** Any other
+  combination is a decision somebody made: a paused agent stays paused, a
+  retired one stays retired, one already raised to 4 keeps 4, and one switched
+  on and deliberately left at level 1 is left there. It never lowers anything.
+- **It runs once ever, behind a marker**, exactly as the one-job split does. A
+  pass that reasserted this on every boot would switch a paused agent back on
+  every time somebody deployed, which is the one behaviour that would make
+  pausing useless. `POST /agents/commission` re-runs it for agents that arrived
+  later — a hire lands ACTIVE at autonomy 1 with dry run on, so it is asleep in
+  the two ways that are left — and is bound by the same rule.
+- Every move is written to `AgentAutonomyChange` with the actor
+  `commissioning`, because "who put this agent on level 2" has to have an
+  answer.
+- **The boot log says whether a decision can actually reach anybody.** This
+  matters more since commissioning: before it, an unreachable Slack was one of
+  several reasons nothing happened; now the approval queue is the only thing
+  between prepared work and a customer, so an unconfigured Slack is a queue
+  filling up silently while every screen says the agents are fine.
+  `slackHealth()` knew all of it already and only the Settings screen ever
+  asked.
+
+**Six of the seven agents the mail room routes to could not read the letter.**
+`inbox.read` and `inbox.handled` were in `mail.room`'s seed and nobody else's,
+so a routed task began with the agent unable to open the message it was raised
+about. Documented here for months as a live-database migration gap; it was
+wrong in the *seeds*, so a fresh deployment had it too. Fixed there, which
+means `reconcileSeedToolkits()` grants it on every existing database at the
+next boot.
+
+**An agent is not sent a tool it could not possibly use** —
+`workflowAvailability()` in `runner.ts`. Measured against the real roster, a
+turn costs ~5,430 tokens before anything happens: 2,482 of system prompt and
+2,948 of tool schema, of which the agent's *own* granted tools are 711 and the
+nine workflow tools are 2,118. The scaffolding for asking a colleague is three
+times the weight of the job, and part of it is provably dead before the turn
+begins: `addToHistory` and `readHistory` both refuse when the task is not about
+a lead, a client or a project, `consult` refuses once the allowance is spent,
+and `handOff` once `MAX_HANDOFFS` are gone.
+
+- **The prompt is built from the same answer as the tool list**, and that half
+  is the one that matters. A prompt naming a tool that was not sent spends a
+  whole turn on a call that cannot resolve, which costs several times the
+  schema it saved. The routing ladder is renumbered rather than left with holes
+  in it — "stop at the first step that answers" is an instruction about an
+  ordered list, and one running 1, 2, 4 invites a model to go looking for 3.
+- **`findAgent` and `needSkill` are never pruned.** An agent that cannot look
+  reports a gap for a craft the roster has had since March, and `needSkill` is
+  the only road to the Agent Creator.
+- **Stable for the length of a run**, because `toolsFor` is called once per
+  claim, before the loop — which is what keeps the cache breakpoint on the last
+  tool definition valid from the first turn to the last. A resume recomputes it
+  from the restored counters, which is when the saving is largest.
+- Worth 516 tokens a turn on a task about no record, 601 on a resumed one, and
+  1,117 on both — every turn, every task, every agent.
+
+**An approved letter can be asked for twice and go once.** `approve()` carries
+work out through `invokeTool` like anything else and passed no
+`idempotencyKey`, so the executed `ToolCall` carried a null one and the replay
+guard could not see it: the task that prepared the letter could be resumed at a
+higher autonomy and send it again, and a duplicate card approved twice was two
+letters. `outwardKey` now lives in `services/tools/idempotency.ts` and both the
+runner and `approvals.ts` import it — deriving it twice would be one edit away
+from two different hashing rules, which is the failure this codebase already
+had over `vendorBase`. Only where there is a task to scope it to.
+
+**Every agent check now seeds the roster it asks about.** `checks/roster.ts`
+seeded two thirds of the way down while the section above it edited an agent's
+wording and asserted the edit reached the deliverable — so on a clean database
+there was nothing to edit and all twenty-one of those assertions reported the
+shipped wording as a failure of the writer layer. `checks/rehearsal.ts` asked
+whether every scenario's starting agent was on the roster and nothing in it
+created one. Both were green on the second run of the day and red on the first.
+**A check that only passes against state a previous run left behind is a check
+nobody can read a new failure out of** — the same lesson `checks/roster.ts`'s
+own reconcile section carries a comment about.
+
+Five committed check files cover this module now, all database-only:
+`commissioning.ts` (34) walks the gate at the commissioned card over the whole
+catalogue; `agentToolBudget.ts` (46) holds the pruning to never removing a
+capability and never naming an absent tool; `agentCollaboration.ts` (37) runs
+`findAgent`, `delegate`, `handOff`, `needSkill` and `consult`'s refusals
+against the **real seeded roster**, because the failure worth catching is a
+rename; `slackApprovals.ts` (48) drives the whole approval loop over real HTTP
+with signed payloads against the router mounted as `index.ts` mounts it; and
+`commissionedRun.ts` (16) is one real `runTask` against a local model stub
+proving all five mechanisms at once — the claim, the gate, the queue, the card
+and the finishing state.
 
 **Every agent's wording is editable, including a seeded one.** That was not
 true until Aug 2026 — the API refused to rewrite a built-in agent on the
