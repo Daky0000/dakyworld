@@ -967,8 +967,8 @@ function DraftReport({
           it exists decides what the letter may say — and a note here is the
           difference between a link and a promise of one. */}
       {result.demo && (
-        <div className={`rounded-2xl border p-4 ${result.demo.url ? "border-line bg-white" : "border-amber-200 bg-amber-50"}`}>
-          <div className={`mb-1 font-mono text-[10px] uppercase tracking-[.12em] ${result.demo.url ? "text-ink/45" : "text-amber-900"}`}>
+        <div className={`rounded-2xl border p-4 ${result.demo.url ? "border-line bg-white" : "border-warn-line bg-warn-surface"}`}>
+          <div className={`mb-1 font-mono text-[10px] uppercase tracking-[.12em] ${result.demo.url ? "text-muted" : "text-warn-text"}`}>
             {result.demo.url ? (result.demo.built ? "A demo page was built for them just now" : "They already have a demo page") : "No demo page"}
           </div>
           {result.demo.url ? (
@@ -976,9 +976,9 @@ function DraftReport({
               {result.demo.url}
             </a>
           ) : (
-            <p className="text-xs leading-relaxed text-amber-900">{result.demo.note}</p>
+            <p className="text-xs leading-relaxed text-warn-text">{result.demo.note}</p>
           )}
-          {result.demo.url && result.demo.note && <p className="mt-2 text-xs leading-relaxed text-ink/60">{result.demo.note}</p>}
+          {result.demo.url && result.demo.note && <p className="mt-2 text-xs leading-relaxed text-muted">{result.demo.note}</p>}
         </div>
       )}
       {/* Several serious faults: the letter names one, and this is where the
@@ -986,8 +986,8 @@ function DraftReport({
           that actually carries them are two different things. */}
       {result.willAttachReport && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">The full review goes with this email</div>
-          <p className="text-xs leading-relaxed text-ink/70">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">The full review goes with this email</div>
+          <p className="text-xs leading-relaxed text-ink">
             More than one serious fault was found, so the letter names the strongest one and the rest are attached as a PDF. The
             report is attached when the email is composed — nothing to tick.
           </p>

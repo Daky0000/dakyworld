@@ -427,7 +427,7 @@ function BusinessContextPanel() {
       title="Business context"
       what="What every agent is told this company sells, read from dakyworld.com. Change a price, a plan or a service on the website and the workforce says the new thing — there is nothing to retype here."
       state={
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-ink/60">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted">
           {!data ? (
             <span>Reading…</span>
           ) : (
@@ -448,8 +448,8 @@ function BusinessContextPanel() {
       {data && (
         <div className="mt-5 space-y-4">
           <div className="rounded-xl border border-line bg-cream/40 p-4">
-            <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">What is on offer</div>
-            <ul className="space-y-1 text-sm text-ink/75">
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">What is on offer</div>
+            <ul className="space-y-1 text-sm text-ink">
               {data.offer.services.map((service) => (
                 <li key={service.id}>
                   <span className="font-medium text-ink">{service.name}</span>
@@ -467,24 +467,24 @@ function BusinessContextPanel() {
           </div>
           {data.offer.doesNotDo.length > 0 && (
             <div className="rounded-xl border border-line p-4">
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Never offered</div>
-              <p className="text-sm text-ink/70">{data.offer.doesNotDo.join(" ")}</p>
+              <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Never offered</div>
+              <p className="text-sm text-ink">{data.offer.doesNotDo.join(" ")}</p>
             </div>
           )}
           {sync.data?.notes?.length ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{sync.data.notes.join(" ")}</div>
+            <div className="rounded-xl border border-warn-line bg-warn-surface p-4 text-sm text-warn-text">{sync.data.notes.join(" ")}</div>
           ) : null}
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={() => sync.mutate()} disabled={sync.isPending}>
               {sync.isPending ? "Reading the site…" : "Read the website again"}
             </Button>
-            <button type="button" className="text-xs text-ink/50 underline underline-offset-2" onClick={() => setOpen((was) => !was)}>
+            <button type="button" className="text-xs text-muted underline underline-offset-2" onClick={() => setOpen((was) => !was)}>
               {open ? "Hide" : "Show"} what the agents are actually told
             </button>
-            {data.readBy && <span className="text-xs text-ink/45">Last read by {data.readBy}.</span>}
+            {data.readBy && <span className="text-xs text-muted">Last read by {data.readBy}.</span>}
           </div>
           {open && (
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-cream/40 p-4 text-xs leading-relaxed text-ink/75">
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-cream/40 p-4 text-xs leading-relaxed text-ink">
               {data.brand}
               {"\n\n"}
               {data.catalogue}
