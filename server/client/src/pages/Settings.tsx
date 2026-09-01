@@ -1197,7 +1197,7 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
   });
 
   const analyst = settings.analyst;
-  /** What the Owner calls whoever serves a job — "OpenRouter", not "openrouter". */
+  /** What the Owner calls whoever serves a job — "NVIDIA", not "nvidia". */
   const providerName = (key: string) => settings.models.providers.find((provider) => provider.key === key)?.name ?? key;
 
   return (
@@ -1335,7 +1335,7 @@ function ModelsPanel({ settings }: { settings: AppSettings }) {
         </div>
       </Panel>
 
-      <FreeModelsPanel connected={Boolean(byKey.get("openrouter")?.configured)} />
+      <FreeModelsPanel connected={Boolean(byKey.get("nvidia")?.configured)} />
 
       {providers
         .filter((provider) => provider.key !== "anthropic")
@@ -1373,66 +1373,103 @@ function ModelsPanel({ settings }: { settings: AppSettings }) {
 interface FreeModelRow {
   id: string;
   name: string;
-  context: number | null;
+  house: string;
+  blurb: string;
+  listed: boolean;
   free: boolean;
   tools: boolean;
+  vision: boolean;
+  /** How it takes a JSON schema, or null for a model nobody has checked. */
+  schema: "enforced" | "accepted" | "object" | null;
+  /** Set when this app probed the endpoint and it would not serve. */
+  down: string | null;
+  /** False for a model NVIDIA lists that this app has never called. */
+  known: boolean;
+}
+
+interface JobLadder {
+  key: string;
+  name: string;
+  phrase: string;
+  blurb: string;
+  ladder: string[];
+  /**
+   * Where this job's ladder came from. "shipped" is the assignment nobody has
+   * touched, "owner" is a list picked here, "off" is free models deliberately
+   * switched off — three different sentences, and the screen used to say the
+   * same one for the first and the third.
+   */
+  source: "shipped" | "owner" | "off";
+  stale: Array<{ id: string; why: string }>;
 }
 
 interface FreeLadderReport {
   connected: boolean;
-  ladder: string[];
-  /**
-   * Where the ladder in use came from. "shipped" is the default nobody has
-   * touched, "owner" is a list picked here, "off" is free models deliberately
-   * switched off — three different sentences, and the screen said the same one
-   * for the first and the third.
-   */
-  source: "shipped" | "owner" | "off";
+  cooldown: { cooling: boolean; until: string | null };
   max: number;
   models: FreeModelRow[];
-  stale: Array<{ id: string; why: string }>;
-  note?: string;
+  ladders: JobLadder[];
+  note?: string | null;
 }
 
 /**
- * The free ladder: up to three OpenRouter models to try before paying for anything.
+ * Free AI models: which free model does which job, and in what order.
  *
- * OpenRouter publishes models that cost nothing per token. They are real models
- * and they are also the least reliable thing available: a free endpoint is
- * shared, so it queues, rate-limits, and sometimes simply does not answer. One
- * of them as *the* model is a system that stops working at busy times. Three in
- * a row with a paid floor behind them is a system that costs nothing most days
- * and never stops.
+ * Every model here is served free by NVIDIA, and there is a **different one
+ * per kind of work** — which is the whole reason this replaced what came
+ * before. One free model used to serve every job in the system, so every job
+ * was only as good as that model was at the worst thing it was asked to do,
+ * and when that endpoint was busy everything stopped together.
  *
- * **On by default.** It was an opt-in for one day, and an opt-in nobody has
- * opted into does nothing at all — so a deployment that never opens this panel
- * still starts every agent on a free model. What is picked is read from the
- * account's own catalogue at the first boot that has a key, because a free slug
- * written down in advance is the most perishable id OpenRouter publishes.
+ * Now each job has up to three, tried in order. When one doesn't answer —
+ * busy, rate-limited, or simply silent — the next is asked straight away, and
+ * when all three have been tried the paid floor finishes the work, **carrying
+ * on from whatever the last one managed to write** rather than starting again.
  *
- * Picked from a list rather than typed, because the ids are long and exact and
- * change — a slug typed from memory is a 404 three days later, inside a
- * sequence, at six in the morning.
+ * The job dropdown is what makes eleven ladders fit on one screen. The
+ * alternative — eleven panels — buries the one row somebody came here to
+ * change, and the summary underneath is what stops a dropdown from hiding the
+ * assignment it is editing.
  */
 function FreeModelsPanel({ connected }: { connected: boolean }) {
   const qc = useQueryClient();
   const report = useQuery({
-    queryKey: ["settings", "openrouter", "free"],
-    queryFn: () => api.get<FreeLadderReport>("/settings/models/openrouter/free"),
+    queryKey: ["settings", "nvidia", "free"],
+    queryFn: () => api.get<FreeLadderReport>("/settings/models/nvidia/free"),
   });
-  const [draft, setDraft] = useState<string[] | null>(null);
-  const ladder = draft ?? report.data?.ladder ?? [];
+
+  const ladders = report.data?.ladders ?? [];
   const max = report.data?.max ?? 3;
+  const models = report.data?.models ?? [];
+  const byId = new Map(models.map((model) => [model.id, model]));
+
+  // Which job is being edited. Defaults to the loop that runs the workforce,
+  // because it is the one that runs most often and the one somebody opening
+  // this panel is usually here about.
+  const [job, setJob] = useState<string>("agent");
+  const current = ladders.find((entry) => entry.key === job) ?? null;
+
+  // The edit in progress, or null when what is shown is what is saved. Reset
+  // on every job change, because carrying a half-made edit from one job's
+  // ladder onto another is how the wrong list gets saved.
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const ladder = draft ?? current?.ladder ?? [];
 
   // `null` is "use whatever ships", `[]` is "no free models, deliberately".
   const save = useMutation({
-    mutationFn: (models: string[] | null) => api.put<{ ladder: string[]; note?: string }>("/settings/models/openrouter/free", { models }),
+    mutationFn: (next: string[] | null) =>
+      api.put<{ job: string; ladder: string[]; note?: string }>("/settings/models/nvidia/free", { job, models: next }),
     onSuccess: () => {
       setDraft(null);
-      void qc.invalidateQueries({ queryKey: ["settings", "openrouter", "free"] });
+      void qc.invalidateQueries({ queryKey: ["settings", "nvidia", "free"] });
     },
   });
-  const source = report.data?.source ?? "shipped";
+
+  const pickJob = (next: string) => {
+    setDraft(null);
+    save.reset();
+    setJob(next);
+  };
 
   const toggle = (id: string) => {
     setDraft(ladder.includes(id) ? ladder.filter((entry) => entry !== id) : ladder.length >= max ? ladder : [...ladder, id]);
@@ -1445,44 +1482,111 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
     setDraft(next);
   };
 
-  const models = report.data?.models ?? [];
-  const byId = new Map(models.map((model) => [model.id, model]));
+  const source = current?.source ?? "shipped";
+  // `image` is the one job with nothing to pick: drawing a picture goes
+  // through an images API that only ChatGPT is wired up for.
+  const servable = current !== null && (current.ladder.length > 0 || source !== "shipped" || job !== "image");
+  const onShipped = ladders.filter((entry) => entry.source === "shipped").length;
 
   return (
     <Panel
-      title="Free models first"
+      title="Free AI models"
       what={
         <>
-          Up to {max} free OpenRouter models, tried in order, and every agent starts on the first of them. When one doesn't answer —
-          busy, rate-limited, or simply silent — the next is asked straight away, and when all {max} have been tried the paid floor
-          finishes the work: Claude, then ChatGPT, then Gemini, whichever of them you have connected. Nothing waits and nothing is
-          lost; the only difference is the bill.
+          Every model here is free, and each job gets the {max} picked for it — the biggest models write, the one with a million
+          tokens of context reads spreadsheets, the ones that can see look at screenshots, and the fastest small one reads the post.
+          When a model doesn't answer — busy, rate-limited, or simply silent — the next is asked straight away, and when all {max}{" "}
+          have been tried the paid floor finishes the work: Claude, then ChatGPT, then Gemini, whichever you have connected. It
+          carries on from whatever the last model managed to write rather than starting again, so nothing is redone and the only
+          difference is the bill.
         </>
       }
       state={
-        source === "off" ? (
-          <NotConnected>Free models are off, so OpenRouter uses its own model and pays for every call.</NotConnected>
-        ) : (
-          <Connected>
-            <span>
-              {ladder.length} rung{ladder.length === 1 ? "" : "s"}
-              {source === "shipped" ? " (the shipped ladder)" : ""}, then the paid floor
-            </span>
-            <span className="font-mono text-xs text-ink/50">{ladder.join(" → ")}</span>
-          </Connected>
-        )
+        <Connected>
+          <span>
+            {ladders.filter((entry) => entry.ladder.length > 0).length} job
+            {ladders.filter((entry) => entry.ladder.length > 0).length === 1 ? "" : "s"} on free models
+            {onShipped > 0 ? `, ${onShipped} on the shipped picks` : ""}
+          </span>
+          <span className="font-mono text-xs text-ink/50">{models.filter((model) => model.known && !model.down).length} models verified</span>
+        </Connected>
       }
     >
       {!connected && (
         <p className="mt-4 border border-line bg-ink/[.02] px-3 py-2 text-sm text-ink/60">
-          Connect an OpenRouter key below first — the list of free models is read from your own account rather than written down here,
-          so it is always the models you can actually reach.
+          Connect an NVIDIA key below first. The ladders here are the shipped ones and are exactly what will be used once a key is
+          in — one key reaches every model, and the console issues it from a model's own page even though it is not tied to that
+          model.
         </p>
       )}
 
-      {/* A rung that has stopped being free is the one thing a saved list cannot
-          tell you about itself, and it is the one that costs money. */}
-      {(report.data?.stale ?? []).map((entry) => (
+      {/* The free vendor sitting out its cooldown is the best available
+          explanation for "I believed the free models were on and they are not
+          kicking in", and nothing used to say it anywhere. */}
+      {report.data?.cooldown?.cooling && (
+        <p className="mt-3 border border-amber-300 bg-amber-50/50 px-3 py-2 text-sm text-ink/70">{report.data.note}</p>
+      )}
+
+      {/* The whole assignment on one screen. A dropdown that edits one row at a
+          time needs this underneath it, or the thing being configured is only
+          ever visible one eleventh at a time. */}
+      <div className="mt-4 overflow-x-auto border border-line">
+        <table className="w-full min-w-[38rem] border-collapse text-sm">
+          <tbody>
+            {ladders.map((entry) => (
+              <tr
+                key={entry.key}
+                className={`border-b border-line last:border-b-0 ${entry.key === job ? "bg-blue/[.06]" : ""}`}
+              >
+                <th scope="row" className="whitespace-nowrap px-3 py-2 text-left align-top font-mono text-[11px] uppercase tracking-[.12em] text-ink/60">
+                  <button type="button" onClick={() => pickJob(entry.key)} className="hover:text-ink">
+                    {entry.name}
+                  </button>
+                </th>
+                <td className="px-3 py-2 align-top">
+                  {entry.ladder.length === 0 ? (
+                    <span className="text-ink/40">
+                      {entry.source === "off" ? "free models off — goes straight to the paid floor" : "no free model serves this"}
+                    </span>
+                  ) : (
+                    <span className="font-mono text-[11px] text-ink/60">
+                      {entry.ladder.map((id) => byId.get(id)?.name ?? id).join(" → ")}
+                    </span>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right align-top">
+                  {entry.source === "owner" && <Badge tone="positive">yours</Badge>}
+                  {entry.stale.length > 0 && <Badge tone="muted">{entry.stale.length} to check</Badge>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-5 border-t border-line pt-5">
+        <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45" htmlFor="free-models-job">
+          Free AI models for
+        </label>
+        <select id="free-models-job" value={job} onChange={(event) => pickJob(event.target.value)} className="input mt-1 w-full sm:w-80">
+          {ladders.map((entry) => (
+            <option key={entry.key} value={entry.key}>
+              {entry.name} — {entry.ladder.length === 0 ? "none" : `${entry.ladder.length} of ${max}`}
+            </option>
+          ))}
+        </select>
+        {current && <p className="mt-2 text-sm text-ink/55">{current.blurb}</p>}
+      </div>
+
+      {source === "off" && (
+        <p className="mt-3 border border-line bg-ink/[.02] px-3 py-2 text-sm text-ink/60">
+          Free models are off for {current?.phrase}. It goes straight to NVIDIA's own model, and to the paid floor when that fails.
+        </p>
+      )}
+
+      {/* A rung the vendor has stopped listing, or one this app has watched
+          fail, is the one thing a saved list cannot tell you about itself. */}
+      {(current?.stale ?? []).map((entry) => (
         <p key={entry.id} className="mt-3 border border-amber-300 bg-amber-50/50 px-3 py-2 text-sm text-ink/70">
           <span className="font-mono text-xs">{entry.id}</span> — {entry.why}
         </p>
@@ -1490,35 +1594,41 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
 
       {ladder.length > 0 && (
         <ol className="mt-4 space-y-2">
-          {ladder.map((id, index) => (
-            <li key={id} className="flex items-center gap-3 border border-line bg-white px-3 py-2">
-              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">{index + 1}</span>
-              <span className="min-w-0 flex-1 truncate text-sm text-ink">{byId.get(id)?.name ?? id}</span>
-              {byId.get(id) && !byId.get(id)!.tools && (
-                <Badge tone="muted">no tools — agents skip it</Badge>
-              )}
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => move(index, index - 1)} disabled={index === 0}>
-                  ↑
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => move(index, index + 1)} disabled={index === ladder.length - 1}>
-                  ↓
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => toggle(id)}>
-                  Remove
-                </Button>
-              </div>
-            </li>
-          ))}
+          {ladder.map((id, index) => {
+            const model = byId.get(id);
+            return (
+              <li key={id} className="flex items-center gap-3 border border-line bg-white px-3 py-2">
+                <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">{index + 1}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-ink">{model?.name ?? id}</span>
+                  <span className="block truncate font-mono text-[11px] text-ink/45">{id}</span>
+                </span>
+                {job === "agent" && model?.known && !model.tools && <Badge tone="muted">no tools — agents skip it</Badge>}
+                {job === "vision" && model?.known && !model.vision && <Badge tone="muted">cannot see</Badge>}
+                {model?.down && <Badge tone="muted">not serving</Badge>}
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => move(index, index - 1)} disabled={index === 0}>
+                    ↑
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => move(index, index + 1)} disabled={index === ladder.length - 1}>
+                    ↓
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => toggle(id)}>
+                    Remove
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
         </ol>
       )}
 
-      {connected && models.length > 0 && (
+      {servable && models.length > 0 && (
         <div className="mt-4">
           <p className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">
-            Free on your account ({models.length}) — pick up to {max}
+            Free on your account ({models.length}) — pick up to {max} for {current?.phrase}
           </p>
-          <div className="mt-2 max-h-72 overflow-y-auto border border-line">
+          <div className="mt-2 max-h-80 overflow-y-auto border border-line">
             {models.map((model) => {
               const picked = ladder.includes(model.id);
               return (
@@ -1527,20 +1637,29 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
                   type="button"
                   onClick={() => toggle(model.id)}
                   disabled={!picked && ladder.length >= max}
-                  className={`flex w-full items-center gap-3 border-b border-line px-3 py-2 text-left last:border-b-0 ${
+                  className={`flex w-full items-start gap-3 border-b border-line px-3 py-2 text-left last:border-b-0 ${
                     picked ? "bg-blue/[.06]" : "hover:bg-ink/[.02]"
                   } disabled:opacity-40`}
                 >
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${picked ? "bg-blue" : "bg-ink/15"}`} />
+                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${picked ? "bg-blue" : "bg-ink/15"}`} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-ink">{model.name}</span>
+                    <span className="block truncate text-sm text-ink">
+                      {model.name} <span className="text-ink/40">· {model.house}</span>
+                    </span>
                     <span className="block truncate font-mono text-[11px] text-ink/45">{model.id}</span>
+                    <span className="mt-0.5 block text-xs text-ink/50">{model.blurb}</span>
                   </span>
-                  {/* An agent turn sends tool definitions. A model that cannot take
-                      them writes perfectly well and fails every agent task, which is
-                      worth knowing before it is picked rather than after. */}
-                  {model.tools ? <Badge tone="positive">tools</Badge> : <Badge tone="muted">no tools</Badge>}
-                  {model.context && <span className="shrink-0 text-xs text-ink/40">{Math.round(model.context / 1000)}k</span>}
+                  {/* What a model can actually do, beside the model, because
+                      these are the reason to pick one row over another and
+                      NVIDIA's own catalogue does not publish any of them —
+                      every flag here was proved against the endpoint. */}
+                  <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                    {model.down && <Badge tone="muted">not serving</Badge>}
+                    {!model.known && <Badge tone="muted">unchecked</Badge>}
+                    {model.vision && <Badge tone="positive">sees images</Badge>}
+                    {model.known && (model.tools ? <Badge tone="positive">tools</Badge> : <Badge tone="muted">no tools</Badge>)}
+                    {model.known && model.schema !== "enforced" && <Badge tone="muted">loose schema</Badge>}
+                  </span>
                 </button>
               );
             })}
@@ -1550,7 +1669,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <Button onClick={() => save.mutate(ladder)} disabled={save.isPending || draft === null}>
-          {save.isPending ? "Checking…" : "Save the ladder"}
+          {save.isPending ? "Checking…" : `Save the ${current?.name.toLowerCase() ?? ""} ladder`}
         </Button>
         {draft !== null && (
           <Button variant="ghost" onClick={() => setDraft(null)}>
@@ -1561,12 +1680,12 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
             click, because the difference between them is money. */}
         {source !== "shipped" && (
           <Button variant="ghost" size="sm" onClick={() => save.mutate(null)} disabled={save.isPending}>
-            Use the shipped ladder
+            Use the models picked for this job
           </Button>
         )}
-        {source !== "off" && (
+        {source !== "off" && ladder.length > 0 && (
           <Button variant="ghost" size="sm" onClick={() => save.mutate([])} disabled={save.isPending}>
-            Turn free models off
+            Turn free models off for this job
           </Button>
         )}
         {save.data?.note && <span className="text-sm text-ink/55">{save.data.note}</span>}

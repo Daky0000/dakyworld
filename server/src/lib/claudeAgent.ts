@@ -6,7 +6,8 @@ import {
   PAID_AGENT_CHAIN,
   PROVIDERS,
   PROVIDER_PRICING,
-  freeLadder,
+  freeLadderFor,
+  freeModel,
   providerConfigured,
   providerKey,
   providerModel,
@@ -361,8 +362,8 @@ function rejectedTheBeta(err: unknown): boolean {
 /**
  * Who can run an agent turn.
  *
- * Four rather than two as of 28 Aug 2026. OpenRouter goes first and climbs its
- * free ladder; when every free rung has refused the work, the paid floor
+ * Four rather than two as of 28 Aug 2026. NVIDIA goes first and climbs the free
+ * ladder picked for agent work; when every free rung has refused the work, the paid floor
  * finishes it, and the floor is now **the best of three** rather than
  * Anthropic alone. See `PAID_AGENT_CHAIN` in models/registry.ts for the order
  * and why it is that order.
@@ -371,7 +372,7 @@ function rejectedTheBeta(err: unknown): boolean {
  * not take tool definitions, so an agent turn on it is a turn with no tools,
  * which is not an agent.
  */
-type AgentVendor = "openrouter" | "anthropic" | "openai" | "gemini";
+type AgentVendor = "nvidia" | "anthropic" | "openai" | "gemini";
 
 /** The three that speak a wire this file writes by hand. Anthropic has an SDK. */
 type FetchVendor = Exclude<AgentVendor, "anthropic">;
@@ -380,10 +381,10 @@ type FetchVendor = Exclude<AgentVendor, "anthropic">;
  * The two vendors whose wire is OpenAI chat completions.
  *
  * One function serves both, and that is the point of putting ChatGPT on the
- * paid floor before Gemini: the step from a free OpenRouter rung to a paid
- * OpenAI model is a different base URL and a different key, and nothing else.
+ * paid floor before Gemini: the step from a free NVIDIA rung to a paid OpenAI
+ * model is a different base URL and a different key, and nothing else.
  */
-type ChatCompletionsVendor = "openrouter" | "openai";
+type ChatCompletionsVendor = "nvidia" | "openai";
 
 /**
  * The statuses that mean this vendor cannot serve this request at all.
@@ -413,15 +414,15 @@ type ChatCompletionsVendor = "openrouter" | "openai";
 const CANNOT_SERVE_STATUSES = [400, 401, 402, 403, 404];
 
 /**
- * How long a refused OpenRouter key sits out.
+ * How long a refused NVIDIA key sits out.
  *
  * Long enough that the resumes a failed run leaves behind start on Claude
  * instead of each paying one wasted call into the same refusal; short enough
  * that topping the account up is noticed without a redeploy. The same shape
  * as `fallbacksAvailable` above, with a clock on it.
  */
-const OPENROUTER_COOLDOWN_MS = 15 * 60 * 1000;
-let openRouterRefusedUntil = 0;
+const NVIDIA_COOLDOWN_MS = 15 * 60 * 1000;
+let nvidiaRefusedUntil = 0;
 
 /**
  * Clears the cooldown. For checks only.
@@ -432,8 +433,8 @@ let openRouterRefusedUntil = 0;
  * nothing: the vendor is skipped before the failure being tested can happen,
  * and the assertion passes for the wrong reason.
  */
-export function clearOpenRouterCooldown(): void {
-  openRouterRefusedUntil = 0;
+export function clearNvidiaCooldown(): void {
+  nvidiaRefusedUntil = 0;
 }
 
 /**
@@ -441,18 +442,18 @@ export function clearOpenRouterCooldown(): void {
  *
  * The cooldown is right and it was **invisible**, which made it the best
  * available explanation for "I believed the free models were available and they
- * are not kicking in": a key-level refusal takes OpenRouter out of the chain for
+ * are not kicking in": a key-level refusal takes NVIDIA out of the chain for
  * fifteen minutes, every agent run in that window starts on a paid vendor, and
  * nothing on any screen said so. Reported by
- * `GET /api/settings/models/openrouter/free` so the answer is where somebody
+ * `GET /api/settings/models/nvidia/free` so the answer is where somebody
  * would look for it.
  *
  * Process-local, like the cooldown itself. A restart clears it, which is worth
  * saying on the screen rather than leaving somebody to discover.
  */
-export function openRouterCooldown(): { cooling: boolean; until: string | null } {
-  const cooling = Date.now() < openRouterRefusedUntil;
-  return { cooling, until: cooling ? new Date(openRouterRefusedUntil).toISOString() : null };
+export function nvidiaCooldown(): { cooling: boolean; until: string | null } {
+  const cooling = Date.now() < nvidiaRefusedUntil;
+  return { cooling, until: cooling ? new Date(nvidiaRefusedUntil).toISOString() : null };
 }
 
 /** As generous as the Anthropic SDK's own default for a non-streaming turn. */
@@ -497,8 +498,8 @@ interface WireTurn {
 }
 
 /**
- * Our effort word onto the three the OpenRouter model takes. See the block
- * comment above.
+ * Our effort word onto the three the wire takes — low, medium, high. See the
+ * block comment above, and `reasoningEffortFor` for the 400 behind it.
  *
  * It lives in `models/registry.ts` with the other vendor facts now, because
  * the one-shot half of the model layer needs the same answer and was sending
@@ -606,11 +607,20 @@ async function chatCompletionsTurn(args: {
   /** A rung of the free ladder: one short clock, and no waiting about. */
   free?: boolean;
 }): Promise<WireTurn> {
+  // The effort only where it is understood.
+  //
+  // ChatGPT takes `reasoning_effort` on every model this app asks for. NVIDIA
+  // does not: `openai/gpt-oss-*` answers a flat 400 to a value outside
+  // low/medium/high, and three of the models in `FREE_MODELS` do not take the
+  // parameter at all. A model this app has never probed is treated as one of
+  // those — a parameter a model ignores is free, and one it rejects costs the
+  // whole turn, on the first turn, after the system prompt has been read.
+  const takesEffort = args.vendor === "openai" || freeModel(args.model)?.reasoning !== false;
   const body: Record<string, unknown> = {
     model: args.model,
     max_tokens: MAX_TOKENS,
     messages: toOpenAiMessages(args.system, args.messages),
-    reasoning_effort: reasoningEffortFor(args.effort),
+    ...(takesEffort ? { reasoning_effort: reasoningEffortFor(args.effort) } : {}),
   };
   if (args.tools.length > 0) {
     body.tools = args.tools.map((tool) => ({
@@ -626,9 +636,6 @@ async function chatCompletionsTurn(args: {
       headers: {
         authorization: `Bearer ${args.apiKey}`,
         "content-type": "application/json",
-        // Optional attribution OpenRouter asks for; ignored by OpenAI and
-        // changes nothing about either call.
-        "x-title": "Dakyworld OS",
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(args.free ? FREE_TURN_TIMEOUT_MS : TURN_TIMEOUT_MS),
@@ -645,11 +652,13 @@ async function chatCompletionsTurn(args: {
 
   if (!response.ok) {
     const detail = (await response.text().catch(() => "")).slice(0, 500);
-    // The prepaid trap, said where it bites: a 402 mid-run reads like a bug
-    // when it is a balance.
+    // The allowance trap, said where it bites: NVIDIA's free models share one
+    // allowance per account, so a 429 mid-run can be the day's limit rather
+    // than a busy model — and those read identically. Offered as a
+    // possibility, because the vendor does not distinguish them either.
     const hint =
-      response.status === 402 && args.vendor === "openrouter"
-        ? " OpenRouter is prepaid: this means the account is out of credits, not that anything is broken — top up at openrouter.ai/credits."
+      response.status === 429 && args.vendor === "nvidia"
+        ? " NVIDIA's free models share one allowance per account, so this may be the day's allowance rather than a busy model. The ladder climbs either way."
         : "";
     throw new WireError(response.status, args.vendor, `${detail}${hint}`);
   }
@@ -905,7 +914,7 @@ async function modelForVendor(vendor: AgentVendor, effort: Effort): Promise<stri
   // Claude keeps the effort split: a sub-agent checking a link is not billed
   // at a director's rate, and Anthropic is the one vendor here with a named
   // cheap model this loop knows about. The other three answer with whatever
-  // the Owner set for them, which for OpenRouter is beside the point anyway —
+  // the Owner set for them, which for NVIDIA is beside the point anyway —
   // the ladder replaces it — and for ChatGPT and Gemini is a single model
   // choice on the Settings screen rather than an effort split this file would
   // be guessing at.
@@ -915,7 +924,7 @@ async function modelForVendor(vendor: AgentVendor, effort: Effort): Promise<stri
 /**
  * A key-level refusal, told apart from a model-level one.
  *
- * The distinction did not matter while OpenRouter meant one model. With a
+ * The distinction did not matter while the free vendor meant one model. With a
  * ladder it decides whether the *next rung* is worth trying: a wrong key, a
  * banned account or an empty balance is true of every model on the account, so
  * climbing the ladder would be three calls into the same wall. A slug that no
@@ -1048,7 +1057,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
 
   // Who runs this conversation, in the order they will be asked.
   //
-  // **OpenRouter first**, because that is where the free models are and free
+  // **NVIDIA first**, because that is where the free models are and free
   // is the instruction: an agent turn is a job like any other, and every job
   // starts on something that costs nothing. Then the paid floor, which is the
   // best of Claude, ChatGPT and Gemini rather than one named vendor — see
@@ -1062,22 +1071,22 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
    * Why the free vendor is not first, when it is not.
    *
    * Said out loud because the alternative is what actually happened on a live
-   * Chief Executive run: OpenRouter was absent, the line underneath announced
+   * Chief Executive run: the free vendor was absent, the line underneath announced
    * "starting on the first of 3 free model(s)", and the run then spent two paid
    * balances. Nothing anywhere said the free vendor had been skipped, so the
    * only reading available was that free models were configured and being
    * ignored.
    */
   let freeSkipped: string | null = null;
-  if (!(await providerConfigured("openrouter"))) {
-    freeSkipped = "No OpenRouter key is set, so there are no free models in this chain. Add one under Settings → AI models — it is where every free model lives.";
-  } else if (Date.now() < openRouterRefusedUntil) {
-    const until = new Date(openRouterRefusedUntil);
+  if (!(await providerConfigured("nvidia"))) {
+    freeSkipped = "No NVIDIA key is set, so there are no free models in this chain. Add one under Settings → AI models — it is where every free model lives.";
+  } else if (Date.now() < nvidiaRefusedUntil) {
+    const until = new Date(nvidiaRefusedUntil);
     freeSkipped =
-      `OpenRouter rejected its key recently, so the free models are sitting out until ${until.toISOString().slice(11, 16)} UTC ` +
+      `NVIDIA rejected its key recently, so the free models are sitting out until ${until.toISOString().slice(11, 16)} UTC ` +
       `and this run starts on a paid vendor. Check the key under Settings → AI models.`;
   } else {
-    candidates.push("openrouter");
+    candidates.push("nvidia");
   }
   for (const paid of PAID_AGENT_CHAIN) {
     if (await providerConfigured(paid)) candidates.push(paid);
@@ -1085,7 +1094,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   if (candidates.length === 0) {
     throw new AnalystError(
       503,
-      "No model is connected for running agents. Add an OpenRouter, Claude, ChatGPT or Gemini key under Settings → AI models — any one of them can do this.",
+      "No model is connected for running agents. Add an NVIDIA, Claude, ChatGPT or Gemini key under Settings → AI models — any one of them can do this.",
     );
   }
   let at = 0;
@@ -1125,7 +1134,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
    *
    * **Three rungs ship by default**, so free-first is what happens on a
    * deployment nobody has configured. Empty only when somebody has turned free
-   * models off deliberately, and then nothing below changes: the one OpenRouter
+   * models off deliberately, and then nothing below changes: the one NVIDIA
    * model is asked exactly as it always was, and a rate limit still requeues
    * the task rather than quietly moving the bill onto a paid vendor.
    *
@@ -1135,19 +1144,19 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
    * not answer costs one short call and the next rung is asked; when the ladder
    * runs out, the paid floor finishes the run. That is the whole feature.
    */
-  const ladder = await freeLadder();
+  const ladder = await freeLadderFor("agent");
   let rung = 0;
 
   // Chosen from the effort rather than fixed, so a sub-agent checking a link
   // is not billed at the rate of a director deciding what to say to a
   // stranger. See `modelForVendor`.
   //
-  // The first rung only when OpenRouter is the one starting. It was
+  // The first rung only when NVIDIA is the one starting. It was
   // unconditional, which was harmless while the ladder was an opt-in nobody
   // had opted into and wrong the moment it shipped switched on: a deployment
-  // holding a Claude key and no OpenRouter key would open its ledger row with
+  // holding a Claude key and no NVIDIA key would open its ledger row with
   // the name of a free model it was never going to call.
-  const model = serving === "openrouter" ? (ladder[0] ?? (await modelForVendor(serving, effort))) : await modelForVendor(serving, effort);
+  const model = serving === "nvidia" ? (ladder[0] ?? (await modelForVendor(serving, effort))) : await modelForVendor(serving, effort);
 
   let client: Anthropic | null = null;
   const startedAt = Date.now();
@@ -1288,19 +1297,19 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
 
   // Said before the first turn rather than after it. The first model call is
   // where a run spends its longest silence -- a free rung can sit for two
-  // minutes before it answers or gives up -- and "OpenRouter, on
+  // minutes before it answers or gives up -- and "NVIDIA, on
   // <slug>" is the difference between a screen that is working and a screen
   // that has hung.
-  // `serving === "openrouter"` is the whole of the guard, and it was missing.
+  // `serving === "nvidia"` is the whole of the guard, and it was missing.
   //
-  // The ladder is a list of OpenRouter model ids. Announcing it while Anthropic
+  // The ladder is a list of NVIDIA model ids. Announcing it while Anthropic
   // is serving is not a cosmetic slip: it is the sentence somebody reads when
   // they are trying to work out why a run cost money, and it says the opposite
   // of what happened. The `model` line three lines below has carried this exact
   // guard since the ladder shipped; this one did not.
   if (freeSkipped) await saying(freeSkipped);
   await saying(
-    serving === "openrouter" && ladder.length > 0
+    serving === "nvidia" && ladder.length > 0
       ? `${PROVIDERS[serving].name}, starting on the first of ${ladder.length} free model(s): ${ladder[0]}.`
       : `${PROVIDERS[serving].name}, on ${model}.`,
   );
@@ -1362,7 +1371,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           // It survived because the harness's fake Anthropic echoes a Claude
           // model whatever it is asked for, so the assertion "Claude finished
           // the run" passed while the request said otherwise.
-          // `checks/agentLoopOpenRouter.ts` now reads the model out of the
+          // `checks/agentLoopNvidia.ts` now reads the model out of the
           // *request body*, which is the only place the truth was.
           const claudeModel = await modelForVendor("anthropic", effort);
           const send = (withFallbacks: boolean) =>
@@ -1402,22 +1411,22 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           response = await chatCompletionsTurn({
             vendor: serving,
             apiKey: (await providerKey(serving)) ?? "",
-            // The rung when OpenRouter is climbing one; this vendor's own
+            // The rung when NVIDIA is climbing one; this vendor's own
             // model otherwise.
             model:
-              serving === "openrouter"
-                ? (ladder[rung] ?? (await modelForVendor("openrouter", effort)))
+              serving === "nvidia"
+                ? (ladder[rung] ?? (await modelForVendor("nvidia", effort)))
                 : await modelForVendor(serving, effort),
             system: request.system,
             messages,
             tools: request.tools,
             effort,
-            free: serving === "openrouter" && ladder.length > 0,
+            free: serving === "nvidia" && ladder.length > 0,
           });
         }
       } catch (err) {
         const status = statusOf(err);
-        const climbing = serving === "openrouter" && ladder.length > 0;
+        const climbing = serving === "nvidia" && ladder.length > 0;
 
         // A rung that did not serve, with rungs left. Not a failure of
         // anything: the next free model is asked and the conversation is
@@ -1439,7 +1448,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         //    Three free models have said no; waiting out a queue is right when
         //    the vendor is the only one who can do this and wrong when a paid
         //    floor is sitting there connected.
-        // 2. **OpenRouter with free models switched off keeps the old rule** —
+        // 2. **NVIDIA with free models switched off keeps the old rule** —
         //    only a status that means it cannot serve the request at all moves
         //    the work, so a rate limit still requeues the task rather than
         //    quietly moving the bill onto a paid vendor. Somebody who turned
@@ -1448,15 +1457,15 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         //    That is the whole point of a floor of three: the second is asked
         //    precisely because the first is busy. When there is nobody left, a
         //    429 still comes out as a 429 and the task resumes.
-        const handsOn = climbing || serving !== "openrouter" || CANNOT_SERVE_STATUSES.includes(status);
+        const handsOn = climbing || serving !== "nvidia" || CANNOT_SERVE_STATUSES.includes(status);
         const next = handsOn ? candidates[at + 1] : undefined;
 
         if (next) {
           // A refused key sits its cooldown out, so the resumes queued behind
           // this run start at the floor instead of each paying one call into
           // the same wall.
-          if (serving === "openrouter" && KEY_LEVEL_STATUSES.includes(status)) {
-            openRouterRefusedUntil = Date.now() + OPENROUTER_COOLDOWN_MS;
+          if (serving === "nvidia" && KEY_LEVEL_STATUSES.includes(status)) {
+            nvidiaRefusedUntil = Date.now() + NVIDIA_COOLDOWN_MS;
           }
           refusals.push(`${PROVIDERS[serving].name}: ${describeTurnFailure(serving, status, climbing ? ladder[rung] : await modelForVendor(serving, effort), err)}`);
           await saying(
@@ -1484,7 +1493,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         // models", which is this codebase's own signal to `retry.ts` that a
         // person must go and configure something — so gluing it onto every
         // failure would turn every genuine rate limit on a deployment with no
-        // OpenRouter key into a blocked task instead of a five-minute pause.
+        // NVIDIA key into a blocked task instead of a five-minute pause.
         // It is said as its own line at the top of the run, which is where
         // somebody reads it.
         const message =
@@ -1550,13 +1559,13 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       // failed: climb the ladder, then hand to the floor, and only give up
       // when nobody is left to ask.
       if (!sawText && !sawToolUse && response.stop_reason !== "pause_turn") {
-        if (serving === "openrouter" && ladder.length > 0 && rung + 1 < ladder.length) {
+        if (serving === "nvidia" && ladder.length > 0 && rung + 1 < ladder.length) {
           await saying(`${ladder[rung]} answered with nothing (stop_reason: ${response.stop_reason}) — trying ${ladder[rung + 1]}.`);
           rung += 1;
           continue;
         }
         // Handed on down the same chain a thrown failure uses, rather than
-        // only from OpenRouter to Claude. A paid vendor that answers with
+        // only from the free vendor to Claude. A paid vendor that answers with
         // nothing has failed exactly as one that throws has, and the reason
         // there are three of them is so the next one is asked.
         const nextAfterSilence = candidates[at + 1];

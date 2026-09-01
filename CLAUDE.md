@@ -115,7 +115,7 @@ as descriptions; nothing in one is ever executed.
 
 **Models are chosen by job, never by vendor** — `src/lib/models/`. A caller
 says `callModel({ job: "text" })` and the routing decides who serves it:
-**OpenRouter is the shipped default for every job except
+**NVIDIA is the shipped default for every job except
 images**, ChatGPT draws, and Perplexity researches companies, checks facts
 against live sources and rewrites drafts into plain English when it is asked
 for by name. **A job whose chosen vendor has no key — or whose call fails
@@ -125,65 +125,95 @@ and each key the Owner pastes moves one job onto its chosen model.
 `registry.ts` holds the vendors, the shipped routing, the published rates and
 `standInsFor()`; `call.ts` holds one adapter per vendor.
 
-Two things about the OpenRouter half: **the model id is verified against
-OpenRouter's own catalogue at key-save time** (`verifyProviderKey` reads
-`GET /models`, free and authenticated), so a slug that isn't listed fails on
-the screen with the closest matches named rather than becoming a month of
-calls that quietly failed over; and **the shipped OpenRouter model has no
-published rate in either pricing table**, so it prices at the dearest known
-rate in the ledger until one is added — the safe direction for a ceiling,
-worth remembering before concluding the budget is being spent too fast. (A
-*free* rung is the exception and is priced at zero explicitly; see below.)
+Two things about the NVIDIA half: **the model id is verified against NVIDIA's
+own catalogue at key-save time** (`verifyProviderKey` reads `GET /models`, free
+and authenticated), so a slug that isn't listed fails on the screen with the
+closest matches named rather than becoming a month of calls that quietly failed
+over; and **one key reaches every model on the account**. NVIDIA's console
+issues a key from an individual model's page, which makes it look as though each
+model needs its own — it does not, and the free allowance is counted per
+*account*, so a second key buys nothing but a second thing to keep secret.
 
-**The vendor is called "OpenRouter", not after its model.** It was named
-"ox-alpha" after the one model it served, and that stopped being true twice
-over: the slug was a stealth listing OpenRouter retired without notice, and the
-vendor now climbs a ladder of free models before anything else, so there is no
-single model to name it after. "ox-alpha isn't connected" sent somebody looking
-for a model when what was missing was a key.
+**The vendor replaced OpenRouter on 1 Sep 2026, and the reason is the whole
+feature.** OpenRouter served **one** free model to every job in the system, so
+every job was only as good as that model was at the worst thing it was asked to
+do — and when that one endpoint was busy or its daily cap was spent, everything
+stopped together. NVIDIA lists a different model per kind of work, all of them
+free on one OpenAI-shaped wire, so the ladder underneath each job is now three
+models picked *for that job*.
 
-**The free ladder: three free models, then the best paid one of three** —
-`openrouter.freeModels`, `freeLadder()` and `PAID_AGENT_CHAIN` in `registry.ts`.
-OpenRouter publishes models that cost nothing per token. They are real models
-and they are also the least reliable thing available: a free endpoint is shared,
-so it queues, rate-limits, and some of the time simply does not answer. One of
-them as *the* model is a system that stops working at busy times; three in a row
-with a paid floor behind them is a system that costs nothing most days and never
-stops.
+**The free ladders: three free models per job, then the best paid one of
+three** — `nvidia.freeModels`, `FREE_LADDER_BY_JOB` / `freeLadderFor()` and
+`PAID_AGENT_CHAIN` in `registry.ts`. Every model NVIDIA serves on that endpoint
+costs nothing per token. They are real models and they are also the least
+reliable thing available: a free endpoint is shared, so it queues, rate-limits,
+and some of the time simply does not answer. One of them as *the* model is a
+system that stops working at busy times; three in a row with a paid floor behind
+them is a system that costs nothing most days and never stops.
 
-- **It is on by default, and that was the whole point of it.** It shipped as an
-  opt-in on 28 Aug 2026 and was switched on by default the next day: an opt-in
-  nobody has opted into is a feature that does nothing, and a deployment that
-  never opened the Settings screen was paying for every agent turn while three
-  free models sat there. `DEFAULT_FREE_LADDER` is the seed; `ensureFreeLadder()`
-  replaces it at the first boot that has a key with the three best free
-  tool-capable models **the account's own catalogue lists**, because a free slug
-  written down in a source file is the most perishable id OpenRouter publishes.
+- **The assignment is the point.** `FREE_LADDER_BY_JOB` is eleven rows — every
+  `ModelJob`, plus `agent` for the loop that runs the workforce. Three rules
+  were applied to each: capability first (a model that cannot see is never in
+  the `vision` ladder), three houses where three exist (free capacity goes
+  short one provider at a time, and three models from one house is one rung
+  wearing three hats), and nothing that is currently down. The spreadsheet job
+  leads on the 1M-context model, triage and prompt-sorting lead on the smallest
+  fastest one, `vision` holds only the three models that can actually look at a
+  picture, and `agent` holds only verified tool-callers.
+- **Capabilities are written down, not read from the catalogue, and that is not
+  laziness.** NVIDIA's `/v1/models` returns `id`, `object`, `created` and
+  `owned_by` — no pricing, no `supported_parameters`, nothing about tools,
+  schemas or vision. OpenRouter published all of it, which is why the vendor
+  this replaced could ask at runtime. Every flag in `FREE_MODELS` is the result
+  of an actual request against the actual endpoint with the date recorded, and
+  `checks/freeModels.ts` asserts the ladders against it. The catalogue
+  contributes exactly one fact — *is this still listed* — which is what
+  `pruneFreeLadders()` uses at boot to drop a rung the vendor has retired. It
+  never *picks* a ladder, because a list picked from a capability-free
+  catalogue would be three ids nobody has ever called.
+- **On by default.** A deployment that never opens the Settings screen still
+  starts every job on the models chosen for it. It shipped as an opt-in for one
+  day in August 2026 and an opt-in nobody has opted into is a feature that does
+  nothing.
 - **Unset, empty and unreadable are three different states**, and conflating any
-  two of them is a money bug. Unset is the shipped ladder; a stored `[]` is free
-  models deliberately off and must survive a deploy; an unreadable row falls back
-  to the shipped ladder rather than quietly starting to pay for things.
+  two of them is a money bug. A job absent from the stored object uses its
+  shipped ladder; a stored `[]` for that job is free models deliberately off and
+  must survive a deploy; an unreadable row falls back to the shipped ladders
+  rather than quietly starting to pay for things. **A bare array is unreadable
+  now** — the setting holds an object keyed by job — which is worth knowing
+  before writing one in a harness.
 - **The paid floor is Claude, then ChatGPT, then Gemini** — the best of three,
   not one named vendor. A floor of one under a ladder built entirely out of
   endpoints that fail is a single point of failure in the place least able to
-  afford one: a run that survived three busy free models and then met a
-  rate-limited Claude died with two connected vendors sitting unasked. The agent
-  loop speaks all three wires — OpenAI chat completions for OpenRouter *and*
-  ChatGPT, the SDK for Anthropic, `:generateContent` for Gemini — and translates
-  each into the loop's Anthropic-shaped state, so a conversation can start on a
-  free rung and finish on Gemini with the checkpoint intact.
-- **The ladder replaces OpenRouter's model, it does not precede it.** Slipping
-  a paid call in between the free rungs and the floor would be a bill nobody
-  asked for at exactly the moment free capacity was short. Switched off, and
-  **nothing about the model layer changes** — which is asserted, because a 429
-  with free models off still requeues the task rather than moving the bill to a
-  paid vendor, and that deliberate difference for one status is the thing most
+  afford one. The agent loop speaks all three wires — OpenAI chat completions
+  for NVIDIA *and* ChatGPT, the SDK for Anthropic, `:generateContent` for
+  Gemini — and translates each into the loop's Anthropic-shaped state.
+- **Nothing starts from an empty page twice.** When an attempt fails having
+  already written something — cut off at the token ceiling, or unreadable — that
+  draft is handed to the next model as work to finish. The agent loop has always
+  done this (the conversation, the tool results and the checkpoint survive a
+  handover); `Carry` and `continuationBrief()` in `call.ts` are the same promise
+  for the one-shot path, and `ModelResult.continuedFrom` names whose work was
+  finished. Three deliberate calls: it rides in the **system prompt**, never as
+  a prior assistant turn, because a message holding invalid JSON is one the next
+  model is being asked to agree with and half of them will simply continue the
+  broken string; a failure that produced **nothing** carries nothing, because an
+  empty block headed "work already done" is worse than no block; and it applies
+  to **every** vendor, not only the paid floor, because "do not start over"
+  reads oddly if it only holds once money is involved.
+- **The ladder replaces NVIDIA's model, it does not precede it.** Switched off,
+  and **nothing about the model layer changes** — which is asserted, because a
+  429 with free models off still requeues the task rather than moving the bill to
+  a paid vendor, and that deliberate difference for one status is the thing most
   likely to get flattened into agreement by somebody reading one branch.
 - **A rung gets one attempt and a short clock**, where the paid floor keeps the
-  patient behaviour. Waiting out a queue is right when the vendor is the only
-  one who can do this and wrong when the next free model is one line down:
-  `FREE_ATTEMPTS = 1`, 60s in `call.ts` and 120s for an agent turn, against
-  four attempts and ninety seconds of backoff for a paid one.
+  patient behaviour: `FREE_ATTEMPTS = 1`, 60s in `call.ts` and 120s for an agent
+  turn, against four attempts and ninety seconds of backoff for a paid one.
+  **What makes it a rung is that there is another one below it, not what it
+  costs.** This was written as "is this model priced at zero" and gave the wrong
+  answer: a rung picked from the unprobed half of the catalogue got the patient
+  path, so a busy free endpoint held a person for ninety seconds before the
+  *next free model* was asked.
 - **A key-level refusal does not climb.** 401/402/403 are true of every model on
   the account, so climbing is three calls into the same wall and a slower
   failure. 400/404/429/5xx/silence are true of that model and say nothing about
@@ -192,38 +222,44 @@ stops.
   implementations of the same wire: `callModel` for one-shot work and
   `runAgentLoop` for an agent turn. A ladder in one and not the other works for
   writing an email and does nothing for the workforce.
-- **A rung is priced at zero, from the ladder rather than from the id.**
-  Most free ids end in `:free` and not all do, and a naming convention is not a
-  price — nothing reaches the *stored* list without having been checked against
-  OpenRouter's catalogue and found free at both ends, and the Settings screen
-  re-checks so a model that stops being free is named rather than quietly
-  charged for. The shipped seed is the one list nothing has checked, which is
-  why every id in it ends in `:free` and why a check asserts that. Left unpriced
-  a rung would fall through to the floor rate, which is deliberately the dearest
-  we know of: a free day would read as the most expensive one this company has
-  ever had and trip every ceiling on money nobody spent.
-- The picker reads the account's own catalogue, marks which models accept
-  `tools`, and says so — a model without them writes perfectly well and fails
-  every agent task.
+- **A rung is priced at zero, explicitly.** Two ways to earn it: membership of
+  `FREE_MODELS`, or membership of a ladder — including one the Owner picked from
+  the part of NVIDIA's catalogue this app has never probed, which the picker
+  offers and marks *unchecked*. Left unpriced a rung falls through to the floor
+  rate, which is deliberately the dearest we know of: a free day would read as
+  the most expensive one this company has ever had and trip every ceiling on
+  money nobody spent.
+- The picker shows what each model can actually do — sees images, tools, loose
+  schema, not serving, unchecked — beside the model, because those are the
+  reason to pick one row over another and the vendor publishes none of them.
+  The Settings panel is **Free AI models**, with a job dropdown and a summary
+  table of all eleven ladders underneath it: a dropdown that edits one row at a
+  time needs that table, or the thing being configured is only ever visible one
+  eleventh at a time.
 
-**Two defects this uncovered, both invisible and both live.** `model` in
-`runAgentLoop` was resolved once from whichever vendor came first, so **every
-handover to Claude was asking Anthropic for `stealth/ox-alpha`** — the failover
-that exists to save a run would have died on the model name. It survived because
-the harness's fake Anthropic echoes a Claude id whatever it is asked for, so
-"Claude finished the run" passed while the request said otherwise;
-`checks/agentLoopOpenRouter.ts` now reads the model out of the **request body**.
-And `BASE` in `call.ts` was captured at import while the agent loop's own
-`openRouterBase()` was read per call, so a harness repointing a vendor between
-scenarios got a frozen address in one half and a live one in the other — a check
-that passes while testing nothing, and on a machine with a real key one that
-spends money. There is now **one** function, `vendorBase()` in `registry.ts`,
-imported by both halves: two correct copies of the same fact are one copy away
-from two different facts, and this pair has already been there once.
-
-`checks/freeModels.ts` (40) drives both paths against local fakes, including the
+`checks/freeModels.ts` (72) drives both paths against local fakes, including the
 whole floor — three free rungs, a refused Claude, a broken ChatGPT, and Gemini
-finishing the run over a third wire.
+finishing the run over a third wire — plus the carry across a handover and the
+negative that a rung which produced nothing carries nothing.
+`tmp/nvidiaLive.ts` is the other half: one pass over the **real** endpoint,
+proving every shipped rung answers, that the vision rungs can see a picture that
+was actually sent, and that the agent loop can call a tool. It costs nothing and
+needs `NVIDIA_API_KEY`.
+
+**Two defects an earlier version of this uncovered, both invisible and both
+live.** `model` in `runAgentLoop` was resolved once from whichever vendor came
+first, so **every handover to Claude was asking Anthropic for a free model id** —
+the failover that exists to save a run would have died on the model name. It
+survived because the harness's fake Anthropic echoes a Claude id whatever it is
+asked for, so "Claude finished the run" passed while the request said otherwise;
+`checks/agentLoopNvidia.ts` now reads the model out of the **request body**.
+And `BASE` in `call.ts` was captured at import while the agent loop had its own
+per-call copy, so a harness repointing a vendor between scenarios got a frozen
+address in one half and a live one in the other — a check that passes while
+testing nothing, and on a machine with a real key one that spends money. There is
+now **one** function, `vendorBase()` in `registry.ts`, imported by both halves:
+two correct copies of the same fact are one copy away from two different facts,
+and this pair has already been there once.
 
 **The chain is not decoration — a two-step fallback had a hole in it.** `vision`
 is routed to ChatGPT and fell back to Claude only, so a deployment holding a
@@ -236,59 +272,64 @@ and the sentence names all of them. A vendor that *cannot* do the job is never
 in the chain, so Perplexity is never asked to look at a screenshot however many
 keys are missing.
 
-**The schema is sent as a schema, or said in words — never neither.** The
-largest of the ox-alpha defects and the one that made the analyst look like it
-had simply got worse. On OpenRouter, `response_format` in a model's
-`supported_parameters` means it takes `{"type":"json_object"}`;
-**`structured_outputs` is the one that means the schema is compiled and
-enforced**, and 332 of the 416 models listed on 24 Aug 2026 declare it.
-**`stealth/ox-alpha` is one of the 84 that do not** — so OpenRouter drops a
-`json_schema` sent to it. That would be harmless if the prompt described the
-answer, and *not one caller in this app does*: every one of them describes it
-entirely in the schema — field names, enums, sentinels, and a `description` per
-field carrying the real instruction. The sheet analyst's prompt says "return a
-plan" and never says what a plan looks like, because `headerRow`,
-`firstDataRow`, the `-1` sentinel and the list of valid field targets all live
-in the schema. So the shipped default model was being asked for a plan with no
-description of one anywhere in the request; it guessed at the field names, and
-`normalizePlan` dropped what it could not recognise.
+**The schema is sent in the shape the model will take, and said in words
+whenever it will not be enforced.** Three states, not two, and finding that out
+cost three probes — `FreeModel.schema` in `registry.ts`:
 
-`openRouterCompilesSchemas()` reads the model's own declaration from the same
-free catalogue endpoint `verifyProviderKey` already uses, cached for six hours,
-and the answer decides: a model that compiles schemas gets the strict one and
-nothing else, one that does not gets `json_object` plus `schemaContract()`
-written into its system prompt. **A failed lookup returns `null` and does
-both** — guessing wrong in that direction costs tokens, and the other direction
-silently un-enforces a schema. `readJson()` also takes a second attempt at a
+- `enforced` — takes `response_format: json_schema` and compiles it. The schema
+  alone is the whole instruction.
+- `accepted` — takes `json_schema`, answers 200, and returns an object with
+  field names it invented. `google/diffusiongemma-26b-a4b-it` does this and
+  **rejects `json_object` outright** ("requires a JSON schema"), so the schema
+  still has to go on the wire; it just cannot be relied on.
+- `object` — 500s on a strict schema and takes `json_object` instead.
+  `meta/llama-3.2-90b-vision-instruct` is this one.
+
+Anything but `enforced` gets `schemaContract()` written into its system prompt
+as well, and so does a model this app has never probed. Without that the model
+is asked for "a plan" with no description of one anywhere in the request,
+because **not one caller in this app describes its answer in the prompt** —
+every one describes it entirely in the schema, field names, enums, sentinels and
+a `description` per field carrying the real instruction. The sheet analyst's
+prompt says "return a plan" and never says what a plan looks like, because
+`headerRow`, `firstDataRow`, the `-1` sentinel and the list of valid field
+targets all live in the schema. `readJson()` also takes a second attempt at a
 reply with a sentence of preamble around the object, which is what a model
 *asked* for JSON rather than held to it routinely sends; it slices the
 outermost braces and parses them, and never repairs malformed JSON, because
 guessing what a truncated object meant is how a plan arrives with boundaries
 nobody chose.
 
-**The OpenRouter wire carries two more things it silently did not.** `effort` is not
-an OpenAI parameter, so for as long as `callModel` existed it put *nothing* on
-that wire and every routed job ran at **ox-alpha's own default, which is max** —
-triage included, which asks for `low` in so many words and runs once per
-*arriving* message. `reasoningEffortFor()` had been written for the agent loop
-and lived inside it; it is a vendor fact and lives in `registry.ts` now, and
-both halves of the model layer read it. And **`max_tokens` caps reasoning plus
-reply on that wire**, exactly as Anthropic's does, so a caller's budget sized
-for the answer was being spent thinking: the sheet analyst asks for 16,000
-because a plan describing forty columns is genuinely long, and what came back
-was an empty message with `finish_reason: "length"` — read correctly as
-"produced nothing usable" and handed to the next vendor. The Owner paid for the
-reasoning, waited for it, and got Claude's answer. `tokensWithReasoning()`
-budgets the thinking on top of the answer, capped at 32,000. Same shape of bug
-as the missing prompt cache: nothing breaks, every answer is correct, and the
-only symptom is the bill and a slower import.
+**The effort on the wire is low / medium / high and nothing else**, and this is
+the one line in the model layer with a live 400 behind it: `openai/gpt-oss-120b`
+and `-20b` answer `Input should be 'low', 'medium' or 'high'` to anything
+outside that set. The mapping this replaced sent OpenRouter's own word `max` on
+every high-effort call — carrying it across would have taken every high-effort
+job down on two of the seven free models, and taken it down as a *request-shape*
+failure, which climbs the ladder: the symptom would have been three free models
+refusing all the important work and the paid floor quietly finishing it. A model
+that does not declare `reasoning` at all is sent no effort — a parameter a model
+ignores is free, one it rejects costs the whole request. `reasoningEffortFor()`
+is a vendor fact and lives in `registry.ts`, read by both halves of the model
+layer; it used to live inside the agent loop, so for as long as `callModel`
+existed it put *nothing* on that wire and every routed job ran at the model's own
+default. And **`max_tokens` caps reasoning plus reply on this wire**, exactly as
+Anthropic's does, so a caller's budget sized for the answer was being spent
+thinking: the sheet analyst asks for 16,000 because a plan describing forty
+columns is genuinely long, and what came back was an empty message with
+`finish_reason: "length"` — read correctly as "produced nothing usable" and
+handed to the next vendor. The Owner paid for the reasoning, waited for it, and
+got Claude's answer. `tokensWithReasoning()` budgets the thinking on top of the
+answer, capped at 32,000. Same shape of bug as the missing prompt cache: nothing
+breaks, every answer is correct, and the only symptom is the bill and a slower
+import.
 
 Four things that will bite:
 
-- The four new vendors are spoken to over `fetch`, not SDKs. Anthropic keeps
-  its SDK because the agent loop needs tool use and thinking blocks.
-- **A chat-completions `content` is not reliably a string.** OpenRouter fronts
-  arbitrary models and some answer with the parts array; that used to reach
+- The four non-Anthropic vendors are spoken to over `fetch`, not SDKs. Anthropic
+  keeps its SDK because the agent loop needs tool use and thinking blocks.
+- **A chat-completions `content` is not reliably a string.** NVIDIA serves
+  arbitrary open models and some answer with the parts array; that used to reach
   `.trim()` as an array and throw an *uncaught* `TypeError`, skipping every
   failover path below it and surfacing as "Something went wrong" about a
   spreadsheet the Owner was looking at. `assistantText()` normalises both
@@ -342,7 +383,7 @@ spent it.
 - **None of it applies to the chat-completions wire, and that is a finding
   rather than a fix.** `chatCompletionsTurn()` sends no `cache_control` and
   reads no cache figures back — it takes `prompt_tokens` and
-  `completion_tokens` and nothing else — so OpenRouter and ChatGPT turns record
+  `completion_tokens` and nothing else — so NVIDIA and ChatGPT turns record
   zero reads and zero writes however large the prompt. Deliberately left alone:
   the ladder puts every agent turn on a *free* rung first, where a full prompt
   costs nothing but latency, and the paid Claude floor goes through the SDK,
@@ -1024,27 +1065,27 @@ only the tools its `toolkit` grants, and turns a manual tool-use loop
 goes through `invokeTool`, so the gate is unchanged.
 
 **An agent turn is a job like any other, and it routes like one.** The loop
-itself picks its vendor: **OpenRouter first and free first** — it climbs the
-three rungs of the free ladder before anything is paid for — then the paid
+itself picks its vendor: **NVIDIA first and free first** — it climbs the three
+rungs of the `agent` free ladder before anything is paid for — then the paid
 floor, which is Claude, then ChatGPT, then Gemini, whichever of them has a key.
 A rehearsal dies no more on an empty Anthropic balance while free capacity sits
 there unasked. There is **one** place in the loop that decides what a failure
 means, for all four vendors: a rung that did not serve climbs to the next rung;
 an exhausted ladder hands on to the floor **including on a 429**; a paid vendor
-hands on for anything at all; and OpenRouter with free models switched off keeps
+hands on for anything at all; and NVIDIA with free models switched off keeps
 the old, narrower rule so a rate limit still requeues rather than moving the
-bill. A **key-level refusal** (401/402/403) also puts OpenRouter on a 15-minute
+bill. A **key-level refusal** (401/402/403) also puts NVIDIA on a 15-minute
 cooldown so the resumes behind it start at the floor instead of each paying one
 call into the same refusal. The loop's internal state stays Anthropic-shaped
 throughout: `chatCompletionsTurn()` and `geminiTurn()` translate at the wire, so
 a checkpoint written by one vendor resumes on another, and the effort travels as
-`reasoning_effort` mapped onto what the OpenRouter model accepts — low stays
-low, medium steps up to high, high rides at max, because the model's own
-default is max and leaving it unset would put headline-depth reasoning under
-every economy run. `checks/agentLoopOpenRouter.ts` drives the real loop against
-a fake OpenRouter and pins the wire shape, the checkpoint shape and the
-handover; it switches free models **off** for its own scenarios, because the
-ladder has its own file and this one is about the wire.
+`reasoning_effort` mapped onto what the wire accepts — low, medium, high, and
+nothing else, because two of the free models answer 400 to any other value. It
+is sent only to a model that declares it takes it.
+`checks/agentLoopNvidia.ts` drives the real loop against a fake NVIDIA and pins
+the wire shape, the checkpoint shape and the handover; it switches free models
+**off for the `agent` job** in its own scenarios, because the ladder has its own
+file and this one is about the wire.
 
 **Check `result.dryRun` before `result.refusedReason`.** A dry run carries a
 `refusedReason` too — it is the sentence explaining *why* the call was
@@ -1654,7 +1695,7 @@ lands in `AgentTaskTransition` with a reason and an actor.
 - **Nothing outside the task is charged to it.** Three faults shared that
   shape and all three are in `checks/agentSpendAndOutages.ts`. A 429 skips
   `retry.ts`'s answerable-phrase sweep entirely, because the message carries up
-  to 300 characters of the vendor's own prose and both OpenRouter ("Add 10
+  to 300 characters of the vendor's own prose and both a free-tier day limit ("Add 10
   credits to unlock…") and Google ("Quota exceeded for quota metric") say one
   of those words inside a plain rate limit — the two likeliest failures here
   were blocking the task and posting an escalation card for a limit that clears
@@ -2006,8 +2047,8 @@ protection existed, was tested, was documented here, and was not wired in.
 It runs on the analyse path only — a plan coming back from the review screen is
 still left alone, for the reason stated above.
 
-`checks/sheetAnalyst.ts` (75) is the committed half — it drives the real
-`analyzeGrids` against a fake OpenRouter and a fake Anthropic and asserts on the
+`checks/sheetAnalyst.ts` (78) is the committed half — it drives the real
+`analyzeGrids` against a fake NVIDIA and a fake Anthropic and asserts on the
 request body, then runs the repairs over a sheet shaped like the one the prompt
 describes. Its negatives are the half worth reading: a correctly-read header row
 must be left alone, and a table with another below it must not run on into it.

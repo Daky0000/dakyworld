@@ -116,33 +116,43 @@ export const SETTING = {
   PERPLEXITY_KEY: "perplexity.apiKey",
   PERPLEXITY_MODEL: "perplexity.model",
   /**
-   * OpenRouter — one key that reaches every model it lists, the default for every job
-   * it can do. When it is not connected, or a call through it fails, the job
-   * moves down the same chain as ever. See lib/models/registry.ts.
-   */
-  OPENROUTER_KEY: "openrouter.apiKey",
-  OPENROUTER_MODEL: "openrouter.model",
-  /**
-   * Free OpenRouter models to try, in order, as a JSON array of model ids.
+   * NVIDIA — one key that reaches every model in its build catalogue, and the
+   * default for every job it can do. When it is not connected, or a call
+   * through it fails, the job moves down the same chain as ever. See
+   * lib/models/registry.ts.
    *
-   * OpenRouter publishes models that cost nothing per token. They are real
+   * **One key, every model.** NVIDIA issues a key per model page in its
+   * console, which makes it look as though each model needs its own; it does
+   * not — a key issued against one model authenticates every model on the
+   * account, and the free allowance is counted per *account*, so a second key
+   * buys nothing but a second thing to keep secret.
+   */
+  NVIDIA_KEY: "nvidia.apiKey",
+  NVIDIA_MODEL: "nvidia.model",
+  /**
+   * The free NVIDIA models to try for each job, in order, as JSON:
+   * `{"vision":["meta/llama-3.2-90b-vision-instruct", …],"agent":[…]}`.
+   *
+   * Every model NVIDIA serves here costs nothing per token. They are real
    * models and they are also the least reliable thing in this system: a free
    * endpoint is shared, so it queues, it rate-limits, and some of the time it
    * simply does not answer. One of them as *the* model would be a system that
    * stops working at busy times. Three of them in a row, with the paid floor
    * behind them, is a system that costs nothing most days and never stops.
    *
-   * So this is a ladder, not a choice: while it holds anything, OpenRouter work
+   * So this is a ladder, not a choice: while it holds anything, NVIDIA work
    * goes down it — first rung, then the next when that one does not answer —
    * and when the whole ladder is exhausted the job carries on to the next
-   * vendor, which is Claude. Empty, and nothing about the model layer changes.
+   * vendor. The difference from what came before is that the ladder is **per
+   * job**: a spreadsheet gets the 1M-context model, a screenshot gets one that
+   * can see, and the mailbox gets the fastest small one.
    *
-   * Every id in here was checked against OpenRouter's own catalogue at the
-   * moment it was saved and cost nothing then. That is also what lets the
-   * ledger price them at zero rather than at the unknown-model rate, which is
-   * deliberately the dearest we know of — see `rateForModel`.
+   * Holds only what has been changed. A job absent from this object uses the
+   * shipped ladder in `FREE_LADDER_BY_JOB`; a job present with an empty array
+   * has free models switched off deliberately, and a deploy must not switch
+   * them back on.
    */
-  OPENROUTER_FREE_MODELS: "openrouter.freeModels",
+  NVIDIA_FREE_MODELS: "nvidia.freeModels",
   /**
    * Which vendor serves which job, as JSON, holding only what has been changed
    * from the shipped routing: `{"text":"anthropic"}`.
@@ -654,8 +664,8 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.GEMINI_MODEL]: "GEMINI_MODEL",
   [SETTING.PERPLEXITY_KEY]: "PERPLEXITY_API_KEY",
   [SETTING.PERPLEXITY_MODEL]: "PERPLEXITY_MODEL",
-  [SETTING.OPENROUTER_KEY]: "OPENROUTER_API_KEY",
-  [SETTING.OPENROUTER_MODEL]: "OPENROUTER_MODEL",
+  [SETTING.NVIDIA_KEY]: "NVIDIA_API_KEY",
+  [SETTING.NVIDIA_MODEL]: "NVIDIA_MODEL",
   [SETTING.GOOGLE_CLIENT_ID]: "GOOGLE_CLIENT_ID",
   [SETTING.GOOGLE_CLIENT_SECRET]: "GOOGLE_CLIENT_SECRET",
   [SETTING.GOOGLE_REFRESH_TOKEN]: "GOOGLE_REFRESH_TOKEN",

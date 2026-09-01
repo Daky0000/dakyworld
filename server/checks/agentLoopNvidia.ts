@@ -32,7 +32,7 @@
  *   Claude too, and only a deployment with neither key connected may fail.
  *
  * No API key and no network — both fakes serve their turns locally.
- *   npx tsx checks/agentLoopOpenRouter.ts
+ *   npx tsx checks/agentLoopNvidia.ts
  */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -154,7 +154,7 @@ let seenInput: Record<string, unknown> | null = null;
 async function main() {
   const { prisma } = await import("../src/lib/prisma.js");
   const { clearSettingsCache, SETTING, setSetting } = await import("../src/lib/settings.js");
-  const { runAgentLoop, reasoningEffortFor, clearOpenRouterCooldown } = await import("../src/lib/claudeAgent.js");
+  const { runAgentLoop, reasoningEffortFor, clearNvidiaCooldown } = await import("../src/lib/claudeAgent.js");
   const { PROVIDERS } = await import("../src/lib/models/registry.js");
 
   // --- Isolation ---------------------------------------------------------------
@@ -170,9 +170,9 @@ async function main() {
     SETTING.ANTHROPIC_KEY,
     SETTING.ANTHROPIC_MODEL,
     SETTING.ANTHROPIC_MODEL_ECONOMY,
-    SETTING.OPENROUTER_KEY,
-    SETTING.OPENROUTER_MODEL,
-    SETTING.OPENROUTER_FREE_MODELS,
+    SETTING.NVIDIA_KEY,
+    SETTING.NVIDIA_MODEL,
+    SETTING.NVIDIA_FREE_MODELS,
     // The other two thirds of the paid floor. This file is about the OpenRouter
     // wire and the handover *to* the floor; a machine with a real ChatGPT or
     // Gemini key pasted would otherwise have a scenario reach one for real.
@@ -189,21 +189,35 @@ async function main() {
   // (`checks/freeModels.ts`), which drives all three rungs and the paid floor
   // behind them. An empty list is the deliberate "off" state; deleting the row
   // would mean "use the shipped ladder", which is the opposite.
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
+  //
+  // **Keyed by job**, because that is what the setting holds now. A bare `[]`
+  // is not an empty ladder here, it is an unreadable value — and unreadable
+  // falls back to the *shipped* ladders on purpose, so this file would have
+  // gone back to being three calls per scenario with nothing saying so.
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, JSON.stringify({ agent: [] }));
   clearSettingsCache();
 
   // --- The effort mapping ----------------------------------------------------
   //
-  // The shipped OpenRouter model offers low/high/max and defaults to max. Our
-  // medium must not become max by omission, and our high must not fall through
-  // to low.
+  // **Three values and no others.** `openai/gpt-oss-120b` and `-20b` answer a
+  // flat 400 — "Input should be 'low', 'medium' or 'high'" — to anything
+  // outside that set, and the mapping this replaced sent one vendor's own word
+  // `max` on every high-effort call. Carrying it across would have taken every
+  // high-effort job down on two of the seven free models, as a *request-shape*
+  // failure that climbs the ladder — so the symptom would have been three free
+  // models refusing all the important work and the paid floor quietly
+  // finishing it. This is the assertion that stops that coming back.
   check("low stays low", reasoningEffortFor("low") === "low");
-  check("medium steps up to high, not the model's max default", reasoningEffortFor("medium") === "high");
-  check("high rides at max", reasoningEffortFor("high") === "max");
-  check("xhigh rides at max", reasoningEffortFor("xhigh") === "max");
-  check("max rides at max", reasoningEffortFor("max") === "max");
+  check("medium stays medium", reasoningEffortFor("medium") === "medium");
+  check("high rides at high", reasoningEffortFor("high") === "high");
+  check("xhigh rides at high", reasoningEffortFor("xhigh") === "high");
+  check("max rides at high, because the wire has no higher word", reasoningEffortFor("max") === "high");
+  check(
+    "and nothing outside low/medium/high is ever sent",
+    (["low", "medium", "high", "xhigh", "max"] as const).every((effort) => ["low", "medium", "high"].includes(reasoningEffortFor(effort))),
+  );
 
-  // --- Scenario A: OpenRouter alone, happy path ------------------------------
+  // --- Scenario A: NVIDIA alone, happy path -----------------------------------
 
   const orBodies: Record<string, any>[] = [];
   const orServer = await httpServer((_body, send) => {
@@ -212,8 +226,8 @@ async function main() {
   });
 
   // Set before anything reads them; getSetting falls back to these live.
-  process.env.OPENROUTER_API_KEY = "sk-or-check-not-a-real-key";
-  process.env.OPENROUTER_BASE_URL = orServer.url;
+  process.env.NVIDIA_API_KEY = "nvapi-check-not-a-real-key";
+  process.env.NVIDIA_BASE_URL = orServer.url;
   // Claude must stay unconnected, or the selection never reaches OpenRouter.
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_BASE_URL;
@@ -221,7 +235,7 @@ async function main() {
 
   let savedState: unknown = null;
   const result = await runAgentLoop({
-    purpose: "check.agentLoop.openrouter",
+    purpose: "check.agentLoop.nvidia",
     system: "You are a check.",
     prompt: "Look something up, then say you are done.",
     tools: [lookUpTool],
@@ -242,8 +256,8 @@ async function main() {
   // this shipped on was retired without notice on 26 Aug 2026, and a check that
   // hard-codes the model fails on the swap itself rather than on anything being
   // wrong — which trains somebody to edit the assertion instead of reading it.
-  check("the shipped slug is what goes out", first?.model === PROVIDERS.openrouter.defaultModel, String(first?.model));
-  check("the effort rides as reasoning_effort", first?.reasoning_effort === "high", String(first?.reasoning_effort));
+  check("the shipped slug is what goes out", first?.model === PROVIDERS.nvidia.defaultModel, String(first?.model));
+  check("the effort rides as reasoning_effort", first?.reasoning_effort === "medium", String(first?.reasoning_effort));
   check("the token ceiling travels as max_tokens", first?.max_tokens === 16_000, String(first?.max_tokens));
   check(
     "no Anthropic-only fields leak onto this wire",
@@ -288,7 +302,7 @@ async function main() {
   );
 
   // --- The ledger ------------------------------------------------------------
-  const row = await prisma.llmCall.findFirst({ where: { purpose: "check.agentLoop.openrouter" }, orderBy: { createdAt: "desc" } });
+  const row = await prisma.llmCall.findFirst({ where: { purpose: "check.agentLoop.nvidia" }, orderBy: { createdAt: "desc" } });
   check("the run was recorded under the model that served it", row?.model === "stealth/ox-alpha", String(row?.model));
   check("both turns' tokens landed", row?.inputTokens === 150 && row?.outputTokens === 20, `in=${row?.inputTokens} out=${row?.outputTokens}`);
   check("it recorded as a success", row?.ok === true, String(row?.ok));
@@ -308,7 +322,7 @@ async function main() {
     send(402, "Insufficient credits");
   });
 
-  process.env.OPENROUTER_BASE_URL = refusedServer.url;
+  process.env.NVIDIA_BASE_URL = refusedServer.url;
   process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
   process.env.ANTHROPIC_BASE_URL = anthServer.url;
   // Scenario A cached these keys' answers; the new environment must be read.
@@ -368,11 +382,11 @@ async function main() {
     send(404, "Thank you for participating in the Stealth Ox Alpha testing period. This model was ZAI\u2019s GLM-5.3 Flash.");
   });
 
-  process.env.OPENROUTER_BASE_URL = goneServer.url;
+  process.env.NVIDIA_BASE_URL = goneServer.url;
   clearSettingsCache();
   // Scenario C left OpenRouter inside its cooldown, which would skip the vendor
   // before the 404 could be reached and make this a test of nothing.
-  clearOpenRouterCooldown();
+  clearNvidiaCooldown();
 
   const anthBefore = anthBodies.length;
   const retired = await runAgentLoop({
@@ -412,9 +426,9 @@ async function main() {
     });
   });
 
-  process.env.OPENROUTER_BASE_URL = emptyServer.url;
+  process.env.NVIDIA_BASE_URL = emptyServer.url;
   clearSettingsCache();
-  clearOpenRouterCooldown();
+  clearNvidiaCooldown();
 
   const anthBeforeEmpty = anthBodies.length;
   const empty = await runAgentLoop({
@@ -440,24 +454,24 @@ async function main() {
   // free model(s): inclusionai/ling-3.0-flash-fin:free", then spent an Anthropic
   // balance and an OpenAI one. Both halves of that sentence were wrong in the
   // same direction, and the reading it invites — free models are configured and
-  // being ignored — is the opposite of what happened: OpenRouter was not in the
-  // chain at all, and nothing said so.
+  // being ignored — is the opposite of what happened: the free vendor was not in
+  // the chain at all, and nothing said so.
   //
-  // The ladder is a list of OpenRouter ids. Saying it while a paid vendor is
+  // The ladder is a list of NVIDIA ids. Saying it while a paid vendor is
   // serving is not cosmetic; it is the line somebody reads when they are
   // working out why a run cost money.
   {
     const { setSetting: put } = await import("../src/lib/settings.js");
-    await put(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(["some-house/some-model:free", "other/other:free"]));
-    // No OpenRouter key at all, so the free vendor cannot be in the chain.
+    await put(SETTING.NVIDIA_FREE_MODELS, JSON.stringify({ agent: ["some-house/some-model", "other/other"] }));
+    // No NVIDIA key at all, so the free vendor cannot be in the chain.
     // **The env var, not the row.** `getSetting` prefers an env-managed value,
-    // and this harness sets `OPENROUTER_API_KEY` — deleting the AppSetting row
+    // and this harness sets `NVIDIA_API_KEY` — deleting the AppSetting row
     // alone leaves the key perfectly readable and the scenario tests nothing.
-    const savedOrKey = process.env.OPENROUTER_API_KEY;
-    delete process.env.OPENROUTER_API_KEY;
-    await prisma.appSetting.deleteMany({ where: { key: SETTING.OPENROUTER_KEY } });
+    const savedOrKey = process.env.NVIDIA_API_KEY;
+    delete process.env.NVIDIA_API_KEY;
+    await prisma.appSetting.deleteMany({ where: { key: SETTING.NVIDIA_KEY } });
     clearSettingsCache();
-    clearOpenRouterCooldown();
+    clearNvidiaCooldown();
 
     const said: string[] = [];
     const spoken = await runAgentLoop({
@@ -473,20 +487,20 @@ async function main() {
 
     const opening = said.join(" | ");
     check(
-      "with no OpenRouter key it does not claim to be starting on free models",
+      "with no NVIDIA key it does not claim to be starting on free models",
       !/free model\(s\)/.test(opening),
       opening,
     );
     check("it names the vendor that is actually serving", /Claude, on claude/.test(opening), opening);
     check(
       "and it says why the free models are absent",
-      /No OpenRouter key is set/.test(opening),
+      /No NVIDIA key is set/.test(opening),
       opening,
     );
     check("the run still finished", spoken.stoppedBecause === "finished", String(spoken.stoppedBecause));
 
-    await put(SETTING.OPENROUTER_FREE_MODELS, "[]");
-    if (savedOrKey) process.env.OPENROUTER_API_KEY = savedOrKey;
+    await put(SETTING.NVIDIA_FREE_MODELS, JSON.stringify({ agent: [] }));
+    if (savedOrKey) process.env.NVIDIA_API_KEY = savedOrKey;
     clearSettingsCache();
   }
 
@@ -502,12 +516,12 @@ async function main() {
 
     // OpenRouter refuses with a 402, and nobody is behind it: the Anthropic key
     // goes from the env as well as the row, for the reason above.
-    process.env.OPENROUTER_BASE_URL = refusedServer.url;
+    process.env.NVIDIA_BASE_URL = refusedServer.url;
     const savedAnthKey = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     await prisma.appSetting.deleteMany({ where: { key: SETTING.ANTHROPIC_KEY } });
     clearSettingsCache();
-    clearOpenRouterCooldown();
+    clearNvidiaCooldown();
 
     let thrown: Error | null = null;
     try {

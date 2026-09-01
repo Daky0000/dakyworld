@@ -109,7 +109,7 @@ async function main() {
   delete process.env.OPENAI_API_KEY;
   delete process.env.GEMINI_API_KEY;
   delete process.env.PERPLEXITY_API_KEY;
-  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.NVIDIA_API_KEY;
 
   const { callClaude } = await import("../src/lib/claude.js");
   const { callModel } = await import("../src/lib/models/call.js");
@@ -230,7 +230,7 @@ async function main() {
   // right now is the stand-in — exactly the state a deployment with only a
   // Claude key is in.
   const route = await routeFor("spreadsheet");
-  check("reading sheets ships routed to OpenRouter", route.chosen === "openrouter");
+  check("reading sheets ships routed to OpenRouter", route.chosen === "nvidia");
   // A stand-in is not "ready": ready means the chosen vendor is the one
   // serving, and the note is what says who is covering instead.
   check("with only a Claude key the stand-in serves it", route.serving === "anthropic" && !route.ready);
@@ -257,7 +257,7 @@ async function main() {
   );
   const analysis = await analyzeGrids([{ name: "Leads", rows: [["Name"], ["Kofi"]], totalRows: 2, truncated: false }], []);
   check("analyzeGrids sends the override to the wire", lastModel() === "claude-haiku-4-5");
-  check("a call served by the fallback says so", analysis.note !== null && analysis.note.includes(PROVIDERS.openrouter.name));
+  check("a call served by the fallback says so", analysis.note !== null && analysis.note.includes(PROVIDERS.nvidia.name));
 
   await prisma.llmCall.deleteMany({
     where: { purpose: "sheet.analyse", id: { notIn: [...knownSheetRows] } },

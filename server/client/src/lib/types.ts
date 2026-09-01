@@ -579,7 +579,7 @@ export interface HostingerMailStatus {
 /** Everything the Owner configures at runtime — see the Settings page. */
 // --- AI models -------------------------------------------------------------
 
-export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "openrouter";
+export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "nvidia";
 
 /** What is being asked for, in the app's own words rather than a vendor's. */
 export type ModelJob =
@@ -716,7 +716,7 @@ export interface AppSettings {
     envManaged: boolean;
     key: string | null;
     /**
-     * Who reads an imported sheet right now — OpenRouter by default, Claude
+     * Who reads an imported sheet right now — NVIDIA by default, Claude
      * standing in behind it. Same shape as a row on the AI models screen.
      */
     reading: ModelRoute;

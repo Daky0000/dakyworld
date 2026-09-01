@@ -44,7 +44,7 @@ export interface RetryPlan {
  * How long a run waits, by how many times it has already waited.
  *
  * Five minutes first, because that is the Owner's instruction and because it is
- * the right number for the case this exists for: an OpenRouter free-tier limit
+ * the right number for the case this exists for: an NVIDIA free-allowance limit
  * that clears on its own. It then doubles to an hour and stays there — a
  * provider that has been down for an hour is not going to be fixed by asking
  * more often, and a run polling a dead vendor every five minutes for a day is
@@ -119,9 +119,10 @@ const TEMPORARY_PHRASES = [
  * match anywhere in the message, and the message carries the vendor's own prose
  * — `describeRejection` puts up to 300 characters of the response body into it.
  * Two of the three most likely failures in this deployment say one of these
- * words *inside a plain rate limit*: OpenRouter answers a free-tier day limit
- * with "Add 10 credits to unlock 1000 free model requests per day", and Google
- * answers one with "Quota exceeded for quota metric". Both were being read as
+ * words *inside a plain rate limit*: a free-tier day limit is answered with a
+ * suggestion to buy credit — OpenRouter's was "Add 10 credits to unlock 1000
+ * free model requests per day" — and Google answers one with "Quota exceeded
+ * for quota metric". Both were being read as
  * "the account is out of money", which blocked the task, posted an escalation
  * card and waited for a person — for a limit that clears on its own. See
  * `RATE_LIMITED_ANYWAY` below for the rule that stops it.

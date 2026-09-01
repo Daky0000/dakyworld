@@ -43,7 +43,7 @@ import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { ensureStandingWork } from "./services/agents/standingWork.js";
 import { SETTING } from "./lib/settings.js";
-import { ensureFreeLadder } from "./lib/models/call.js";
+import { pruneFreeLadders } from "./lib/models/call.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
 import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
@@ -282,13 +282,19 @@ ensureSystemRoles()
       void ensureDakyworldSite()
         .then((created) => created && console.log("  → Added dakyworld.com to the website editor"))
         .catch((err) => console.error("Website seed failed:", err));
-      // The free ladder, from OpenRouter's own catalogue rather than from a
-      // list written down here. Only ever when nothing is stored — a ladder
-      // the Owner has set, including one they have deliberately emptied, is
-      // theirs. Harmless with no key: it returns without writing anything.
-      void ensureFreeLadder()
-        .then((picked) => picked && console.log(`  → Free model ladder: ${picked.ladder.join(" → ")}, then the paid floor`))
-        .catch((err) => console.error("Free ladder pick failed:", err));
+      // Drops from the Owner's own free ladders anything NVIDIA has stopped
+      // listing. It never *picks* a ladder — the shipped ones were probed by
+      // hand and the assignment is the point — and it never touches a job
+      // using a shipped ladder or one deliberately emptied. Harmless with no
+      // key: it returns without writing anything.
+      void pruneFreeLadders()
+        .then((pruned: { dropped: Record<string, string[]> } | null) => {
+          if (!pruned) return;
+          for (const [job, ids] of Object.entries(pruned.dropped)) {
+            console.log(`  → ${job}: dropped ${ids.join(", ")} — NVIDIA no longer lists it`);
+          }
+        })
+        .catch((err: unknown) => console.error("Free ladder prune failed:", err));
       // Adds agents that don't exist yet; never overwrites one the Owner has changed.
       void ensureAgents()
         .then(async (added) => {

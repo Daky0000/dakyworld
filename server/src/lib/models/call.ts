@@ -3,23 +3,25 @@ import { costOf, rateFor, type ModelRate } from "../claudePricing.js";
 import { recordLlmCall } from "../llmLedger.js";
 import { SETTING, getSetting, setSetting } from "../settings.js";
 import {
-  DEFAULT_FREE_LADDER,
-  FREE_LADDER_MAX,
+  FREE_MODELS,
   JOBS,
   PROVIDERS,
   PROVIDER_PRICING,
+  freeModel,
   imageModel,
   isFreeModel,
   modelForJob,
-  openRouterAttempts,
+  nvidiaAttempts,
   providerKey,
   providerModel,
+  readFreeLadders,
   reasoningEffortFor,
   requestFee,
   routeFor,
   serveChain,
   tokensWithReasoning,
   vendorBase,
+  type LadderKey,
   type ModelJob,
   type ProviderKey,
 } from "./registry.js";
@@ -141,6 +143,17 @@ export interface ModelResult<T> {
   sources: { title: string; url: string; date?: string | null }[];
   /** Set when the chosen vendor was unavailable and something else stepped in. */
   fallbackNote: string | null;
+  /**
+   * The model whose unfinished answer this one was handed, when there was one.
+   *
+   * Null on the ordinary path, which is almost always. It is set when an
+   * earlier attempt wrote something and then failed — cut off at the token
+   * ceiling, or unreadable — and the model that eventually answered was given
+   * that draft to finish rather than starting again. Surfaced rather than kept
+   * internal for the same reason `fallbackNote` is: a handover nobody can see
+   * is one nobody can price or fix.
+   */
+  continuedFrom: string | null;
 }
 
 // --- Pricing ----------------------------------------------------------------
@@ -444,7 +457,7 @@ function openAiContent(request: ModelRequest): unknown {
  * The assistant's words, whatever shape they arrived in.
  *
  * A plain string is what the chat-completions spec says and what ChatGPT
- * always sends. OpenRouter fronts arbitrary models and some of them answer
+ * always sends. NVIDIA serves arbitrary open models and some of them answer
  * with the parts array instead, which used to reach `completion.text.trim()`
  * as an array and throw a `TypeError` — an uncaught one, so it skipped every
  * failover path below and surfaced to the Owner as "Something went wrong"
@@ -585,59 +598,7 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
   };
 }
 
-// --- OpenRouter -------------------------------------------------------------
-
-/**
- * Which models on OpenRouter actually compile a strict JSON schema.
- *
- * OpenRouter's catalogue declares this per model, and the distinction is not
- * cosmetic: `response_format` in a model's `supported_parameters` means it
- * takes `{"type":"json_object"}` — *some* JSON — while `structured_outputs`
- * is the one that means the schema is compiled and enforced. 332 of the 416
- * models listed on 24 Aug 2026 declare the second. **The shipped default was
- * one of the 84 that do not**, which is the whole reason this exists. It is
- * asked per model rather than hard-coded, so a model swap — `stealth/ox-alpha`
- * became `z-ai/glm-5.3-flash` when OpenRouter retired the stealth slug — is
- * answered correctly by the next catalogue read rather than by editing this.
- *
- * Read from the same free, authenticated endpoint `verifyProviderKey` already
- * uses, cached for the process, and **`null` when it cannot be answered** —
- * a failed lookup must not downgrade a model that would have enforced the
- * schema perfectly well.
- */
-const compilesSchemas = new Map<string, boolean>();
-let catalogueReadAt = 0;
-const CATALOGUE_TTL_MS = 6 * 60 * 60_000;
-
-async function openRouterCompilesSchemas(apiKey: string, model: string): Promise<boolean | null> {
-  if (catalogueReadAt && Date.now() - catalogueReadAt > CATALOGUE_TTL_MS) {
-    compilesSchemas.clear();
-    catalogueReadAt = 0;
-  }
-  const cached = compilesSchemas.get(model);
-  if (cached !== undefined) return cached;
-  if (catalogueReadAt) return null; // Catalogue is fresh and simply doesn't list it.
-
-  try {
-    const response = await fetch(`${base("openrouter")}/models`, {
-      headers: { authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json()) as { data?: { id?: unknown; supported_parameters?: unknown }[] };
-    const entries = payload?.data ?? [];
-    if (!entries.length) return null;
-    for (const entry of entries) {
-      if (typeof entry?.id !== "string") continue;
-      compilesSchemas.set(entry.id, Array.isArray(entry.supported_parameters) && entry.supported_parameters.includes("structured_outputs"));
-    }
-    catalogueReadAt = Date.now();
-    return compilesSchemas.get(model) ?? null;
-  } catch {
-    // A catalogue we could not read tells us nothing about the model.
-    return null;
-  }
-}
+// --- NVIDIA -----------------------------------------------------------------
 
 /**
  * The answer's shape, said in the prompt rather than only in the request.
@@ -650,12 +611,11 @@ async function openRouterCompilesSchemas(apiKey: string, model: string): Promise
  * of valid field targets all live in the schema.
  *
  * That is exactly right when the schema is compiled into a grammar, and it is
- * nothing at all when it is dropped on the floor — which is what OpenRouter
- * does with `json_schema` for a model that has not declared
- * `structured_outputs`. The model is then asked for "a plan" with no
- * description of one anywhere in the request, and it guesses at the field
- * names. `normalizePlan` drops what it cannot recognise, and the Owner sees an
- * analyst that has got worse for no visible reason.
+ * nothing at all when it is dropped on the floor — which is what a model that
+ * merely *accepts* `json_schema` does with it. The model is then asked for "a
+ * plan" with no description of one anywhere in the request, and it guesses at
+ * the field names. `normalizePlan` drops what it cannot recognise, and the
+ * Owner sees an analyst that has got worse for no visible reason.
  *
  * So where the schema will not be enforced, it is stated. Compact rather than
  * indented — a model reads minified JSON Schema perfectly well and the
@@ -677,66 +637,51 @@ function schemaContract(schema: unknown): string {
 }
 
 /**
- * OpenRouter speaks the OpenAI chat-completions shape, so this is `callOpenAI`
- * with a different base URL and two small differences that matter.
+ * NVIDIA speaks the OpenAI chat-completions shape, so this is `callOpenAI`
+ * with a different base URL and three differences that each have a live error
+ * behind them.
  *
- * **`max_tokens`, not `max_completion_tokens`.** OpenRouter normalises to the
- * older field name across every model it fronts; sending the newer one is
- * accepted by some models and ignored by others, which is a silent way for a
- * page build to come back cut in half.
+ * **`max_tokens`, not `max_completion_tokens`.** NVIDIA's NIM front end
+ * normalises to the older field name across every model it serves; sending the
+ * newer one is accepted by some models and ignored by others, which is a
+ * silent way for a page build to come back cut in half.
  *
- * **The schema is sent as a schema, or said in words — never neither.** This
- * comment used to claim the schema "rides along in case strict mode doesn't",
- * on the grounds that "the caller's instruction to return JSON is already in
- * the system prompt". That was false, and it was the whole bug: not one caller
- * in this app describes its answer in the system prompt, because every one of
- * them describes it in the schema — field names, enums, sentinels, and a
- * `description` per field carrying the actual instruction. OpenRouter drops
- * `json_schema` for a model that has not declared `structured_outputs`, and
- * **the shipped default had not**, so it was being asked for "a plan" with no
- * description of one anywhere in the request. It guessed at the
- * field names; `normalizePlan` dropped what it could not recognise; and the
- * analyst looked like it had simply got worse.
+ * **`reasoning_effort` is low / medium / high, and only for a model that takes
+ * it at all.** `openai/gpt-oss-*` answers a flat 400 to anything else, and
+ * `moonshotai/kimi-k3` rejects `reasoning_budget` by name. So the effort rides
+ * only where `FreeModel.reasoning` says it is understood — a parameter a model
+ * ignores is free, and one it rejects costs the whole request. See
+ * `reasoningEffortFor`.
  *
- * So the model's own declared capability decides: a model that compiles
- * schemas gets the strict one and nothing else, and a model that does not gets
- * `json_object` plus the schema written into the prompt. When the catalogue
- * cannot be read we do both, because guessing wrong in that direction only
- * costs tokens.
- *
- * **The effort travels as `reasoning_effort`, and the budget makes room for
- * it.** Both were missing here, and both were invisible. `effort` is not an
- * OpenAI parameter, so every routed job — triage included, which asks for
- * `low` in so many words and runs once per *arriving* message — rode at
- * the model's own default, which on the shipped one is max. And `max_tokens`
- * caps reasoning *plus* reply
- * on this wire, so the sheet analyst's 16,000 could be spent thinking before a
- * character of the plan was written, and what came back was an empty message
- * with `finish_reason: "length"` — read here, correctly, as "produced nothing
- * usable" and handed to the next vendor. The Owner paid for the reasoning,
- * waited for it, and got Claude's answer or the pattern rules.
- *
- * See `reasoningEffortFor` and `tokensWithReasoning` in registry.ts.
+ * **The schema is sent in the shape the model will take, and said in words
+ * whenever it will not be enforced.** Three models, three answers: a strict
+ * schema compiled properly, a strict schema accepted and quietly ignored, and
+ * a model that 500s on a strict schema and wants `json_object`. `FreeModel.schema`
+ * carries which, because NVIDIA's catalogue does not — it returns `id`,
+ * `object`, `created` and `owned_by` and nothing else, so unlike the vendor
+ * this replaced there is no runtime capability lookup to make.
  */
-async function callOpenRouter(apiKey: string, model: string, request: ModelRequest, free = false): Promise<Completion> {
+async function callNvidia(apiKey: string, model: string, request: ModelRequest, free = false): Promise<Completion> {
   // The same default `callClaude` applies when a caller names no effort, so a
   // job moving between vendors does not quietly change how hard it is thought
   // about.
   const effort = request.effort ?? "medium";
   const schema = forStructuredOutput(request.schema);
 
-  // true: it compiles the schema. false: it will be dropped. null: unknown.
-  const compiles = await openRouterCompilesSchemas(apiKey, model);
-  const system = compiles === true ? request.system : `${request.system}\n${schemaContract(schema)}`;
+  // Null for a model the Owner typed in that this app has never probed. Treated
+  // as the cautious answer on every axis: the schema is stated in words as well
+  // as sent, and no effort is put on the wire. Both are free when they turn out
+  // to be unnecessary and both are the difference between working and a 400
+  // when they are not.
+  const known = freeModel(model);
+  const enforced = known?.schema === "enforced";
+  const objectOnly = known?.schema === "object";
+
+  const system = enforced ? request.system : `${request.system}\n${schemaContract(schema)}`;
 
   const body = await post(
-    `${base("openrouter")}/chat/completions`,
-    {
-      authorization: `Bearer ${apiKey}`,
-      // Optional attribution headers OpenRouter asks for; they change nothing
-      // about the call itself.
-      "x-title": "Dakyworld OS",
-    },
+    `${base("nvidia")}/chat/completions`,
+    { authorization: `Bearer ${apiKey}` },
     {
       model,
       max_tokens: tokensWithReasoning(request.maxTokens ?? DEFAULT_MAX_TOKENS, effort),
@@ -744,17 +689,12 @@ async function callOpenRouter(apiKey: string, model: string, request: ModelReque
         { role: "system", content: system },
         { role: "user", content: openAiContent(request) },
       ],
-      reasoning_effort: reasoningEffortFor(effort),
-      response_format:
-        compiles === false
-          ? // Asking a model that cannot compile a schema for a strict one is at
-            // best ignored and at worst a refusal from a provider honouring
-            // `require_parameters`. Plain JSON mode is what it can actually do,
-            // and the shape is in the prompt above.
-            { type: "json_object" }
-          : { type: "json_schema", json_schema: { name: "result", strict: true, schema } },
+      ...(known?.reasoning === false ? {} : { reasoning_effort: reasoningEffortFor(effort) }),
+      response_format: objectOnly
+        ? { type: "json_object" }
+        : { type: "json_schema", json_schema: { name: "result", strict: true, schema } },
     },
-    "OpenRouter",
+    "NVIDIA",
     free ? { attempts: FREE_ATTEMPTS, timeoutMs: FREE_TIMEOUT_MS } : undefined,
   );
 
@@ -767,6 +707,90 @@ async function callOpenRouter(apiKey: string, model: string, request: ModelReque
     sources: [],
     truncated: choice?.finish_reason === "length",
   };
+}
+
+// --- Carrying an unfinished answer to the next model ------------------------
+
+/**
+ * What one model managed to produce before it stopped, handed to the next one.
+ *
+ * The Owner's instruction was that a paid model taking over from a free one
+ * "should not start the process all over, but continue from where it left".
+ * The agent loop has always done that — the conversation, the tool results and
+ * the checkpoint all survive a handover, so a run can start on a free rung and
+ * finish on Gemini with nothing repeated. This is the other half of the model
+ * layer, the one-shot `callModel` path, where until now every attempt started
+ * from an empty page.
+ *
+ * It only ever applies to a failure that **produced something**: a reply cut
+ * off at the token ceiling, or one that came back as prose the parser could
+ * not read. A vendor that was rate-limited, refused the key or timed out has
+ * produced nothing, and there is nothing to carry — the next attempt is a
+ * fresh one, exactly as before.
+ *
+ * The partial is passed as *work to finish*, not as an answer to trust. A
+ * truncated JSON object is by definition invalid, so the next model is asked
+ * to keep what is usable and complete the rest; it is not asked to agree with
+ * it. That distinction matters because the alternative — pasting a half-answer
+ * in and saying "continue" — gets a model to append to broken JSON and hands
+ * the parser something worse than it started with.
+ */
+interface Carry {
+  /** Who produced it, so the sentence a person reads names a model. */
+  model: string;
+  /** What it managed to write. Never empty — an empty carry is not a carry. */
+  partial: string;
+  /** Why it stopped, in the words that go into the brief. */
+  why: string;
+}
+
+/**
+ * How much of a partial answer is worth passing on.
+ *
+ * A truncated reply is by definition as long as the token ceiling allowed, and
+ * pasting all of it into the next model's system prompt would spend that
+ * model's context on the last one's failure. The head is the useful part: it
+ * holds the opening of the object and the fields that were completed, which is
+ * everything the next model needs to avoid redoing the work.
+ */
+const CARRY_MAX_CHARS = 12_000;
+
+function carryFrom(model: string, text: string, why: string): Carry | null {
+  const partial = text.trim();
+  if (!partial) return null;
+  return { model, partial: partial.slice(0, CARRY_MAX_CHARS), why };
+}
+
+/**
+ * The brief that turns a second attempt into a continuation.
+ *
+ * Appended to the system prompt rather than sent as a prior assistant turn, on
+ * purpose: an assistant turn holding invalid JSON is a message the next model
+ * is being asked to agree with, and half of them will simply continue the
+ * broken string. As part of the instructions it is what it actually is —
+ * somebody else's unfinished draft, and a reason not to start from nothing.
+ *
+ * Applied to **every** vendor, not only the paid floor. A second free rung
+ * benefits from the first rung's work exactly as much as Claude does, and the
+ * rule "do not start over" reads oddly if it only holds once money is involved.
+ */
+function continuationBrief(carry: Carry): string {
+  return [
+    "",
+    "---",
+    "",
+    "# Work already done on this",
+    "",
+    `Another model (${carry.model}) was asked this same question and ${carry.why}. Its unfinished answer is below.`,
+    "",
+    "Do not start again from nothing. Read it, keep every part of it that is correct and complete, and produce the whole finished answer — the same single JSON object described above, valid and complete this time. Where its work is wrong, unfinished or cut off mid-value, replace that part rather than continuing the broken text.",
+    "",
+    "Your reply must still be one complete JSON object on its own. Do not refer to the draft, do not explain what you changed, and do not append to it.",
+    "",
+    "```",
+    carry.partial,
+    "```",
+  ].join("\n");
 }
 
 // --- The one entry point ----------------------------------------------------
@@ -794,6 +818,16 @@ class AttemptFailed extends Error {
     readonly failover: boolean,
     /** A few words for the note a person reads: "rate-limited", "rejected the key". */
     readonly why: string,
+    /**
+     * What this attempt produced before it failed, when it produced anything.
+     *
+     * Only ever set for the two failures that leave real work behind — a reply
+     * cut off at the ceiling, and one the parser could not read. Everything
+     * else (rate limits, refused keys, timeouts) produced nothing, and a carry
+     * of nothing is worse than none: it would put an empty block headed "work
+     * already done" in front of the next model.
+     */
+    readonly carry: Carry | null = null,
   ) {
     super(error.message);
     this.name = "AttemptFailed";
@@ -819,16 +853,19 @@ function whyFailed(status: number): string {
  * at it, a demo build pays for its design lookup and then never gets a page.
  * Both of those had a second vendor sitting connected and unasked.
  *
- * Three rules hold it honest:
+ * Four rules hold it honest:
  *
  * - **A named provider is never routed around.** A caller that passed
  *   `provider` meant that vendor, usually because it is comparing them.
  * - **Only vendors that declare the job are in the chain**, so a failing
  *   vision call never falls through to a model that cannot see.
  * - **A content refusal stops everything.** See `AttemptFailed`.
+ * - **Nothing starts from an empty page twice.** When an attempt fails having
+ *   already written something — cut off at the ceiling, or unreadable — that
+ *   draft is handed to the next model as work to finish. See `Carry`.
  *
- * What comes back says who actually answered. A fallback that is invisible is
- * a fallback nobody can price or fix.
+ * What comes back says who actually answered, and whose work they continued. A
+ * fallback that is invisible is a fallback nobody can price or fix.
  */
 export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T>> {
   const say = (kind: FailureKind) => request.messages?.[kind] ?? DEFAULT_MESSAGES[kind];
@@ -840,15 +877,25 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
   const failures: AnalystError[] = [];
 
   /**
+   * The most recent unfinished answer, carried forward across every attempt.
+   *
+   * Deliberately not reset between vendors: the whole instruction is that a
+   * paid model picks up where a free one stopped, and a free rung's draft is
+   * every bit as useful to Claude as it was to the next free rung. Overwritten
+   * rather than accumulated, because two half-answers to the same question are
+   * not more useful than the later one — they are two things to reconcile.
+   */
+  let carry: Carry | null = null;
+
+  /**
    * Every model this vendor should be asked for, in order.
    *
-   * One for everybody except OpenRouter, which has a ladder of free models
-   * when the Owner has set one — and the whole point of the ladder is that a
-   * rung failing is an ordinary event rather than the vendor failing. See
-   * `openRouterAttempts`.
+   * One for everybody except NVIDIA, which has a ladder of free models **per
+   * job** — and the whole point of a ladder is that a rung failing is an
+   * ordinary event rather than the vendor failing. See `nvidiaAttempts`.
    */
   const modelsFor = async (serving: ProviderKey): Promise<(string | undefined)[]> =>
-    serving === "openrouter" ? await openRouterAttempts() : [undefined];
+    serving === "nvidia" ? await nvidiaAttempts(request.job) : [undefined];
 
   /**
    * Asks one vendor, down its whole ladder, and gives up on it only when every
@@ -860,11 +907,12 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
   const askVendor = async (serving: ProviderKey): Promise<ModelResult<T> | null> => {
     for (const model of await modelsFor(serving)) {
       try {
-        return await attemptProvider<T>(serving, request, say, model);
+        return await attemptProvider<T>(serving, request, say, model, carry);
       } catch (err) {
         if (!(err instanceof AttemptFailed)) throw err;
         if (!err.failover) throw err.error;
-        // Named by model where there was a choice of them, because "OpenRouter
+        if (err.carry) carry = err.carry;
+        // Named by model where there was a choice of them, because "NVIDIA
         // failed" three times over is a note that hides which rungs were tried
         // and reads as one thing going wrong three times.
         tried.push(model ? `${model} ${err.why}` : `${PROVIDERS[serving].name} ${err.why}`);
@@ -874,9 +922,12 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
     return null;
   };
 
+  /** Whose unfinished work the model that answered was handed, if anybody's. */
+  const continuedFrom = () => carry?.model ?? null;
+
   if (request.provider) {
     const result = await askVendor(request.provider);
-    if (result) return result;
+    if (result) return { ...result, continuedFrom: continuedFrom() };
     throw failures.at(-1) ?? new AnalystError(502, say("empty"));
   }
 
@@ -888,7 +939,13 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
 
   for (const serving of chain) {
     const result = await askVendor(serving);
-    if (result) return { ...result, fallbackNote: handoverNote(request.job, chosen, serving, tried) };
+    if (result) {
+      return {
+        ...result,
+        continuedFrom: continuedFrom(),
+        fallbackNote: handoverNote(request.job, chosen, serving, tried, carry),
+      };
+    }
   }
 
   // Everyone who could do this job was asked and none of them answered. The
@@ -902,13 +959,14 @@ export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T
   );
 }
 
-/** Who answered, when it was not the first choice. Null when it was. */
-function handoverNote(job: ModelJob, chosen: ProviderKey, serving: ProviderKey, tried: string[]): string | null {
+/** Who answered, when it was not the first choice, and whose draft they finished. */
+function handoverNote(job: ModelJob, chosen: ProviderKey, serving: ProviderKey, tried: string[], carry: Carry | null): string | null {
+  const finished = carry ? ` It carried on from ${carry.model}'s unfinished answer rather than starting again.` : "";
   if (serving === chosen && tried.length === 0) return null;
   if (tried.length === 0) {
     return `${PROVIDERS[chosen].name} isn't connected, so ${PROVIDERS[serving].name} is doing ${JOBS[job].phrase} for now. Add a ${PROVIDERS[chosen].name} key under Settings → AI models.`;
   }
-  return `${tried.join("; ")}, so ${PROVIDERS[serving].name} did ${JOBS[job].phrase} instead.`;
+  return `${tried.join("; ")}, so ${PROVIDERS[serving].name} did ${JOBS[job].phrase} instead.${finished}`;
 }
 
 async function attemptProvider<T>(
@@ -917,23 +975,31 @@ async function attemptProvider<T>(
   say: (kind: FailureKind) => string,
   /** One rung of the free ladder, when this attempt is one of several. */
   modelOverride?: string,
+  /** An earlier attempt's unfinished answer, to be finished rather than redone. */
+  carry?: Carry | null,
 ): Promise<ModelResult<T>> {
+  // The continuation rides in the system prompt, so it reaches every vendor
+  // through the one field they all have — including Claude, which does not go
+  // through the adapters below. See `continuationBrief` for why it is not sent
+  // as a prior assistant turn.
+  const asked: ModelRequest = carry ? { ...request, system: `${request.system}\n${continuationBrief(carry)}` } : request;
+
   if (serving === "anthropic") {
     try {
       const result = await callClaude<T>({
-        purpose: request.purpose,
-        system: request.system,
-        prompt: request.prompt,
-        schema: request.schema,
-        effort: request.effort,
+        purpose: asked.purpose,
+        system: asked.system,
+        prompt: asked.prompt,
+        schema: asked.schema,
+        effort: asked.effort,
         // Named rather than left to `callClaude`, so both halves of the model
         // layer honour one answer. Left unset, the job's tier and the Owner's
         // per-job choice would apply to the three fetch vendors and silently
         // not to Claude — which is the vendor most jobs actually fall back to.
-        model: await modelForJob(request.job, "anthropic"),
-        maxTokens: request.maxTokens,
-        images: request.images,
-        messages: request.messages,
+        model: await modelForJob(asked.job, "anthropic"),
+        maxTokens: asked.maxTokens,
+        images: asked.images,
+        messages: asked.messages,
       });
       return {
         data: result.data,
@@ -944,6 +1010,7 @@ async function attemptProvider<T>(
         costUsd: result.costUsd,
         sources: [],
         fallbackNote: null,
+        continuedFrom: null,
       };
     } catch (err) {
       // `callClaude` already prices and records its own failures, so this only
@@ -959,20 +1026,28 @@ async function attemptProvider<T>(
   const apiKey = await providerKey(serving);
   if (!apiKey) throw new AttemptFailed(new AnalystError(503, say("noKey")), true, "not connected");
 
-  const model = modelOverride ?? (await modelForJob(request.job, serving));
+  const model = modelOverride ?? (await modelForJob(asked.job, serving));
   // A rung is asked once and given a short clock. See `FREE_TIMEOUT_MS`.
-  const free = serving === "openrouter" && (await isFreeModel(model));
+  //
+  // **What makes it a rung is that there is another one below it**, not what
+  // it costs. This was written as "is this model priced at zero", which is a
+  // different question and gave the wrong answer twice: a rung the Owner
+  // picked from the unprobed half of NVIDIA's catalogue got the patient
+  // four-attempt path with ninety seconds of backoff, so a busy free endpoint
+  // held a person for a minute and a half before the *next free model* was
+  // asked — which is the one thing the ladder exists to avoid.
+  const free = serving === "nvidia" && modelOverride !== undefined;
   const startedAt = Date.now();
 
   const fail = async (status: number, message: string) => {
     await recordLlmCall({
-      purpose: request.purpose,
+      purpose: asked.purpose,
       model,
       inputTokens: 0,
       outputTokens: 0,
       costUsd: 0,
       durationMs: Date.now() - startedAt,
-      effort: request.effort,
+      effort: asked.effort,
       ok: false,
       error: message,
     });
@@ -983,12 +1058,12 @@ async function attemptProvider<T>(
   try {
     completion =
       serving === "openai"
-        ? await callOpenAI(apiKey, model, request)
+        ? await callOpenAI(apiKey, model, asked)
         : serving === "gemini"
-          ? await callGemini(apiKey, model, request)
+          ? await callGemini(apiKey, model, asked)
           : serving === "perplexity"
-            ? await callPerplexity(apiKey, model, request)
-            : await callOpenRouter(apiKey, model, request, free);
+            ? await callPerplexity(apiKey, model, asked)
+            : await callNvidia(apiKey, model, asked, free);
   } catch (err) {
     if (err instanceof ProviderError) {
       const kind = err.failure.kind;
@@ -1018,13 +1093,13 @@ async function attemptProvider<T>(
 
   const spent = (ok: boolean, error?: string) =>
     recordLlmCall({
-      purpose: request.purpose,
+      purpose: asked.purpose,
       model,
       inputTokens: completion.inputTokens,
       outputTokens: completion.outputTokens,
       costUsd,
       durationMs: Date.now() - startedAt,
-      effort: request.effort,
+      effort: asked.effort,
       ok,
       error,
     });
@@ -1032,18 +1107,26 @@ async function attemptProvider<T>(
   // Truncated, empty and unparseable are all "this vendor produced nothing
   // usable", which is exactly the case another vendor may well handle — a
   // schema one model chokes on is routine for the next.
-  const rejected = async (status: number, message: string) => {
+  //
+  // Two of the three leave real work behind, though, and that work is handed
+  // on: what came back is passed to the next attempt as a draft to finish. The
+  // empty case is the one that carries nothing, because there is nothing.
+  const rejected = async (status: number, message: string, produced: Carry | null = null) => {
     await spent(false, message);
-    return new AttemptFailed(new AnalystError(status, message), true, "returned nothing usable");
+    return new AttemptFailed(new AnalystError(status, message), true, "returned nothing usable", produced);
   };
 
   // Hitting the cap leaves valid-looking JSON cut off mid-string, which would
   // otherwise surface as an unexplained parse failure.
-  if (completion.truncated) throw await rejected(502, say("truncated"));
+  if (completion.truncated) {
+    throw await rejected(502, say("truncated"), carryFrom(model, completion.text, "ran out of room before it finished"));
+  }
   if (!completion.text.trim()) throw await rejected(502, say("empty"));
 
   const parsed = readJson<T>(completion.text);
-  if (parsed === undefined) throw await rejected(502, say("parse"));
+  if (parsed === undefined) {
+    throw await rejected(502, say("parse"), carryFrom(model, completion.text, "answered with something that could not be read as the JSON object asked for"));
+  }
   const data = parsed;
 
   await spent(true);
@@ -1056,21 +1139,25 @@ async function attemptProvider<T>(
     costUsd,
     sources: completion.sources,
     fallbackNote: null,
+    continuedFrom: null,
   };
 }
 
 /**
  * Adds the one vendor-specific note worth carrying on a mid-run failure.
  *
- * OpenRouter is prepaid and answers **402** when the account is out of
- * credits — which arrives here as an ordinary failure whose raw sentence
- * ("Insufficient credits") reads like a bug in the app rather than a balance
- * hitting zero at 6am inside a sequence. The same trap Perplexity's 401 was,
- * one status code over.
+ * NVIDIA answers **429** when the account's free allowance for the day is
+ * spent, and the raw sentence reads like a busy endpoint rather than a limit
+ * that will not clear for hours — so a person waits for something that is not
+ * coming. It is the same trap Perplexity's 401 is, and the OpenRouter 402 this
+ * replaced: a status whose obvious reading is the wrong one.
+ *
+ * Said as a possibility rather than a fact, because a 429 genuinely is a busy
+ * model some of the time and the vendor does not distinguish the two.
  */
 function withVendorHint(provider: ProviderKey, status: number, detail: string): string {
-  if (provider === "openrouter" && status === 402) {
-    return `${detail} OpenRouter is prepaid: this means the account is out of credits, not that anything is broken — top up at openrouter.ai/credits.`;
+  if (provider === "nvidia" && status === 429) {
+    return `${detail} NVIDIA's free models share one allowance per account, so this can be the day's allowance rather than a busy model — the ladder moves to the next model either way, and the paid floor finishes the work if all three are out.`;
   }
   return detail;
 }
@@ -1098,7 +1185,8 @@ function stripFence(text: string): string {
  * Two attempts, in order of trust. The plain parse is what a vendor enforcing
  * a schema always gives. The second is for a model that was *asked* for JSON
  * rather than held to it — which is now a supported case rather than an
- * accident, because the shipped OpenRouter model does not compile schemas — and which answers with
+ * accident, because two of the free NVIDIA models do not compile a schema (see
+ * `FreeModel.schema`) — and which answers with
  * a sentence of preamble often enough to be worth six lines here. The
  * alternative is a rejected reply, a second vendor paid to redo the work, and
  * "the analyst's plan could not be read" put in front of the Owner.
@@ -1234,148 +1322,185 @@ export async function generateImage(request: ImageRequest): Promise<ImageResult>
  * support conversation; one that is refused at the moment it is pasted is a
  * typo the Owner fixes in ten seconds.
  */
-export interface OpenRouterModel {
+export interface NvidiaModel {
   id: string;
+  /** What it is called on screen. The catalogue has no name field, so this is ours. */
   name: string;
-  /** Context length in tokens, when OpenRouter states one. */
-  context: number | null;
-  /** True when both the prompt and the completion rate are zero. */
+  /** Who built it, which is all `owned_by` actually tells us. */
+  house: string;
+  /** NVIDIA's own one-line description, for the models this app has probed. */
+  blurb: string;
+  /** True when NVIDIA is currently listing it. */
+  listed: boolean;
+  /**
+   * True for everything NVIDIA serves on this endpoint — which is the point of
+   * the vendor. Kept as a field rather than assumed, so the picker reads the
+   * same as the one it replaced and a future paid NIM does not silently
+   * inherit a zero price.
+   */
   free: boolean;
-  /** Whether the model can be asked for tools — an agent turn needs this. */
+  /** Whether it can be asked for tools — an agent turn needs this. */
   tools: boolean;
+  /** Whether it can look at a picture. Three of them can. */
+  vision: boolean;
+  /** How it takes a JSON schema, if at all. See `FreeModel.schema`. */
+  schema: "enforced" | "accepted" | "object" | null;
+  /** Set when this app has probed the endpoint and it would not serve. */
+  down: string | null;
+  /** True when this app has verified what this model can do. */
+  known: boolean;
 }
 
 /**
- * Everything OpenRouter will serve this account, with the free ones marked.
+ * Everything NVIDIA will serve this account, joined to what this app knows
+ * about each one.
  *
  * The listing endpoint is free and authenticated, which is what makes it the
  * right thing to build a picker on: no tokens are spent to find out what is
- * available, and the answer is the account's own rather than a list written
- * down here that goes stale the week a model is retired.
+ * available, and whether a model is still listed is the account's own answer
+ * rather than a list written down here that goes stale the week one is
+ * retired.
  *
- * **Free is read from the published rate, not from the id.** Most free ids end
- * in `:free` and not all of them do, and a naming convention is not a price —
- * pricing both halves at zero is. That distinction is what the ledger later
- * relies on when it prices a rung at nothing.
+ * **But it is only half the answer, and that is the difference from the vendor
+ * this replaced.** NVIDIA's `/v1/models` returns `id`, `object`, `created` and
+ * `owned_by` — no pricing, no `supported_parameters`, nothing about tools,
+ * schemas or vision. OpenRouter published all of it, which is why the old
+ * picker could be built entirely from the catalogue. Here the capabilities
+ * come from `FREE_MODELS`, where every flag was proved against the endpoint on
+ * a recorded date, and the catalogue contributes exactly one fact: is this
+ * still listed.
  *
- * `tools` is carried because an agent turn sends tool definitions, and a model
- * that cannot take them fails every agent task while working perfectly for
- * one-shot writing. Better as a column on the picker than as a defect somebody
- * diagnoses at six in the morning.
+ * A model NVIDIA lists that this app has never probed comes back with
+ * `known: false` and its capabilities null. It can still be typed into a
+ * ladder — the layer treats an unknown model cautiously, stating the schema in
+ * words and sending no reasoning effort — but the screen says plainly that
+ * nobody has checked it.
  */
-export async function listOpenRouterModels(apiKey: string): Promise<OpenRouterModel[]> {
-  const response = await fetch(`${base("openrouter")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
+export async function listNvidiaModels(apiKey: string): Promise<NvidiaModel[]> {
+  const response = await fetch(`${base("nvidia")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
   if (!response.ok) {
-    throw new AnalystError(response.status === 401 || response.status === 403 ? 400 : 502, describeRejection("openrouter", response.status, await response.text()));
+    throw new AnalystError(response.status === 401 || response.status === 403 ? 400 : 502, describeRejection("nvidia", response.status, await response.text()));
   }
-  const payload = (await response.json().catch(() => null)) as {
-    data?: {
-      id?: unknown;
-      name?: unknown;
-      context_length?: unknown;
-      pricing?: { prompt?: unknown; completion?: unknown };
-      supported_parameters?: unknown;
-    }[];
-  } | null;
+  const payload = (await response.json().catch(() => null)) as { data?: { id?: unknown; owned_by?: unknown }[] } | null;
 
-  const models: OpenRouterModel[] = [];
+  const listed = new Set<string>();
+  const houses = new Map<string, string>();
   for (const entry of payload?.data ?? []) {
     if (typeof entry?.id !== "string" || !entry.id) continue;
-    const prompt = Number(entry.pricing?.prompt ?? NaN);
-    const completion = Number(entry.pricing?.completion ?? NaN);
+    listed.add(entry.id);
+    if (typeof entry.owned_by === "string") houses.set(entry.id, entry.owned_by);
+  }
+
+  // Everything this app has verified first, in the order the catalogue file
+  // declares it — which is roughly best-first and is the order the picker
+  // should read in.
+  const models: NvidiaModel[] = FREE_MODELS.map((model) => ({
+    id: model.id,
+    name: model.name,
+    house: model.house,
+    blurb: model.blurb,
+    listed: listed.has(model.id),
+    free: true,
+    tools: model.tools,
+    vision: model.vision,
+    schema: model.schema,
+    down: model.down ?? null,
+    known: true,
+  }));
+
+  // Then everything else NVIDIA lists, unverified and marked as such. Offered
+  // rather than hidden: the catalogue is eighty models deep and the Owner may
+  // well want one this app has not got round to.
+  for (const id of [...listed].sort()) {
+    if (freeModel(id)) continue;
+    const house = houses.get(id) ?? id.split("/")[0] ?? id;
     models.push({
-      id: entry.id,
-      name: typeof entry.name === "string" && entry.name ? entry.name : entry.id,
-      context: typeof entry.context_length === "number" ? entry.context_length : null,
-      // Both halves, and both have to parse. A missing or unreadable rate is
-      // not free — it is unknown, and treating unknown as free is how a bill
-      // arrives for a model somebody picked off a list headed "free".
-      free: Number.isFinite(prompt) && Number.isFinite(completion) && prompt === 0 && completion === 0,
-      tools: Array.isArray(entry.supported_parameters) && entry.supported_parameters.includes("tools"),
+      id,
+      name: id,
+      house,
+      blurb: "Listed by NVIDIA. This app has not checked what it can do — pick it and it will be asked cautiously: the answer's shape stated in words, and no reasoning effort on the wire.",
+      listed: true,
+      free: true,
+      tools: false,
+      vision: false,
+      schema: null,
+      down: null,
+      known: false,
     });
   }
+
   return models;
 }
 
 /**
- * Picks the free ladder from the account's own catalogue, the first time there
- * is a key to read it with.
+ * Drops from the stored ladders anything NVIDIA no longer lists, at boot.
  *
- * `DEFAULT_FREE_LADDER` is a seed written into a source file, and a free model
- * id is the most perishable thing OpenRouter publishes: the `:free` variant is
- * withdrawn, the model is renamed, the provider stops offering it. A seed is
- * therefore right for the first boot and wrong for the sixth month, and the
- * only list that is right in the sixth month is the one the account itself
- * returns.
+ * This is what is left of `ensureFreeLadder`, and what is left is the honest
+ * half. The old one picked a whole ladder out of OpenRouter's catalogue at the
+ * first boot with a key, because that catalogue said which models were free
+ * and which took tools — so it could choose better than a source file could.
+ * NVIDIA's says neither. A ladder picked from it would be three ids nobody has
+ * ever called, and the shipped ladders are the opposite of that: every rung
+ * was probed by hand, and the assignment is the point of the feature.
  *
- * **Only ever when the Owner has stored nothing.** A stored ladder is a
- * decision — including a stored *empty* one, which means "no free models,
- * deliberately" — and this must never overwrite either. It runs once in the
- * life of a deployment, at the first boot that has a key, and after that the
- * setting exists and this returns null forever.
+ * So nothing is ever *chosen* here. What this does is remove a rung the vendor
+ * has stopped listing, which is the one thing the catalogue can prove and the
+ * one failure a written-down list cannot survive — a retired id answers 404,
+ * and while that costs only one fast call, a ladder quietly two rungs long is
+ * a ladder that stops being what the Owner configured.
  *
- * **Tool-capable only.** An agent turn sends tool definitions. A free model
- * that cannot take them answers 400 and is skipped to the next rung, which
- * works but wastes a call on every single agent task — and writing is served
- * perfectly well by a model that also does tools, so there is nothing to trade
- * off.
+ * **Only ever touches a ladder the Owner stored.** A job using the shipped
+ * ladder is left alone: writing a pruned copy into settings would turn a
+ * default that tracks the code into a frozen snapshot of today's catalogue,
+ * which is the exact trap `readRoutes` and `readFreeLadders` are shaped to
+ * avoid. A stored *empty* ladder — free models deliberately off — is left
+ * alone too.
  *
- * **Three different houses where possible.** Free capacity goes short one
- * provider at a time: three variants from the same house is one rung wearing
- * three hats, and it fails as one. The seeds that are still free and still
- * take tools keep their places first — they were chosen deliberately — and the
- * rest of the ladder is filled from the widest-context models of houses not
- * already on it.
- *
- * Never fatal. OpenRouter being unreachable at boot is not a reason to fail a
- * deploy; the seed serves until the next one.
+ * Never fatal. NVIDIA being unreachable at boot is not a reason to fail a
+ * deploy; the ladders stand and a dead rung costs one 404.
  */
-export async function ensureFreeLadder(): Promise<{ ladder: string[]; from: "catalogue" } | null> {
-  const stored = await getSetting(SETTING.OPENROUTER_FREE_MODELS);
-  if (stored?.trim()) return null;
+export async function pruneFreeLadders(): Promise<{ dropped: Record<string, string[]> } | null> {
+  const stored = await readFreeLadders();
+  const keys = Object.keys(stored) as LadderKey[];
+  if (keys.length === 0) return null;
 
-  const apiKey = await providerKey("openrouter");
+  const apiKey = await providerKey("nvidia");
   if (!apiKey) return null;
 
-  let models: OpenRouterModel[];
+  let listed: Set<string>;
   try {
-    models = await listOpenRouterModels(apiKey);
+    listed = new Set((await listNvidiaModels(apiKey)).filter((model) => model.listed).map((model) => model.id));
   } catch (err) {
-    console.warn(`[models] could not read OpenRouter's catalogue to pick the free ladder — the shipped one stands: ${(err as Error).message}`);
+    console.warn(`[models] could not read NVIDIA's catalogue to check the free ladders — they stand as stored: ${(err as Error).message}`);
     return null;
   }
+  // An empty or unreadable catalogue must not empty every ladder the Owner
+  // configured. "We could not tell" and "none of them exist" are the same
+  // shape here and completely different facts.
+  if (listed.size === 0) return null;
 
-  const usable = models.filter((model) => model.free && model.tools);
-  if (usable.length === 0) {
-    console.warn("[models] OpenRouter lists no free model that supports tools — the shipped ladder stands.");
-    return null;
+  const next: Partial<Record<LadderKey, string[]>> = { ...stored };
+  const dropped: Record<string, string[]> = {};
+  for (const key of keys) {
+    const ladder = stored[key] ?? [];
+    if (ladder.length === 0) continue;
+    const kept = ladder.filter((id) => listed.has(id));
+    if (kept.length === ladder.length) continue;
+    // Every rung gone is not "free models off" — it is a ladder that has
+    // rotted, and storing `[]` would read as a deliberate switch-off forever
+    // after. The key is removed instead, which puts that job back on the
+    // shipped ladder.
+    if (kept.length === 0) delete next[key];
+    else next[key] = kept;
+    dropped[key] = ladder.filter((id) => !listed.has(id));
   }
 
-  const byId = new Map(usable.map((model) => [model.id, model]));
-  const house = (id: string) => id.split("/")[0] ?? id;
-
-  const ladder: string[] = [];
-  const houses = new Set<string>();
-  const take = (id: string) => {
-    if (ladder.length >= FREE_LADDER_MAX || ladder.includes(id)) return;
-    ladder.push(id);
-    houses.add(house(id));
-  };
-
-  // The seeds first, where they have survived.
-  for (const id of DEFAULT_FREE_LADDER) if (byId.has(id)) take(id);
-
-  // Then the widest-context free models, one house at a time, and only then a
-  // second from a house already represented.
-  const rest = usable
-    .filter((model) => !ladder.includes(model.id))
-    .sort((a, b) => (b.context ?? 0) - (a.context ?? 0) || a.id.localeCompare(b.id));
-  for (const model of rest) if (!houses.has(house(model.id))) take(model.id);
-  for (const model of rest) take(model.id);
-
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(ladder));
-  console.log(`[models] free ladder picked from OpenRouter's catalogue: ${ladder.join(", ")}`);
-  return { ladder, from: "catalogue" };
+  if (Object.keys(dropped).length === 0) return null;
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, JSON.stringify(next));
+  for (const [key, ids] of Object.entries(dropped)) {
+    console.warn(`[models] NVIDIA no longer lists ${ids.join(", ")} — dropped from the ${key} ladder.`);
+  }
+  return { dropped };
 }
 
 export async function verifyProviderKey(provider: ProviderKey, apiKey: string, modelChoice?: string): Promise<{ model: string }> {
@@ -1388,12 +1513,12 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string, m
   }
 
   try {
-    if (provider === "openrouter") {
+    if (provider === "nvidia") {
       // The model list is free and authenticated, so it proves the key without
       // spending anything — and it carries every id the account can ask for,
       // which makes it the one place a wrong model slug can be caught before
       // it becomes a month of calls that quietly failed over to somebody else.
-      const response = await fetch(`${base("openrouter")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
+      const response = await fetch(`${base("nvidia")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
       if (!response.ok) throw new ProviderError({ status: response.status, kind: "auth", detail: await response.text() });
 
       // The id being saved with the key, when the form sent one — checking the
@@ -1406,9 +1531,9 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string, m
         throw new AnalystError(
           400,
           [
-            `That key works, but OpenRouter has no model called “${wanted}”.`,
-            matches.length > 0 ? `Closest ids on OpenRouter: ${matches.join(", ")}.` : null,
-            "Find the exact id at openrouter.ai/models and put it in the model field, then save again.",
+            `That key works, but NVIDIA has no model called “${wanted}”.`,
+            matches.length > 0 ? `Closest ids on NVIDIA: ${matches.join(", ")}.` : null,
+            "Find the exact id at build.nvidia.com and put it in the model field, then save again.",
           ]
             .filter(Boolean)
             .join(" "),
@@ -1468,9 +1593,9 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string, m
  * a flat "rejected that API key" sends somebody to regenerate a key that was
  * never the problem.
  *
- * So the vendor's own sentence is always carried through, and the two vendors
- * with a common non-obvious cause get that named as well. A guess is offered,
- * never asserted: what is stated as fact is only ever what the vendor said.
+ * So the vendor's own sentence is always carried through, and the vendors with
+ * a common non-obvious cause get that named as well. A guess is offered, never
+ * asserted: what is stated as fact is only ever what the vendor said.
  */
 function describeRejection(provider: ProviderKey, status: number, body: string): string {
   const definition = PROVIDERS[provider];
@@ -1486,7 +1611,9 @@ function describeRejection(provider: ProviderKey, status: number, body: string):
       ? "Perplexity is prepaid, so it answers this for a valid key on an account with no credits as well as for a wrong one — check the balance on the API billing page before regenerating anything."
       : provider === "openai"
         ? "Check the key is from the right project, and that the project has credit."
-        : null;
+        : provider === "nvidia"
+          ? "An NVIDIA key is issued from a model's page in the console but works for every model on the account, so this is the key itself rather than the model it was made on. Keys also expire — check the date next to it at build.nvidia.com."
+          : null;
 
   return [
     `${definition.vendor} would not accept that key.`,

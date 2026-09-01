@@ -1,7 +1,7 @@
 /**
- * The free ladder: three free models tried in order, then the paid floor.
+ * The free ladders: three free models per job, tried in order, then the paid floor.
  *
- * OpenRouter publishes models that cost nothing per token. They are real models
+ * NVIDIA serves every model on this endpoint free. They are real models
  * and they are also the least reliable thing in this system — a free endpoint is
  * shared, so it queues, rate-limits, and some of the time simply does not
  * answer. One of them as *the* model is a system that stops working at busy
@@ -13,7 +13,7 @@
  *  1. Every rung is tried, in the order it was set, and the work still gets
  *     done by the last one that answers.
  *  2. When the whole ladder is silent, Claude finishes — and is asked for a
- *     *Claude* model, not the OpenRouter slug the run started on.
+ *     *Claude* model, not the free slug the run started on.
  *  3. A rate limit climbs the ladder. With free models switched off it must
  *     still requeue the task, which is a deliberately different answer for the
  *     same status and the one thing most likely to be "simplified" into
@@ -35,9 +35,11 @@
  *  8. **The paid floor is the best of three, not Claude alone.** A rate-limited
  *     Claude hands the run to ChatGPT, and a failing ChatGPT hands it to Gemini
  *     — with the conversation intact across all three wires.
- *  9. Every shipped rung is a `:free` id, because the ledger prices a rung at
- *     zero and the shipped seed is the one list nothing has checked against a
- *     live catalogue.
+ *  9. Every shipped rung is a model this app has probed and priced at zero,
+ *     no ladder starts on one that would not serve, only models that can see
+ *     are in the vision ladder, and only tool-callers are in the agent one.
+ *     NVIDIA's catalogue publishes no capabilities at all, so this table is
+ *     the only guarantee there is.
  *
  * Both halves of the model layer are driven, because they are two separate
  * implementations of the same wire: `callModel` for one-shot work and
@@ -64,19 +66,28 @@ function check(name: string, condition: boolean, detail?: string) {
   }
 }
 
-const RUNGS = ["free/one:free", "free/two:free", "free/three:free"];
+const RUNGS = ["free/one", "free/two", "free/three"];
 
 interface Hit {
   path: string;
   model?: string;
+  /**
+   * What actually went over the wire.
+   *
+   * Carried because one scenario asserts on the *contents* of the request and
+   * not just on how many there were: the continuation has to be visible in the
+   * second rung's system prompt, and "two calls happened" is exactly the shape
+   * of assertion that passes while the feature does nothing.
+   */
+  body?: Record<string, unknown>;
 }
 
 /**
- * A fake OpenRouter that answers the catalogue and lets each test decide what
+ * A fake NVIDIA that answers the catalogue and lets each test decide what
  * a completion does.
  *
- * The catalogue matters: the adapter asks whether a model compiles schemas
- * before it sends one, so a fake without `/models` makes every scenario here
+ * The catalogue is served because `verifyProviderKey` and `pruneFreeLadders`
+ * read it, so a fake without `/models` makes every scenario here
  * fail on a lookup rather than on the thing being tested.
  */
 /**
@@ -86,7 +97,7 @@ interface Hit {
  */
 const opened: Server[] = [];
 
-function openRouterStub(
+function nvidiaStub(
   hits: Hit[],
   reply: (model: string, hit: number) => { status: number; payload: unknown },
 ): Promise<{ server: Server; url: string }> {
@@ -99,23 +110,16 @@ function openRouterStub(
         if (req.method === "GET" && path.includes("/models")) {
           hits.push({ path });
           res.writeHead(200, { "content-type": "application/json" });
+          // NVIDIA's own catalogue shape, which is four fields and no
+          // capabilities: no pricing, no `supported_parameters`, nothing about
+          // tools, schemas or vision. That is the whole reason `FREE_MODELS`
+          // exists as a written-down, probed table — a fake that published
+          // capabilities here would be testing a lookup this app cannot make.
           res.end(
             JSON.stringify({
               data: [
-                ...RUNGS.map((id) => ({
-                  id,
-                  name: id,
-                  context_length: 32_000,
-                  pricing: { prompt: "0", completion: "0" },
-                  supported_parameters: ["tools", "response_format"],
-                })),
-                {
-                  id: "paid/model",
-                  name: "Paid model",
-                  context_length: 200_000,
-                  pricing: { prompt: "0.000003", completion: "0.000015" },
-                  supported_parameters: ["tools", "structured_outputs", "response_format"],
-                },
+                ...RUNGS.map((id) => ({ id, object: "model", created: 735790403, owned_by: id.split("/")[0] })),
+                { id: "paid/model", object: "model", created: 735790403, owned_by: "paid" },
               ],
             }),
           );
@@ -130,7 +134,7 @@ function openRouterStub(
         }
         const model = String(body.model ?? "");
         const completions = hits.filter((hit) => !hit.path.includes("/models")).length;
-        hits.push({ path, model });
+        hits.push({ path, model, body });
         const answer = reply(model, completions);
         res.writeHead(answer.status, { "content-type": "application/json" });
         res.end(typeof answer.payload === "string" ? answer.payload : JSON.stringify(answer.payload));
@@ -303,8 +307,15 @@ async function main() {
   const { prisma } = await import("../src/lib/prisma.js");
   const { clearSettingsCache, SETTING, setSetting } = await import("../src/lib/settings.js");
   const { callModel } = await import("../src/lib/models/call.js");
-  const { DEFAULT_FREE_LADDER, freeLadder, freeLadderSource, FREE_LADDER_MAX, PAID_AGENT_CHAIN } = await import("../src/lib/models/registry.js");
-  const { runAgentLoop, clearOpenRouterCooldown } = await import("../src/lib/claudeAgent.js");
+  const { FREE_LADDER_BY_JOB, FREE_MODELS, freeLadderFor, freeLadderSource, isFreeModel, FREE_LADDER_MAX, PAID_AGENT_CHAIN } = await import("../src/lib/models/registry.js");
+
+  // The ladders are stored per job now, so a scenario that wants "these three
+  // rungs" has to say which job. Both halves of the model layer are driven
+  // here — `callModel` on the `text` job and `runAgentLoop` on `agent` — and a
+  // ladder set on one of them is a scenario that silently tests the shipped
+  // ladder on the other.
+  const ladders = (rungs: string[]) => JSON.stringify({ text: rungs, agent: rungs });
+  const { runAgentLoop, clearNvidiaCooldown } = await import("../src/lib/claudeAgent.js");
 
   // Rule one of this directory: a database and nothing else, and certainly no
   // real vendor on the other end. A dev database holds whatever keys were
@@ -315,9 +326,9 @@ async function main() {
     SETTING.ANTHROPIC_KEY,
     SETTING.ANTHROPIC_MODEL,
     SETTING.ANTHROPIC_MODEL_ECONOMY,
-    SETTING.OPENROUTER_KEY,
-    SETTING.OPENROUTER_MODEL,
-    SETTING.OPENROUTER_FREE_MODELS,
+    SETTING.NVIDIA_KEY,
+    SETTING.NVIDIA_MODEL,
+    SETTING.NVIDIA_FREE_MODELS,
     // The other two thirds of the paid floor. A machine with a real ChatGPT key
     // pasted would otherwise have the last scenario reach OpenAI for real.
     SETTING.OPENAI_KEY,
@@ -363,63 +374,111 @@ async function main() {
 
   // --- The ladder itself -----------------------------------------------------
 
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify([...RUNGS, "free/four:free"]));
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, ladders([...RUNGS, "free/four"]));
   clearSettingsCache();
-  const ladder = await freeLadder();
+  const ladder = await freeLadderFor("text");
   check(`the ladder is capped at ${FREE_LADDER_MAX}`, ladder.length === FREE_LADDER_MAX, String(ladder.length));
   check("and keeps the order it was set in", ladder.join(",") === RUNGS.join(","), ladder.join(","));
+  // Set on both jobs by `ladders()`, and read back on both. A per-job store
+  // whose keys are not actually separate is a store that looks configured and
+  // serves one list to everything, which is what it replaced.
+  check("and each job has its own", (await freeLadderFor("agent")).join(",") === RUNGS.join(","));
 
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(["free/one:free", "free/one:free", "free/two:free"]));
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, ladders(["free/one", "free/one", "free/two"]));
   clearSettingsCache();
   // A repeated rung is a rung that proves nothing — the same endpoint that just
   // failed is asked again and the ladder is shorter than it looks.
-  check("a duplicate rung is dropped", (await freeLadder()).join(",") === "free/one:free,free/two:free");
+  check("a duplicate rung is dropped", (await freeLadderFor("text")).join(",") === "free/one,free/two");
 
   // 7. Unset, empty and unreadable are three different states, and the whole
   // "free first by default" promise rests on the first of them.
-  await prisma.appSetting.deleteMany({ where: { key: SETTING.OPENROUTER_FREE_MODELS } });
+  await prisma.appSetting.deleteMany({ where: { key: SETTING.NVIDIA_FREE_MODELS } });
   clearSettingsCache();
-  const shipped = await freeLadder();
+  const shipped = await freeLadderFor("text");
   check("a deployment that has configured nothing still has a ladder", shipped.length === FREE_LADDER_MAX, String(shipped.length));
-  check("and it is the shipped one", shipped.join(",") === DEFAULT_FREE_LADDER.join(","), shipped.join(","));
-  check("named as the shipped one rather than as somebody's choice", (await freeLadderSource()) === "shipped");
-  // 9. The seed is the one list nothing has checked against a live catalogue,
-  // and `isFreeModel` prices every rung at zero. `:free` is OpenRouter's own
-  // convention for a zero-rate variant and it is the only guarantee available
-  // to a list written in advance.
+  check("and it is the shipped one", shipped.join(",") === FREE_LADDER_BY_JOB.text.join(","), shipped.join(","));
+  check("named as the shipped one rather than as somebody's choice", (await freeLadderSource("text")) === "shipped");
+
+  // 9. Every shipped rung is a model this app has actually probed and priced
+  // at zero. `isFreeModel` is what stops a rung falling through to the floor
+  // rate — deliberately the dearest we know of — so a free day would otherwise
+  // read as the most expensive one this company has ever had.
+  //
+  // The vendor this replaced published a `:free` suffix and a per-model rate,
+  // so a written-down list could be checked against a naming convention.
+  // NVIDIA's catalogue publishes neither: `/v1/models` returns `id`, `object`,
+  // `created` and `owned_by` and nothing else. Membership of `FREE_MODELS` —
+  // where every flag was proved against the endpoint on a recorded date — is
+  // the only guarantee there is, which is exactly why it is asserted here.
+  const known = new Set(FREE_MODELS.map((model) => model.id));
+  for (const [job, rungs] of Object.entries(FREE_LADDER_BY_JOB)) {
+    check(
+      `every shipped rung for ${job} is a model this app has verified`,
+      rungs.every((id) => known.has(id)),
+      rungs.filter((id) => !known.has(id)).join(", ") || "all known",
+    );
+  }
+  const priced = await Promise.all(FREE_MODELS.map((model) => isFreeModel(model.id)));
+  check("and every verified model is priced at zero", priced.every(Boolean));
+
+  // 10. **Nothing that is known not to serve is in a shipped ladder.** Two
+  // models in the catalogue would not answer when this app last checked, and a
+  // first rung that times out costs every call sixty seconds before anything
+  // useful happens — which is worse than not having it at all.
+  const down = new Set(FREE_MODELS.filter((model) => model.down).map((model) => model.id));
   check(
-    "every shipped rung is a free variant by its id",
-    DEFAULT_FREE_LADDER.every((id) => id.endsWith(":free")),
-    DEFAULT_FREE_LADDER.join(", "),
+    "no shipped ladder starts on a model that would not serve",
+    Object.values(FREE_LADDER_BY_JOB).every((rungs) => rungs.every((id) => !down.has(id))),
+    [...down].join(", "),
   );
 
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
-  clearSettingsCache();
-  check("an empty list is free models switched off, deliberately", (await freeLadder()).length === 0);
-  check("and says so rather than reading as unconfigured", (await freeLadderSource()) === "off");
+  // 11. **The vision ladder can only hold models that can see.** Getting this
+  // wrong is not a slow job, it is an Apify screenshot bought and then
+  // described by a model that never looked at it — the exact failure the
+  // routing chain was built for, one layer down.
+  const blind = new Set(FREE_MODELS.filter((model) => !model.vision).map((model) => model.id));
+  check(
+    "every rung for vision can actually look at a picture",
+    FREE_LADDER_BY_JOB.vision.every((id) => !blind.has(id)),
+    FREE_LADDER_BY_JOB.vision.join(", "),
+  );
 
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "not json at all");
+  // 12. **Every rung for the agent loop can call tools.** One that cannot
+  // fails on its first turn, having read the whole system prompt first.
+  const toolless = new Set(FREE_MODELS.filter((model) => !model.tools).map((model) => model.id));
+  check(
+    "every rung for running agents can call tools",
+    FREE_LADDER_BY_JOB.agent.every((id) => !toolless.has(id)),
+    FREE_LADDER_BY_JOB.agent.join(", "),
+  );
+
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, ladders([]));
+  clearSettingsCache();
+  check("an empty list is free models switched off, deliberately", (await freeLadderFor("text")).length === 0);
+  check("and says so rather than reading as unconfigured", (await freeLadderSource("text")) === "off");
+
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, "not json at all");
   clearSettingsCache();
   // Unreadable is not the same as off. Falling through to the paid model here
   // would answer a corrupt settings row by starting to spend money.
-  check("a corrupt setting falls back to the shipped ladder", (await freeLadder()).join(",") === DEFAULT_FREE_LADDER.join(","));
+  check("a corrupt setting falls back to the shipped ladder", (await freeLadderFor("text")).join(",") === FREE_LADDER_BY_JOB.text.join(","));
 
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(RUNGS));
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, ladders(RUNGS));
   clearSettingsCache();
-  check("a list picked here is named as the Owner's", (await freeLadderSource()) === "owner");
+  check("a list picked here is named as the Owner's", (await freeLadderSource("text")) === "owner");
   check("and the paid floor is three vendors deep", PAID_AGENT_CHAIN.join(",") === "anthropic,openai,gemini", PAID_AGENT_CHAIN.join(","));
 
   // --- Scenario A: the second rung answers -----------------------------------
 
   const hitsA: Hit[] = [];
-  const orA = await openRouterStub(hitsA, (model) =>
+  const orA = await nvidiaStub(hitsA, (model) =>
     model === RUNGS[0] ? { status: 429, payload: "Rate limit exceeded" } : { status: 200, payload: completion(model) },
   );
   const anthA: Record<string, unknown>[] = [];
   const claudeA = await anthropicStub(anthA);
 
-  process.env.OPENROUTER_API_KEY = "sk-or-check-not-a-real-key";
-  process.env.OPENROUTER_BASE_URL = orA.url;
+  process.env.NVIDIA_API_KEY = "nvapi-check-not-a-real-key";
+  process.env.NVIDIA_BASE_URL = orA.url;
   process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
   process.env.ANTHROPIC_BASE_URL = claudeA.url;
   clearSettingsCache();
@@ -445,10 +504,10 @@ async function main() {
   // --- Scenario B: every rung silent, Claude finishes ------------------------
 
   const hitsB: Hit[] = [];
-  const orB = await openRouterStub(hitsB, () => ({ status: 503, payload: "upstream is busy" }));
+  const orB = await nvidiaStub(hitsB, () => ({ status: 503, payload: "upstream is busy" }));
   const anthB: Record<string, unknown>[] = [];
   const claudeB = await anthropicStub(anthB);
-  process.env.OPENROUTER_BASE_URL = orB.url;
+  process.env.NVIDIA_BASE_URL = orB.url;
   process.env.ANTHROPIC_BASE_URL = claudeB.url;
   clearSettingsCache();
 
@@ -468,13 +527,13 @@ async function main() {
   // --- Scenario C: a refused key does not climb ------------------------------
 
   const hitsC: Hit[] = [];
-  const orC = await openRouterStub(hitsC, () => ({ status: 402, payload: "Insufficient credits" }));
+  const orC = await nvidiaStub(hitsC, () => ({ status: 402, payload: "Insufficient credits" }));
   const anthC: Record<string, unknown>[] = [];
   const claudeC = await anthropicStub(anthC);
-  process.env.OPENROUTER_BASE_URL = orC.url;
+  process.env.NVIDIA_BASE_URL = orC.url;
   process.env.ANTHROPIC_BASE_URL = claudeC.url;
   clearSettingsCache();
-  clearOpenRouterCooldown();
+  clearNvidiaCooldown();
 
   const agent = await runAgentLoop({
     purpose: "check.free.agentRefused",
@@ -498,7 +557,7 @@ async function main() {
   // --- Scenario D: the agent loop climbs, then hands over --------------------
 
   const hitsD: Hit[] = [];
-  const orD = await openRouterStub(hitsD, (model) => {
+  const orD = await nvidiaStub(hitsD, (model) => {
     if (model === RUNGS[2]) {
       return {
         status: 200,
@@ -515,10 +574,10 @@ async function main() {
   });
   const anthD: Record<string, unknown>[] = [];
   const claudeD = await anthropicStub(anthD);
-  process.env.OPENROUTER_BASE_URL = orD.url;
+  process.env.NVIDIA_BASE_URL = orD.url;
   process.env.ANTHROPIC_BASE_URL = claudeD.url;
   clearSettingsCache();
-  clearOpenRouterCooldown();
+  clearNvidiaCooldown();
 
   const climbed = await runAgentLoop({
     purpose: "check.free.agentClimbs",
@@ -546,15 +605,15 @@ async function main() {
   // Stored as `[]`, not deleted: deleting the row now means "use the shipped
   // ladder", which is the opposite of what this scenario is about.
 
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, ladders([]));
   clearSettingsCache();
-  clearOpenRouterCooldown();
+  clearNvidiaCooldown();
 
   const hitsE: Hit[] = [];
-  const orE = await openRouterStub(hitsE, () => ({ status: 429, payload: "Rate limit exceeded" }));
+  const orE = await nvidiaStub(hitsE, () => ({ status: 429, payload: "Rate limit exceeded" }));
   const anthE: Record<string, unknown>[] = [];
   const claudeE = await anthropicStub(anthE);
-  process.env.OPENROUTER_BASE_URL = orE.url;
+  process.env.NVIDIA_BASE_URL = orE.url;
   process.env.ANTHROPIC_BASE_URL = claudeE.url;
   clearSettingsCache();
 
@@ -578,6 +637,95 @@ async function main() {
   orE.server.close();
   claudeE.server.close();
 
+  // --- Scenario G: the next model finishes what the last one started --------
+  //
+  // The Owner's instruction: a paid model taking over from a free one "should
+  // not start the process all over, but continue from where it left". The
+  // agent loop has always done that — the conversation, the tool results and
+  // the checkpoint all survive a handover. This is the other half of the model
+  // layer, the one-shot `callModel` path, where every attempt used to start
+  // from an empty page however much the last one had written.
+  //
+  // Rung one writes half a plan and hits the token ceiling. Rung two must be
+  // handed that half, and the model that finally answers must have been handed
+  // it too — the carry crosses vendors, not just rungs, because "do not start
+  // over" reads oddly if it only holds once money is involved.
+  //
+  // The negatives are the half that matter, and they are asserted below:
+  // a rung that produced *nothing* (rate-limited, refused, silent) carries
+  // nothing, or the next model reads an empty block headed "work already done";
+  // and the carry never arrives as a prior assistant turn, because a message
+  // holding invalid JSON is one the next model is being asked to agree with,
+  // and half of them will simply continue the broken string.
+
+  const HALF = '{"answer":"the first half of a long ans';
+
+  // Scenario E switched free models off. Back on, or this scenario is one call
+  // to the vendor's own model and every assertion below is about a ladder that
+  // was not in use — which is exactly how it failed the first time it ran.
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, ladders(RUNGS));
+  clearSettingsCache();
+
+  const hitsCarry: Hit[] = [];
+  const orCarry = await nvidiaStub(hitsCarry, (model) =>
+    model === RUNGS[0]
+      ? {
+          status: 200,
+          payload: {
+            id: "chatcmpl_cut",
+            object: "chat.completion",
+            model,
+            // The expensive failure: it wrote something, and then ran out of
+            // room. Valid-looking JSON, cut off mid-string.
+            choices: [{ index: 0, finish_reason: "length", message: { role: "assistant", content: HALF } }],
+            usage: { prompt_tokens: 200, completion_tokens: 900 },
+          },
+        }
+      : { status: 200, payload: completion(model) },
+  );
+  const anthCarry: Record<string, unknown>[] = [];
+  const claudeCarry = await anthropicStub(anthCarry);
+  process.env.NVIDIA_BASE_URL = orCarry.url;
+  process.env.ANTHROPIC_BASE_URL = claudeCarry.url;
+  clearSettingsCache();
+
+  const finished = await ask("check.free.continuation");
+  const bodiesCarry = hitsCarry.filter((hit) => !hit.path.includes("/models"));
+  const secondSystem = String((bodiesCarry[1]?.body?.messages as { content?: unknown }[] | undefined)?.[0]?.content ?? "");
+
+  check("a truncated rung still climbs to the next one", bodiesCarry.length === 2, String(bodiesCarry.length));
+  check("and the next rung is handed what the last one wrote", secondSystem.includes(HALF), secondSystem.slice(-160));
+  check("...as work to finish rather than an answer to trust", secondSystem.includes("Do not start again from nothing"));
+  check("...in the system prompt, never as a prior assistant turn", (bodiesCarry[1]?.body?.messages as unknown[] | undefined)?.length === 2);
+  check("the finished answer is the one that comes back", finished.data.answer === "from a free model", finished.data.answer);
+  check("and the reply names whose work was finished on", finished.continuedFrom === RUNGS[0], String(finished.continuedFrom));
+  await prisma.llmCall.deleteMany({ where: { purpose: "check.free.continuation" } });
+  orCarry.server.close();
+  claudeCarry.server.close();
+
+  // The negative: a rung that produced nothing carries nothing. A rate limit,
+  // a refused key and a timeout have all told us exactly as much about this
+  // request as each other — which is nothing — and an empty block headed "work
+  // already done" is worse than no block at all.
+  const hitsBare: Hit[] = [];
+  const orBare = await nvidiaStub(hitsBare, (model) =>
+    model === RUNGS[0] ? { status: 429, payload: "Rate limit exceeded" } : { status: 200, payload: completion(model) },
+  );
+  const anthBare: Record<string, unknown>[] = [];
+  const claudeBare = await anthropicStub(anthBare);
+  process.env.NVIDIA_BASE_URL = orBare.url;
+  process.env.ANTHROPIC_BASE_URL = claudeBare.url;
+  clearSettingsCache();
+
+  const empty = await ask("check.free.noCarry");
+  const bodiesBare = hitsBare.filter((hit) => !hit.path.includes("/models"));
+  const bareSystem = String((bodiesBare[1]?.body?.messages as { content?: unknown }[] | undefined)?.[0]?.content ?? "");
+  check("a rung that produced nothing carries nothing forward", !bareSystem.includes("Work already done"), bareSystem.slice(-120));
+  check("and the reply says nothing was finished", empty.continuedFrom === null, String(empty.continuedFrom));
+  await prisma.llmCall.deleteMany({ where: { purpose: "check.free.noCarry" } });
+  orBare.server.close();
+  claudeBare.server.close();
+
   // --- Scenario F: the paid floor is the best of three ----------------------
   //
   // The instruction was "three free models, then the best paid one of the
@@ -589,14 +737,14 @@ async function main() {
   // Claude refuses the key, ChatGPT breaks, Gemini finishes — over three
   // different wires, with the same conversation.
 
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(RUNGS));
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, ladders(RUNGS));
   await setSetting(SETTING.OPENAI_KEY, "sk-check-not-a-real-key");
   await setSetting(SETTING.GEMINI_KEY, "gm-check-not-a-real-key");
   clearSettingsCache();
-  clearOpenRouterCooldown();
+  clearNvidiaCooldown();
 
   const hitsF: Hit[] = [];
-  const orF = await openRouterStub(hitsF, () => ({ status: 503, payload: "upstream is busy" }));
+  const orF = await nvidiaStub(hitsF, () => ({ status: 503, payload: "upstream is busy" }));
   const anthF: Record<string, unknown>[] = [];
   const claudeF = await anthropicStub(anthF, () => ({ status: 401, payload: { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } } }));
   const openAiF: Hit[] = [];
@@ -604,7 +752,7 @@ async function main() {
   const geminiF: Record<string, unknown>[] = [];
   const gmF = await geminiStub(geminiF);
 
-  process.env.OPENROUTER_BASE_URL = orF.url;
+  process.env.NVIDIA_BASE_URL = orF.url;
   process.env.ANTHROPIC_BASE_URL = claudeF.url;
   process.env.OPENAI_BASE_URL = chatgptF.url;
   process.env.GEMINI_BASE_URL = gmF.url;
@@ -672,7 +820,7 @@ async function main() {
   // which is every run that does any work. This happened live, on the first
   // task ever to reach the new floor.
 
-  clearOpenRouterCooldown();
+  clearNvidiaCooldown();
   const SIGNATURE = "sig_check_Cg8KDXRob3VnaHRfc2lnbmF0dXJl";
   const geminiG: Record<string, unknown>[] = [];
   const gmG = await geminiStub(geminiG, (call) =>
@@ -700,15 +848,15 @@ async function main() {
 
   // Gemini alone on the floor, so the run starts and finishes on that wire.
   await prisma.appSetting.deleteMany({
-    where: { key: { in: [SETTING.ANTHROPIC_KEY, SETTING.OPENAI_KEY, SETTING.OPENROUTER_KEY] } },
+    where: { key: { in: [SETTING.ANTHROPIC_KEY, SETTING.OPENAI_KEY, SETTING.NVIDIA_KEY] } },
   });
   await setSetting(SETTING.GEMINI_KEY, "gm-check-not-a-real-key");
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, ladders([]));
   // The row is only half of it: `getSetting` prefers the environment, and the
   // scenarios above export three of these keys for the whole process. A vendor
   // meant to be unconnected has to lose both, or this run starts on OpenRouter
   // against a stub that has already been closed.
-  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.NVIDIA_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.OPENAI_API_KEY;
   process.env.GEMINI_API_KEY = "gm-check-not-a-real-key";

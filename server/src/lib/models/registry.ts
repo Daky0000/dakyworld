@@ -24,7 +24,7 @@ import { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, defaultModel, type ModelRa
  */
 
 /** The vendors. `anthropic` is the floor everything falls back to. */
-export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "openrouter";
+export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "nvidia";
 
 /**
  * What is being asked for, in the app's own words rather than a vendor's.
@@ -93,13 +93,13 @@ export interface JobDescription {
 /**
  * The shipped routing.
  *
- * These are the Owner's choices, written down: **OpenRouter serves every job
- * it can do**, ChatGPT draws the pictures, and each job moves down its chain
- * when OpenRouter isn't connected or a call through it fails — the declared
- * fallback first, then every other vendor that can do the work.
+ * These are the Owner's choices, written down: **NVIDIA serves every job it
+ * can do**, ChatGPT draws the pictures, and each job moves down its chain when
+ * NVIDIA isn't connected or a call through it fails — the declared fallback
+ * first, then every other vendor that can do the work.
  *
- * OpenRouter starts on a **free** model and only pays for one when three free
- * ones have refused the work. See `DEFAULT_FREE_LADDER` and `freeLadder()`.
+ * NVIDIA is asked on the **free model picked for that job**, and only pays for
+ * one when three free ones have refused the work. See `FREE_LADDER_BY_JOB`.
  */
 export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: ProviderKey }> = {
   text: {
@@ -107,7 +107,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Writing",
     phrase: "writing",
     blurb: "Every piece of prose the system produces — proposal copy, email drafts, ad concepts, page copy, cold outreach.",
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "anthropic",
   },
   spreadsheet: {
@@ -116,12 +116,12 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "reading a spreadsheet",
     blurb:
       "Reads an imported spreadsheet of leads — where every table starts and stops, what each column means, which columns don't fit — and returns the plan a person reviews before anything is written.",
-    // OpenRouter first like everything else. This was the one judgement job in
+    // NVIDIA first like everything else. This was the one judgement job in
     // the system still hard-wired to Claude through its own private call path,
     // which made it the one model nobody could change. It is a routing
-    // decision like any other now: OpenRouter by default, Claude standing in
+    // decision like any other now: NVIDIA by default, Claude standing in
     // behind it, both changeable from the Settings screen.
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "anthropic",
     // No economy tier on purpose. Getting a table boundary wrong costs the
     // Owner an afternoon of cleanup, and a sheet is analysed once per file,
@@ -133,12 +133,12 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "sorting a prompt into sections",
     blurb:
       "Reading a written instruction and filing it under the ten headings an agent prompt is made of — so a pasted playbook becomes a prompt rather than a wall of text.",
-    // OpenRouter first like everything else. This job is comprehension and
+    // NVIDIA first like everything else. This job is comprehension and
     // filing, not prose: nothing it returns is read by a customer, and the
     // failure that matters is a paragraph put under the wrong heading or
     // quietly reworded. Every vendor that can follow a schema can do it, so
     // the chain is wide and the cost is a rounding error against being wrong.
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "anthropic",
     // Following a schema, on a job with a right answer, where nothing it
     // returns is read by a customer.
@@ -156,7 +156,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     // mailbox is a thousand calls a month, and separating it is what lets the
     // Owner put it on a cheap model from the Settings screen without moving
     // everything else there too.
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "gemini",
     // The argument above, carried out. Separating the job was only half of it:
     // for months this still resolved to whichever model the vendor's own
@@ -182,7 +182,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Web pages",
     phrase: "building web pages",
     blurb: "Complete HTML pages on the brand design system — the thing a developer opens and edits.",
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "anthropic",
   },
   factcheck: {
@@ -190,12 +190,12 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Fact-checking",
     phrase: "fact-checking",
     blurb: "Checks a draft's claims against live sources, so nothing goes out that stopped being true last year.",
-    // OpenRouter carries the job by default, per the Owner's call. It does not
+    // NVIDIA carries the job by default, per the Owner's call. It does not
     // search the live web, so an answer it gives reports itself as checked
     // against no live source — the tool result says who checked and against
     // what, and Perplexity stays one step down the chain for when that
     // distinction matters more than the default does.
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "anthropic",
   },
   research: {
@@ -204,9 +204,9 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "researching a company",
     blurb:
       "Finds out who a prospect actually is — trade, address, reputation, who runs it — from live sources, and fills the blanks a scrape left behind.",
-    // Same reasoning as factcheck above: OpenRouter by default, and the result
+    // Same reasoning as factcheck above: NVIDIA by default, and the result
     // records honestly whether what came back was searched for or remembered.
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "anthropic",
   },
   humanise: {
@@ -214,7 +214,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Plain English",
     phrase: "plain-English rewrites",
     blurb: "Rewrites a draft to sound like a person wrote it and to be understood on one reading.",
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "anthropic",
   },
   vision: {
@@ -223,10 +223,210 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     phrase: "looking at a page",
     blurb:
       "Reads a screenshot of a prospect's homepage and says what a first-time visitor actually sees — the half of a site audit that markup cannot answer.",
-    defaultProvider: "openrouter",
+    defaultProvider: "nvidia",
     fallback: "anthropic",
   },
 };
+
+// --- The free models --------------------------------------------------------
+
+/**
+ * What one free NVIDIA model can actually do.
+ *
+ * **This table is written down rather than read from the catalogue, and that
+ * is not laziness.** NVIDIA's `/v1/models` returns `id`, `object`, `created`
+ * and `owned_by` — and nothing else. There is no `supported_parameters`, no
+ * capability list, nothing that says whether a model calls tools, honours a
+ * strict JSON schema or can see a picture. OpenRouter published all three,
+ * which is why the vendor this replaced could ask the catalogue at runtime
+ * (`openRouterCompilesSchemas`) instead of keeping a list.
+ *
+ * So each flag below is the result of an actual request against the actual
+ * endpoint, and the date it was checked is recorded. A flag nobody has proved
+ * is a flag that is wrong eventually — and getting these wrong is expensive in
+ * two different directions: claiming a schema a model ignores means the model
+ * is asked for "a plan" with no description of one anywhere in the request
+ * (see `schemaContract`), and claiming vision a model does not have means a
+ * homepage screenshot is paid for at Apify and then described by a model that
+ * cannot see it.
+ */
+export interface FreeModel {
+  id: string;
+  /** What it is called on screen. "GPT-OSS 120B", not the slug. */
+  name: string;
+  /** Who built it. Used to keep a ladder from being three hats on one head. */
+  house: string;
+  /** NVIDIA's own one-line description of what it is for. */
+  blurb: string;
+  /** Function calling — required by the agent loop, ignored by `callModel`. */
+  tools: boolean;
+  /**
+   * How this model can be asked for JSON, which is three answers rather than
+   * two — and finding that out cost three probes, so it is written down here.
+   *
+   * - `enforced` — takes `response_format: json_schema` and actually compiles
+   *   it. The schema alone is the whole instruction.
+   * - `accepted` — takes `json_schema`, answers 200, and hands back an object
+   *   with field names it invented. `google/diffusiongemma` does this, and it
+   *   **rejects `json_object` outright** ("requires a JSON schema"), so the
+   *   schema still has to be sent; it just cannot be relied on.
+   * - `object` — 500s on a strict schema and takes `json_object` instead.
+   *   `meta/llama-3.2-90b-vision-instruct` is this one.
+   *
+   * Anything but `enforced` gets the shape written into the prompt as well —
+   * see `schemaContract`. Without that, a model is asked for "a plan" with no
+   * description of one anywhere in the request, because every caller in this
+   * app describes its answer in the schema and nowhere else.
+   */
+  schema: "enforced" | "accepted" | "object";
+  /** Reads images. Three of these do; most do not. */
+  vision: boolean;
+  /**
+   * Takes `reasoning_effort`, and takes it on the OpenAI scale.
+   *
+   * Load-bearing: `openai/gpt-oss-*` answers **400** — "Input should be 'low',
+   * 'medium' or 'high'" — to anything else, and the vendor this replaced sent
+   * its own word `max` on every high-effort call. A model with this false is
+   * sent no effort at all rather than a guess.
+   */
+  reasoning: boolean;
+  /** When these flags were last proved against the endpoint. */
+  checked: string;
+  /** Set when the endpoint would not serve at all, with what it said. */
+  down?: string;
+}
+
+/**
+ * Every free NVIDIA model this app has verified, and what each is for.
+ *
+ * Two of them are listed and currently unserviceable. They are kept here
+ * rather than deleted because a model that is overloaded today is a model that
+ * works next month, and the Owner can put one back in a ladder from the
+ * Settings screen the moment it does — but neither is in a shipped ladder, so
+ * no job spends its first attempt on a known-dead endpoint.
+ */
+export const FREE_MODELS: FreeModel[] = [
+  {
+    id: "moonshotai/kimi-k3",
+    name: "Kimi K3",
+    house: "Moonshot AI",
+    blurb: "~2.8T hybrid KDA+MLA multimodal MoE for long-horizon coding, agentic tool use, and image understanding.",
+    tools: true,
+    schema: "enforced",
+    vision: true,
+    reasoning: true,
+    checked: "2026-09-01",
+  },
+  {
+    id: "nvidia/nemotron-3-super-120b-a12b",
+    name: "Nemotron 3 Super 120B",
+    house: "NVIDIA",
+    blurb: "Open, efficient hybrid Mamba-Transformer MoE with 1M context, excelling in agentic reasoning, coding, planning and tool calling.",
+    tools: true,
+    schema: "enforced",
+    vision: false,
+    reasoning: true,
+    checked: "2026-09-01",
+  },
+  {
+    id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    name: "Nemotron 3 Nano Omni",
+    house: "NVIDIA",
+    blurb: "Omni-modal reasoning model that understands images, video, speech and text.",
+    tools: true,
+    schema: "enforced",
+    vision: true,
+    reasoning: true,
+    checked: "2026-09-01",
+  },
+  {
+    id: "openai/gpt-oss-120b",
+    name: "GPT-OSS 120B",
+    house: "OpenAI",
+    blurb: "Mixture of Experts (MoE) reasoning LLM (text-only) designed to fit within an 80GB GPU.",
+    tools: true,
+    schema: "enforced",
+    vision: false,
+    reasoning: true,
+    checked: "2026-09-01",
+  },
+  {
+    id: "openai/gpt-oss-20b",
+    name: "GPT-OSS 20B",
+    house: "OpenAI",
+    blurb: "Smaller Mixture of Experts (MoE) text-only LLM for efficient AI reasoning and math.",
+    tools: true,
+    schema: "enforced",
+    vision: false,
+    reasoning: true,
+    checked: "2026-09-01",
+  },
+  {
+    id: "google/diffusiongemma-26b-a4b-it",
+    name: "DiffusionGemma 26B",
+    house: "Google",
+    blurb: "Diffusion-based 26B parameter LLM enabling parallel token generation for real-time text apps.",
+    tools: true,
+    // Accepts `json_schema`, answers 200, and returns a fenced object with its
+    // own field names. Accepting a parameter is not honouring it — and it
+    // refuses `json_object`, so the schema is still what goes on the wire.
+    schema: "accepted",
+    vision: true,
+    reasoning: false,
+    checked: "2026-09-01",
+  },
+  {
+    id: "meta/llama-3.2-90b-vision-instruct",
+    name: "Llama 3.2 90B Vision",
+    house: "Meta",
+    blurb: "Cutting-edge vision-language model excelling in high-quality reasoning from images.",
+    tools: true,
+    // 500 on a strict schema, reliably; `json_object` is what it takes. The
+    // shape goes in the prompt alongside it.
+    schema: "object",
+    vision: true,
+    reasoning: false,
+    checked: "2026-09-01",
+  },
+  {
+    id: "google/gemma-4-31b-it",
+    name: "Gemma 4 31B",
+    house: "Google",
+    blurb: "Dense 31B model delivering frontier reasoning for coding, agentic workflows and fine-tuning.",
+    tools: true,
+    schema: "enforced",
+    vision: true,
+    reasoning: true,
+    checked: "2026-09-01",
+    down: "504 Gateway Timeout on every request, twice, fifteen minutes apart. Not in any shipped ladder until it serves again.",
+  },
+  {
+    id: "mistralai/mistral-nemotron",
+    name: "Mistral Nemotron",
+    house: "Mistral AI",
+    blurb: "Built for agentic workflows, this model excels in coding, instruction following and function calling.",
+    tools: true,
+    schema: "enforced",
+    vision: false,
+    reasoning: false,
+    checked: "2026-09-01",
+    down: "Times out at three minutes, or answers 500 'Inference connection error'. The expensive failure shape — a request that hangs rather than refusing — so it is kept out of every shipped ladder.",
+  },
+];
+
+export const FREE_MODEL_IDS = FREE_MODELS.map((model) => model.id);
+
+const FREE_BY_ID = new Map(FREE_MODELS.map((model) => [model.id, model]));
+
+/** What this app knows about a free model, or null for one it has never checked. */
+export function freeModel(id: string): FreeModel | null {
+  return FREE_BY_ID.get(id) ?? null;
+}
+
+/** True when every model on this vendor is free, which is the whole point of it. */
+export function isNvidiaModel(id: string): boolean {
+  return FREE_BY_ID.has(id);
+}
 
 export interface ProviderDefinition {
   key: ProviderKey;
@@ -335,51 +535,51 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     jobs: ["text", "triage", "factcheck", "research", "humanise"],
     models: ["sonar", "sonar-pro", "sonar-reasoning-pro"],
   },
-  openrouter: {
-    key: "openrouter",
-    // **The shop, not the model.** This used to be called "ox-alpha" after the
-    // one model it served, on the reasoning that the Owner calls a thing by
-    // the model rather than by the shop it came from — the same reason ChatGPT
-    // is not called "OpenAI" here.
+  nvidia: {
+    key: "nvidia",
+    // **The shop, not the model**, and this time the shop is the point.
     //
-    // That stopped being true twice over. The slug it was named after was a
-    // stealth listing that OpenRouter retired without notice on 26 Aug 2026,
-    // so the vendor was carrying the name of a model that no longer existed;
-    // and this vendor now serves a *ladder* of free models before anything
-    // else, so there is no single model to name it after. A sentence reading
-    // "ox-alpha isn't connected" sent somebody looking for a model in a
-    // catalogue when what was missing was a key. It is OpenRouter, which is
-    // what is on the key, on the console and on the bill.
-    name: "OpenRouter",
-    vendor: "OpenRouter",
+    // Every model here is served free from NVIDIA's own build catalogue, on
+    // one OpenAI-shaped wire, against one key. It replaced OpenRouter on
+    // 1 Sep 2026 for a reason that was costing real work: OpenRouter served
+    // one free model to every job at once, so one busy endpoint or one
+    // exhausted daily cap took the whole workforce down together. NVIDIA
+    // lists a **different model per kind of work** — a small fast one for
+    // reading the post, a 1M-context one for a spreadsheet, three that can
+    // actually look at a picture — so the ladder underneath each job is now
+    // three models picked for that job rather than three copies of one guess.
+    //
+    // See `FREE_MODELS` for the catalogue and `FREE_LADDER_BY_JOB` for the
+    // assignment.
+    name: "NVIDIA",
+    vendor: "NVIDIA",
     purpose:
-      "The default for every job it can do — one key covers writing, sorting, triage, pages, research, fact-checking, plain English and looking at a page. Free models are tried first; see the ladder below.",
-    keySetting: SETTING.OPENROUTER_KEY,
-    modelSetting: SETTING.OPENROUTER_MODEL,
-    // What OpenRouter is asked for when the free ladder is switched off. It
-    // was a stealth listing called `stealth/ox-alpha`, and on 26 Aug 2026
-    // OpenRouter retired the slug with a 404 whose body named what it had been
-    // all along: ZAI's GLM-5.3 Flash. Same model, real name. A stealth id is a
-    // rented one and this is the second thing to check when every job stops at
-    // once.
-    defaultModel: "z-ai/glm-5.3-flash",
-    // Nothing cheaper names its default, which makes the economy tier a no-op
-    // here rather than a broken request.
-    economyModel: "z-ai/glm-5.3-flash",
-    console: "https://openrouter.ai/settings/keys",
-    keyHint: "sk-or-…",
+      "The default for every job it can do, and every model on it is free. One key covers writing, sorting, triage, pages, research, fact-checking, plain English and looking at a page — each on the free model picked for that job.",
+    keySetting: SETTING.NVIDIA_KEY,
+    modelSetting: SETTING.NVIDIA_MODEL,
+    // What NVIDIA is asked for when the free ladders are switched off, which
+    // is a strange thing to do here and is allowed anyway: every model on this
+    // vendor is free, so "off" means *one* free model for everything instead
+    // of the right one per job. It is the strongest all-rounder in the
+    // catalogue — the only model that does tools, a strict schema and vision
+    // at once.
+    defaultModel: "moonshotai/kimi-k3",
+    // The small, fast, genuinely cheaper-to-wait-for one. Free either way, so
+    // the economy tier here buys latency rather than money — which is exactly
+    // what triage and prompt-sorting want.
+    economyModel: "openai/gpt-oss-20b",
+    console: "https://build.nvidia.com/settings/api-keys",
+    keyHint: "nvapi-…",
     // Every job except `image`. Drawing a picture goes through an images API
     // this app only wires up for ChatGPT (`generateImage` refuses anything
     // else), so listing `image` here would put a route in the dropdown that
-    // looks saved and never once serves — the exact thing the routing exists
-    // to prevent. Everything else is chat completions, which OpenRouter
-    // speaks for any model on it; if the model serving turns out not to read
-    // pictures, a vision call fails over to the next vendor that can.
+    // looks saved and never once serves. NVIDIA does host image models; none
+    // of them is on this wire.
     jobs: ["text", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
-    // The shipped id. If OpenRouter lists the model under a different slug,
-    // paste that instead — the field takes anything, and verifying the key
-    // checks the id against OpenRouter's own catalogue before saving.
-    models: ["z-ai/glm-5.3-flash"],
+    // The dropdown offers what this app has actually verified against the
+    // endpoint, which is a narrower list than NVIDIA's catalogue on purpose —
+    // see `FREE_MODELS`. Anything else can still be typed.
+    models: FREE_MODEL_IDS,
   },
 };
 
@@ -393,37 +593,35 @@ export function isModelJob(value: unknown): value is ModelJob {
   return typeof value === "string" && (MODEL_JOBS as string[]).includes(value);
 }
 
-// --- How hard the OpenRouter model thinks -----------------------------------
+// --- How hard the model thinks ----------------------------------------------
 
 /**
- * Our effort word onto the three the OpenRouter default takes.
+ * Our effort word onto the scale the wire actually accepts.
  *
- * A vendor fact, so it lives with the other vendor facts rather than inside
- * whichever caller happened to need it first. It was written for the agent
- * loop and stayed there, which meant the *other* half of the model layer —
- * every one-shot `callModel` — put nothing on the wire at all and every routed
- * job ran at **the model's own default, which on the shipped one is max**.
- * Triage asks for `low`
- * in so many words, runs once per arriving message, and was paying
- * headline-depth reasoning on every one of them.
+ * **low / medium / high, and nothing else.** This is the one line in the model
+ * layer with a live 400 behind it: `openai/gpt-oss-120b` and `-20b` answer
  *
- * Exactly the bug `checks/modelChoice.ts` exists for, one field over: nothing
+ *     400 {"type":"literal_error","loc":["body","reasoning_effort"],
+ *          "msg":"Input should be 'low', 'medium' or 'high'"}
+ *
+ * to anything outside that set, and the vendor this replaced sent its own word
+ * `max` on every high-effort call. Carrying that mapping across would have
+ * taken down every high-effort job on two of the seven models the moment this
+ * shipped, and taken it down as a *request-shape* failure — which climbs the
+ * ladder, so the symptom would have been three free models refusing every
+ * important piece of work and the paid floor quietly finishing all of it.
+ *
+ * That is exactly the shape of bug `checks/modelChoice.ts` exists for: nothing
  * breaks, every answer is correct, and the only symptom is the bill.
  *
- * The model this was written against offered low/high/max, not our medium —
- * so medium steps up to high, and everything above rides at max.
- *
- * **`max` is that model's word, not an OpenAI-standard one** (that scale is
- * low/medium/high). It survived the move to `z-ai/glm-5.3-flash` untouched
- * because changing it would change what every job costs and how well it
- * thinks, on a guess about a model nobody has measured here yet. If high-effort
- * work starts coming back 400, this is the line — and the agent loop now falls
- * to Claude rather than dying while somebody works that out.
+ * A model that does not declare `reasoning` is sent no effort at all — see
+ * `FreeModel.reasoning`. A parameter a model ignores is free; a parameter it
+ * rejects costs the whole request.
  */
-export function reasoningEffortFor(effort: Effort): "low" | "high" | "max" {
+export function reasoningEffortFor(effort: Effort): "low" | "medium" | "high" {
   if (effort === "low") return "low";
-  if (effort === "medium") return "high";
-  return "max";
+  if (effort === "medium") return "medium";
+  return "high";
 }
 
 /**
@@ -432,7 +630,7 @@ export function reasoningEffortFor(effort: Effort): "low" | "high" | "max" {
  * On an OpenAI-shaped wire `max_tokens` caps **reasoning plus reply**, the
  * same trap Anthropic's does — but nothing here was leaving any slack for it.
  * The sheet analyst asks for 16,000 tokens because a plan describing forty
- * columns across three tables is genuinely long, and at max effort a reasoning
+ * columns across three tables is genuinely long, and at high effort a reasoning
  * model can spend that much before it writes a character. What comes back then is
  * `finish_reason: "length"` with an empty message, which this layer correctly
  * reads as "produced nothing usable" and hands to the next vendor — so the
@@ -443,18 +641,18 @@ export function reasoningEffortFor(effort: Effort): "low" | "high" | "max" {
  * *answer* — and the thinking is budgeted on top of it here, by the effort we
  * just asked for.
  */
-const REASONING_HEADROOM: Record<"low" | "high" | "max", number> = { low: 2_000, high: 8_000, max: 16_000 };
+const REASONING_HEADROOM: Record<"low" | "medium" | "high", number> = { low: 2_000, medium: 8_000, high: 16_000 };
 
 /**
  * A ceiling, because `max_tokens` above what a model can actually emit is a
  * 400 on some of them rather than a clamp. 32,000 is twice the agent loop's
- * own budget and inside what every frontier model on OpenRouter accepts.
+ * own budget and inside what every model in `FREE_MODELS` accepts.
  */
-const OPENROUTER_MAX_TOKENS = 32_000;
+const MAX_TOKENS_CEILING = 32_000;
 
 /** The wire's `max_tokens`: the answer the caller asked for, plus the thinking. */
 export function tokensWithReasoning(answerTokens: number, effort: Effort): number {
-  return Math.min(answerTokens + REASONING_HEADROOM[reasoningEffortFor(effort)], OPENROUTER_MAX_TOKENS);
+  return Math.min(answerTokens + REASONING_HEADROOM[reasoningEffortFor(effort)], MAX_TOKENS_CEILING);
 }
 
 // --- Keys and models --------------------------------------------------------
@@ -536,166 +734,283 @@ export async function modelForJob(job: ModelJob, provider: ProviderKey): Promise
   return providerModel(provider);
 }
 
-// --- The free ladder --------------------------------------------------------
+// --- The free ladders -------------------------------------------------------
 
 /**
- * How many free models are worth trying before giving up on free.
+ * How many free models are worth trying before paying for one.
  *
- * Three, and the number is a judgement rather than a limit of the mechanism.
- * A free endpoint that does not answer is usually busy rather than broken, so
- * a second one is very likely to work; by the third, the sensible conclusion is
- * that free capacity is short right now and the work still has to happen. Each
- * rung costs a request and some seconds of waiting, and a ladder of ten would
- * turn a busy afternoon into minutes of latency in front of a person, paid for
- * in nothing but delay.
+ * Three, which is the Owner's own number — "if they fail three times, then
+ * they move to the paid version" — and it is also the number the mechanism
+ * argues for on its own. A free endpoint that does not answer is usually busy
+ * rather than broken, so a second one is very likely to work; by the third,
+ * the sensible conclusion is that free capacity is short right now and the
+ * work still has to happen. Each rung costs a request and some seconds of
+ * waiting, and a ladder of ten would turn a busy afternoon into minutes of
+ * latency in front of a person, paid for in nothing but delay.
  */
 export const FREE_LADDER_MAX = 3;
 
 /**
- * The ladder that ships, used when the Owner has never set one.
+ * The things a ladder can be picked for.
  *
- * **Free-first is a default, not an opt-in.** It was an opt-in for exactly one
- * day, and an opt-in nobody has opted into is a feature that does nothing: a
- * deployment where this setting was never touched paid for every agent turn
- * and every piece of writing while three free models sat there. The
- * instruction was "all agents use a free model first", and a setting somebody
- * has to find is not that.
- *
- * **These three are a seed, not a promise.** A free slug is the most perishable
- * id there is — the model moves, the `:free` variant is withdrawn, the provider
- * renames it — and this file cannot know today what OpenRouter lists in six
- * months. Two things make that survivable:
- *
- * 1. `ensureFreeLadder()` (models/call.ts) reads the account's **own**
- *    catalogue at boot and stores the three best free, tool-capable models it
- *    actually lists, replacing this seed. From then on the ladder is a fact
- *    about the account rather than a guess in a source file.
- * 2. A rung that no longer exists answers 404, which is a rung that did not
- *    serve, which is the next rung. A dead seed costs one fast call, not a run.
- *
- * Three different houses on purpose. Free capacity goes short for one provider
- * at a time — a ladder of three variants of the same model is one rung wearing
- * three hats, and it fails as one.
- *
- * **Every id here ends in `:free`,** and that is load-bearing rather than
- * tidy: `isFreeModel()` prices a rung at zero, and the stored ladder earns
- * that by having been checked against the live catalogue, while this seed has
- * not been checked by anything. The suffix is OpenRouter's own convention for
- * a zero-rate variant and it is the only guarantee available to a list written
- * in advance. `checks/freeModels.ts` asserts it.
+ * Every routed job, plus `agent` — the loop that runs the workforce, which is
+ * not a `ModelJob` because it is not a one-shot call. It needs its own list
+ * anyway: it is the only consumer that genuinely *requires* function calling,
+ * where the one-shot half only requires a schema, and picking one list for
+ * both would mean either barring a good writer that cannot call tools or
+ * putting a model in the agent ladder that will fail on its first turn.
  */
-export const DEFAULT_FREE_LADDER = [
-  "z-ai/glm-4.5-air:free",
-  "deepseek/deepseek-chat-v3-0324:free",
-  "qwen/qwen3-235b-a22b:free",
-];
+export type LadderKey = ModelJob | "agent";
+
+export const LADDER_KEYS: LadderKey[] = [...MODEL_JOBS, "agent"];
+
+export function isLadderKey(value: unknown): value is LadderKey {
+  return typeof value === "string" && (LADDER_KEYS as string[]).includes(value);
+}
 
 /**
- * The free OpenRouter models to try, in order.
+ * Which free models serve which job, in the order they are tried.
  *
- * Three states, and they are three rather than two on purpose:
+ * **This is the assignment**, and it is the reason this vendor replaced the
+ * last one. OpenRouter served *one* free model to every job in the system, so
+ * every job was only as good as that one model was at the worst thing it was
+ * asked to do — and when that endpoint was busy, everything stopped together.
+ * NVIDIA lists a different model per kind of work, so each job gets three
+ * picked for it.
  *
- * - **Nothing stored** — the shipped ladder. A fresh deployment tries free
- *   models without anybody configuring it.
- * - **A stored list** — that list, capped at three.
- * - **A stored empty list** — free models are off, deliberately, and OpenRouter
- *   is asked for its own model as it was before any of this existed. Somebody
- *   who has turned this off must not have it turned back on by a deploy, which
- *   is exactly what would happen if "empty" and "unset" meant the same thing.
+ * Three rules were applied to every row:
  *
- * Capped rather than refused above the cap: a stored list that grew past three
- * — pasted in by hand, or written by a future screen — should quietly use the
- * first three rather than fail, because the alternative is a model layer that
- * stops working on a settings value nobody thought was dangerous.
+ * 1. **Capability first.** A model that cannot see is never in the `vision`
+ *    ladder, however good it is; a model whose schema is ignored is fine
+ *    anywhere, because the shape is written into the prompt for it (see
+ *    `schemaContract`), but it is not put first on a job whose answer is
+ *    forty structured fields.
+ * 2. **Three houses where three exist.** Free capacity goes short one provider
+ *    at a time, and a ladder of three models from one house is one rung
+ *    wearing three hats — it fails as one. `vision` is the row where this
+ *    could not be fully honoured: only three models here can see at all.
+ * 3. **Nothing that is currently down.** `google/gemma-4-31b-it` and
+ *    `mistralai/mistral-nemotron` are both in `FREE_MODELS` and in neither
+ *    ladder. A first rung that times out costs every call sixty seconds before
+ *    anything useful happens, which is worse than not having it.
  */
-export async function freeLadder(): Promise<string[]> {
-  const raw = await getSetting(SETTING.OPENROUTER_FREE_MODELS);
-  if (!raw?.trim()) return [...DEFAULT_FREE_LADDER];
+export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
+  // Prose a customer reads. The two biggest models here, then a reasoning
+  // model that writes cleanly, across three houses.
+  text: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
+
+  // A spreadsheet is the one job where context length is the whole game: forty
+  // columns across three tables, and the plan is wrong if the model only saw
+  // half of it. Nemotron Super carries 1M tokens of context and leads for that
+  // reason alone.
+  spreadsheet: ["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3", "openai/gpt-oss-120b"],
+
+  // Filing a written instruction under ten headings: comprehension, not prose,
+  // with a right answer and nothing a customer reads. The small fast model
+  // first, and this is what the `economy` tier means on a vendor where
+  // everything is free — it buys latency, not money.
+  organise: ["openai/gpt-oss-20b", "google/diffusiongemma-26b-a4b-it", "nvidia/nemotron-3-super-120b-a12b"],
+
+  // Runs once per *arriving* message rather than once per piece of work, so a
+  // busy mailbox is a thousand calls a month. The two fastest models in the
+  // catalogue, in order; DiffusionGemma decodes in parallel and is built for
+  // exactly this.
+  triage: ["openai/gpt-oss-20b", "google/diffusiongemma-26b-a4b-it", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
+
+  // Not on this vendor at all: drawing a picture goes through an images API
+  // `generateImage` only wires up for ChatGPT. Empty rather than absent, so
+  // that a screen listing the ladders shows the job and says so.
+  image: [],
+
+  // A complete page is a coding job. Kimi K3 is built for long-horizon coding,
+  // Nemotron Super for coding and planning, and GPT-OSS 120B reasons its way
+  // through a layout well enough to finish one.
+  html: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
+
+  // **None of these searches the live web**, which is a real limit rather than
+  // a detail: what comes back is reasoned from training data, and the tool
+  // result says so (`checkedAgainstLiveSources`). Perplexity stays one step
+  // down the chain for when that distinction matters more than free does. So
+  // the ladder is ordered by reasoning quality, which is what is actually on
+  // offer here.
+  factcheck: ["openai/gpt-oss-120b", "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"],
+
+  // Same limit, same honesty, and a longer answer — a company profile is more
+  // writing than a claim check, so the 1M-context model leads.
+  research: ["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3", "openai/gpt-oss-120b"],
+
+  // A rewrite is short, mechanical and wanted immediately, usually with
+  // somebody waiting on the screen. DiffusionGemma generates tokens in
+  // parallel and is the fastest thing here by a distance.
+  humanise: ["google/diffusiongemma-26b-a4b-it", "moonshotai/kimi-k3", "openai/gpt-oss-120b"],
+
+  // The three models in this catalogue that can actually look at a picture,
+  // strongest first. Llama 3.2 90B Vision is the largest and is built for
+  // reasoning *from* an image rather than captioning one, which is the whole
+  // job: what does a first-time visitor to this homepage actually see.
+  //
+  // Its schema is ignored (500 on a strict one), so the shape goes in the
+  // prompt — which is the right trade here, because the alternative is
+  // describing a screenshot with a model that cannot see it.
+  vision: ["meta/llama-3.2-90b-vision-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "moonshotai/kimi-k3"],
+
+  // The workforce loop. Every rung has to call tools — a model that cannot
+  // fails on turn one, having read the whole system prompt first — and has to
+  // hold a long conversation without losing the thread. All three are verified
+  // tool-callers, and Kimi K3 leads because it is the only one built for
+  // long-horizon agentic use *and* able to look at a screenshot a tool
+  // returned.
+  agent: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
+};
+
+/**
+ * A heading, a clause and an explanation for each thing a ladder serves.
+ *
+ * Nine of the eleven are already written down in `JOBS`; this exists for the
+ * two that are not. `agent` is not a `ModelJob` — it is the loop that runs the
+ * workforce — and `image` has no ladder at all, so a screen listing every
+ * ladder needs a sentence for both or it shows a blank row and a job the Owner
+ * cannot make sense of.
+ */
+export function ladderLabel(key: LadderKey): { name: string; phrase: string; blurb: string } {
+  if (key === "agent") {
+    return {
+      name: "Running agents",
+      phrase: "running an agent",
+      blurb:
+        "The loop the whole workforce runs on: read the record, decide, call a tool, read what came back, decide again. Every model here has to be able to call tools — one that cannot fails on its first turn, having read the entire system prompt first.",
+    };
+  }
+  const job = JOBS[key];
+  return { name: job.name, phrase: job.phrase, blurb: job.blurb };
+}
+
+/**
+ * The Owner's own ladders, holding only what has been changed.
+ *
+ * Same shape and same reasoning as `readRoutes` and `capture.actors`: a stored
+ * copy of a default is a default that silently stops tracking the code, so a
+ * job nobody has touched is absent from this object rather than present with
+ * the shipped value in it.
+ *
+ * **Unset, empty and unreadable are three different states**, and conflating
+ * any two of them is a money bug:
+ *
+ * - **A key absent** — the shipped ladder for that job. A fresh deployment
+ *   tries free models without anybody configuring anything.
+ * - **A stored list** — that list, capped at three, duplicates dropped.
+ * - **A stored empty list** — free models are off *for that job*, deliberately,
+ *   and it goes straight to whatever NVIDIA's own model setting names. Somebody
+ *   who turned this off must not have it turned back on by a deploy, which is
+ *   exactly what would happen if "empty" and "unset" meant the same thing.
+ * - **Unreadable JSON** — the shipped ladders, because answering a corrupt
+ *   settings row by falling through to a paid model is answering it with money.
+ */
+export async function readFreeLadders(): Promise<Partial<Record<LadderKey, string[]>>> {
+  const raw = await getSetting(SETTING.NVIDIA_FREE_MODELS);
+  if (!raw?.trim()) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    // Unreadable is not the same as "off". Off is a value somebody stored on
-    // purpose; this is a row nobody can read, and the two must not have the
-    // same effect — falling through to the paid model here would answer a
-    // corrupt settings row by quietly starting to spend money.
-    console.warn("[models] openrouter.freeModels is not valid JSON — using the shipped free ladder.");
-    return [...DEFAULT_FREE_LADDER];
+    console.warn("[models] nvidia.freeModels is not valid JSON — using the shipped free ladders.");
+    return {};
   }
-  if (!Array.isArray(parsed)) return [...DEFAULT_FREE_LADDER];
-  const seen = new Set<string>();
-  const ladder: string[] = [];
-  for (const entry of parsed) {
-    if (typeof entry !== "string") continue;
-    const id = entry.trim();
-    // A duplicate rung is a rung that proves nothing: the same endpoint that
-    // just failed is asked again, and the ladder is one shorter than it looks.
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    ladder.push(id);
-    if (ladder.length >= FREE_LADDER_MAX) break;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+  const ladders: Partial<Record<LadderKey, string[]>> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!isLadderKey(key)) continue;
+    if (!Array.isArray(value)) continue;
+    const seen = new Set<string>();
+    const rungs: string[] = [];
+    for (const entry of value) {
+      if (typeof entry !== "string") continue;
+      const id = entry.trim();
+      // A duplicate rung is a rung that proves nothing: the same endpoint that
+      // just failed is asked again, and the ladder is one shorter than it looks.
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      rungs.push(id);
+      if (rungs.length >= FREE_LADDER_MAX) break;
+    }
+    ladders[key] = rungs;
   }
-  return ladder;
+  return ladders;
+}
+
+/** The free models to try for this job, in order. */
+export async function freeLadderFor(key: LadderKey): Promise<string[]> {
+  const stored = (await readFreeLadders())[key];
+  if (stored) return stored;
+  return [...FREE_LADDER_BY_JOB[key]];
 }
 
 /**
- * Where the ladder currently in use came from.
+ * Where the ladder in use came from.
  *
  * The screen needs this and cannot infer it: "three rungs" looks identical
- * whether they are the shipped seed, the Owner's own picks, or a stale copy of
- * a seed from two deploys ago — and "no rungs" reads as *not set up* when it
- * actually means *deliberately switched off*. Every one of those is a different
- * sentence to put in front of somebody.
+ * whether they are the shipped picks or the Owner's own, and "no rungs" reads
+ * as *not set up* when it actually means *deliberately switched off*. Every
+ * one of those is a different sentence to put in front of somebody.
  */
 export type LadderSource = "shipped" | "owner" | "off";
 
-export async function freeLadderSource(): Promise<LadderSource> {
-  const raw = await getSetting(SETTING.OPENROUTER_FREE_MODELS);
-  if (!raw?.trim()) return "shipped";
-  return (await freeLadder()).length > 0 ? "owner" : "off";
+export async function freeLadderSource(key: LadderKey): Promise<LadderSource> {
+  const stored = (await readFreeLadders())[key];
+  if (!stored) return "shipped";
+  return stored.length > 0 ? "owner" : "off";
 }
 
 /**
- * True when this model is a rung, and therefore costs nothing.
+ * True when this model costs nothing.
  *
- * The ledger asks this before it prices a call. It is deliberately the ladder
- * rather than a guess from the id — most free ids end in `:free` and not all of
- * them do, and a naming convention is not a price. What makes a *stored* rung
- * trustworthy is that nothing reaches the setting without having been checked
- * against OpenRouter's own catalogue and found free at that moment; and the
- * Settings screen re-checks, so a model that stops being free is named on the
- * screen rather than quietly charged for.
+ * Two ways to be free, and both are needed:
  *
- * The shipped seed is the one case that has been checked by nobody, which is
- * why every id in it ends in `:free` and why `ensureFreeLadder()` replaces it
- * with catalogue-verified ids the first time a key is present. Worst case is a
- * seed rung that turns out to cost a fraction of a cent and is recorded as
- * nothing, for as long as it takes one boot to correct the list.
+ * 1. **It is in `FREE_MODELS`** — a model this app has called against NVIDIA's
+ *    endpoint and recorded. Every model NVIDIA serves there is free, which is
+ *    the whole reason this vendor was chosen.
+ * 2. **It is a rung of a ladder** — including one the Owner picked from the
+ *    part of NVIDIA's catalogue this app has never probed. The picker offers
+ *    those and marks them unchecked; they are still NVIDIA models on the free
+ *    endpoint, and pricing one at the unknown-model rate would charge for a
+ *    call that cost nothing.
+ *
+ * Getting this wrong only ever goes one way in practice and it is the
+ * expensive way: an unpriced model falls through to `FALLBACK` in
+ * claudePricing.ts, which is deliberately the dearest rate known, so a day's
+ * work on free models would read on the costs screen as the most expensive day
+ * this company has ever had and trip every budget ceiling on money nobody
+ * spent. That is exactly what happened the first time this was written as
+ * catalogue-membership alone.
+ *
+ * A model that is in neither is not assumed free — a slug typed into a
+ * vendor's model field is not a promise about its price.
  */
 export async function isFreeModel(model: string): Promise<boolean> {
-  return (await freeLadder()).includes(model);
+  if (isNvidiaModel(model)) return true;
+  const stored = await readFreeLadders();
+  for (const key of LADDER_KEYS) {
+    const ladder = stored[key] ?? FREE_LADDER_BY_JOB[key];
+    if (ladder.includes(model)) return true;
+  }
+  return false;
 }
 
 /**
- * Every model an OpenRouter attempt should try, in order.
+ * Every model an NVIDIA attempt should try for this job, in order.
  *
  * The ladder when there is one. **`[undefined]` when there is not** — that is,
- * when somebody has deliberately turned free models off — meaning "whatever
- * this vendor's ordinary model is". That is not a tidiness choice: with free
- * models off, this vendor has to behave exactly as it did before any of this
- * existed, down to the wording of the note a person reads when a vendor hands
- * over. Naming the model there is right when three of them were tried and
- * wrong when one was, where it turns "OpenRouter could not do it" into a slug
- * nobody recognises.
+ * when somebody has deliberately turned this job's free models off — meaning
+ * "whatever this vendor's ordinary model is".
  *
- * When a ladder *is* in use it **replaces** the vendor's model rather than sitting
- * in front of it, which is the rule the Settings screen states in those words:
- * the point is a run of free attempts and then the paid floor, and slipping a
- * paid call in between would be a bill nobody asked for at exactly the moment
- * free capacity was short.
+ * When a ladder *is* in use it **replaces** the vendor's model rather than
+ * sitting in front of it: the point is a run of free attempts and then the
+ * paid floor, and slipping another call in between would be latency nobody
+ * asked for at exactly the moment free capacity was short.
  */
-export async function openRouterAttempts(): Promise<(string | undefined)[]> {
-  const ladder = await freeLadder();
+export async function nvidiaAttempts(job: ModelJob): Promise<(string | undefined)[]> {
+  const ladder = await freeLadderFor(job);
   return ladder.length > 0 ? ladder : [undefined];
 }
 
@@ -756,13 +1071,13 @@ export function vendorBase(vendor: Exclude<ProviderKey, "anthropic">): string {
     openai: process.env.OPENAI_BASE_URL,
     gemini: process.env.GEMINI_BASE_URL,
     perplexity: process.env.PERPLEXITY_BASE_URL,
-    openrouter: process.env.OPENROUTER_BASE_URL,
+    nvidia: process.env.NVIDIA_BASE_URL,
   }[vendor];
   const fallback = {
     openai: "https://api.openai.com/v1",
     gemini: "https://generativelanguage.googleapis.com/v1beta",
     perplexity: "https://api.perplexity.ai",
-    openrouter: "https://openrouter.ai/api/v1",
+    nvidia: "https://integrate.api.nvidia.com/v1",
   }[vendor];
   return fromEnv?.replace(/\/$/, "") || fallback;
 }
@@ -1060,6 +1375,23 @@ export const PROVIDER_PRICING: Record<string, ModelRate> = {
   "sonar-pro": { inputPerMTok: 3, outputPerMTok: 15 },
   "sonar-reasoning-pro": { inputPerMTok: 2, outputPerMTok: 8 },
   "sonar-deep-research": { inputPerMTok: 2, outputPerMTok: 8 },
+
+  // NVIDIA — build.nvidia.com. **Zero, explicitly**, and the explicitness is
+  // the point: an unpriced model falls through to `FALLBACK` in
+  // claudePricing.ts, which is deliberately the dearest rate we know of, so a
+  // day served entirely by free models would read as the most expensive day
+  // this company has ever had. Every id here is in `FREE_MODELS`; the two that
+  // are currently down are priced anyway, because they are still free when
+  // they come back and a ladder the Owner edits can reach them tomorrow.
+  "moonshotai/kimi-k3": { inputPerMTok: 0, outputPerMTok: 0 },
+  "nvidia/nemotron-3-super-120b-a12b": { inputPerMTok: 0, outputPerMTok: 0 },
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": { inputPerMTok: 0, outputPerMTok: 0 },
+  "openai/gpt-oss-120b": { inputPerMTok: 0, outputPerMTok: 0 },
+  "openai/gpt-oss-20b": { inputPerMTok: 0, outputPerMTok: 0 },
+  "google/diffusiongemma-26b-a4b-it": { inputPerMTok: 0, outputPerMTok: 0 },
+  "meta/llama-3.2-90b-vision-instruct": { inputPerMTok: 0, outputPerMTok: 0 },
+  "google/gemma-4-31b-it": { inputPerMTok: 0, outputPerMTok: 0 },
+  "mistralai/mistral-nemotron": { inputPerMTok: 0, outputPerMTok: 0 },
 };
 
 /**

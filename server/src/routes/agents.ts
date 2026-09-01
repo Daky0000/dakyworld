@@ -1472,7 +1472,7 @@ function taskSummary(task: {
      * A QUEUED task with a future `scheduledFor` and a reason on it was put
      * down because a model provider was rate-limiting, busy or unreachable —
      * see services/agents/retry.ts. Derived here rather than left to each
-     * screen: "queued" and "paused because OpenRouter's free tier is used up
+     * screen: "queued" and "paused because the free allowance is used up
      * until 14:35" are the same status and completely different news, and a
      * screen that shows the first for the second is why a quiet morning looks
      * like a broken one.

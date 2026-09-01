@@ -7,7 +7,7 @@ import { SETTING, deleteSetting, getSetting, isEnvManaged, setSetting } from "..
 import { maskSecret } from "../lib/secrets.js";
 import { ImapError, imapConfigured, readImapConfig, suggestFromSmtp, verifyImap } from "../lib/imap.js";
 import { restartWatcher, watcherStatus } from "../services/mailbox/watcher.js";
-import { openRouterCooldown } from "../lib/claudeAgent.js";
+import { nvidiaCooldown } from "../lib/claudeAgent.js";
 import { ApifyError, clearApifyCaches, getAccount, getActorPricing, getActorSchema, getMonthlyUsage } from "../lib/apify.js";
 import { DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS, screenshotActorId } from "../services/screenshotActors.js";
 import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
@@ -28,19 +28,24 @@ import {
   PROVIDER_KEYS,
   describeProviders,
   describeRouting,
-  freeLadder,
+  LADDER_KEYS,
+  freeLadderFor,
   freeLadderSource,
+  isLadderKey,
   isModelJob,
   isPricedModel,
   isProviderKey,
   providerKey,
+  ladderLabel,
+  readFreeLadders,
   readJobModels,
   readRoutes,
   routeFor,
+  type LadderKey,
   type ModelJob,
   type ProviderKey,
 } from "../lib/models/registry.js";
-import { listOpenRouterModels, verifyProviderKey } from "../lib/models/call.js";
+import { listNvidiaModels, verifyProviderKey, type NvidiaModel } from "../lib/models/call.js";
 import {
   GoogleError,
   buildAuthUrl,
@@ -220,7 +225,7 @@ async function describeAll(req: Request) {
       configured: Boolean(anthropicKey),
       envManaged: isEnvManaged(SETTING.ANTHROPIC_KEY),
       key: anthropicKey ? maskSecret(anthropicKey) : null,
-      // Who reads an imported sheet right now: OpenRouter by default, Claude
+      // Who reads an imported sheet right now: NVIDIA by default, Claude
       // standing in behind it, both changeable under AI models like every
       // other job. Sent whole so the panel can name the model actually doing
       // the reading and say why, when it is a stand-in.
@@ -891,7 +896,7 @@ settingsRouter.put("/models/:provider", async (req, res, next) => {
       // token and the Anthropic key are: a key that fails on first use is a
       // support conversation, and one refused at the moment it is pasted is a
       // typo fixed in ten seconds. The model field rides along when the form
-      // sent one — OpenRouter verifies its id against its own catalogue, and
+      // sent one — NVIDIA verifies its id against its own catalogue, and
       // checking the stored value instead would miss a slug corrected in this
       // same submit.
       await verifyProviderKey(provider, input.key.trim(), input.model?.trim() ?? undefined);
@@ -921,70 +926,89 @@ settingsRouter.put("/models/:provider", async (req, res, next) => {
 });
 
 /**
- * The free models OpenRouter will serve this account, and the ladder in use.
+ * The free models NVIDIA will serve this account, and the ladder each job is
+ * using.
  *
  * A picker rather than a text box, because the ids are long, exact and change
- * — `meta-llama/llama-3.3-70b-instruct:free` typed from memory is a 404 three
- * days later inside a sequence. Pasting is still allowed on the way in; this
- * is what makes pasting unnecessary.
+ * — `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` typed from memory is a 404
+ * three days later inside a sequence. Pasting is still allowed on the way in;
+ * this is what makes pasting unnecessary.
  *
  * **The rungs already saved are re-checked against this same listing**, so a
- * model that has stopped being free, or that OpenRouter no longer lists, is
- * named on the screen instead of quietly becoming a charge. That is the one
- * thing this endpoint does that a static list could not.
+ * model NVIDIA no longer lists is named on the screen instead of quietly
+ * becoming a rung that always 404s. That is the one thing this endpoint does
+ * that a static list could not.
+ *
+ * **Eleven ladders rather than one**, which is the whole difference from the
+ * vendor this replaced. One free model served every job in the system before,
+ * so every job was as good as that model was at the worst thing it was asked
+ * to do. Now a spreadsheet gets the 1M-context model, a screenshot gets one
+ * that can see, and the mailbox gets the fastest small one — and each of those
+ * is a row the Owner can change.
  */
-settingsRouter.get("/models/openrouter/free", async (_req, res, next) => {
+settingsRouter.get("/models/nvidia/free", async (_req, res, next) => {
   try {
-    const apiKey = await providerKey("openrouter");
-    const ladder = await freeLadder();
-    // Three states, not two. See `LadderSource`: "three rungs" reads the same
-    // whether they are ours or the Owner's, and an empty ladder reads as
-    // unconfigured when it means switched off.
-    const source = await freeLadderSource();
+    const apiKey = await providerKey("nvidia");
     // Whether the free vendor is in the chain **right now**, which is a
     // different question from whether it is configured and is the one somebody
     // is actually asking when they say the free models are not kicking in. A
-    // key-level refusal takes OpenRouter out for fifteen minutes and nothing
-    // said so — see `openRouterCooldown`.
-    const cooldown = openRouterCooldown();
+    // key-level refusal takes NVIDIA out for fifteen minutes and nothing said
+    // so — see `nvidiaCooldown`.
+    const cooldown = nvidiaCooldown();
+
+    const ladderFor = async (key: LadderKey, byId: Map<string, NvidiaModel> | null) => {
+      const ladder = await freeLadderFor(key);
+      const label = ladderLabel(key);
+      return {
+        key,
+        name: label.name,
+        phrase: label.phrase,
+        blurb: label.blurb,
+        ladder,
+        // Three states, not two. See `LadderSource`: "three rungs" reads the
+        // same whether they are ours or the Owner's, and an empty ladder reads
+        // as unconfigured when it means switched off.
+        source: await freeLadderSource(key),
+        stale: byId
+          ? ladder
+              .map((id) => {
+                const found = byId.get(id);
+                if (!found) return { id, why: "NVIDIA no longer lists this model." };
+                if (found.down) return { id, why: found.down };
+                return null;
+              })
+              .filter((entry): entry is { id: string; why: string } => entry !== null)
+          : [],
+      };
+    };
+
     if (!apiKey) {
       return res.json({
         connected: false,
-        ladder,
-        source,
         cooldown,
         max: FREE_LADDER_MAX,
         models: [],
-        stale: [],
-        note: "Connect an OpenRouter key first — the list of free models is read from your own account.",
+        ladders: await Promise.all(LADDER_KEYS.map((key) => ladderFor(key, null))),
+        note: "Connect an NVIDIA key first — whether a model is still listed is read from your own account. The ladders below are the shipped ones and are what will be used until then.",
       });
     }
 
-    const models = await listOpenRouterModels(apiKey);
-    const free = models.filter((model) => model.free);
+    const models = await listNvidiaModels(apiKey);
     const byId = new Map(models.map((model) => [model.id, model]));
-    const stale = ladder
-      .map((id) => {
-        const found = byId.get(id);
-        if (!found) return { id, why: "OpenRouter no longer lists this model." };
-        if (!found.free) return { id, why: "This model is no longer free — it will be billed at OpenRouter's rate." };
-        return null;
-      })
-      .filter((entry): entry is { id: string; why: string } => entry !== null);
 
     res.json({
       connected: true,
-      ladder,
-      source,
       cooldown,
       note: cooldown.cooling
-        ? `OpenRouter rejected its key recently, so the free models are out of the chain until ${cooldown.until?.slice(11, 16)} UTC and agent runs are starting on a paid vendor. Check the key below; a restart also clears it.`
+        ? `NVIDIA rejected its key recently, so the free models are out of the chain until ${cooldown.until?.slice(11, 16)} UTC and agent runs are starting on a paid vendor. Check the key below; a restart also clears it.`
         : null,
       max: FREE_LADDER_MAX,
-      // Tool-capable first: an agent turn sends tool definitions, and a model
-      // that cannot take them works for writing and fails every agent task.
-      models: free.sort((a, b) => Number(b.tools) - Number(a.tools) || a.name.localeCompare(b.name)),
-      stale,
+      // Verified first, then still-listed, then everything else. A model this
+      // app has probed is worth putting in front of one it has only seen the
+      // id of, because the capability columns beside it are the reason to pick
+      // one row over another.
+      models,
+      ladders: await Promise.all(LADDER_KEYS.map((key) => ladderFor(key, byId))),
     });
   } catch (err) {
     if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });
@@ -993,73 +1017,144 @@ settingsRouter.get("/models/openrouter/free", async (_req, res, next) => {
 });
 
 /**
- * Sets the ladder — the free models to try, in order.
+ * Sets one job's ladder — the free models to try for it, in order.
  *
- * Every id is checked against OpenRouter's own catalogue and has to be free
- * *now*, which is what lets the ledger price a rung at zero later. A model
- * that is listed but no longer free is refused by name rather than saved with
- * a warning: the whole reason somebody sets this is to not be billed.
+ * Every id is checked against NVIDIA's own catalogue, which is the one thing
+ * that catalogue can prove: is this still listed. It cannot say whether a
+ * model takes tools, honours a schema or reads pictures — it returns `id`,
+ * `object`, `created` and `owned_by` and nothing else — so those come from
+ * `FREE_MODELS`, where each was proved against the endpoint by hand.
+ *
+ * **A rung that will not work for this job is said, not refused.** A model
+ * that cannot call tools is a fine writer and a dead agent rung; one that
+ * cannot see is useless for reading a screenshot and perfectly good at prose.
+ * Which of those matters is the Owner's call, not this route's — except for
+ * vision, where a model that cannot see cannot do the job at all and saving it
+ * would mean paying Apify for a screenshot that nothing then looks at.
  */
-settingsRouter.put("/models/openrouter/free", async (req, res, next) => {
+settingsRouter.put("/models/nvidia/free", async (req, res, next) => {
   try {
     // `null` and `[]` are deliberately different, and conflating them is how a
     // deploy would switch free models back on for somebody who turned them off.
     // Null means *use whatever ships*; an empty array means *no free models,
     // I mean it*.
-    const input = z.object({ models: z.array(z.string().max(120)).max(FREE_LADDER_MAX).nullable() }).parse(req.body ?? {});
+    const input = z
+      .object({
+        job: z.string().max(40),
+        models: z.array(z.string().max(160)).max(FREE_LADDER_MAX).nullable(),
+      })
+      .parse(req.body ?? {});
+
+    if (!isLadderKey(input.job)) return res.status(400).json({ error: "No such job." });
+    const job = input.job;
+    const label = ladderLabel(job);
+
+    // Stored one object, edited one key at a time. Read-modify-write rather
+    // than a whole-object PUT, because the alternative is a screen that has to
+    // send eleven ladders to change one and silently reverts anything another
+    // tab changed in between.
+    const stored = await readFreeLadders();
 
     if (input.models === null) {
-      await deleteSetting(SETTING.OPENROUTER_FREE_MODELS);
-      const shipped = await freeLadder();
+      delete stored[job];
+      await writeLadders(stored);
+      const shipped = await freeLadderFor(job);
       return res.json({
+        job,
         ladder: shipped,
-        source: await freeLadderSource(),
-        note: `Back to the shipped ladder: ${shipped.join(" → ")}, then the paid floor. It is re-picked from your own catalogue on the next restart.`,
+        source: await freeLadderSource(job),
+        note:
+          shipped.length > 0
+            ? `Back to the shipped ladder for ${label.phrase}: ${shipped.join(" → ")}, then the paid floor.`
+            : `${label.name} has no free ladder — it is not a job NVIDIA serves here.`,
       });
     }
 
     const wanted = [...new Set(input.models.map((id) => id.trim()).filter(Boolean))];
 
     if (wanted.length === 0) {
-      // Stored, not deleted. A deleted row means "never decided" and would be
+      // Stored, not deleted. A deleted key means "never decided" and would be
       // filled with the shipped ladder on the next read.
-      await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
+      stored[job] = [];
+      await writeLadders(stored);
       return res.json({
+        job,
         ladder: [],
-        source: await freeLadderSource(),
-        note: "Free models off. OpenRouter uses its own model and pays for every call.",
+        source: await freeLadderSource(job),
+        note: `Free models off for ${label.phrase}. NVIDIA uses its own model for it, and the paid floor takes over when that fails.`,
       });
     }
 
-    const apiKey = await providerKey("openrouter");
-    if (!apiKey) return res.status(400).json({ error: "Connect an OpenRouter key first — a free model can only be checked against your own account." });
+    const apiKey = await providerKey("nvidia");
+    if (!apiKey) return res.status(400).json({ error: "Connect an NVIDIA key first — a model can only be checked against your own account." });
 
-    const models = await listOpenRouterModels(apiKey);
+    const models = await listNvidiaModels(apiKey);
     const byId = new Map(models.map((model) => [model.id, model]));
     for (const id of wanted) {
       const found = byId.get(id);
-      if (!found) return res.status(400).json({ error: `OpenRouter has no model called “${id}”. Pick one from the list, or check the id at openrouter.ai/models.` });
-      if (!found.free) return res.status(400).json({ error: `“${id}” is not free — OpenRouter charges for it. Only free models belong on this list.` });
+      if (!found) return res.status(400).json({ error: `NVIDIA has no model called “${id}”. Pick one from the list, or check the id at build.nvidia.com.` });
+      // The one hard refusal. Everything else below is a warning, because
+      // everything else is a judgement the Owner is allowed to make; this one
+      // is not a judgement, it is a job the model cannot do. A blind model in
+      // the vision ladder means an Apify screenshot bought and never read.
+      if (job === "vision" && found.known && !found.vision) {
+        return res.status(400).json({ error: `“${id}” cannot look at a picture, so it cannot do ${label.phrase}. Pick one of the models marked as reading images.` });
+      }
     }
 
-    await setSetting(SETTING.OPENROUTER_FREE_MODELS, JSON.stringify(wanted));
-    const withoutTools = wanted.filter((id) => !byId.get(id)?.tools);
+    stored[job] = wanted;
+    await writeLadders(stored);
+
+    // Said rather than refused. Which of these matters is the Owner's call.
+    const warnings: string[] = [];
+    const noTools = wanted.filter((id) => byId.get(id)?.known && !byId.get(id)?.tools);
+    if (job === "agent" && noTools.length > 0) {
+      warnings.push(
+        `${noTools.join(", ")} ${noTools.length === 1 ? "does" : "do"} not call tools, so ${noTools.length === 1 ? "it" : "they"} will fail an agent turn and be skipped to the next rung — fine for writing, wasted on an agent.`,
+      );
+    }
+    const down = wanted.filter((id) => byId.get(id)?.down);
+    if (down.length > 0) {
+      warnings.push(`${down.join(", ")} would not serve when this app last checked, so ${down.length === 1 ? "that rung" : "those rungs"} may cost a wasted attempt.`);
+    }
+    const unknown = wanted.filter((id) => !byId.get(id)?.known);
+    if (unknown.length > 0) {
+      warnings.push(
+        `${unknown.join(", ")} ${unknown.length === 1 ? "has" : "have"} not been checked by this app, so ${unknown.length === 1 ? "it is" : "they are"} asked cautiously — the answer's shape stated in words, and no reasoning effort on the wire.`,
+      );
+    }
+
     res.json({
+      job,
       ladder: wanted,
-      source: await freeLadderSource(),
-      // Said rather than refused. A model with no tool support is a perfectly
-      // good rung for writing and a dead one for an agent turn, and which of
-      // those matters is the Owner's call, not this route's.
+      source: await freeLadderSource(job),
       note:
-        withoutTools.length > 0
-          ? `Saved. ${withoutTools.join(", ")} ${withoutTools.length === 1 ? "does" : "do"} not support tools, so ${withoutTools.length === 1 ? "it" : "they"} will fail an agent task and be skipped to the next rung — fine for writing, wasted on an agent.`
-          : "Saved. OpenRouter work goes down this ladder, and the paid floor — Claude, then ChatGPT, then Gemini — finishes anything all of them refuse.",
+        warnings.length > 0
+          ? `Saved. ${warnings.join(" ")}`
+          : `Saved. ${label.name} goes down this ladder, and the paid floor — Claude, then ChatGPT, then Gemini — finishes anything all three refuse, carrying on from wherever the last one stopped.`,
     });
   } catch (err) {
     if (err instanceof AnalystError) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });
+
+/**
+ * Writes the ladders back, or deletes the row when nothing is left in it.
+ *
+ * An object with no keys is not "every job switched off" — it is *no job
+ * configured*, which is what an absent row already means. Storing `{}` would
+ * be a row that reads as a decision and is not one, and the next person to
+ * look at `nvidia.freeModels` would find an empty object where they expected
+ * either a list or nothing at all.
+ */
+async function writeLadders(ladders: Partial<Record<LadderKey, string[]>>): Promise<void> {
+  if (Object.keys(ladders).length === 0) {
+    await deleteSetting(SETTING.NVIDIA_FREE_MODELS);
+    return;
+  }
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, JSON.stringify(ladders));
+}
 
 settingsRouter.delete("/models/:provider", async (req, res, next) => {
   try {

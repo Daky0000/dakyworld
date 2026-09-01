@@ -41,7 +41,7 @@
  */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { PROVIDERS } from "../src/lib/models/registry.js";
+import { FREE_MODELS, LADDER_KEYS, PROVIDERS } from "../src/lib/models/registry.js";
 
 /**
  * Whatever the OpenRouter default is today, read rather than typed.
@@ -57,7 +57,31 @@ import { PROVIDERS } from "../src/lib/models/registry.js";
  * wire. What the real model declares is read from OpenRouter's live catalogue
  * at run time and is none of this file's business.
  */
-const SHIPPED = PROVIDERS.openrouter.defaultModel;
+const SHIPPED = PROVIDERS.nvidia.defaultModel;
+
+/**
+ * A model whose JSON schema is accepted and not honoured, for the negative
+ * below.
+ *
+ * Read from the catalogue rather than written down, the same call `SHIPPED`
+ * makes: what is under test is the *code path* — does this app state the shape
+ * in words when it will not be enforced — and a hard-coded id would fail on a
+ * model swap rather than on anything being wrong, which teaches whoever sees
+ * it to edit the assertion instead of read it.
+ */
+const LOOSE = FREE_MODELS.find((model) => model.schema === "object")?.id ?? SHIPPED;
+
+/**
+ * A model that takes a strict schema, answers 200, and ignores it.
+ *
+ * The third state, and the one that reads as a contradiction until you have
+ * watched it: `google/diffusiongemma-26b-a4b-it` returns an object with field
+ * names it invented — and **refuses `json_object` outright** ("requires a JSON
+ * schema"). So the schema still has to go on the wire; it just cannot be
+ * relied on, which means the shape goes in the prompt as well. Sending
+ * `json_object` to this one, the obvious simplification, is a 400.
+ */
+const ACCEPTED = FREE_MODELS.find((model) => model.schema === "accepted")?.id ?? SHIPPED;
 
 const failures: string[] = [];
 let passed = 0;
@@ -214,7 +238,7 @@ const TITLED = { name: "Titled", rows: TITLED_ROWS, totalRows: TITLED_ROWS.lengt
 async function main() {
   // --- Two fake vendors, before anything imports ---------------------------
   //
-  // `BASE.openrouter` in models/call.ts and the Anthropic SDK both read their
+  // `vendorBase("nvidia")` in models/registry.ts and the Anthropic SDK both read their
   // root at construction, so a value assigned after the imports is one nothing
   // sees.
   const orBodies: any[] = [];
@@ -284,8 +308,8 @@ Let me know if you would like it changed.`
     });
   });
 
-  process.env.OPENROUTER_BASE_URL = or.url;
-  process.env.OPENROUTER_API_KEY = "sk-or-check-not-a-real-key";
+  process.env.NVIDIA_BASE_URL = or.url;
+  process.env.NVIDIA_API_KEY = "nvapi-check-not-a-real-key";
   process.env.ANTHROPIC_BASE_URL = anthropic.url;
   process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
   // The other three must stay unconnected or the chain reaches one of them and
@@ -310,16 +334,16 @@ Let me know if you would like it changed.`
   const VENDOR_SETTINGS = [
     SETTING.ANTHROPIC_KEY,
     SETTING.ANTHROPIC_MODEL,
-    SETTING.OPENROUTER_KEY,
-    SETTING.OPENROUTER_MODEL,
-    SETTING.OPENROUTER_FREE_MODELS,
+    SETTING.NVIDIA_KEY,
+    SETTING.NVIDIA_MODEL,
+    SETTING.NVIDIA_FREE_MODELS,
     SETTING.MODEL_ROUTES,
     SETTING.MODEL_JOB_MODELS,
   ];
   const savedSettings = await prisma.appSetting.findMany({ where: { key: { in: VENDOR_SETTINGS } } });
   await prisma.appSetting.deleteMany({ where: { key: { in: VENDOR_SETTINGS } } });
   // **Free models off for this file**, the same separation of subjects
-  // `checks/agentLoopOpenRouter.ts` makes and for the same reason. Everything
+  // `checks/agentLoopNvidia.ts` makes and for the same reason. Everything
   // below asserts about the *wire* — the effort that reaches it, the token
   // budget, whether a `json_schema` survives, and what happens when the answer
   // is truncated, arrives in parts, or comes wrapped in a sentence. With the
@@ -329,7 +353,14 @@ Let me know if you would like it changed.`
   // (`checks/freeModels.ts`), which drives all three rungs and the paid floor
   // under them. An empty list is the deliberate "off" state; deleting the row
   // means "use the shipped ladder", which is the opposite.
-  await setSetting(SETTING.OPENROUTER_FREE_MODELS, "[]");
+  //
+  // **Keyed by job**, because that is the shape the setting holds now — one
+  // ladder per job. A bare `[]` is not an empty ladder, it is an unreadable
+  // value, and unreadable deliberately falls back to the *shipped* ladders; so
+  // writing one here would silently give this file the three-call behaviour
+  // the paragraph above exists to prevent, with every assertion still passing
+  // for the wrong reason on whichever rung happened to answer.
+  await setSetting(SETTING.NVIDIA_FREE_MODELS, JSON.stringify(Object.fromEntries(LADDER_KEYS.map((key) => [key, []]))));
   clearSettingsCache();
 
   // "sheet.analyse" is a real production purpose, so only the rows this run
@@ -341,12 +372,13 @@ Let me know if you would like it changed.`
 
   // --- The mapping ---------------------------------------------------------
   //
-  // The shipped OpenRouter model offers low/high/max and its own default is max, so our `low` must
-  // not become max by omission and our `high` must not fall through to low.
+  // The wire takes low, medium or high and nothing else — `openai/gpt-oss-*`
+  // answers 400 to anything outside that set — so `low` must not become high
+  // by omission and `high` must not fall through to low.
   console.log("\nHow hard it is asked to think");
   check("low stays low", reasoningEffortFor("low") === "low");
-  check("medium steps up to high, not the model's max default", reasoningEffortFor("medium") === "high");
-  check("high rides at max", reasoningEffortFor("high") === "max");
+  check("medium stays medium", reasoningEffortFor("medium") === "medium");
+  check("high rides at high", reasoningEffortFor("high") === "high");
   check("the answer budget is what the caller asked for, plus room to think", tokensWithReasoning(16_000, "high") > 16_000);
   check("a cheap job gets a small allowance", tokensWithReasoning(2_000, "low") < tokensWithReasoning(2_000, "high"));
   check("the total is capped rather than unbounded", tokensWithReasoning(1_000_000, "max") <= 32_000);
@@ -358,43 +390,63 @@ Let me know if you would like it changed.`
   const analysis = await analyzeGrids([GRID as any], hints);
   const sent = orBodies.at(-1);
 
-  check("OpenRouter served it, under its shipped slug", sent?.model === SHIPPED, String(sent?.model));
+  check("NVIDIA served it, under its shipped slug", sent?.model === SHIPPED, String(sent?.model));
   check("it was not quietly handed to the stand-in", analysis.note === null, String(analysis.note));
   check("the effort reaches the wire at all", typeof sent?.reasoning_effort === "string", JSON.stringify(sent?.reasoning_effort));
-  check("reading a sheet is asked for at max, not left to the default", sent?.reasoning_effort === "max", String(sent?.reasoning_effort));
+  check("reading a sheet is asked for at high, not left to the model's default", sent?.reasoning_effort === "high", String(sent?.reasoning_effort));
   check(
     "the budget has room for the thinking on top of the plan",
     typeof sent?.max_tokens === "number" && sent.max_tokens > 16_000,
     String(sent?.max_tokens),
   );
-  // The defect that made the analyst look like it had simply got worse.
-  // The shipped OpenRouter model declares `response_format` and NOT `structured_outputs`, so
-  // OpenRouter drops a `json_schema` sent to it — and every caller in this app
-  // describes its answer entirely in the schema. The sheet analyst's system
-  // prompt says "return a plan" and never says what a plan looks like, so the
-  // model was being asked for one with no description of it in the request.
+  // The shipped model compiles a strict schema, so it gets one and is not made
+  // to read a copy of it in its prompt as well. A fix that taxed every model
+  // for one model's limitation would be a regression wearing a repair's
+  // clothes.
   const systemSent = sent?.messages?.[0]?.content ?? "";
-  check("a model that cannot compile a schema is asked for plain JSON", sent?.response_format?.type === "json_object", String(sent?.response_format?.type));
-  check("...and the shape is written into the prompt instead", systemSent.includes("The shape of your answer"));
-  check("...naming the fields the plan is made of", systemSent.includes("firstDataRow") && systemSent.includes("lastDataRow"));
-  check("...and the field targets it may map a column to", systemSent.includes("contactName"));
+  check("keeps the strict JSON schema", sent?.response_format?.json_schema?.strict === true, String(sent?.response_format?.type));
+  check("...and is not sent the shape a second time in its prompt", !String(systemSent).includes("The shape of your answer"));
   check(
-    "the schema still carries no keyword structured outputs refuse",
-    !systemSent.includes("maxItems") && !JSON.stringify(sent?.response_format?.json_schema?.schema ?? {}).includes("maxItems"),
+    "the schema carries no keyword structured outputs refuse",
+    !JSON.stringify(sent?.response_format?.json_schema?.schema ?? {}).includes("maxItems"),
   );
 
-  // The negative: a model that *does* declare structured outputs keeps the
-  // strict schema and is not made to read a copy of it in its prompt. A fix
-  // that taxed every model for one model's limitation would be a regression
-  // wearing a repair's clothes.
+  // The defect that made the analyst look like it had simply got worse, and
+  // the reason `FreeModel.schema` is three states rather than a boolean.
+  //
+  // `meta/llama-3.2-90b-vision-instruct` answers **500** to a strict schema and
+  // takes `json_object` instead — and every caller in this app describes its
+  // answer entirely in the schema. The sheet analyst's system prompt says
+  // "return a plan" and never says what a plan looks like, because
+  // `firstDataRow`, the -1 sentinel and the list of field targets all live in
+  // the schema. Drop that on the floor and the model is being asked for a plan
+  // with no description of one anywhere in the request.
   console.log("");
-  console.log("A model that does compile schemas");
-  await setSetting(SETTING.OPENROUTER_MODEL, "vendor/strict-one");
+  console.log("A model whose schema would be ignored");
+  await setSetting(SETTING.NVIDIA_MODEL, LOOSE);
+  clearSettingsCache();
   await analyzeGrids([GRID as any], hints);
-  const strictSent = orBodies.at(-1);
-  check("keeps the strict JSON schema", strictSent?.response_format?.json_schema?.strict === true, String(strictSent?.response_format?.type));
-  check("...and is not sent the shape a second time in its prompt", !String(strictSent?.messages?.[0]?.content ?? "").includes("The shape of your answer"));
-  await setSetting(SETTING.OPENROUTER_MODEL, SHIPPED);
+  const looseSent = orBodies.at(-1);
+  const looseSystem = String(looseSent?.messages?.[0]?.content ?? "");
+  check("a model that 500s on a strict schema is asked for plain JSON", looseSent?.response_format?.type === "json_object", String(looseSent?.response_format?.type));
+  check("...and the shape is written into the prompt instead", looseSystem.includes("The shape of your answer"));
+  check("...naming the fields the plan is made of", looseSystem.includes("firstDataRow") && looseSystem.includes("lastDataRow"));
+  check("...and the field targets it may map a column to", looseSystem.includes("contactName"));
+  check("...with no keyword structured outputs refuse in the copy either", !looseSystem.includes("maxItems"));
+  await setSetting(SETTING.NVIDIA_MODEL, ACCEPTED);
+  clearSettingsCache();
+  await analyzeGrids([GRID as any], hints);
+  const acceptedSent = orBodies.at(-1);
+  const acceptedSystem = String(acceptedSent?.messages?.[0]?.content ?? "");
+  // The third state. This model *refuses* `json_object`, so the schema has to
+  // be sent even though it will not be honoured — and the shape has to be in
+  // the prompt as well, because it will not be honoured. Both, or the request
+  // is either a 400 or a guess at the field names.
+  check("a model that accepts a schema and ignores it still gets one", acceptedSent?.response_format?.type === "json_schema", String(acceptedSent?.response_format?.type));
+  check("...and is told the shape in words as well", acceptedSystem.includes("The shape of your answer"));
+
+  await setSetting(SETTING.NVIDIA_MODEL, SHIPPED);
+  clearSettingsCache();
 
   // The negative that pays for the whole mapping: an economy job must not ride
   // at the headline model's reasoning depth just because nobody said otherwise.
@@ -420,9 +472,9 @@ Let me know if you would like it changed.`
   orTruncates = false;
   check("the sheet is still read", covered.plan.tables.length > 0);
   check("...by the stand-in, over the Anthropic wire", anthropicBodies.length === 1, `${anthropicBodies.length} calls`);
-  check("...and the handover is said out loud", covered.note !== null && covered.note.includes(PROVIDERS.openrouter.name), String(covered.note));
+  check("...and the handover is said out loud", covered.note !== null && covered.note.includes(PROVIDERS.nvidia.name), String(covered.note));
 
-  // OpenRouter fronts arbitrary models and not all of them answer with a
+  // NVIDIA serves arbitrary open models and not all of them answer with a
   // plain string. This used to reach `.trim()` as an array and throw an
   // uncaught TypeError, which skipped every failover path and surfaced as
   // "Something went wrong" about a spreadsheet the Owner was looking at.

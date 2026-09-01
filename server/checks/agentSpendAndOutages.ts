@@ -54,7 +54,7 @@ console.log("\nA rate limit is a clock, not a question");
   // Verbatim shapes. `describeRejection` puts the vendor's own body into the
   // message and `call.ts` prefixes the whole chain, so this is what actually
   // arrives at `planFor` rather than a tidied version of it.
-  const openrouter = new AnalystError(
+  const dayLimit = new AnalystError(
     429,
     "Answering could not be done. deepseek/deepseek-r1:free rate-limited; qwen/qwen3:free rate-limited. " +
       "Last error: OpenRouter returned 429: Rate limit exceeded: free-models-per-day. " +
@@ -66,13 +66,13 @@ console.log("\nA rate limit is a clock, not a question");
       "Quota exceeded for quota metric 'Generate requests per minute'",
   );
 
-  check("an OpenRouter free-tier day limit waits", planFor(openrouter, 0).remedy === "wait", planFor(openrouter, 0).remedy);
+  check("a free-tier day limit waits", planFor(dayLimit, 0).remedy === "wait", planFor(dayLimit, 0).remedy);
   check("a Gemini quota 429 waits", planFor(gemini, 0).remedy === "wait", planFor(gemini, 0).remedy);
-  check("and it waits five minutes first", planFor(openrouter, 0).waitMinutes === 5, `${planFor(openrouter, 0).waitMinutes}`);
+  check("and it waits five minutes first", planFor(dayLimit, 0).waitMinutes === 5, `${planFor(dayLimit, 0).waitMinutes}`);
   check(
     "the sentence calls it a rate limit rather than an empty account",
-    planFor(openrouter, 0).reason.includes("rate-limiting"),
-    planFor(openrouter, 0).reason.slice(0, 80),
+    planFor(dayLimit, 0).reason.includes("rate-limiting"),
+    planFor(dayLimit, 0).reason.slice(0, 80),
   );
 
   // The controls, and they matter more than the four above. Taking 429 out of
@@ -86,7 +86,7 @@ console.log("\nA rate limit is a clock, not a question");
 
   // Waiting still ends somewhere. A vendor down all afternoon is a question,
   // not a task that polls it for ever.
-  check("a rate limit that never clears ends as a question", planFor(openrouter, 6).remedy === "ask", planFor(openrouter, 6).remedy);
+  check("a rate limit that never clears ends as a question", planFor(dayLimit, 6).remedy === "ask", planFor(dayLimit, 6).remedy);
 }
 
 async function reset() {
@@ -241,7 +241,7 @@ console.log("\nA colleague nobody could reach is not an opinion");
   // being deterministic and one that spends the Owner's money.
   const VENDOR_SETTINGS = [
     SETTING.ANTHROPIC_KEY,
-    SETTING.OPENROUTER_KEY,
+    SETTING.NVIDIA_KEY,
     SETTING.OPENAI_KEY,
     SETTING.GEMINI_KEY,
     SETTING.PERPLEXITY_KEY,
@@ -250,7 +250,7 @@ console.log("\nA colleague nobody could reach is not an opinion");
   const savedKeys = await prisma.appSetting.findMany({ where: { key: { in: VENDOR_SETTINGS } } });
   const savedEnv = { ...process.env };
   await prisma.appSetting.deleteMany({ where: { key: { in: VENDOR_SETTINGS } } });
-  for (const name of ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY"]) {
+  for (const name of ["ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY"]) {
     delete process.env[name];
   }
   clearSettingsCache();

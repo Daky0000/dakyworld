@@ -8,7 +8,7 @@
  * that Excel helpfully turned into 2.56742E+11. A person can see all of that in
  * two seconds; a fixed parser can't see any of it.
  *
- * So the grid goes to whoever serves the `spreadsheet` job — OpenRouter by
+ * So the grid goes to whoever serves the `spreadsheet` job — NVIDIA by
  * default — and what comes back is a plan: every table it found, where each
  * one starts and stops, and what each column means. The plan is data, not an
  * action; it goes to the Owner for review before a lead is written.
@@ -173,7 +173,7 @@ export interface AnalysisResult {
 }
 
 /**
- * Sends the grids to whoever serves the `spreadsheet` job — OpenRouter by
+ * Sends the grids to whoever serves the `spreadsheet` job — NVIDIA by
  * default, Claude standing in behind it — and returns the plan produced.
  * Throws AnalystError on anything the caller should show the Owner — no model
  * connected, a refusal, a response that didn't parse — so the import route can
@@ -192,7 +192,7 @@ export async function analyzeGrids(grids: SheetGrid[], hints: PlanTable[]): Prom
     effort: "high",
     maxTokens: 16000,
     messages: {
-      noKey: "No model is connected for reading sheets. Add an OpenRouter, Claude or Gemini key under Settings → AI models.",
+      noKey: "No model is connected for reading sheets. Add an NVIDIA, Claude or Gemini key under Settings → AI models.",
       rate: "The model provider is rate-limiting this key. Try the import again in a minute.",
       refusal: "The analyst declined to read this file. Check the review screen and map the columns by hand.",
       empty: "The analyst returned nothing. Try again, or map the columns by hand.",
