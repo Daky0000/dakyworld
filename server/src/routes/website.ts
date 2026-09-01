@@ -22,6 +22,7 @@ import {
   type SiteField,
 } from "../services/website/index.js";
 import { discoverPages, pageSource, pageUrl, publishPage, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
+import { offerPagePublished } from "../services/context/business.js";
 
 /**
  * Editing the websites this company publishes.
@@ -630,6 +631,11 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       message: `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`,
     });
 
+    // The website is where the workforce reads what this company sells, so a
+    // published change to a page that describes the offer is a change to every
+    // agent's brief. Fire-and-forget — see `offerPagePublished`.
+    offerPagePublished(page.filePath);
+
     const last = await prisma.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
     const version = await prisma.sitePageVersion.create({
       data: {
@@ -914,6 +920,10 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res
       html: version.html,
       message: `Website: roll ${page.path} back to version ${version.number} (${author})`,
     });
+
+    // A rollback changes the live page like any other publish, and a price
+    // rolled back is a price the agents must stop quoting.
+    offerPagePublished(page.filePath);
 
     const last = await prisma.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
     const written = await prisma.sitePageVersion.create({

@@ -50,7 +50,8 @@ import { toolStatuses } from "../toolRegistry.js";
 import { callClaude } from "../../lib/claude.js";
 import { callModel, generateImage } from "../../lib/models/call.js";
 import { PROVIDERS, routeFor } from "../../lib/models/registry.js";
-import { BRAND, VOICE, catalogueForPrompt } from "../dakyworld.js";
+import { VOICE } from "../dakyworld.js";
+import { brandBlock, catalogueBlock } from "../context/business.js";
 import { writerSystem } from "../writers/brief.js";
 import { allMcpTools, callOn, imageProvider, mcpTools } from "./mcpTools.js";
 import { companyProfile, contactBlock } from "../systemProfile.js";
@@ -2167,7 +2168,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         purpose: "content.draft",
         job: "text",
         system: await writerSystem("content.draft", CONTENT_DRAFT_DOCTRINE, {
-          facts: [BRAND, catalogueForPrompt()],
+          facts: [await brandBlock(), await catalogueBlock()],
           contract: CONTENT_DRAFT_CONTRACT,
         }),
         prompt: () =>
@@ -2443,7 +2444,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       }>({
         purpose: "design.brief",
         system: await writerSystem("design.brief", DESIGN_BRIEF_DOCTRINE, {
-          facts: [BRAND, VOICE, contactBlock(profile)],
+          facts: [await brandBlock(), VOICE, contactBlock(profile)],
           contract: DESIGN_BRIEF_CONTRACT,
         }),
         prompt: () =>
@@ -2525,7 +2526,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       }>({
         purpose: "video.plan",
         system: await writerSystem("video.plan", VIDEO_PLAN_DOCTRINE, {
-          facts: [BRAND, VOICE, contactBlock(profile)],
+          facts: [await brandBlock(), VOICE, contactBlock(profile)],
           contract: VIDEO_PLAN_CONTRACT,
         }),
         prompt: () =>
@@ -2609,7 +2610,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       }>({
         purpose: "ad.concept",
         system: await writerSystem("ad.concept", AD_CONCEPT_DOCTRINE, {
-          facts: [BRAND, VOICE, catalogueForPrompt(), contactBlock(profile)],
+          facts: [await brandBlock(), VOICE, await catalogueBlock(), contactBlock(profile)],
           contract: AD_CONCEPT_CONTRACT,
         }),
         prompt: () =>
@@ -2682,7 +2683,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         purpose: "web.page",
         job: "html",
         system: await writerSystem("web.page", WEB_PAGE_DOCTRINE, {
-          facts: [BRAND, VOICE, catalogueForPrompt(), contactBlock(profile)],
+          facts: [await brandBlock(), VOICE, await catalogueBlock(), contactBlock(profile)],
           contract: WEB_PAGE_CONTRACT,
         }),
         prompt: () =>

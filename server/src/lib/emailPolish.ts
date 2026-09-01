@@ -110,7 +110,7 @@ const TEST: Partial<Record<EmailPurpose, string>> = {
 - **No price anywhere.** A number belongs in a proposal.
 - No technical vocabulary in the explanation: SPF, DMARC, DNS, robots.txt, metadata, structured data, viewport, TLS and the rest are all out.
 - No private individual is named.
-- Any proof is one of the three true ones — admin cut by 70%+, four-hour response on priority-one security, no data-loss incidents — and only where it fits the issue just described. No client names, no invented figures.
+- Any proof is one of the figures the sender actually publishes, which are listed in the facts under "About the sender", and only where it fits the issue just described. Never add one the draft did not already carry. No client names, no invented figures.
 - 70–120 words. It does not end with a typed name: the app appends the signature.
 - The subject is two to four lowercase words that look like ordinary internal mail, not a pitch and not a question the body repeats.
 

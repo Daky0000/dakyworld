@@ -1,6 +1,7 @@
 import { callModel } from "./models/call.js";
 import { MODEL_DEFAULT } from "./claudePricing.js";
-import { BRAND, VOICE, SERVICE_LINES, catalogueForPrompt } from "../services/dakyworld.js";
+import { VOICE } from "../services/dakyworld.js";
+import { brandBlock, catalogueBlock, serviceIds } from "../services/context/business.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { auditForPrompt } from "../services/companyAudit.js";
 import { writerSystem } from "../services/writers/brief.js";
@@ -33,144 +34,152 @@ import type { ProposalContext } from "../services/proposalContext.js";
 
 export const PROPOSAL_MODEL = MODEL_DEFAULT;
 
-const SERVICE_IDS = SERVICE_LINES.map((service) => service.id);
-
-const SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "title",
-    "serviceType",
-    "headline",
-    "situation",
-    "findings",
-    "scope",
-    "investment",
-    "timeline",
-    "whyUs",
-    "assumptions",
-    "nextStep",
-    "confidence",
-    "thinFacts",
-  ],
-  properties: {
-    title: {
-      type: "string",
-      description:
-        "The proposal's title, naming the company and the work. e.g. 'Website and business email for Adjei Dental Centre'. No colons-as-branding, no 'Proposal for'.",
-    },
-    serviceType: {
-      type: "string",
-      description: "The single headline service this proposal is for, in plain words — 'Website build', 'Website and email', 'Automation'.",
-    },
-    headline: {
-      type: "string",
-      description:
-        "One sentence the reader sees first. It must state the most specific observed problem and its consequence for them. Never a greeting, never a summary of Dakyworld.",
-    },
-    situation: {
-      type: "string",
-      description:
-        "Two short paragraphs about THEM — what they appear to do, what is working, and what is currently costing them. Written so that a stranger could not have written it. Acknowledge at least one thing they are doing well if the findings support it. No mention of Dakyworld here at all.",
-    },
-    findings: {
-      type: "array",
-      description:
-        "The argument. One entry per observed problem worth fixing, strongest first, three to six of them. Never invent one; each must trace to a supplied finding.",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["observed", "evidence", "costsThem", "fix", "service"],
-        properties: {
-          observed: { type: "string", description: "What is true right now, stated plainly and without hedging." },
-          evidence: {
-            type: "string",
-            description: "Copied from the supplied finding's evidence — the URL, header or DNS record. The reader must be able to check it.",
+/**
+ * The answer's shape, built per call because one field of it is not a constant.
+ *
+ * `service` is an enum of what this company currently sells, and what it sells
+ * is read from its own website (`services/context/business.ts`). Baked in at
+ * import, as it was, the enum went on offering service lines the site had
+ * dropped — so a proposal could recommend, and price, work nobody would do.
+ */
+function proposalSchema(SERVICE_IDS: string[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "title",
+      "serviceType",
+      "headline",
+      "situation",
+      "findings",
+      "scope",
+      "investment",
+      "timeline",
+      "whyUs",
+      "assumptions",
+      "nextStep",
+      "confidence",
+      "thinFacts",
+    ],
+    properties: {
+      title: {
+        type: "string",
+        description:
+          "The proposal's title, naming the company and the work. e.g. 'Website and business email for Adjei Dental Centre'. No colons-as-branding, no 'Proposal for'.",
+      },
+      serviceType: {
+        type: "string",
+        description: "The single headline service this proposal is for, in plain words — 'Website build', 'Website and email', 'Automation'.",
+      },
+      headline: {
+        type: "string",
+        description:
+          "One sentence the reader sees first. It must state the most specific observed problem and its consequence for them. Never a greeting, never a summary of Dakyworld.",
+      },
+      situation: {
+        type: "string",
+        description:
+          "Two short paragraphs about THEM — what they appear to do, what is working, and what is currently costing them. Written so that a stranger could not have written it. Acknowledge at least one thing they are doing well if the findings support it. No mention of Dakyworld here at all.",
+      },
+      findings: {
+        type: "array",
+        description:
+          "The argument. One entry per observed problem worth fixing, strongest first, three to six of them. Never invent one; each must trace to a supplied finding.",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["observed", "evidence", "costsThem", "fix", "service"],
+          properties: {
+            observed: { type: "string", description: "What is true right now, stated plainly and without hedging." },
+            evidence: {
+              type: "string",
+              description: "Copied from the supplied finding's evidence — the URL, header or DNS record. The reader must be able to check it.",
+            },
+            costsThem: {
+              type: "string",
+              description:
+                "What this costs THIS business, given what they do. Concrete and grounded — a dental clinic losing after-hours bookings, not 'reduced customer confidence'. Do not invent a cedi figure.",
+            },
+            fix: { type: "string", description: "What Dakyworld would actually do about it. One or two sentences, concrete work, no adjectives." },
+            service: { type: "string", enum: [...SERVICE_IDS], description: "Which service line this belongs to." },
           },
-          costsThem: {
-            type: "string",
-            description:
-              "What this costs THIS business, given what they do. Concrete and grounded — a dental clinic losing after-hours bookings, not 'reduced customer confidence'. Do not invent a cedi figure.",
-          },
-          fix: { type: "string", description: "What Dakyworld would actually do about it. One or two sentences, concrete work, no adjectives." },
-          service: { type: "string", enum: [...SERVICE_IDS], description: "Which service line this belongs to." },
         },
       },
-    },
-    scope: {
-      type: "array",
-      description: "What is actually being delivered, as phases. Two to four. Each must be traceable to the findings above.",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["phase", "deliverables", "outcome"],
-        properties: {
-          phase: { type: "string", description: "Short name — 'Build', 'Migration', 'Handover and training'." },
-          deliverables: { type: "array", items: { type: "string" }, description: "Specific things they receive. Nouns, not activities." },
-          outcome: { type: "string", description: "What is true for them at the end of this phase that was not true before." },
+      scope: {
+        type: "array",
+        description: "What is actually being delivered, as phases. Two to four. Each must be traceable to the findings above.",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["phase", "deliverables", "outcome"],
+          properties: {
+            phase: { type: "string", description: "Short name — 'Build', 'Migration', 'Handover and training'." },
+            deliverables: { type: "array", items: { type: "string" }, description: "Specific things they receive. Nouns, not activities." },
+            outcome: { type: "string", description: "What is true for them at the end of this phase that was not true before." },
+          },
         },
       },
-    },
-    investment: {
-      type: "object",
-      additionalProperties: false,
-      required: ["lineItems", "total", "totalIsFirm", "recurring", "basis"],
-      properties: {
-        lineItems: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["description", "amount", "firm", "billing"],
-            properties: {
-              description: { type: "string" },
-              amount: { type: "number", description: "GHS. Use 0 when this line cannot be priced without the discovery call." },
-              firm: { type: "boolean", description: "True only when the amount comes from a published catalogue price." },
-              billing: { type: "string", enum: ["ONE_OFF", "MONTHLY"] },
+      investment: {
+        type: "object",
+        additionalProperties: false,
+        required: ["lineItems", "total", "totalIsFirm", "recurring", "basis"],
+        properties: {
+          lineItems: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["description", "amount", "firm", "billing"],
+              properties: {
+                description: { type: "string" },
+                amount: { type: "number", description: "GHS. Use 0 when this line cannot be priced without the discovery call." },
+                firm: { type: "boolean", description: "True only when the amount comes from a published catalogue price." },
+                billing: { type: "string", enum: ["ONE_OFF", "MONTHLY"] },
+              },
             },
           },
-        },
-        total: { type: "number", description: "GHS, one-off items only. 0 when nothing could be priced from the catalogue." },
-        totalIsFirm: { type: "boolean", description: "False if any part of the total was estimated rather than taken from the catalogue." },
-        recurring: { type: "number", description: "GHS per month for any care plan proposed. 0 if none." },
-        basis: {
-          type: "string",
-          description: "One sentence saying exactly where these numbers came from, and what is still to be confirmed. The Owner reads this before sending.",
+          total: { type: "number", description: "GHS, one-off items only. 0 when nothing could be priced from the catalogue." },
+          totalIsFirm: { type: "boolean", description: "False if any part of the total was estimated rather than taken from the catalogue." },
+          recurring: { type: "number", description: "GHS per month for any care plan proposed. 0 if none." },
+          basis: {
+            type: "string",
+            description: "One sentence saying exactly where these numbers came from, and what is still to be confirmed. The Owner reads this before sending.",
+          },
         },
       },
+      timeline: {
+        type: "string",
+        description: "How long the work takes, in weeks, phrased as a range. Do not promise dates. One or two sentences.",
+      },
+      whyUs: {
+        type: "string",
+        description:
+          "Three sentences at most on why Dakyworld rather than a freelancer or an agency, using only the true claims supplied. This is the shortest section in the document and must read that way.",
+      },
+      assumptions: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "What this proposal assumes and what would change it — including anything that was NOT checked. Being explicit here is what makes the rest credible.",
+      },
+      nextStep: {
+        type: "string",
+        description: "One small, specific ask. A thirty-minute call, a yes to phase one. Never two asks.",
+      },
+      confidence: {
+        type: "number",
+        description:
+          "0 to 1 — how well the evidence supported a genuinely specific proposal. Low when the audit found little, which tells the Owner to have the call before sending this.",
+      },
+      thinFacts: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "What you wanted to know and did not — the questions the Owner should ask on the call. Empty only if the evidence was genuinely rich.",
+      },
     },
-    timeline: {
-      type: "string",
-      description: "How long the work takes, in weeks, phrased as a range. Do not promise dates. One or two sentences.",
-    },
-    whyUs: {
-      type: "string",
-      description:
-        "Three sentences at most on why Dakyworld rather than a freelancer or an agency, using only the true claims supplied. This is the shortest section in the document and must read that way.",
-    },
-    assumptions: {
-      type: "array",
-      items: { type: "string" },
-      description:
-        "What this proposal assumes and what would change it — including anything that was NOT checked. Being explicit here is what makes the rest credible.",
-    },
-    nextStep: {
-      type: "string",
-      description: "One small, specific ask. A thirty-minute call, a yes to phase one. Never two asks.",
-    },
-    confidence: {
-      type: "number",
-      description:
-        "0 to 1 — how well the evidence supported a genuinely specific proposal. Low when the audit found little, which tells the Owner to have the call before sending this.",
-    },
-    thinFacts: {
-      type: "array",
-      items: { type: "string" },
-      description:
-        "What you wanted to know and did not — the questions the Owner should ask on the call. Empty only if the evidence was genuinely rich.",
-    },
-  },
-} as const;
+  } as const;
+}
 
 /**
  * The doctrine Dakyworld ships for a proposal.
@@ -278,11 +287,11 @@ export async function writeProposal(context: ProposalContext, brief?: string | n
     // falling back to Claude while no Gemini key is set. See lib/models.
     job: "text",
     system: await writerSystem("proposal", SHIPPED_DOCTRINE, {
-      facts: [BRAND, catalogueForPrompt(), contactBlock(await companyProfile())],
+      facts: [await brandBlock(), await catalogueBlock(), contactBlock(await companyProfile())],
       contract: CONTRACT,
     }),
     prompt: () => buildPrompt(context, brief),
-    schema: SCHEMA as unknown as Record<string, unknown>,
+    schema: proposalSchema(await serviceIds()) as unknown as Record<string, unknown>,
     // A proposal is written once and decides a deal; this is not the place to
     // save a few seconds of thinking.
     effort: "high",

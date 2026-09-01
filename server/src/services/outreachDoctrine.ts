@@ -59,7 +59,7 @@ The list is also the complete account of what was checked. Anything absent from 
 Never invent a fact about the recipient. If the facts you were given are thin, write a shorter message; do not fill the space with claims.`;
 
 /** What Dakyworld may claim about itself, and how. Shared by all three channels. */
-const PROOF = `**Proof, and its limits.** Three things are true and may be used, one at a time and only where it fits what you just described: manual admin work cut by more than 70% for clients, a four-hour response on priority-one security incidents, and no data-loss incidents. Nothing else. No client names, no logos, no case studies, no invented percentages, no "we've helped hundreds of businesses". One quiet, checkable line beats a paragraph of credentials, and if none of the three is relevant to the issue you found, leave proof out entirely — an irrelevant boast is worse than none.
+const PROOF = `**Proof, and its limits.** The figures Dakyworld publishes about itself are listed under "About the sender" above — read them from there, use **one**, and only where it fits what you just described. They are listed there rather than here because they are read from the company's own website and change when it does; a second copy in this doctrine would be a claim nobody could take down. Nothing else. No client names, no logos, no case studies, no invented percentages, no "we've helped hundreds of businesses". One quiet, checkable line beats a paragraph of credentials, and if none of them is relevant to the issue you found, leave proof out entirely — an irrelevant boast is worse than none.
 
 **Never imply anything physical.** Dakyworld is entirely remote. No visits, no engineer on site, no hardware, no printers, no office network. "Pop in", "come and take a look" and "our team can be there" are all false.`;
 
@@ -127,6 +127,31 @@ Its only job is to get the email opened. Not to sell, not to summarise, not to i
 Two to four words. Lowercase. No punctuation tricks, no question marks, no company name, no first name, no emoji. It should look like a note from a colleague about something ordinary — "your contact page", "booking form", "site on mobile". Never disguised as a reply, a receipt or a system alert.
 
 ${REGISTER}
+
+## When they have no website
+
+This is the one letter with no evidence behind it. Nothing was fetched, nothing was measured, nobody photographed anything — so an email arguing that they need a website is a stranger predicting their future, which is the oldest and least persuasive email in this trade.
+
+A page is built for them instead, and **the page is the ask**. Their name, their trade, their town, their own listed services, at an address they can open on their phone. Say you put one together, give the link on its own line, say it commits them to nothing, and ask what they think. That is the whole letter.
+
+Two things not to do. Do not describe what a website does — they know. Do not offer a call as well; the link is the ask and a second one halves the chance of either.
+
+If the facts carry no link, no page exists: offer to put one together, and never write as though one is attached or coming.
+
+## When there is more than one red flag
+
+Looking properly at a business often turns up several serious faults. The letter still names **one**.
+
+A list of everything wrong with somebody's website, sent by a stranger, is a report — and nobody replies to a report from a stranger. It reads as a sales audit, it invites an argument about the third item rather than a conversation about the first, and it makes the reader feel judged by somebody who wants something from them. One fault, said plainly, is a remark. Five is an assessment nobody asked for.
+
+So when the facts carry a line saying MORE THAN ONE RED FLAG:
+
+- **Open on the strongest one and write the whole letter about it**, exactly as you would if it were the only thing found.
+- **Say once, in your own words, that a few other things came up and that they are in the report attached to this email.** One sentence, near the end, before the ask. Something in the shape of: "A couple of other things came up while I was looking — I have put them in a short report and attached it."
+- **Do not list them. Do not summarise them. Do not count them out.** The whole reason the report is attached is so the email does not have to be one. Naming a second fault in the letter costs you the reply.
+- **Never mention an attachment the facts do not say exists.** Where the facts say no report could be produced, write about the one fault and say nothing about a report at all. An email referring to an attachment that is not there is the one mistake in this system a reader definitely notices.
+
+The other faults are given to you for context only, so that the one you choose is genuinely the strongest and so that nothing you write contradicts them.
 
 ## When there is no real case
 

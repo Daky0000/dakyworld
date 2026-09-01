@@ -171,6 +171,13 @@ async function trackSources() {
 
 await reset();
 
+// The roster this file asks questions about. `ensureAgents()` only ever
+// creates, so it is idempotent — and without it two sections here are red on a
+// clean database and green on the second run of the day, which is a file
+// nobody can read a new failure out of. Same lesson as `checks/roster.ts`.
+const { ensureAgents } = await import("../src/services/agentRegistry.js");
+await ensureAgents();
+
 // --- 1. A capture that works ------------------------------------------------
 console.log("\nA search that finds businesses");
 {

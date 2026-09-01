@@ -683,9 +683,48 @@ had already dropped. Four things in it **reverse** the playbook, so do not
 - **Subjects are two to four lowercase words and deliberately boring**, not
   "six words or fewer, specific". The subject's only job is to get the email
   opened.
-- **One true proof point belongs in a first email** — 70%+ admin cut, four-hour
-  priority-one response, no data-loss incidents — where it fits the issue just
+- **One true proof point belongs in a first email** — whichever figures the
+  website currently publishes, read from it rather than listed here (70% of the
+  manual work removed on one automation, 30+ enquiries a month, 30+ hours
+  returned monthly, as of Sep 2026; the four-hour security-incident claim went
+  when the site stopped offering managed cybersecurity) — where it fits the issue just
   described. The playbook had none.
+
+**More than one red flag is one letter and one attachment** — `redFlags()` in
+`leadPrep.ts`, the doctrine's "When there is more than one red flag",
+`reportToAttach()` in `emailSender.ts`. Looking properly at a business
+routinely turns up three or four serious faults, and everything about the
+drafter encouraged it to argue from all of them. A list of everything wrong
+with somebody's website, sent by a stranger, is a sales audit: it invites an
+argument about the third item instead of a conversation about the first, and
+nobody replies to it.
+
+- **A red flag is CRITICAL or HIGH, from either half of the scan.** MEDIUM is
+  housekeeping — real, worth fixing, not worth a paragraph in a first letter —
+  and counting it would make every business look alarming, which is how the
+  word stops meaning anything.
+- **Two or more, and the four-reviewer report runs itself.** `withAuditTeam`
+  is tri-state now: asked for, refused, or *earned by the findings*. There has
+  to be something to attach, or the sentence "a few other things came up and
+  they are in the report" is a stranger saying "there are other problems with
+  your business" and offering nothing. **A batch still never runs it** — sixty
+  leads prepared overnight would be sixty reports nobody asked for.
+- **`composeMessage` attaches it, exactly as it attaches an invoice.** A rule
+  that must hold on every message cannot depend on whoever composed it
+  remembering to tick a box, and this is the same reasoning — and the same
+  failure — as "attach the PDF" was for invoices. It is a `StoredAttachment`
+  kind of its own keyed on the *review* rather than the file, so a report
+  re-run between drafting and sending goes out as it now stands.
+- **The letter and the attachment are decided from the same facts.** Where no
+  PDF rendered, the fact the drafter reads says so and forbids mentioning a
+  report at all. An email referring to an attachment that is not there is the
+  one mistake in this pipeline a reader definitely notices.
+
+`checks/coldEvidence.ts` (31) covers both halves, database only, and half of it
+is negatives: one red flag attaches nothing, a project update never carries an
+audit of a stranger's website, a review with no rendered PDF is skipped rather
+than failing the send, and a business that already has a site is never given a
+demo behind somebody's back.
 
 What survived is the honesty floor, and it survived because it was never
 playbook: only what was confirmed, **what it makes harder rather than what it
@@ -1027,6 +1066,24 @@ served at **`/demos/<slug>`**.
   the page does not arrive broken by its own headers.
 - Nothing builds without a scan behind it. The route answers 409 and the tool
   throws — a guard that only exists in a button is not a guard.
+- **A lead with no website gets one built before the letter is written** —
+  `services/leadDemo.ts`, `demoIsTheArgument()` in `leadPrep.ts`,
+  `POST /emails/draft`'s `demo` option. `buildDemo` could do this from August
+  and **nothing ever called it on its own**: somebody had to notice the lead
+  had no site and press a button, while the drafter was being told to offer "a
+  page built for them to look at" that did not exist. That letter is the one
+  with no evidence behind it — nothing fetched, nothing measured, nothing
+  photographed — so it was a stranger predicting their future, which is the
+  least persuasive email in this trade. Now the page is built during the draft,
+  the link is a fact like any other (`emailContext` already carried it), and
+  the doctrine's "When they have no website" section makes the link the whole
+  ask: no call, no list of what a website contains, no second question.
+  Three rules: **only where there is no site** (a demo for a working site is a
+  redesign pitch, which is somebody's decision — `demo: "always"` is how it is
+  made), **never twice** (a page the prospect may already have opened must not
+  change under them), and **a failure is a note, never an error** — the facts
+  say which of the two happened, because a letter offering a link that does not
+  exist is the one mistake here a prospect definitely notices.
 - `EmailPurpose.DEMO_READY` carries the link, and `emailContext` puts the URL
   and whether it has been opened into the facts.
 
@@ -2182,6 +2239,65 @@ back to an API-only status page when it doesn't.
 `AppSetting` model, keyed by `APP_SECRET`. That is deliberate: adding or
 rotating a key must never need a redeploy. Env vars still override where they
 exist. **Rotating `APP_SECRET` makes every stored key unreadable.**
+
+**What the company *sells* is data too, and it is read from the website** —
+`services/context/business.ts`, `SHIPPED_OFFER` in `dakyworld.ts`, Settings →
+System → Business context. Every agent is handed a paragraph saying who
+Dakyworld is and a catalogue saying what it may offer, and until Sep 2026 both
+came from a constant nothing kept in step with dakyworld.com. By then the site
+sold **four** services where the constant listed eight, charged GHS 3,000 a
+month where the constant said 5,000, ran a Founding Partner discount the
+constant had never heard of, and said plainly that Dakyworld does not
+administer business email or run managed cybersecurity — two things the
+constant was still offering. Nothing failed. Every letter was grammatical. The
+only symptom was a prospect being quoted a price they could see was wrong on
+the page they were reading.
+
+```
+dakyworld.com ──→ pageSource() ──→ visibleText() ──→ one model call ──→ AppSetting
+ seven pages      the editor's      markup out       job: "organise"    business.offer
+                  own reader                         strict schema
+```
+
+- **The shipped constant is the floor, never the value.** No key, no network, an
+  unreadable row, a sync that never ran — each lands on `SHIPPED_OFFER` rather
+  than on nothing, because an agent with no description of its own company
+  writes a letter about a company in general. Same arrangement as
+  `systemProfile.ts`, for the same reason: changing what a business sells must
+  never need a deploy.
+- **An empty list is not an answer.** "This company sells nothing" and "the
+  reader could not find the services" arrive looking identical and only one can
+  be true, so every list falls back per section. `offers` is the deliberate
+  exception — a discount that has closed must be able to disappear.
+- **A discount is a field, not a rewritten price.** `monthly` and
+  `discountedMonthly` both survive, because a writer that can only see one
+  number cannot say "GHS 3,000 for the first three months, then GHS 5,000",
+  and a discount nobody can state as a figure sells nothing.
+- **The boundary is carried as a rule.** `doesNotDo` is emitted last and framed
+  as what may never be offered. This is the half that was actually dangerous:
+  an agent pitching managed cybersecurity to somebody whose audit found an
+  expired certificate is a pitch discovered on the call.
+- **Three things refresh it, and none of them is a person retyping it.** The
+  daily housekeeping tick (which costs seven cached page reads and *no* model
+  call when the fingerprint has not moved), publishing any offer page from the
+  website editor, and the button on the Settings panel. There is deliberately
+  no form: a field somebody could edit here would be a second answer to a
+  question the website already answers, which is how this drifted in the first
+  place.
+- **A finding's service tag is resolved, not printed.** `companyAudit.ts` tags
+  every finding with the service line that addresses it and those tags were
+  written when the company sold eight. `serviceForFinding()` maps the retired
+  ones to **null** — "nothing Dakyworld sells, this one is context, never an
+  offer" — because that tag is the one line in a prompt that tells a writer a
+  fault is sellable.
+- **The proposal writer's `service` enum is built per call** from what is sold
+  now. Baked in at import, as it was, it went on offering lines the site had
+  dropped — and a proposal is where that becomes a number somebody quotes.
+
+`checks/businessContext.ts` (37) covers it, database only. Half of it is the
+negatives: a sync with nothing to read must leave what is stored alone, an
+offer with no services must be refused rather than written, and a retired
+service tag must never resolve to a sale.
 
 **The company's own details are data, not constants.**
 `services/systemProfile.ts` holds the name, address, phone numbers, socials and

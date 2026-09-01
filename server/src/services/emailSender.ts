@@ -1,6 +1,7 @@
 import type { EmailMessage } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { MailerError, sendMail, type Attachment } from "../lib/mailer.js";
+import { redFlags } from "./leadPrep.js";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { renderProposalPdf } from "./pdf.js";
 import { renderInvoicePdfFor } from "./invoicePdf.js";
@@ -23,7 +24,7 @@ import { resolveContext } from "./emailContext.js";
  */
 
 /**
- * An attachment as stored on the message. Four kinds, and the difference
+ * An attachment as stored on the message. Five kinds, and the difference
  * between them is *when the bytes exist*:
  *
  * - `stored` — a real file somebody uploaded, held in StoredFile. The bytes
@@ -32,12 +33,17 @@ import { resolveContext } from "./emailContext.js";
  * - `invoice` / `proposal` — a document this app renders, and renders **at
  *   send time**, so what the client receives is the document as it stands when
  *   it is sent rather than as it stood when the email was drafted.
+ * - `audit` — the website review's PDF. Stored as the *review's* id rather
+ *   than the file's, for the same reason: a review re-run between drafting and
+ *   sending replaces its PDF, and what should leave with the letter is the
+ *   report as it stands, not the one that happened to be rendered on Tuesday.
  */
 export type StoredAttachment =
   | { kind: "stored"; fileId: string; name: string; contentType?: string; size?: number }
   | { kind?: "file"; name: string; url: string; contentType?: string }
   | { kind: "invoice"; invoiceId: string; name?: string }
-  | { kind: "proposal"; proposalId: string; name?: string };
+  | { kind: "proposal"; proposalId: string; name?: string }
+  | { kind: "audit"; auditId: string; name?: string };
 
 export function parseAttachments(value: unknown): StoredAttachment[] {
   if (!Array.isArray(value)) return [];
@@ -74,6 +80,29 @@ export async function resolveAttachments(stored: StoredAttachment[]): Promise<At
       const rendered = await renderInvoicePdfFor(entry.invoiceId);
       if (!rendered) continue;
       resolved.push({ filename: rendered.filename, content: rendered.pdf, contentType: "application/pdf" });
+      continue;
+    }
+
+    if ("kind" in entry && entry.kind === "audit") {
+      const audit = await prisma.websiteAudit.findUnique({
+        where: { id: entry.auditId },
+        select: { pdfFileId: true, businessName: true },
+      });
+      // A review whose PDF never rendered is skipped like a missing upload
+      // rather than failing the send. The letter is the point — and the
+      // drafter is only told to mention an attachment once one exists, so the
+      // sentence and the file are decided together upstream.
+      if (!audit?.pdfFileId) {
+        console.warn(`[email] the review ${entry.auditId} has no PDF — sending without it.`);
+        continue;
+      }
+      const file = await readFile(audit.pdfFileId);
+      if (!file) {
+        console.warn(`[email] the report for ${audit.businessName} is gone — sending without it.`);
+        continue;
+      }
+      const safeName = audit.businessName.replace(/[^\w\- ]+/g, "").slice(0, 60) || "Website";
+      resolved.push({ filename: entry.name || `${safeName} — website review.pdf`, content: file.data, contentType: "application/pdf" });
       continue;
     }
 
@@ -211,6 +240,38 @@ async function logCommunication(message: EmailMessage) {
  * sequences, and by the automations — one path, so a sequence email and a
  * hand-written one are rendered by exactly the same code.
  */
+/**
+ * The website review a first letter should leave with, if there is one.
+ *
+ * Three conditions, all of them necessary:
+ *
+ * - **A first approach to a lead.** A client update carrying an audit of a
+ *   stranger's website is nonsense, and a follow-up already sent the report
+ *   with the first letter.
+ * - **More than one serious fault.** One fault is an email about that fault
+ *   and nothing to attach — the report exists to hold the ones the letter
+ *   deliberately does not name. See `redFlags()` in `services/leadPrep.ts`.
+ * - **A rendered PDF on the most recent review.** No file, no sentence: the
+ *   drafter is told the same thing from the same facts, so the letter and the
+ *   attachment agree about whether a report exists.
+ */
+export async function reportToAttach(args: { purpose: EmailMessage["purpose"]; leadId?: string | null }): Promise<StoredAttachment | null> {
+  if (args.purpose !== "COLD_OUTREACH" || !args.leadId) return null;
+
+  const [audit, research] = await Promise.all([
+    prisma.websiteAudit.findFirst({
+      where: { leadId: args.leadId, pdfFileId: { not: null } },
+      orderBy: { ranAt: "desc" },
+      select: { id: true },
+    }),
+    prisma.leadResearch.findUnique({ where: { leadId: args.leadId }, select: { audit: true, look: true } }),
+  ]);
+  if (!audit || !research) return null;
+  if (redFlags(research.audit as never, research.look as never).length < 2) return null;
+
+  return { kind: "audit", auditId: audit.id };
+}
+
 export async function composeMessage(args: {
   subject: string;
   body: string;
@@ -232,6 +293,15 @@ export async function composeMessage(args: {
   enrollmentId?: string | null;
   createdById?: string | null;
   attachments?: StoredAttachment[];
+  /**
+   * Refuse the website review this letter would otherwise carry.
+   *
+   * Only ever set by a person who has decided this particular email should not
+   * have it. There is deliberately no way for a model to set it: the report is
+   * what makes "several other things came up" an honest sentence rather than
+   * an unsupported one.
+   */
+  attachReport?: boolean;
   scheduledFor?: Date | null;
   status?: EmailMessage["status"];
 }): Promise<EmailMessage> {
@@ -267,6 +337,17 @@ export async function composeMessage(args: {
   if (args.proposalId && !attachments.some((entry) => (entry as { kind?: string }).kind === "proposal" && (entry as { proposalId?: string }).proposalId === args.proposalId)) {
     attachments.push({ kind: "proposal", proposalId: args.proposalId });
   }
+
+  // And a first letter that names one fault out of several carries the rest.
+  //
+  // The doctrine tells the writer to say "a few other things came up and they
+  // are in the attached report" — and a rule that has to hold on every message
+  // cannot depend on whoever composed it remembering to tick a box. Same
+  // reasoning as the invoice above, and the same failure if it is left to a
+  // person: a letter that refers to an attachment which is not there is the
+  // one mistake in this pipeline a prospect definitely notices.
+  const report = args.attachReport === false ? null : await reportToAttach(args);
+  if (report) attachments.push(report);
 
   return prisma.emailMessage.create({
     data: {

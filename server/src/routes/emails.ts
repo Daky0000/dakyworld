@@ -7,9 +7,10 @@ import { preSendCheck } from "../services/coldEmailChecks.js";
 import { chooseScenario, exampleWording, manualScenarios } from "../services/coldEmailScenarios.js";
 import { polishEmail } from "../lib/emailPolish.js";
 import { caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
+import { ensureDemoForLead } from "../services/leadDemo.js";
 import { analystConfigured } from "../lib/anthropic.js";
 import { resolveContext } from "../services/emailContext.js";
-import { COLD_PURPOSES, composeMessage, isSuppressed, parseAttachments, sendMessage, type StoredAttachment } from "../services/emailSender.js";
+import { COLD_PURPOSES, composeMessage, isSuppressed, parseAttachments, reportToAttach, sendMessage, type StoredAttachment } from "../services/emailSender.js";
 import { fillPlaceholders, renderEmail, toHtml, verifyUnsubscribeToken } from "../services/emailRender.js";
 import { BUILTIN_TEMPLATES, ensureBuiltinTemplates } from "../services/emailTemplates.js";
 import { enrol, nextSendSlot, runDueSequences, stopEnrollment, stopOnReply } from "../services/emailSequences.js";
@@ -199,6 +200,17 @@ emailsRouter.get("/context/lookup", async (req, res, next) => {
   }
 });
 
+/**
+ * The letters a demo page belongs in.
+ *
+ * The first one, because for a business with no website the page *is* the ask.
+ * The follow-up too: the doctrine's day-3 touch delivers the thing the first
+ * email offered, and a follow-up that cannot produce it is the "just checking
+ * in" the doctrine bans. Nothing else — a proposal cover or an invoice has no
+ * business building a page.
+ */
+const DEMO_PURPOSES = new Set<string>(["COLD_OUTREACH", "FOLLOW_UP"]);
+
 const draftInput = z.object({
   purpose: z.enum(PURPOSES).default("CUSTOM"),
   leadId: z.string().cuid().nullish(),
@@ -223,6 +235,16 @@ const draftInput = z.object({
   prepare: z.enum(["auto", "always", "never"]).default("auto"),
   /** The plain-English pass. On by default — see lib/emailPolish.ts. */
   polish: z.boolean().default(true),
+  /**
+   * Whether to build the demo page before writing.
+   *
+   * "auto" builds one for a first email to a business with **no website**,
+   * where the page is the whole argument and the ask — see
+   * `services/leadDemo.ts`. It never builds one for a business that has a
+   * site: that is a redesign pitch and somebody's decision, which is what
+   * "always" is for.
+   */
+  demo: z.enum(["auto", "always", "never"]).default("auto"),
 });
 
 /**
@@ -262,6 +284,20 @@ emailsRouter.post("/draft", async (req, res, next) => {
           prepError = (err as Error).message;
         }
       }
+    }
+
+    // --- 1b. The page, for a business that has none ------------------------
+    //
+    // Before the context is resolved, because `leadContext` reads the lead's
+    // demos into the facts and the letter has to carry the link. A first email
+    // to a business with no website has no evidence to argue from, so the page
+    // is the argument: their name, their trade, their town, at an address they
+    // can open on their phone. Nothing built one automatically until Sep 2026,
+    // while the drafter was being told to offer "a page built for them to look
+    // at" — which did not exist.
+    let demo: Awaited<ReturnType<typeof ensureDemoForLead>> | null = null;
+    if (input.leadId && input.demo !== "never" && DEMO_PURPOSES.has(input.purpose)) {
+      demo = await ensureDemoForLead(input.leadId, { force: input.demo === "always" });
     }
 
     // Resolved after the prep, so the draft is written from the filled-in
@@ -373,6 +409,20 @@ emailsRouter.post("/draft", async (req, res, next) => {
           }
         : null,
       prepError,
+      /**
+       * The demo page, when this lead is one of the ones it is the argument
+       * for. `note` is why there is no link, which the composer shows: an
+       * email offering a page that could not be built is the one mistake here
+       * the prospect definitely notices.
+       */
+      demo: demo && (demo.url || demo.note) ? demo : null,
+      /**
+       * The review that will leave with this letter, when the scan found more
+       * than one serious fault. Shown to the sender because an email that says
+       * "the rest are attached" and an email that actually carries them are
+       * two different things, and only one of them is honest.
+       */
+      willAttachReport: input.leadId ? await reportToAttach({ purpose: input.purpose, leadId: input.leadId }) : null,
       /**
        * Whether there was anything here worth writing about, from this
        * request's own look or from the stored one. Shown to the sender, who is

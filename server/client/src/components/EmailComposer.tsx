@@ -963,6 +963,36 @@ function DraftReport({
           </p>
         </div>
       )}
+      {/* The page built for a business that has none. It is the ask, so whether
+          it exists decides what the letter may say — and a note here is the
+          difference between a link and a promise of one. */}
+      {result.demo && (
+        <div className={`rounded-2xl border p-4 ${result.demo.url ? "border-line bg-white" : "border-amber-200 bg-amber-50"}`}>
+          <div className={`mb-1 font-mono text-[10px] uppercase tracking-[.12em] ${result.demo.url ? "text-ink/45" : "text-amber-900"}`}>
+            {result.demo.url ? (result.demo.built ? "A demo page was built for them just now" : "They already have a demo page") : "No demo page"}
+          </div>
+          {result.demo.url ? (
+            <a href={result.demo.url} target="_blank" rel="noreferrer" className="break-all text-xs font-medium text-blue underline underline-offset-2">
+              {result.demo.url}
+            </a>
+          ) : (
+            <p className="text-xs leading-relaxed text-amber-900">{result.demo.note}</p>
+          )}
+          {result.demo.url && result.demo.note && <p className="mt-2 text-xs leading-relaxed text-ink/60">{result.demo.note}</p>}
+        </div>
+      )}
+      {/* Several serious faults: the letter names one, and this is where the
+          rest of them go. Shown because "the others are attached" and an email
+          that actually carries them are two different things. */}
+      {result.willAttachReport && (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">The full review goes with this email</div>
+          <p className="text-xs leading-relaxed text-ink/70">
+            More than one serious fault was found, so the letter names the strongest one and the rest are attached as a PDF. The
+            report is attached when the email is composed — nothing to tick.
+          </p>
+        </div>
+      )}
       {/* What the look found, when this request went and looked. */}
       {prep && (
         <div className="rounded-2xl border border-line bg-white p-4">

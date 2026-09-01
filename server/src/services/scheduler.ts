@@ -14,6 +14,7 @@ import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { pruneMemories } from "./agents/memory.js";
 import { refreshStaleServers } from "./tools/mcpTools.js";
+import { syncBusinessOffer } from "./context/business.js";
 import { ensureGapReviews, expireStaleHireRequests, postGapNotice } from "./agents/hiring.js";
 import { postEscalationDigest } from "./agents/escalationDigest.js";
 import { SETTING, getSetting, setSetting } from "../lib/settings.js";
@@ -247,6 +248,25 @@ async function housekeepingTick(now: Date) {
   // is not evidence a house rule stopped being true.
   const forgotten = await pruneMemories();
   if (forgotten) console.log(`[scheduler] cleared ${forgotten} agent memory/memories nothing had recalled`);
+
+  // What the company sells, from the company's own website.
+  //
+  // The workforce describes Dakyworld on every cold email, every proposal and
+  // every agent turn, and it used to describe it from a constant that nothing
+  // kept in step with dakyworld.com. A price that came down, a plan that was
+  // renamed, a service line that was dropped — none of it reached an agent
+  // until somebody edited TypeScript. On the ordinary day this costs seven
+  // cached page reads and no model call at all: `syncBusinessOffer` fingerprints
+  // the text it read and stops there when nothing has changed.
+  try {
+    const offer = await syncBusinessOffer();
+    if (offer.changed) console.log(`[scheduler] re-read what the business sells from the website (${offer.pages.length} page(s), ${offer.readBy})`);
+    for (const note of offer.notes) console.warn(`[scheduler] business context: ${note}`);
+  } catch (err) {
+    // Never fatal. An agent with a slightly old catalogue still works; a
+    // housekeeping tick that throws loses everything below it.
+    console.warn(`[scheduler] the business context could not be refreshed: ${(err as Error).message}`);
+  }
 
   // Tool lists from connected MCP servers, where the cached one has gone old.
   //

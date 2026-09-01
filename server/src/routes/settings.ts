@@ -89,6 +89,7 @@ import {
   type BrandSlot,
 } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import { businessContextStatus, syncBusinessOffer } from "../services/context/business.js";
 
 /**
  * Everything the Owner configures at runtime, in one place.
@@ -117,6 +118,7 @@ settingsRouter.use(
       { path: /^\/messaging\//, permission: "messages.settings" },
       { path: /^\/system\/brand\//, permission: "settings.templates" },
       { path: /^\/(system|general)$/, permission: "settings.company" },
+      { path: /^\/business/, permission: "settings.company" },
       { path: /^\/(models|anthropic)/, permission: "settings.models" },
       { path: /^\/(apify|capture)/, permission: "leads.sources" },
     ],
@@ -2058,6 +2060,37 @@ const profileInput = z.object({
   currency: z.string().max(6).optional(),
   registrationNumber: z.string().max(60).optional(),
   vatNumber: z.string().max(60).optional(),
+});
+
+/**
+ * The business context: what this company sells, read from its own website.
+ *
+ * Two routes and no form. There is nothing here for a person to type — the
+ * website is the source, and a field somebody could edit here would be a
+ * second answer to a question the site already answers, which is how the
+ * catalogue came to be a year out of date in the first place. What the screen
+ * shows is what every agent is currently told, when it was last read, and a
+ * button to read it again.
+ */
+settingsRouter.get("/business", async (_req, res, next) => {
+  try {
+    res.json(await businessContextStatus());
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.post("/business/sync", async (req, res, next) => {
+  try {
+    // `force` re-reads even when the site has not changed since the last sync —
+    // which is what somebody pressing the button after fixing a wrong price
+    // actually wants, and the fingerprint check would otherwise refuse.
+    const force = req.body?.force === true;
+    const result = await syncBusinessOffer({ force });
+    res.json({ ...result, ...(await businessContextStatus()) });
+  } catch (err) {
+    next(err);
+  }
 });
 
 settingsRouter.put("/system", async (req, res, next) => {

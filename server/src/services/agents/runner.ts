@@ -14,7 +14,8 @@ import type { ToolDefinition } from "../tools/types.js";
 import { invokeTool } from "../tools/invoke.js";
 import { outwardKey } from "../tools/idempotency.js";
 import { companyProfile, contactBlock } from "../systemProfile.js";
-import { BRAND, VOICE } from "../dakyworld.js";
+import { VOICE } from "../dakyworld.js";
+import { brandBlock } from "../context/business.js";
 import { MemoryRefused, recall, remember, subjectOf, type Recalled } from "./memory.js";
 import { authoredInstruction } from "./authored.js";
 import { describeTask, taskSubjects } from "./context.js";
@@ -1691,7 +1692,13 @@ export async function composePrompt(
   // rather than silently shipping off-brand prose from a writer nobody added
   // to a list.
   if (!NO_BRAND_VOICE.has(agent.key)) {
-    regions.push({ key: "brand", label: "Who Dakyworld is", source: "services/dakyworld.ts — the same for every agent.", editable: false, text: BRAND });
+    regions.push({
+      key: "brand",
+      label: "Who Dakyworld is",
+      source: "Read from dakyworld.com — Settings → Business context. The same for every agent.",
+      editable: false,
+      text: await brandBlock(),
+    });
   }
   regions.push({
     key: "contact",

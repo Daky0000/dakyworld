@@ -1498,6 +1498,41 @@ export interface EmailDraft {
   preparedAt?: string | null;
   /** Whether there was anything here worth writing about at all. */
   strength?: CaseStrength | null;
+  /**
+   * The demo page, for a business with no website of its own — where the page
+   * is the argument and the ask rather than an optional extra.
+   */
+  demo?: { url: string | null; demoId: string | null; built: boolean; note: string | null; costUsd: number } | null;
+  /** The website review this letter will carry, when several faults were found. */
+  willAttachReport?: { kind: "audit"; auditId: string; name?: string } | null;
+}
+
+/**
+ * What the workforce is told this company sells, read from dakyworld.com.
+ *
+ * There is no editable copy of this in the app on purpose — the website is the
+ * source. See `server/src/services/context/business.ts`.
+ */
+export interface BusinessContext {
+  offer: {
+    positioning: string;
+    summary: string[];
+    doesNotDo: string[];
+    proofPoints: string[];
+    services: { id: string; name: string; what: string; fixes: string[]; anchorPrice: number | null; billing: "ONE_OFF" | "MONTHLY"; priceNote: string }[];
+    plans: { tier: string; monthly: number | null; discountedMonthly: number | null; discountNote: string; for: string }[];
+    projects: { name: string; from: number | null; what: string }[];
+    offers: string[];
+  };
+  /** Whether this came from the website, or from the catalogue the app ships with. */
+  from: "website" | "shipped";
+  syncedAt: string | null;
+  pages: string[];
+  readBy: string | null;
+  /** The two blocks as they appear in an agent's prompt. */
+  brand: string;
+  catalogue: string;
+  shippedPages: string[];
 }
 
 export interface EmailTemplate {

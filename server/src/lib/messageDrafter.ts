@@ -1,7 +1,8 @@
 import type { EmailPurpose, MessageChannel } from "@prisma/client";
 import { callModel } from "./models/call.js";
 import { smsCost, toGsm7 } from "./phone.js";
-import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
+import { VOICE as BRAND_VOICE } from "../services/dakyworld.js";
+import { brandBlock } from "../services/context/business.js";
 import { PHONE_MESSAGE_DOCTRINE } from "../services/outreachDoctrine.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { writerSystem } from "../services/writers/brief.js";
@@ -198,7 +199,7 @@ Return the body as plain text. Do not add a sign-off, a name at the end, or an o
 async function draftSystem(channel: MessageChannel): Promise<string> {
   const profile = await companyProfile();
   return writerSystem("message.phone", SHIPPED_DOCTRINE, {
-    facts: [BRAND, contactBlock(profile)],
+    facts: [await brandBlock(), contactBlock(profile)],
     contract: contractFor(channel),
   });
 }

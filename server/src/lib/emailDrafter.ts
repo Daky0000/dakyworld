@@ -1,7 +1,8 @@
 import type { EmailPurpose } from "@prisma/client";
 import { callModel } from "./models/call.js";
 import { MODEL_DEFAULT } from "./claudePricing.js";
-import { BRAND, VOICE as BRAND_VOICE } from "../services/dakyworld.js";
+import { VOICE as BRAND_VOICE } from "../services/dakyworld.js";
+import { brandBlock } from "../services/context/business.js";
 import { COLD_EMAIL_DOCTRINE, EVIDENCE_RULES, FOLLOW_UP_DOCTRINE } from "../services/outreachDoctrine.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { writerSystem } from "../services/writers/brief.js";
@@ -166,7 +167,7 @@ function angle(context: RecipientContext): string | null {
   if (context.kind !== "lead") return null;
 
   if (!context.variables.website?.trim()) {
-    return `They have no website. That is the email.
+    return `They have no website. That is the email, and the demo page is the ask.
 
 Do not write about websites in general and do not list what a website contains. Write about what not having one means for *this* business: somebody searching their trade in their town finds the competitors who have one, and the reviews they have earned have nowhere to send anybody.
 
@@ -174,7 +175,9 @@ Use their trade and their town by name. Those two words are what make it about t
 
 If the facts show demand already exists — a rating, a review count, a busy social account — that is the strongest thing you have, because the interest is real and there is nowhere for it to land. Say that.
 
-The ask still offers something small: an outline of what a page would need to do, or a page built for them to look at. Not a call.`;
+**The ask is the page.** A page has been built for them and the facts carry its link. Say plainly that you put a page together to show what it could look like, give the link on its own line, and ask what they think of it. Nothing else: no call, no meeting, no second ask. It is theirs to look at, it took an afternoon, and it commits them to nothing — say that if it fits in the words you have.
+
+If the facts carry **no** demo link, then no page exists. Offer to put one together instead, and never write as though a link is coming with this email.`;
   }
 
   return `They have a website and somebody has looked at it. The facts include what was checked on it and what it looks like.
@@ -329,7 +332,7 @@ End on the ask. Do not type a sign-off or a name at the end — the app appends 
 async function draftSystem(purpose: EmailPurpose): Promise<string> {
   const job = emailJobFor(purpose);
   return writerSystem(job, shippedDoctrineFor(job), {
-    facts: [BRAND, contactBlock(await companyProfile())],
+    facts: [await brandBlock(), contactBlock(await companyProfile())],
     contract: CONTRACT,
   });
 }

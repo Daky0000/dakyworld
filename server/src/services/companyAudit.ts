@@ -3,6 +3,7 @@ import net from "node:net";
 import http from "node:http";
 import https from "node:https";
 import type { TLSSocket } from "node:tls";
+import { serviceForFinding } from "./dakyworld.js";
 
 /**
  * What is actually wrong with a company's setup, observed rather than assumed.
@@ -1412,7 +1413,9 @@ export function auditForPrompt(audit: CompanyAudit): string {
 
   const findings = sortFindings(audit.findings).map(
     (finding) =>
-      `- [${finding.severity}] [${finding.area}] ${finding.observed}\n  Evidence: ${finding.evidence}\n  Addressed by: ${finding.service ?? "nothing — this one is a strength, not a sale"}`,
+      `- [${finding.severity}] [${finding.area}] ${finding.observed}\n  Evidence: ${finding.evidence}\n  Addressed by: ${
+        serviceForFinding(finding.service) ?? "nothing Dakyworld sells — this one is context, never an offer"
+      }`,
   );
 
   const parts = [

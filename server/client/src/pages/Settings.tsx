@@ -8,6 +8,7 @@ import type {
   ActorHealthReport,
   AppSettings,
   BrandSlot,
+  BusinessContext,
   CaptureConfig,
   CompanyProfile,
   ModelJob,
@@ -391,7 +392,108 @@ function SystemPanel({ settings }: { settings: AppSettings }) {
       </Panel>
 
       <BrandPanel settings={settings} />
+      <BusinessContextPanel />
     </div>
+  );
+}
+
+/**
+ * What the workforce is told this company sells.
+ *
+ * Deliberately not a form. The website is the source — every agent describing
+ * the offer should be describing the same thing the prospect is reading — and a
+ * field somebody could type into here would be a second answer to a question
+ * dakyworld.com already answers. That is exactly how the catalogue came to be a
+ * year out of date: eight services and last year's prices lived in a constant
+ * while the site had moved to four and published a discount.
+ *
+ * So there are two things on this panel: what the agents are currently told,
+ * and a button to read the site again. The daily tick does the same thing on
+ * its own, and so does publishing a change to any page that describes the offer.
+ */
+function BusinessContextPanel() {
+  const context = useQuery({ queryKey: ["business-context"], queryFn: () => api.get<BusinessContext>("/settings/business") });
+  const qc = useQueryClient();
+  const sync = useMutation({
+    mutationFn: () => api.post<BusinessContext & { changed: boolean; notes: string[] }>("/settings/business/sync", { force: true }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["business-context"] }),
+  });
+
+  const data = sync.data ?? context.data;
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Panel
+      title="Business context"
+      what="What every agent is told this company sells, read from dakyworld.com. Change a price, a plan or a service on the website and the workforce says the new thing — there is nothing to retype here."
+      state={
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-ink/60">
+          {!data ? (
+            <span>Reading…</span>
+          ) : (
+            <>
+              <span className="font-display text-lg tracking-[-.02em] text-ink">{data.offer.services.length} services</span>
+              <span>{data.offer.plans.length} monthly tiers</span>
+              <span>{data.offer.offers.length > 0 ? `${data.offer.offers.length} offers running` : "no offers running"}</span>
+              <span>
+                {data.from === "website"
+                  ? `read from the site${data.syncedAt ? ` ${new Date(data.syncedAt).toLocaleDateString()}` : ""}`
+                  : "never read — using the shipped catalogue"}
+              </span>
+            </>
+          )}
+        </div>
+      }
+    >
+      {data && (
+        <div className="mt-5 space-y-4">
+          <div className="rounded-xl border border-line bg-cream/40 p-4">
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">What is on offer</div>
+            <ul className="space-y-1 text-sm text-ink/75">
+              {data.offer.services.map((service) => (
+                <li key={service.id}>
+                  <span className="font-medium text-ink">{service.name}</span>
+                  {service.anchorPrice ? ` — from GHS ${service.anchorPrice.toLocaleString("en-GB")}` : " — priced on scope"}
+                </li>
+              ))}
+              {data.offer.plans.map((plan) => (
+                <li key={plan.tier}>
+                  <span className="font-medium text-ink">{plan.tier}</span>
+                  {plan.monthly ? ` — GHS ${plan.monthly.toLocaleString("en-GB")}/month` : " — priced on scope"}
+                  {plan.discountedMonthly ? ` · GHS ${plan.discountedMonthly.toLocaleString("en-GB")} on offer now` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {data.offer.doesNotDo.length > 0 && (
+            <div className="rounded-xl border border-line p-4">
+              <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Never offered</div>
+              <p className="text-sm text-ink/70">{data.offer.doesNotDo.join(" ")}</p>
+            </div>
+          )}
+          {sync.data?.notes?.length ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{sync.data.notes.join(" ")}</div>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={() => sync.mutate()} disabled={sync.isPending}>
+              {sync.isPending ? "Reading the site…" : "Read the website again"}
+            </Button>
+            <button type="button" className="text-xs text-ink/50 underline underline-offset-2" onClick={() => setOpen((was) => !was)}>
+              {open ? "Hide" : "Show"} what the agents are actually told
+            </button>
+            {data.readBy && <span className="text-xs text-ink/45">Last read by {data.readBy}.</span>}
+          </div>
+          {open && (
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-cream/40 p-4 text-xs leading-relaxed text-ink/75">
+              {data.brand}
+              {"\n\n"}
+              {data.catalogue}
+            </pre>
+          )}
+          <ErrorNote error={sync.error} />
+        </div>
+      )}
+    </Panel>
   );
 }
 

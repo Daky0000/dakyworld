@@ -60,6 +60,18 @@ export interface LeadPrep {
   /** Whether there is anything here worth writing to them about. */
   strength: CaseStrength;
   /**
+   * The CRITICAL and HIGH faults, in the order they were found.
+   *
+   * More than one of these changes the letter: it names one and the rest are
+   * attached as the report. See `redFlags()` below.
+   */
+  redFlags: { say: string; severity: string; kind: "seen" | "checked" }[];
+  /**
+   * True when this business has no website, so the demo page is the argument
+   * rather than an optional extra. See `demoIsTheArgument()`.
+   */
+  needsDemo: boolean;
+  /**
    * The website audit team's run, when one was asked for.
    *
    * Deliberately a summary rather than the report: the report is a row of its
@@ -93,6 +105,14 @@ export interface PrepOptions {
    *
    * The scan's own work is handed over rather than repeated — the DNS audit
    * and the desktop screenshot are both already in hand by the time this runs.
+   *
+   * **It also runs itself when the scan found more than one red flag**, and
+   * that is not a convenience. A letter that names one fault and says several
+   * others were found has to be able to hand the rest over, or it is a stranger
+   * saying "there are other problems with your business" and offering nothing —
+   * which is worse than saying nothing at all. The report is what makes that
+   * sentence honest, so it is produced by the same pass that discovers there is
+   * more than one thing to say. Pass `false` to refuse it outright.
    */
   withAuditTeam?: boolean;
 }
@@ -225,12 +245,14 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
   }
 
   const strength = caseStrength(audit, look);
+  const flags = redFlags(audit, look);
+  const needsDemo = demoIsTheArgument({ website: subject.website, audit });
   if (subject.website && !look) {
     notes.push(
       "Nobody has seen how their site actually looks — only what it is made of. The design, the layout and the first impression are the half a business owner cares about, and none of it was checked.",
     );
   }
-  const facts = buildFacts({ research, audit, look, filled, strength, hasWebsite: Boolean(subject.website) });
+  const facts = buildFacts({ research, audit, look, filled, strength, hasWebsite: Boolean(subject.website), redFlags: flags });
 
   // --- 5. The audit team, when it was asked for ----------------------------
   //
@@ -245,7 +267,12 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
   // screenshot, which cost an Apify container boot. The phone view is the only
   // new picture.
   let websiteAudit: LeadPrep["websiteAudit"] = null;
-  if (options.withAuditTeam) {
+  // Asked for, or earned by the findings: more than one red flag means the
+  // letter will name one and attach the rest, and there is nothing to attach
+  // without this. `withAuditTeam: false` still refuses — a caller that has
+  // said no is not overruled by arithmetic.
+  const auditTeamWanted = options.withAuditTeam ?? flags.length > 1;
+  if (auditTeamWanted) {
     // The address that answered, in preference to the one on file. `corrected`
     // is only ever a hostname swap, so it is the fallback rather than the
     // first choice — `liveUrl` is already where the page actually came from.
@@ -273,6 +300,11 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
         };
         costUsd += run.report.costUsd;
         notes.push(...run.report.notes.filter((note) => !notes.includes(note)));
+        if (options.withAuditTeam === undefined) {
+          notes.push(
+            `The full review was run because ${flags.length} serious faults were found: the letter names one and the report carries the rest.`,
+          );
+        }
       } catch (err) {
         // The scan is what the email is written from. Losing it because the
         // report could not be produced would cost the useful half to save the
@@ -280,6 +312,24 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
         notes.push(`The audit team did not finish: ${(err as Error).message} The scan above is unaffected.`);
       }
     }
+  }
+
+  // Said last, and said only once the report either exists or provably does
+  // not. A drafter told "the rest are attached" on a lead whose report failed
+  // to render writes a letter referring to an attachment that is not there,
+  // which is the one mistake here a prospect definitely notices.
+  if (flags.length > 1) {
+    facts.push(
+      websiteAudit?.pdfFileId
+        ? `MORE THAN ONE RED FLAG — ${flags.length} serious faults were found, and the full report is attached to this email as a PDF. Name ONLY the strongest one in the letter. Then say, in one sentence and in your own words, that a few other things came up while looking and that they are in the attached report. Do not list them, do not summarise them, and do not count them out. The other faults, for your information only: ${flags
+            .slice(1)
+            .map((flag) => flag.say)
+            .join("; ")}`
+        : `MORE THAN ONE RED FLAG — ${flags.length} serious faults were found, but no report could be produced this time, so there is nothing to attach. Write about the strongest one only and do not refer to a report or an attachment. The others, for your information only: ${flags
+            .slice(1)
+            .map((flag) => flag.say)
+            .join("; ")}`,
+    );
   }
 
   const ranAt = new Date();
@@ -323,6 +373,8 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     facts,
     notes,
     strength,
+    redFlags: flags,
+    needsDemo,
     websiteAudit,
     costUsd,
   };
@@ -386,7 +438,16 @@ export async function prepareLeads(leadIds: string[], options: PrepOptions = {})
       continue;
     }
     try {
-      const prep = await prepareLead(leadId, { ...options, captured: shots.get(leadId) ?? null });
+      const prep = await prepareLead(leadId, {
+        // A batch never runs the four-reviewer report on its own. One lead
+        // somebody is about to write to earns it when the faults pile up;
+        // sixty leads prepared overnight would be sixty reports, two model
+        // calls and an Apify run each, that nobody asked for. Explicitly
+        // asking still works.
+        ...options,
+        withAuditTeam: options.withAuditTeam ?? false,
+        captured: shots.get(leadId) ?? null,
+      });
       prepared.push(prep);
       costUsd += prep.costUsd;
     } catch (err) {
@@ -736,6 +797,60 @@ export function caseStrength(audit: CompanyAudit | null, look: HomepageLook | nu
 }
 
 /**
+ * The faults serious enough for a stranger to be written to about.
+ *
+ * A "red flag" is CRITICAL or HIGH, from either half of the scan. MEDIUM is
+ * housekeeping — real, worth fixing, and not worth a paragraph in a first
+ * letter — and counting it here would make almost every business look alarming,
+ * which is the fastest way to make the word mean nothing.
+ *
+ * The count is what decides the shape of the letter. One red flag is an email
+ * about that one thing. Several is the case this exists for: the letter still
+ * names **one**, because a list of faults is a report and nobody replies to a
+ * report from a stranger, and the rest go out as the attached PDF with a
+ * sentence saying so. See `outreachDoctrine.ts` → "When there is more than one
+ * red flag".
+ */
+export function redFlags(audit: CompanyAudit | null, look: HomepageLook | null): { say: string; severity: string; kind: "seen" | "checked" }[] {
+  const serious = (severity: string) => severity === "CRITICAL" || severity === "HIGH";
+  const flags: { say: string; severity: string; kind: "seen" | "checked" }[] = [];
+
+  for (const observation of look?.observations ?? []) {
+    if (!serious(observation.severity)) continue;
+    flags.push({ say: observation.plainly || observation.observed, severity: observation.severity, kind: "seen" });
+  }
+  for (const finding of audit?.findings ?? []) {
+    if (!serious(finding.severity)) continue;
+    flags.push({ say: finding.observed, severity: finding.severity, kind: "checked" });
+  }
+  return flags;
+}
+
+/**
+ * Whether a demo page is the argument rather than an optional extra.
+ *
+ * A business with no website is the one case where there is nothing to observe,
+ * nothing to measure and nothing to photograph — so every letter to one was
+ * written from the *absence* of evidence, which reads as a lecture about
+ * websites in general however carefully it is worded. The page itself is the
+ * argument: their name, their trade, their town, at a link they can open on
+ * their phone. That is far easier to say yes to than a meeting, and it is the
+ * thing rather than a claim about the thing.
+ *
+ * So for a lead with no site the demo is part of preparing them, not a button
+ * somebody remembers to press afterwards.
+ */
+export function demoIsTheArgument(input: { website: string | null | undefined; audit: CompanyAudit | null }): boolean {
+  if (input.website?.trim()) return false;
+  // A blank `website` and a site that provably does not exist are the same
+  // case. What is *not* the same case is a site that could not be fetched: a
+  // WAF, a timeout or a certificate nobody has renewed is a site their
+  // customers can still reach, and building a replacement for it would be
+  // pitching against a page we never opened.
+  return true;
+}
+
+/**
  * The prep as the drafter reads it.
  *
  * Plain lines, each one carrying its own evidence, because the drafter is told
@@ -749,6 +864,7 @@ function buildFacts(input: {
   filled: LeadPrep["filled"];
   strength: CaseStrength;
   hasWebsite: boolean;
+  redFlags: { say: string; severity: string; kind: "seen" | "checked" }[];
 }): string[] {
   const facts: string[] = [];
 
@@ -789,6 +905,14 @@ function buildFacts(input: {
         `What was actually checked: ${input.audit.checked.join("; ")}. Anything not on that list was not looked at, and nothing may be claimed about it.`,
       );
     }
+  }
+
+  if (!input.hasWebsite) {
+    // The one case with no evidence to argue from, which is exactly why the
+    // letter needs something other than an argument. See `demoIsTheArgument`.
+    facts.push(
+      "THEY HAVE NO WEBSITE, SO THE DEMO PAGE IS THE ASK. A page has been built for them — their name, their trade, their town, at a link they can open on their phone. Offer that link and nothing else: no meeting, no call, no list of what a website contains. If the facts above carry a demo link, put it in the letter on its own line. If they do not, the page could not be built this time, so offer to send one instead of pretending it exists.",
+    );
   }
 
   if (input.look) {
