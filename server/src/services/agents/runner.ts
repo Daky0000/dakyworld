@@ -11,6 +11,7 @@ import { AnalystError } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
 import type { ToolDefinition } from "../tools/types.js";
 import { invokeTool } from "../tools/invoke.js";
+import { outwardKey } from "../tools/idempotency.js";
 import { companyProfile, contactBlock } from "../systemProfile.js";
 import { BRAND, VOICE } from "../dakyworld.js";
 import { MemoryRefused, recall, remember, subjectOf, type Recalled } from "./memory.js";
@@ -451,27 +452,6 @@ function withCase(schema: JsonSchema, tool: { outward: boolean; spends: boolean 
   };
 }
 
-/**
- * What makes a repeat of this exact call the same call.
- *
- * Task, tool and a hash of the arguments. Scoped to the task on purpose: within
- * one run, asking twice for the same send is always a replay — a resumed
- * half-finished turn, a retried claim — and across runs it may well be a second
- * letter somebody meant to send.
- *
- * The keys are sorted before hashing, because a model does not emit its object
- * properties in a stable order and two spellings of one payload must not read
- * as two different calls.
- */
-function outwardKey(taskId: string, toolKey: string, input: unknown): string {
-  const canonical = JSON.stringify(input, (_k, value) =>
-    value && typeof value === "object" && !Array.isArray(value)
-      ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
-      : value,
-  );
-  const digest = createHash("sha256").update(canonical ?? "null").digest("hex").slice(0, 32);
-  return `${taskId}:${toolKey}:${digest}`;
-}
 
 /**
  * The catalogue, narrowed to what this agent has been granted, plus the three

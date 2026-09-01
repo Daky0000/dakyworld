@@ -1,6 +1,7 @@
 import type { ActionRequest } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { invokeTool } from "./tools/invoke.js";
+import { outwardKey } from "./tools/idempotency.js";
 import { resolveTool } from "./tools/catalogue.js";
 import { appendNote } from "./context/dossier.js";
 import { taskSubjects } from "./agents/context.js";
@@ -304,6 +305,17 @@ export async function approve(id: string, by: DecisionBy) {
     dryRun: false,
     taskId: existing.taskId,
     approvedRequestId: existing.id,
+    // The same key the runner would have derived for this call, because this
+    // *is* that call — the agent prepared it, a person said yes, and now it
+    // happens. Without it the executed `ToolCall` carried a null key and the
+    // replay guard could not see it, so the task that prepared the letter
+    // could be resumed at a higher autonomy and send it a second time, and a
+    // duplicate card approved twice was two letters to the same person.
+    //
+    // Only where there is a task to scope it to. An action raised from the API
+    // with no task behind it has nothing to be a repeat *of*, and inventing a
+    // scope for it would make two deliberate sends a month apart read as one.
+    ...(existing.taskId ? { idempotencyKey: outwardKey(existing.taskId, existing.tool, existing.input) } : {}),
   });
 
   const ok = result.ok && !result.dryRun;

@@ -45,6 +45,7 @@ import { slackRouter } from "../src/routes/slack.js";
 import { APPROVAL_ACTIONS } from "../src/services/approvalCards.js";
 import { countPending, listRequests } from "../src/services/approvals.js";
 import { invokeTool } from "../src/services/tools/invoke.js";
+import { outwardKey } from "../src/services/tools/idempotency.js";
 import { COMMISSIONED_AUTONOMY } from "../src/services/agentRegistry.js";
 import { recordCreated } from "../src/services/agents/state.js";
 
@@ -328,6 +329,72 @@ async function main() {
   check("but refused outright — nobody is enrolled against a rehearsal", (await enrolments(secondLead.id)) === beforeSpecimen);
   const stillPending = specimenId ? await prisma.actionRequest.findUnique({ where: { id: specimenId } }) : null;
   check("leaving it PENDING rather than half-approved", stillPending?.status === "PENDING", String(stillPending?.status));
+
+  // --- 8. The same letter, asked for twice --------------------------------
+  //
+  // The hole this closes. An approved action is carried out through
+  // `invokeTool` like any other call, and until Aug 2026 `approve()` passed no
+  // idempotency key — so the executed `ToolCall` carried a null one and the
+  // replay guard could not see it. The task that prepared the letter could be
+  // resumed at a higher autonomy and send it again, and a duplicate card
+  // approved twice was two letters to the same person.
+  //
+  // Driven as the runner drives it: the same task, the same tool, the same
+  // input, and the key the runner itself derives.
+  console.log("\nAsking for an approved action a second time");
+
+  const enrolledOnce = await enrolments(lead.id);
+  const asAgain = await invokeTool(
+    "sequence.enrol",
+    { sequenceId: sequence.id, leadId: lead.id },
+    {
+      agentKey: AGENT_KEY,
+      userId: null,
+      dryRun: false,
+      taskId: task.id,
+      // Raised above EXECUTE_LEVEL for this one call, which is the case that
+      // makes the hole reachable: below it the repeat is held at a preview and
+      // the founder merely sees a duplicate card.
+      asOwner: true,
+      idempotencyKey: outwardKey(task.id, "sequence.enrol", { sequenceId: sequence.id, leadId: lead.id }),
+    },
+  );
+  check("the repeat is recognised as one, not carried out again", asAgain.replayed === true, JSON.stringify(asAgain.output ?? {}).slice(0, 100));
+  check("and the prospect is still enrolled exactly once", (await enrolments(lead.id)) === enrolledOnce, `${await enrolments(lead.id)} vs ${enrolledOnce}`);
+
+  // The assertion that actually pins the fix, and it has to name the *first*
+  // executed call rather than any of them: the replay attempt above carries a
+  // key of its own, so a query filtering on "has a key" would be satisfied by
+  // the check's own call and would pass with the defect in place. What is
+  // being asserted is that the call **approving made** carried one.
+  const executions = await prisma.toolCall.findMany({
+    where: { agentKey: AGENT_KEY, tool: "sequence.enrol", ok: true, dryRun: false },
+    orderBy: { createdAt: "asc" },
+    select: { idempotencyKey: true, output: true },
+  });
+  const byApproval = executions[0];
+  check("the approval carried the work out", Boolean(byApproval));
+  check(
+    "and recorded it under the key the runner would have used, so a repeat can be seen",
+    Boolean(byApproval?.idempotencyKey),
+    "the approved call carried no idempotency key — a resumed task would do it again",
+  );
+  check(
+    "which is the key the runner derives, not one of its own",
+    byApproval?.idempotencyKey === outwardKey(task.id, "sequence.enrol", { sequenceId: sequence.id, leadId: lead.id }),
+    String(byApproval?.idempotencyKey),
+  );
+  // Said out loud because it is the reason the enrolment count above is a weak
+  // witness: `enrol()` refuses a second enrolment on its own, so for this one
+  // tool the business harm is absorbed even with the guard broken. `email.send`
+  // has no such second line, which is why the ledger is what this asserts on.
+  //
+  // A replay is itself recorded as a call — that is the audit trail working, and
+  // it is how "this was asked for twice and happened once" is answerable later.
+  // So what is counted is the calls that were not replays.
+  const realWork = executions.filter((call) => !(call.output as { replayed?: boolean } | null)?.replayed);
+  check("exactly one real execution is on the ledger", realWork.length === 1, `${realWork.length} of ${executions.length} rows did the work`);
+  check("and the second attempt is recorded as the replay it was", executions.length === 2, `${executions.length} rows`);
 
   server.close();
   await reset();
