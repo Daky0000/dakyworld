@@ -706,6 +706,10 @@ export interface AppSettings {
     envManaged: { monthlyBudgetUsd: boolean; maxConcurrentRuns: boolean; timezone: boolean };
     /** Which pre-defined actor runs which kind of capture. */
     tasks: CaptureTaskInfo[];
+    /** What an agent may start on its own, and how far it may go. */
+    capabilities: CaptureCapability[];
+    /** How many capture runs one agent task may start. */
+    maxRunsPerTask: number;
   };
   analyst: {
     configured: boolean;
@@ -2049,6 +2053,34 @@ export interface CaptureTaskInfo {
   /** True when this task has been pointed at an actor other than the shipped one. */
   overridden: boolean;
   input: Record<string, unknown>;
+}
+
+/**
+ * What an agent is allowed to do with one capture task.
+ *
+ * Separate from `CaptureTaskInfo` because the two are separate decisions: that
+ * one says which actor runs the task, this one says whether the workforce may
+ * start it and how big one call may be. Switching a capability off leaves
+ * Quick capture — which a person drives — working exactly as before.
+ */
+export interface CaptureCapability {
+  kind: CaptureTargetKind;
+  label: string;
+  /** What an agent is told this is for. */
+  purpose: string;
+  /** What an agent is told to use instead. */
+  notFor: string;
+  actorId: string;
+  enabled: boolean;
+  maxTargets: number;
+  maxResults: number;
+  waitSecs: number;
+  /** Hours a capture stays current enough to reuse. 0 for a task that is never reused. */
+  cacheHours: number;
+  /** True only for a task whose targets are named, so a recent capture can be found again. */
+  cacheable: boolean;
+  /** True when a limit here has been changed from the shipped one. */
+  overridden: boolean;
 }
 
 /** The answer to "would this value run as this task?", before anything is charged. */

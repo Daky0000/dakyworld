@@ -330,6 +330,58 @@ The Inbox routes are behind the `inbox.view` permission, which the three roles
 that ship with outreach access carry — on the grounds that what a stranger wrote
 to the company is at least as sensitive as what the company sent.
 
+### Running an actor on an agent's say-so (added Sep 2026)
+
+`capture.find` and `capture.read` let an agent start an Apify run without a
+person having configured a lead source first — see the module note in
+CLAUDE.md. It is the second path that ingests content written by strangers, and
+the first where a *model* chooses what to fetch. Six things are decisions:
+
+- **The token never leaves the server and never reaches the model.** It lives
+  encrypted in `AppSetting`, is read inside `lib/apify.ts` per call, and appears
+  in no tool output and no error message. `checks/actorTools.ts` asserts both,
+  including on the failure paths — an error is the likelier of the two places
+  for a credential to escape.
+- **An agent cannot name an actor.** It names a *capability* — Google Maps, a
+  website, LinkedIn, Facebook, Instagram — and `captureActors.ts` decides which
+  actor that is. There is no input anywhere on this path that reaches an
+  arbitrary actor id, which is the whole of the "unauthorised actor" story: an
+  agent that could pass one could run anything published on Apify, at any price,
+  against any target.
+- **The values are validated against the capability before anything is
+  charged.** `checkForTask` normalises and refuses — a `/in/` LinkedIn URL, an
+  Instagram post, a Facebook personal profile — and a refused value never
+  reaches a run. Every generated number is clamped rather than trusted.
+- **Four ceilings, and one of them is new.** Targets per call, results per call
+  and the wait were the capability's; the monthly Apify budget, the per-run
+  charge cap and the concurrency limit were already `assertCanRun`'s. What did
+  not exist is a limit on *how many runs one task may start* — neither spend
+  ceiling stops a loop — and `capture.maxRunsPerTask` is counted off `ToolCall`
+  rows so it survives a restart.
+- **Scraped content is data, never instruction.** Every business name, bio and
+  description an actor returns is written by whoever owns that page, and it goes
+  into a model's context. `lib/untrusted.ts` states the boundary — a fence
+  around text going into a prompt, and a standing paragraph in the prompt of any
+  agent holding a tool marked `external` — and the tools that carry outside text
+  are marked as such in the catalogue rather than guessed at. There is no
+  keyword filter, deliberately: the phrasings are unbounded, and a filter strict
+  enough to catch them also deletes what a prospect wrote about their own
+  business. **Do not add a path that lets a scraped string choose a tool, a
+  recipient or an actor.**
+- **Nothing on this path is outward-facing, and it still needs approval.** The
+  tools are `charge` scope, so at the commissioned autonomy level an agent
+  prepares a capture and a person approves it. A capability can also be switched
+  off entirely under Settings → Lead capture, which stops the agents and leaves
+  Quick capture — driven by a person — working.
+
+**SSRF:** the fetching is done by Apify's infrastructure, not by this server, so
+a target URL an agent supplies is not a request from inside this network. The
+server's *own* fetches — `companyAudit.fetchSite` and every redirect hop — go
+through `routability()`, which resolves the host and refuses anything that is
+not a public address. That guard is the one to keep: a redirect is an address
+somebody else chose, and a loop written to follow them is the easiest place in
+this codebase to lose it.
+
 ## The website
 
 Everything in each `<head>` between the `BEGIN SEO` / `END SEO` markers is

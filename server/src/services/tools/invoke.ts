@@ -96,7 +96,12 @@ export class ToolRefused extends Error {
   }
 }
 
-export interface InvokeOptions extends ToolContext {
+/**
+ * `taskId` is optional here and required on `ToolContext`, so it is omitted
+ * and redeclared: a route calling a tool directly has no task, and every
+ * handler that reads one should get `null` rather than `undefined`.
+ */
+export interface InvokeOptions extends Omit<ToolContext, "taskId"> {
   /** Skips the grant and autonomy checks. Only ever set for a person acting directly. */
   asOwner?: boolean;
   /** The task this call belongs to, so a prepared action can be traced back to the work that proposed it. */
@@ -395,7 +400,7 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
   }
 
   const dryRun = permission.mustDryRun;
-  const context: ToolContext = { agentKey: options.agentKey, userId: options.userId, dryRun };
+  const context: ToolContext = { agentKey: options.agentKey, userId: options.userId, taskId: options.taskId ?? null, dryRun };
 
   if (dryRun) {
     // A tool that can't say what it would do must not be dry-run into silently
@@ -535,10 +540,31 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
     return { tool: key, callId, ok: true, output, dryRun: false, costUsd, durationMs };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
-    const message = (err as Error).message ?? "The tool failed.";
+    const message = toolErrorMessage(err);
     const callId = await record({ tool: key, options, ok: false, input: parsed.data, error: message, durationMs });
     return { tool: key, callId, ok: false, output: null, dryRun: false, error: message, costUsd: 0, durationMs };
   }
+}
+
+/**
+ * A tool that names its own failure gets the name carried through.
+ *
+ * An agent reading "Google Maps capture is switched off" has to infer whether
+ * that is worth trying again, worth working around, or worth escalating; an
+ * agent reading "ACTOR_DISABLED — Google Maps capture is switched off" does
+ * not. The code goes into the `ToolCall` row too, which is what makes "how
+ * often does this refuse, and for which reason" a query rather than a grep
+ * over prose.
+ *
+ * Anything with an upper-case `code` qualifies, not only this app's own
+ * errors: a Node `ECONNREFUSED` and a Prisma `P2002` are exactly as worth
+ * naming, and both are otherwise a sentence that could have come from
+ * anywhere.
+ */
+function toolErrorMessage(err: unknown): string {
+  const message = (err as Error)?.message ?? "The tool failed.";
+  const code = (err as { code?: unknown })?.code;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,}$/.test(code) ? `${code} — ${message}` : message;
 }
 
 /** How long a prepared action stays decidable before it has to be re-proposed. */

@@ -2224,6 +2224,7 @@ function CapturePanel({ settings }: { settings: AppSettings }) {
       <ErrorNote error={connect.error ?? disconnect.error} />
 
       <CaptureTasks settings={settings} />
+      <CaptureCapabilities settings={settings} />
       <CaptureBehaviour settings={settings} />
       <ActorHealthList />
     </Panel>
@@ -2331,6 +2332,185 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
       </div>
       <ErrorNote error={point.error ?? reset.error} />
     </div>
+  );
+}
+
+/**
+ * What the workforce may capture on its own.
+ *
+ * The pairings above answer "which actor runs a Google Maps search". This
+ * answers a different question that used to have no answer at all: whether an
+ * agent may start one, how big a call it may make, and how long it may wait.
+ *
+ * Switching one off stops the agents and leaves Quick capture alone, which is
+ * the distinction worth having a screen for — a task that is failing, or an
+ * actor whose price has moved, is a reason to stop the unattended runs long
+ * before it is a reason to stop a person capturing a lead they are looking at.
+ */
+function CaptureCapabilities({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const capabilities = settings.capture.capabilities ?? [];
+  const [open, setOpen] = useState<string | null>(null);
+
+  const change = useMutation({
+    mutationFn: ({ kind, patch }: { kind: string; patch: Record<string, number | boolean> }) =>
+      api.put<AppSettings>(`/settings/capture/capabilities/${kind}`, patch),
+    onSuccess: save,
+  });
+  const reset = useMutation({
+    mutationFn: (kind: string) => api.delete<AppSettings>(`/settings/capture/capabilities/${kind}`),
+    onSuccess: (result) => {
+      save(result);
+      setOpen(null);
+    },
+  });
+
+  if (!capabilities.length) return null;
+
+  return (
+    <div className="mt-8 border-t border-ink/10 pt-5">
+      <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">What the agents may run</div>
+      <p className="mb-4 max-w-2xl text-sm text-ink/55">
+        An agent can start these itself when a job needs businesses nobody here has heard of. Each one has a ceiling on how much a
+        single call may ask for, because the numbers an agent passes are generated rather than typed. Switching one off stops the
+        agents using it — Quick capture, which you drive, carries on working either way.
+      </p>
+
+      <div className="divide-y divide-ink/5 border border-line">
+        {capabilities.map((capability) => (
+          <div key={capability.kind} className="px-4 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-ink">{capability.label}</span>
+                  {capability.overridden && <Badge>changed</Badge>}
+                  {!capability.enabled && <Badge>off</Badge>}
+                </div>
+                <p className="mt-0.5 max-w-xl text-xs text-ink/45">{capability.purpose}</p>
+                <p className="mt-1 font-mono text-[10px] text-ink/35">
+                  up to {capability.maxTargets} target(s) · {capability.maxResults} result(s) · waits {capability.waitSecs}s
+                  {capability.cacheable && capability.cacheHours > 0 ? ` · reuses a capture under ${capability.cacheHours}h old` : ""}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <Toggle
+                  checked={capability.enabled}
+                  onChange={(value) => change.mutate({ kind: capability.kind, patch: { enabled: value } })}
+                  label={capability.enabled ? "On" : "Off"}
+                />
+                <button
+                  type="button"
+                  onClick={() => setOpen(open === capability.kind ? null : capability.kind)}
+                  className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline"
+                >
+                  {open === capability.kind ? "Done" : "Limits"}
+                </button>
+              </div>
+            </div>
+
+            {open === capability.kind && (
+              <form
+                className="mt-4 grid gap-3 border-t border-ink/5 pt-4 sm:grid-cols-4"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const form = new FormData(event.currentTarget);
+                  change.mutate({
+                    kind: capability.kind,
+                    patch: {
+                      maxTargets: Number(form.get("maxTargets")),
+                      maxResults: Number(form.get("maxResults")),
+                      waitSecs: Number(form.get("waitSecs")),
+                      // A task whose targets are not named can never be reused,
+                      // whatever is typed here — the server clamps it to zero
+                      // rather than storing a number that does nothing.
+                      cacheHours: capability.cacheable ? Number(form.get("cacheHours")) : 0,
+                    },
+                  });
+                }}
+              >
+                <Field label="Targets per call">
+                  <input name="maxTargets" type="number" min={1} max={50} defaultValue={capability.maxTargets} className="input" />
+                </Field>
+                <Field label="Results per call">
+                  <input name="maxResults" type="number" min={1} max={1000} defaultValue={capability.maxResults} className="input" />
+                </Field>
+                <Field label="Waits (seconds)">
+                  <input name="waitSecs" type="number" min={30} max={900} defaultValue={capability.waitSecs} className="input" />
+                </Field>
+                <Field label={capability.cacheable ? "Reuse under (hours)" : "Never reused"}>
+                  <input
+                    name="cacheHours"
+                    type="number"
+                    min={0}
+                    max={2160}
+                    defaultValue={capability.cacheHours}
+                    disabled={!capability.cacheable}
+                    className="input disabled:opacity-40"
+                  />
+                </Field>
+                <div className="flex items-center gap-3 sm:col-span-4">
+                  <Button type="submit" size="sm" disabled={change.isPending}>
+                    {change.isPending ? "Saving…" : "Save limits"}
+                  </Button>
+                  {capability.overridden && (
+                    <button
+                      type="button"
+                      onClick={() => reset.mutate(capability.kind)}
+                      disabled={reset.isPending}
+                      className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 hover:text-ink hover:underline"
+                    >
+                      Put back
+                    </button>
+                  )}
+                  <p className="text-xs text-ink/45">Not for: {capability.notFor}</p>
+                </div>
+              </form>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <RunsPerTask settings={settings} />
+      <ErrorNote error={change.error ?? reset.error} />
+    </div>
+  );
+}
+
+/**
+ * How many capture runs one agent task may start.
+ *
+ * The monthly budget and the per-run charge cap both stop spend and neither
+ * stops a loop: an agent that starts a run, reads a disappointing result and
+ * tries again with a different phrase can do that all night inside every other
+ * guard. This is the number that ends it, and it is counted off the audit
+ * trail so a restart mid-task does not reset it.
+ */
+function RunsPerTask({ settings }: { settings: AppSettings }) {
+  const save = useSaveSettings();
+  const [value, setValue] = useState(String(settings.capture.maxRunsPerTask ?? 6));
+  useEffect(() => setValue(String(settings.capture.maxRunsPerTask ?? 6)), [settings.capture.maxRunsPerTask]);
+
+  const write = useMutation({
+    mutationFn: (runs: number) => api.put<AppSettings>("/settings/capture", { maxRunsPerTask: runs }),
+    onSuccess: save,
+  });
+
+  return (
+    <form
+      className="mt-4 flex flex-wrap items-end gap-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        write.mutate(Number(value));
+      }}
+    >
+      <Field label="Capture runs one task may start" hint="A ceiling on the loop, not on the spend. The budget stops the money; this stops the retrying.">
+        <input type="number" min={1} max={50} value={value} onChange={(event) => setValue(event.target.value)} className="input w-28" />
+      </Field>
+      <Button type="submit" size="sm" variant="ghost" disabled={write.isPending || value === String(settings.capture.maxRunsPerTask)}>
+        {write.isPending ? "Saving…" : "Save"}
+      </Button>
+      <ErrorNote error={write.error} />
+    </form>
   );
 }
 

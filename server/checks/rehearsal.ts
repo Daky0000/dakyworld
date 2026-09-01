@@ -549,7 +549,7 @@ async function itStaysOutOfThePipeline() {
   const visible = await prisma.lead.create({ data: { contactName: `${MARK} pipeline visible`, rehearsal: false, source: "OTHER" } });
   const hidden = await prisma.lead.create({ data: { contactName: `${MARK} pipeline hidden`, rehearsal: true, source: "OTHER" } });
 
-  const ctx = { agentKey: AGENT_KEY, userId: null, dryRun: false };
+  const ctx = { agentKey: AGENT_KEY, userId: null, taskId: null, dryRun: false };
   const listed = (await readLeads.run({ search: MARK, limit: 50 }, ctx)) as Array<{ id: string }>;
   const ids = listed.map((lead) => lead.id);
   check("a rehearsal lead does not surface in a listing search", !ids.includes(hidden.id), JSON.stringify(ids));

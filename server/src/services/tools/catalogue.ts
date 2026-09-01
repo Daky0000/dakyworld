@@ -35,6 +35,8 @@ import { hunt } from "../hunt/run.js";
 import { estimateCost } from "../captureCost.js";
 import { resolveActor, actorInput, checkForTask, TASK_KINDS, type CaptureTask, type Checked } from "../captureActors.js";
 import { readCaptureConfig } from "../captureConfig.js";
+import { collectCapture, describeCapture, runCapture } from "../captureOnDemand.js";
+import { describeCapabilities } from "../actorCapabilities.js";
 import { getActorSchema, getMonthlyUsage } from "../../lib/apify.js";
 import { sendSlack } from "../../lib/slack.js";
 import { createIssue, listCommits, listIssues, listRepos } from "../../lib/github.js";
@@ -280,6 +282,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     requires: "database",
     spends: false,
     outward: false,
+    // Company names, categories and enrichment, all scraped off the businesses' own listings.
+    external: true,
     input: z.object({
       id: z.string().optional(),
       status: z.enum(["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"]).optional(),
@@ -363,6 +367,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     // screenshot is an Apify run. Both are small; neither is free.
     spends: true,
     outward: false,
+    // Research, the site's own copy and a read of its homepage.
+    external: true,
     input: z.object({
       leadId: z.string().min(1),
       skipResearch: z.boolean().default(false).describe("Skip the live-source pass, for a record that is already complete."),
@@ -408,6 +414,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     job: "research",
     spends: true,
     outward: false,
+    // Research, the sites' own copy and a read of their homepages.
+    external: true,
     input: z.object({
       leadIds: z.array(z.string().min(1)).min(1).max(50),
       skipLook: z.boolean().default(false).describe("Skip the screenshots and the model that reads them."),
@@ -502,6 +510,140 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       return `Run “${source.name}” on ${source.actorId}, expecting roughly ${estimate.results} results for ${cost}.`;
     },
     run: async (input) => runSource(input.sourceId, "MANUAL"),
+  },
+  {
+    key: "capture.find",
+    name: "Find businesses",
+    group: "Pipeline",
+    purpose:
+      "Search for businesses that are not in the pipeline yet — a trade and a place, like “dental clinics in Kumasi”. Starts a Google Maps run, waits for it, and files what it finds as leads. Costs money on every call. Use it when you need businesses nobody here has heard of; do not use it to look up a company you can already name, or to answer a general question about a market.",
+    scope: "charge",
+    requires: "apify",
+    spends: true,
+    outward: false,
+    // Business names, categories and addresses, written by the businesses.
+    external: true,
+    input: z.object({
+      searches: z
+        .array(z.string().min(2).max(200))
+        .min(1)
+        .max(20)
+        .describe("What to search for, one phrase per entry. Include the town — “law firms in Accra”. Extra phrases past the configured limit are dropped."),
+      maxResults: z
+        .number()
+        .int()
+        .min(1)
+        .max(1000)
+        .optional()
+        .describe("Businesses to bring back per search. Capped at the configured ceiling; asking for more is not an error, it is capped and said so."),
+      label: z.string().max(80).optional().describe("Names the list these land in on the Leads screen."),
+      waitSeconds: z
+        .number()
+        .int()
+        .min(30)
+        .max(900)
+        .optional()
+        .describe("How long to wait for results before handing back a run id to collect later. Capped at the configured ceiling."),
+    }),
+    preview: async (input, ctx) =>
+      describeCapture({ kind: "MAPS_SEARCH", values: input.searches, maxResults: input.maxResults, label: input.label, taskId: ctx.taskId }),
+    run: async (input, ctx) =>
+      runCapture({
+        kind: "MAPS_SEARCH",
+        values: input.searches,
+        maxResults: input.maxResults,
+        label: input.label,
+        waitSecs: input.waitSeconds,
+        taskId: ctx.taskId,
+      }),
+  },
+  {
+    key: "capture.read",
+    name: "Read a business's own pages",
+    group: "Pipeline",
+    purpose:
+      "Read the contact details a business publishes about itself — its own website, its LinkedIn company page, its Facebook Page or its Instagram account — and file what comes back as leads. Costs money on every call. Use it to fill in who to write to; do not use it to judge a website (company.audit reads its markup for nothing, site.look photographs it, audit.website reviews it properly).",
+    scope: "charge",
+    requires: "apify",
+    spends: true,
+    outward: false,
+    // Bios, page copy and business descriptions, all written by the business.
+    external: true,
+    input: z.object({
+      kind: z
+        .enum(["WEBSITE", "LINKEDIN_COMPANY", "FACEBOOK_PAGE", "INSTAGRAM"])
+        .describe(
+          "WEBSITE for a company's own site. LINKEDIN_COMPANY for a /company/ URL — personal /in/ profiles cannot be read. FACEBOOK_PAGE for a business Page, never a personal profile. INSTAGRAM for an account, given as a username or its URL.",
+        ),
+      targets: z
+        .array(z.string().min(2).max(300))
+        .min(1)
+        .max(30)
+        .describe("The addresses or handles to read. A value that is the wrong shape for the kind is refused before anything is charged, and the refusal says which kind it looked like."),
+      maxResults: z.number().int().min(1).max(1000).optional().describe("Capped at the configured ceiling for this kind."),
+      label: z.string().max(80).optional(),
+      fresh: z
+        .boolean()
+        .optional()
+        .describe("Run it even if these were captured recently. Without this, a target captured inside the freshness window is read back from the pipeline instead of being paid for again."),
+      waitSeconds: z.number().int().min(30).max(900).optional(),
+    }),
+    preview: async (input, ctx) =>
+      describeCapture({ kind: input.kind as CaptureTask, values: input.targets, maxResults: input.maxResults, label: input.label, taskId: ctx.taskId }),
+    run: async (input, ctx) =>
+      runCapture({
+        kind: input.kind as CaptureTask,
+        values: input.targets,
+        maxResults: input.maxResults,
+        label: input.label,
+        fresh: input.fresh,
+        waitSecs: input.waitSeconds,
+        taskId: ctx.taskId,
+      }),
+  },
+  {
+    key: "capture.result",
+    name: "Collect a capture",
+    group: "Pipeline",
+    purpose:
+      "The results of a capture run that was still going when it was started. Costs nothing and starts nothing — it reads the run and the leads it has filed so far.",
+    scope: "read",
+    // The run's record and its leads are both in this database; the poller
+    // that watches Apify is already running. Reading it needs no token, which
+    // is what lets an agent collect a run after the Owner's Apify month has
+    // been disconnected or the tool revoked.
+    requires: "database",
+    spends: false,
+    outward: false,
+    external: true,
+    input: z.object({ runId: z.string().min(1).max(64).describe("The run id a capture handed back when it was still running.") }),
+    run: async (input) => collectCapture(input.runId),
+  },
+  {
+    key: "capture.capabilities",
+    name: "What can be captured",
+    group: "Pipeline",
+    purpose:
+      "Which kinds of capture are switched on, what each one is for, what it must not be used for, and the ceilings on one call. Read this before planning a search rather than discovering a limit by hitting it.",
+    scope: "read",
+    requires: "database",
+    spends: false,
+    outward: false,
+    input: z.object({}),
+    run: async () => {
+      const capabilities = await describeCapabilities();
+      return capabilities.map((capability) => ({
+        kind: capability.kind,
+        name: capability.label,
+        available: capability.enabled,
+        useFor: capability.purpose,
+        doNotUseFor: capability.notFor,
+        mostTargetsPerCall: capability.maxTargets,
+        mostResultsPerCall: capability.maxResults,
+        waitsUpToSeconds: capability.waitSecs,
+        reusesACaptureYoungerThanHours: capability.cacheHours || null,
+      }));
+    },
   },
   {
     key: "capture.spend",
@@ -616,6 +758,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     requires: "apify",
     spends: true,
     outward: false,
+    // The evidence each verdict rests on, gathered off the businesses' own pages.
+    external: true,
     input: z.object({ key: z.string().min(1).max(64) }),
     preview: async (input) => {
       const thesis = await prisma.leadThesis.findUnique({ where: { key: input.key } });
@@ -997,6 +1141,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     requires: "database",
     spends: false,
     outward: false,
+    // A message a stranger wrote and sent here.
+    external: true,
     input: z.object({
       messageId: z.string().optional(),
       threadId: z.string().optional(),
@@ -1113,6 +1259,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     requires: "database",
     spends: false,
     outward: false,
+    // Their page title, meta description and whatever their markup says.
+    external: true,
     input: z.object({
       leadId: z.string().optional(),
       website: z.string().max(200).optional(),
@@ -1159,6 +1307,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     job: "vision",
     spends: true,
     outward: false,
+    // A description of their homepage, including any words printed on it.
+    external: true,
     input: z.object({
       website: z.string().min(1).max(200),
       companyName: z.string().max(200).optional(),
@@ -1185,6 +1335,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     // Nothing is sent anywhere and nothing is published — the report is a row
     // in this database with two files beside it.
     outward: false,
+    // Four reviewers quoting the site's own content back.
+    external: true,
     input: z.object({
       leadId: z.string().optional().describe("The lead whose website to review."),
       website: z.string().max(300).optional().describe("A web address, when there is no lead behind it."),
@@ -1269,6 +1421,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     requires: "database",
     spends: false,
     outward: false,
+    // The report, which quotes the site's own content.
+    external: true,
     input: z.object({
       auditId: z.string().optional(),
       leadId: z.string().optional().describe("The most recent review of this lead's site."),

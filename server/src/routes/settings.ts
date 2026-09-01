@@ -13,6 +13,11 @@ import { DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS, screenshotActorId } 
 import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
 import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
 import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from "../services/captureActors.js";
+import {
+  describeCapabilities,
+  maxRunsPerTask,
+  writeCapabilityOverride,
+} from "../services/actorCapabilities.js";
 import { isValidTimezone } from "../services/scheduler.js";
 import { AnalystError, verifyKey } from "../lib/anthropic.js";
 import {
@@ -164,6 +169,15 @@ async function describeCapture() {
     envManaged: captureEnvManaged(),
     /** Which pre-defined actor runs which kind of capture — see captureActors.ts. */
     tasks: await describeTasks(),
+    /**
+     * What an agent may start on its own, and how far it may go — see
+     * services/actorCapabilities.ts. Beside the pairings rather than in place
+     * of them: the two answer different questions, and the screen has to be
+     * able to say "this task runs on that actor, and an agent may not start
+     * it" without the second sentence looking like a fault in the first.
+     */
+    capabilities: await describeCapabilities(),
+    maxRunsPerTask: await maxRunsPerTask(),
   };
 }
 
@@ -628,11 +642,20 @@ settingsRouter.put("/capture", async (req, res, next) => {
         notify: z.enum(["OFF", "FAILURES", "ALL"]),
         notifyEmail: z.string().email().or(z.literal("")).nullable(),
         retentionDays: z.number().int().min(0).max(3650),
+        /**
+         * Not part of `CaptureConfig` — it governs agents rather than runs, and
+         * lives in its own setting. Accepted here so the Lead capture screen
+         * saves in one request rather than two, and split back out below.
+         */
+        maxRunsPerTask: z.number().int().min(1).max(50),
       })
       .partial()
       .parse(req.body);
 
-    await writeCaptureConfig(input);
+    const { maxRunsPerTask: perTask, ...config } = input;
+    if (perTask !== undefined) await setSetting(SETTING.CAPTURE_MAX_RUNS_PER_TASK, String(perTask));
+
+    await writeCaptureConfig(config);
     res.json(await describeAll(req));
   } catch (err) {
     next(err);
@@ -746,6 +769,56 @@ settingsRouter.put("/capture/screenshot-actor", async (req, res, next) => {
     if (wanted) await setSetting(SETTING.SCREENSHOT_ACTOR, wanted);
     else await deleteSetting(SETTING.SCREENSHOT_ACTOR);
     res.json({ current: await screenshotActorId() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * What an agent may do with one capture task: whether it may start it at all,
+ * how many targets and rows one call may ask for, how long a call waits, and
+ * how recent a capture has to be to be reused instead of paid for again.
+ *
+ * A separate endpoint from the actor pairing above because the two are
+ * separate decisions with separate consequences. Moving Google Maps onto a
+ * cheaper actor changes what a run costs; switching the capability off stops
+ * the workforce searching without touching Quick capture, which a person
+ * drives and which was never the thing anybody wanted stopped.
+ *
+ * Nothing here is validated against Apify. The numbers are clamped in
+ * `actorCapabilities.clean()` rather than rejected, because a ceiling stored
+ * as zero is a capability that refuses everything under a message about the
+ * input — a shape nobody would recognise as a bad setting.
+ */
+settingsRouter.put("/capture/capabilities/:kind", async (req, res, next) => {
+  try {
+    const kind = req.params.kind as CaptureTask;
+    if (!TASK_KINDS.includes(kind)) return res.status(404).json({ error: `There is no capture task called ${req.params.kind}.` });
+
+    const patch = z
+      .object({
+        enabled: z.boolean().optional(),
+        maxTargets: z.number().int().optional(),
+        maxResults: z.number().int().optional(),
+        waitSecs: z.number().int().optional(),
+        cacheHours: z.number().int().optional(),
+      })
+      .parse(req.body ?? {});
+
+    await writeCapabilityOverride(kind, patch);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Puts one capability back to the limits the app ships with. */
+settingsRouter.delete("/capture/capabilities/:kind", async (req, res, next) => {
+  try {
+    const kind = req.params.kind as CaptureTask;
+    if (!TASK_KINDS.includes(kind)) return res.status(404).json({ error: `There is no capture task called ${req.params.kind}.` });
+    await writeCapabilityOverride(kind, null);
+    res.json(await describeAll(req));
   } catch (err) {
     next(err);
   }

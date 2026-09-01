@@ -238,7 +238,7 @@ export async function freshPreview(request: ActionRequest): Promise<{ wouldDo: s
   try {
     const parsed = tool.input.safeParse(request.input);
     if (!parsed.success) return { wouldDo: "This can no longer be carried out — the tool no longer accepts what was prepared.", changed: true };
-    const wouldDo = await tool.preview(parsed.data, { agentKey: request.agentKey, userId: null, dryRun: true });
+    const wouldDo = await tool.preview(parsed.data, { agentKey: request.agentKey, userId: null, taskId: request.taskId, dryRun: true });
     return { wouldDo, changed: wouldDo.trim() !== request.wouldDo.trim() };
   } catch {
     // A preview that throws is not a reason to refuse the decision — the tool's

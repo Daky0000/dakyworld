@@ -37,10 +37,13 @@ import type { ToolDefinition } from "../tools/types.js";
  *   which is a thing worth knowing before the workforce is turned loose on
  *   four hundred leads.
  *
- * The one to keep an eye on is `capture.run`: it spends without being outward,
+ * The ones to keep an eye on are the capture tools — `capture.run`, and since
+ * Sep 2026 `capture.find` and `capture.read`: they spend without being outward,
  * so a brief that talked an agent into scraping a city would really scrape it.
- * Nothing in the shipped scenarios asks for that, and the ceiling on the run
- * plus the cost readout is what would show it.
+ * Nothing in the shipped scenarios asks for that, and three things would show
+ * it: the ceiling on the run, the cost readout, and `capture.maxRunsPerTask`,
+ * which is the only one of the three that stops a rehearsal repeating a search
+ * rather than merely reporting what it cost.
  *
  * **This is a floor, not the only gate.** `permissionFor` still applies the
  * agent's own card on top — its autonomy level and its dry-run flag — and for

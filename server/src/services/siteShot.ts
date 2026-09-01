@@ -1,4 +1,5 @@
-import { ApifyNotConfiguredError, apifyConfigured, getDatasetItems, getRun, runCost, startRun } from "../lib/apify.js";
+import { apifyConfigured } from "../lib/apify.js";
+import { runActor } from "./actorRun.js";
 import { cropPngTop, downscalePng, pngSize } from "./png.js";
 import { buildScreenshotInput, runOptionsFor, screenshotActorId } from "./screenshotActors.js";
 
@@ -92,8 +93,6 @@ const KEEP_ROWS = 2400;
 const MAX_IMAGE_BYTES = 4_500_000;
 /** Claude's ceiling, and the lowest of the three. */
 const MAX_IMAGE_EDGE = 8000;
-
-const POLL_EVERY_MS = 2500;
 
 export interface Screenshot {
   /** What we asked for. */
@@ -192,48 +191,50 @@ export async function captureHomepages(websites: string[], options: ShotOptions 
     { viewportWidth, viewportHeight, delayMs: 3000 },
   );
 
-  let run;
-  try {
-    run = await startRun(built.actorId, built.input, await runOptionsFor(wanted.length, built.actorId));
-  } catch (err) {
-    if (err instanceof ApifyNotConfiguredError) return failAll(err.message);
-    return failAll(`No screenshot was taken — Apify would not start the run: ${(err as Error).message}`);
-  }
-
   // The clock scales with the batch: twenty pages genuinely take longer than
   // one, and giving up early would throw away a run that has been paid for.
   const giveUpAfterMs = Math.min(600_000, 60_000 + wanted.length * 20_000);
-  const giveUpAt = Date.now() + giveUpAfterMs;
-  let finished = run;
-  while (finished.status === "READY" || finished.status === "RUNNING") {
-    if (Date.now() > giveUpAt) {
-      return failAll(`No screenshot was taken — the run was still going after ${Math.round(giveUpAfterMs / 1000)} seconds.`);
+
+  // Start, poll and read are `services/actorRun.ts` rather than a loop here.
+  // The loop that used to be in this function treated `ABORTING` and
+  // `TIMING-OUT` as finished — they are not terminal — so a run being killed
+  // was reported as a run that failed for no stated reason. Every message
+  // below is the one this function has always produced; only the machinery
+  // underneath them is now shared with the capture tools.
+  const result = await runActor(built.actorId, built.input, {
+    ...(await runOptionsFor(wanted.length, built.actorId)),
+    waitMs: giveUpAfterMs,
+    maxItemsRead: Math.max(10, wanted.length * 2),
+  });
+
+  if (!result.ok) {
+    switch (result.code) {
+      case "APIFY_NOT_CONFIGURED":
+      case "APIFY_AUTH_ERROR":
+        return failAll(result.message);
+      case "STILL_RUNNING":
+        return failAll(`No screenshot was taken — the run was still going after ${Math.round(giveUpAfterMs / 1000)} seconds.`);
+      case "APIFY_UNREACHABLE":
+        return failAll(`No screenshot was taken — Apify stopped answering: ${result.message}`);
+      case "DATASET_RETRIEVAL_FAILED":
+        return failAll(`The screenshots were taken but could not be read back: ${result.message}`);
+      case "ACTOR_FAILED":
+      case "ACTOR_ABORTED":
+      case "ACTOR_TIMEOUT":
+        return failAll(
+          `No screenshot was taken — the run ${(result.status ?? "failed").toLowerCase()}. Their site may block automated browsers.`,
+        );
+      default:
+        return failAll(`No screenshot was taken — Apify would not start the run: ${result.message}`);
     }
-    await wait(POLL_EVERY_MS);
-    try {
-      finished = await getRun(run.id);
-    } catch (err) {
-      return failAll(`No screenshot was taken — Apify stopped answering: ${(err as Error).message}`);
-    }
   }
 
-  if (finished.status !== "SUCCEEDED") {
-    return failAll(`No screenshot was taken — the run ${finished.status.toLowerCase()}. Their site may block automated browsers.`);
-  }
-
-  let items: Record<string, unknown>[];
-  try {
-    items = await getDatasetItems(finished.defaultDatasetId, Math.max(10, wanted.length * 2));
-  } catch (err) {
-    return failAll(`The screenshots were taken but could not be read back: ${(err as Error).message}`);
-  }
-
+  const items = result.items;
   // What one page cost, which is the number worth knowing when choosing an
   // actor. Apify reports per run, so it is shared out across the pictures that
   // actually came back.
-  const cost = await runCost(finished, built.actorId).catch(() => ({ totalUsd: null, events: null }));
   const withImages = items.filter((row) => typeof row.screenshotUrl === "string").length;
-  const perShot = cost.totalUsd != null && withImages > 0 ? cost.totalUsd / withImages : null;
+  const perShot = result.costUsd != null && withImages > 0 ? result.costUsd / withImages : null;
 
   for (const [index, entry] of wanted.entries()) {
     const item = matchItem(items, entry.url, index, wanted.length);
@@ -246,7 +247,7 @@ export async function captureHomepages(websites: string[], options: ShotOptions 
       results.set(entry.requested, none(`No screenshot came back for ${entry.url} — the run finished without producing an image for it.${said}`));
       continue;
     }
-    results.set(entry.requested, await readShot(entry, item!, imageUrl, finished.finishedAt ?? null, perShot, built, viewportWidth, keepRows));
+    results.set(entry.requested, await readShot(entry, item!, imageUrl, new Date().toISOString(), perShot, built, viewportWidth, keepRows));
   }
 
   return results;
@@ -356,7 +357,3 @@ export async function captureHomepage(website: string, options: ShotOptions = {}
 
 /** Which actor is doing this, for anything that needs to say so. */
 export { screenshotActorId };
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

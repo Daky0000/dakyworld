@@ -37,6 +37,27 @@ export const SETTING = {
    */
   CAPTURE_ACTORS: "capture.actors",
   /**
+   * What an agent is allowed to do with those actors, as JSON, holding only
+   * what has been changed from the shipped limits:
+   * `{"MAPS_SEARCH":{"enabled":false}}`.
+   *
+   * Separate from `CAPTURE_ACTORS` because the two answer different
+   * questions and are owned by different decisions. That one says *which*
+   * actor runs a task — a swap for a cheaper or better one, which changes
+   * nothing about who may run it. This one says whether an agent may start
+   * that task on its own, how many targets and rows one call may ask for, and
+   * how long it may wait. See services/actorCapabilities.ts.
+   */
+  CAPTURE_CAPABILITIES: "capture.capabilities",
+  /**
+   * How many actor runs one agent task may start. Blank uses the shipped
+   * ceiling. This is the per-workflow limit: the monthly budget and the
+   * per-run charge cap both stop *spend*, and neither stops a loop — an agent
+   * that starts a run, reads a disappointing result and tries again with a
+   * different phrase can do that all night inside every other guard.
+   */
+  CAPTURE_MAX_RUNS_PER_TASK: "capture.maxRunsPerTask",
+  /**
    * Which Apify actor takes the homepage screenshots. Blank uses the shipped
    * default (`i-scraper/website-screenshot`). A setting rather than a constant
    * because every screenshot actor does the same job at a different price, and
