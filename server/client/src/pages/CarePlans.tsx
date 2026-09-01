@@ -87,9 +87,9 @@ export function CarePlans() {
       />
 
       {notice && (
-        <div className="mb-6 flex items-center justify-between gap-4 border border-ink/15 bg-white px-4 py-3 text-sm">
+        <div className="overflow-hidden rounded-2xl mb-6 flex items-center justify-between gap-4 border border-line-strong bg-white px-4 py-3 text-sm">
           <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)} className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40 hover:text-ink">
+          <button type="button" onClick={() => setNotice(null)} className="font-mono text-[10px] uppercase tracking-[.14em] text-muted hover:text-ink">
             Dismiss
           </button>
         </div>
@@ -107,7 +107,7 @@ export function CarePlans() {
       </div>
 
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : !plans || plans.length === 0 ? (
         <EmptyState
           message="No care plans yet. A retainer is what turns a delivered project into recurring revenue — add one for a client you've already delivered for."
@@ -179,10 +179,10 @@ function PlanCard({
             {!plan.autoInvoice && plan.status === "ACTIVE" && <Badge tone="muted">Manual billing</Badge>}
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-ink/60">
+          <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted">
             <span className="text-ink">
               <Money amount={plan.monthlyFee} currency={plan.currency} />
-              <span className="text-ink/50"> / month</span>
+              <span className="text-muted"> / month</span>
             </span>
             <span>Day {plan.billingDay}</span>
             {plan.status === "ACTIVE" && plan.autoInvoice && plan.nextBillingAt && (
@@ -196,7 +196,7 @@ function PlanCard({
           <HoursBar plan={plan} />
 
           {reviewOverdue && (
-            <div className="mt-3 inline-flex items-center gap-2 border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+            <div className="mt-3 inline-flex items-center gap-2 rounded-xl border border-warn-line bg-warn-surface px-3 py-1.5 text-xs text-warn-text">
               Review due <RelativeTime value={plan.nextReviewAt} /> — every {plan.reviewEveryMonths} months
               <button
                 type="button"
@@ -208,7 +208,7 @@ function PlanCard({
             </div>
           )}
 
-          {churned && plan.churnReason && <div className="mt-3 text-xs text-ink/50">Churned: {plan.churnReason}</div>}
+          {churned && plan.churnReason && <div className="mt-3 text-xs text-muted">Churned: {plan.churnReason}</div>}
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
@@ -258,7 +258,7 @@ function HoursBar({ plan }: { plan: CarePlan }) {
   if (!usage) return null;
   if (usage.includedHours === null) {
     return (
-      <div className="mt-3 text-xs text-ink/45">
+      <div className="mt-3 text-xs text-muted">
         Unmetered · {usage.hoursUsed} h logged this period{plan.project ? "" : " (no project linked, so nothing is counted)"}
       </div>
     );
@@ -266,25 +266,25 @@ function HoursBar({ plan }: { plan: CarePlan }) {
 
   const ratio = usage.includedHours === 0 ? 1 : usage.hoursUsed / usage.includedHours;
   const over = usage.hoursUsed > usage.includedHours;
-  const tone = over ? "bg-red-500" : ratio > 0.8 ? "bg-amber-500" : "bg-ink/60";
+  const tone = over ? "bg-danger" : ratio > 0.8 ? "bg-warn" : "bg-ink/60";
 
   return (
     <div className="mt-3 max-w-md">
       <div className="flex items-baseline justify-between text-xs">
-        <span className="text-ink/60">
+        <span className="text-muted">
           {usage.hoursUsed} of {usage.includedHours} h this period
         </span>
-        <span className={over ? "text-red-600" : "text-ink/45"}>
+        <span className={over ? "text-danger-text" : "text-muted"}>
           {over
             ? `${Math.round((usage.hoursUsed - usage.includedHours) * 100) / 100} h over`
             : `${usage.hoursRemaining} h left`}
         </span>
       </div>
-      <div className="mt-1 h-1.5 w-full bg-ink/10">
+      <div className="mt-1 h-1.5 w-full bg-line">
         <div className={`h-full ${tone}`} style={{ width: `${Math.min(100, Math.max(2, ratio * 100))}%` }} />
       </div>
       {over && !plan.overageHourlyRate && (
-        <div className="mt-1 text-[11px] text-ink/45">No overage rate set — the extra hours won't be charged.</div>
+        <div className="mt-1 text-[11px] text-muted">No overage rate set — the extra hours won't be charged.</div>
       )}
     </div>
   );
@@ -297,19 +297,19 @@ function PlanHistory({ planId }: { planId: string }) {
     queryFn: () => api.get<CarePlan>(`/care-plans/${planId}`),
   });
 
-  if (isLoading) return <div className="mt-5 border-t border-ink/10 pt-4 text-sm text-ink/50">Loading history…</div>;
+  if (isLoading) return <div className="mt-5 border-t border-line pt-4 text-sm text-muted">Loading history…</div>;
   const cycles = data?.cycles ?? [];
 
   return (
-    <div className="mt-5 border-t border-ink/10 pt-4">
-      {data?.notes && <p className="mb-4 max-w-2xl text-sm text-ink/60">{data.notes}</p>}
+    <div className="mt-5 border-t border-line pt-4">
+      {data?.notes && <p className="mb-4 max-w-2xl text-sm text-muted">{data.notes}</p>}
       {cycles.length === 0 ? (
-        <p className="text-sm text-ink/45">Nothing billed yet. The first invoice goes out on the next billing day.</p>
+        <p className="text-sm text-muted">Nothing billed yet. The first invoice goes out on the next billing day.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead>
-              <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                 <th className="py-2 pr-4">Period</th>
                 <th className="py-2 pr-4">Fee</th>
                 <th className="py-2 pr-4">Hours</th>
@@ -334,27 +334,27 @@ function CycleRow({ cycle }: { cycle: CarePlanCycle }) {
   const included = cycle.includedHours === null || cycle.includedHours === undefined ? null : Number(cycle.includedHours);
 
   return (
-    <tr className="border-b border-ink/5 last:border-0">
+    <tr className="border-b border-line last:border-0">
       <td className="py-2 pr-4 font-medium">{period}</td>
       <td className="py-2 pr-4">
         <Money amount={cycle.monthlyFee} />
       </td>
-      <td className="py-2 pr-4 text-ink/70">
+      <td className="py-2 pr-4 text-ink">
         {cycle.settledAt ? (
           <>
             {Number(cycle.hoursUsed ?? 0)} h{included !== null ? ` / ${included}` : ""}
           </>
         ) : (
-          <span className="text-ink/40">counting…</span>
+          <span className="text-muted">counting…</span>
         )}
       </td>
       <td className="py-2 pr-4">
         {Number(cycle.overageAmount ?? 0) > 0 ? (
-          <span className="text-red-600">
+          <span className="text-danger-text">
             <Money amount={cycle.overageAmount ?? 0} /> ({Number(cycle.overageHours ?? 0)} h)
           </span>
         ) : (
-          <span className="text-ink/30">—</span>
+          <span className="text-muted">—</span>
         )}
       </td>
       <td className="py-2 pr-4">
@@ -370,7 +370,7 @@ function CycleRow({ cycle }: { cycle: CarePlanCycle }) {
             <Badge tone={cycle.invoice.status === "PAID" ? "positive" : "muted"}>{cycle.invoice.status}</Badge>
           </span>
         ) : (
-          <span className="text-ink/30">—</span>
+          <span className="text-muted">—</span>
         )}
       </td>
     </tr>

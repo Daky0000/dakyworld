@@ -94,8 +94,8 @@ export function AgentHiring() {
   return (
     <section className="space-y-3">
       <div>
-        <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Hiring</h2>
-        <p className="mt-0.5 text-xs text-ink/40">
+        <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Hiring</h2>
+        <p className="mt-0.5 text-xs text-muted">
           When an agent hits work no craft here covers, it says so. The Agent Creator decides whether that needs somebody new.
         </p>
       </div>
@@ -107,10 +107,10 @@ export function AgentHiring() {
               <span className="font-display text-lg tracking-[-.02em]">{auto ? "Hiring automatically" : "Asking you first"}</span>
               {auto && <Badge tone="warn">auto</Badge>}
             </div>
-            <p className="mt-1 text-sm text-ink/60">{policy.data?.explanation}</p>
-            {policy.data?.note && <p className="mt-1 text-sm text-amber-700">{policy.data.note}</p>}
+            <p className="mt-1 text-sm text-muted">{policy.data?.explanation}</p>
+            {policy.data?.note && <p className="mt-1 text-sm text-warn-text">{policy.data.note}</p>}
             {policy.data?.slackConnected && (
-              <p className="mt-1 text-xs text-ink/40">
+              <p className="mt-1 text-xs text-muted">
                 Also answerable in Slack — the card carries the same buttons, and <code>/dakyworld hiring auto</code> changes this setting.
               </p>
             )}
@@ -127,11 +127,11 @@ export function AgentHiring() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-display text-lg tracking-[-.02em]">{request.name}</span>
-                <code className="font-mono text-[11px] text-ink/45">{request.key}</code>
+                <code className="font-mono text-[11px] text-muted">{request.key}</code>
                 <Badge tone="muted">proposed by {request.proposedByKey}</Badge>
               </div>
-              <p className="mt-1 text-sm text-ink/60">{request.mission}</p>
-              <p className="mt-1 text-sm text-ink/45">
+              <p className="mt-1 text-sm text-muted">{request.mission}</p>
+              <p className="mt-1 text-sm text-muted">
                 Produces: {request.deliverable} · reports to <code className="font-mono text-[11px]">{request.managerKey}</code>
               </p>
             </div>
@@ -148,7 +148,7 @@ export function AgentHiring() {
           {/* The one line that stops a roster becoming forty agents doing a
               third of each other's jobs. Loud on purpose. */}
           {request.overlaps.length > 0 && (
-            <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
               Overlaps agents you already have:{" "}
               {request.overlaps.map((overlap) => `${overlap.name} (${Math.round(overlap.score * 100)}%)`).join(", ")}
             </p>
@@ -158,11 +158,11 @@ export function AgentHiring() {
             {open === request.id ? "Hide the argument" : "Why a new agent rather than existing work?"}
           </button>
           {open === request.id && (
-            <div className="mt-2 space-y-2 border-t border-line pt-3 text-sm text-ink/60">
+            <div className="mt-2 space-y-2 border-t border-line pt-3 text-sm text-muted">
               <p>{request.rationale}</p>
-              {request.skills.length > 0 && <p className="text-ink/45">Good at: {request.skills.join(", ")}</p>}
-              <p className="text-ink/45">Asks for: {request.toolkit.length > 0 ? request.toolkit.join(", ") : "no tools"}</p>
-              <p className="text-ink/40">
+              {request.skills.length > 0 && <p className="text-muted">Good at: {request.skills.join(", ")}</p>}
+              <p className="text-muted">Asks for: {request.toolkit.length > 0 ? request.toolkit.join(", ") : "no tools"}</p>
+              <p className="text-muted">
                 Approving employs it at level 1 with dry run on — it prepares work and nothing it decides takes effect until you raise that.
               </p>
             </div>
@@ -172,12 +172,12 @@ export function AgentHiring() {
 
       {openGaps.length > 0 && (
         <Card>
-          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Crafts nobody here has</p>
+          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Crafts nobody here has</p>
           <ul className="mt-2 space-y-2">
             {openGaps.map((gap) => (
               <li key={gap.id} className="text-sm">
-                <span className="text-ink/75">{gap.skillNeeded}</span>{" "}
-                <span className="text-ink/45">
+                <span className="text-ink">{gap.skillNeeded}</span>{" "}
+                <span className="text-muted">
                   — asked for by {gap.timesRequested} agent{gap.timesRequested === 1 ? "" : "s"} · {gap.status.toLowerCase().replace("_", " ")} ·{" "}
                   <RelativeTime value={gap.createdAt} />
                 </span>

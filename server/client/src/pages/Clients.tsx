@@ -14,13 +14,13 @@ export function Clients() {
     <div>
       <PageHeader title="Clients" subtitle="Every company you've worked with — projects, invoices, and care plans in one place." />
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : !clients || clients.length === 0 ? (
         <EmptyState message="No clients yet. Clients are created automatically when a proposal is accepted." />
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
               <th className="px-4 py-3">Client</th>
               <th className="px-4 py-3">Sector</th>
               <th className="px-4 py-3">Lifetime value</th>
@@ -30,12 +30,12 @@ export function Clients() {
           </thead>
           <tbody>
             {clients.map((c) => (
-              <tr key={c.id} className="border-b border-ink/5 last:border-0 hover:bg-ink/[.02]">
+              <tr key={c.id} className="border-b border-line last:border-0 hover:bg-sunken">
                 <td className="px-4 py-3">
                   <Link to={`/clients/${c.id}`} className="font-medium hover:underline">
                     {c.name}
                   </Link>
-                  <div className="text-xs text-ink/50">{c.email}</div>
+                  <div className="text-xs text-muted">{c.email}</div>
                 </td>
                 <td className="px-4 py-3">{c.sector ?? "—"}</td>
                 <td className="px-4 py-3">

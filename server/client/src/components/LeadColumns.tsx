@@ -102,7 +102,7 @@ export function CaptureTag({ method }: { method: CaptureMethod | undefined }) {
 // --- Rendering -------------------------------------------------------------
 
 function Empty() {
-  return <span className="text-ink/25">—</span>;
+  return <span className="text-muted">—</span>;
 }
 
 /**
@@ -129,7 +129,7 @@ export function LeadCell({
         value={lead.status}
         onChange={(event) => onStatus(event.target.value)}
         onClick={(event) => event.stopPropagation()}
-        className="border border-ink/20 bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
+        className="rounded-full border border-line-strong bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
       >
         {STATUSES.map((status) => (
           <option key={status} value={status}>
@@ -213,7 +213,7 @@ export function LeadCell({
       return <Money amount={value as string} />;
     case "DATE":
       return field.key === "createdAt" ? (
-        <span className="text-xs text-ink/40">
+        <span className="text-xs text-muted">
           <RelativeTime value={String(value)} />
         </span>
       ) : (
@@ -223,7 +223,7 @@ export function LeadCell({
       return <span>{value === true || value === "true" ? "Yes" : "No"}</span>;
     case "LONG_TEXT":
       return (
-        <span className="block max-w-[22rem] truncate text-ink/70" title={String(value)}>
+        <span className="block max-w-[22rem] truncate text-ink" title={String(value)}>
           {String(value)}
         </span>
       );
@@ -296,7 +296,7 @@ export function LeadCellEditor({
     }
   };
 
-  const shared = "w-full min-w-[6rem] border border-ink/25 bg-white px-2 py-1 text-sm outline-none focus:border-ink";
+  const shared = "rounded-[10px] w-full min-w-[6rem] border border-line-strong bg-white px-2 py-1 text-sm outline-none focus:border-ink";
 
   if (field.key === "status" || field.key === "source") {
     const options = field.key === "status" ? STATUSES : SOURCES;
@@ -529,12 +529,12 @@ export function ColumnManager({
     >
       <div className="space-y-4">
         {save.isError && (
-          <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
             {save.error instanceof Error ? save.error.message : "Could not save the columns"}
           </p>
         )}
 
-        <p className="text-sm text-ink/60">
+        <p className="text-sm text-muted">
           Rename anything, reorder it, hide what you don't need, and add columns of your own. Columns marked{" "}
           <Badge tone="muted">lead field</Badge> feed the pipeline itself — filters, scoring and the conversion to a client — so
           their meaning is fixed even though their label isn't.
@@ -542,13 +542,13 @@ export function ColumnManager({
 
         <div className="rounded-2xl border border-line bg-white">
           {fields.map((field, index) => (
-            <div key={`${field.key}-${index}`} className="flex flex-wrap items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
+            <div key={`${field.key}-${index}`} className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 last:border-0">
               <div className="flex flex-col">
                 <button
                   type="button"
                   onClick={() => move(index, -1)}
                   disabled={index === 0}
-                  className="px-1 text-[10px] leading-none text-ink/40 transition hover:text-ink disabled:opacity-20"
+                  className="px-1 text-[10px] leading-none text-muted transition hover:text-ink disabled:opacity-20"
                   aria-label={`Move ${field.label} up`}
                 >
                   ▲
@@ -557,7 +557,7 @@ export function ColumnManager({
                   type="button"
                   onClick={() => move(index, 1)}
                   disabled={index === fields.length - 1}
-                  className="px-1 text-[10px] leading-none text-ink/40 transition hover:text-ink disabled:opacity-20"
+                  className="px-1 text-[10px] leading-none text-muted transition hover:text-ink disabled:opacity-20"
                   aria-label={`Move ${field.label} down`}
                 >
                   ▼
@@ -567,26 +567,26 @@ export function ColumnManager({
               <input
                 value={field.label}
                 onChange={(event) => update(index, { label: event.target.value })}
-                className="w-44 border border-ink/15 px-2 py-1 text-sm outline-none transition focus:border-ink/50"
+                className="rounded-[10px] w-44 border border-line-strong px-2 py-1 text-sm outline-none transition focus:border-ink/50"
               />
 
               {field.builtin ? (
                 <span className="flex items-center gap-2">
                   <Badge tone="muted">lead field</Badge>
-                  <span className="font-mono text-[10px] text-ink/35">{field.key}</span>
+                  <span className="font-mono text-[10px] text-muted">{field.key}</span>
                 </span>
               ) : (
                 <>
                   <input
                     value={field.key}
                     onChange={(event) => update(index, { key: event.target.value })}
-                    className="w-36 rounded-lg border border-line bg-cream px-2 py-1 font-mono text-[11px] outline-none"
+                    className="w-36 rounded-xl border border-line bg-cream px-2 py-1 font-mono text-[11px] outline-none"
                     title="Storage key — change this and existing values move with it"
                   />
                   <select
                     value={field.type}
                     onChange={(event) => update(index, { type: event.target.value as LeadFieldType })}
-                    className="border border-ink/15 bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
+                    className="rounded-full border border-line-strong bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
                   >
                     {FIELD_TYPES.map((type) => (
                       <option key={type} value={type}>
@@ -599,7 +599,7 @@ export function ColumnManager({
 
               <span className="flex-1" />
 
-              <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+              <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                 <input
                   type="checkbox"
                   checked={!field.hidden}
@@ -612,20 +612,20 @@ export function ColumnManager({
               <button
                 type="button"
                 onClick={() => setDraft(fields.filter((_, position) => position !== index))}
-                className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 transition hover:text-red-600"
+                className="font-mono text-[10px] uppercase tracking-[.12em] text-muted transition hover:text-danger-text"
               >
                 Remove
               </button>
             </div>
           ))}
-          {fields.length === 0 && <p className="px-3 py-4 text-sm text-ink/50">No columns. Add one below.</p>}
+          {fields.length === 0 && <p className="px-3 py-4 text-sm text-muted">No columns. Add one below.</p>}
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <select
             value={addKey}
             onChange={(event) => setAddKey(event.target.value)}
-            className="border border-ink/15 bg-white px-2 py-1.5 text-sm"
+            className="rounded-[10px] border border-line-strong bg-white px-2 py-1.5 text-sm"
           >
             <option value="">Add a column…</option>
             <option value="__custom">New column of my own</option>
@@ -641,13 +641,13 @@ export function ColumnManager({
             Add
           </Button>
           {data && (
-            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
               {data.scope === "group" ? "This batch has its own columns" : data.scope === "default" ? "Saved default set" : "Built-in set"}
             </span>
           )}
         </div>
 
-        <p className="text-xs text-ink/40">
+        <p className="text-xs text-muted">
           Removing a column only takes it off the table — the values it held stay on the leads, and adding the column back shows them
           again.
         </p>

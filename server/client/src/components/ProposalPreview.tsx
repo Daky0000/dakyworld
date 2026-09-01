@@ -38,7 +38,7 @@ export function ProposalPreview({
         <span className="flex flex-wrap items-center gap-2">
           <Badge tone="muted">{proposal.status.toLowerCase()}</Badge>
           <span>{proposal.client?.name ?? proposal.lead?.companyName ?? proposal.lead?.contactName ?? "Unassigned"}</span>
-          {proposal.body && <span className="text-ink/40">· argued from {proposal.body.findings.length} findings</span>}
+          {proposal.body && <span className="text-muted">· argued from {proposal.body.findings.length} findings</span>}
         </span>
       }
       footer={
@@ -49,14 +49,14 @@ export function ProposalPreview({
           <a
             href={`${pdf}?download=1`}
             download
-            className="inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-cream transition hover:bg-ink/90"
+            className="rounded-full inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-cream transition hover:bg-ink/90"
           >
             Download PDF
           </a>
           <a
             href={docx}
             download
-            className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+            className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
           >
             Download Word
           </a>
@@ -77,7 +77,7 @@ export function ProposalPreview({
         title={`${proposal.title} — preview`}
         className="h-[74vh] w-full rounded-2xl border border-line bg-cream"
       />
-      <p className="mt-3 text-xs text-ink/40">
+      <p className="mt-3 text-xs text-muted">
         This is the document itself, not a preview of it — what you see here is what downloads and what the client receives.
       </p>
     </Drawer>

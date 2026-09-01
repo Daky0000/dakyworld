@@ -55,23 +55,23 @@ const STATUS_LABEL: Record<AgentTaskStatus, string> = {
  * anonymous grey dot.
  */
 export const STEP_STYLE: Record<AgentStepKind, { mark: string; tone: string }> = {
-  STARTED: { mark: "▸", tone: "text-ink/40" },
-  THOUGHT: { mark: "·", tone: "text-ink/45" },
+  STARTED: { mark: "▸", tone: "text-muted" },
+  THOUGHT: { mark: "·", tone: "text-muted" },
   TOOL_CALL: { mark: "•", tone: "text-blue" },
-  PREPARED: { mark: "◇", tone: "text-amber-600" },
-  REFUSED: { mark: "×", tone: "text-red-600" },
+  PREPARED: { mark: "◇", tone: "text-warn-text" },
+  REFUSED: { mark: "×", tone: "text-danger-text" },
   DELEGATED: { mark: "↳", tone: "text-blue" },
   CONSULTED: { mark: "?", tone: "text-blue" },
   HANDED_OFF: { mark: "⇢", tone: "text-blue" },
-  GAP_RAISED: { mark: "◦", tone: "text-amber-600" },
-  REMEMBERED: { mark: "✱", tone: "text-ink/50" },
-  NOTED: { mark: "✎", tone: "text-ink/50" },
-  BLOCKED: { mark: "!", tone: "text-amber-600" },
-  FINISHED: { mark: "✓", tone: "text-emerald-600" },
-  FAILED: { mark: "×", tone: "text-red-600" },
-  INTERRUPTED: { mark: "‖", tone: "text-ink/40" },
-  RESUMED: { mark: "▸", tone: "text-ink/40" },
-  SERVING: { mark: "◐", tone: "text-ink/40" },
+  GAP_RAISED: { mark: "◦", tone: "text-warn-text" },
+  REMEMBERED: { mark: "✱", tone: "text-muted" },
+  NOTED: { mark: "✎", tone: "text-muted" },
+  BLOCKED: { mark: "!", tone: "text-warn-text" },
+  FINISHED: { mark: "✓", tone: "text-positive-text" },
+  FAILED: { mark: "×", tone: "text-danger-text" },
+  INTERRUPTED: { mark: "‖", tone: "text-muted" },
+  RESUMED: { mark: "▸", tone: "text-muted" },
+  SERVING: { mark: "◐", tone: "text-muted" },
 };
 
 /** Shared with the rehearsal room, which shows the same kinds interleaved across agents. */
@@ -122,9 +122,9 @@ export function AgentWork({ agent }: { agent: AgentDetail }) {
     <section className="space-y-4">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it is working on</h3>
+          <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it is working on</h3>
           {data && (
-            <p className="mt-1 text-sm text-ink/55">
+            <p className="mt-1 text-sm text-muted">
               {running.length > 0 ? `${running.length} in flight · ` : ""}
               {queued.length} queued · {waiting.length} waiting on you · {data.summary.done} done
               {data.summary.spendUsd > 0 && ` · $${data.summary.spendUsd.toFixed(2)} in 30 days`}
@@ -137,16 +137,16 @@ export function AgentWork({ agent }: { agent: AgentDetail }) {
       </div>
 
       {agent.status !== "ACTIVE" && (
-        <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
           {agent.name} is a {agent.status.toLowerCase()}. You can queue work for it now, but it will not pick anything up until you set it to
           Active.
         </p>
       )}
 
       {!data ? (
-        <p className="text-sm text-ink/50">Loading…</p>
+        <p className="text-sm text-muted">Loading…</p>
       ) : running.length + queued.length + waiting.length + finished.length === 0 ? (
-        <p className="border border-line bg-cream px-3 py-3 text-sm text-ink/55">
+        <p className="rounded-xl border border-line bg-cream px-3 py-3 text-sm text-muted">
           Nothing yet. Give it something to do — describe the job the way you would to a person, and it will use the tools it has been
           granted to work it out.
         </p>
@@ -180,7 +180,7 @@ function Group({
 }) {
   return (
     <div>
-      {label && <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">{label}</p>}
+      {label && <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</p>}
       <div className="space-y-1.5">
         {tasks.map((task) => (
           <button
@@ -188,7 +188,7 @@ function Group({
             type="button"
             onClick={() => onOpen(task.id)}
             className={`block w-full border px-3 py-2.5 text-left transition ${
-              live ? "border-blue/40 bg-blue/[.04]" : muted ? "border-line bg-white hover:bg-ink/[.02]" : "border-line bg-white hover:bg-ink/[.02]"
+              live ? "border-blue/40 bg-blue/[.04]" : muted ? "border-line bg-white hover:bg-sunken" : "border-line bg-white hover:bg-sunken"
             }`}
           >
             <span className="flex items-start justify-between gap-3">
@@ -198,24 +198,24 @@ function Group({
                   <span className="truncate text-sm font-medium">{task.title}</span>
                 </span>
                 {(task.pausedBecause || task.summary || task.blockedReason || task.error) && (
-                  <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-ink/55">
+                  <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-muted">
                     {task.pausedBecause ?? task.blockedReason ?? task.error ?? task.summary}
                   </span>
                 )}
-                <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">
+                <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 font-mono text-[10px] uppercase tracking-[.1em] text-muted">
                   {/* Paused reads instead of "queued", not beside it. The
                       status is the same and the news is not: this one is
                       waiting on a vendor and will start itself. */}
-                  <span className={task.paused ? "text-amber-700" : undefined}>
+                  <span className={task.paused ? "text-warn-text" : undefined}>
                     {task.paused ? "paused" : STATUS_LABEL[task.status]}
                   </span>
                   {task.paused && task.pausedUntil && (
-                    <span className="text-amber-700">
+                    <span className="text-warn-text">
                       back <RelativeTime value={task.pausedUntil} />
                     </span>
                   )}
                   {task.toolCalls > 0 && <span>{task.toolCalls} tool call{task.toolCalls === 1 ? "" : "s"}</span>}
-                  {task.dryRunCalls > 0 && <span className="text-amber-700">{task.dryRunCalls} prepared</span>}
+                  {task.dryRunCalls > 0 && <span className="text-warn-text">{task.dryRunCalls} prepared</span>}
                   {task.delegated > 0 && <span>{task.delegated} delegated</span>}
                   <RelativeTime value={task.finishedAt ?? task.startedAt ?? task.createdAt} />
                 </span>
@@ -292,7 +292,7 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
       footer={
         task && (
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+            <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">
               {task.toolCalls} tool call{task.toolCalls === 1 ? "" : "s"} · ${task.costUsd.toFixed(4)}
               {task.attempts > 1 && ` · attempt ${task.attempts}`}
               {task.resumesFrom && ` · saved at step ${task.resumesFrom.steps}`}
@@ -323,15 +323,15 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
       }
     >
       {!task ? (
-        <p className="text-sm text-ink/50">Loading…</p>
+        <p className="text-sm text-muted">Loading…</p>
       ) : (
         <div className="space-y-6">
-          {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+          {notice && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
 
           {task.status === "BLOCKED" && (
-            <div className="border border-amber-200 bg-amber-50 px-4 py-3">
-              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-amber-800">It stopped and asked</p>
-              <p className="mt-1.5 text-sm text-amber-900">{task.blockedReason}</p>
+            <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5">
+              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">It stopped and asked</p>
+              <p className="mt-1.5 text-sm text-warn-text">{task.blockedReason}</p>
               <div className="mt-3">
                 <Field label="Your answer" hint="Added to the brief. What it was originally asked stays on the record." full>
                   <textarea rows={2} className="input" value={answer} onChange={(event) => setAnswer(event.target.value)} />
@@ -341,30 +341,30 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
           )}
 
           {task.status === "NEEDS_APPROVAL" && (
-            <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
               {task.dryRunCalls} action{task.dryRunCalls === 1 ? " was" : "s were"} prepared and not carried out — {task.agent.name} is in dry
               run or below the autonomy those tools need. Read the timeline, then approve it. To stop being asked, raise its autonomy on its
               own card.
             </p>
           )}
 
-          {task.error && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{task.error}</p>}
+          {task.error && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{task.error}</p>}
 
           {task.summary && (
             <section>
-              <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it says it did</h4>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink/75">{task.summary}</p>
+              <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it says it did</h4>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{task.summary}</p>
             </section>
           )}
 
           <section>
-            <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it was asked</h4>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink/65">{task.brief}</p>
+            <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it was asked</h4>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted">{task.brief}</p>
             {linked.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {linked.map((entry, index) => (
-                  <span key={index} className="rounded-lg border border-line bg-cream px-2 py-0.5 text-xs text-ink/60">
-                    <span className="font-mono text-[9px] uppercase tracking-[.1em] text-ink/40">{entry!.label}</span> {entry!.text}
+                  <span key={index} className="rounded-xl border border-line bg-cream px-2 py-0.5 text-xs text-muted">
+                    <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted">{entry!.label}</span> {entry!.text}
                   </span>
                 ))}
               </div>
@@ -372,7 +372,7 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
           </section>
 
           <section>
-            <h4 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">
+            <h4 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
               What it did{task.status === "RUNNING" && <span className="ml-2 text-blue">· still going</span>}
             </h4>
             <ol className="space-y-1.5">
@@ -384,28 +384,28 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
                       {style.mark}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm leading-relaxed text-ink/75">{step.message}</span>
-                      <span className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-ink/35">
+                      <span className="block text-sm leading-relaxed text-ink">{step.message}</span>
+                      <span className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
                         <span className={style.tone}>{step.kind.toLowerCase().replace("_", " ")}</span>
-                        {step.tool && <code className="text-ink/40">{step.tool}</code>}
+                        {step.tool && <code className="text-muted">{step.tool}</code>}
                         <RelativeTime value={step.createdAt} />
                       </span>
                     </span>
                   </li>
                 );
               })}
-              {task.status === "RUNNING" && task.steps.length === 0 && <li className="text-sm text-ink/45">Thinking…</li>}
+              {task.status === "RUNNING" && task.steps.length === 0 && <li className="text-sm text-muted">Thinking…</li>}
             </ol>
           </section>
 
           {task.children.length > 0 && (
             <section>
-              <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Handed to others</h4>
-              <ul className="space-y-1 text-sm text-ink/65">
+              <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">Handed to others</h4>
+              <ul className="space-y-1 text-sm text-muted">
                 {task.children.map((child) => (
                   <li key={child.id}>
                     · {child.agent.name} — {child.title}{" "}
-                    <span className="text-ink/40">({STATUS_LABEL[child.status]})</span>
+                    <span className="text-muted">({STATUS_LABEL[child.status]})</span>
                   </li>
                 ))}
               </ul>
@@ -413,7 +413,7 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
           )}
 
           {task.parent && (
-            <p className="text-xs text-ink/45">
+            <p className="text-xs text-muted">
               Handed to {task.agent.name} by {task.parent.agent.name}, as part of “{task.parent.title}”.
             </p>
           )}
@@ -478,7 +478,7 @@ function GiveTaskDrawer({
       }
     >
       <div className="space-y-4">
-        {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+        {notice && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
 
         <Field label="What is it" full hint="One line, for the board.">
           <input className="input" autoFocus value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -500,7 +500,7 @@ function GiveTaskDrawer({
           </select>
         </Field>
 
-        <p className="border border-line bg-cream px-3 py-2 text-xs leading-relaxed text-ink/55">
+        <p className="rounded-xl border border-line bg-cream px-3 py-2 text-xs leading-relaxed text-muted">
           It has {agent.toolkit.length} tool{agent.toolkit.length === 1 ? "" : "s"} and is at level {agent.autonomyLevel}
           {agent.dryRun ? " with dry run on" : ""}. Anything it cannot carry out at that setting it will prepare instead, and the task will
           come back to you to approve.
@@ -550,9 +550,9 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
   return (
     <section className="space-y-3">
       <div>
-        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it remembers</h3>
+        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it remembers</h3>
         {data && (
-          <p className="mt-1 text-sm text-ink/55">
+          <p className="mt-1 text-sm text-muted">
             {data.summary.total} across {data.summary.subjects} subject{data.summary.subjects === 1 ? "" : "s"}
             {data.summary.neverUsed > 0 && ` · ${data.summary.neverUsed} never recalled`}
             {agent.sharedMemories > 0 && ` · including ${agent.sharedMemories} the whole company holds`}
@@ -561,7 +561,7 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
       </div>
 
       {memories.length === 0 ? (
-        <p className="border border-line bg-cream px-3 py-2.5 text-sm text-ink/55">
+        <p className="rounded-xl border border-line bg-cream px-3 py-2.5 text-sm text-muted">
           Nothing yet. It writes these itself as it works — a decision and why, what came of it, something it learnt about a client. You can
           also tell it something directly below.
         </p>
@@ -575,29 +575,29 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
               }`}
             >
               <span className="min-w-0 flex-1">
-                <span className="block text-sm leading-relaxed text-ink/75">{memory.content}</span>
-                <span className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-ink/35">
+                <span className="block text-sm leading-relaxed text-ink">{memory.content}</span>
+                <span className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
                   {/* Marked, because these are the company's rather than this
                       agent's — and forgetting one would take it away from all
                       of them, which is why this row doesn't offer to. */}
                   {memory.scope === "SHARED" && <span className="text-blue">every agent</span>}
                   <span>{memory.kind.toLowerCase()}</span>
-                  <code className="text-ink/40">{memory.subject}</code>
+                  <code className="text-muted">{memory.subject}</code>
                   <span>importance {memory.importance}</span>
-                  <span className={memory.useCount === 0 ? "text-amber-700" : ""}>
+                  <span className={memory.useCount === 0 ? "text-warn-text" : ""}>
                     {memory.useCount === 0 ? "never recalled" : `recalled ${memory.useCount}×`}
                   </span>
                 </span>
               </span>
               {memory.scope === "SHARED" ? (
-                <span className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-ink/25" title="Shared with every agent — manage it on the Agents screen">
+                <span className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-muted" title="Shared with every agent — manage it on the Agents screen">
                   shared
                 </span>
               ) : (
                 <button
                   type="button"
                   onClick={() => remove.mutate(memory.id)}
-                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-ink/35 transition hover:text-ink"
+                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
                 >
                   Forget
                 </button>
@@ -607,7 +607,7 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
         </div>
       )}
 
-      <div className="border-t border-ink/10 pt-3">
+      <div className="border-t border-line pt-3">
         <Field label="Tell it something" full hint="Filed as a standing preference — it is shown on every task, not just one subject.">
           <div className="flex gap-2">
             <input
@@ -621,7 +621,7 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
             </Button>
           </div>
         </Field>
-        {notice && <p className="mt-2 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+        {notice && <p className="mt-2 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
       </div>
     </section>
   );

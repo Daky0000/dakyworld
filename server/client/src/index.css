@@ -13,6 +13,15 @@ body {
   letter-spacing: -0.03em;
 }
 
+/* Money, counts and scores sit in columns and get compared down the column, so
+   their digits are all one width. Space Grotesk's proportional figures make a
+   column of GHS totals look ragged where nothing is actually wrong. */
+.font-display,
+.font-mono,
+table {
+  font-variant-numeric: tabular-nums;
+}
+
 ::selection {
   background: theme("colors.lime");
   color: theme("colors.ink");
@@ -24,12 +33,36 @@ body {
   outline-offset: 3px;
 }
 
+/* §38. This was the one accessibility rule in the design system with no
+   implementation anywhere in the OS. It matters more here than on the website:
+   the live dots on the agents floor pulse forever, and "forever" is exactly
+   what this preference is asking to stop. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Hover lifts are the one thing worth keeping legible rather than instant:
+     with the transform gone the button still has to say it is being pointed
+     at, so the elevation stays and only the movement goes. */
+  .transition,
+  [class*="hover:-translate-y"]:hover {
+    transform: none !important;
+  }
+}
+
 @layer components {
   /* §42: 12px corners, blue focus with a soft ring. Calm, not colourful. */
   .input {
     @apply w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm outline-none transition
-           placeholder:text-ink/30
-           focus:border-blue focus:shadow-[0_0_0_3px_rgba(49,87,255,.10)];
+           placeholder:text-faint
+           focus:border-blue focus:shadow-[0_0_0_3px_rgba(49,87,255,.10)]
+           disabled:bg-sunken disabled:text-faint;
   }
 
   /* Compact control for filter bars and toolbars, where a full .input is too loud. */
@@ -41,8 +74,16 @@ body {
 
   /* JSON editors: actor input and field maps. */
   .code-input {
-    @apply w-full rounded-xl border border-line bg-ink/[.02] px-3.5 py-2.5 font-mono text-xs leading-relaxed
+    @apply w-full rounded-xl border border-line bg-sunken px-3.5 py-2.5 font-mono text-xs leading-relaxed
            outline-none transition
            focus:border-blue focus:shadow-[0_0_0_3px_rgba(49,87,255,.10)];
+  }
+
+  /* The house micro-label: the 10px tracked mono caption over a number, a
+     table column or a field. It was written out by hand roughly four hundred
+     times, at five different opacities of ink, which is how a label ended up
+     lighter than the placeholder text beneath it on some screens. */
+  .micro {
+    @apply font-mono text-[10px] uppercase tracking-[.14em] text-muted;
   }
 }

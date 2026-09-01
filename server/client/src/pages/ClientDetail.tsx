@@ -22,14 +22,14 @@ export function ClientDetail() {
     queryFn: () => api.get<ClientDetailData>(`/clients/${id}`),
   });
 
-  if (isLoading || !client) return <div className="text-sm text-ink/50">Loading…</div>;
+  if (isLoading || !client) return <div className="text-sm text-muted">Loading…</div>;
 
   return (
     <div>
       <PageHeader title={client.name} subtitle={[client.sector, client.email, client.phone].filter(Boolean).join(" · ")} />
 
       <Card className="mb-8">
-        <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Lifetime value</div>
+        <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Lifetime value</div>
         <div className="mt-2 font-display text-2xl">
           <Money amount={client.lifetimeValue} />
         </div>
@@ -78,5 +78,5 @@ function Row({ left, right }: { left: React.ReactNode; right: React.ReactNode })
 }
 
 function Empty() {
-  return <div className="text-sm text-ink/40">None yet.</div>;
+  return <div className="text-sm text-muted">None yet.</div>;
 }

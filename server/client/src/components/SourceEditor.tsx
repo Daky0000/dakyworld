@@ -130,8 +130,8 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
               {runPreview.isPending ? "Reading…" : "Preview mapping"}
             </Button>
           )}
-          {save.isError && <span className="text-xs text-red-600">{(save.error as Error).message}</span>}
-          {runPreview.isError && <span className="text-xs text-red-600">{(runPreview.error as Error).message}</span>}
+          {save.isError && <span className="text-xs text-danger-text">{(save.error as Error).message}</span>}
+          {runPreview.isError && <span className="text-xs text-danger-text">{(runPreview.error as Error).message}</span>}
         </div>
       }
     >
@@ -159,14 +159,14 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
 
         <section>
           <SectionTitle>Actor input</SectionTitle>
-          <p className="mb-2 text-xs text-ink/50">
+          <p className="mb-2 text-xs text-muted">
             Passed to Apify exactly as written, except for the tokens replaced when the run starts:{" "}
             <code className="font-mono">{"{{date}}"}</code>, <code className="font-mono">{"{{yesterday}}"}</code> so a daily
             schedule can move its own search window, and <code className="font-mono">{"{{location}}"}</code>,{" "}
             <code className="font-mono">{"{{country}}"}</code>, <code className="font-mono">{"{{language}}"}</code> from
             Settings → Lead capture so the market is set in one place.
           </p>
-          <p className="mb-2 text-xs text-ink/50">
+          <p className="mb-2 text-xs text-muted">
             A proxy is added automatically for actors that take one; write the key yourself to override it.
           </p>
           <textarea
@@ -176,7 +176,7 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
             onChange={(event) => setInputText(event.target.value)}
             className="code-input"
           />
-          {inputError && <p className="mt-1 text-xs text-red-600">{inputError}</p>}
+          {inputError && <p className="mt-1 text-xs text-danger-text">{inputError}</p>}
         </section>
 
         <section>
@@ -194,7 +194,7 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
                   </option>
                 ))}
               </select>
-              <span className="mt-1 block text-xs text-ink/40">
+              <span className="mt-1 block text-xs text-muted">
                 {PRESETS.find((preset) => preset.value === form.preset)?.hint}
               </span>
             </Field>
@@ -245,11 +245,11 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
           </div>
 
           <details className="mt-4 rounded-2xl border border-line bg-white">
-            <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">
+            <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
               Field map (only if an actor names things unusually)
             </summary>
-            <div className="border-t border-ink/10 p-4">
-              <p className="mb-2 text-xs text-ink/50">
+            <div className="border-t border-line p-4">
+              <p className="mb-2 text-xs text-muted">
                 Lead field to a path in the row, e.g.{" "}
                 <code className="font-mono">{'{ "contactEmail": "contact.primaryEmail" }'}</code>. Overrides everything else.
               </p>
@@ -261,7 +261,7 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
                 placeholder="{}"
                 className="code-input"
               />
-              {fieldMapError && <p className="mt-1 text-xs text-red-600">{fieldMapError}</p>}
+              {fieldMapError && <p className="mt-1 text-xs text-danger-text">{fieldMapError}</p>}
             </div>
           </details>
         </section>
@@ -333,7 +333,7 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
                 </button>
               </span>
             ))}
-            {form.scheduleTimes.length === 0 && <span className="text-xs text-ink/40">No times set — manual runs only.</span>}
+            {form.scheduleTimes.length === 0 && <span className="text-xs text-muted">No times set — manual runs only.</span>}
           </div>
 
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
@@ -385,10 +385,10 @@ function PreviewPanel({ preview }: { preview: MappingPreview }) {
                 {item.skipped && <Badge tone="muted">skipped: {item.skipped}</Badge>}
               </div>
               {lead && (
-                <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 text-xs text-ink/60">
+                <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 text-xs text-muted">
                   {(["contactEmail", "contactPhone", "website", "city", "category"] as const).map((field) => (
                     <div key={field} className="contents">
-                      <dt className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">{field}</dt>
+                      <dt className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">{field}</dt>
                       <dd className="truncate">{(lead[field] as string) ?? "—"}</dd>
                     </div>
                   ))}
@@ -403,7 +403,7 @@ function PreviewPanel({ preview }: { preview: MappingPreview }) {
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">{children}</h3>;
+  return <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">{children}</h3>;
 }
 
 /** Validation for the JSON textareas — a bad paste should say so, not 400 later. */

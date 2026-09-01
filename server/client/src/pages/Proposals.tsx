@@ -42,7 +42,7 @@ export function Proposals() {
       />
 
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : !proposals || proposals.length === 0 ? (
         <EmptyState
           message="No proposals yet. Pick a lead and the writer will check their site and their domain, then argue from what it finds."
@@ -60,12 +60,12 @@ export function Proposals() {
                     {p.body && <Badge tone="muted">drafted from {p.body.findings.length} findings</Badge>}
                     {p.confidence != null && p.confidence < 0.55 && <Badge tone="muted">low confidence</Badge>}
                   </div>
-                  <div className="mt-1 text-sm text-ink/60">
+                  <div className="mt-1 text-sm text-muted">
                     {p.client?.name ?? p.lead?.companyName ?? p.lead?.contactName ?? "Unassigned"} · {p.serviceType}
                   </div>
                   <div className="mt-2 text-sm">
                     <Money amount={p.priceAmount} currency={p.currency} />
-                    {p.priceTier && <span className="text-ink/50"> · {p.priceTier}</span>}
+                    {p.priceTier && <span className="text-muted"> · {p.priceTier}</span>}
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">

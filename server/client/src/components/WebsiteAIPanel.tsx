@@ -38,7 +38,7 @@ export function WebsiteAIPanel({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <div className="rounded-xl border border-dashed border-line px-4 py-3">
-            <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Not built yet</div>
+            <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Not built yet</div>
             <p className="mt-1.5 text-sm text-muted">
               Ask for a change in words — “make this shorter”, “write alt text for every picture”, “rewrite the pricing intro for a
               non-technical reader”.
@@ -55,7 +55,7 @@ export function WebsiteAIPanel({
               "You approve. It becomes an ordinary draft, and publishes the ordinary way.",
             ].map((step, index) => (
               <li key={step} className="flex gap-2.5">
-                <span className="mt-px font-mono text-[11px] text-ink/40">{index + 1}</span>
+                <span className="mt-px font-mono text-[11px] text-muted">{index + 1}</span>
                 <span>{step}</span>
               </li>
             ))}

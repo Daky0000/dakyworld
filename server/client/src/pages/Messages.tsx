@@ -56,11 +56,11 @@ export function Messages() {
       />
 
       {nothingConnected && (
-        <Card className="mb-6 border-amber-300 bg-amber-50">
+        <Card className="mb-6 border-warn-line bg-warn-surface">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="font-medium">Neither channel is connected yet.</div>
-              <p className="mt-1 text-sm text-ink/60">
+              <p className="mt-1 text-sm text-muted">
                 Messages can still be written and opened in your own WhatsApp by hand — nothing here needs an account to be useful today.
               </p>
             </div>
@@ -74,9 +74,9 @@ export function Messages() {
       {/* Meta's read on how recipients are reacting. Nowhere else shows it, and
           a number that reaches RED stops being able to start conversations. */}
       {status?.quality?.qualityRating && status.quality.qualityRating !== "GREEN" && (
-        <Card className={`mb-6 ${status.quality.qualityRating === "RED" ? "border-red-300 bg-red-50" : "border-amber-300 bg-amber-50"}`}>
+        <Card className={`mb-6 ${status.quality.qualityRating === "RED" ? "border-danger-line bg-danger-surface" : "border-warn-line bg-warn-surface"}`}>
           <div className="font-medium">WhatsApp rates this number {status.quality.qualityRating.toLowerCase()}.</div>
-          <p className="mt-1 text-sm text-ink/60">
+          <p className="mt-1 text-sm text-muted">
             That happens when recipients block or report messages. It cuts how many conversations the number may start each day, and at red it
             stops being able to start any. Send fewer, to better-matched people, and make the opt-out obvious.
           </p>
@@ -97,7 +97,7 @@ export function Messages() {
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap gap-1 border-b border-ink/10">
+      <div className="mb-6 flex flex-wrap gap-1 border-b border-line">
         {(
           [
             ["reach", "Who to reach"],
@@ -112,7 +112,7 @@ export function Messages() {
             type="button"
             onClick={() => setTab(value)}
             className={`-mb-px border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-[.14em] transition ${
-              tab === value ? "border-ink text-ink" : "border-transparent text-ink/45 hover:text-ink"
+              tab === value ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"
             }`}
           >
             {label}
@@ -174,11 +174,11 @@ function Reach({ onCompose }: { onCompose: (target: MessageTarget) => void }) {
 
       <Table>
         <thead>
-          <tr className="border-b border-line text-[10px] uppercase tracking-[.12em] text-ink/40">
-            <th className="px-4 py-3 font-medium">Business</th>
-            <th className="px-4 py-3 font-medium">Number</th>
-            <th className="px-4 py-3 font-medium">Score</th>
-            <th className="px-4 py-3 font-medium">Where it stands</th>
+          <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+            <th className="px-4 py-3 font-normal">Business</th>
+            <th className="px-4 py-3 font-normal">Number</th>
+            <th className="px-4 py-3 font-normal">Score</th>
+            <th className="px-4 py-3 font-normal">Where it stands</th>
             <th className="px-4 py-3" />
           </tr>
         </thead>
@@ -196,13 +196,13 @@ function Reach({ onCompose }: { onCompose: (target: MessageTarget) => void }) {
               <td className="px-4 py-3 font-mono text-[12px]">{lead.leadScore}</td>
               <td className="px-4 py-3 text-xs">
                 {lead.unreachable ? (
-                  <span className="text-amber-700">{lead.unreachable}</span>
+                  <span className="text-warn-text">{lead.unreachable}</span>
                 ) : lead.replied ? (
                   <Badge tone="positive">They replied{lead.unread ? ` · ${lead.unread} unread` : ""}</Badge>
                 ) : lead.contacted ? (
                   <Badge tone="muted">Messaged, no reply</Badge>
                 ) : (
-                  <span className="text-ink/45">Not contacted</span>
+                  <span className="text-muted">Not contacted</span>
                 )}
               </td>
               <td className="px-4 py-3 text-right">
@@ -256,14 +256,14 @@ function Conversations({ onCompose }: { onCompose: (target: MessageTarget) => vo
                 <Badge tone="muted">{thread.channel === "WHATSAPP" ? "WhatsApp" : "SMS"}</Badge>
                 {thread.unreadCount > 0 && <Badge tone="positive">{thread.unreadCount} new</Badge>}
                 {thread.windowOpen && thread.channel === "WHATSAPP" && (
-                  <span className="font-mono text-[10px] uppercase tracking-[.1em] text-emerald-700">
+                  <span className="font-mono text-[10px] uppercase tracking-[.1em] text-positive-text">
                     open · {thread.windowMinutesLeft}m
                   </span>
                 )}
               </div>
               <div className="mt-0.5 truncate text-xs text-muted">{thread.lastInboundText ?? "No reply yet"}</div>
             </div>
-            <div className="shrink-0 text-right text-[11px] text-ink/40">
+            <div className="shrink-0 text-right text-[11px] text-muted">
               <RelativeTime value={thread.lastInboundAt ?? thread.lastOutboundAt} />
             </div>
           </button>
@@ -345,13 +345,13 @@ function ThreadDrawer({ id, onClose, onCompose }: { id: string | null; onClose: 
                 }`}
               >
                 <div className="whitespace-pre-wrap">{message.body}</div>
-                <div className={`mt-1.5 font-mono text-[10px] uppercase tracking-[.1em] ${message.direction === "INBOUND" ? "text-ink/35" : "text-white/45"}`}>
+                <div className={`mt-1.5 font-mono text-[10px] uppercase tracking-[.1em] ${message.direction === "INBOUND" ? "text-muted" : "text-white/45"}`}>
                   {message.direction === "INBOUND" ? "Them" : STATUS_LABEL[message.status] ?? message.status.toLowerCase()}
                   {" · "}
                   <RelativeTime value={message.sentAt ?? message.createdAt} />
                   {message.templateName ? ` · template ${message.templateName}` : ""}
                 </div>
-                {message.error && <div className="mt-1 text-[11px] text-red-300">{message.error}</div>}
+                {message.error && <div className="mt-1 text-[11px] text-danger-light">{message.error}</div>}
               </div>
             </div>
           ))}
@@ -431,14 +431,14 @@ function Outbox() {
                     <StatusDot tone={STATUS_TONE[message.status] ?? "idle"} />
                     <span className="font-medium">{message.lead?.companyName ?? message.lead?.contactName ?? message.toName ?? message.display}</span>
                     <Badge tone="muted">{message.channel === "WHATSAPP" ? "WhatsApp" : "SMS"}</Badge>
-                    <span className="font-mono text-[11px] text-ink/40">{message.display}</span>
+                    <span className="font-mono text-[11px] text-muted">{message.display}</span>
                     {message.segments && message.segments > 1 && <Badge tone="warn">{message.segments} segments</Badge>}
                   </div>
-                  <p className="mt-1.5 line-clamp-2 text-sm text-ink/70">{message.body}</p>
-                  {message.error && <p className="mt-1 text-xs text-red-700">{message.error}</p>}
+                  <p className="mt-1.5 line-clamp-2 text-sm text-ink">{message.body}</p>
+                  {message.error && <p className="mt-1 text-xs text-danger-text">{message.error}</p>}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+                  <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">
                     {STATUS_LABEL[message.status] ?? message.status.toLowerCase()}
                   </span>
                   {message.status === "READY" && (
@@ -521,7 +521,7 @@ function Templates() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl">
             <div className="font-medium">A first WhatsApp is always a template.</div>
-            <p className="mt-1 text-sm text-ink/60">
+            <p className="mt-1 text-sm text-muted">
               WhatsApp lets a business write freely only within 24 hours of the other person's last message. A lead who has never written to us
               has never opened that window, so a cold approach can only go out as a template Meta approved beforehand — usually minutes, sometimes
               a day. Until one is approved, send by hand from your own WhatsApp instead; it needs no approval and arrives from a person.
@@ -533,7 +533,7 @@ function Templates() {
         </div>
       </Card>
 
-      {error && <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
+      {error && <div className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error}</div>}
 
       {data?.templates.length ? (
         <div className="space-y-2">
@@ -545,11 +545,11 @@ function Templates() {
                   {template.status.toLowerCase()}
                 </Badge>
                 <Badge tone="muted">{template.category.toLowerCase()}</Badge>
-                <span className="text-[11px] text-ink/40">{template.language}</span>
+                <span className="text-[11px] text-muted">{template.language}</span>
               </div>
-              <p className="mt-2 whitespace-pre-wrap text-sm text-ink/70">{template.body}</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{template.body}</p>
               {template.rejectionReason && (
-                <p className="mt-2 text-xs text-amber-700">Meta's reason: {template.rejectionReason}</p>
+                <p className="mt-2 text-xs text-warn-text">Meta's reason: {template.rejectionReason}</p>
               )}
             </div>
           ))}
@@ -559,7 +559,7 @@ function Templates() {
       )}
 
       <div>
-        <div className="mb-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Ready to submit</div>
+        <div className="mb-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">Ready to submit</div>
         <div className="grid gap-3 md:grid-cols-2">
           {(data?.starters ?? []).map((starter) => (
             <div key={starter.name} className="rounded-2xl border border-line bg-white p-4">
@@ -567,10 +567,10 @@ function Templates() {
                 <div className="font-medium">{starter.label}</div>
                 <Badge tone="muted">{starter.category.toLowerCase()}</Badge>
               </div>
-              <p className="mt-2 whitespace-pre-wrap text-sm text-ink/60">{starter.body}</p>
-              <p className="mt-2 text-xs text-ink/40">{starter.footer}</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-muted">{starter.body}</p>
+              <p className="mt-2 text-xs text-muted">{starter.footer}</p>
               <div className="mt-3 flex items-center justify-between gap-3">
-                <div className="text-[11px] text-ink/40">{starter.variables.join(" · ")}</div>
+                <div className="text-[11px] text-muted">{starter.variables.join(" · ")}</div>
                 <Button
                   size="sm"
                   variant="secondary"
@@ -607,10 +607,10 @@ function Suppression() {
   return (
     <Table>
       <thead>
-        <tr className="border-b border-line text-[10px] uppercase tracking-[.12em] text-ink/40">
-          <th className="px-4 py-3 font-medium">Number</th>
-          <th className="px-4 py-3 font-medium">Why</th>
-          <th className="px-4 py-3 font-medium">When</th>
+        <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+          <th className="px-4 py-3 font-normal">Number</th>
+          <th className="px-4 py-3 font-normal">Why</th>
+          <th className="px-4 py-3 font-normal">When</th>
           <th className="px-4 py-3" />
         </tr>
       </thead>

@@ -35,8 +35,8 @@ function Shell({ title, what, state, children }: { title: string; what: ReactNod
   return (
     <section className="rounded-2xl border border-line bg-white p-6">
       <h2 className="font-display text-2xl">{title}</h2>
-      <p className="mt-1 max-w-2xl text-sm text-ink/60">{what}</p>
-      <div className="mt-4 border-y border-ink/10 py-4">{state}</div>
+      <p className="mt-1 max-w-2xl text-sm text-muted">{what}</p>
+      <div className="mt-4 border-y border-line py-4">{state}</div>
       {children}
     </section>
   );
@@ -46,9 +46,9 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint: R
   const [copied, setCopied] = useState(false);
   return (
     <div className="mt-4">
-      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{label}</p>
+      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</p>
       <div className="mt-1 flex flex-wrap items-center gap-2">
-        <code className="break-all border border-line bg-cream px-2 py-1 font-mono text-xs">{value}</code>
+        <code className="rounded-[10px] break-all border border-line bg-cream px-2 py-1 font-mono text-xs">{value}</code>
         <button
           type="button"
           className="font-mono text-[10px] uppercase tracking-[.12em] text-blue transition hover:underline"
@@ -61,14 +61,14 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint: R
           {copied ? "copied" : "copy"}
         </button>
       </div>
-      <p className="mt-1 max-w-2xl text-xs text-ink/50">{hint}</p>
+      <p className="mt-1 max-w-2xl text-xs text-muted">{hint}</p>
     </div>
   );
 }
 
 function ErrorNote({ error }: { error: unknown }) {
   if (!(error instanceof Error)) return null;
-  return <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error.message}</p>;
+  return <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error.message}</p>;
 }
 
 const QUALITY_TONE: Record<string, "positive" | "warn" | "muted"> = { GREEN: "positive", YELLOW: "warn", RED: "warn" };
@@ -107,29 +107,29 @@ export function WhatsAppPanel({ settings }: { settings: AppSettings }) {
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <Badge tone="positive">connected</Badge>
               {whatsapp.number?.displayNumber && <code className="font-mono text-xs">{whatsapp.number.displayNumber}</code>}
-              {whatsapp.number?.verifiedName && <span className="text-ink/50">{whatsapp.number.verifiedName}</span>}
+              {whatsapp.number?.verifiedName && <span className="text-muted">{whatsapp.number.verifiedName}</span>}
               {whatsapp.number?.qualityRating && (
                 <Badge tone={QUALITY_TONE[whatsapp.number.qualityRating] ?? "muted"}>quality {whatsapp.number.qualityRating.toLowerCase()}</Badge>
               )}
               {!whatsapp.envManaged && (
                 <button
                   type="button"
-                  className="font-mono text-[10px] uppercase tracking-[.12em] text-red-600/70 transition hover:text-red-600"
+                  className="font-mono text-[10px] uppercase tracking-[.12em] text-danger-text/70 transition hover:text-danger-text"
                   onClick={() => remove.mutate()}
                 >
                   disconnect
                 </button>
               )}
             </div>
-            <p className="text-xs text-ink/50">
+            <p className="text-xs text-muted">
               {whatsapp.approvedTemplates > 0
                 ? `${whatsapp.approvedTemplates} approved template${whatsapp.approvedTemplates === 1 ? "" : "s"}.`
                 : "No approved template yet, so a first message can only go out as a wa.me link."}
             </p>
-            {whatsapp.numberError && <p className="text-xs text-amber-700">{whatsapp.numberError}</p>}
+            {whatsapp.numberError && <p className="text-xs text-warn-text">{whatsapp.numberError}</p>}
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-3 text-sm text-ink/60">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
             <Badge tone="muted">not set up</Badge>
             <span>
               A permanent access token and the phone number ID from{" "}
@@ -166,7 +166,7 @@ export function WhatsAppPanel({ settings }: { settings: AppSettings }) {
       )}
 
       {whatsapp.envManaged && (
-        <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">
           Pinned by the <code className="font-mono">WHATSAPP_TOKEN</code> environment variable, so it can't be edited here.
         </p>
       )}
@@ -191,15 +191,15 @@ export function WhatsAppPanel({ settings }: { settings: AppSettings }) {
       )}
 
       {whatsapp.configured && !whatsapp.inboundTrusted && (
-        <p className="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="mt-4 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
           No app secret is set, so inbound replies are stored and <strong>not acted on</strong>. That is deliberate: an unverified inbound could
           open a free-form window to any number, or opt a live prospect out. Add the secret to turn replies back on.
         </p>
       )}
 
-      <div className="mt-5 border-t border-ink/10 pt-4">
-        <p className="max-w-2xl text-sm text-ink/55">
-          <strong className="text-ink/75">You do not have to wait for any of this.</strong> A wa.me link opens WhatsApp on your own phone with
+      <div className="mt-5 border-t border-line pt-4">
+        <p className="max-w-2xl text-sm text-muted">
+          <strong className="text-ink">You do not have to wait for any of this.</strong> A wa.me link opens WhatsApp on your own phone with
           the message already typed, needs no Business account and no template review, and arrives from you rather than from a brand — which is
           what a small business here actually replies to. Every message in the composer offers that route.
         </p>
@@ -230,17 +230,17 @@ export function SmsCallbackPanel({ settings }: { settings: AppSettings }) {
         sms.inboundTrusted ? (
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <Badge tone="positive">callbacks trusted</Badge>
-            <span className="text-ink/50">Replies and delivery reports are acted on.</span>
+            <span className="text-muted">Replies and delivery reports are acted on.</span>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-3 text-sm text-ink/60">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
             <Badge tone="muted">no callback token</Badge>
             <span>Inbound texts are recorded and not acted on, so a reply of STOP would not stop anything.</span>
           </div>
         )
       }
     >
-      <p className="mt-4 max-w-2xl text-sm text-ink/55">
+      <p className="mt-4 max-w-2xl text-sm text-muted">
         Hubtel signs nothing, unlike Meta and Stripe. So the only thing separating a real delivery report from anybody who guesses the address is
         a secret inside the URL itself — which is why these two links carry one and must not be shortened or shared.
       </p>
@@ -250,7 +250,7 @@ export function SmsCallbackPanel({ settings }: { settings: AppSettings }) {
           {sms.inboundToken ? "Generate a new token" : "Generate a callback token"}
         </Button>
         {sms.inboundToken && (
-          <p className="mt-2 text-xs text-amber-700">
+          <p className="mt-2 text-xs text-warn-text">
             Generating a new one invalidates whatever is in Hubtel's dashboard now, and replies stop being acted on until it is replaced.
           </p>
         )}

@@ -25,14 +25,14 @@ import { Button, Drawer, EmptyState, Field } from "./ui";
 /** The palette, as Tailwind classes. Lime is absent on purpose — it is the action colour. */
 const SWATCH: Record<TagColour, string> = {
   blue: "border-blue/30 bg-blue/10 text-blue",
-  cyan: "border-cyan/40 bg-cyan/15 text-ink/70",
-  ink: "border-ink/20 bg-ink/5 text-ink/60",
-  amber: "border-amber-300 bg-amber-50 text-amber-800",
-  emerald: "border-emerald-300 bg-emerald-50 text-emerald-800",
-  red: "border-red-200 bg-red-50 text-red-700",
+  cyan: "border-cyan/40 bg-cyan/15 text-ink",
+  ink: "border-line-strong bg-sunken text-muted",
+  amber: "border-warn-line bg-warn-surface text-warn-text",
+  emerald: "border-positive-line bg-positive-surface text-positive-text",
+  red: "border-danger-line bg-danger-surface text-danger-text",
 };
 
-const NEUTRAL = "border-ink/15 bg-ink/5 text-ink/55";
+const NEUTRAL = "border-line-strong bg-sunken text-muted";
 
 export function useLeadTags() {
   return useQuery({
@@ -161,7 +161,7 @@ export function TagPicker({
           add(matching[0]?.slug ?? asSlug);
         }}
         placeholder={placeholder}
-        className="w-full border border-ink/15 px-2 py-1 text-sm outline-none transition focus:border-ink/50"
+        className="rounded-[10px] w-full border border-line-strong px-2 py-1 text-sm outline-none transition focus:border-ink/50"
       />
 
       {(matching.length > 0 || isNew) && (
@@ -170,7 +170,7 @@ export function TagPicker({
             <button
               type="button"
               onClick={() => add(asSlug)}
-              className="border border-blue/40 bg-blue/5 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[.08em] text-blue transition hover:bg-blue/10"
+              className="rounded-xl border border-blue/40 bg-blue/5 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[.08em] text-blue transition hover:bg-blue/10"
             >
               + {typed.trim()}
             </button>
@@ -228,7 +228,7 @@ export function TagManager({ onClose }: { onClose: () => void }) {
 
   return (
     <Drawer open onClose={onClose} title="Tags" subtitle="The vocabulary for leads and lists" wide>
-      <p className="text-sm text-ink/60">
+      <p className="text-sm text-muted">
         Labels on leads and on lists. A tag's name can be changed freely — every lead carrying it follows, because what is stored is
         the tag rather than the word. Renaming one is safe; deleting one takes it off everything that had it.
       </p>
@@ -237,7 +237,7 @@ export function TagManager({ onClose }: { onClose: () => void }) {
         <Button size="sm" onClick={() => setCreating((open) => !open)}>
           {creating ? "Cancel" : "New tag"}
         </Button>
-        <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">
+        <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
           {tags.length} tag{tags.length === 1 ? "" : "s"} ·{" "}
           {tags.filter((tag) => tag.autoCreated).length} coined by a capture
         </span>
@@ -254,7 +254,7 @@ export function TagManager({ onClose }: { onClose: () => void }) {
       )}
 
       <div className="mt-5 space-y-2">
-        {isLoading && <p className="text-sm text-ink/50">Loading…</p>}
+        {isLoading && <p className="text-sm text-muted">Loading…</p>}
         {!isLoading && tags.length === 0 && (
           <EmptyState message="No tags yet. Tag a lead, or make one here — a capture will also coin one per business category." />
         )}
@@ -271,23 +271,23 @@ export function TagManager({ onClose }: { onClose: () => void }) {
               onCancel={() => setEditing(null)}
             />
           ) : (
-            <div key={tag.id} className="flex flex-wrap items-center gap-3 border border-line px-3 py-2">
+            <div key={tag.id} className="rounded-xl flex flex-wrap items-center gap-3 border border-line px-3 py-2">
               <TagChip slug={tag.slug} lookup={new Map([[tag.slug, tag]])} />
-              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">
+              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
                 {tag.leads} lead{tag.leads === 1 ? "" : "s"}
                 {tag.groups > 0 ? ` · ${tag.groups} list${tag.groups === 1 ? "" : "s"}` : ""}
               </span>
               {tag.autoCreated && (
-                <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/30" title="Coined by a capture, an import or a webhook">
+                <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted" title="Coined by a capture, an import or a webhook">
                   auto
                 </span>
               )}
-              {tag.description && <span className="min-w-0 flex-1 truncate text-xs text-ink/50">{tag.description}</span>}
+              {tag.description && <span className="min-w-0 flex-1 truncate text-xs text-muted">{tag.description}</span>}
               <span className="flex-1" />
               <button
                 type="button"
                 onClick={() => setEditing(tag.id)}
-                className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+                className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
               >
                 Edit
               </button>
@@ -302,7 +302,7 @@ export function TagManager({ onClose }: { onClose: () => void }) {
                   }
                 }}
                 disabled={remove.isPending}
-                className="font-mono text-[10px] uppercase tracking-[.14em] text-red-600/70 transition hover:text-red-600"
+                className="font-mono text-[10px] uppercase tracking-[.14em] text-danger-text/70 transition hover:text-danger-text"
               >
                 Delete
               </button>
@@ -312,7 +312,7 @@ export function TagManager({ onClose }: { onClose: () => void }) {
       </div>
 
       {remove.error instanceof Error && (
-        <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{remove.error.message}</p>
+        <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{remove.error.message}</p>
       )}
     </Drawer>
   );
@@ -339,7 +339,7 @@ function TagForm({
 
   return (
     <form
-      className="mt-3 space-y-3 border border-blue/30 bg-blue/5 p-3"
+      className="rounded-xl mt-3 space-y-3 border border-blue/30 bg-blue/5 p-3"
       onSubmit={(event) => {
         event.preventDefault();
         if (!label.trim()) return;
@@ -371,11 +371,11 @@ function TagForm({
       </Field>
 
       {tag && (
-        <p className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">
+        <p className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
           Stored as {tag.slug} — renaming does not change that, so nothing loses the tag.
         </p>
       )}
-      {error instanceof Error && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error.message}</p>}
+      {error instanceof Error && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error.message}</p>}
 
       <div className="flex items-center gap-3">
         <Button type="submit" size="sm" disabled={pending || !label.trim()}>

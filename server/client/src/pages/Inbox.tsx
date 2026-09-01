@@ -74,7 +74,7 @@ export function Inbox() {
       />
 
       {status && !status.connected && (
-        <Card className="mb-6 border-amber-300 bg-amber-50">
+        <Card className="mb-6 border-warn-line bg-warn-surface">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="font-medium text-ink">No mailbox is connected for reading.</p>
@@ -90,8 +90,8 @@ export function Inbox() {
       )}
 
       {sync.error && (
-        <Card className="mb-6 border-red-300 bg-red-50">
-          <p className="text-sm text-red-800">{(sync.error as ApiError).message}</p>
+        <Card className="mb-6 border-danger-line bg-danger-surface">
+          <p className="text-sm text-danger-text">{(sync.error as ApiError).message}</p>
         </Card>
       )}
 
@@ -364,14 +364,14 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
           )}
 
           {message.triageError && (
-            <Card className="border-amber-300 bg-amber-50">
-              <p className="text-sm text-amber-900">This one was filed but never read: {message.triageError}</p>
+            <Card className="border-warn-line bg-warn-surface">
+              <p className="text-sm text-warn-text">This one was filed but never read: {message.triageError}</p>
             </Card>
           )}
 
           <div>
             <h4 className="mb-2 text-sm font-medium text-muted">What they wrote</h4>
-            <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-cream p-4 text-sm text-ink">{message.bodyText}</pre>
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-cream p-4 text-sm text-ink">{message.bodyText}</pre>
           </div>
 
           {message.hasAttachments && (
@@ -428,7 +428,7 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               <select
                 value={agentKey}
                 onChange={(event) => setAgentKey(event.target.value)}
-                className="mb-2 w-full rounded-lg border border-line px-3 py-2 text-sm"
+                className="mb-2 w-full rounded-xl border border-line px-3 py-2 text-sm"
               >
                 <option value="">Choose an agent…</option>
                 {(roster?.agents ?? [])
@@ -443,12 +443,12 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
                 value={why}
                 onChange={(event) => setWhy(event.target.value)}
                 placeholder="Why is this theirs? (goes on the task)"
-                className="mb-2 w-full rounded-lg border border-line px-3 py-2 text-sm"
+                className="mb-2 w-full rounded-xl border border-line px-3 py-2 text-sm"
               />
               <Button onClick={() => route.mutate()} disabled={!agentKey || why.trim().length < 10 || route.isPending}>
                 {route.isPending ? "Handing over…" : "Hand it over"}
               </Button>
-              {route.error && <p className="mt-2 text-sm text-red-700">{(route.error as ApiError).message}</p>}
+              {route.error && <p className="mt-2 text-sm text-danger-text">{(route.error as ApiError).message}</p>}
             </Card>
           )}
 
@@ -458,7 +458,7 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               value={note}
               onChange={(event) => setNote(event.target.value)}
               placeholder="What happened?"
-              className="mb-2 w-full rounded-lg border border-line px-3 py-2 text-sm"
+              className="mb-2 w-full rounded-xl border border-line px-3 py-2 text-sm"
             />
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => handled.mutate(false)} disabled={handled.isPending}>
@@ -471,7 +471,7 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
                 {reread.isPending ? "Reading…" : "Read it again"}
               </Button>
             </div>
-            {reread.error && <p className="mt-2 text-sm text-red-700">{(reread.error as ApiError).message}</p>}
+            {reread.error && <p className="mt-2 text-sm text-danger-text">{(reread.error as ApiError).message}</p>}
           </Card>
         </div>
       )}

@@ -62,7 +62,7 @@ export function Costs() {
                 type="button"
                 onClick={() => setDays(option)}
                 className={`rounded-full border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[.12em] transition ${
-                  days === option ? "border-blue bg-blue text-white" : "border-line text-ink/55 hover:border-ink/30"
+                  days === option ? "border-blue bg-blue text-white" : "border-line text-muted hover:border-ink/30"
                 }`}
               >
                 {option} days
@@ -73,7 +73,7 @@ export function Costs() {
       />
 
       {isLoading || !summary || !data ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -156,7 +156,7 @@ function CacheTile({ rate, read, input, written }: { rate: number | null; read: 
         read === 0 ? (
           // Not decoration. This is what a broken prompt cache looks like, and
           // it is the only place in the app it would show.
-          <span className="text-amber-700">
+          <span className="text-warn-text">
             nothing cached — every run is paying full rate to re-send its own instructions
           </span>
         ) : (
@@ -183,7 +183,7 @@ function FailureTile({ calls, cost, refused, dryRun }: { calls: number; cost: nu
       sub={
         <>
           {calls > 0 ? `${usd(cost)} paid for nothing` : "nothing failed"}
-          {held && <span className="text-ink/40"> · {held}</span>}
+          {held && <span className="text-muted"> · {held}</span>}
         </>
       }
     />
@@ -203,7 +203,7 @@ function DailyChart({ days }: { days: DaySpend[] }) {
     return (
       <Card>
         <Heading>Day by day</Heading>
-        <p className="mt-3 text-sm text-ink/50">Nothing was spent in this window.</p>
+        <p className="mt-3 text-sm text-muted">Nothing was spent in this window.</p>
       </Card>
     );
   }
@@ -225,7 +225,7 @@ function DailyChart({ days }: { days: DaySpend[] }) {
           );
         })}
       </div>
-      <div className="mt-2 flex justify-between font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">
+      <div className="mt-2 flex justify-between font-mono text-[10px] uppercase tracking-[.12em] text-muted">
         <span>{days[0]?.day}</span>
         <span>peak {usd(peak)}</span>
         <span>{days.at(-1)?.day}</span>
@@ -253,19 +253,19 @@ function SpendTable({
     <section className="space-y-3">
       <div>
         <Heading>{heading}</Heading>
-        <p className="mt-1 text-sm text-ink/50">{note}</p>
+        <p className="mt-1 text-sm text-muted">{note}</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState message="Nothing in this window." />
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
-              <th className="px-4 py-2.5 font-normal">{keyHeading}</th>
-              <th className="px-4 py-2.5 text-right font-normal">Calls</th>
-              {tokensColumn && <th className="px-4 py-2.5 text-right font-normal">Tokens</th>}
-              <th className="px-4 py-2.5 text-right font-normal">Cost</th>
-              <th className="px-4 py-2.5 text-right font-normal">Each</th>
+            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <th className="px-4 py-3 font-normal">{keyHeading}</th>
+              <th className="px-4 py-3 text-right font-normal">Calls</th>
+              {tokensColumn && <th className="px-4 py-3 text-right font-normal">Tokens</th>}
+              <th className="px-4 py-3 text-right font-normal">Cost</th>
+              <th className="px-4 py-3 text-right font-normal">Each</th>
             </tr>
           </thead>
           <tbody>
@@ -279,16 +279,16 @@ function SpendTable({
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-ink/70">{row.calls.toLocaleString()}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-ink">{row.calls.toLocaleString()}</td>
                 {tokensColumn && (
-                  <td className="px-4 py-2.5 text-right tabular-nums text-ink/55">{tokens(row.inputTokens + row.outputTokens)}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-muted">{tokens(row.inputTokens + row.outputTokens)}</td>
                 )}
                 <td className="px-4 py-2.5 text-right tabular-nums">{usd(row.costUsd)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-ink/55">{usd(row.calls > 0 ? row.costUsd / row.calls : 0)}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-muted">{usd(row.calls > 0 ? row.costUsd / row.calls : 0)}</td>
               </tr>
             ))}
             <tr className="bg-cream/40">
-              <td className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+              <td className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                 {rows.length} row{rows.length === 1 ? "" : "s"}
               </td>
               <td />
@@ -324,7 +324,7 @@ function Outcomes({ outcomes, totalUsd, days }: { outcomes: Outcome[]; totalUsd:
     <section className="space-y-3">
       <div>
         <Heading>What it bought</Heading>
-        <p className="mt-1 max-w-3xl text-sm text-ink/50">
+        <p className="mt-1 max-w-3xl text-sm text-muted">
           The whole {days}-day spend of {usd(totalUsd)} against each finished thing the business produced in the same window. Each line
           divides the <em>same</em> total, so these do not add up and are not meant to — a single research call feeds an email, an audit
           and a proposal, and splitting it between them would be a guess that looked like a measurement. Read them month against month.
@@ -332,22 +332,22 @@ function Outcomes({ outcomes, totalUsd, days }: { outcomes: Outcome[]; totalUsd:
       </div>
       <Table>
         <thead>
-          <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
-            <th className="px-4 py-2.5 font-normal">Outcome</th>
-            <th className="px-4 py-2.5 font-normal">Counted as</th>
-            <th className="px-4 py-2.5 text-right font-normal">Count</th>
-            <th className="px-4 py-2.5 text-right font-normal">Spend each</th>
+          <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+            <th className="px-4 py-3 font-normal">Outcome</th>
+            <th className="px-4 py-3 font-normal">Counted as</th>
+            <th className="px-4 py-3 text-right font-normal">Count</th>
+            <th className="px-4 py-3 text-right font-normal">Spend each</th>
           </tr>
         </thead>
         <tbody>
           {outcomes.map((outcome) => (
             <tr key={outcome.key} className="border-b border-line/60 last:border-0">
               <td className="px-4 py-2.5">{outcome.label}</td>
-              <td className="px-4 py-2.5 text-xs text-ink/45">{outcome.countedAs}</td>
+              <td className="px-4 py-2.5 text-xs text-muted">{outcome.countedAs}</td>
               <td className="px-4 py-2.5 text-right tabular-nums">{outcome.count.toLocaleString()}</td>
               <td className="px-4 py-2.5 text-right tabular-nums">
                 {outcome.costEachUsd === null ? (
-                  <span className="text-ink/35">none in this window</span>
+                  <span className="text-muted">none in this window</span>
                 ) : (
                   usd(outcome.costEachUsd)
                 )}
@@ -361,7 +361,7 @@ function Outcomes({ outcomes, totalUsd, days }: { outcomes: Outcome[]; totalUsd:
 }
 
 function Heading({ children }: { children: React.ReactNode }) {
-  return <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">{children}</h2>;
+  return <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">{children}</h2>;
 }
 
 // --- Ceilings ---------------------------------------------------------------
@@ -414,7 +414,7 @@ function Budgets({ agentKeys, toolKeys }: { agentKeys: string[]; toolKeys: strin
     <section className="space-y-3">
       <div>
         <Heading>Ceilings</Heading>
-        <p className="mt-1 max-w-3xl text-sm text-ink/50">
+        <p className="mt-1 max-w-3xl text-sm text-muted">
           What a scope may spend before the app stops itself. Nothing is capped until you set one. At half the ceiling this page says
           so; at three quarters the workforce keeps going on the cheaper model; at ninety per cent it prepares outward and spending work
           for your decision instead of doing it; at the ceiling it starts nothing new. A read is never held — an agent that cannot look
@@ -427,14 +427,14 @@ function Budgets({ agentKeys, toolKeys }: { agentKeys: string[]; toolKeys: strin
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
-              <th className="px-4 py-2.5 font-normal">Scope</th>
-              <th className="px-4 py-2.5 font-normal">Period</th>
-              <th className="px-4 py-2.5 text-right font-normal">Spent</th>
-              <th className="px-4 py-2.5 text-right font-normal">Warn at</th>
-              <th className="px-4 py-2.5 text-right font-normal">Ceiling</th>
-              <th className="px-4 py-2.5 font-normal">State</th>
-              <th className="px-4 py-2.5" />
+            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <th className="px-4 py-3 font-normal">Scope</th>
+              <th className="px-4 py-3 font-normal">Period</th>
+              <th className="px-4 py-3 text-right font-normal">Spent</th>
+              <th className="px-4 py-3 text-right font-normal">Warn at</th>
+              <th className="px-4 py-3 text-right font-normal">Ceiling</th>
+              <th className="px-4 py-3 font-normal">State</th>
+              <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
@@ -451,9 +451,9 @@ function Budgets({ agentKeys, toolKeys }: { agentKeys: string[]; toolKeys: strin
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-ink/60">{budget.period === "DAY" ? "each day" : "each month"}</td>
+                  <td className="px-4 py-2.5 text-muted">{budget.period === "DAY" ? "each day" : "each month"}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums">{usd(budget.spentUsd)}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-ink/55">{soft === null ? "—" : usd(soft)}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-muted">{soft === null ? "—" : usd(soft)}</td>
                   {/* Zero is a real setting and must not render as "no ceiling",
                       or the one person who typed it on purpose cannot see that
                       it took. */}
@@ -462,7 +462,7 @@ function Budgets({ agentKeys, toolKeys }: { agentKeys: string[]; toolKeys: strin
                     {budget.enabled ? (
                       <Badge tone={ACTION_TONE[budget.action]}>{ACTION_SAYS[budget.action]}</Badge>
                     ) : (
-                      <span className="text-ink/35">—</span>
+                      <span className="text-muted">—</span>
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right">
@@ -470,7 +470,7 @@ function Budgets({ agentKeys, toolKeys }: { agentKeys: string[]; toolKeys: strin
                       type="button"
                       onClick={() => remove.mutate(budget.id)}
                       disabled={remove.isPending}
-                      className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 hover:text-ink/70"
+                      className="font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink"
                     >
                       Remove
                     </button>
@@ -520,7 +520,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
     <Card>
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Applies to</label>
+          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Applies to</label>
           <select
             value={scopeType}
             onChange={(event) => {
@@ -537,7 +537,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
 
         {scopeType !== "GLOBAL" && (
           <div>
-            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Which one</label>
+            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Which one</label>
             <input
               list="costs-scope-options"
               value={scopeId}
@@ -556,7 +556,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
         )}
 
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Period</label>
+          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Period</label>
           <select value={period} onChange={(event) => setPeriod(event.target.value as BudgetPeriod)} className="input mt-1 w-36">
             <option value="MONTH">Each month</option>
             <option value="DAY">Each day</option>
@@ -564,7 +564,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
         </div>
 
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Warn at ($)</label>
+          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Warn at ($)</label>
           <input
             type="number"
             min="0"
@@ -577,7 +577,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
         </div>
 
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Ceiling ($)</label>
+          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Ceiling ($)</label>
           <input
             type="number"
             min="0"
@@ -594,12 +594,12 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
         </Button>
       </div>
 
-      <p className="mt-3 text-xs text-ink/45">
+      <p className="mt-3 text-xs text-muted">
         Leave a box empty for no limit of that kind. A ceiling of <span className="font-mono">0</span> is a real setting and stops all
         spend on that scope — it is not read as "unset".
       </p>
 
-      {save.error && <p className="mt-3 text-sm text-red-700">{(save.error as Error).message}</p>}
+      {save.error && <p className="mt-3 text-sm text-danger-text">{(save.error as Error).message}</p>}
     </Card>
   );
 }

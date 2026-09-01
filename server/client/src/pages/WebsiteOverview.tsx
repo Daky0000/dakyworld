@@ -42,7 +42,7 @@ export function WebsiteOverview() {
             counts.unconnected > 0 ? (
               // Said here rather than at the moment somebody presses Publish and
               // is told it cannot happen.
-              <span className="text-amber-700">
+              <span className="text-warn-text">
                 {counts.unconnected} cannot publish yet — no repository
               </span>
             ) : (

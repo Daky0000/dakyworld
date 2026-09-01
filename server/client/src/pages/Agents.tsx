@@ -155,7 +155,7 @@ export function Agents() {
       <AgentHiring />
 
       {batchNote && (
-        <p className="rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink/70">
+        <p className="rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink">
           {batchNote}{" "}
           <button type="button" onClick={() => setBatchNote(null)} className="text-blue hover:underline">
             Dismiss
@@ -171,7 +171,7 @@ export function Agents() {
         already holds, which for everything here is 1 with dry run on.
       */}
       {(picked.size > 0 || drafts.length > 0) && (
-        <div className="flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
+        <div className="overflow-hidden rounded-2xl flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
           <span className="font-mono text-[11px] uppercase tracking-[.14em]">
             {picked.size > 0 ? `${picked.size} picked` : `${drafts.length} draft${drafts.length === 1 ? "" : "s"} on the roster`}
           </span>
@@ -179,7 +179,7 @@ export function Agents() {
             <button
               type="button"
               onClick={() => setPicked(new Set(drafts.map((agent) => agent.key)))}
-              className="border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10"
+              className="rounded-full border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10"
             >
               Pick every draft
             </button>
@@ -191,7 +191,7 @@ export function Agents() {
                   type="button"
                   disabled={setStatus.isPending}
                   onClick={() => setStatus.mutate({ keys: [...picked], status })}
-                  className="border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10 disabled:text-cream/40"
+                  className="rounded-full border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10 disabled:text-cream/40"
                 >
                   {status === "ACTIVE" ? "Set active" : status === "PAUSED" ? "Pause" : "Back to draft"}
                 </button>
@@ -212,15 +212,15 @@ export function Agents() {
       )}
 
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : agents.length === 0 ? (
         <EmptyState message="No agents have been seeded yet. They're created on server start — restart the API and they'll appear." />
       ) : (
         byTier.map(([tier, list]) => (
           <section key={tier} className="space-y-3">
             <div>
-              <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">{TIER_LABEL[tier] ?? tier}</h2>
-              {TIER_BLURB[tier] && <p className="mt-0.5 text-xs text-ink/40">{TIER_BLURB[tier]}</p>}
+              <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">{TIER_LABEL[tier] ?? tier}</h2>
+              {TIER_BLURB[tier] && <p className="mt-0.5 text-xs text-muted">{TIER_BLURB[tier]}</p>}
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {list.map((agent) => (
@@ -229,7 +229,7 @@ export function Agents() {
                       button, and a checkbox nested in one is neither clickable
                       nor valid. */}
                   <label
-                    className="absolute right-3 top-3 z-10 flex cursor-pointer items-center gap-1 rounded-lg border border-line bg-white/90 px-1.5 py-0.5"
+                    className="absolute right-3 top-3 z-10 flex cursor-pointer items-center gap-1 rounded-xl border border-line bg-white/90 px-1.5 py-0.5"
                     title="Pick for a batch change"
                   >
                     <input
@@ -251,11 +251,11 @@ export function Agents() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <StatusDot tone={toneFor(agent)} />
-                          {agent.avatar && <span aria-hidden className="text-ink/50">{agent.avatar}</span>}
+                          {agent.avatar && <span aria-hidden className="text-muted">{agent.avatar}</span>}
                           <span className="font-display text-lg tracking-[-.02em]">{agent.name}</span>
                           {agent.custom && <Badge tone="muted">yours</Badge>}
                         </div>
-                        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+                        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                           {DEPARTMENTS[agent.department] ?? agent.department}
                           {agent.managerName ? ` · reports to ${agent.managerName}` : ""}
                         </p>
@@ -264,25 +264,25 @@ export function Agents() {
                         L{agent.autonomyLevel} {LEVELS[agent.autonomyLevel]?.name}
                       </Badge>
                     </div>
-                    <p className="mt-3 text-sm text-ink/60">{agent.mission}</p>
+                    <p className="mt-3 text-sm text-muted">{agent.mission}</p>
                     {agent.skills.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1">
                         {agent.skills.slice(0, 4).map((skill) => (
-                          <span key={skill} className="rounded-lg border border-line bg-cream px-1.5 py-0.5 text-[11px] text-ink/55">
+                          <span key={skill} className="rounded-xl border border-line bg-cream px-1.5 py-0.5 text-[11px] text-muted">
                             {skill}
                           </span>
                         ))}
-                        {agent.skills.length > 4 && <span className="px-1 py-0.5 text-[11px] text-ink/35">+{agent.skills.length - 4}</span>}
+                        {agent.skills.length > 4 && <span className="px-1 py-0.5 text-[11px] text-muted">+{agent.skills.length - 4}</span>}
                       </div>
                     )}
                     {(agent.work?.running || agent.work?.queued || agent.work?.waiting) ? (
                       <p className="mt-3 flex flex-wrap items-center gap-x-3 font-mono text-[10px] uppercase tracking-[.12em]">
                         {agent.work.running > 0 && <span className="text-blue">working on {agent.work.running}</span>}
-                        {agent.work.queued > 0 && <span className="text-ink/45">{agent.work.queued} queued</span>}
-                        {agent.work.waiting > 0 && <span className="text-amber-700">{agent.work.waiting} waiting on you</span>}
+                        {agent.work.queued > 0 && <span className="text-muted">{agent.work.queued} queued</span>}
+                        {agent.work.waiting > 0 && <span className="text-warn-text">{agent.work.waiting} waiting on you</span>}
                       </p>
                     ) : agent.dryRun ? (
-                      <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">Dry run · nothing takes effect</p>
+                      <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Dry run · nothing takes effect</p>
                     ) : null}
                   </Card>
                 </button>
@@ -411,7 +411,7 @@ function HireDrawer({
       }
     >
       <div className="space-y-4">
-        {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+        {notice && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Name" hint="What you would call the role. '3D Artist', 'Bookkeeper'.">
@@ -463,7 +463,7 @@ function HireDrawer({
           </Field>
         </div>
 
-        <p className="border border-line bg-cream px-3 py-2 text-xs text-ink/55">
+        <p className="rounded-xl border border-line bg-cream px-3 py-2 text-xs text-muted">
           It starts at level 1 with dry run on and no tools, like every other agent here. Grant it tools and raise its autonomy from its own
           card once you have seen what it produces.
         </p>
@@ -522,12 +522,12 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
       subtitle={agent ? `${agent.title} · ${DEPARTMENTS[agent.department] ?? agent.department}` : undefined}
     >
       {!agent ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : (
         <div className="space-y-7">
-          <p className="text-sm text-ink/70">{agent.mission}</p>
+          <p className="text-sm text-ink">{agent.mission}</p>
 
-          {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+          {notice && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
 
           {/* First, because "what is it doing" outranks "how is it configured"
               every time somebody opens this. */}
@@ -546,7 +546,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
             may it do while working".
           */}
           <section className="space-y-3">
-            <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Whether it works</h3>
+            <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Whether it works</h3>
             <div className="flex flex-wrap gap-1.5">
               {STATUSES.map((option) => (
                 <Button
@@ -560,9 +560,9 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
                 </Button>
               ))}
             </div>
-            <p className="text-sm text-ink/55">{STATUSES.find((option) => option.value === agent.status)?.means}</p>
+            <p className="text-sm text-muted">{STATUSES.find((option) => option.value === agent.status)?.means}</p>
             {agent.status !== "ACTIVE" && agent.work.queued > 0 && (
-              <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
                 {agent.work.queued} task{agent.work.queued === 1 ? "" : "s"} {agent.work.queued === 1 ? "is" : "are"} queued against this
                 agent and none will start until it is Active.
               </p>
@@ -572,7 +572,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
           <AgentPace agent={agent} onSave={save.mutate} saving={save.isPending} />
 
           <section className="space-y-3">
-            <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it may do unasked</h3>
+            <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it may do unasked</h3>
             <div className="flex flex-wrap gap-1.5">
               {LEVELS.map((level) => (
                 <Button
@@ -586,7 +586,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
                 </Button>
               ))}
             </div>
-            <p className="text-sm text-ink/55">{LEVELS[agent.autonomyLevel]?.means}</p>
+            <p className="text-sm text-muted">{LEVELS[agent.autonomyLevel]?.means}</p>
             <div className="pt-1">
               <Toggle
                 checked={agent.dryRun}
@@ -595,7 +595,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
               />
             </div>
             {(!agent.dryRun || agent.autonomyLevel > 2) && (
-              <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
                 This agent can act without asking you. That is deliberate only if you set it.
               </p>
             )}
@@ -605,15 +605,15 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
 
           {agent.skills.length > 0 && (
             <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">What it knows</h3>
+              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it knows</h3>
               <div className="flex flex-wrap gap-1.5">
                 {agent.skills.map((skill) => (
-                  <span key={skill} className="rounded-lg border border-line bg-cream px-2 py-0.5 text-xs text-ink/60">
+                  <span key={skill} className="rounded-xl border border-line bg-cream px-2 py-0.5 text-xs text-muted">
                     {skill}
                   </span>
                 ))}
               </div>
-              <p className="text-xs text-ink/40">
+              <p className="text-xs text-muted">
                 Skills are what it is asked for. Tools are what it can reach — the two are separate, and only the second is a permission.
               </p>
             </section>
@@ -625,8 +625,8 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
 
           {agent.kpis.length > 0 && (
             <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Judged on</h3>
-              <ul className="space-y-1 text-sm text-ink/70">
+              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Judged on</h3>
+              <ul className="space-y-1 text-sm text-ink">
                 {agent.kpis.map((k) => <li key={k}>· {k}</li>)}
               </ul>
             </section>
@@ -634,8 +634,8 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
 
           {agent.reports.length > 0 && (
             <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Reports to it</h3>
-              <p className="text-sm text-ink/70">{agent.reports.map((r) => r.name).join(", ")}</p>
+              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Reports to it</h3>
+              <p className="text-sm text-ink">{agent.reports.map((r) => r.name).join(", ")}</p>
             </section>
           )}
 
@@ -698,13 +698,13 @@ function AgentPace({
 
   return (
     <section className="space-y-3">
-      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">How often it may work</h3>
+      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">How often it may work</h3>
       <div className="grid gap-3 sm:grid-cols-3">
         {FIELDS.map((field) => {
           const usage = agent.pace?.find((row) => row.period === field.period);
           return (
             <div key={field.key} className="space-y-1">
-              <label className="block font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+              <label className="block font-mono text-[10px] uppercase tracking-[.1em] text-muted">
                 Tasks in {field.label}
               </label>
               <input
@@ -714,9 +714,9 @@ function AgentPace({
                 onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
                 onBlur={() => commit(field.key)}
                 onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
-                className="w-full rounded-lg border border-line bg-white px-2 py-1 text-sm text-ink"
+                className="w-full rounded-xl border border-line bg-white px-2 py-1 text-sm text-ink"
               />
-              <p className="text-xs text-ink/40">
+              <p className="text-xs text-muted">
                 {usage ? `${usage.started} started` : "—"}
                 {usage?.limit === 0 ? " · taking none" : usage?.limit != null ? ` of ${usage.limit}` : " · no limit"}
               </p>
@@ -724,7 +724,7 @@ function AgentPace({
           );
         })}
       </div>
-      <p className="text-xs text-ink/40">
+      <p className="text-xs text-muted">
         A ceiling on how often, not on how much — spending has its own under Costs. A task held by one of these stays queued and
         starts when the period rolls over. Leave blank for no limit; 0 stops it taking work without retiring it.
       </p>
@@ -769,8 +769,8 @@ function ToolGrants({
   return (
     <section className="space-y-3">
       <div>
-        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Tools it may use</h3>
-        <p className="mt-1 text-sm text-ink/55">
+        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Tools it may use</h3>
+        <p className="mt-1 text-sm text-muted">
           {granted.length} of {tools.length} granted
           {granted.some((tool) => !tool.ready) && " · some need a key before they will do anything"}
         </p>
@@ -779,7 +779,7 @@ function ToolGrants({
       <div className="space-y-4">
         {groups.map((group) => (
           <div key={group}>
-            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">{group}</p>
+            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">{group}</p>
             <div className="space-y-1">
               {tools
                 .filter((tool) => tool.group === group)
@@ -787,7 +787,7 @@ function ToolGrants({
                   <label
                     key={tool.key}
                     className={`flex cursor-pointer items-start gap-2.5 border px-2.5 py-2 transition-colors ${
-                      tool.granted ? "border-blue/30 bg-blue/[.04]" : "border-line bg-white hover:bg-ink/[.02]"
+                      tool.granted ? "border-blue/30 bg-blue/[.04]" : "border-line bg-white hover:bg-sunken"
                     }`}
                   >
                     <input
@@ -803,12 +803,12 @@ function ToolGrants({
                         {tool.spends && <Badge>$</Badge>}
                         {tool.outward && <Badge tone="muted">outward</Badge>}
                       </span>
-                      <span className="mt-0.5 block text-xs leading-relaxed text-ink/55">{tool.purpose}</span>
+                      <span className="mt-0.5 block text-xs leading-relaxed text-muted">{tool.purpose}</span>
                       {tool.granted && !tool.ready && tool.blockedReason && (
-                        <span className="mt-1 block text-xs text-amber-700">{tool.blockedReason}</span>
+                        <span className="mt-1 block text-xs text-warn-text">{tool.blockedReason}</span>
                       )}
                       {tool.granted && tool.ready && tool.permissionNote && (
-                        <span className={`mt-1 block text-xs ${tool.allowed ? "text-ink/45" : "text-amber-700"}`}>
+                        <span className={`mt-1 block text-xs ${tool.allowed ? "text-muted" : "text-warn-text"}`}>
                           {tool.allowed ? "" : "Cannot right now — "}
                           {tool.permissionNote}
                         </span>
@@ -880,7 +880,7 @@ function WhyItOnlyPrepares({ agentKey }: { agentKey: string }) {
 
   return (
     <div className="mt-3 space-y-3 rounded border border-line bg-cream/60 p-3">
-      <p className="text-sm text-ink/80">{verdict}</p>
+      <p className="text-sm text-ink">{verdict}</p>
 
       {blockers.length > 0 && (
         <ul className="space-y-2 text-sm">
@@ -889,8 +889,8 @@ function WhyItOnlyPrepares({ agentKey }: { agentKey: string }) {
               <span className="font-medium">
                 {blocker.switch}: {blocker.is}
               </span>
-              <span className="text-ink/65"> — {blocker.means}</span>
-              <span className="block text-ink/50">{blocker.fix}</span>
+              <span className="text-muted"> — {blocker.means}</span>
+              <span className="block text-muted">{blocker.fix}</span>
             </li>
           ))}
         </ul>
@@ -898,19 +898,19 @@ function WhyItOnlyPrepares({ agentKey }: { agentKey: string }) {
 
       {preparing.length > 0 && (
         <details className="text-sm">
-          <summary className="cursor-pointer text-ink/60">
+          <summary className="cursor-pointer text-muted">
             {counts.does} of its tools run for real, {counts.prepares} only prepare
             {counts.refused > 0 && `, ${counts.refused} are refused outright`}
           </summary>
           <ul className="mt-2 space-y-1">
             {tools.map((tool) => (
               <li key={tool.key} className="flex items-start gap-2 text-xs">
-                <span className="w-20 shrink-0 font-mono text-ink/40">
+                <span className="w-20 shrink-0 font-mono text-muted">
                   {tool.state === "does" ? "does" : tool.state === "prepares" ? "prepares" : "refused"}
                 </span>
                 <span className="min-w-0">
-                  <span className="font-mono text-ink/70">{tool.key}</span>
-                  {tool.because && <span className="text-ink/50"> — {tool.because}</span>}
+                  <span className="font-mono text-ink">{tool.key}</span>
+                  {tool.because && <span className="text-muted"> — {tool.because}</span>}
                 </span>
               </li>
             ))}
@@ -920,7 +920,7 @@ function WhyItOnlyPrepares({ agentKey }: { agentKey: string }) {
 
       {blockers.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
-          <span className="text-xs text-ink/50">Set it live at level</span>
+          <span className="text-xs text-muted">Set it live at level</span>
           {[2, 3, 4].map((option) => (
             <Button key={option} size="sm" variant={level === option ? "primary" : "secondary"} onClick={() => setLevel(option)}>
               {option}
@@ -933,13 +933,13 @@ function WhyItOnlyPrepares({ agentKey }: { agentKey: string }) {
       )}
 
       {goLive.data && (
-        <ul className="space-y-1 text-sm text-ink/70">
+        <ul className="space-y-1 text-sm text-ink">
           {goLive.data.nowAllowed.map((line) => (
             <li key={line}>{line}</li>
           ))}
         </ul>
       )}
-      {goLive.error && <p className="text-sm text-red-700">{(goLive.error as Error).message}</p>}
+      {goLive.error && <p className="text-sm text-danger-text">{(goLive.error as Error).message}</p>}
     </div>
   );
 }
@@ -989,7 +989,7 @@ function StartTheDay() {
   return (
     <div className="relative">
       <div className="flex items-center gap-2">
-        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-ink/50" title="A hunt starts an Apify capture and audits five businesses. That costs money.">
+        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted" title="A hunt starts an Apify capture and audits five businesses. That costs money.">
           <input type="checkbox" checked={withHunts} onChange={(event) => setWithHunts(event.target.checked)} />
           hunts too
         </label>
@@ -999,13 +999,13 @@ function StartTheDay() {
       </div>
 
       {(result || start.error) && (
-        <div className="absolute right-0 z-10 mt-2 w-80 border border-line bg-white p-3 text-sm shadow-lg">
+        <div className="rounded-xl absolute right-0 z-10 mt-2 w-80 border border-line bg-white p-3 text-sm shadow-lg">
           {start.error ? (
-            <p className="text-red-700">{(start.error as Error).message}</p>
+            <p className="text-danger-text">{(start.error as Error).message}</p>
           ) : (
-            <p className="text-ink/75">{result?.summary}</p>
+            <p className="text-ink">{result?.summary}</p>
           )}
-          <button className="mt-2 text-xs text-ink/45 hover:text-ink" onClick={() => setResult(null)}>
+          <button className="mt-2 text-xs text-muted hover:text-ink" onClick={() => setResult(null)}>
             Close
           </button>
         </div>

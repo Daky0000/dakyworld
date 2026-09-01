@@ -33,13 +33,13 @@ export function Invoices() {
     <div>
       <PageHeader title="Invoicing & Payments" subtitle="Generate invoices, track payments, manage receivables." />
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : !invoices || invoices.length === 0 ? (
         <EmptyState message="No invoices yet." />
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
               <th className="px-4 py-3">Invoice</th>
               <th className="px-4 py-3">Client</th>
               <th className="px-4 py-3">Amount</th>
@@ -50,7 +50,7 @@ export function Invoices() {
           </thead>
           <tbody>
             {invoices.map((inv) => (
-              <tr key={inv.id} className="border-b border-ink/5 last:border-0">
+              <tr key={inv.id} className="border-b border-line last:border-0">
                 <td className="px-4 py-3 font-medium">{inv.invoiceNumber}</td>
                 <td className="px-4 py-3">{inv.client.name}</td>
                 <td className="px-4 py-3">

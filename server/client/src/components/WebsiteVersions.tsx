@@ -131,7 +131,7 @@ export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: strin
           </Button>
         </div>
 
-        {failure && <p className="flex-none border-b border-line bg-red-50 px-5 py-3 text-sm text-red-800">{failure}</p>}
+        {failure && <p className="flex-none border-b border-line bg-danger-surface px-5 py-3 text-sm text-danger-text">{failure}</p>}
         {note && <p className="flex-none border-b border-line bg-blue/[.06] px-5 py-3 text-sm text-ink">{note}</p>}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -172,7 +172,7 @@ export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: strin
                         </li>
                       ))}
                       {version.summary.length > 6 && (
-                        <li className="text-ink/50">and {version.summary.length - 6} more</li>
+                        <li className="text-muted">and {version.summary.length - 6} more</li>
                       )}
                     </ul>
                   ) : (
@@ -205,7 +205,7 @@ export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: strin
               <h3 className="font-display text-base tracking-[-.02em]">Put version {confirming.version.number} back on the site?</h3>
               {/* The server's own sentence, not a paraphrase. It is the whole
                   reason this dialog exists. */}
-              <p className="mt-1 text-xs text-amber-800">{confirming.diff.warning}</p>
+              <p className="mt-1 text-xs text-warn-text">{confirming.diff.warning}</p>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
@@ -232,7 +232,7 @@ export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: strin
                   )}
                   <ul className="space-y-2">
                     {confirming.diff.differences.map((entry) => (
-                      <li key={entry.id} className="rounded-lg border border-line p-2.5 text-xs">
+                      <li key={entry.id} className="rounded-xl border border-line p-2.5 text-xs">
                         <div className="mb-1 font-bold uppercase tracking-[.08em] text-muted">{entry.label}</div>
                         <div className="break-words text-muted">
                           <span className="line-through">{entry.now}</span>

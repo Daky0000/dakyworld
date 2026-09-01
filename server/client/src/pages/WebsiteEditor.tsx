@@ -174,7 +174,7 @@ function ButtonControls({
                 type="button"
                 disabled={readOnly}
                 onClick={() => onChange({ ...edit, variant: candidate })}
-                className={`rounded-lg border px-2.5 py-1 text-[12px] ${
+                className={`rounded-xl border px-2.5 py-1 text-[12px] ${
                   variant === candidate ? "border-ink bg-ink text-cream" : "border-line bg-white text-ink hover:border-ink/40"
                 } disabled:opacity-50`}
               >
@@ -185,7 +185,7 @@ function ButtonControls({
               type="button"
               disabled={readOnly}
               onClick={() => onChange({ ...edit, variant: null })}
-              className={`rounded-lg border px-2.5 py-1 text-[12px] ${
+              className={`rounded-xl border px-2.5 py-1 text-[12px] ${
                 variant === null ? "border-ink bg-ink text-cream" : "border-line bg-white text-muted hover:border-ink/40"
               } disabled:opacity-50`}
             >
@@ -252,7 +252,7 @@ function FieldRow({
       className={
         bare
           ? ""
-          : `rounded-2xl border p-4 ${problem ? "border-amber-300 bg-amber-50/40" : changed ? "border-blue/40 bg-blue/[.02]" : "border-line bg-white"}`
+          : `rounded-2xl border p-4 ${problem ? "border-warn-line bg-warn-surface/40" : changed ? "border-blue/40 bg-blue/[.02]" : "border-line bg-white"}`
       }
     >
       {!bare && (
@@ -331,7 +331,7 @@ function FieldRow({
             <img
               src={imageSrc}
               alt=""
-              className="h-16 w-16 rounded-lg border border-line bg-cream object-contain p-1"
+              className="h-16 w-16 rounded-xl border border-line bg-cream object-contain p-1"
               onError={(event) => ((event.target as HTMLImageElement).style.visibility = "hidden")}
             />
           )}
@@ -360,7 +360,7 @@ function FieldRow({
       )}
 
       {field.note && <p className="mt-2 text-xs text-muted">{field.note}</p>}
-      {problem && <p className="mt-2 text-xs font-semibold text-amber-800">{problem}</p>}
+      {problem && <p className="mt-2 text-xs font-semibold text-warn-text">{problem}</p>}
     </div>
   );
 }
@@ -390,7 +390,7 @@ function LayerList({
     <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
       {sections.map((section) => (
         <div key={section.id} className="mb-2">
-          <div className="px-2 pb-1 pt-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-ink/35">{section.label}</div>
+          <div className="px-2 pb-1 pt-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-muted">{section.label}</div>
           <ul>
             {section.fields.map((field) => {
               const picked = field.id === pickedId;
@@ -401,19 +401,19 @@ function LayerList({
                     type="button"
                     onClick={() => onPick(field.id)}
                     title={field.label}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] transition ${
-                      picked ? "bg-blue/10 text-ink" : "text-ink/80 hover:bg-ink/[.04] hover:text-ink"
+                    className={`flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[12px] transition ${
+                      picked ? "bg-blue/10 text-ink" : "text-ink hover:bg-sunken hover:text-ink"
                     }`}
                   >
                     <span
                       className={`flex h-4 w-4 shrink-0 items-center justify-center rounded font-mono text-[8px] uppercase ${
-                        picked ? "bg-blue text-white" : "bg-ink/[.06] text-ink/45"
+                        picked ? "bg-blue text-white" : "bg-sunken text-muted"
                       }`}
                     >
                       {field.kind === "image" ? "▣" : field.kind === "link" ? "↗" : "T"}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{field.preview || field.label}</span>
-                    {problems.has(field.id) && <span className="shrink-0 text-[9px] text-amber-600">!</span>}
+                    {problems.has(field.id) && <span className="shrink-0 text-[9px] text-warn-text">!</span>}
                     {changed && <span className="shrink-0 text-[9px] text-blue">●</span>}
                   </button>
                 </li>
@@ -509,7 +509,7 @@ function ConflictDialog({
                           key={side}
                           type="button"
                           onClick={() => setChoices((current) => ({ ...current, [field.id]: side }))}
-                          className={`rounded-lg border p-2.5 text-left text-xs transition ${
+                          className={`rounded-xl border p-2.5 text-left text-xs transition ${
                             choices[field.id] === side ? "border-blue bg-blue/[.06] text-ink" : "border-line text-muted hover:border-ink/30"
                           }`}
                         >
@@ -1079,7 +1079,7 @@ export function WebsiteEditor() {
   if (page.isLoading) return <div className="p-10 text-sm text-muted">Opening the page…</div>;
   if (page.isError) {
     return (
-      <div className="m-10 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900">
+      <div className="m-10 rounded-2xl border border-warn-line bg-warn-surface p-6 text-sm text-warn-text">
         {page.error instanceof ApiError ? page.error.message : "That page could not be opened."}
       </div>
     );
@@ -1177,7 +1177,7 @@ export function WebsiteEditor() {
               title="Undo (Ctrl+Z)"
               disabled={!historyState.canUndo}
               onClick={() => restore(-1)}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition enabled:hover:bg-ink/[.05] enabled:hover:text-ink disabled:opacity-30"
+              className="flex h-7 w-7 items-center justify-center rounded-xl text-muted transition enabled:hover:bg-sunken enabled:hover:text-ink disabled:opacity-30"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
                 <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round">
@@ -1191,7 +1191,7 @@ export function WebsiteEditor() {
               title="Redo (Ctrl+Shift+Z)"
               disabled={!historyState.canRedo}
               onClick={() => restore(1)}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition enabled:hover:bg-ink/[.05] enabled:hover:text-ink disabled:opacity-30"
+              className="flex h-7 w-7 items-center justify-center rounded-xl text-muted transition enabled:hover:bg-sunken enabled:hover:text-ink disabled:opacity-30"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
                 <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round">
@@ -1210,7 +1210,7 @@ export function WebsiteEditor() {
               void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
               setPreviewToken((token) => token + 1);
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-ink/[.05] hover:text-ink"
+            className="flex h-7 w-7 items-center justify-center rounded-xl text-muted transition hover:bg-sunken hover:text-ink"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
               <g stroke="currentColor" strokeWidth="1.25" fill="none" strokeLinecap="round" strokeLinejoin="round">
@@ -1221,7 +1221,7 @@ export function WebsiteEditor() {
           </button>
 
           {mode !== "edit" && (
-            <div className="flex overflow-hidden rounded-lg border border-line">
+            <div className="flex overflow-hidden rounded-xl border border-line">
               {DEVICES.map((option) => (
                 <button
                   key={option.key}
@@ -1304,11 +1304,11 @@ export function WebsiteEditor() {
                       {entry.label}: “{entry.from}” → “{entry.to}”
                     </li>
                   ))}
-                  {published.summary.length > 5 && <li className="text-ink/50">and {published.summary.length - 5} more</li>}
+                  {published.summary.length > 5 && <li className="text-muted">and {published.summary.length - 5} more</li>}
                 </ul>
               )}
               {published.touched.seo && (
-                <p className="mt-1.5 text-xs text-amber-800">
+                <p className="mt-1.5 text-xs text-warn-text">
                   This changed the page title or its search-result description. The generated link-preview copies need{" "}
                   <code className="font-mono">npm run site</code> in the repository to match.
                 </p>
@@ -1328,7 +1328,7 @@ export function WebsiteEditor() {
               </div>
             </div>
           )}
-          {failure && <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{failure}</div>}
+          {failure && <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">{failure}</div>}
         </div>
       )}
 
@@ -1338,7 +1338,7 @@ export function WebsiteEditor() {
           <aside className="flex w-[300px] flex-none flex-col border-r border-line bg-white">
             <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-4 py-2.5">
               <div className="min-w-0">
-                <div className="font-mono text-[9px] uppercase tracking-[.14em] text-ink/40">{picked ? picked.tag : "Nothing selected"}</div>
+                <div className="font-mono text-[9px] uppercase tracking-[.14em] text-muted">{picked ? picked.tag : "Nothing selected"}</div>
                 <div className="truncate font-display text-[13px] tracking-[-.02em]">{picked ? picked.label : "Pick something"}</div>
               </div>
               {picked && (
@@ -1349,7 +1349,7 @@ export function WebsiteEditor() {
             </div>
 
             {liveBlind && (
-              <p className="flex-none border-b border-line bg-amber-50 px-4 py-2 text-[11px] leading-relaxed text-amber-900">
+              <p className="flex-none border-b border-line bg-warn-surface px-4 py-2 text-[11px] leading-relaxed text-warn-text">
                 The page beside this is not keeping up as you type. Your changes are being saved — it will catch up a moment
                 after each one.
               </p>
@@ -1372,7 +1372,7 @@ export function WebsiteEditor() {
                 <>
                   <div className="border-b border-line px-4 py-3.5">
                     <div className="mb-2.5 flex items-center justify-between">
-                      <span className="font-mono text-[10px] font-bold uppercase tracking-[.14em] text-ink/40">Content</span>
+                      <span className="font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted">Content</span>
                       {picked.kind !== "image" && (
                         <button
                           type="button"
@@ -1384,7 +1384,7 @@ export function WebsiteEditor() {
                       )}
                     </div>
                     {absentIds.has(picked.id) && (
-                      <p className="mb-2 rounded-lg bg-cream/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+                      <p className="mb-2 rounded-xl bg-cream/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
                         {picked.id.startsWith("meta.")
                           ? "This one is not on the page itself — it is what browsers and search results show. Nothing here will change in the preview."
                           : "This one cannot be shown while you type. It appears in the page once the draft saves."}
@@ -1419,7 +1419,7 @@ export function WebsiteEditor() {
         {mode === "edit" ? (
           <>
             <aside className="w-[240px] flex-none overflow-y-auto border-r border-line bg-white p-3">
-              <div className="mb-2 px-1 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-ink/40">Sections</div>
+              <div className="mb-2 px-1 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-muted">Sections</div>
               <ul className="space-y-0.5">
                 {sections.map((candidate) => {
                   const edited = candidate.fields.some((field) => edits[field.id]);
@@ -1429,8 +1429,8 @@ export function WebsiteEditor() {
                         type="button"
                         onClick={() => setSectionId(candidate.id)}
                         title={candidate.label}
-                        className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] ${
-                          candidate.id === section?.id ? "bg-ink text-cream" : "text-ink hover:bg-ink/[.04]"
+                        className={`flex w-full items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-left text-[12px] ${
+                          candidate.id === section?.id ? "bg-ink text-cream" : "text-ink hover:bg-sunken"
                         }`}
                       >
                         <span className="truncate">{candidate.label}</span>

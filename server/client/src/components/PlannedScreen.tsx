@@ -46,7 +46,7 @@ export function PlannedScreen({
       <PageHeader title={title} eyebrow={eyebrow ?? "Website Builder"} subtitle={summary} />
 
       <div className="mb-6 rounded-2xl border border-dashed border-line bg-white px-5 py-4">
-        <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Not built yet</div>
+        <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Not built yet</div>
         <p className="mt-1.5 text-sm text-muted">
           This screen is in the plan and has not been built. It is here so it is not forgotten — see{" "}
           <span className="font-mono text-xs text-ink">server/docs/website-builder.md</span> for the whole map.
@@ -88,7 +88,7 @@ export function PlannedScreen({
               <ul className="space-y-2">
                 {waitingOn.map((item) => (
                   <li key={item} className="flex gap-2.5 text-sm text-muted">
-                    <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-amber-400" />
+                    <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-warn" />
                     <span>{item}</span>
                   </li>
                 ))}

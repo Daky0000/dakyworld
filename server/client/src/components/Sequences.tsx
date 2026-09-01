@@ -49,7 +49,7 @@ export function Sequences() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-ink/55">
+        <p className="max-w-2xl text-sm text-muted">
           A sequence sends the follow-ups nobody remembers to send by hand. It stops on its own when someone replies, unsubscribes, or
           moves out of the pipeline.
         </p>
@@ -64,7 +64,7 @@ export function Sequences() {
       </div>
 
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : !sequences || sequences.length === 0 ? (
         <EmptyState
           message="No sequences yet. The usual first one: three emails to every new scraped lead with no website, three days apart."
@@ -83,13 +83,13 @@ export function Sequences() {
                     <Badge tone="muted">{TRIGGERS.find((option) => option.value === sequence.trigger)?.label ?? sequence.trigger}</Badge>
                     {sequence.requireApproval && <Badge tone="muted">Approval first</Badge>}
                   </div>
-                  {sequence.description && <p className="mt-1 text-sm text-ink/55">{sequence.description}</p>}
+                  {sequence.description && <p className="mt-1 text-sm text-muted">{sequence.description}</p>}
 
-                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink/50">
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
                     {sequence.steps.map((step, index) => (
                       <span key={step.id ?? index} className="flex items-center gap-2">
-                        {index > 0 && <span className="text-ink/25">→</span>}
-                        <span className="rounded-lg border border-line bg-white px-2 py-1">
+                        {index > 0 && <span className="text-muted">→</span>}
+                        <span className="rounded-xl border border-line bg-white px-2 py-1">
                           {index === 0 ? `after ${step.delayDays}d` : `+${step.delayDays}d`}
                           {step.useAi && <span className="ml-1 text-blue">AI</span>}
                         </span>
@@ -98,7 +98,7 @@ export function Sequences() {
                     {sequence.steps.length === 0 && <span className="italic">No steps yet</span>}
                   </div>
 
-                  <div className="mt-3 text-xs text-ink/45">
+                  <div className="mt-3 text-xs text-muted">
                     {sequence.activeEnrollments ?? 0} in it now · {sequence._count?.enrollments ?? 0} ever · sends{" "}
                     {sequence.sendWindowStart}:00–{sequence.sendWindowEnd}:00 {sequence.weekdaysOnly ? "on weekdays" : "any day"}
                   </div>
@@ -225,9 +225,9 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} aria-hidden />
       <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-line bg-cream p-6">
         <h3 className="mb-1 font-display text-2xl">{form.id ? "Edit sequence" : "New sequence"}</h3>
-        <p className="mb-5 text-sm text-ink/55">Each step waits its own number of days, then sends inside the window below.</p>
+        <p className="mb-5 text-sm text-muted">Each step waits its own number of days, then sends inside the window below.</p>
 
-        {error && <div className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+        {error && <div className="mb-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error}</div>}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Name" full>
@@ -287,7 +287,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
                 value={form.sendWindowStart}
                 onChange={(event) => setForm({ ...form, sendWindowStart: Number(event.target.value) })}
               />
-              <span className="text-ink/40">and</span>
+              <span className="text-muted">and</span>
               <input
                 type="number"
                 min={1}
@@ -302,7 +302,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
             <input className="input" value={form.timezone} onChange={(event) => setForm({ ...form, timezone: event.target.value })} />
           </Field>
 
-          <div className="sm:col-span-2 flex flex-wrap gap-6 border-t border-ink/10 pt-4">
+          <div className="sm:col-span-2 flex flex-wrap gap-6 border-t border-line pt-4">
             <Toggle checked={form.weekdaysOnly} onChange={(next) => setForm({ ...form, weekdaysOnly: next })} label="Weekdays only" />
             <Toggle checked={form.stopOnReply} onChange={(next) => setForm({ ...form, stopOnReply: next })} label="Stop when they reply" />
             <Toggle
@@ -335,7 +335,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
             {form.steps.map((step, index) => (
               <div key={index} className="rounded-2xl border border-line bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">
+                  <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
                     Step {index + 1} · {index === 0 ? "after enrolment" : "after the step before"}
                   </span>
                   <div className="flex items-center gap-2">
@@ -347,11 +347,11 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
                       value={step.delayDays}
                       onChange={(event) => updateStep(index, { delayDays: Number(event.target.value) })}
                     />
-                    <span className="text-xs text-ink/45">days later</span>
+                    <span className="text-xs text-muted">days later</span>
                     <button
                       type="button"
                       onClick={() => setForm({ ...form, steps: form.steps.filter((_, position) => position !== index) })}
-                      className="ml-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/35 hover:text-red-600"
+                      className="ml-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-danger-text"
                     >
                       Remove
                     </button>
@@ -428,7 +428,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
           </div>
         </div>
 
-        <div className="mt-6 flex justify-end gap-2 border-t border-ink/10 pt-5">
+        <div className="mt-6 flex justify-end gap-2 border-t border-line pt-5">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
@@ -458,24 +458,24 @@ function Enrollments({ sequenceId }: { sequenceId: string }) {
     },
   });
 
-  if (isLoading) return <div className="mt-5 border-t border-ink/10 pt-4 text-sm text-ink/50">Loading…</div>;
+  if (isLoading) return <div className="mt-5 border-t border-line pt-4 text-sm text-muted">Loading…</div>;
   if (!data || data.length === 0) {
     return (
-      <div className="mt-5 border-t border-ink/10 pt-4 text-sm text-ink/45">
+      <div className="mt-5 border-t border-line pt-4 text-sm text-muted">
         Nobody is in this sequence yet. Add people from the Leads page, or turn on the trigger above.
       </div>
     );
   }
 
   return (
-    <div className="mt-5 max-h-80 overflow-y-auto border-t border-ink/10 pt-4">
+    <div className="mt-5 max-h-80 overflow-y-auto border-t border-line pt-4">
       {data.map((enrollment) => (
-        <div key={enrollment.id} className="flex items-center justify-between border-b border-ink/5 py-2 text-sm last:border-0">
+        <div key={enrollment.id} className="flex items-center justify-between border-b border-line py-2 text-sm last:border-0">
           <div className="min-w-0">
             <span className="font-medium">{enrollment.lead?.contactName ?? enrollment.client?.name ?? enrollment.toEmail}</span>
-            <span className="ml-2 text-xs text-ink/40">{enrollment.toEmail}</span>
+            <span className="ml-2 text-xs text-muted">{enrollment.toEmail}</span>
           </div>
-          <div className="flex shrink-0 items-center gap-3 text-xs text-ink/50">
+          <div className="flex shrink-0 items-center gap-3 text-xs text-muted">
             <span>{enrollment._count?.messages ?? 0} sent</span>
             {enrollment.status === "ACTIVE" ? (
               <>

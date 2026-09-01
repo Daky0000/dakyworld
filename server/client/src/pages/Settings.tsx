@@ -165,7 +165,7 @@ export function Settings() {
               key={entry.id}
               type="button"
               onClick={() => choose(entry.id)}
-              className={`flex w-full items-start gap-3 border-b border-ink/5 px-4 py-3 text-left transition last:border-0 ${
+              className={`flex w-full items-start gap-3 border-b border-line px-4 py-3 text-left transition last:border-0 ${
                 section === entry.id ? "bg-ink text-cream" : "hover:bg-cream"
               }`}
             >
@@ -174,7 +174,7 @@ export function Settings() {
               </span>
               <span className="min-w-0">
                 <span className="block font-mono text-[11px] uppercase tracking-[.12em]">{entry.label}</span>
-                <span className={`mt-0.5 block text-xs ${section === entry.id ? "text-cream/60" : "text-ink/45"}`}>
+                <span className={`mt-0.5 block text-xs ${section === entry.id ? "text-cream/60" : "text-muted"}`}>
                   {entry.blurb}
                 </span>
               </span>
@@ -184,7 +184,7 @@ export function Settings() {
 
         <div>
           {isLoading || !data ? (
-            <p className="text-sm text-ink/50">Loading…</p>
+            <p className="text-sm text-muted">Loading…</p>
           ) : (
             <>
               {section === "security" && <SecurityPanel />}
@@ -287,7 +287,7 @@ function SystemPanel({ settings }: { settings: AppSettings }) {
         title="System"
         what="Who the business is, everywhere it says so. Change a detail here and it changes on every email, every PDF, every proposal and everything the AI writes — there is no second copy to keep in step."
         state={
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-ink/60">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted">
             <span className="font-display text-lg tracking-[-.02em] text-ink">{settings.system.profile.displayName}</span>
             <span>{settings.system.profile.location}</span>
             <span>{settings.system.profile.email}</span>
@@ -386,7 +386,7 @@ function SystemPanel({ settings }: { settings: AppSettings }) {
           <Button onClick={() => update.mutate()} disabled={!dirty || update.isPending}>
             {update.isPending ? "Saving…" : dirty ? "Save changes" : "Saved"}
           </Button>
-          {dirty && <span className="text-xs text-ink/45">This changes every email, PDF and proposal from the next one onward.</span>}
+          {dirty && <span className="text-xs text-muted">This changes every email, PDF and proposal from the next one onward.</span>}
         </div>
         <ErrorNote error={update.error} />
       </Panel>
@@ -501,7 +501,7 @@ function BusinessContextPanel() {
 function Band({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h3 className="mb-3 border-b border-ink/10 pb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">{title}</h3>
+      <h3 className="mb-3 border-b border-line pb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">{title}</h3>
       {children}
     </section>
   );
@@ -562,12 +562,12 @@ function BrandPanel({ settings }: { settings: AppSettings }) {
       what="What is stamped on a document and embedded in an email. Logos are attached to the message itself rather than linked, so they show even in Outlook with images blocked."
       where="Under 1 MB each, PNG with a transparent background for preference. Anything left empty falls back to the artwork shipped with the app."
       state={
-        <div className="text-sm text-ink/60">
+        <div className="text-sm text-muted">
           {settings.system.brand.filter((entry) => entry.uploaded).length} of {settings.system.brand.length} uploaded
         </div>
       }
     >
-      {error && <p className="mt-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {error && <p className="mt-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error}</p>}
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         {settings.system.brand.map((entry) => {
@@ -577,28 +577,28 @@ function BrandPanel({ settings }: { settings: AppSettings }) {
             <div key={entry.slot} className="rounded-2xl border border-line bg-white p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">{entry.label}</p>
-                  <p className="mt-1 text-xs leading-relaxed text-ink/55">{entry.what}</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{entry.label}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted">{entry.what}</p>
                 </div>
                 {entry.uploaded ? <Badge tone="positive">uploaded</Badge> : <Badge tone="muted">shipped</Badge>}
               </div>
 
               <div
-                className={`mt-3 flex h-24 items-center justify-center rounded-xl border border-dashed border-ink/15 px-4 ${
+                className={`mt-3 flex h-24 items-center justify-center rounded-xl border border-dashed border-line-strong px-4 ${
                   onDark ? "bg-ink" : "bg-cream"
                 }`}
               >
                 {image ? (
                   <img src={image} alt={entry.label} className="max-h-16 max-w-full object-contain" />
                 ) : (
-                  <span className={`font-mono text-[10px] uppercase tracking-[.12em] ${onDark ? "text-cream/40" : "text-ink/30"}`}>
+                  <span className={`font-mono text-[10px] uppercase tracking-[.12em] ${onDark ? "text-cream/40" : "text-muted"}`}>
                     nothing uploaded
                   </span>
                 )}
               </div>
 
               <div className="mt-3 flex items-center gap-2">
-                <label className="cursor-pointer border border-ink/20 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink/60 transition hover:border-ink hover:text-ink">
+                <label className="rounded-full cursor-pointer border border-line-strong px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:border-ink hover:text-ink">
                   {busy === entry.slot ? "Uploading…" : entry.uploaded ? "Replace" : "Upload"}
                   <input
                     type="file"
@@ -618,7 +618,7 @@ function BrandPanel({ settings }: { settings: AppSettings }) {
                       setBusy(entry.slot);
                       remove.mutate(entry.slot);
                     }}
-                    className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40 transition hover:text-ink"
+                    className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
                   >
                     Remove
                   </button>
@@ -741,7 +741,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
             <span>
               {email.fromName} &lt;{email.fromEmail}&gt;
             </span>
-            <span className="font-mono text-xs text-ink/50">
+            <span className="font-mono text-xs text-muted">
               {email.transport === "HOSTINGER"
                 ? email.hostinger.mcp?.ok
                   ? `hostinger mcp · ${email.hostinger.mcp.tool}`
@@ -838,7 +838,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
               <Button type="submit" disabled={connect.isPending || !host.trim() || !user.trim() || !password || !fromEmail.trim()}>
                 {connect.isPending ? "Checking with the server…" : email.configured ? "Save" : "Connect"}
               </Button>
-              <span className="text-xs text-ink/45">Checked against the mail server before it's saved.</span>
+              <span className="text-xs text-muted">Checked against the mail server before it's saved.</span>
             </div>
           </form>
           <ErrorNote error={connect.error} />
@@ -846,8 +846,8 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
       )}
 
       {email.configured && (
-        <div className="mt-6 border-t border-ink/10 pt-4">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">Send a test</div>
+        <div className="mt-6 border-t border-line pt-4">
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Send a test</div>
           <div className="flex flex-wrap gap-2">
             <input
               className="input max-w-xs"
@@ -859,7 +859,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
               {test.isPending ? "Sending…" : "Send test"}
             </Button>
           </div>
-          {testResult && <p className="mt-2 text-sm text-ink/60">{testResult}</p>}
+          {testResult && <p className="mt-2 text-sm text-muted">{testResult}</p>}
         </div>
       )}
     </Panel>
@@ -958,10 +958,10 @@ function InboxPanel({ settings }: { settings: AppSettings }) {
       state={
         inbox.configured ? (
           <Connected>
-            <span className="text-ink/70">
+            <span className="text-ink">
               {inbox.user} at {inbox.host}
             </span>
-            <span className="text-ink/45">
+            <span className="text-muted">
               {inbox.watcher.connected ? "live connection open" : "reading on the minute"}
               {inbox.sentFolder ? ` · Sent: ${inbox.sentFolder}` : " · no Sent folder found"}
             </span>
@@ -974,7 +974,7 @@ function InboxPanel({ settings }: { settings: AppSettings }) {
       }
     >
       {inbox.folders.some((folder) => folder.lastError) && (
-        <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="mt-4 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
           {inbox.folders
             .filter((folder) => folder.lastError)
             .map((folder) => (
@@ -1035,7 +1035,7 @@ function InboxPanel({ settings }: { settings: AppSettings }) {
                 onChange={setAutoRoute}
                 label="Hand messages to the agent whose job it is"
               />
-              <p className="text-xs text-ink/45">
+              <p className="text-xs text-muted">
                 With both off, mail is still filed, sequences still stop when somebody replies and bounces are still suppressed — those
                 are code, not judgement. Nothing here ever sends: a reply an agent writes is a draft you send.
               </p>
@@ -1044,7 +1044,7 @@ function InboxPanel({ settings }: { settings: AppSettings }) {
               <Button type="submit" disabled={connect.isPending || !canSubmit}>
                 {connect.isPending ? "Checking with the server…" : inbox.configured ? "Save" : "Connect"}
               </Button>
-              <span className="text-xs text-ink/45">Checked against the mail server before it's saved.</span>
+              <span className="text-xs text-muted">Checked against the mail server before it's saved.</span>
               {inbox.configured && (
                 <Button variant="ghost" onClick={() => pause.mutate(inbox.paused)} disabled={pause.isPending}>
                   {inbox.paused ? "Start reading again" : "Pause reading"}
@@ -1149,19 +1149,19 @@ function HostingerForm({ settings }: { settings: AppSettings }) {
           <Button type="submit" disabled={connect.isPending || (!token.trim() && !live)}>
             {connect.isPending ? "Checking with Hostinger…" : live ? "Save" : "Connect"}
           </Button>
-          <span className="text-xs text-ink/45">Checked against Hostinger before it's saved.</span>
+          <span className="text-xs text-muted">Checked against Hostinger before it's saved.</span>
         </div>
       </form>
 
       <ErrorNote error={connect.error} />
-      {hostinger.error && <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{hostinger.error}</p>}
+      {hostinger.error && <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{hostinger.error}</p>}
 
       {/* Which path a send will actually take. Worth stating plainly: the MCP
           server and the plain Mail API fail in different ways. */}
       {hostinger.mcp && (
         <p
           className={`mt-3 px-3 py-2 text-sm ${
-            hostinger.mcp.ok ? "border border-line bg-ink/[.02] text-ink/60" : "border border-amber-200 bg-amber-50 text-amber-800"
+            hostinger.mcp.ok ? "border border-line bg-sunken text-muted" : "rounded-xl border border-warn-line bg-warn-surface text-warn-text"
           }`}
         >
           {hostinger.mcp.ok ? (
@@ -1179,7 +1179,7 @@ function HostingerForm({ settings }: { settings: AppSettings }) {
       )}
 
       {live && (
-        <p className="mt-3 text-xs text-ink/45">
+        <p className="mt-3 text-xs text-muted">
           Two things SMTP does that this path can't: a reply-to address different from the mailbox, and the one-click unsubscribe
           header. The unsubscribe link inside every cold email is unaffected.
         </p>
@@ -1208,7 +1208,7 @@ function Chip({
       title={title}
       onClick={onClick}
       className={`border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
-        selected ? "border-ink bg-ink text-cream" : "border-ink/15 text-ink/55 hover:border-ink hover:text-ink"
+        selected ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink hover:text-ink"
       }`}
     >
       {children}
@@ -1234,9 +1234,9 @@ function Panel({
   return (
     <section className="rounded-2xl border border-line bg-white p-6">
       <h2 className="font-display text-2xl">{title}</h2>
-      <p className="mt-1 max-w-2xl text-sm text-ink/60">{what}</p>
-      <div className="mt-4 border-y border-ink/10 py-4">{state}</div>
-      {where && <p className="mt-4 max-w-2xl text-sm text-ink/55">{where}</p>}
+      <p className="mt-1 max-w-2xl text-sm text-muted">{what}</p>
+      <div className="mt-4 border-y border-line py-4">{state}</div>
+      {where && <p className="mt-4 max-w-2xl text-sm text-muted">{where}</p>}
       {children}
     </section>
   );
@@ -1244,7 +1244,7 @@ function Panel({
 
 function EnvNote({ variable }: { variable: string }) {
   return (
-    <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+    <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">
       Pinned by the <code className="font-mono">{variable}</code> environment variable, so it can't be edited here. Change it in
       Railway, or remove the variable to manage it from this screen.
     </p>
@@ -1253,7 +1253,7 @@ function EnvNote({ variable }: { variable: string }) {
 
 function ErrorNote({ error }: { error: unknown }) {
   if (!(error instanceof Error)) return null;
-  return <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error.message}</p>;
+  return <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error.message}</p>;
 }
 
 /** Saving any panel returns the whole settings snapshot, so one cache key covers everything. */
@@ -1273,7 +1273,7 @@ function Connected({ children }: { children: ReactNode }) {
 
 function NotConnected({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-3 text-sm text-ink/60">
+    <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
       <Badge tone="muted">not set up</Badge>
       {children}
     </div>
@@ -1326,8 +1326,8 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
       state={
         analyst.reading.ready ? (
           <Connected>
-            <span className="font-mono text-xs text-ink/50">{analyst.key}</span>
-            <span className="text-xs text-ink/40">
+            <span className="font-mono text-xs text-muted">{analyst.key}</span>
+            <span className="text-xs text-muted">
               Sheets read by {providerName(analyst.reading.serving)} · {analyst.reading.model}
             </span>
             {!analyst.envManaged && (
@@ -1374,9 +1374,9 @@ function AnalystPanel({ settings }: { settings: AppSettings }) {
           the AI models screen alongside every other job. This names where the
           choice lives rather than keeping a second control for it. */}
       {analyst.reading.note && (
-        <p className="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{analyst.reading.note}</p>
+        <p className="mt-4 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">{analyst.reading.note}</p>
       )}
-      <p className="mt-4 max-w-2xl text-xs text-ink/45">
+      <p className="mt-4 max-w-2xl text-xs text-muted">
         Who reads sheets, and on which model, is chosen under <span className="font-mono text-[11px]">Settings → AI models → Reading sheets</span>.
         This key stays as the floor everything falls back to.
       </p>
@@ -1421,7 +1421,7 @@ function ModelsPanel({ settings }: { settings: AppSettings }) {
           fallingBack.length === 0 ? (
             <Connected>Every job is going to the model chosen for it.</Connected>
           ) : (
-            <div className="flex flex-wrap items-center gap-3 text-sm text-ink/60">
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
               <Badge tone="muted">
                 {fallingBack.length} of {routing.length} falling back
               </Badge>
@@ -1456,8 +1456,8 @@ function ModelsPanel({ settings }: { settings: AppSettings }) {
         state={
           byKey.get("anthropic")?.configured ? (
             <Connected>
-              <span className="text-xs text-ink/40">{byKey.get("anthropic")?.model}</span>
-              <span className="text-xs text-ink/45">
+              <span className="text-xs text-muted">{byKey.get("anthropic")?.model}</span>
+              <span className="text-xs text-muted">
                 Covering {routing.filter((route) => route.serving === "anthropic").length} of {routing.length} jobs.
               </span>
             </Connected>
@@ -1641,12 +1641,12 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
             {ladders.filter((entry) => entry.ladder.length > 0).length === 1 ? "" : "s"} on free models
             {onShipped > 0 ? `, ${onShipped} on the shipped picks` : ""}
           </span>
-          <span className="font-mono text-xs text-ink/50">{models.filter((model) => model.known && !model.down).length} models verified</span>
+          <span className="font-mono text-xs text-muted">{models.filter((model) => model.known && !model.down).length} models verified</span>
         </Connected>
       }
     >
       {!connected && (
-        <p className="mt-4 border border-line bg-ink/[.02] px-3 py-2 text-sm text-ink/60">
+        <p className="rounded-xl mt-4 border border-line bg-sunken px-3 py-2 text-sm text-muted">
           Connect an NVIDIA key below first. The ladders here are the shipped ones and are exactly what will be used once a key is
           in — one key reaches every model, and the console issues it from a model's own page even though it is not tied to that
           model.
@@ -1657,7 +1657,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
           explanation for "I believed the free models were on and they are not
           kicking in", and nothing used to say it anywhere. */}
       {report.data?.cooldown?.cooling && (
-        <p className="mt-3 border border-amber-300 bg-amber-50/50 px-3 py-2 text-sm text-ink/70">{report.data.note}</p>
+        <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface/50 px-3.5 py-2.5 text-sm text-ink">{report.data.note}</p>
       )}
 
       {/* The whole assignment on one screen. A dropdown that edits one row at a
@@ -1671,18 +1671,18 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
                 key={entry.key}
                 className={`border-b border-line last:border-b-0 ${entry.key === job ? "bg-blue/[.06]" : ""}`}
               >
-                <th scope="row" className="whitespace-nowrap px-3 py-2 text-left align-top font-mono text-[11px] uppercase tracking-[.12em] text-ink/60">
+                <th scope="row" className="whitespace-nowrap px-3 py-2 text-left align-top font-mono text-[11px] uppercase tracking-[.12em] text-muted">
                   <button type="button" onClick={() => pickJob(entry.key)} className="hover:text-ink">
                     {entry.name}
                   </button>
                 </th>
                 <td className="px-3 py-2 align-top">
                   {entry.ladder.length === 0 ? (
-                    <span className="text-ink/40">
+                    <span className="text-muted">
                       {entry.source === "off" ? "free models off — goes straight to the paid floor" : "no free model serves this"}
                     </span>
                   ) : (
-                    <span className="font-mono text-[11px] text-ink/60">
+                    <span className="font-mono text-[11px] text-muted">
                       {entry.ladder.map((id) => byId.get(id)?.name ?? id).join(" → ")}
                     </span>
                   )}
@@ -1698,7 +1698,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
       </div>
 
       <div className="mt-5 border-t border-line pt-5">
-        <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45" htmlFor="free-models-job">
+        <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted" htmlFor="free-models-job">
           Free AI models for
         </label>
         <select id="free-models-job" value={job} onChange={(event) => pickJob(event.target.value)} className="input mt-1 w-full sm:w-80">
@@ -1708,11 +1708,11 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
             </option>
           ))}
         </select>
-        {current && <p className="mt-2 text-sm text-ink/55">{current.blurb}</p>}
+        {current && <p className="mt-2 text-sm text-muted">{current.blurb}</p>}
       </div>
 
       {source === "off" && (
-        <p className="mt-3 border border-line bg-ink/[.02] px-3 py-2 text-sm text-ink/60">
+        <p className="rounded-xl mt-3 border border-line bg-sunken px-3 py-2 text-sm text-muted">
           Free models are off for {current?.phrase}. It goes straight to NVIDIA's own model, and to the paid floor when that fails.
         </p>
       )}
@@ -1720,7 +1720,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
       {/* A rung the vendor has stopped listing, or one this app has watched
           fail, is the one thing a saved list cannot tell you about itself. */}
       {(current?.stale ?? []).map((entry) => (
-        <p key={entry.id} className="mt-3 border border-amber-300 bg-amber-50/50 px-3 py-2 text-sm text-ink/70">
+        <p key={entry.id} className="mt-3 rounded-xl border border-warn-line bg-warn-surface/50 px-3.5 py-2.5 text-sm text-ink">
           <span className="font-mono text-xs">{entry.id}</span> — {entry.why}
         </p>
       ))}
@@ -1730,11 +1730,11 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
           {ladder.map((id, index) => {
             const model = byId.get(id);
             return (
-              <li key={id} className="flex items-center gap-3 border border-line bg-white px-3 py-2">
-                <span className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">{index + 1}</span>
+              <li key={id} className="rounded-xl flex items-center gap-3 border border-line bg-white px-3 py-2">
+                <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">{index + 1}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm text-ink">{model?.name ?? id}</span>
-                  <span className="block truncate font-mono text-[11px] text-ink/45">{id}</span>
+                  <span className="block truncate font-mono text-[11px] text-muted">{id}</span>
                 </span>
                 {job === "agent" && model?.known && !model.tools && <Badge tone="muted">no tools — agents skip it</Badge>}
                 {job === "vision" && model?.known && !model.vision && <Badge tone="muted">cannot see</Badge>}
@@ -1758,7 +1758,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
 
       {servable && models.length > 0 && (
         <div className="mt-4">
-          <p className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">
+          <p className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
             Free on your account ({models.length}) — pick up to {max} for {current?.phrase}
           </p>
           <div className="mt-2 max-h-80 overflow-y-auto border border-line">
@@ -1771,16 +1771,16 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
                   onClick={() => toggle(model.id)}
                   disabled={!picked && ladder.length >= max}
                   className={`flex w-full items-start gap-3 border-b border-line px-3 py-2 text-left last:border-b-0 ${
-                    picked ? "bg-blue/[.06]" : "hover:bg-ink/[.02]"
+                    picked ? "bg-blue/[.06]" : "hover:bg-sunken"
                   } disabled:opacity-40`}
                 >
-                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${picked ? "bg-blue" : "bg-ink/15"}`} />
+                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${picked ? "bg-blue" : "bg-line-strong"}`} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm text-ink">
-                      {model.name} <span className="text-ink/40">· {model.house}</span>
+                      {model.name} <span className="text-muted">· {model.house}</span>
                     </span>
-                    <span className="block truncate font-mono text-[11px] text-ink/45">{model.id}</span>
-                    <span className="mt-0.5 block text-xs text-ink/50">{model.blurb}</span>
+                    <span className="block truncate font-mono text-[11px] text-muted">{model.id}</span>
+                    <span className="mt-0.5 block text-xs text-muted">{model.blurb}</span>
                   </span>
                   {/* What a model can actually do, beside the model, because
                       these are the reason to pick one row over another and
@@ -1827,7 +1827,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
             Turn free models off for this job
           </Button>
         )}
-        {save.data?.note && <span className="text-sm text-ink/55">{save.data.note}</span>}
+        {save.data?.note && <span className="text-sm text-muted">{save.data.note}</span>}
       </div>
       <ErrorNote error={save.error ?? report.error} />
     </Panel>
@@ -1872,12 +1872,12 @@ function RouteRow({
             <StatusDot tone={route.ready ? "ok" : "warn"} />
             <span className="font-mono text-[11px] uppercase tracking-[.12em]">{info?.name ?? route.job}</span>
           </div>
-          <p className="mt-1 text-sm text-ink/55">{info?.blurb}</p>
+          <p className="mt-1 text-sm text-muted">{info?.blurb}</p>
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-3">
           <div>
-            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Handled by</label>
+            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Handled by</label>
             <select
               value={route.chosen}
               onChange={(event) => choose.mutate(event.target.value)}
@@ -1898,7 +1898,7 @@ function RouteRow({
               that is, so choosing nothing is an informed choice rather than a
               blank box. */}
           <div>
-            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">On model</label>
+            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">On model</label>
             <select
               value={route.modelOverride ?? ""}
               onChange={(event) => setModel.mutate(event.target.value)}
@@ -1919,11 +1919,11 @@ function RouteRow({
         </div>
       </div>
 
-      {route.note && <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{route.note}</p>}
+      {route.note && <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">{route.note}</p>}
       {route.ready && (
-        <p className="mt-2 font-mono text-[11px] text-ink/40">
+        <p className="mt-2 font-mono text-[11px] text-muted">
           {route.model}
-          {route.tier === "economy" && !route.modelOverride && <span className="ml-2 not-italic text-ink/35">economy tier</span>}
+          {route.tier === "economy" && !route.modelOverride && <span className="ml-2 not-italic text-muted">economy tier</span>}
         </p>
       )}
       <ErrorNote error={choose.error} />
@@ -1993,9 +1993,9 @@ function ProviderPanel({
       state={
         provider.configured ? (
           <Connected>
-            <span className="font-mono text-xs text-ink/50">{provider.keyPreview}</span>
-            <span className="text-xs text-ink/40">{provider.model}</span>
-            <span className="text-xs text-ink/45">{doing.length > 0 ? `Doing: ${doing.join(", ")}.` : "Nothing routed to it."}</span>
+            <span className="font-mono text-xs text-muted">{provider.keyPreview}</span>
+            <span className="text-xs text-muted">{provider.model}</span>
+            <span className="text-xs text-muted">{doing.length > 0 ? `Doing: ${doing.join(", ")}.` : "Nothing routed to it."}</span>
             {!provider.envManaged && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
                 Remove key
@@ -2169,7 +2169,7 @@ function GooglePanel({
         ) : google.configured ? (
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <Badge tone="muted">client saved</Badge>
-            <span className="text-ink/60">Not signed in yet.</span>
+            <span className="text-muted">Not signed in yet.</span>
             <Button size="sm" onClick={() => connect.mutate()} disabled={connect.isPending}>
               {connect.isPending ? "Redirecting…" : "Connect Google Drive"}
             </Button>
@@ -2180,12 +2180,12 @@ function GooglePanel({
       }
     >
       {result === "connected" && (
-        <p className="mt-4 border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <p className="mt-4 rounded-xl border border-positive-line bg-positive-surface px-3.5 py-2.5 text-sm text-positive-text">
           Connected{params.get("account") ? ` as ${params.get("account")}` : ""}.
         </p>
       )}
       {result === "error" && (
-        <p className="mt-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="mt-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           {params.get("message") ?? "The Google sign-in didn't complete."}
         </p>
       )}
@@ -2196,7 +2196,7 @@ function GooglePanel({
           hint="Add this to the OAuth client in Google Cloud, exactly as shown — Google matches it character for character."
         >
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-lg border border-line bg-cream px-2 py-1.5 text-xs">{google.redirectUri}</code>
+            <code className="flex-1 break-all rounded-xl border border-line bg-cream px-2 py-1.5 text-xs">{google.redirectUri}</code>
             <Button
               variant="secondary"
               size="sm"
@@ -2262,10 +2262,10 @@ function GooglePanel({
           </form>
 
           <details className="mt-5 rounded-2xl border border-line bg-cream">
-            <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">
+            <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
               How to create the OAuth client
             </summary>
-            <ol className="list-decimal space-y-2 px-8 py-4 text-sm text-ink/65">
+            <ol className="list-decimal space-y-2 px-8 py-4 text-sm text-muted">
               <li>
                 In{" "}
                 <a className="text-blue hover:underline" href="https://console.cloud.google.com" target="_blank" rel="noreferrer">
@@ -2287,7 +2287,7 @@ function GooglePanel({
               </li>
               <li>Paste the client ID and secret here, save, then Connect.</li>
             </ol>
-            <p className="border-t border-ink/10 px-4 py-3 text-xs text-ink/50">
+            <p className="border-t border-line px-4 py-3 text-xs text-muted">
               On first sign-in Google shows “Google hasn't verified this app” — that's expected for an unverified app asking for
               read access to Drive. Choose <strong>Advanced → Go to Dakyworld OS</strong>.
             </p>
@@ -2322,12 +2322,12 @@ function CalendarSection({ settings, onReconnect }: { settings: AppSettings; onR
   if (!settings.google.connected) return null;
 
   return (
-    <div className="mt-6 border-t border-ink/10 pt-5">
-      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Calendar</h3>
+    <div className="mt-6 border-t border-line pt-5">
+      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Calendar</h3>
 
       {!calendar.scoped ? (
-        <div className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2">
-          <p className="text-sm text-amber-900">
+        <div className="mt-2 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5">
+          <p className="text-sm text-warn-text">
             This account was connected before calendar access existed, so booking is off. Reconnecting grants it — nothing else
             changes.
           </p>
@@ -2337,7 +2337,7 @@ function CalendarSection({ settings, onReconnect }: { settings: AppSettings; onR
         </div>
       ) : (
         <>
-          <p className="mt-1 text-sm text-ink/55">
+          <p className="mt-1 text-sm text-muted">
             Where an agent books a consultation. A shared calendar the team can see beats the account's own once more than one
             person needs to know what was booked.
           </p>
@@ -2426,9 +2426,9 @@ function CapturePanel({ settings }: { settings: AppSettings }) {
           <Connected>
             <span>
               {apify.account?.username ?? "your account"}
-              {apify.account?.plan?.id && <span className="text-ink/50"> · {apify.account.plan.id} plan</span>}
+              {apify.account?.plan?.id && <span className="text-muted"> · {apify.account.plan.id} plan</span>}
             </span>
-            <span className="font-mono text-xs text-ink/50">{apify.token}</span>
+            <span className="font-mono text-xs text-muted">{apify.token}</span>
             {!apify.envManaged && (
               <Button
                 variant="ghost"
@@ -2445,7 +2445,7 @@ function CapturePanel({ settings }: { settings: AppSettings }) {
         ) : apify.error ? (
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <Badge tone="muted">error</Badge>
-            <span className="text-red-600">{apify.error}</span>
+            <span className="text-danger-text">{apify.error}</span>
           </div>
         ) : (
           <NotConnected>Scrapers can't run until a token is added.</NotConnected>
@@ -2519,9 +2519,9 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
   if (!tasks.length) return null;
 
   return (
-    <div className="mt-8 border-t border-ink/10 pt-5">
-      <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">What runs what</div>
-      <p className="mb-4 max-w-2xl text-sm text-ink/55">
+    <div className="mt-8 border-t border-line pt-5">
+      <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">What runs what</div>
+      <p className="mb-4 max-w-2xl text-sm text-muted">
         Type a link or a phrase into Quick capture and it works out which of these it is, then runs the actor paired with it. The
         pairings below are the ones the app ships with — change one only to move a task onto a different actor.
       </p>
@@ -2534,8 +2534,8 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
                 <span className="text-sm font-medium text-ink">{task.label}</span>
                 {task.overridden && <Badge>changed</Badge>}
               </div>
-              <p className="mt-0.5 text-xs text-ink/45">{task.takes}</p>
-              <p className="mt-1 font-mono text-[10px] text-ink/35">e.g. {task.example}</p>
+              <p className="mt-0.5 text-xs text-muted">{task.takes}</p>
+              <p className="mt-1 font-mono text-[10px] text-muted">e.g. {task.example}</p>
             </div>
 
             {editing === task.kind ? (
@@ -2562,7 +2562,7 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
               </form>
             ) : (
               <div className="flex flex-wrap items-center gap-3">
-                <code className="font-mono text-xs text-ink/70">{task.actorId}</code>
+                <code className="font-mono text-xs text-ink">{task.actorId}</code>
                 <button
                   type="button"
                   onClick={() => {
@@ -2578,7 +2578,7 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
                     type="button"
                     onClick={() => reset.mutate(task.kind)}
                     disabled={reset.isPending}
-                    className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 hover:text-ink hover:underline"
+                    className="font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink hover:underline"
                   >
                     Put back
                   </button>
@@ -2626,9 +2626,9 @@ function CaptureCapabilities({ settings }: { settings: AppSettings }) {
   if (!capabilities.length) return null;
 
   return (
-    <div className="mt-8 border-t border-ink/10 pt-5">
-      <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">What the agents may run</div>
-      <p className="mb-4 max-w-2xl text-sm text-ink/55">
+    <div className="mt-8 border-t border-line pt-5">
+      <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">What the agents may run</div>
+      <p className="mb-4 max-w-2xl text-sm text-muted">
         An agent can start these itself when a job needs businesses nobody here has heard of. Each one has a ceiling on how much a
         single call may ask for, because the numbers an agent passes are generated rather than typed. Switching one off stops the
         agents using it — Quick capture, which you drive, carries on working either way.
@@ -2644,8 +2644,8 @@ function CaptureCapabilities({ settings }: { settings: AppSettings }) {
                   {capability.overridden && <Badge>changed</Badge>}
                   {!capability.enabled && <Badge>off</Badge>}
                 </div>
-                <p className="mt-0.5 max-w-xl text-xs text-ink/45">{capability.purpose}</p>
-                <p className="mt-1 font-mono text-[10px] text-ink/35">
+                <p className="mt-0.5 max-w-xl text-xs text-muted">{capability.purpose}</p>
+                <p className="mt-1 font-mono text-[10px] text-muted">
                   up to {capability.maxTargets} target(s) · {capability.maxResults} result(s) · waits {capability.waitSecs}s
                   {capability.cacheable && capability.cacheHours > 0 ? ` · reuses a capture under ${capability.cacheHours}h old` : ""}
                 </p>
@@ -2668,7 +2668,7 @@ function CaptureCapabilities({ settings }: { settings: AppSettings }) {
 
             {open === capability.kind && (
               <form
-                className="mt-4 grid gap-3 border-t border-ink/5 pt-4 sm:grid-cols-4"
+                className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-4"
                 onSubmit={(event) => {
                   event.preventDefault();
                   const form = new FormData(event.currentTarget);
@@ -2715,12 +2715,12 @@ function CaptureCapabilities({ settings }: { settings: AppSettings }) {
                       type="button"
                       onClick={() => reset.mutate(capability.kind)}
                       disabled={reset.isPending}
-                      className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 hover:text-ink hover:underline"
+                      className="font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink hover:underline"
                     >
                       Put back
                     </button>
                   )}
-                  <p className="text-xs text-ink/45">Not for: {capability.notFor}</p>
+                  <p className="text-xs text-muted">Not for: {capability.notFor}</p>
                 </div>
               </form>
             )}
@@ -2786,16 +2786,16 @@ function SpendMeter({ settings }: { settings: AppSettings }) {
     <div className="w-full">
       <div className="flex flex-wrap items-baseline gap-2 text-sm">
         <span className="font-medium">${usage.spentUsd.toFixed(2)}</span>
-        <span className="text-ink/50">
+        <span className="text-muted">
           this billing month
           {ceiling ? ` of $${ceiling.toFixed(2)} ${budget != null ? "budget" : "included"}` : ""}
         </span>
         {blocked && <Badge tone="muted">runs paused</Badge>}
       </div>
       {fraction != null && (
-        <div className="mt-1.5 h-1 w-full max-w-sm bg-ink/10">
+        <div className="mt-1.5 h-1 w-full max-w-sm bg-line">
           <div
-            className={`h-1 ${blocked ? "bg-red-500" : fraction > 0.8 ? "bg-amber-500" : "bg-ink"}`}
+            className={`h-1 ${blocked ? "bg-danger" : fraction > 0.8 ? "bg-warn" : "bg-ink"}`}
             style={{ width: `${Math.max(2, fraction * 100)}%` }}
           />
         </div>
@@ -2855,7 +2855,7 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
 
   return (
-    <div className="mt-8 border-t border-ink/10 pt-6">
+    <div className="mt-8 border-t border-line pt-6">
       <SpendMeter settings={settings} />
 
       <div className="mt-6 space-y-6">
@@ -3087,7 +3087,7 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
           {update.isPending ? "Saving…" : dirty ? "Save capture settings" : "Saved"}
         </Button>
         {dirty && (
-          <button type="button" onClick={() => setForm(saved)} className="font-mono text-[11px] uppercase tracking-[.12em] text-ink/40">
+          <button type="button" onClick={() => setForm(saved)} className="font-mono text-[11px] uppercase tracking-[.12em] text-muted">
             Discard
           </button>
         )}
@@ -3095,7 +3095,7 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
           <button
             type="button"
             onClick={() => setForm(settings.capture.defaults)}
-            className="font-mono text-[11px] uppercase tracking-[.12em] text-ink/40"
+            className="font-mono text-[11px] uppercase tracking-[.12em] text-muted"
           >
             Reset to defaults
           </button>
@@ -3109,8 +3109,8 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
 function Group({ title, blurb, children }: { title: string; blurb: ReactNode; children: ReactNode }) {
   return (
     <section className="rounded-2xl border border-line bg-cream/40 p-4">
-      <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/50">{title}</h3>
-      <p className="mt-1 max-w-2xl text-xs text-ink/50">{blurb}</p>
+      <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">{title}</h3>
+      <p className="mt-1 max-w-2xl text-xs text-muted">{blurb}</p>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">{children}</div>
     </section>
   );
@@ -3140,11 +3140,11 @@ function ActorHealthList() {
   });
 
   return (
-    <div className="mt-8 border-t border-ink/10 pt-6">
+    <div className="mt-8 border-t border-line pt-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/50">Actors in use</h3>
-          <p className="mt-1 max-w-2xl text-xs text-ink/50">
+          <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Actors in use</h3>
+          <p className="mt-1 max-w-2xl text-xs text-muted">
             Every actor the templates and your sources point at, checked against Apify.
           </p>
         </div>
@@ -3170,21 +3170,21 @@ function ActorHealthList() {
                 </a>
                 {actor.pricingModel && <Badge tone="muted">{PRICING_LABELS[actor.pricingModel] ?? actor.pricingModel}</Badge>}
                 {actor.proxyRequired && <Badge tone="muted">needs a proxy</Badge>}
-                {actor.inTemplates && actor.usedBy.length === 0 && <span className="text-xs text-ink/40">template only</span>}
+                {actor.inTemplates && actor.usedBy.length === 0 && <span className="text-xs text-muted">template only</span>}
                 {actor.usedBy.length > 0 && (
-                  <span className="text-xs text-ink/50">
+                  <span className="text-xs text-muted">
                     used by {actor.usedBy.map((source) => source.name).join(", ")}
                   </span>
                 )}
               </div>
               {!actor.reachable && (
-                <p className="mt-1.5 text-xs text-red-600">
+                <p className="mt-1.5 text-xs text-danger-text">
                   Apify wouldn't return this actor — it may have been renamed, made private, or removed. Any source pointing at
                   it will fail on its next run.
                 </p>
               )}
               {problems.map((source) => (
-                <p key={source.id} className="mt-1.5 text-xs text-amber-700">
+                <p key={source.id} className="mt-1.5 text-xs text-warn-text">
                   <strong>{source.name}</strong> sends {source.unknownKeys.map((key) => `“${key}”`).join(", ")}, which this
                   actor doesn't accept — Apify ignores those silently, so the setting isn't doing anything.
                 </p>
@@ -3192,7 +3192,7 @@ function ActorHealthList() {
             </div>
           );
         })}
-        {data?.actors.length === 0 && <p className="text-sm text-ink/50">No actors configured yet.</p>}
+        {data?.actors.length === 0 && <p className="text-sm text-muted">No actors configured yet.</p>}
       </div>
     </div>
   );
@@ -3244,9 +3244,9 @@ function PaymentsPanel({ settings }: { settings: AppSettings }) {
       state={
         stripe.configured ? (
           <Connected>
-            <span className="font-mono text-xs text-ink/50">{stripe.key}</span>
+            <span className="font-mono text-xs text-muted">{stripe.key}</span>
             <Badge tone={stripe.livemode ? "positive" : "muted"}>{stripe.livemode ? "live mode" : "test mode"}</Badge>
-            {!stripe.webhookConfigured && <span className="text-xs text-amber-700">No webhook secret — invoices won't self-mark paid</span>}
+            {!stripe.webhookConfigured && <span className="text-xs text-warn-text">No webhook secret — invoices won't self-mark paid</span>}
             {!stripe.envManaged && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
                 Remove keys
@@ -3264,7 +3264,7 @@ function PaymentsPanel({ settings }: { settings: AppSettings }) {
           hint="In Stripe: Developers → Webhooks → Add endpoint, listening for checkout.session.completed. Then paste its signing secret below."
         >
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-lg border border-line bg-cream px-2 py-1.5 text-xs">{stripe.webhookUrl}</code>
+            <code className="flex-1 break-all rounded-xl border border-line bg-cream px-2 py-1.5 text-xs">{stripe.webhookUrl}</code>
             <Button
               variant="secondary"
               size="sm"
@@ -3368,7 +3368,7 @@ function StoragePanel({ settings }: { settings: AppSettings }) {
         cloudinary.configured ? (
           <Connected>
             <span>{cloudinary.cloudName}</span>
-            <span className="font-mono text-xs text-ink/50">{cloudinary.apiKey}</span>
+            <span className="font-mono text-xs text-muted">{cloudinary.apiKey}</span>
             {!cloudinary.envManaged && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
                 Remove
@@ -3472,8 +3472,8 @@ function SlackHealthNote() {
   return (
     <div className="mt-4 border border-line">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-3 py-2">
-        <span className={`h-2 w-2 rounded-full ${data.ready ? "bg-lime" : data.problems.length > 0 ? "bg-amber-500" : "bg-ink/20"}`} />
-        <span className="text-sm text-ink/70">
+        <span className={`h-2 w-2 rounded-full ${data.ready ? "bg-lime" : data.problems.length > 0 ? "bg-warn" : "bg-line-strong"}`} />
+        <span className="text-sm text-ink">
           {data.ready
             ? "Slack works in both directions — cards go out, and buttons come back."
             : data.outbound.ready
@@ -3485,10 +3485,10 @@ function SlackHealthNote() {
       {/* Each problem names its own fix. A list of things that are wrong with no
           remedy beside them is a list somebody reads once. */}
       {data.problems.length > 0 && (
-        <ul className="space-y-2 px-3 py-3 text-sm text-ink/60">
+        <ul className="space-y-2 px-3 py-3 text-sm text-muted">
           {data.problems.map((problem) => (
             <li key={problem} className="flex gap-2">
-              <span aria-hidden className="text-amber-600">
+              <span aria-hidden className="text-warn-text">
                 !
               </span>
               <span>{problem}</span>
@@ -3497,12 +3497,12 @@ function SlackHealthNote() {
         </ul>
       )}
 
-      <div className="border-t border-line px-3 py-3 text-xs text-ink/50">
+      <div className="border-t border-line px-3 py-3 text-xs text-muted">
         {/* The proof, or the absence of it. A verified request is the only thing
             that distinguishes a correct setup from a plausible-looking one. */}
         {data.inbound.everVerified ? (
           <p>
-            Slack last reached this app on <span className="text-ink/70">{new Date(data.inbound.lastOkAt ?? "").toLocaleString()}</span>
+            Slack last reached this app on <span className="text-ink">{new Date(data.inbound.lastOkAt ?? "").toLocaleString()}</span>
             {data.inbound.lastOkKind ? ` (${data.inbound.lastOkKind})` : ""}.
           </p>
         ) : (
@@ -3514,7 +3514,7 @@ function SlackHealthNote() {
         {data.inbound.lastRefusedReason && (
           <p className="mt-1">
             Last refused {data.inbound.lastRefusedAt ? new Date(data.inbound.lastRefusedAt).toLocaleString() : ""} —{" "}
-            <span className="text-ink/70">{data.inbound.lastRefusedReason}</span>
+            <span className="text-ink">{data.inbound.lastRefusedReason}</span>
           </p>
         )}
       </div>
@@ -3593,8 +3593,8 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
         alerts.configured ? (
           <Connected>
             <span>{alerts.transport === "TOKEN" ? "Bot token" : "Incoming webhook"}</span>
-            <span className="font-mono text-xs text-ink/50">{alerts.botToken ?? alerts.webhookUrl}</span>
-            {alerts.defaultChannel && <span className="text-ink/50">→ {alerts.defaultChannel}</span>}
+            <span className="font-mono text-xs text-muted">{alerts.botToken ?? alerts.webhookUrl}</span>
+            {alerts.defaultChannel && <span className="text-muted">→ {alerts.defaultChannel}</span>}
             <Button variant="ghost" size="sm" onClick={() => test.mutate()} disabled={test.isPending}>
               {test.isPending ? "Sending…" : "Send a test"}
             </Button>
@@ -3610,7 +3610,7 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
       }
     >
       {test.isSuccess && (
-        <p className="mt-3 border border-line bg-ink/[.02] px-3 py-2 text-sm text-ink/60">
+        <p className="rounded-xl mt-3 border border-line bg-sunken px-3 py-2 text-sm text-muted">
           Sent. If nothing arrived, the bot probably isn't in that channel yet.
         </p>
       )}
@@ -3619,7 +3619,7 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
 
       {/* What an agent will actually interrupt you about, said plainly. The
           feature is worth nothing if nobody knows a question ever arrives. */}
-      <p className="mt-3 text-sm text-ink/55">
+      <p className="mt-3 text-sm text-muted">
         What lands here: an agent that stopped and asked something (with its own choices as buttons), an action prepared and waiting on a
         decision, a run that failed, and a proposal to employ a new agent. Every one of them can also be answered on the Agents screen —
         Slack is the fast road, never the only one.
@@ -3667,8 +3667,8 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
               "can we post to Slack" and everything below is "can Slack decide
               something here", which is a much bigger permission. */}
           <div className="sm:col-span-2 border-t border-line pt-4">
-            <p className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Letting Slack answer back</p>
-            <p className="mt-1 text-sm text-ink/55">
+            <p className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Letting Slack answer back</p>
+            <p className="mt-1 text-sm text-muted">
               Needed for the Approve and Decline buttons on a hiring card, and for <code className="font-mono">/dakyworld</code>. Create a
               Slack app, switch on Interactivity with the request URL{" "}
               <code className="font-mono text-xs">{`${window.location.origin}/api/slack/actions`}</code>, add a slash command pointing at{" "}
@@ -3755,8 +3755,8 @@ function DeveloperPanel({ settings }: { settings: AppSettings }) {
       state={
         developer.configured ? (
           <Connected>
-            <span className="font-mono text-xs text-ink/50">{developer.token}</span>
-            {developer.owner && <span className="text-ink/50">default owner: {developer.owner}</span>}
+            <span className="font-mono text-xs text-muted">{developer.token}</span>
+            {developer.owner && <span className="text-muted">default owner: {developer.owner}</span>}
             {!developer.envManaged && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
                 Remove
@@ -3796,7 +3796,7 @@ function DeveloperPanel({ settings }: { settings: AppSettings }) {
               className="input"
             />
           </Field>
-          <p className="text-xs text-ink/45 sm:col-span-2">
+          <p className="text-xs text-muted sm:col-span-2">
             With a default owner set, a repository can be named <code className="font-mono">os</code> rather than{" "}
             <code className="font-mono">dakyworld/os</code>.
           </p>
@@ -3852,29 +3852,29 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
       state={
         <div className="space-y-3 text-sm">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Contact form posts to</p>
-            <code className="mt-1 block break-all font-mono text-xs text-ink/70">{webhooks.formUrl}</code>
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Contact form posts to</p>
+            <code className="mt-1 block break-all font-mono text-xs text-ink">{webhooks.formUrl}</code>
           </div>
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Anything else</p>
-            <code className="mt-1 block break-all font-mono text-xs text-ink/70">{webhooks.baseUrl}&lt;source&gt;</code>
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Anything else</p>
+            <code className="mt-1 block break-all font-mono text-xs text-ink">{webhooks.baseUrl}&lt;source&gt;</code>
           </div>
         </div>
       }
     >
       <div className="mt-4 space-y-4">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Signing secret</p>
-          <p className="mt-1 text-sm text-ink/55">
+          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Signing secret</p>
+          <p className="mt-1 text-sm text-muted">
             Senders other than the website form must sign: an{" "}
             <code className="font-mono">x-dakyworld-signature</code> header holding the HMAC-SHA256 of{" "}
             <code className="font-mono">{"`${timestamp}.${body}`"}</code>, with the timestamp in{" "}
             <code className="font-mono">x-dakyworld-timestamp</code>. Requests more than five minutes old are refused.
           </p>
-          <p className="mt-2 font-mono text-xs text-ink/50">{webhooks.secret}</p>
+          <p className="mt-2 font-mono text-xs text-muted">{webhooks.secret}</p>
 
           {revealed && (
-            <p className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p className="mt-2 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">
               New secret — copy it now, it is not shown again:
               <code className="mt-1 block break-all font-mono">{revealed}</code>
             </p>
@@ -3883,8 +3883,8 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
           {webhooks.envManaged ? (
             <EnvNote variable="WEBHOOK_SECRET" />
           ) : confirming ? (
-            <div className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2">
-              <p className="text-sm text-amber-900">
+            <div className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5">
+              <p className="text-sm text-warn-text">
                 Every sender already using the old secret will start being rejected until you update it. Only the website form,
                 which posts unsigned, keeps working.
               </p>
@@ -3930,7 +3930,7 @@ function GeneralPanel({ settings }: { settings: AppSettings }) {
       title="General"
       what="How the app describes itself to the outside world, and the defaults it starts new things with."
       state={
-        <div className="text-sm text-ink/60">
+        <div className="text-sm text-muted">
           Currently answering as <code className="font-mono text-xs">{settings.general.resolvedAppUrl}</code>
         </div>
       }
@@ -4063,7 +4063,7 @@ function SecurityPanel() {
           <StatusDot tone={data?.enabled ? "ok" : "warn"} />
           {data?.enabled ? (
             <span>
-              Two-factor is on. <span className="text-ink/50">{data.recoveryCodesRemaining} recovery codes unused.</span>
+              Two-factor is on. <span className="text-muted">{data.recoveryCodesRemaining} recovery codes unused.</span>
             </span>
           ) : (
             <span>Two-factor is off — your password is the only thing between an attacker and this system.</span>
@@ -4072,18 +4072,18 @@ function SecurityPanel() {
       }
     >
       {error && (
-        <p role="alert" className="mt-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="mt-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           {error}
         </p>
       )}
 
       {recoveryCodes && (
-        <div className="mt-4 border border-amber-200 bg-amber-50 px-3 py-3">
-          <p className="text-sm font-bold text-amber-900">Recovery codes — copy them now. They are not shown again.</p>
-          <p className="mt-1 text-xs text-amber-900/80">
+        <div className="mt-4 rounded-xl border border-warn-line bg-warn-surface px-3 py-3">
+          <p className="text-sm font-bold text-warn-text">Recovery codes — copy them now. They are not shown again.</p>
+          <p className="mt-1 text-xs text-warn-text/80">
             Each works once, in place of a code from your phone. Keep them somewhere that is not the phone.
           </p>
-          <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-xs text-amber-900">
+          <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 font-mono text-xs text-warn-text sm:grid-cols-2">
             {recoveryCodes.map((entry) => (
               <span key={entry}>{entry}</span>
             ))}
@@ -4111,11 +4111,11 @@ function SecurityPanel() {
           }}
         >
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Setup key</p>
-            <p className="mt-1 text-sm text-ink/55">
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Setup key</p>
+            <p className="mt-1 text-sm text-muted">
               In your authenticator app, add an account by entering a setup key, and paste this.
             </p>
-            <code className="mt-2 block select-all break-all border border-line bg-cream px-3 py-2 font-mono text-sm">
+            <code className="rounded-xl mt-2 block select-all break-all border border-line bg-cream px-3 py-2 font-mono text-sm">
               {grouped}
             </code>
           </div>
@@ -4147,7 +4147,7 @@ function SecurityPanel() {
       )}
 
       {data?.enabled && (
-        <div className="mt-6 space-y-6 border-t border-ink/10 pt-5">
+        <div className="mt-6 space-y-6 border-t border-line pt-5">
           <form
             className="space-y-3"
             onSubmit={(e) => {
@@ -4155,8 +4155,8 @@ function SecurityPanel() {
               regenerate.mutate();
             }}
           >
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">New recovery codes</p>
-            <p className="text-sm text-ink/55">
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">New recovery codes</p>
+            <p className="text-sm text-muted">
               Issues a fresh set and voids the old sheet. Worth doing if you cannot account for where the last one ended up.
             </p>
             <Field label="Your password">
@@ -4181,8 +4181,8 @@ function SecurityPanel() {
               disable.mutate();
             }}
           >
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Turn it off</p>
-            <p className="text-sm text-ink/55">
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Turn it off</p>
+            <p className="text-sm text-muted">
               Both factors are required, so a stolen session cannot strip the protection it has just run into. Fill in the
               password above as well.
             </p>

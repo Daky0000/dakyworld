@@ -25,9 +25,9 @@ export function WebsiteTeam() {
       ]}
       waitingOn={["A SiteMember model", "A clientId column on User — middleware/auth.ts already names it as the missing piece"]}
     >
-      <div className="rounded-2xl border border-amber-300 bg-amber-50 px-5 py-4">
-        <h3 className="font-display text-sm tracking-[-.02em] text-amber-900">The riskiest change in the whole programme</h3>
-        <p className="mt-1.5 text-sm text-amber-900">
+      <div className="rounded-2xl border border-warn-line bg-warn-surface px-5 py-4">
+        <h3 className="font-display text-sm tracking-[-.02em] text-warn-text">The riskiest change in the whole programme</h3>
+        <p className="mt-1.5 text-sm text-warn-text">
           One client seeing another client's website is the failure that ends this product. When this is built it gets its own check,
           whose assertions are mostly negatives, and it must be run over real HTTP with <span className="font-mono text-xs">DEV_NO_AUTH=false</span> —
           <span className="font-mono text-xs"> .env</span> sets it true, and against an implicit Owner every refusal assertion passes for the

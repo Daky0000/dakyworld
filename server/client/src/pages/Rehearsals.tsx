@@ -141,7 +141,7 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
       />
 
       {catalogue && (
-        <p className="mb-6 rounded-2xl border border-blue/25 bg-blue/[.04] px-4 py-3 text-sm text-ink/75">
+        <p className="mb-6 rounded-2xl border border-blue/25 bg-blue/[.04] px-4 py-3 text-sm text-ink">
           <span className="font-semibold">Nothing leaves the building.</span> {catalogue.guarantee}
         </p>
       )}
@@ -169,7 +169,7 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
               errand, the run switches on what it needs — so what this says is
               what will happen, not what you have to do first. */}
           {chosen && chosen.wouldWake > 0 && (
-            <p className="mt-3 rounded-xl border border-blue/25 bg-blue/[.04] px-3 py-2 text-sm text-ink/75">
+            <p className="mt-3 rounded-xl border border-blue/25 bg-blue/[.04] px-3 py-2 text-sm text-ink">
               Starting this switches on {chosen.wouldWake} agent{chosen.wouldWake === 1 ? "" : "s"} that {chosen.wouldWake === 1 ? "has" : "have"}{" "}
               never been switched on
               {chosen.wouldWakeNames.length > 0 && (
@@ -179,7 +179,7 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
             </p>
           )}
           {blocked.length > 0 && (
-            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
               {blocked.length === 1
                 ? `“${blocked[0].name}” cannot start: ${blocked[0].unavailableBecause}`
                 : `${blocked.length} of these cannot start — the agent each begins with is paused or retired, and a rehearsal will not undo that.`}
@@ -220,7 +220,7 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
           </Field>
         </div>
 
-        {notice && <p className="mt-5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+        {notice && <p className="mt-5 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
 
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-5">
           <p className="max-w-xl text-xs leading-relaxed text-muted">
@@ -255,7 +255,7 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
                     <span className="truncate text-sm font-semibold">{row.businessName || row.host}</span>
                     <Badge tone="muted">{row.scenarioName}</Badge>
                   </span>
-                  <span className="mt-1 block font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">
+                  <span className="mt-1 block font-mono text-[10px] uppercase tracking-[.1em] text-muted">
                     {row.host} · {row.taskCount} agent task{row.taskCount === 1 ? "" : "s"} · {row.toolCalls} tool call
                     {row.toolCalls === 1 ? "" : "s"}
                     {row.preparedCalls > 0 && ` · ${row.preparedCalls} prepared`} · <RelativeTime value={row.startedAt} />
@@ -286,17 +286,17 @@ function ScenarioCard({ scenario, chosen, onChoose }: { scenario: RehearsalScena
         {scenario.reach === "wide" && <Badge tone="warn">wide</Badge>}
       </span>
       <span className="mt-1 block text-xs leading-relaxed text-muted">{scenario.purpose}</span>
-      <span className="mt-2 block font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">
+      <span className="mt-2 block font-mono text-[10px] uppercase tracking-[.1em] text-muted">
         starts with {scenario.startAgentName}
         {scenario.available && scenario.wouldWake > 0 && ` · wakes ${scenario.wouldWake}`}
       </span>
-      {scenario.unavailableBecause && <span className="mt-2 block text-xs text-amber-700">{scenario.unavailableBecause}</span>}
+      {scenario.unavailableBecause && <span className="mt-2 block text-xs text-warn-text">{scenario.unavailableBecause}</span>}
       {chosen && (
         <span className="mt-3 block border-t border-blue/20 pt-2.5">
-          <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">What this shows you</span>
+          <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">What this shows you</span>
           <span className="mt-1 block space-y-0.5">
             {scenario.exercises.map((line) => (
-              <span key={line} className="block text-xs leading-relaxed text-ink/65">
+              <span key={line} className="block text-xs leading-relaxed text-muted">
                 · {line}
               </span>
             ))}
@@ -378,14 +378,14 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
         }
       />
 
-      {notice && <p className="mb-5 rounded-xl border border-line bg-cream px-3 py-2 text-sm text-ink/70">{notice}</p>}
+      {notice && <p className="mb-5 rounded-xl border border-line bg-cream px-3 py-2 text-sm text-ink">{notice}</p>}
 
       {/* Waking a draft is the one thing a rehearsal changes outside its own
           tree, so it is said out loud in both states. While it runs, so nobody
           is surprised to find an agent switched on; after it ends, so "it put
           them back" is something you can read rather than trust. */}
       {run.woke.length > 0 ? (
-        <p className="mb-5 rounded-xl border border-blue/25 bg-blue/[.04] px-3 py-2 text-sm text-ink/70">
+        <p className="mb-5 rounded-xl border border-blue/25 bg-blue/[.04] px-3 py-2 text-sm text-ink">
           This run switched on {run.woke.length} agent{run.woke.length === 1 ? "" : "s"} that had never been switched on —{" "}
           {run.woke.join(", ")}. They go back to drafts when it ends.
         </p>
@@ -434,7 +434,7 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
         <div>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <Eyebrow>What happened, in order</Eyebrow>
-            <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+            <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.1em] text-muted">
               <input type="checkbox" checked={follow} onChange={(event) => setFollow(event.target.checked)} className="accent-[#3157FF]" />
               Follow along
             </label>
@@ -508,7 +508,7 @@ function TheFloor({ run, onlyAgent, onPick }: { run: RehearsalDetail; onlyAgent:
     return (
       <div key={`${key}-${depth}-${kind ?? "root"}`} className={depth > 0 ? "ml-3 border-l border-line pl-3" : ""}>
         {kind && (
-          <span className="mb-0.5 block font-mono text-[9px] uppercase tracking-[.12em] text-ink/30">
+          <span className="mb-0.5 block font-mono text-[9px] uppercase tracking-[.12em] text-muted">
             {kind === "DELEGATED" ? "delegated to" : kind === "HANDED_OFF" ? "handed to" : "asked"}
           </span>
         )}
@@ -527,7 +527,7 @@ function TheFloor({ run, onlyAgent, onPick }: { run: RehearsalDetail; onlyAgent:
             <span className="mt-0.5 block truncate text-xs text-muted">{agent?.title ?? (consultOnly ? "asked for an opinion" : "not reached")}</span>
           )}
           {agent && (
-            <span className="mt-1 block font-mono text-[9px] uppercase tracking-[.1em] text-ink/35">
+            <span className="mt-1 block font-mono text-[9px] uppercase tracking-[.1em] text-muted">
               {agent.steps} step{agent.steps === 1 ? "" : "s"} · {agent.toolCalls} tool
               {agent.preparedCalls > 0 && ` · ${agent.preparedCalls} prepared`} · ${agent.costUsd.toFixed(3)}
             </span>
@@ -580,7 +580,7 @@ function Timeline({ steps, live }: { steps: RehearsalStep[]; live: boolean }) {
         <div key={`${group.agentKey}-${index}`} className="rounded-2xl border border-line bg-white">
           <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-2.5">
             <span className="text-sm font-semibold">{group.agentName}</span>
-            <span className="truncate font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">{group.taskTitle}</span>
+            <span className="truncate font-mono text-[10px] uppercase tracking-[.1em] text-muted">{group.taskTitle}</span>
           </div>
           <ol className="divide-y divide-line/60">
             {group.steps.map((step) => (
@@ -608,15 +608,15 @@ function Step({ step }: { step: RehearsalStep }) {
         <div className="min-w-0 flex-1">
           <p
             className={`whitespace-pre-wrap text-sm leading-relaxed ${
-              step.kind === "THOUGHT" ? "text-ink/70" : step.kind === "REFUSED" || step.kind === "FAILED" ? "text-red-700" : "text-ink/85"
+              step.kind === "THOUGHT" ? "text-ink" : step.kind === "REFUSED" || step.kind === "FAILED" ? "text-danger-text" : "text-ink"
             }`}
           >
             {step.message}
           </p>
-          <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-ink/35">
+          <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
             <span className={style.tone}>{STEP_LABEL[step.kind] ?? step.kind.toLowerCase()}</span>
-            {step.tool && <code className="text-ink/45">{step.tool}</code>}
-            {step.dryRun && <span className="text-amber-700">not carried out</span>}
+            {step.tool && <code className="text-muted">{step.tool}</code>}
+            {step.dryRun && <span className="text-warn-text">not carried out</span>}
             <RelativeTime value={step.at} />
             {detail && (
               <button type="button" onClick={() => setOpen(!open)} className="text-blue transition hover:underline">
@@ -625,7 +625,7 @@ function Step({ step }: { step: RehearsalStep }) {
             )}
           </div>
           {open && detail && (
-            <pre className="mt-2 max-h-80 overflow-auto rounded-xl bg-ink/[.03] p-3 text-[11px] leading-relaxed text-ink/70">{detail}</pre>
+            <pre className="mt-2 max-h-80 overflow-auto rounded-xl bg-sunken p-3 text-[11px] leading-relaxed text-ink">{detail}</pre>
           )}
         </div>
       </div>
@@ -655,7 +655,7 @@ function Prepared({ run }: { run: RehearsalDetail }) {
         {held > 0 && (
           <>
             {" "}
-            <strong className="font-medium text-ink/75">
+            <strong className="font-medium text-ink">
               {held} of them stopped for a different reason: the agent was not allowed to make the call at all.
             </strong>{" "}
             Those say so underneath, and they are a fact about that agent&rsquo;s settings rather than about this run.
@@ -668,46 +668,46 @@ function Prepared({ run }: { run: RehearsalDetail }) {
             key={action.id}
             className={
               action.outward
-                ? "rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3"
-                : "rounded-2xl border border-ink/10 bg-ink/[.02] px-4 py-3"
+                ? "rounded-2xl border border-warn-line bg-warn-surface/60 px-4 py-3"
+                : "rounded-2xl border border-line bg-sunken px-4 py-3"
             }
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <code className={action.outward ? "font-mono text-[11px] text-amber-900" : "font-mono text-[11px] text-ink/70"}>{action.tool}</code>
+              <code className={action.outward ? "font-mono text-[11px] text-warn-text" : "font-mono text-[11px] text-ink"}>{action.tool}</code>
               <span
                 className={
                   action.outward
-                    ? "font-mono text-[9px] uppercase tracking-[.1em] text-amber-800"
+                    ? "font-mono text-[9px] uppercase tracking-[.1em] text-warn-text"
                     : "font-mono text-[9px] uppercase tracking-[.1em] text-muted"
                 }
               >
                 {run.agents.find((agent) => agent.key === action.agentKey)?.name ?? action.agentKey}
               </span>
             </div>
-            <p className="mt-1.5 text-sm leading-relaxed text-ink/80">{action.wouldDo}</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-ink">{action.wouldDo}</p>
             {action.heldBecause && (
-              <p className={action.outward ? "mt-1 text-xs leading-relaxed text-amber-900/70" : "mt-1 text-xs leading-relaxed text-muted"}>
+              <p className={action.outward ? "mt-1 text-xs leading-relaxed text-warn-text/70" : "mt-1 text-xs leading-relaxed text-muted"}>
                 {action.outward ? "Held: " : "Not allowed: "}
                 {action.heldBecause}
               </p>
             )}
             {action.status === "EXECUTED" && (
-              <p className="mt-1 font-mono text-[10px] uppercase tracking-[.1em] text-red-700">
+              <p className="mt-1 font-mono text-[10px] uppercase tracking-[.1em] text-danger-text">
                 Carried out for real — cost ${action.costUsd.toFixed(4)}. This should have stayed a preview.
               </p>
             )}
             {action.why && (
-              <dl className="mt-2 space-y-1 border-t border-amber-200 pt-2 text-xs leading-relaxed text-ink/65">
+              <dl className="mt-2 space-y-1 border-t border-warn-line pt-2 text-xs leading-relaxed text-muted">
                 <div>
-                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-amber-800">Why </dt>
+                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-warn-text">Why </dt>
                   <dd className="inline">{action.why}</dd>
                 </div>
                 <div>
-                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-amber-800">Gains </dt>
+                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-warn-text">Gains </dt>
                   <dd className="inline">{action.gain}</dd>
                 </div>
                 <div>
-                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-amber-800">Risk </dt>
+                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-warn-text">Risk </dt>
                   <dd className="inline">{action.risk}</dd>
                 </div>
               </dl>
@@ -740,7 +740,7 @@ function Produced({ run }: { run: RehearsalDetail }) {
           Nothing on the record yet. A run that finishes with nothing here did a lot of reasoning and made nothing — which is worth knowing.
         </p>
       ) : (
-        <ul className="mt-2 space-y-1.5 text-sm text-ink/75">
+        <ul className="mt-2 space-y-1.5 text-sm text-ink">
           {made.research && (
             <li>
               · Researched and looked at, <RelativeTime value={made.research.ranAt} />
@@ -766,7 +766,7 @@ function Produced({ run }: { run: RehearsalDetail }) {
               <a className="text-blue hover:underline" href={`/demos/${demo.slug}`} target="_blank" rel="noreferrer">
                 {demo.title}
               </a>{" "}
-              <span className="text-ink/40">({demo.status.toLowerCase()})</span>
+              <span className="text-muted">({demo.status.toLowerCase()})</span>
             </li>
           ))}
           {made.proposals.map((proposal) => (
@@ -776,7 +776,7 @@ function Produced({ run }: { run: RehearsalDetail }) {
           ))}
           {made.emails.map((email) => (
             <li key={email.id}>
-              · {email.purpose.toLowerCase().replace(/_/g, " ")} — “{email.subject}” <span className="text-ink/40">({email.status.toLowerCase()})</span>
+              · {email.purpose.toLowerCase().replace(/_/g, " ")} — “{email.subject}” <span className="text-muted">({email.status.toLowerCase()})</span>
             </li>
           ))}
           {made.notes > 0 && <li>· {made.notes} entries added to the company's history</li>}

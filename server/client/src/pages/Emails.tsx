@@ -37,11 +37,11 @@ export function Emails() {
       />
 
       {status && !status.connected && (
-        <Card className="mb-6 border-amber-300 bg-amber-50">
+        <Card className="mb-6 border-warn-line bg-warn-surface">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="font-medium">No mailbox connected yet.</div>
-              <p className="mt-1 text-sm text-ink/60">
+              <p className="mt-1 text-sm text-muted">
                 Drafts and sequences can be written now, but nothing will leave until an address is connected.
               </p>
             </div>
@@ -66,7 +66,7 @@ export function Emails() {
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap gap-1 border-b border-ink/10">
+      <div className="mb-6 flex flex-wrap gap-1 border-b border-line">
         {(
           [
             ["outbox", "Outbox"],
@@ -80,7 +80,7 @@ export function Emails() {
             type="button"
             onClick={() => setTab(value)}
             className={`-mb-px border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-[.14em] transition ${
-              tab === value ? "border-ink text-ink" : "border-transparent text-ink/45 hover:text-ink"
+              tab === value ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"
             }`}
           >
             {label}
@@ -141,7 +141,7 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
             type="button"
             onClick={() => setFilter(value)}
             className={`border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
-              filter === value ? "border-ink bg-ink text-cream" : "border-ink/15 text-ink/55 hover:border-ink/40"
+              filter === value ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink/40"
             }`}
           >
             {value || "All"}
@@ -150,7 +150,7 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
       </div>
 
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : !messages || messages.length === 0 ? (
         <EmptyState message="Nothing here yet." action={<Button onClick={() => onOpen({})}>Write one</Button>} />
       ) : (
@@ -166,12 +166,12 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
                     {message.kind === "AI_DRAFT" && <Badge tone="muted">AI</Badge>}
                     {message.step && <Badge tone="muted">{message.step.sequence.name} · step {message.step.position + 1}</Badge>}
                   </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 text-sm text-ink/55">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 text-sm text-muted">
                     <span>
                       to {message.toName ? `${message.toName} · ` : ""}
                       {message.toEmail}
                     </span>
-                    <span className="text-ink/35">
+                    <span className="text-muted">
                       {message.status === "SENT" ? (
                         <RelativeTime value={message.sentAt} />
                       ) : message.status === "SCHEDULED" ? (
@@ -182,10 +182,10 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
                         <RelativeTime value={message.createdAt} />
                       )}
                     </span>
-                    {message.attachments.length > 0 && <span className="text-ink/35">{message.attachments.length} attached</span>}
+                    {message.attachments.length > 0 && <span className="text-muted">{message.attachments.length} attached</span>}
                   </div>
-                  {message.error && <div className="mt-2 text-xs text-red-600">{message.error}</div>}
-                  <p className="mt-2 line-clamp-2 text-sm text-ink/45">{message.bodyText.slice(0, 200)}</p>
+                  {message.error && <div className="mt-2 text-xs text-danger-text">{message.error}</div>}
+                  <p className="mt-2 line-clamp-2 text-sm text-muted">{message.bodyText.slice(0, 200)}</p>
                 </div>
 
                 <div className="flex shrink-0 flex-wrap gap-2">
@@ -282,7 +282,7 @@ function Templates() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between gap-4">
-        <p className="max-w-2xl text-sm text-ink/55">
+        <p className="max-w-2xl text-sm text-muted">
           The letters worth writing down. These ship with the app and can be edited freely — an edit is never overwritten by a deploy.
         </p>
         <Button
@@ -315,8 +315,8 @@ function Templates() {
                   {template.builtin && <Badge tone="muted">Built in</Badge>}
                   {!template.active && <Badge tone="muted">Off</Badge>}
                 </div>
-                {template.description && <p className="mt-1 text-xs text-ink/50">{template.description}</p>}
-                <p className="mt-2 font-mono text-[11px] text-ink/40">{template.subject}</p>
+                {template.description && <p className="mt-1 text-xs text-muted">{template.description}</p>}
+                <p className="mt-2 font-mono text-[11px] text-muted">{template.subject}</p>
               </div>
               <div className="flex shrink-0 gap-1">
                 <Button variant="ghost" size="sm" onClick={() => setEditing(template)}>
@@ -329,7 +329,7 @@ function Templates() {
                 )}
               </div>
             </div>
-            {template.usageCount > 0 && <div className="mt-2 text-[11px] text-ink/35">Used {template.usageCount}×</div>}
+            {template.usageCount > 0 && <div className="mt-2 text-[11px] text-muted">Used {template.usageCount}×</div>}
           </Card>
         ))}
       </div>
@@ -406,7 +406,7 @@ function Suppression() {
 
   return (
     <div>
-      <p className="mb-4 max-w-2xl text-sm text-ink/55">
+      <p className="mb-4 max-w-2xl text-sm text-muted">
         Addresses that will never be written to again — checked before every send, sequences included. Unsubscribes land here on their
         own; anyone who asks to be left alone by phone or in person should be added by hand.
       </p>
@@ -423,10 +423,10 @@ function Suppression() {
       ) : (
         <div className="rounded-2xl border border-line bg-white">
           {data.map((row) => (
-            <div key={row.id} className="flex items-center justify-between border-b border-ink/5 px-4 py-2.5 text-sm last:border-0">
+            <div key={row.id} className="flex items-center justify-between border-b border-line px-4 py-2.5 text-sm last:border-0">
               <span>
                 {row.email}
-                <span className="ml-3 text-xs text-ink/40">
+                <span className="ml-3 text-xs text-muted">
                   {row.reason} · <RelativeTime value={row.createdAt} />
                 </span>
               </span>

@@ -72,7 +72,7 @@ export function Tools() {
       </div>
 
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : tools.length === 0 ? (
         <EmptyState message="No tools reported. That usually means the API is still starting." />
       ) : (
@@ -82,8 +82,8 @@ export function Tools() {
           return (
             <section key={group.state} className="space-y-3">
               <div>
-                <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">{group.heading}</h2>
-                <p className="mt-1 text-sm text-ink/50">{group.note}</p>
+                <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">{group.heading}</h2>
+                <p className="mt-1 text-sm text-muted">{group.note}</p>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 {list.map((tool) => <ToolCard key={tool.key} tool={tool} />)}
@@ -114,20 +114,20 @@ function ToolCard({ tool }: { tool: ToolStatus }) {
         {tool.spends && <Badge>costs money</Badge>}
       </div>
 
-      <p className="mt-2 text-sm text-ink/60">{tool.purpose}</p>
+      <p className="mt-2 text-sm text-muted">{tool.purpose}</p>
 
       {tool.needs && (
         <p className={`mt-3 px-3 py-2 text-sm ${
           tool.state === "NEEDS_KEY"
-            ? "border border-amber-200 bg-amber-50 text-amber-800"
-            : "border border-line bg-ink/[.02] text-ink/55"
+            ? "rounded-xl border border-warn-line bg-warn-surface text-warn-text"
+            : "border border-line bg-sunken text-muted"
         }`}>
           {tool.needs}
         </p>
       )}
 
       {tool.tools.length > 0 && (
-        <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+        <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           {tool.tools.length} tool{tool.tools.length === 1 ? "" : "s"}
           {tool.outwardTools > 0 && ` · ${tool.outwardTools} reach outside`}
         </p>
@@ -150,7 +150,7 @@ function ToolCard({ tool }: { tool: ToolStatus }) {
           {tool.settingsTab && tool.state !== "PLANNED" && (
             <Link
               to={`/settings?tab=${tool.settingsTab}`}
-              className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/45 hover:text-ink hover:underline"
+              className="font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink hover:underline"
             >
               {tool.state === "NEEDS_KEY" ? "Set it up ↗" : "Change ↗"}
             </Link>
@@ -172,8 +172,8 @@ function Catalogue({ catalogue, onAssign }: { catalogue: CatalogueResponse; onAs
     <section className="space-y-3">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">The catalogue</h2>
-          <p className="mt-1 text-sm text-ink/50">
+          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">The catalogue</h2>
+          <p className="mt-1 text-sm text-muted">
             {catalogue.summary.total} tools an agent can be granted. {catalogue.summary.outward} of them reach outside the company and{" "}
             {catalogue.summary.spending} spend money — those stay behind dry run until an agent is explicitly trusted with them.
           </p>
@@ -194,7 +194,7 @@ function Catalogue({ catalogue, onAssign }: { catalogue: CatalogueResponse; onAs
             if (list.length === 0) return null;
             return (
               <div key={group}>
-                <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">{group}</h3>
+                <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">{group}</h3>
                 <div className="grid gap-2 md:grid-cols-2">
                   {list.map((tool) => <CatalogueRow key={tool.key} tool={tool} onAssign={onAssign} />)}
                 </div>
@@ -209,14 +209,14 @@ function Catalogue({ catalogue, onAssign }: { catalogue: CatalogueResponse; onAs
 
 function CatalogueRow({ tool, onAssign }: { tool: CatalogueTool; onAssign: (key: string) => void }) {
   return (
-    <div className="border border-line bg-white px-3 py-2.5">
+    <div className="rounded-xl border border-line bg-white px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <StatusDot tone={tool.ready ? "ok" : "warn"} />
             <span className="truncate text-sm font-medium">{tool.name}</span>
           </div>
-          <code className="mt-0.5 block font-mono text-[10px] text-ink/40">{tool.key}</code>
+          <code className="mt-0.5 block font-mono text-[10px] text-muted">{tool.key}</code>
         </div>
         <div className="flex shrink-0 gap-1">
           {tool.spends && <Badge>$</Badge>}
@@ -224,9 +224,9 @@ function CatalogueRow({ tool, onAssign }: { tool: CatalogueTool; onAssign: (key:
           {tool.outward && <Badge tone="muted">outward</Badge>}
         </div>
       </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-ink/55">{tool.purpose}</p>
+      <p className="mt-1.5 text-xs leading-relaxed text-muted">{tool.purpose}</p>
       {!tool.ready && tool.blockedReason && (
-        <p className="mt-1.5 text-xs text-amber-700">{tool.blockedReason}</p>
+        <p className="mt-1.5 text-xs text-warn-text">{tool.blockedReason}</p>
       )}
       <button
         type="button"
@@ -283,10 +283,10 @@ function GrantDrawer({ toolKey, onClose }: { toolKey: string | null; onClose: ()
       subtitle={data ? `${granted.length} of ${agents.length} agents can call it` : undefined}
     >
       {!data ? (
-        <p className="text-sm text-ink/50">Loading…</p>
+        <p className="text-sm text-muted">Loading…</p>
       ) : (
         <div className="space-y-5">
-          <p className="text-sm text-ink/65">{data.tool.purpose}</p>
+          <p className="text-sm text-muted">{data.tool.purpose}</p>
 
           <div className="flex flex-wrap gap-1.5">
             <Badge tone="muted">{data.tool.scope}</Badge>
@@ -295,20 +295,20 @@ function GrantDrawer({ toolKey, onClose }: { toolKey: string | null; onClose: ()
           </div>
 
           {(data.tool.spends || data.tool.outward) && (
-            <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
               Granting this is not the same as letting an agent use it unattended — it still needs the autonomy level and dry run to allow
               it. Both are on the agent's own card.
             </p>
           )}
 
-          {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+          {notice && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
 
           <div className="space-y-1">
             {agents.map((agent) => (
               <label
                 key={agent.key}
                 className={`flex cursor-pointer items-start gap-2.5 border px-2.5 py-2 transition-colors ${
-                  agent.granted ? "border-blue/30 bg-blue/[.04]" : "border-line bg-white hover:bg-ink/[.02]"
+                  agent.granted ? "border-blue/30 bg-blue/[.04]" : "border-line bg-white hover:bg-sunken"
                 }`}
               >
                 <input
@@ -321,7 +321,7 @@ function GrantDrawer({ toolKey, onClose }: { toolKey: string | null; onClose: ()
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-1.5">
                     <span className="text-sm font-medium">{agent.name}</span>
-                    <span className="text-xs text-ink/40">{agent.title}</span>
+                    <span className="text-xs text-muted">{agent.title}</span>
                     {agent.status !== "ACTIVE" && <Badge tone="muted">{agent.status.toLowerCase()}</Badge>}
                   </span>
                   {/* Granted and still unable to act is a different problem
@@ -330,7 +330,7 @@ function GrantDrawer({ toolKey, onClose }: { toolKey: string | null; onClose: ()
                       `mustDryRun` it stayed silent for an outright refusal,
                       which is the case somebody most needs to be told about. */}
                   {agent.granted && agent.permissionNote && (
-                    <span className={`mt-0.5 block text-xs ${agent.allowed ? "text-ink/45" : "text-amber-700"}`}>
+                    <span className={`mt-0.5 block text-xs ${agent.allowed ? "text-muted" : "text-warn-text"}`}>
                       {agent.allowed ? "" : "Cannot right now — "}
                       {agent.permissionNote}
                     </span>
@@ -387,8 +387,8 @@ function Connections() {
     <section className="space-y-3">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Connected tools</h2>
-          <p className="mt-1 max-w-2xl text-sm text-ink/50">
+          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Connected tools</h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted">
             Anything that speaks MCP. Its tools join the catalogue and are granted, called and audited exactly like the built-in ones — this
             is how a new capability arrives without a deploy. Image generation is the obvious one: connect a server that draws and{" "}
             <code className="font-mono text-xs">image.generate</code> starts working.
@@ -413,7 +413,7 @@ function Connections() {
                     <StatusDot tone={server.lastError ? "bad" : server.enabled ? "ok" : "idle"} />
                     <span className="font-display text-lg tracking-[-.02em]">{server.name}</span>
                   </div>
-                  <code className="mt-0.5 block truncate font-mono text-[10px] text-ink/40">{server.url}</code>
+                  <code className="mt-0.5 block truncate font-mono text-[10px] text-muted">{server.url}</code>
                 </div>
                 <div className="flex shrink-0 gap-1">
                   {server.spends && <Badge>$</Badge>}
@@ -422,12 +422,12 @@ function Connections() {
                 </div>
               </div>
 
-              {server.purpose && <p className="mt-2 text-sm text-ink/60">{server.purpose}</p>}
+              {server.purpose && <p className="mt-2 text-sm text-muted">{server.purpose}</p>}
 
               {server.lastError ? (
-                <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{server.lastError}</p>
+                <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{server.lastError}</p>
               ) : (
-                <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+                <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                   {server.toolCount} tool{server.toolCount === 1 ? "" : "s"}
                   {server.hasAuth ? " · authorised" : " · no credential"}
                 </p>
@@ -436,11 +436,11 @@ function Connections() {
               {server.tools.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {server.tools.slice(0, 6).map((tool) => (
-                    <span key={tool.name} title={tool.description ?? undefined} className="rounded-lg border border-line bg-cream px-1.5 py-0.5 font-mono text-[10px] text-ink/55">
+                    <span key={tool.name} title={tool.description ?? undefined} className="rounded-xl border border-line bg-cream px-1.5 py-0.5 font-mono text-[10px] text-muted">
                       {tool.name}
                     </span>
                   ))}
-                  {server.tools.length > 6 && <span className="px-1 py-0.5 text-[10px] text-ink/35">+{server.tools.length - 6}</span>}
+                  {server.tools.length > 6 && <span className="px-1 py-0.5 text-[10px] text-muted">+{server.tools.length - 6}</span>}
                 </div>
               )}
 
@@ -454,14 +454,14 @@ function Connections() {
                   type="button"
                   onClick={() => refresh.mutate(server.id)}
                   disabled={refresh.isPending}
-                  className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/45 transition hover:text-ink"
+                  className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
                 >
                   {refresh.isPending ? "Checking…" : "Re-check"}
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditing(server)}
-                  className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/45 transition hover:text-ink"
+                  className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
                 >
                   Settings
                 </button>
@@ -588,9 +588,9 @@ function ConnectionDrawer({ open, server, onClose }: { open: boolean; server: Mc
       }
     >
       <div className="space-y-4">
-        {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+        {notice && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
         {warning && (
-          <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
             Saved, but the server didn't answer: {warning}
           </p>
         )}
@@ -636,9 +636,9 @@ function ConnectionDrawer({ open, server, onClose }: { open: boolean; server: Mc
           <input className="input" value={form.purpose} onChange={(event) => setForm({ ...form, purpose: event.target.value })} />
         </Field>
 
-        <div className="border border-line bg-cream p-4">
-          <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">What it's trusted with</h3>
-          <p className="mt-1 text-xs leading-relaxed text-ink/55">
+        <div className="overflow-hidden rounded-2xl border border-line bg-cream p-4">
+          <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it's trusted with</h3>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
             These three decide how a call is gated, and they are read from here rather than from anything the server says about itself. A
             server describing its own tool as harmless is a server asking to act unwatched.
           </p>
@@ -662,7 +662,7 @@ function ConnectionDrawer({ open, server, onClose }: { open: boolean; server: Mc
         </div>
 
         {!server && (
-          <p className="border border-line bg-white px-3 py-2 text-xs text-ink/55">
+          <p className="rounded-xl border border-line bg-white px-3 py-2 text-xs text-muted">
             It arrives switched off. Connecting a server and letting agents call it are two decisions — turn it on once you've seen what it
             advertises.
           </p>
@@ -720,7 +720,7 @@ function Presets() {
   });
 
   const available = (data?.presets ?? []).filter((preset) => !preset.connected);
-  if (available.length === 0) return note ? <p className="text-sm text-ink/60">{note}</p> : null;
+  if (available.length === 0) return note ? <p className="text-sm text-muted">{note}</p> : null;
 
   return (
     <div className="space-y-2">
@@ -733,10 +733,10 @@ function Presets() {
                 {preset.spends && <Badge>$</Badge>}
                 <Badge tone="muted">{preset.scope}</Badge>
               </div>
-              <p className="mt-1 text-sm text-ink/60">{preset.purpose}</p>
-              <p className="mt-1 text-sm text-ink/45">{preset.note}</p>
+              <p className="mt-1 text-sm text-muted">{preset.purpose}</p>
+              <p className="mt-1 text-sm text-muted">{preset.note}</p>
               {preset.credentialNote && (
-                <p className={`mt-1 text-xs ${preset.credentialReady ? "text-ink/45" : "text-amber-700"}`}>{preset.credentialNote}</p>
+                <p className={`mt-1 text-xs ${preset.credentialReady ? "text-muted" : "text-warn-text"}`}>{preset.credentialNote}</p>
               )}
             </div>
             <Button
@@ -750,7 +750,7 @@ function Presets() {
           </div>
         </Card>
       ))}
-      {note && <p className="text-sm text-ink/60">{note}</p>}
+      {note && <p className="text-sm text-muted">{note}</p>}
     </div>
   );
 }

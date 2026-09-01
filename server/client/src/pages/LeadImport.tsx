@@ -342,7 +342,7 @@ export function LeadImport() {
             )}
             <Link
               to="/leads"
-              className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+              className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
             >
               Back to leads
             </Link>
@@ -434,23 +434,23 @@ function Connections({ connections }: { connections?: AppSettings }) {
   return (
     <Card className="mb-8">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-        <span className="font-mono text-[11px] uppercase tracking-[.14em] text-ink/60">Connections</span>
+        <span className="font-mono text-[11px] uppercase tracking-[.14em] text-muted">Connections</span>
 
         <span className="flex items-center gap-2 text-sm">
           <StatusDot tone={analyst?.configured ? "ok" : "idle"} />
           {analyst?.configured ? (
-            <span className="text-ink/70">AI analyst on</span>
+            <span className="text-ink">AI analyst on</span>
           ) : (
-            <span className="text-ink/50">No AI analyst — sheets are mapped by pattern rules</span>
+            <span className="text-muted">No AI analyst — sheets are mapped by pattern rules</span>
           )}
         </span>
 
         <span className="flex items-center gap-2 text-sm">
           <StatusDot tone={google?.connected ? "ok" : google?.configured ? "warn" : "idle"} />
           {google?.connected ? (
-            <span className="text-ink/70">Drive: {google.account ?? "connected"}</span>
+            <span className="text-ink">Drive: {google.account ?? "connected"}</span>
           ) : (
-            <span className="text-ink/50">Drive not connected — upload a file instead</span>
+            <span className="text-muted">Drive not connected — upload a file instead</span>
           )}
         </span>
 
@@ -535,7 +535,7 @@ function SourceStep({
             const file = event.dataTransfer.files?.[0];
             if (file) void readFile(file);
           }}
-          className="border border-dashed border-ink/20 p-8 text-center"
+          className="rounded-xl border border-dashed border-line-strong p-8 text-center"
         >
           <input
             ref={fileInput}
@@ -547,7 +547,7 @@ function SourceStep({
               if (file) void readFile(file);
             }}
           />
-          <p className="text-sm text-ink/60">Drop an .xlsx or .csv here, or</p>
+          <p className="text-sm text-muted">Drop an .xlsx or .csv here, or</p>
           <div className="mt-3">
             <Button variant="secondary" onClick={() => fileInput.current?.click()} disabled={reading}>
               {reading ? "Reading…" : "Choose a file"}
@@ -556,7 +556,7 @@ function SourceStep({
           {upload && (
             <p className="mt-4 text-sm">
               <strong>{upload.name}</strong>{" "}
-              <span className="text-ink/50">({Math.max(1, Math.round(upload.size / 1024))} KB)</span>
+              <span className="text-muted">({Math.max(1, Math.round(upload.size / 1024))} KB)</span>
             </p>
           )}
           {readError && <Note tone="bad">{readError}</Note>}
@@ -567,7 +567,7 @@ function SourceStep({
 
       {chosen && sheets.length > 1 && (
         <div className="mt-6">
-          <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Tabs to read</h3>
+          <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Tabs to read</h3>
           <div className="flex flex-wrap gap-2">
             {sheets.map((sheet) => {
               const active = chosenSheets.includes(sheet);
@@ -577,7 +577,7 @@ function SourceStep({
                   type="button"
                   onClick={() => onSheets(active ? chosenSheets.filter((name) => name !== sheet) : [...chosenSheets, sheet])}
                   className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
-                    active ? "bg-ink text-cream" : "bg-ink/5 text-ink/50 hover:text-ink"
+                    active ? "bg-ink text-cream" : "bg-sunken text-muted hover:text-ink"
                   }`}
                 >
                   {sheet}
@@ -589,11 +589,11 @@ function SourceStep({
       )}
 
       {chosen && (
-        <div className="mt-6 flex flex-wrap items-center gap-4 border-t border-ink/10 pt-5">
-          <label className="flex items-center gap-2 text-sm text-ink/70">
+        <div className="mt-6 flex flex-wrap items-center gap-4 border-t border-line pt-5">
+          <label className="flex items-center gap-2 text-sm text-ink">
             <input type="checkbox" checked={useAi} onChange={(event) => onUseAi(event.target.checked)} className="h-3.5 w-3.5 accent-blue" />
             Let the AI analyst read it
-            {!connections?.analyst.configured && <span className="text-xs text-ink/40">(no API key set — pattern rules will be used)</span>}
+            {!connections?.analyst.configured && <span className="text-xs text-muted">(no API key set — pattern rules will be used)</span>}
           </label>
           <span className="flex-1" />
           <Button onClick={onAnalyze} disabled={busy || (chosenSheets.length === 0 && sheets.length > 0)}>
@@ -634,32 +634,32 @@ function ReadingProgress({
   return (
     <Card className="mb-8">
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-        <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">
+        <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">
           {halted ? "Stopped" : "Reading the workbook"}
         </h3>
-        <span className="font-mono text-[11px] uppercase tracking-[.12em] text-ink/50">
+        <span className="font-mono text-[11px] uppercase tracking-[.12em] text-muted">
           {complete} of {total} tabs · {reading.tables.length} {reading.tables.length === 1 ? "table" : "tables"} ·{" "}
           {rows.toLocaleString()} rows
         </span>
       </div>
 
-      <div className="h-1.5 w-full overflow-hidden bg-ink/10">
+      <div className="h-1.5 w-full overflow-hidden bg-line">
         <div
-          className={`h-full transition-all duration-500 ${halted ? "bg-amber-500" : "bg-blue"}`}
+          className={`h-full transition-all duration-500 ${halted ? "bg-warn" : "bg-blue"}`}
           style={{ width: `${Math.round((complete / total) * 100)}%` }}
         />
       </div>
 
-      <p className="mt-3 text-sm text-ink/70">
+      <p className="mt-3 text-sm text-ink">
         {reading.error ? (
-          <span className="text-red-600">{reading.error}</span>
+          <span className="text-danger-text">{reading.error}</span>
         ) : reading.stopped ? (
           <>Stopped after {complete} of {total} tabs. Nothing has been written to the pipeline.</>
         ) : reading.current ? (
           <>
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue" />{" "}
             Reading <strong>{reading.current}</strong>
-            {reading.remaining.length > 1 && <span className="text-ink/40"> · {reading.remaining.length - 1} to go</span>}
+            {reading.remaining.length > 1 && <span className="text-muted"> · {reading.remaining.length - 1} to go</span>}
           </>
         ) : (
           "Finishing…"
@@ -678,7 +678,7 @@ function ReadingProgress({
             <span
               key={name}
               className={`px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] ${
-                name === reading.current ? "bg-ink text-cream" : "bg-ink/5 text-ink/40"
+                name === reading.current ? "bg-ink text-cream" : "bg-sunken text-muted"
               }`}
             >
               {name}
@@ -688,15 +688,15 @@ function ReadingProgress({
       )}
 
       {reading.warnings.length > 0 && (
-        <ul className="mt-4 space-y-1 border-t border-ink/10 pt-3 text-xs text-ink/60">
+        <ul className="mt-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
           {[...new Set(reading.warnings)].slice(0, 6).map((warning) => (
             <li key={warning}>· {warning}</li>
           ))}
-          {new Set(reading.warnings).size > 6 && <li className="text-ink/40">· and {new Set(reading.warnings).size - 6} more</li>}
+          {new Set(reading.warnings).size > 6 && <li className="text-muted">· and {new Set(reading.warnings).size - 6} more</li>}
         </ul>
       )}
 
-      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-ink/10 pt-4">
+      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-4">
         {halted ? (
           <>
             {reading.remaining.length > 0 && <Button onClick={onCarryOn}>Carry on from {reading.remaining[0]}</Button>}
@@ -764,7 +764,7 @@ function DrivePicker({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search your Drive…"
-          className="flex-1 border border-ink/15 px-3 py-1.5 text-sm outline-none transition focus:border-ink/50"
+          className="rounded-[10px] flex-1 border border-line-strong px-3 py-1.5 text-sm outline-none transition focus:border-ink/50"
         />
         <Button type="submit" variant="secondary" size="sm">
           Search
@@ -773,9 +773,9 @@ function DrivePicker({
 
       {error instanceof Error && <Note tone="bad">{error.message}</Note>}
       {isLoading ? (
-        <p className="text-sm text-ink/50">Loading…</p>
+        <p className="text-sm text-muted">Loading…</p>
       ) : !data?.files.length ? (
-        <p className="text-sm text-ink/50">No spreadsheets found.</p>
+        <p className="text-sm text-muted">No spreadsheets found.</p>
       ) : (
         <ul className="max-h-72 divide-y divide-ink/5 overflow-y-auto rounded-2xl border border-line">
           {data.files.map((file) => (
@@ -789,11 +789,11 @@ function DrivePicker({
               >
                 <span className="flex-1 truncate">{file.name}</span>
                 {file.modifiedTime && (
-                  <span className="text-xs text-ink/40">
+                  <span className="text-xs text-muted">
                     <RelativeTime value={file.modifiedTime} />
                   </span>
                 )}
-                {loadingId === file.id && <span className="font-mono text-[10px] uppercase text-ink/40">opening…</span>}
+                {loadingId === file.id && <span className="font-mono text-[10px] uppercase text-muted">opening…</span>}
               </button>
             </li>
           ))}
@@ -860,7 +860,7 @@ function ReviewStep({
       </div>
 
       {analysis.warning && <Note tone="warn">{analysis.warning}</Note>}
-      {plan.summary && <p className="mb-6 border-l-2 border-blue/60 bg-white px-4 py-3 text-sm text-ink/70">{plan.summary}</p>}
+      {plan.summary && <p className="overflow-hidden rounded-2xl mb-6 border-l-2 border-blue/60 bg-white px-4 py-3 text-sm text-ink">{plan.summary}</p>}
 
       <GroupingCard
         plan={plan}
@@ -891,7 +891,7 @@ function ReviewStep({
 
       {error instanceof Error && <Note tone="bad">{error.message}</Note>}
 
-      <div className="sticky bottom-4 mt-6 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
+      <div className="overflow-hidden rounded-2xl sticky bottom-4 mt-6 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
         <span className="font-mono text-[11px] uppercase tracking-[.14em]">
           {groups.length} list{groups.length === 1 ? "" : "s"} · {included.length} table{included.length === 1 ? "" : "s"} · {totalRows} leads
         </span>
@@ -953,7 +953,7 @@ function GroupingCard({
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h3 className="font-display text-lg">Lists this will create</h3>
         <span className="flex-1" />
-        <div className="flex divide-x divide-ink/15 border border-ink/15">
+        <div className="flex divide-x divide-ink/15 border border-line-strong">
           {choices.map((choice) => (
             <button
               key={choice.value}
@@ -961,7 +961,7 @@ function GroupingCard({
               title={choice.hint}
               onClick={() => onGrouping(choice.value)}
               className={`px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition ${
-                grouping === choice.value ? "bg-ink text-cream" : "text-ink/50 hover:text-ink"
+                grouping === choice.value ? "bg-ink text-cream" : "text-muted hover:text-ink"
               }`}
             >
               {choice.label}
@@ -971,7 +971,7 @@ function GroupingCard({
       </div>
 
       {groups.length === 0 ? (
-        <p className="text-sm text-ink/50">Nothing is ticked for import yet.</p>
+        <p className="text-sm text-muted">Nothing is ticked for import yet.</p>
       ) : (
         <ul className="divide-y divide-ink/5 rounded-2xl border border-line">
           {groups.map((group) => (
@@ -984,7 +984,7 @@ function GroupingCard({
                   </Badge>
                 ))}
               </div>
-              <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+              <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                 {group.tables.length > 1 && `${group.tables.length} tables · `}
                 {rowsIn(group.tables)} rows
               </span>
@@ -993,7 +993,7 @@ function GroupingCard({
         </ul>
       )}
 
-      <p className="mt-3 text-xs text-ink/50">
+      <p className="mt-3 text-xs text-muted">
         Every lead carries its worksheet as a tag, so you can find the ones that came off the same sheet even after a list is renamed or
         split.
       </p>
@@ -1040,7 +1040,7 @@ function TableCard({
             onChange={(event) => onChange({ title: event.target.value })}
             className="w-full border-b border-transparent bg-transparent font-display text-xl outline-none transition focus:border-ink/30"
           />
-          <p className="mt-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+          <p className="mt-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
             {table.sheet} · rows {table.firstDataRow + 1}–{table.lastDataRow + 1}
             {table.headerRow !== null && ` · header row ${table.headerRow + 1}`} · {kept.length} columns
             {custom.length > 0 && ` (${custom.length} new)`}
@@ -1056,15 +1056,15 @@ function TableCard({
         </div>
       </div>
 
-      {table.notes && <p className="mb-4 text-sm text-ink/60">{table.notes}</p>}
+      {table.notes && <p className="mb-4 text-sm text-muted">{table.notes}</p>}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           Source
           <select
             value={table.leadSource}
             onChange={(event) => onChange({ leadSource: event.target.value })}
-            className="border border-ink/15 bg-white px-2 py-1 text-[10px]"
+            className="rounded-[10px] border border-line-strong bg-white px-2 py-1 text-[10px]"
           >
             {LEAD_SOURCES.map((source) => (
               <option key={source} value={source}>
@@ -1073,24 +1073,24 @@ function TableCard({
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           Rows start at
           <input
             type="number"
             min={1}
             value={table.firstDataRow + 1}
             onChange={(event) => onChange({ firstDataRow: Math.max(0, Number(event.target.value) - 1) })}
-            className="w-20 border border-ink/15 px-2 py-1 text-[11px]"
+            className="rounded-[10px] w-20 border border-line-strong px-2 py-1 text-[11px]"
           />
         </label>
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           and end at
           <input
             type="number"
             min={1}
             value={table.lastDataRow + 1}
             onChange={(event) => onChange({ lastDataRow: Math.max(0, Number(event.target.value) - 1) })}
-            className="w-20 border border-ink/15 px-2 py-1 text-[11px]"
+            className="rounded-[10px] w-20 border border-line-strong px-2 py-1 text-[11px]"
           />
         </label>
         <span className="flex-1" />
@@ -1102,19 +1102,19 @@ function TableCard({
       {showColumns && (
         <div className="mb-5 rounded-2xl border border-line">
           {table.columns.map((column, index) => (
-            <div key={`${column.index}-${index}`} className="flex flex-wrap items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
-              <span className="w-28 truncate font-mono text-[10px] uppercase tracking-[.1em] text-ink/40" title={column.header}>
+            <div key={`${column.index}-${index}`} className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 last:border-0">
+              <span className="w-28 truncate font-mono text-[10px] uppercase tracking-[.1em] text-muted" title={column.header}>
                 {column.header || `col ${column.index + 1}`}
               </span>
               <input
                 value={column.label}
                 onChange={(event) => updateColumn(index, { label: event.target.value })}
-                className="w-44 border border-ink/15 px-2 py-1 text-sm outline-none transition focus:border-ink/50"
+                className="rounded-[10px] w-44 border border-line-strong px-2 py-1 text-sm outline-none transition focus:border-ink/50"
               />
               <select
                 value={column.field}
                 onChange={(event) => updateColumn(index, { field: event.target.value })}
-                className="border border-ink/15 bg-white px-2 py-1 text-xs"
+                className="rounded-[10px] border border-line-strong bg-white px-2 py-1 text-xs"
               >
                 <option value="custom">New column of its own</option>
                 <option value="ignore">Don't import</option>
@@ -1130,7 +1130,7 @@ function TableCard({
                 <select
                   value={column.type}
                   onChange={(event) => updateColumn(index, { type: event.target.value as LeadFieldType })}
-                  className="border border-ink/15 bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
+                  className="rounded-full border border-line-strong bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
                 >
                   {FIELD_TYPES.map((type) => (
                     <option key={type} value={type}>
@@ -1141,7 +1141,7 @@ function TableCard({
               )}
             </div>
           ))}
-          <p className="border-t border-ink/10 bg-cream px-3 py-2 text-xs text-ink/50">
+          <p className="border-t border-line bg-cream px-3 py-2 text-xs text-muted">
             Change anything here and hit “Recheck preview” to see the effect before importing.
           </p>
         </div>
@@ -1151,7 +1151,7 @@ function TableCard({
         <div className="overflow-x-auto rounded-2xl border border-line">
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="border-b border-ink/10 bg-cream font-mono text-[10px] uppercase tracking-[.1em] text-ink/50">
+              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                 {Object.keys(preview.sample[0]).map((header) => (
                   <th key={header} className="whitespace-nowrap px-3 py-2">
                     {header}
@@ -1161,10 +1161,10 @@ function TableCard({
             </thead>
             <tbody>
               {preview.sample.map((row, index) => (
-                <tr key={index} className="border-b border-ink/5 last:border-0">
+                <tr key={index} className="border-b border-line last:border-0">
                   {Object.keys(preview.sample[0]).map((header) => (
                     <td key={header} className="max-w-[16rem] truncate px-3 py-2" title={row[header]}>
-                      {row[header] || <span className="text-ink/25">—</span>}
+                      {row[header] || <span className="text-muted">—</span>}
                     </td>
                   ))}
                 </tr>
@@ -1189,7 +1189,7 @@ function Finished({
   return (
     <Card className="mb-8">
       <h2 className="font-display text-2xl">Imported</h2>
-      <p className="mt-1 text-sm text-ink/60">
+      <p className="mt-1 text-sm text-muted">
         {done.created} new lead{done.created === 1 ? "" : "s"}
         {done.updated > 0 && `, ${done.updated} existing one${done.updated === 1 ? "" : "s"} refreshed`}.
       </p>
@@ -1197,7 +1197,7 @@ function Finished({
         {done.groups.map((group) => (
           <li key={group.id} className="flex items-center gap-3 px-4 py-3">
             <span className="flex-1">{group.name}</span>
-            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{group.leads} rows</span>
+            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{group.leads} rows</span>
             <Link to={`/leads?groupId=${group.id}`} className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">
               Open →
             </Link>
@@ -1223,11 +1223,11 @@ function History({ history }: { history: LeadImportRecord[] }) {
   if (!history.length) return null;
   return (
     <section>
-      <h2 className="mb-3 font-mono text-[11px] uppercase tracking-[.14em] text-ink/50">Recent imports</h2>
+      <h2 className="mb-3 font-mono text-[11px] uppercase tracking-[.14em] text-muted">Recent imports</h2>
       <div className="overflow-x-auto rounded-2xl border border-line bg-white">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead>
-            <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
               <th className="px-4 py-3">File</th>
               <th className="px-4 py-3">Read by</th>
               <th className="px-4 py-3">Tables</th>
@@ -1238,7 +1238,7 @@ function History({ history }: { history: LeadImportRecord[] }) {
           </thead>
           <tbody>
             {history.map((record) => (
-              <tr key={record.id} className="border-b border-ink/5 last:border-0">
+              <tr key={record.id} className="border-b border-line last:border-0">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <StatusDot
@@ -1246,11 +1246,11 @@ function History({ history }: { history: LeadImportRecord[] }) {
                     />
                     <span className="truncate">{record.fileName ?? "Spreadsheet"}</span>
                   </div>
-                  {record.error && <p className="mt-1 text-xs text-red-600">{record.error}</p>}
+                  {record.error && <p className="mt-1 text-xs text-danger-text">{record.error}</p>}
                 </td>
-                <td className="px-4 py-3 text-xs text-ink/50">{record.analyzedBy === "rules" ? "Pattern rules" : record.analyzedBy}</td>
-                <td className="px-4 py-3 text-xs text-ink/60">{record.tablesFound}</td>
-                <td className="px-4 py-3 text-xs text-ink/60">
+                <td className="px-4 py-3 text-xs text-muted">{record.analyzedBy === "rules" ? "Pattern rules" : record.analyzedBy}</td>
+                <td className="px-4 py-3 text-xs text-muted">{record.tablesFound}</td>
+                <td className="px-4 py-3 text-xs text-muted">
                   {record.leadsCreated}
                   {record.leadsUpdated > 0 && ` (+${record.leadsUpdated} updated)`}
                 </td>
@@ -1263,7 +1263,7 @@ function History({ history }: { history: LeadImportRecord[] }) {
                     ))}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-xs text-ink/40">
+                <td className="px-4 py-3 text-xs text-muted">
                   <RelativeTime value={record.createdAt} />
                 </td>
               </tr>
@@ -1283,7 +1283,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       type="button"
       onClick={onClick}
       className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] transition ${
-        active ? "bg-ink text-cream" : "bg-ink/5 text-ink/50 hover:text-ink"
+        active ? "bg-ink text-cream" : "bg-sunken text-muted hover:text-ink"
       }`}
     >
       {children}
@@ -1293,9 +1293,9 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 
 function Note({ tone, children }: { tone: "ok" | "warn" | "bad"; children: React.ReactNode }) {
   const styles = {
-    ok: "border-emerald-200 bg-emerald-50 text-emerald-800",
-    warn: "border-amber-200 bg-amber-50 text-amber-800",
-    bad: "border-red-200 bg-red-50 text-red-700",
+    ok: "border-positive-line bg-positive-surface text-positive-text",
+    warn: "border-warn-line bg-warn-surface text-warn-text",
+    bad: "border-danger-line bg-danger-surface text-danger-text",
   }[tone];
   return <p className={`mb-4 border px-3 py-2 text-sm ${styles}`}>{children}</p>;
 }

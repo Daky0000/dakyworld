@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { DashboardData } from "../lib/types";
-import { Card, Money, PageHeader, RelativeTime } from "../components/ui";
+import { Card, Loading, Money, PageHeader, RelativeTime, SectionHeading, StatGrid, StatTile } from "../components/ui";
 
 export function Dashboard() {
   const { data, isLoading } = useQuery({
@@ -14,41 +14,41 @@ export function Dashboard() {
     <div>
       <PageHeader title="Revenue Dashboard" subtitle="Total revenue, recurring revenue, outstanding invoices, and pipeline — live." />
       {isLoading || !data ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <Loading rows={2} />
       ) : (
-        <div className="grid grid-cols-1 gap-px rounded-2xl border border-line bg-ink/10 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat label="Revenue this month" value={<Money amount={data.revenueThisMonth} />} />
-          <Stat
+        <StatGrid>
+          <StatTile label="Revenue this month" value={<Money amount={data.revenueThisMonth} />} />
+          <StatTile
             label="Monthly recurring revenue"
             value={<Money amount={data.monthlyRecurringRevenue} />}
             sub={`${data.activeCarePlanCount} active care plan${data.activeCarePlanCount === 1 ? "" : "s"}`}
           />
-          <Stat
+          <StatTile
             label="Outstanding invoices"
             value={<Money amount={data.outstandingInvoiceTotal} />}
             sub={`${data.outstandingInvoiceCount} unpaid`}
           />
-          <Stat
+          <StatTile
             label="Pipeline value"
             value={<Money amount={data.pipelineValue} />}
             sub={`${data.openProposalCount} open proposal${data.openProposalCount === 1 ? "" : "s"}`}
           />
-        </div>
+        </StatGrid>
       )}
 
       {data?.carePlans && <RetainerHealth data={data} />}
 
       {data && (
         <div className="mt-10">
-          <h2 className="mb-4 font-display text-xl">Leads by status</h2>
-          <div className="flex flex-wrap gap-3">
+          <SectionHeading title="Leads by status" />
+          <div className="flex flex-wrap gap-x-8 gap-y-5 rounded-2xl border border-line bg-white px-6 py-5">
             {data.leadsByStatus.map((row) => (
-              <Card key={row.status} className="min-w-[140px]">
-                <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">{row.status}</div>
-                <div className="mt-2 font-display text-2xl">{row._count}</div>
-              </Card>
+              <div key={row.status}>
+                <div className="micro">{row.status}</div>
+                <div className="mt-1.5 font-display text-2xl leading-none tracking-[-.04em]">{row._count}</div>
+              </div>
             ))}
-            {data.leadsByStatus.length === 0 && <div className="text-sm text-ink/50">No leads yet.</div>}
+            {data.leadsByStatus.length === 0 && <div className="text-sm text-muted">No leads yet.</div>}
           </div>
         </div>
       )}
@@ -68,16 +68,18 @@ function RetainerHealth({ data }: { data: DashboardData }) {
 
   return (
     <div className="mt-10">
-      <div className="mb-4 flex items-baseline justify-between gap-4">
-        <h2 className="font-display text-xl">Retainers</h2>
-        <Link to="/care-plans" className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink">
-          Manage →
-        </Link>
-      </div>
+      <SectionHeading
+        title="Retainers"
+        action={
+          <Link to="/care-plans" className="micro transition hover:text-ink">
+            Manage →
+          </Link>
+        }
+      />
 
       {plans.active === 0 && plans.paused === 0 ? (
         <Card>
-          <p className="text-sm text-ink/55">
+          <p className="text-sm text-muted">
             No care plans yet. Most Dakyworld clients arrive through a one-off project — a retainer is how that becomes recurring
             revenue.{" "}
             <Link to="/care-plans" className="underline underline-offset-2">
@@ -87,39 +89,29 @@ function RetainerHealth({ data }: { data: DashboardData }) {
           </p>
         </Card>
       ) : (
-        <div className="grid grid-cols-2 gap-px rounded-2xl border border-line bg-ink/10 sm:grid-cols-3 lg:grid-cols-5">
-          <Stat
+        <StatGrid columns={5}>
+          <StatTile
             label="Next invoice"
             value={plans.nextBilling ? <RelativeTime value={plans.nextBilling.at} /> : "—"}
             sub={plans.nextBilling ? `${plans.nextBilling.client} · ${plans.nextBilling.currency} ${Number(plans.nextBilling.amount).toLocaleString()}` : "Nothing scheduled"}
           />
-          <Stat label="Billing this week" value={plans.billingWithin7Days} sub="Invoices raised automatically" />
-          <Stat label="Drafts to send" value={plans.draftInvoices} sub={plans.draftInvoices > 0 ? "Nothing is emailed for you" : "All sent"} />
-          <Stat label="Reviews due" value={plans.reviewsDue} sub={plans.reviewsDue > 0 ? "Overdue as of today" : "All current"} />
-          <Stat
+          <StatTile label="Billing this week" value={plans.billingWithin7Days} sub="Invoices raised automatically" />
+          <StatTile label="Drafts to send" value={plans.draftInvoices} sub={plans.draftInvoices > 0 ? "Nothing is emailed for you" : "All sent"} />
+          <StatTile label="Reviews due" value={plans.reviewsDue} sub={plans.reviewsDue > 0 ? "Overdue as of today" : "All current"} />
+          <StatTile
             label="Paused / churned"
             value={`${plans.paused} / ${plans.churnedThisQuarter}`}
             sub="Churn counted this quarter"
           />
-        </div>
+        </StatGrid>
       )}
 
       {attention > 0 && (
-        <p className="mt-3 text-xs text-ink/45">
+        <p className="mt-3 text-xs text-muted">
           {attention} thing{attention === 1 ? "" : "s"} on the retainers need a person: drafts don't send themselves, and a paused
           plan bills nothing until it's resumed.
         </p>
       )}
-    </div>
-  );
-}
-
-function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
-  return (
-    <div className="bg-white p-6">
-      <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">{label}</div>
-      <div className="mt-3 font-display text-2xl">{value}</div>
-      {sub && <div className="mt-1 text-xs text-ink/50">{sub}</div>}
     </div>
   );
 }

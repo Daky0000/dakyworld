@@ -157,7 +157,7 @@ export function Hunts() {
         <Card className="border-blue/40 bg-blue/5">
           <div className="flex items-start justify-between gap-4">
             <p className="text-sm">{note}</p>
-            <button className="text-xs text-ink/50 hover:text-ink" onClick={() => setNote(null)}>
+            <button className="text-xs text-muted hover:text-ink" onClick={() => setNote(null)}>
               Dismiss
             </button>
           </div>
@@ -196,7 +196,7 @@ export function Hunts() {
                   {thesis.custom && <Badge tone="muted">yours</Badge>}
                   {thesis.edited && <Badge tone="muted">edited</Badge>}
                 </div>
-                <p className="mt-1 text-sm text-ink/70">{thesis.target}</p>
+                <p className="mt-1 text-sm text-ink">{thesis.target}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Button
@@ -223,29 +223,29 @@ export function Hunts() {
             </div>
 
             {/* The reason, which is the whole point of a thesis. */}
-            <p className="mt-4 text-sm leading-relaxed text-ink/80">{thesis.rationale}</p>
-            <p className="mt-2 text-sm text-ink/60">
-              <span className="font-medium text-ink/80">What we would sell them:</span> {thesis.offer}
+            <p className="mt-4 text-sm leading-relaxed text-ink">{thesis.rationale}</p>
+            <p className="mt-2 text-sm text-muted">
+              <span className="font-medium text-ink">What we would sell them:</span> {thesis.offer}
             </p>
 
-            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-ink/60">
+            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
               <span>
-                <span className="font-medium text-ink/80">{thesis.leadsPerRun}</span> a run ·{" "}
-                <span className="font-medium text-ink/80">{thesis.runTimes.length || "no"}</span> run
+                <span className="font-medium text-ink">{thesis.leadsPerRun}</span> a run ·{" "}
+                <span className="font-medium text-ink">{thesis.runTimes.length || "no"}</span> run
                 {thesis.runTimes.length === 1 ? "" : "s"} a day
                 {thesis.runTimes.length > 0 && ` (${thesis.runTimes.join(", ")} ${thesis.timezone})`}
               </span>
               <span>
-                = <span className="font-medium text-ink/80">{thesis.perDay}</span> audited a day
+                = <span className="font-medium text-ink">{thesis.perDay}</span> audited a day
               </span>
               <span>kept at {thesis.minScore}+</span>
-              <span className={thesis.deleteRejected ? "text-red-600" : undefined}>
+              <span className={thesis.deleteRejected ? "text-danger-text" : undefined}>
                 {thesis.deleteRejected ? "rejected leads are deleted" : "rejected leads are kept, marked disqualified"}
               </span>
               {thesis.source ? (
                 <span>searches with “{thesis.source.name}”</span>
               ) : (
-                <span className="text-red-600">no search attached — nothing to run</span>
+                <span className="text-danger-text">no search attached — nothing to run</span>
               )}
               {thesis.enabled && thesis.nextRunAt && (
                 <span>
@@ -263,11 +263,11 @@ export function Hunts() {
             )}
 
             {thesis.lastHunt?.summary && (
-              <p className="mt-3 border-l-2 border-ink/10 pl-3 text-xs text-ink/60">{thesis.lastHunt.summary}</p>
+              <p className="mt-3 border-l-2 border-line pl-3 text-xs text-muted">{thesis.lastHunt.summary}</p>
             )}
 
             {open === thesis.key && (
-              <div className="mt-5 space-y-5 border-t border-ink/10 pt-5">
+              <div className="mt-5 space-y-5 border-t border-line pt-5">
                 <Lines title="Fits when" lines={thesis.qualifiers} empty="Nothing — every business it finds would be undecided." />
                 <Lines title="Ruled out by" lines={thesis.disqualifiers} empty="Nothing rules a business out outright." />
 
@@ -277,7 +277,7 @@ export function Hunts() {
                     <Runs hunts={detail.data.hunts} />
                   </>
                 )}
-                {detail.isLoading && <p className="text-xs text-ink/50">Loading what it has decided…</p>}
+                {detail.isLoading && <p className="text-xs text-muted">Loading what it has decided…</p>}
               </div>
             )}
           </Card>
@@ -300,7 +300,7 @@ function Lines({ title, lines, empty }: { title: string; lines: Line[]; empty: s
     <div>
       <Eyebrow>{title}</Eyebrow>
       {lines.length === 0 ? (
-        <p className="mt-2 text-sm text-ink/50">{empty}</p>
+        <p className="mt-2 text-sm text-muted">{empty}</p>
       ) : (
         <ul className="mt-2 space-y-2">
           {lines.map((line) => {
@@ -310,9 +310,9 @@ function Lines({ title, lines, empty }: { title: string; lines: Line[]; empty: s
                 <Badge tone={line.checkedBy === "the audit" ? "muted" : "warn"}>
                   {line.checkedBy === "the audit" ? "checked free" : "read by a model"}
                 </Badge>
-                <span className="flex-1 text-ink/75">
+                <span className="flex-1 text-ink">
                   {line.says}
-                  {defining && <span className="ml-2 text-xs text-ink/50">— must be true, not just weighed</span>}
+                  {defining && <span className="ml-2 text-xs text-muted">— must be true, not just weighed</span>}
                 </span>
               </li>
             );
@@ -324,28 +324,28 @@ function Lines({ title, lines, empty }: { title: string; lines: Line[]; empty: s
 }
 
 function Verdicts({ verdicts }: { verdicts: Verdict[] }) {
-  if (verdicts.length === 0) return <p className="text-sm text-ink/50">Nothing judged yet.</p>;
+  if (verdicts.length === 0) return <p className="text-sm text-muted">Nothing judged yet.</p>;
   return (
     <div>
       <Eyebrow>What it decided, and why</Eyebrow>
       <ul className="mt-2 space-y-2">
         {verdicts.slice(0, 20).map((verdict) => (
-          <li key={verdict.id} className="rounded border border-ink/10 p-3 text-sm">
+          <li key={verdict.id} className="rounded border border-line p-3 text-sm">
             <div className="flex flex-wrap items-center gap-2">
               <StatusDot tone={VERDICT_TONE[verdict.verdict]} />
               <span className="font-medium">{verdict.companyName ?? "Unnamed"}</span>
-              <span className="text-xs text-ink/50">{verdict.score}</span>
-              {verdict.website && <span className="text-xs text-ink/50">{verdict.website}</span>}
+              <span className="text-xs text-muted">{verdict.score}</span>
+              {verdict.website && <span className="text-xs text-muted">{verdict.website}</span>}
               {verdict.deleted && <Badge tone="muted">deleted from the pipeline</Badge>}
               {!verdict.deleted && verdict.leadId === null && verdict.verdict === "REJECTED" && (
                 <Badge tone="muted">gone, kept as a record</Badge>
               )}
             </div>
-            <p className="mt-1 text-ink/70">{verdict.reason}</p>
+            <p className="mt-1 text-ink">{verdict.reason}</p>
           </li>
         ))}
       </ul>
-      {verdicts.length > 20 && <p className="mt-2 text-xs text-ink/50">…and {verdicts.length - 20} more.</p>}
+      {verdicts.length > 20 && <p className="mt-2 text-xs text-muted">…and {verdicts.length - 20} more.</p>}
     </div>
   );
 }
@@ -355,7 +355,7 @@ function Runs({ hunts }: { hunts: HuntRun[] }) {
   return (
     <div>
       <Eyebrow>Cycles</Eyebrow>
-      <ul className="mt-2 space-y-1 text-xs text-ink/60">
+      <ul className="mt-2 space-y-1 text-xs text-muted">
         {hunts.slice(0, 8).map((run) => (
           <li key={run.id} className="flex flex-wrap items-center gap-2">
             <RelativeTime value={run.startedAt} />
@@ -365,7 +365,7 @@ function Runs({ hunts }: { hunts: HuntRun[] }) {
               {run.skipped > 0 && `, skipped ${run.skipped} already judged`}
             </span>
             <span>${run.costUsd.toFixed(2)}</span>
-            {run.error && <span className="text-red-600">{run.error}</span>}
+            {run.error && <span className="text-danger-text">{run.error}</span>}
           </li>
         ))}
       </ul>

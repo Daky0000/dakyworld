@@ -93,7 +93,7 @@ export function LeadSources() {
           <div className="flex items-center gap-3">
             <Link
               to="/leads"
-              className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+              className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
             >
               View leads
             </Link>
@@ -133,9 +133,9 @@ export function LeadSources() {
         </div>
       )}
 
-      <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Sources</h2>
+      <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Sources</h2>
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : !sources || sources.length === 0 ? (
         <EmptyState
           message="No lead sources yet. Start from a template — the Google Maps one is set up for exactly the businesses Dakyworld sells to."
@@ -161,7 +161,7 @@ export function LeadSources() {
         </div>
       )}
 
-      <h2 className="mb-3 mt-10 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Recent runs</h2>
+      <h2 className="mb-3 mt-10 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Recent runs</h2>
       <RunsTable runs={runs ?? []} onStop={(id) => stop.mutate(id)} />
 
       <SourcePicker
@@ -198,7 +198,7 @@ function ApifyConnection({ settings, overview }: { settings?: AppSettings; overv
           <StatusDot tone={spend?.blocked ? "bad" : apify?.connected ? "ok" : apify?.token ? "bad" : "idle"} />
           <h2 className="font-display text-lg">Apify connection</h2>
         </div>
-        <p className="min-w-[16rem] flex-1 text-sm text-ink/60">
+        <p className="min-w-[16rem] flex-1 text-sm text-muted">
           {apify?.connected ? (
             <>
               Connected as <strong>{apify.account?.username ?? "your account"}</strong>
@@ -206,7 +206,7 @@ function ApifyConnection({ settings, overview }: { settings?: AppSettings; overv
               {spend && (
                 <>
                   {" "}
-                  <span className={spend.blocked ? "text-red-600" : "text-ink/50"}>
+                  <span className={spend.blocked ? "text-danger-text" : "text-muted"}>
                     ${spend.spentUsd.toFixed(2)} spent this month
                     {spend.budgetUsd != null ? ` of a $${spend.budgetUsd.toFixed(2)} budget` : ""}.
                   </span>
@@ -214,20 +214,20 @@ function ApifyConnection({ settings, overview }: { settings?: AppSettings; overv
               )}
             </>
           ) : apify?.error ? (
-            <span className="text-red-600">{apify.error}</span>
+            <span className="text-danger-text">{apify.error}</span>
           ) : (
             <>Scrapers can&rsquo;t run until an Apify API token is added.</>
           )}
         </p>
         <Link
           to="/settings?tab=capture"
-          className="inline-flex items-center gap-2 border border-ink/20 px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+          className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
         >
           {apify?.connected ? "Manage in Settings" : "Add a token"}
         </Link>
       </div>
       {spend?.blocked && (
-        <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           The monthly Apify budget has been reached, so runs are being refused. Raise it under{" "}
           <Link to="/settings?tab=capture" className="underline">
             Settings → Lead capture
@@ -274,8 +274,8 @@ function SourceCard({
             <Badge tone="muted">{source.leadSource.replace(/_/g, " ")}</Badge>
             {!source.enabled && <Badge>paused</Badge>}
           </div>
-          <p className="mt-1 text-sm text-ink/60">{source.description || "No description"}</p>
-          <p className="mt-1 font-mono text-[11px] text-ink/40">
+          <p className="mt-1 text-sm text-muted">{source.description || "No description"}</p>
+          <p className="mt-1 font-mono text-[11px] text-muted">
             <a
               href={`https://apify.com/${source.actorId}`}
               target="_blank"
@@ -303,19 +303,19 @@ function SourceCard({
         </div>
       </div>
 
-      <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-ink/5 pt-4 text-sm sm:grid-cols-4">
+      <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 text-sm sm:grid-cols-4">
         <Stat label="Schedule">
           {source.scheduleEnabled && source.scheduleTimes.length > 0 ? (
             <span>
               {source.scheduleTimes.join(", ")}{" "}
-              <span className="text-ink/40">{source.timezone.replace("_", " ")}</span>
+              <span className="text-muted">{source.timezone.replace("_", " ")}</span>
             </span>
           ) : (
-            <span className="text-ink/40">Manual only</span>
+            <span className="text-muted">Manual only</span>
           )}
         </Stat>
         <Stat label="Next run">
-          {source.enabled && source.scheduleEnabled ? <RelativeTime value={source.nextRunAt} /> : <span className="text-ink/40">—</span>}
+          {source.enabled && source.scheduleEnabled ? <RelativeTime value={source.nextRunAt} /> : <span className="text-muted">—</span>}
         </Stat>
         <Stat label="Last run">
           {lastRun ? (
@@ -324,7 +324,7 @@ function SourceCard({
               <RelativeTime value={lastRun.startedAt} />
             </span>
           ) : (
-            <span className="text-ink/40">Never</span>
+            <span className="text-muted">Never</span>
           )}
         </Stat>
         <Stat label="Leads captured">
@@ -334,26 +334,26 @@ function SourceCard({
         </Stat>
       </dl>
 
-      {runError && <p className="mt-3 text-sm text-red-600">{runError}</p>}
+      {runError && <p className="mt-3 text-sm text-danger-text">{runError}</p>}
       {lastRun?.error && (
         <p
           className={`mt-3 border px-3 py-2 text-sm ${
             lastRun.status === "SUCCEEDED"
-              ? "border-amber-200 bg-amber-50 text-amber-800"
-              : "border-red-200 bg-red-50 text-red-700"
+              ? "border-warn-line bg-warn-surface text-warn-text"
+              : "border-danger-line bg-danger-surface text-danger-text"
           }`}
         >
           {lastRun.error}
         </p>
       )}
       {health && !health.reachable && (
-        <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           Apify wouldn&rsquo;t return this actor. It may have been renamed, made private or removed — this source will fail on
           its next run.
         </p>
       )}
       {unknownKeys.length > 0 && (
-        <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
           The actor doesn&rsquo;t accept {unknownKeys.map((key) => `“${key}”`).join(", ")} — Apify drops those keys silently, so
           whatever they were meant to do isn&rsquo;t happening.
         </p>
@@ -365,7 +365,7 @@ function SourceCard({
 function Stat({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{label}</dt>
+      <dt className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</dt>
       <dd className="mt-0.5">{children}</dd>
     </div>
   );
@@ -385,7 +385,7 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
     <div className="overflow-x-auto rounded-2xl border border-line bg-white">
       <table className="w-full min-w-[820px] text-left text-sm">
         <thead>
-          <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+          <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
             <th className="px-4 py-3">Source</th>
             <th className="px-4 py-3">Started</th>
             <th className="px-4 py-3">Trigger</th>
@@ -400,12 +400,12 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
         </thead>
         <tbody>
           {runs.map((run) => (
-            <tr key={run.id} className="border-b border-ink/5 last:border-0 align-top">
+            <tr key={run.id} className="border-b border-line last:border-0 align-top">
               <td className="px-4 py-3">
                 <div className="font-medium">{run.source?.name ?? "—"}</div>
-                {run.error && <div className="mt-0.5 max-w-md text-xs text-red-600">{run.error}</div>}
+                {run.error && <div className="mt-0.5 max-w-md text-xs text-danger-text">{run.error}</div>}
               </td>
-              <td className="px-4 py-3 text-xs text-ink/50">
+              <td className="px-4 py-3 text-xs text-muted">
                 <RelativeTime value={run.startedAt} />
               </td>
               <td className="px-4 py-3">
@@ -416,27 +416,27 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
               </td>
               <td className="px-4 py-3">{run.itemsFetched}</td>
               <td className="px-4 py-3 font-medium">{run.leadsCreated}</td>
-              <td className="px-4 py-3 text-ink/60">{run.leadsUpdated}</td>
-              <td className="px-4 py-3 text-ink/60">
+              <td className="px-4 py-3 text-muted">{run.leadsUpdated}</td>
+              <td className="px-4 py-3 text-muted">
                 {run.filtered}
                 {/* A run that found rows and filed none has to say why, or the
                     only way to find out is to open the raw dataset in Apify. */}
                 {run.filtered > 0 && run.diagnostics && <WhyDropped diagnostics={run.diagnostics} />}
               </td>
-              <td className="px-4 py-3 text-xs text-ink/60">
+              <td className="px-4 py-3 text-xs text-muted">
                 {run.costUsd != null ? (
                   <>
-                    <span className="font-medium text-ink/75">${Number(run.costUsd).toFixed(2)}</span>
+                    <span className="font-medium text-ink">${Number(run.costUsd).toFixed(2)}</span>
                     {/* The estimate beside the bill is what makes the estimate
                         trustworthy over time — or visibly not. */}
                     {run.estimateUsd != null && (
-                      <span className="block text-ink/40">est ${Number(run.estimateUsd).toFixed(2)}</span>
+                      <span className="block text-muted">est ${Number(run.estimateUsd).toFixed(2)}</span>
                     )}
                   </>
                 ) : run.estimateUsd != null ? (
-                  <span className="text-ink/40">est ${Number(run.estimateUsd).toFixed(2)}</span>
+                  <span className="text-muted">est ${Number(run.estimateUsd).toFixed(2)}</span>
                 ) : (
-                  <span className="text-ink/30">—</span>
+                  <span className="text-muted">—</span>
                 )}
               </td>
               <td className="px-4 py-3">
@@ -487,8 +487,8 @@ function WhyDropped({ diagnostics }: { diagnostics: NonNullable<ScraperRun["diag
       {open && (
         <ul className="mt-1 max-w-sm space-y-1">
           {diagnostics.dropped.map((entry) => (
-            <li key={entry.reason} className="text-xs leading-relaxed text-ink/55">
-              <span className="font-medium text-ink/70">{entry.count}×</span> {entry.reason}
+            <li key={entry.reason} className="text-xs leading-relaxed text-muted">
+              <span className="font-medium text-ink">{entry.count}×</span> {entry.reason}
             </li>
           ))}
         </ul>
@@ -566,7 +566,7 @@ function SourcePicker({
     <Drawer open={open} onClose={onClose} wide title="Add a lead source" subtitle="Start from a template, or use any actor on Apify">
       <div className="space-y-8">
         <section>
-          <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Templates</h3>
+          <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Templates</h3>
           <div className="grid gap-3">
             {templates?.map((template) => (
               <button
@@ -579,15 +579,15 @@ function SourcePicker({
                   <span className="font-medium">{template.name}</span>
                   <Badge tone="positive">{template.headline}</Badge>
                 </div>
-                <p className="mt-1 text-sm text-ink/60">{template.description}</p>
-                <p className="mt-1 font-mono text-[11px] text-ink/40">{template.actorId}</p>
+                <p className="mt-1 text-sm text-muted">{template.description}</p>
+                <p className="mt-1 font-mono text-[11px] text-muted">{template.actorId}</p>
               </button>
             ))}
           </div>
         </section>
 
         <section>
-          <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Any actor on Apify</h3>
+          <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Any actor on Apify</h3>
           <form
             className="mb-3 flex gap-2"
             onSubmit={(event) => {
@@ -608,7 +608,7 @@ function SourcePicker({
 
           {catalog?.mine && catalog.mine.length > 0 && (
             <>
-              <p className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">Your own actors</p>
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Your own actors</p>
               <ActorList actors={catalog.mine} onPick={(actor) => onPick(fromActor(actor))} />
             </>
           )}
@@ -642,8 +642,8 @@ function ActorList({ actors, onPick }: { actors: ApifyActorSummary[]; onPick: (a
           {actor.pictureUrl && <img src={actor.pictureUrl} alt="" className="h-8 w-8 shrink-0 object-contain" />}
           <span className="min-w-0">
             <span className="block font-medium">{actor.title ?? actor.name}</span>
-            <span className="mt-0.5 block truncate text-xs text-ink/50">{actor.description}</span>
-            <span className="mt-0.5 block font-mono text-[10px] text-ink/40">
+            <span className="mt-0.5 block truncate text-xs text-muted">{actor.description}</span>
+            <span className="mt-0.5 block font-mono text-[10px] text-muted">
               {actor.fullName}
               {actor.stats?.totalRuns ? ` · ${Intl.NumberFormat().format(actor.stats.totalRuns)} runs` : ""}
               {actor.pricingModel && actor.pricingModel !== "FREE" ? ` · ${actor.pricingModel.replace(/_/g, " ").toLowerCase()}` : ""}
@@ -699,8 +699,8 @@ function WhyNothingRuns() {
     <Card className="mb-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Nothing capturing?</h2>
-          <p className="mt-1 text-sm text-ink/60">
+          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Nothing capturing?</h2>
+          <p className="mt-1 text-sm text-muted">
             Checks the token, the credit, our own spending ceiling, the schedules, the last runs and the agents that
             would start one — and says which of them is the reason.
           </p>
@@ -719,17 +719,17 @@ function WhyNothingRuns() {
 
       {data && (
         <div className="mt-4 space-y-3">
-          <p className={`text-sm ${data.blocked ? "font-medium text-red-700" : "text-ink/80"}`}>{data.verdict}</p>
+          <p className={`text-sm ${data.blocked ? "font-medium text-danger-text" : "text-ink"}`}>{data.verdict}</p>
           <ul className="space-y-2">
             {data.checks.map((check) => (
-              <li key={check.name} className="flex items-start gap-3 rounded border border-ink/10 p-3 text-sm">
+              <li key={check.name} className="flex items-start gap-3 rounded border border-line p-3 text-sm">
                 <span className="pt-1">
                   <StatusDot tone={tone(check.state)} />
                 </span>
                 <div className="min-w-0">
                   <div className="font-medium">{check.name}</div>
-                  <p className="text-ink/70">{check.found}</p>
-                  {check.fix && <p className="mt-1 text-ink/55">{check.fix}</p>}
+                  <p className="text-ink">{check.found}</p>
+                  {check.fix && <p className="mt-1 text-muted">{check.fix}</p>}
                 </div>
               </li>
             ))}

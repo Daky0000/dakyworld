@@ -71,7 +71,7 @@ export function Demos() {
           type="button"
           onClick={() => setFilter("")}
           className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] ${
-            filter === "" ? "border-ink bg-ink text-cream" : "border-ink/20 text-ink/60 hover:border-ink/40"
+            filter === "" ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink/40"
           }`}
         >
           All
@@ -82,7 +82,7 @@ export function Demos() {
             type="button"
             onClick={() => setFilter(status)}
             className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] ${
-              filter === status ? "border-ink bg-ink text-cream" : "border-ink/20 text-ink/60 hover:border-ink/40"
+              filter === status ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink/40"
             }`}
           >
             {STATUS_LABEL[status]}
@@ -91,10 +91,10 @@ export function Demos() {
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-ink/50">Loading…</p>
+        <p className="text-sm text-muted">Loading…</p>
       ) : demos.length === 0 ? (
         <div className="rounded-2xl border border-line bg-white p-6">
-          <p className="text-sm text-ink/60">
+          <p className="text-sm text-muted">
             Nothing built yet. Open a lead with no website — or one whose site is the problem — and use <strong>Build a demo</strong>. It
             researches a design direction from real published work first, so the page is not the one every model produces.
           </p>
@@ -110,7 +110,7 @@ export function Demos() {
                     <Badge tone={STATUS_TONE[demo.status]}>{STATUS_LABEL[demo.status]}</Badge>
                     {demo.version > 1 && <Badge tone="muted">v{demo.version}</Badge>}
                   </div>
-                  <p className="mt-1 text-xs text-ink/50">
+                  <p className="mt-1 text-xs text-muted">
                     {demo.title}
                     {demo.builtBy && <> · built by {demo.builtBy}</>}
                     {demo.lead && (
@@ -127,7 +127,7 @@ export function Demos() {
                   </a>
                 </div>
 
-                <div className="text-right text-xs text-ink/50">
+                <div className="text-right text-xs text-muted">
                   {/* The number that decides the next move. */}
                   <div className={demo.views > 0 ? "text-ink" : ""}>
                     {demo.views > 0 ? `Opened ${demo.views} time${demo.views === 1 ? "" : "s"}` : "Not opened"}
@@ -145,11 +145,11 @@ export function Demos() {
                 </div>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink/10 pt-3">
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
                 <select
                   value={demo.status}
                   onChange={(event) => update.mutate({ id: demo.id, status: event.target.value as DemoStatus })}
-                  className="border border-ink/20 bg-white px-2 py-1.5 font-mono text-[10px] uppercase tracking-[.08em]"
+                  className="rounded-full border border-line-strong bg-white px-2 py-1.5 font-mono text-[10px] uppercase tracking-[.08em]"
                 >
                   {STATUSES.map((status) => (
                     <option key={status} value={status}>

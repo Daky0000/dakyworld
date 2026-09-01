@@ -246,7 +246,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
       title={context?.name ? `Email ${context.name}` : "New email"}
       subtitle={
         context?.suppressed ? (
-          <span className="text-red-600">{toEmail} has unsubscribed — nothing will send to this address.</span>
+          <span className="text-danger-text">{toEmail} has unsubscribed — nothing will send to this address.</span>
         ) : (
           toEmail || "Pick who this is going to"
         )
@@ -281,7 +281,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
         </div>
       }
     >
-      {notice && <div className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</div>}
+      {notice && <div className="mb-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</div>}
 
       {pickingRecipient && !hasRecipient && <RecipientPicker onPick={(picked) => { setManual(picked); setPickingRecipient(false); }} />}
 
@@ -289,14 +289,14 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
           the server's own render, so what is shown here is what leaves — see
           EmailPreviewPane. */}
       {hasRecipient && (
-        <div className="mb-5 flex gap-1.5 border-b border-ink/10">
+        <div className="mb-5 flex gap-1.5 border-b border-line">
           {(["write", "preview"] as const).map((option) => (
             <button
               key={option}
               type="button"
               onClick={() => setTab(option)}
               className={`-mb-px border-b-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition ${
-                tab === option ? "border-ink text-ink" : "border-transparent text-ink/40 hover:text-ink/70"
+                tab === option ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"
               }`}
             >
               {option === "write" ? "Write" : "Preview"}
@@ -338,7 +338,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
               </select>
             </Field>
           </div>
-          <p className="-mt-3 mb-5 text-xs text-ink/45">{purposeMeta.hint}</p>
+          <p className="-mt-3 mb-5 text-xs text-muted">{purposeMeta.hint}</p>
 
           {/* What we know. The whole reason this email can be specific. */}
           {context && context.facts.length > 0 && (
@@ -346,13 +346,13 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
               <button
                 type="button"
                 onClick={() => setShowFacts(!showFacts)}
-                className="flex w-full items-center justify-between px-4 py-2.5 text-left font-mono text-[10px] uppercase tracking-[.12em] text-ink/50 hover:text-ink"
+                className="flex w-full items-center justify-between px-4 py-2.5 text-left font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink"
               >
                 <span>What we know about them ({context.facts.length})</span>
                 <span aria-hidden>{showFacts ? "−" : "+"}</span>
               </button>
               {showFacts && (
-                <ul className="space-y-1 border-t border-ink/10 px-4 py-3 text-xs text-ink/65">
+                <ul className="space-y-1 border-t border-line px-4 py-3 text-xs text-muted">
                   {context.facts.map((fact, index) => (
                     <li key={index} className="leading-relaxed">
                       · {fact}
@@ -364,7 +364,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
           )}
 
           {/* The drafter. */}
-          <div className="mb-5 border border-blue/30 bg-blue/[.05] p-4">
+          <div className="overflow-hidden rounded-2xl mb-5 border border-blue/30 bg-blue/[.05] p-4">
             <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-blue">
               <StatusDot tone="live" /> Draft it with AI
             </div>
@@ -380,7 +380,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
               onChange={(event) => setBrief(event.target.value)}
             />
             <div className="mt-2 flex items-center justify-between gap-3">
-              <span className="text-[11px] text-ink/45">
+              <span className="text-[11px] text-muted">
                 {recipient.leadId && !context?.preparedAt
                   ? "Nobody has looked at this business yet — writing will research them and check their site first, which takes a minute."
                   : "Uses only what's above — it won't invent anything about them, and Perplexity reads it before you do."}
@@ -395,14 +395,14 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
                     : "Write a draft"}
               </Button>
             </div>
-            {rationale && <p className="mt-3 border-t border-blue/20 pt-2 text-[11px] italic text-ink/55">{rationale}</p>}
+            {rationale && <p className="mt-3 border-t border-blue/20 pt-2 text-[11px] italic text-muted">{rationale}</p>}
           </div>
 
           {draftResult && <DraftReport result={draftResult} showingOriginal={showingOriginal} onToggle={togglePolish} />}
 
           {relevantTemplates.length > 0 && (
             <div className="mb-5">
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">Or start from a template</div>
+              <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Or start from a template</div>
               <div className="flex flex-wrap gap-2">
                 {relevantTemplates.map((template) => (
                   <button
@@ -415,7 +415,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
                       setPurpose(template.purpose);
                       setRationale(null);
                     }}
-                    className="border border-ink/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink/60 transition hover:border-ink hover:text-ink"
+                    className="rounded-full border border-line-strong px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:border-ink hover:text-ink"
                   >
                     {template.name}
                   </button>
@@ -442,7 +442,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
                   type="button"
                   title={value || "(empty for this recipient)"}
                   onClick={() => setBody((current) => `${current}{{${name}}}`)}
-                  className="rounded-lg border border-line bg-white px-1.5 py-0.5 font-mono text-[10px] text-ink/50 transition hover:border-ink/40 hover:text-ink"
+                  className="rounded-xl border border-line bg-white px-1.5 py-0.5 font-mono text-[10px] text-muted transition hover:border-ink/40 hover:text-ink"
                 >
                   {`{{${name}}}`}
                 </button>
@@ -485,7 +485,7 @@ function RecipientPicker({ onPick }: { onPick: (picked: { leadId?: string; clien
         <button
           type="button"
           onClick={() => onPick({ toEmail: search.trim() })}
-          className="mt-3 w-full border border-ink/20 px-3 py-2 text-left text-sm transition hover:border-ink"
+          className="rounded-xl mt-3 w-full border border-line-strong px-3 py-2 text-left text-sm transition hover:border-ink"
         >
           Write to <span className="font-medium">{search.trim()}</span> — no record on file
         </button>
@@ -493,16 +493,16 @@ function RecipientPicker({ onPick }: { onPick: (picked: { leadId?: string; clien
 
       {matchingClients.length > 0 && (
         <div className="mt-5">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">Clients</div>
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Clients</div>
           {matchingClients.map((client) => (
             <button
               key={client.id}
               type="button"
               onClick={() => onPick({ clientId: client.id })}
-              className="block w-full border-b border-ink/5 px-1 py-2 text-left text-sm transition hover:bg-ink/[.03]"
+              className="block w-full border-b border-line px-1 py-2 text-left text-sm transition hover:bg-sunken"
             >
               {client.name}
-              {client.company && <span className="text-ink/45"> · {client.company}</span>}
+              {client.company && <span className="text-muted"> · {client.company}</span>}
             </button>
           ))}
         </div>
@@ -510,17 +510,17 @@ function RecipientPicker({ onPick }: { onPick: (picked: { leadId?: string; clien
 
       {matchingLeads.length > 0 && (
         <div className="mt-5">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">Leads</div>
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Leads</div>
           {matchingLeads.map((lead) => (
             <button
               key={lead.id}
               type="button"
               onClick={() => onPick({ leadId: lead.id })}
-              className="block w-full border-b border-ink/5 px-1 py-2 text-left text-sm transition hover:bg-ink/[.03]"
+              className="block w-full border-b border-line px-1 py-2 text-left text-sm transition hover:bg-sunken"
             >
               {lead.contactName}
-              {lead.companyName && <span className="text-ink/45"> · {lead.companyName}</span>}
-              <span className="ml-2 text-xs text-ink/35">{lead.contactEmail}</span>
+              {lead.companyName && <span className="text-muted"> · {lead.companyName}</span>}
+              <span className="ml-2 text-xs text-muted">{lead.contactEmail}</span>
             </button>
           ))}
         </div>
@@ -612,15 +612,15 @@ function AttachmentPanel({
   const remove = (index: number) => onChange(attachments.filter((_, position) => position !== index));
 
   return (
-    <div className="mt-5 border-t border-ink/10 pt-4">
+    <div className="mt-5 border-t border-line pt-4">
       <div className="mb-2 flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           Attachments{attachments.length > 0 ? ` (${attachments.length})` : ""}
         </span>
         <button
           type="button"
           onClick={() => setShowLink(!showLink)}
-          className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40 transition hover:text-ink"
+          className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
         >
           {showLink ? "Hide link form" : "Attach a link instead"}
         </button>
@@ -636,15 +636,15 @@ function AttachmentPanel({
                 <span className="flex min-w-0 items-center gap-2">
                   <Badge tone="muted">{kind === "stored" ? "file" : kind}</Badge>
                   <span className="truncate">{attachmentLabel(attachment)}</span>
-                  {size && <span className="shrink-0 text-xs text-ink/40">{size}</span>}
+                  {size && <span className="shrink-0 text-xs text-muted">{size}</span>}
                   {(kind === "invoice" || kind === "proposal") && (
-                    <span className="shrink-0 text-xs text-ink/40">rendered when it sends</span>
+                    <span className="shrink-0 text-xs text-muted">rendered when it sends</span>
                   )}
                 </span>
                 <button
                   type="button"
                   onClick={() => remove(index)}
-                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40 transition hover:text-ink"
+                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-muted transition hover:text-ink"
                 >
                   Remove
                 </button>
@@ -655,7 +655,7 @@ function AttachmentPanel({
       )}
 
       {uploading.map((name) => (
-        <div key={name} className="mb-1.5 flex items-center gap-2 rounded-xl border border-blue/30 bg-blue/[.04] px-3 py-2 text-sm text-ink/60">
+        <div key={name} className="mb-1.5 flex items-center gap-2 rounded-xl border border-blue/30 bg-blue/[.04] px-3 py-2 text-sm text-muted">
           <StatusDot tone="live" />
           <span className="truncate">Uploading {name}…</span>
         </div>
@@ -673,7 +673,7 @@ function AttachmentPanel({
           if (event.dataTransfer.files.length) void upload(event.dataTransfer.files);
         }}
         className={`flex cursor-pointer items-center justify-center rounded-xl border border-dashed px-4 py-5 text-center text-sm transition ${
-          dragging ? "border-blue bg-blue/[.06] text-ink" : "border-ink/20 text-ink/50 hover:border-ink/40 hover:text-ink/70"
+          dragging ? "border-blue bg-blue/[.06] text-ink" : "border-line-strong text-muted hover:border-ink/40 hover:text-ink"
         }`}
       >
         <input
@@ -687,11 +687,11 @@ function AttachmentPanel({
         />
         <span>
           Drop files here, or <span className="underline underline-offset-2">choose them</span>
-          <span className="block text-xs text-ink/35">Up to {MAX_ATTACHMENT_MB} MB each</span>
+          <span className="block text-xs text-muted">Up to {MAX_ATTACHMENT_MB} MB each</span>
         </span>
       </label>
 
-      {error && <p className="mt-2 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {error && <p className="mt-2 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error}</p>}
 
       {showLink && (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -759,9 +759,9 @@ export function EmailPreviewPane({
   });
 
   if (error) {
-    return <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{(error as Error).message}</p>;
+    return <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{(error as Error).message}</p>;
   }
-  if (!data) return <p className="text-sm text-ink/50">Rendering…</p>;
+  if (!data) return <p className="text-sm text-muted">Rendering…</p>;
 
   return (
     <div className="space-y-4">
@@ -769,14 +769,14 @@ export function EmailPreviewPane({
       <div className="rounded-2xl border border-line bg-white">
         <dl className="divide-y divide-ink/5 text-sm">
           <Row label="From">
-            {data.from.name} <span className="text-ink/45">&lt;{data.from.email}&gt;</span>
+            {data.from.name} <span className="text-muted">&lt;{data.from.email}&gt;</span>
           </Row>
           <Row label="To">
             {data.toName ? `${data.toName} ` : ""}
-            <span className="text-ink/45">&lt;{data.toEmail}&gt;</span>
+            <span className="text-muted">&lt;{data.toEmail}&gt;</span>
           </Row>
           <Row label="Subject">
-            <span className="font-medium">{data.subject || <span className="text-ink/35">no subject</span>}</span>
+            <span className="font-medium">{data.subject || <span className="text-muted">no subject</span>}</span>
           </Row>
           {data.attachments.length > 0 && (
             <Row label="Attached">
@@ -785,12 +785,12 @@ export function EmailPreviewPane({
                   <span
                     key={index}
                     title={attachment.note ?? undefined}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-1.5 py-0.5 text-xs ${
-                      attachment.missing ? "border-red-200 bg-red-50 text-red-700" : "border-line bg-cream text-ink/60"
+                    className={`inline-flex items-center gap-1.5 rounded-xl border px-1.5 py-0.5 text-xs ${
+                      attachment.missing ? "border-danger-line bg-danger-surface text-danger-text" : "border-line bg-cream text-muted"
                     }`}
                   >
                     {attachment.name}
-                    {formatBytes(attachment.size) && <span className="text-ink/35">{formatBytes(attachment.size)}</span>}
+                    {formatBytes(attachment.size) && <span className="text-muted">{formatBytes(attachment.size)}</span>}
                     {attachment.missing && <span>· missing</span>}
                   </span>
                 ))}
@@ -801,26 +801,26 @@ export function EmailPreviewPane({
       </div>
 
       {data.unresolved.length > 0 && (
-        <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
           Nothing fills {data.unresolved.map((name) => `{{${name}}}`).join(", ")} for this recipient — it will go out with the braces
           showing. Check the spelling, or write the words in.
         </p>
       )}
 
       {data.suppressed && (
-        <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           {data.toEmail} has unsubscribed ({data.suppressed}). Nothing will send to this address.
         </p>
       )}
 
       {data.historical && (
-        <p className="border border-line bg-cream px-3 py-2 text-xs text-ink/55">
+        <p className="rounded-xl border border-line bg-cream px-3 py-2 text-xs text-muted">
           This is the message exactly as it was sent, not a fresh render — a sent email is the record that it was sent.
         </p>
       )}
 
       <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           {isFetching ? "Rendering…" : "As it will arrive"}
         </span>
         <div className="flex gap-1.5">
@@ -830,7 +830,7 @@ export function EmailPreviewPane({
               type="button"
               onClick={() => setWidth(option)}
               className={`border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[.1em] transition ${
-                width === option ? "border-ink bg-ink text-cream" : "border-ink/15 text-ink/50 hover:border-ink/40"
+                width === option ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink/40"
               }`}
             >
               {option}
@@ -844,16 +844,16 @@ export function EmailPreviewPane({
           title="Email preview"
           sandbox=""
           srcDoc={data.html}
-          className="h-[640px] rounded-xl border border-ink/10 bg-white transition-[width]"
+          className="h-[640px] rounded-xl border border-line bg-white transition-[width]"
           style={{ width: width === "mobile" ? 400 : "100%" }}
         />
       </div>
 
       <details className="rounded-2xl border border-line bg-white px-4 py-3">
-        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           The plain-text half
         </summary>
-        <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-ink/60">{data.text}</p>
+        <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-muted">{data.text}</p>
       </details>
     </div>
   );
@@ -862,7 +862,7 @@ export function EmailPreviewPane({
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex gap-3 px-4 py-2">
-      <dt className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{label}</dt>
+      <dt className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</dt>
       <dd className="min-w-0 flex-1 break-words">{children}</dd>
     </div>
   );
@@ -908,11 +908,11 @@ function DraftReport({
           and burying it under the research would mean nobody read it until the
           prospect did. */}
       {checks && checks.blocking.length > 0 && (
-        <div className="rounded-2xl border border-red-300 bg-red-50 p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-red-900">
+        <div className="rounded-2xl border border-danger-line bg-danger-surface p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-danger-text">
             Do not send this yet — {checks.blocking.length} check{checks.blocking.length === 1 ? "" : "s"} failed
           </div>
-          <ul className="space-y-1 text-xs leading-relaxed text-red-900">
+          <ul className="space-y-1 text-xs leading-relaxed text-danger-text">
             {checks.blocking.map((check) => (
               <li key={check.id}>
                 <span className="font-medium">{check.label}.</span> {check.detail}
@@ -922,9 +922,9 @@ function DraftReport({
         </div>
       )}
       {checks && checks.warnings.length > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-amber-900">Worth a second look</div>
-          <ul className="space-y-1 text-xs leading-relaxed text-amber-900">
+        <div className="rounded-2xl border border-warn-line bg-warn-surface p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">Worth a second look</div>
+          <ul className="space-y-1 text-xs leading-relaxed text-warn-text">
             {checks.warnings.map((check) => (
               <li key={check.id}>
                 <span className="font-medium">{check.label}.</span> {check.detail}
@@ -937,14 +937,14 @@ function DraftReport({
           out — so "why is this not about the slow homepage" has an answer. */}
       {scenario && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
             Playbook scenario {scenario.number}
           </div>
           <p className="text-sm font-medium text-ink">{scenario.name}</p>
-          <p className="mt-1 text-xs text-ink/60">Should reach: {scenario.contact}</p>
-          {scenario.guard && <p className="mt-2 text-xs leading-relaxed text-ink/70">Must not: {scenario.guard}</p>}
+          <p className="mt-1 text-xs text-muted">Should reach: {scenario.contact}</p>
+          {scenario.guard && <p className="mt-2 text-xs leading-relaxed text-ink">Must not: {scenario.guard}</p>}
           {scenario.alsoAvailable.length > 0 && (
-            <p className="mt-2 text-xs text-ink/50">
+            <p className="mt-2 text-xs text-muted">
               Also found and left for another time: {scenario.alsoAvailable.map((other) => other.name).join("; ")}
             </p>
           )}
@@ -954,9 +954,9 @@ function DraftReport({
           this at all. A business that is doing fine, told by a stranger that it
           is not, remembers that — so this is louder than the rest. */}
       {weak && (
-        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-amber-900">Nothing serious was found</div>
-          <p className="text-xs leading-relaxed text-amber-900">
+        <div className="rounded-2xl border border-warn-line bg-warn-surface p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">Nothing serious was found</div>
+          <p className="text-xs leading-relaxed text-warn-text">
             Their site and email set-up check out — the worst of it is minor housekeeping. There may be no real reason for this
             business to reply, and a cold email about nothing costs the chance to write to them the year they do need somebody. Read
             the draft below before sending it, or leave this one.
@@ -996,7 +996,7 @@ function DraftReport({
       {/* What the look found, when this request went and looked. */}
       {prep && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">
+          <div className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
             <span>{prep.ranNow ? "Looked at them just now" : "Read from an earlier look"}</span>
             {prep.researchedBy && (
               <Badge tone={prep.searchedLiveSources ? "muted" : "warn"}>
@@ -1010,14 +1010,14 @@ function DraftReport({
               <img src={prep.shot.imageUrl} alt="Their homepage" className="max-h-44 w-full object-cover object-top" loading="lazy" />
             </a>
           )}
-          {prep.look && <p className="text-xs leading-relaxed text-ink/70">{prep.look.firstImpression}</p>}
+          {prep.look && <p className="text-xs leading-relaxed text-ink">{prep.look.firstImpression}</p>}
           {Object.keys(prep.filled).length > 0 && (
-            <p className="mt-2 text-[11px] text-ink/45">
+            <p className="mt-2 text-[11px] text-muted">
               Filled in on their record: {Object.keys(prep.filled).join(", ")}.
             </p>
           )}
           {prep.notes.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-[11px] text-ink/45">
+            <ul className="mt-2 space-y-0.5 text-[11px] text-muted">
               {prep.notes.map((note, index) => (
                 <li key={index}>· {note}</li>
               ))}
@@ -1027,9 +1027,9 @@ function DraftReport({
       )}
 
       {unseen && (
-        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-amber-900">Nobody has seen their page</div>
-          <p className="text-xs leading-relaxed text-amber-900">
+        <div className="rounded-2xl border border-warn-line bg-warn-surface p-4">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">Nobody has seen their page</div>
+          <p className="text-xs leading-relaxed text-warn-text">
             Their site was checked by machine but never photographed, so nothing is known about how it looks — the half a business owner
             actually cares about. What is left is technical detail, and an email built on that reads as trivia. Connect Apify under Lead
             Sources → Connection and look again.
@@ -1038,7 +1038,7 @@ function DraftReport({
       )}
 
       {result.prepError && (
-        <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <p className="rounded-2xl border border-warn-line bg-warn-surface px-4 py-3 text-xs text-warn-text">
           Nobody could go and look at this business first, so the draft is working from the record alone: {result.prepError}
         </p>
       )}
@@ -1047,7 +1047,7 @@ function DraftReport({
       {polish && (
         <div className="rounded-2xl border border-line bg-white p-4">
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">Read and polished by {polish.polishedBy}</span>
+            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Read and polished by {polish.polishedBy}</span>
             <Badge tone={polish.servesPurpose ? "positive" : "warn"}>
               {polish.servesPurpose ? "Does its job" : "Does not do its job yet"}
             </Badge>
@@ -1060,8 +1060,8 @@ function DraftReport({
           </div>
           {polish.changes.length > 0 && (
             <>
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">What it changed</div>
-              <ul className="space-y-1 text-xs text-ink/65">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">What it changed</div>
+              <ul className="space-y-1 text-xs text-muted">
                 {polish.changes.map((change, index) => (
                   <li key={index} className="leading-relaxed">
                     · {change}
@@ -1071,9 +1071,9 @@ function DraftReport({
             </>
           )}
           {polish.concerns.length > 0 && (
-            <div className="mt-3 border-t border-ink/10 pt-2">
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-amber-800">Still weak, before you send it</div>
-              <ul className="space-y-1 text-xs text-amber-900">
+            <div className="mt-3 border-t border-line pt-2">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">Still weak, before you send it</div>
+              <ul className="space-y-1 text-xs text-warn-text">
                 {polish.concerns.map((concern, index) => (
                   <li key={index} className="leading-relaxed">
                     · {concern}
@@ -1083,7 +1083,7 @@ function DraftReport({
             </div>
           )}
           {polish.added.length > 0 && (
-            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+            <div className="mt-2 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-xs text-danger-text">
               <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em]">Added, and not in the facts — check before sending</div>
               <ul className="space-y-1">
                 {polish.added.map((entry, index) => (
@@ -1096,7 +1096,7 @@ function DraftReport({
       )}
 
       {result.polishError && (
-        <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <p className="rounded-2xl border border-warn-line bg-warn-surface px-4 py-3 text-xs text-warn-text">
           The plain-English pass did not run, so this is the draft as written: {result.polishError}
         </p>
       )}

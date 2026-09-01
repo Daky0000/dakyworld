@@ -111,9 +111,9 @@ export function QuickCapture() {
     <Card>
       <div className="flex items-baseline justify-between gap-4">
         <h2 className="font-display text-xl tracking-[-.02em]">Quick capture</h2>
-        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">no setup needed</span>
+        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">no setup needed</span>
       </div>
-      <p className="mt-1.5 text-sm text-ink/60">
+      <p className="mt-1.5 text-sm text-muted">
         Paste a link — a website, a Google Maps place, a LinkedIn company, a Facebook Page, an Instagram account — or just
         say what you're after. Rows copied from a spreadsheet go to the importer instead.
       </p>
@@ -134,7 +134,7 @@ export function QuickCapture() {
             key={example}
             type="button"
             onClick={() => setText(example)}
-            className="rounded-full border border-line px-2.5 py-1 font-mono text-[10px] text-ink/45 transition hover:border-blue/40 hover:text-ink"
+            className="rounded-full border border-line px-2.5 py-1 font-mono text-[10px] text-muted transition hover:border-blue/40 hover:text-ink"
           >
             {example}
           </button>
@@ -146,11 +146,11 @@ export function QuickCapture() {
           {read.isPending ? "Reading…" : "Read this"}
         </Button>
         {intent && !intent.free && (
-          <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">interpreted by Claude</span>
+          <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">interpreted by Claude</span>
         )}
       </div>
 
-      {error && <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error.message}</p>}
+      {error && <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error.message}</p>}
 
       {/* Reading it failed — no Anthropic key, or a request the model would not
           guess at. That is precisely when naming the task by hand matters, so
@@ -168,11 +168,11 @@ export function QuickCapture() {
 
       {intent && (
         <div className="mt-5 border-t border-line pt-5">
-          {intent.summary && <p className="text-sm text-ink/70">{intent.summary}</p>}
+          {intent.summary && <p className="text-sm text-ink">{intent.summary}</p>}
 
           {intent.targets.length > 0 && (
             <>
-              <h3 className="mt-4 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">
+              <h3 className="mt-4 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
                 About to capture — nothing has run yet
               </h3>
               <ul className="mt-2 space-y-2">
@@ -181,7 +181,7 @@ export function QuickCapture() {
                     {/* The task is a choice, not a verdict — reading it wrong
                         should cost a click, not a wasted paid run. */}
                     <select
-                      className="shrink-0 border border-line bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink/70"
+                      className="rounded-full shrink-0 border border-line bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink"
                       value={target.kind}
                       onChange={(event) => retask(i, event.target.value as CaptureTargetKind)}
                       aria-label="What to run this as"
@@ -194,7 +194,7 @@ export function QuickCapture() {
                     </select>
                     <div className="min-w-0">
                       <p className="truncate text-sm text-ink">{target.value}</p>
-                      {target.why && <p className="text-xs text-ink/45">{target.why}</p>}
+                      {target.why && <p className="text-xs text-muted">{target.why}</p>}
                     </div>
                   </li>
                 ))}
@@ -214,7 +214,7 @@ export function QuickCapture() {
           )}
 
           {intent.question && (
-            <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{intent.question}</p>
+            <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">{intent.question}</p>
           )}
 
           {/* Nothing came out of the words: say what it is instead of rewording
@@ -235,12 +235,12 @@ export function QuickCapture() {
       {done && (
         <div className="mt-5 border-t border-line pt-5">
           {done.started.length > 0 && (
-            <p className="text-sm text-ink/70">
+            <p className="text-sm text-ink">
               Started {done.started.length} run{done.started.length === 1 ? "" : "s"}. Leads appear below as they land.
             </p>
           )}
           {done.failed.map((f, i) => (
-            <p key={`${f.kind}-${i}`} className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <p key={`${f.kind}-${i}`} className="mt-2 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
               {KIND_LABEL[f.kind as CaptureTargetKind] ?? f.kind}: {f.reason}
             </p>
           ))}
@@ -277,7 +277,7 @@ function TaskPicker({
 
   return (
     <div className="mt-4 border-t border-line pt-4">
-      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Or say what it is</h3>
+      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Or say what it is</h3>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {tasks.map((entry) => (
           <button
@@ -289,7 +289,7 @@ function TaskPicker({
               setValue(seed.trim().split("\n")[0] ?? "");
             }}
             className={`rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
-              chosen === entry.kind ? "border-ink bg-ink text-cream" : "border-line text-ink/50 hover:border-blue/40 hover:text-ink"
+              chosen === entry.kind ? "border-ink bg-ink text-cream" : "border-line text-muted hover:border-blue/40 hover:text-ink"
             }`}
           >
             {entry.label}
@@ -305,7 +305,7 @@ function TaskPicker({
             if (value.trim()) onRun(task.kind, value.trim());
           }}
         >
-          <p className="text-xs text-ink/50">{task.takes}</p>
+          <p className="text-xs text-muted">{task.takes}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input
               className="input max-w-md flex-1"
@@ -318,7 +318,7 @@ function TaskPicker({
               {busy ? "Starting…" : `Run as ${task.label}`}
             </Button>
           </div>
-          <p className="mt-1.5 font-mono text-[10px] text-ink/35">runs {task.actorId}</p>
+          <p className="mt-1.5 font-mono text-[10px] text-muted">runs {task.actorId}</p>
         </form>
       )}
     </div>
@@ -340,8 +340,8 @@ function CostNote({ estimate }: { estimate: CaptureEstimate }) {
   const waste = estimate.tasks.flatMap((task) => task.estimate.waste);
 
   return (
-    <div className="mt-3 border border-line bg-ink/[.02] px-3 py-2">
-      <p className="text-sm text-ink/70">
+    <div className="rounded-xl mt-3 border border-line bg-sunken px-3 py-2">
+      <p className="text-sm text-ink">
         {estimate.totalUsd == null ? (
           "Apify wouldn't quote a price for this, so it can't be costed in advance."
         ) : (
@@ -354,7 +354,7 @@ function CostNote({ estimate }: { estimate: CaptureEstimate }) {
       {estimate.tasks.length > 1 && (
         <ul className="mt-1 space-y-0.5">
           {estimate.tasks.map((task) => (
-            <li key={task.kind} className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/40">
+            <li key={task.kind} className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">
               {task.label} × {task.count} —{" "}
               {task.estimate.totalUsd == null ? "not priced" : `$${task.estimate.totalUsd.toFixed(2)}`}
             </li>
@@ -362,7 +362,7 @@ function CostNote({ estimate }: { estimate: CaptureEstimate }) {
         </ul>
       )}
       {waste.map((line) => (
-        <p key={line} className="mt-1.5 text-xs text-amber-700">
+        <p key={line} className="mt-1.5 text-xs text-warn-text">
           {line}
         </p>
       ))}

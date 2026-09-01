@@ -94,7 +94,7 @@ export function Website() {
               type="button"
               onClick={() => setSiteId(site.id)}
               className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] ${
-                site.id === current.id ? "border-ink bg-ink text-cream" : "border-ink/20 text-ink/60 hover:border-ink/40"
+                site.id === current.id ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink/40"
               }`}
             >
               {site.name}
@@ -114,7 +114,7 @@ export function Website() {
       </div>
 
       {scanResult && <p className="mb-4 rounded-2xl border border-line bg-white p-4 text-sm text-ink">{scanResult}</p>}
-      {scanError && <p className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">{scanError}</p>}
+      {scanError && <p className="mb-4 rounded-2xl border border-warn-line bg-warn-surface p-4 text-sm text-warn-text">{scanError}</p>}
 
       {pages.isLoading ? (
         <div className="text-sm text-muted">Loading pages…</div>
@@ -133,12 +133,12 @@ export function Website() {
         <>
           <Table>
             <thead>
-              <tr className="border-b border-line text-[11px] uppercase tracking-[.1em] text-muted">
-                <th className="px-5 py-3 font-bold">Page</th>
-                <th className="px-5 py-3 font-bold">Address</th>
-                <th className="px-5 py-3 font-bold">State</th>
-                <th className="px-5 py-3 font-bold">Last published</th>
-                <th className="px-5 py-3" />
+              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                <th className="px-4 py-3 font-normal">Page</th>
+                <th className="px-4 py-3 font-normal">Address</th>
+                <th className="px-4 py-3 font-normal">State</th>
+                <th className="px-4 py-3 font-normal">Last published</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>

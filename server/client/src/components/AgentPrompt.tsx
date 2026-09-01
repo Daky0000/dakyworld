@@ -158,14 +158,14 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Its system prompt</h3>
+        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Its system prompt</h3>
         {compiled?.overridden && (
           <span className="font-mono text-[9px] uppercase tracking-[.1em] text-blue" title="Written here, replacing the ten shipped sections">
             rewritten
           </span>
         )}
         {compiled && (
-          <span className="font-mono text-[9px] uppercase tracking-[.1em] text-ink/30" title="Roughly what this costs to send before the task itself">
+          <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted" title="Roughly what this costs to send before the task itself">
             ~{compiled.approxTokens.toLocaleString()} tokens
           </span>
         )}
@@ -175,7 +175,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
             <button
               type="button"
               onClick={() => setMode("layers")}
-              className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+              className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
             >
               Edit as sections
             </button>
@@ -198,11 +198,11 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
         )}
       </div>
 
-      {isLoading && <p className="text-sm text-ink/45">Assembling what it is told…</p>}
+      {isLoading && <p className="text-sm text-muted">Assembling what it is told…</p>}
 
       {mode === "read" && compiled && (
         <div className="space-y-3">
-          <p className="border border-line bg-cream px-3 py-2 text-xs text-ink/55">
+          <p className="rounded-xl border border-line bg-cream px-3 py-2 text-xs text-muted">
             This is the whole of what {agent.name} is told before every task. Only the first block is written by you — the rest is
             assembled when it runs, from the company profile, what it remembers, and what it is allowed to do.
           </p>
@@ -222,9 +222,9 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
             the wording does not yet have.
           */}
           {compiled.writes && compiled.writes.length > 0 && (
-            <div className="border border-line bg-white px-3 py-2">
-              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">What this wording writes</p>
-              <p className="mt-0.5 text-[11px] text-ink/45">
+            <div className="rounded-xl border border-line bg-white px-3 py-2">
+              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">What this wording writes</p>
+              <p className="mt-0.5 text-[11px] text-muted">
                 Not only {agent.name}'s own tasks. These are written elsewhere in the app, and this instruction is what writes them.
               </p>
               <ul className="mt-2 space-y-1">
@@ -240,14 +240,14 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
           {compiled.regions.map((region) => (
             <div key={region.key} className={region.editable ? "" : "border-l-2 border-line pl-3"}>
               <div className="flex flex-wrap items-baseline gap-2">
-                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">{region.label}</p>
+                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{region.label}</p>
                 {!region.editable && (
-                  <span className="font-mono text-[9px] uppercase tracking-[.1em] text-ink/25">assembled when it runs</span>
+                  <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted">assembled when it runs</span>
                 )}
               </div>
-              <p className="mt-0.5 text-[11px] text-ink/35">{region.source}</p>
+              <p className="mt-0.5 text-[11px] text-muted">{region.source}</p>
               <pre
-                className={`mt-1 whitespace-pre-wrap break-words font-sans text-sm ${region.editable ? "text-ink/75" : "text-ink/50"}`}
+                className={`mt-1 whitespace-pre-wrap break-words font-sans text-sm ${region.editable ? "text-ink" : "text-muted"}`}
               >
                 {region.text}
               </pre>
@@ -258,7 +258,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
 
       {mode === "prose" && compiled && (
         <div className="space-y-4">
-          <p className="border border-blue/25 bg-blue/5 px-3 py-2 text-sm text-ink/70">
+          <p className="rounded-xl border border-blue/25 bg-blue/5 px-3 py-2 text-sm text-ink">
             {compiled.overridden
               ? "You have written this agent's instruction yourself. The ten shipped sections are still underneath, untouched — Reset brings them back."
               : "This is the ten shipped sections, run together. Saving an edit here replaces them with what you write; the sections stay underneath so Reset can restore them."}{" "}
@@ -269,10 +269,10 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
             <textarea rows={22} className="input font-mono text-[13px] leading-relaxed" value={prose} onChange={(event) => setProse(event.target.value)} />
           </Field>
 
-          {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
-          {saved && !proseDirty && <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{saved}</p>}
+          {notice && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
+          {saved && !proseDirty && <p className="rounded-xl border border-positive-line bg-positive-surface px-3.5 py-2.5 text-sm text-positive-text">{saved}</p>}
 
-          <div className="flex flex-wrap items-center gap-3 border-t border-ink/10 pt-3">
+          <div className="flex flex-wrap items-center gap-3 border-t border-line pt-3">
             <Button disabled={saveProse.isPending || !proseDirty} onClick={() => saveProse.mutate()}>
               {saveProse.isPending ? "Saving…" : "Save the instruction"}
             </Button>
@@ -280,7 +280,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
               <button
                 type="button"
                 onClick={() => setProse(compiled.instruction)}
-                className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+                className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
               >
                 Discard changes
               </button>
@@ -293,7 +293,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
 
       {mode === "layers" && (
         <div className="space-y-4">
-          <p className="border border-blue/25 bg-blue/5 px-3 py-2 text-sm text-ink/70">
+          <p className="rounded-xl border border-blue/25 bg-blue/5 px-3 py-2 text-sm text-ink">
             The ten sections the shipped agents are built from. Saving here makes them the instruction again
             {compiled?.overridden ? ", replacing the prose you wrote" : ""}. A change takes effect on the agent's next task.
           </p>
@@ -309,9 +309,9 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
             presses Save, because an organiser that wrote straight to the agent
             would be a model editing a prompt with nobody looking.
           */}
-          <div className="border border-line bg-white px-3 py-3">
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">Paste an instruction and have it sorted</p>
-            <p className="mt-0.5 text-[11px] text-ink/45">
+          <div className="rounded-xl border border-line bg-white px-3 py-3">
+            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Paste an instruction and have it sorted</p>
+            <p className="mt-0.5 text-[11px] text-muted">
               Write the doctrine however you write it — a playbook, a page of rules, a paste out of a document — and a model files it
               under the headings below. It copies your sentences and never rewrites them. Nothing is saved until you press Save sections.
             </p>
@@ -329,15 +329,15 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
               >
                 {organise.isPending ? "Sorting…" : "Sort it into sections"}
               </Button>
-              {organised && <span className="text-[11px] text-ink/45">Sorted by {organised.organisedBy}. Read it below, then save.</span>}
+              {organised && <span className="text-[11px] text-muted">Sorted by {organised.organisedBy}. Read it below, then save.</span>}
             </div>
-            {organised?.note && <p className="mt-2 text-[11px] text-amber-700">{organised.note}</p>}
+            {organised?.note && <p className="mt-2 text-[11px] text-warn-text">{organised.note}</p>}
             {organised && organised.unplaced.length > 0 && (
-              <div className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2">
-                <p className="text-[11px] font-medium text-amber-900">It could not place these, so they were left out. Put them somewhere by hand:</p>
+              <div className="mt-2 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5">
+                <p className="text-[11px] font-medium text-warn-text">It could not place these, so they were left out. Put them somewhere by hand:</p>
                 <ul className="mt-1 space-y-0.5">
                   {organised.unplaced.map((line, index) => (
-                    <li key={index} className="text-[11px] text-amber-900">
+                    <li key={index} className="text-[11px] text-warn-text">
                       “{line}”
                     </li>
                   ))}
@@ -366,10 +366,10 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
             <textarea rows={3} className="input" value={policy} onChange={(event) => setPolicy(event.target.value)} />
           </Field>
 
-          {notice && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
-          {saved && !layersDirty && <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{saved}</p>}
+          {notice && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
+          {saved && !layersDirty && <p className="rounded-xl border border-positive-line bg-positive-surface px-3.5 py-2.5 text-sm text-positive-text">{saved}</p>}
 
-          <div className="flex flex-wrap items-center gap-3 border-t border-ink/10 pt-3">
+          <div className="flex flex-wrap items-center gap-3 border-t border-line pt-3">
             <Button disabled={saveLayers.isPending || !layersDirty} onClick={() => saveLayers.mutate()}>
               {saveLayers.isPending ? "Saving…" : "Save sections"}
             </Button>
@@ -379,7 +379,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
                 <button
                   type="button"
                   onClick={() => setComparing((current) => !current)}
-                  className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+                  className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
                 >
                   {comparing ? "Hide shipped" : "Show shipped"}
                 </button>
@@ -389,19 +389,19 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
           </div>
 
           {comparing && shipped && (
-            <div className="space-y-3 border border-line bg-cream p-3">
-              <p className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">The wording this agent shipped with</p>
+            <div className="rounded-xl space-y-3 border border-line bg-cream p-3">
+              <p className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">The wording this agent shipped with</p>
               {shipped.layers
                 .filter((layer) => shipped.prompt[layer]?.trim())
                 .map((layer) => {
                   const changed = (shipped.prompt[layer] ?? "") !== (draft[layer] ?? "");
                   return (
                     <div key={layer} className={changed ? "border-l-2 border-blue pl-2" : ""}>
-                      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">
+                      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                         {layer}
                         {changed && <span className="ml-2 text-blue">changed</span>}
                       </p>
-                      <p className="mt-0.5 text-sm text-ink/60">{shipped.prompt[layer]}</p>
+                      <p className="mt-0.5 text-sm text-muted">{shipped.prompt[layer]}</p>
                     </div>
                   );
                 })}
@@ -423,7 +423,7 @@ function ResetButton({ pending, onReset }: { pending: boolean; onReset: () => vo
           onReset();
         }
       }}
-      className="font-mono text-[10px] uppercase tracking-[.14em] text-red-600/70 transition hover:text-red-600"
+      className="font-mono text-[10px] uppercase tracking-[.14em] text-danger-text/70 transition hover:text-danger-text"
     >
       Reset to shipped
     </button>
@@ -494,12 +494,12 @@ function WriterBriefRow({
   const dirty = brief ? text.trim() !== brief.text.trim() : false;
 
   return (
-    <div className={open ? "border border-line bg-cream/40 px-3 py-2" : ""}>
+    <div className={open ? "rounded-xl border border-line bg-cream/40 px-3 py-2" : ""}>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
-          className="text-left text-sm text-ink/75 underline decoration-line underline-offset-4 transition hover:text-ink"
+          className="text-left text-sm text-ink underline decoration-line underline-offset-4 transition hover:text-ink"
         >
           {label}
         </button>
@@ -510,27 +510,27 @@ function WriterBriefRow({
         )}
         {brief && (
           <span
-            className={`font-mono text-[9px] uppercase tracking-[.1em] ${brief.edited ? "text-blue" : "text-ink/30"}`}
+            className={`font-mono text-[9px] uppercase tracking-[.1em] ${brief.edited ? "text-blue" : "text-muted"}`}
             title={brief.explains}
           >
             {brief.edited ? "your wording" : "shipped wording"}
           </span>
         )}
-        {!open && <span className="w-full text-[11px] text-ink/40">{what}</span>}
+        {!open && <span className="w-full text-[11px] text-muted">{what}</span>}
       </div>
 
       {open && (
         <div className="mt-2 space-y-2">
-          <p className="text-[11px] text-ink/45">{what}</p>
-          {isLoading && <p className="text-sm text-ink/45">Reading what writes it…</p>}
+          <p className="text-[11px] text-muted">{what}</p>
+          {isLoading && <p className="text-sm text-muted">Reading what writes it…</p>}
           {brief && (
             <>
-              <p className="text-[11px] text-ink/40">
+              <p className="text-[11px] text-muted">
                 This is what the model is given, word for word. The format it has to return — the fields, the length, the rules that keep
                 it honest — is kept separately and is never affected by anything you write here.
               </p>
               <textarea rows={14} className="input font-mono text-[12px]" value={text} onChange={(event) => setText(event.target.value)} />
-              {note && <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{note}</p>}
+              {note && <p className="rounded-xl border border-positive-line bg-positive-surface px-3.5 py-2.5 text-sm text-positive-text">{note}</p>}
               <div className="flex flex-wrap items-center gap-3">
                 <Button disabled={save.isPending || !dirty} onClick={() => save.mutate()}>
                   {save.isPending ? "Saving…" : "Save this prompt"}
@@ -539,7 +539,7 @@ function WriterBriefRow({
                   <button
                     type="button"
                     onClick={() => setText(brief.text)}
-                    className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+                    className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
                   >
                     Undo
                   </button>
@@ -549,7 +549,7 @@ function WriterBriefRow({
                   <button
                     type="button"
                     onClick={() => setText(brief.shipped)}
-                    className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45 transition hover:text-ink"
+                    className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
                     title="Loads the shipped wording into the box. Nothing changes until you save."
                   >
                     Put the shipped wording back

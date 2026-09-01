@@ -109,7 +109,7 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
       subtitle={editing ? "Changes apply from the next invoice; history is untouched." : "The recurring half of the relationship."}
       footer={
         <div className="flex items-center justify-between gap-4">
-          <span className="text-xs text-ink/50">
+          <span className="text-xs text-muted">
             {form.autoInvoice
               ? `Bills on day ${form.billingDay} of each month, ${form.currency} ${form.monthlyFee.toLocaleString()}.`
               : "Invoices raised by hand from this page."}
@@ -125,7 +125,7 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
         </div>
       }
     >
-      {error && <div className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {error && <div className="mb-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error}</div>}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Client" full>
@@ -162,11 +162,11 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
                   })
                 }
                 className={`border px-3 py-2 text-left transition ${
-                  form.tier === option.value ? "border-ink bg-ink text-cream" : "border-ink/15 hover:border-ink/40"
+                  form.tier === option.value ? "border-ink bg-ink text-cream" : "border-line-strong hover:border-ink/40"
                 }`}
               >
                 <span className="block font-mono text-[10px] uppercase tracking-[.12em]">{option.label}</span>
-                <span className={`mt-1 block text-xs ${form.tier === option.value ? "text-cream/60" : "text-ink/50"}`}>
+                <span className={`mt-1 block text-xs ${form.tier === option.value ? "text-cream/60" : "text-muted"}`}>
                   GHS {option.fee.toLocaleString()}/mo
                 </span>
               </button>
@@ -270,13 +270,13 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
           />
         </Field>
 
-        <div className="sm:col-span-2 border-t border-ink/10 pt-4">
+        <div className="sm:col-span-2 border-t border-line pt-4">
           <Toggle
             checked={form.autoInvoice}
             onChange={(next) => setForm({ ...form, autoInvoice: next })}
             label="Invoice automatically on the billing day"
           />
-          <p className="mt-2 text-xs text-ink/50">
+          <p className="mt-2 text-xs text-muted">
             Invoices are raised as drafts — nothing is emailed. Send them from the Invoices page once you've looked at them.
           </p>
         </div>

@@ -170,7 +170,7 @@ function writeColour({ hex, alpha }: Colour): string {
 /* ------------------------------------------------------------- primitives */
 
 const FIELD =
-  "flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-line bg-white px-2 focus-within:border-blue focus-within:ring-2 focus-within:ring-blue/15";
+  "flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-xl border border-line bg-white px-2 focus-within:border-blue focus-within:ring-2 focus-within:ring-blue/15";
 const NUM = "w-full min-w-0 bg-transparent text-right font-mono text-[11px] text-ink outline-none";
 const SELECT = "w-full min-w-0 bg-transparent text-right text-[11px] text-ink outline-none cursor-pointer";
 const LABEL = "shrink-0 text-[10px] uppercase tracking-[.08em] text-muted";
@@ -178,7 +178,7 @@ const LABEL = "shrink-0 text-[10px] uppercase tracking-[.08em] text-muted";
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="border-b border-line px-4 py-3.5 last:border-b-0">
-      <div className="mb-2.5 font-mono text-[10px] font-bold uppercase tracking-[.14em] text-ink/40">{title}</div>
+      <div className="mb-2.5 font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted">{title}</div>
       <div className="space-y-1.5">{children}</div>
     </div>
   );
@@ -372,7 +372,7 @@ function ColourField({
           className="ml-auto flex items-center gap-1.5"
           title={value || "As designed"}
         >
-          <span className="h-4 w-4 shrink-0 rounded border border-ink/15" style={{ background: CHECKER }}>
+          <span className="h-4 w-4 shrink-0 rounded border border-line-strong" style={{ background: CHECKER }}>
             <span className="block h-full w-full rounded" style={{ backgroundColor: value || "transparent" }} />
           </span>
           <span className="font-mono text-[9px] uppercase text-muted">{value ? colour.hex.replace("#", "") : "auto"}</span>
@@ -392,7 +392,7 @@ function ColourField({
                   onCommit?.();
                 }}
                 className={`h-5 w-full rounded border ${
-                  colour.hex.toUpperCase() === option.value.toUpperCase() ? "border-blue ring-2 ring-blue/25" : "border-ink/15"
+                  colour.hex.toUpperCase() === option.value.toUpperCase() ? "border-blue ring-2 ring-blue/25" : "border-line-strong"
                 }`}
                 style={{ backgroundColor: option.value }}
               />
@@ -407,7 +407,7 @@ function ColourField({
               onChange={(event) => set({ hex: event.target.value.toUpperCase() })}
               onBlur={() => onCommit?.()}
             />
-            <div className="flex h-7 flex-1 items-center gap-1 rounded-lg border border-line px-2">
+            <div className="flex h-7 flex-1 items-center gap-1 rounded-xl border border-line px-2">
               <span className="text-[10px] text-muted">#</span>
               <input
                 className="w-full bg-transparent font-mono text-[11px] uppercase text-ink outline-none"
@@ -444,7 +444,7 @@ function ColourField({
                 onCommit?.();
                 setOpen(false);
               }}
-              className="mt-2.5 w-full rounded-lg border border-line py-1.5 text-[11px] font-semibold text-muted transition hover:border-ink/30 hover:text-ink"
+              className="mt-2.5 w-full rounded-xl border border-line py-1.5 text-[11px] font-semibold text-muted transition hover:border-ink/30 hover:text-ink"
             >
               As designed
             </button>
@@ -474,7 +474,7 @@ function IconToggle({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-[13px] transition ${
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border text-[13px] transition ${
         on ? "border-blue bg-blue/10 text-blue" : "border-line bg-white text-muted hover:text-ink"
       }`}
     >
@@ -495,7 +495,7 @@ function Segmented({
   onChange: (next: string) => void;
 }) {
   return (
-    <div className="flex h-8 flex-1 overflow-hidden rounded-lg border border-line bg-white">
+    <div className="flex h-8 flex-1 overflow-hidden rounded-xl border border-line bg-white">
       {options.map((option) => (
         <button
           key={option.value}
@@ -504,7 +504,7 @@ function Segmented({
           disabled={disabled}
           onClick={() => onChange(option.value === value ? "" : option.value)}
           className={`flex flex-1 items-center justify-center border-r border-line text-[11px] last:border-r-0 transition ${
-            value === option.value ? "bg-blue/10 text-blue" : "text-muted hover:bg-ink/[.03] hover:text-ink"
+            value === option.value ? "bg-blue/10 text-blue" : "text-muted hover:bg-sunken hover:text-ink"
           }`}
         >
           {option.label}
@@ -519,7 +519,7 @@ function SubBlock({ title, onRemove, children }: { title: string; onRemove: () =
     <div className="rounded-xl border border-line bg-cream/60 p-2.5">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[11px] font-semibold text-ink">{title}</span>
-        <button type="button" onClick={onRemove} className="text-[10px] text-muted transition hover:text-red-600">
+        <button type="button" onClick={onRemove} className="text-[10px] text-muted transition hover:text-danger-text">
           Remove
         </button>
       </div>
@@ -707,7 +707,7 @@ export function StylePanel({
             return (
               <SubBlock key={key} title="Filter" onRemove={() => set("filter", "")}>
                 <input
-                  className="h-8 w-full rounded-lg border border-line bg-white px-2 font-mono text-[11px] text-ink outline-none focus:border-blue"
+                  className="h-8 w-full rounded-xl border border-line bg-white px-2 font-mono text-[11px] text-ink outline-none focus:border-blue"
                   value={declarations.filter ?? ""}
                   placeholder="blur(2px) grayscale(.4)"
                   onChange={(event) => set("filter", event.target.value)}
@@ -778,7 +778,7 @@ export function StylePanel({
                     set(key, EXTRA_SEED[key]);
                     onCommit?.();
                   }}
-                  className="border-b border-dashed border-line text-ink/70 transition hover:border-blue hover:text-blue"
+                  className="border-b border-dashed border-line text-ink transition hover:border-blue hover:text-blue"
                 >
                   {EXTRA_LABEL[key]}
                 </button>
@@ -920,7 +920,7 @@ export function StylePanel({
               set("border", "1px solid #08101F");
               onCommit?.();
             }}
-            className="w-full rounded-lg border border-dashed border-line py-2 text-[11px] font-semibold text-muted transition hover:border-blue hover:text-blue"
+            className="w-full rounded-xl border border-dashed border-line py-2 text-[11px] font-semibold text-muted transition hover:border-blue hover:text-blue"
           >
             + Add border
           </button>
@@ -930,8 +930,8 @@ export function StylePanel({
       {(untouched.length > 0 || style) && (
         <div className="px-4 py-3.5">
           {untouched.length > 0 && (
-            <div className="mb-2 rounded-lg bg-cream/70 px-2.5 py-2 text-[10px] leading-relaxed text-muted">
-              <span className="font-semibold text-ink/60">Also on this element, left alone:</span>{" "}
+            <div className="mb-2 rounded-xl bg-cream/70 px-2.5 py-2 text-[10px] leading-relaxed text-muted">
+              <span className="font-semibold text-muted">Also on this element, left alone:</span>{" "}
               <span className="font-mono">{untouched.map(([property, value]) => `${property}: ${value}`).join("; ")}</span>
             </div>
           )}

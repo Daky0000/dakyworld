@@ -49,7 +49,7 @@ export function ProjectDetail() {
     },
   });
 
-  if (isLoading || !project) return <div className="text-sm text-ink/50">Loading…</div>;
+  if (isLoading || !project) return <div className="text-sm text-muted">Loading…</div>;
 
   return (
     <div>
@@ -57,16 +57,16 @@ export function ProjectDetail() {
 
       <div className="grid gap-8 lg:grid-cols-3">
         <Card>
-          <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Budget</div>
+          <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Budget</div>
           <div className="mt-2 font-display text-2xl">{project.budgetAmount ? <Money amount={project.budgetAmount} /> : "—"}</div>
         </Card>
         <Card>
-          <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Hours logged</div>
+          <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Hours logged</div>
           <div className="mt-2 font-display text-2xl">{Number(project.actualHours).toFixed(1)}h</div>
         </Card>
         <Card>
-          <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/50">Scope</div>
-          <div className="mt-2 text-sm text-ink/70">{project.scopeSummary}</div>
+          <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Scope</div>
+          <div className="mt-2 text-sm text-ink">{project.scopeSummary}</div>
         </Card>
       </div>
 
@@ -80,7 +80,7 @@ export function ProjectDetail() {
                 <Badge tone={m.completedAt ? "positive" : "muted"}>{m.completedAt ? "Done" : m.dueDate ? new Date(m.dueDate).toLocaleDateString() : "No date"}</Badge>
               </div>
             ))}
-            {project.milestones.length === 0 && <div className="text-sm text-ink/50">No milestones yet.</div>}
+            {project.milestones.length === 0 && <div className="text-sm text-muted">No milestones yet.</div>}
           </div>
           <form
             className="mt-3 flex gap-2"
@@ -101,12 +101,12 @@ export function ProjectDetail() {
               <div key={t.id} className="flex items-center justify-between rounded-xl border border-line bg-white px-4 py-3 text-sm">
                 <div>
                   <div>{t.title}</div>
-                  {t.assignee && <div className="text-xs text-ink/50">{t.assignee.name}</div>}
+                  {t.assignee && <div className="text-xs text-muted">{t.assignee.name}</div>}
                 </div>
                 <select
                   value={t.status}
                   onChange={(e) => updateTaskStatus.mutate({ taskId: t.id, status: e.target.value })}
-                  className="border border-ink/20 bg-white px-2 py-1 font-mono text-xs uppercase tracking-[.08em]"
+                  className="rounded-full border border-line-strong bg-white px-2 py-1 font-mono text-xs uppercase tracking-[.08em]"
                 >
                   {TASK_STATUSES.map((s) => (
                     <option key={s} value={s}>
@@ -116,7 +116,7 @@ export function ProjectDetail() {
                 </select>
               </div>
             ))}
-            {project.tasks.length === 0 && <div className="text-sm text-ink/50">No tasks yet.</div>}
+            {project.tasks.length === 0 && <div className="text-sm text-muted">No tasks yet.</div>}
           </div>
           <form
             className="mt-3 flex gap-2"

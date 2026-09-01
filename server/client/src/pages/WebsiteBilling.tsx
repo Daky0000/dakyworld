@@ -36,9 +36,9 @@ export function WebsiteBilling() {
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[420px] text-left text-sm">
             <thead>
-              <tr className="border-b border-line text-[11px] uppercase tracking-[.1em] text-muted">
-                <th className="py-2 pr-4 font-bold">State</th>
-                <th className="py-2 font-bold">Behaviour</th>
+              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                <th className="py-2 pr-4 font-normal">State</th>
+                <th className="py-2 font-normal">Behaviour</th>
               </tr>
             </thead>
             <tbody className="text-muted">

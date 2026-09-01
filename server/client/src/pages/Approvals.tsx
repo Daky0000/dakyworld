@@ -77,7 +77,7 @@ export function Approvals() {
             type="button"
             onClick={() => setFilter(option.value)}
             className={`border px-3 py-1 font-mono text-[10px] uppercase tracking-[.12em] transition ${
-              filter === option.value ? "border-ink bg-ink text-cream" : "border-line text-ink/50 hover:border-ink/40 hover:text-ink"
+              filter === option.value ? "border-ink bg-ink text-cream" : "border-line text-muted hover:border-ink/40 hover:text-ink"
             }`}
           >
             {option.label}
@@ -86,7 +86,7 @@ export function Approvals() {
         ))}
       </div>
 
-      {isLoading && <p className="text-sm text-ink/45">Reading the queue…</p>}
+      {isLoading && <p className="text-sm text-muted">Reading the queue…</p>}
 
       {!isLoading && requests.length === 0 && (
         <EmptyState
@@ -128,7 +128,7 @@ function ApprovalCard({ request, onSettled }: { request: ActionRequestRow; onSet
   return (
     <article className="border border-line bg-white">
       <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3">
-        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           {request.agent.avatar ? `${request.agent.avatar} ` : ""}
           {request.agent.name}
         </span>
@@ -139,15 +139,15 @@ function ApprovalCard({ request, onSettled }: { request: ActionRequestRow; onSet
         <Badge tone={STATUS_TONE[request.status]}>{STATUS_LABEL[request.status]}</Badge>
         <span className="flex-1" />
         {request.about && (
-          <span className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/35">{request.about.name}</span>
+          <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">{request.about.name}</span>
         )}
         <RelativeTime value={request.createdAt} />
       </header>
 
       <div className="space-y-4 px-4 py-4">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">It would</p>
-          <p className="mt-0.5 text-sm text-ink/80">{request.wouldDo}</p>
+          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">It would</p>
+          <p className="mt-0.5 text-sm text-ink">{request.wouldDo}</p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
@@ -157,33 +157,33 @@ function ApprovalCard({ request, onSettled }: { request: ActionRequestRow; onSet
         </div>
 
         {request.taskTitle && (
-          <p className="text-[11px] text-ink/40">
-            Prepared while working on <span className="text-ink/60">{request.taskTitle}</span>
+          <p className="text-[11px] text-muted">
+            Prepared while working on <span className="text-muted">{request.taskTitle}</span>
             {request.heldBecause ? ` · ${request.heldBecause}` : ""}
           </p>
         )}
 
         {request.status === "EXECUTED" && (
-          <p className="text-[11px] text-ink/40">
-            Cost <span className="text-ink/60">${Number(request.costUsd).toFixed(4)}</span>
+          <p className="text-[11px] text-muted">
+            Cost <span className="text-muted">${Number(request.costUsd).toFixed(4)}</span>
           </p>
         )}
 
         {request.expired && request.status === "PENDING" && (
-          <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
             This was prepared more than a week ago, so it can no longer be carried out. What the agent proposed then may not be
             right now — ask it to look again.
           </p>
         )}
 
         {request.error && (
-          <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{request.error}</p>
+          <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{request.error}</p>
         )}
-        {error && <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-        {outcome && <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{outcome}</p>}
+        {error && <p className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error}</p>}
+        {outcome && <p className="rounded-xl border border-positive-line bg-positive-surface px-3.5 py-2.5 text-sm text-positive-text">{outcome}</p>}
 
         {!settled && !request.expired && (
-          <div className="space-y-3 border-t border-ink/10 pt-3">
+          <div className="space-y-3 border-t border-line pt-3">
             <input
               className="input"
               placeholder="A note about your decision, if you want one on the record"
@@ -198,18 +198,18 @@ function ApprovalCard({ request, onSettled }: { request: ActionRequestRow; onSet
                 type="button"
                 disabled={decide.isPending}
                 onClick={() => decide.mutate("decline")}
-                className="font-mono text-[10px] uppercase tracking-[.14em] text-red-600/70 transition hover:text-red-600"
+                className="font-mono text-[10px] uppercase tracking-[.14em] text-danger-text/70 transition hover:text-danger-text"
               >
                 Decline
               </button>
               <span className="flex-1" />
-              <span className="text-[11px] text-ink/35">Nothing has happened yet.</span>
+              <span className="text-[11px] text-muted">Nothing has happened yet.</span>
             </div>
           </div>
         )}
 
         {settled && request.decisionNote && (
-          <p className="border-t border-ink/10 pt-3 text-[11px] text-ink/45">Your note: {request.decisionNote}</p>
+          <p className="border-t border-line pt-3 text-[11px] text-muted">Your note: {request.decisionNote}</p>
         )}
       </div>
     </article>
@@ -219,8 +219,8 @@ function ApprovalCard({ request, onSettled }: { request: ActionRequestRow; onSet
 function Reason({ label, text }: { label: string; text: string }) {
   return (
     <div>
-      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/35">{label}</p>
-      <p className="mt-0.5 text-sm text-ink/70">{text}</p>
+      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</p>
+      <p className="mt-0.5 text-sm text-ink">{text}</p>
     </div>
   );
 }

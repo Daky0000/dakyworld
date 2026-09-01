@@ -22,11 +22,11 @@ import { Badge, Button, Drawer, Field } from "./ui";
 type Stage = "setup" | "review";
 
 const SEVERITY_TONE: Record<AuditFinding["severity"], string> = {
-  CRITICAL: "border-red-300 bg-red-50 text-red-800",
-  HIGH: "border-amber-300 bg-amber-50 text-amber-800",
-  MEDIUM: "border-ink/15 bg-cream text-ink/70",
-  LOW: "border-ink/10 bg-white text-ink/55",
-  GOOD: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  CRITICAL: "border-danger-line bg-danger-surface text-danger-text",
+  HIGH: "border-warn-line bg-warn-surface text-warn-text",
+  MEDIUM: "border-line-strong bg-cream text-ink",
+  LOW: "border-line bg-white text-muted",
+  GOOD: "border-positive-line bg-positive-surface text-positive-text",
 };
 
 export function ProposalWriter({
@@ -163,9 +163,9 @@ export function ProposalWriter({
             <Button variant="secondary" onClick={() => check.mutate()} disabled={!leadId || check.isPending}>
               {check.isPending ? "Checking…" : "Just check them"}
             </Button>
-            {write.isPending && <span className="text-xs text-ink/40">Fetching their site, asking DNS, then drafting — up to a minute.</span>}
+            {write.isPending && <span className="text-xs text-muted">Fetching their site, asking DNS, then drafting — up to a minute.</span>}
             {(write.error || check.error) && (
-              <span className="text-xs text-red-600">{((write.error ?? check.error) as Error).message}</span>
+              <span className="text-xs text-danger-text">{((write.error ?? check.error) as Error).message}</span>
             )}
           </div>
         ) : (
@@ -182,7 +182,7 @@ export function ProposalWriter({
             <Button variant="ghost" onClick={() => write.mutate()} disabled={write.isPending}>
               {write.isPending ? "Rewriting…" : "Write it again"}
             </Button>
-            {save.isError && <span className="text-xs text-red-600">{(save.error as Error).message}</span>}
+            {save.isError && <span className="text-xs text-danger-text">{(save.error as Error).message}</span>}
           </div>
         )
       }
@@ -204,29 +204,29 @@ export function ProposalWriter({
                     key={entry.id}
                     type="button"
                     onClick={() => setLeadId(entry.id)}
-                    className={`flex w-full items-baseline justify-between gap-3 border-b border-ink/5 px-3 py-2 text-left text-sm transition last:border-0 ${
+                    className={`flex w-full items-baseline justify-between gap-3 border-b border-line px-3 py-2 text-left text-sm transition last:border-0 ${
                       leadId === entry.id ? "bg-ink text-cream" : "hover:bg-cream"
                     }`}
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{entry.companyName ?? entry.contactName}</span>
-                      <span className={`block truncate text-xs ${leadId === entry.id ? "text-cream/60" : "text-ink/45"}`}>
+                      <span className={`block truncate text-xs ${leadId === entry.id ? "text-cream/60" : "text-muted"}`}>
                         {entry.website ?? "no website"} · {entry.city ?? "no city"}
                       </span>
                     </span>
-                    <span className={`shrink-0 font-mono text-[10px] ${leadId === entry.id ? "text-cream/60" : "text-ink/40"}`}>
+                    <span className={`shrink-0 font-mono text-[10px] ${leadId === entry.id ? "text-cream/60" : "text-muted"}`}>
                       {entry.leadScore}
                     </span>
                   </button>
                 ))}
-                {leads?.items.length === 0 && <p className="px-3 py-4 text-sm text-ink/50">No leads match that.</p>}
+                {leads?.items.length === 0 && <p className="px-3 py-4 text-sm text-muted">No leads match that.</p>}
               </div>
             </section>
           )}
 
           <section>
             <SectionTitle>Anything you want it to lead with</SectionTitle>
-            <p className="mb-2 text-xs text-ink/50">
+            <p className="mb-2 text-xs text-muted">
               Optional. Use it when you know something the check can&rsquo;t see — what they said on a call, a budget, a deadline.
               It overrides the writer&rsquo;s own judgement on angle and scope.
             </p>
@@ -255,7 +255,7 @@ function AuditPanel({ audit }: { audit: CompanyAudit }) {
     <section>
       <SectionTitle>What we can see about them</SectionTitle>
       {audit.site && (
-        <p className="mb-3 font-mono text-[11px] text-ink/45">
+        <p className="mb-3 font-mono text-[11px] text-muted">
           {audit.site.reachable
             ? `${audit.site.finalUrl} · ${audit.site.status} · ${audit.site.responseMs}ms${audit.site.platform ? ` · ${audit.site.platform}` : ""}`
             : `${audit.site.requested} — did not load`}
@@ -273,19 +273,19 @@ function AuditPanel({ audit }: { audit: CompanyAudit }) {
           </div>
         ))}
         {audit.findings.length === 0 && (
-          <p className="text-sm text-ink/50">
+          <p className="text-sm text-muted">
             Nothing specific found. Worth a call before writing anything — a proposal with no observations behind it is a brochure.
           </p>
         )}
       </div>
       {audit.notes.length > 0 && (
-        <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{audit.notes.join(" ")}</p>
+        <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">{audit.notes.join(" ")}</p>
       )}
       <details className="mt-3">
-        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           What was checked ({audit.checked.length})
         </summary>
-        <ul className="mt-2 space-y-1 text-xs text-ink/50">
+        <ul className="mt-2 space-y-1 text-xs text-muted">
           {audit.checked.map((entry) => (
             <li key={entry}>· {entry}</li>
           ))}
@@ -324,7 +324,7 @@ function Review({
   return (
     <div className="space-y-8">
       {weak && (
-        <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
           The writer rates its own confidence at {Math.round(draft.confidence * 100)}% — there wasn&rsquo;t much to go on. Have the
           call before sending this.
         </p>
@@ -334,71 +334,71 @@ function Review({
         <SectionTitle>The document</SectionTitle>
         <div className="rounded-2xl border border-line bg-white p-5">
           <h3 className="font-display text-xl leading-snug">{draft.headline}</h3>
-          <p className="mt-3 whitespace-pre-wrap text-sm text-ink/70">{draft.situation}</p>
+          <p className="mt-3 whitespace-pre-wrap text-sm text-ink">{draft.situation}</p>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">What we found</h4>
+          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">What we found</h4>
           <div className="mt-2 space-y-4">
             {draft.findings.map((finding, index) => (
               <div key={index} className="border-l-2 border-blue pl-3">
                 <p className="font-medium">{finding.observed}</p>
-                <p className="mt-1 text-sm text-ink/70">{finding.costsThem}</p>
-                <p className="mt-1 font-mono text-[10px] text-ink/40">Checked: {finding.evidence}</p>
+                <p className="mt-1 text-sm text-ink">{finding.costsThem}</p>
+                <p className="mt-1 font-mono text-[10px] text-muted">Checked: {finding.evidence}</p>
                 <p className="mt-1 text-sm">
-                  <span className="text-ink/45">What we would do: </span>
+                  <span className="text-muted">What we would do: </span>
                   {finding.fix}
                 </p>
               </div>
             ))}
           </div>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">What they get</h4>
+          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">What they get</h4>
           <div className="mt-2 space-y-3">
             {draft.scope.map((phase, index) => (
               <div key={index}>
                 <p className="font-medium">{phase.phase}</p>
-                <ul className="mt-1 space-y-0.5 text-sm text-ink/70">
+                <ul className="mt-1 space-y-0.5 text-sm text-ink">
                   {phase.deliverables.map((item) => (
                     <li key={item}>· {item}</li>
                   ))}
                 </ul>
-                <p className="mt-1 text-sm italic text-ink/50">{phase.outcome}</p>
+                <p className="mt-1 text-sm italic text-muted">{phase.outcome}</p>
               </div>
             ))}
           </div>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Investment</h4>
+          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Investment</h4>
           <table className="mt-2 w-full text-sm">
             <tbody>
               {draft.investment.lineItems.map((item, index) => (
-                <tr key={index} className="border-b border-ink/5 last:border-0">
+                <tr key={index} className="border-b border-line last:border-0">
                   <td className="py-1.5 pr-3">{item.description}</td>
                   <td className="py-1.5 text-right whitespace-nowrap">
                     {item.amount > 0 ? (
                       <>
                         GHS {item.amount.toLocaleString("en-GB")}
-                        {item.billing === "MONTHLY" && <span className="text-ink/40">/mo</span>}
-                        {!item.firm && <span className="ml-1 text-ink/40">est.</span>}
+                        {item.billing === "MONTHLY" && <span className="text-muted">/mo</span>}
+                        {!item.firm && <span className="ml-1 text-muted">est.</span>}
                       </>
                     ) : (
-                      <span className="text-ink/40">after the call</span>
+                      <span className="text-muted">after the call</span>
                     )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="mt-2 text-xs text-ink/50">{draft.investment.basis}</p>
+          <p className="mt-2 text-xs text-muted">{draft.investment.basis}</p>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Timeline</h4>
-          <p className="mt-1 text-sm text-ink/70">{draft.timeline}</p>
+          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Timeline</h4>
+          <p className="mt-1 text-sm text-ink">{draft.timeline}</p>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">Why Dakyworld</h4>
-          <p className="mt-1 text-sm text-ink/70">{draft.whyUs}</p>
+          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Why Dakyworld</h4>
+          <p className="mt-1 text-sm text-ink">{draft.whyUs}</p>
 
           {draft.assumptions.length > 0 && (
             <>
-              <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">What this assumes</h4>
-              <ul className="mt-1 space-y-0.5 text-sm text-ink/60">
+              <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">What this assumes</h4>
+              <ul className="mt-1 space-y-0.5 text-sm text-muted">
                 {draft.assumptions.map((entry) => (
                   <li key={entry}>· {entry}</li>
                 ))}
@@ -406,15 +406,15 @@ function Review({
             </>
           )}
 
-          <p className="mt-6 border-t border-ink/10 pt-4 font-medium">{draft.nextStep}</p>
+          <p className="mt-6 border-t border-line pt-4 font-medium">{draft.nextStep}</p>
         </div>
       </section>
 
       {draft.thinFacts.length > 0 && (
         <section>
           <SectionTitle>Ask these on the call</SectionTitle>
-          <p className="mb-2 text-xs text-ink/50">What the writer wanted to know and couldn&rsquo;t see from outside.</p>
-          <ul className="space-y-1 text-sm text-ink/70">
+          <p className="mb-2 text-xs text-muted">What the writer wanted to know and couldn&rsquo;t see from outside.</p>
+          <ul className="space-y-1 text-sm text-ink">
             {draft.thinFacts.map((entry) => (
               <li key={entry}>· {entry}</li>
             ))}
@@ -424,7 +424,7 @@ function Review({
 
       <section>
         <SectionTitle>Before you save it</SectionTitle>
-        <p className="mb-3 text-xs text-ink/50">
+        <p className="mb-3 text-xs text-muted">
           The writer may only quote prices Dakyworld publishes, so anything it couldn&rsquo;t price is left at zero. The number
           that goes on the proposal is yours.
         </p>
@@ -447,21 +447,21 @@ function Review({
       <AuditPanel audit={result.audit} />
 
       <details>
-        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           Everything the writer was told ({result.facts.length} facts)
         </summary>
-        <ul className="mt-2 space-y-1 text-xs text-ink/50">
+        <ul className="mt-2 space-y-1 text-xs text-muted">
           {result.facts.map((fact, index) => (
             <li key={index}>· {fact}</li>
           ))}
         </ul>
-        <p className="mt-2 text-xs text-ink/40">
+        <p className="mt-2 text-xs text-muted">
           It was told these are the only facts it may use. Anything in the draft that isn&rsquo;t traceable to this list or to the
           evidence above is a mistake worth reporting.
         </p>
       </details>
 
-      <p className="text-xs text-ink/40">
+      <p className="text-xs text-muted">
         {result.usage.inputTokens.toLocaleString()} in / {result.usage.outputTokens.toLocaleString()} out ·{" "}
         <Badge tone="muted">confidence {Math.round(draft.confidence * 100)}%</Badge>
       </p>
@@ -470,5 +470,5 @@ function Review({
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-ink/40">{children}</h3>;
+  return <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">{children}</h3>;
 }

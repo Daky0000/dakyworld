@@ -3018,6 +3018,41 @@ should stay.
 Artwork uploaded under Settings → System wins over both. Order everywhere is
 **uploaded → shipped file → type**.
 
+### The OS UI has a semantic layer above those primitives
+
+`server/client/tailwind.config.js` now carries two tiers. The nine brand colours
+above are **primitives** and never change. Everything else is a **semantic**
+token that says what a colour is *for*, and exists because the design system
+describes a brand rather than an operations tool — it has nothing to say about
+what colour a failed send is, so before Sep 2026 every screen invented one.
+
+| Token | Replaces | For |
+|---|---|---|
+| `muted` | thirteen steps of `text-ink/25…65`, 871 uses | all secondary text |
+| `faint` | `text-ink/30` and friends on placeholders | placeholders, disabled, an empty cell — never a label |
+| `sunken` | `bg-ink/[.02]`…`[.06]` and `bg-ink/5` | the one inset surface |
+| `line-strong` | `border-ink/15`, `/20`, `/25` | a divider meant to be seen |
+| `positive` `warn` `danger` `info` | ~500 uses of stock `emerald-*` `amber-*` `red-*` | status, each as surface / line / text / solid |
+
+Three rules follow from it:
+
+1. **§05 allows exactly two text colours on a light surface** — `ink` and
+   `muted`. An opacity of ink is not a third one. `text-ink/40` measured 2.61:1
+   on cream and was the most-used text colour in the product.
+2. **Status colours are Dakyworld's, not Tailwind's.** The reds lean cool, the
+   ambers lean ochre, and `positive` is lime walked down towards ink rather than
+   an unrelated emerald — so the accent and the success state are visibly the
+   same idea at two brightnesses.
+3. **Radius has four values and no more**: `rounded-full` for pills,
+   `rounded-[10px]` for chips and inline inputs, `rounded-xl` (12px) for fields
+   and small panels, `rounded-2xl` (16px) for cards. `rounded-lg` is 8px, below
+   §15's floor, and does not appear.
+
+The shared components in `client/src/components/ui.tsx` are the other half of
+this — `Notice`, `Loading`, `StatGrid`/`StatTile`, `Thead`/`Th`/`Td`/`Tr` and
+`SectionHeading` exist so a status box, a loading state, a row of figures and a
+table header are each drawn once. Reach for one before writing a `<div>`.
+
 ## Render it and look at it
 
 Reviewing document and layout code by reading it does not work here — a
@@ -3079,8 +3114,9 @@ substitute, so headings come out serif. The files are still correct — do not
 - **Railway's Root Directory and GitHub-repo connections are dashboard-only** —
   the CLI has no subcommand for them. Report the click path instead of retrying.
 - Tailwind's config maps `blue`, `lime` and `cyan` to single brand values, which
-  replaces those default scales. `blue-500` and friends do not exist; the red,
-  amber and emerald scales are untouched and carry error/warning/success states.
+  replaces those default scales. `blue-500` and friends do not exist. **Nor do
+  `red-*`, `amber-*` and `emerald-*` any more** — status has its own semantic
+  families (below), and Tailwind's stock scales are not to be reached for again.
 - **Uploads ride in the JSON body as base64**, so their paths are excluded from
   the global parser in `index.ts` (`UPLOAD_PATHS`) and each mounts its own
   larger one *inside* its router, after the role check. Adding a third upload

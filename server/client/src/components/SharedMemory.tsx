@@ -84,7 +84,7 @@ export function SharedMemoryPanel() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="font-display text-2xl">What every agent knows</h2>
-          <p className="mt-1 max-w-2xl text-sm text-ink/60">
+          <p className="mt-1 max-w-2xl text-sm text-muted">
             Written once here and put in front of every agent, alongside whatever that one has worked out for itself. This is where a
             house rule goes — the thing you would otherwise have to tell each of them separately. An agent can add to it too, when it
             concludes something about how Dakyworld works rather than about its own way of working.
@@ -96,7 +96,7 @@ export function SharedMemoryPanel() {
       </div>
 
       {data && (
-        <p className="mt-3 font-mono text-[10px] uppercase tracking-[.14em] text-ink/35">
+        <p className="mt-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
           {data.summary.total} shared · {data.summary.standing} on every task
           {data.summary.total - data.summary.standing > 0 && ` · ${data.summary.total - data.summary.standing} about a specific record`}
           {data.summary.neverUsed > 0 && ` · ${data.summary.neverUsed} never recalled`}
@@ -104,7 +104,7 @@ export function SharedMemoryPanel() {
       )}
 
       {writing && (
-        <div className="mt-4 space-y-3 border border-blue/25 bg-blue/5 p-3">
+        <div className="rounded-xl mt-4 space-y-3 border border-blue/25 bg-blue/5 p-3">
           <Field label="What every agent should know" full>
             <textarea
               rows={3}
@@ -139,7 +139,7 @@ export function SharedMemoryPanel() {
             </Field>
           </div>
 
-          <p className="text-xs text-ink/45">
+          <p className="text-xs text-muted">
             Never write a password, a token or an API key here — a memory is re-read into a prompt every time its subject comes up, and
             anything credential-shaped is refused.
           </p>
@@ -150,11 +150,11 @@ export function SharedMemoryPanel() {
         </div>
       )}
 
-      {notice && <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+      {notice && <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{notice}</p>}
 
       <div className="mt-5 space-y-1.5">
         {memories.length === 0 && !writing && (
-          <p className="border border-line bg-cream px-3 py-2.5 text-sm text-ink/55">
+          <p className="rounded-xl border border-line bg-cream px-3 py-2.5 text-sm text-muted">
             Nothing shared yet. Anything you would otherwise have to tell all of them one at a time belongs here.
           </p>
         )}
@@ -169,15 +169,15 @@ export function SharedMemoryPanel() {
               onCancel={() => setEditing(null)}
             />
           ) : (
-            <div key={memory.id} className="flex items-start justify-between gap-3 border border-line bg-white px-3 py-2">
+            <div key={memory.id} className="rounded-xl flex items-start justify-between gap-3 border border-line bg-white px-3 py-2">
               <span className="min-w-0 flex-1">
-                <span className="block text-sm leading-relaxed text-ink/75">{memory.content}</span>
-                <span className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-ink/35">
+                <span className="block text-sm leading-relaxed text-ink">{memory.content}</span>
+                <span className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
                   <span>{memory.kind.toLowerCase()}</span>
-                  <code className="text-ink/40">{memory.subject}</code>
+                  <code className="text-muted">{memory.subject}</code>
                   <span>importance {memory.importance}</span>
                   {memory.authorKey && memory.authorKey !== "owner" && <span>from {memory.authorKey}</span>}
-                  <span className={memory.useCount === 0 ? "text-amber-700" : ""}>
+                  <span className={memory.useCount === 0 ? "text-warn-text" : ""}>
                     {memory.useCount === 0 ? "never recalled" : `recalled ${memory.useCount}×`}
                   </span>
                 </span>
@@ -186,7 +186,7 @@ export function SharedMemoryPanel() {
                 <button
                   type="button"
                   onClick={() => setEditing(memory.id)}
-                  className="font-mono text-[10px] uppercase tracking-[.1em] text-ink/35 transition hover:text-ink"
+                  className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
                 >
                   Edit
                 </button>
@@ -195,7 +195,7 @@ export function SharedMemoryPanel() {
                   onClick={() => {
                     if (confirm("Delete this? Every agent stops being told it.")) remove.mutate(memory.id);
                   }}
-                  className="font-mono text-[10px] uppercase tracking-[.1em] text-red-600/60 transition hover:text-red-600"
+                  className="font-mono text-[10px] uppercase tracking-[.1em] text-danger-text/60 transition hover:text-danger-text"
                 >
                   Forget
                 </button>
@@ -230,10 +230,10 @@ function EditRow({
   const [importance, setImportance] = useState(memory.importance);
 
   return (
-    <div className="space-y-2 border border-blue/30 bg-blue/5 px-3 py-2.5">
+    <div className="rounded-xl space-y-2 border border-blue/30 bg-blue/5 px-3 py-2.5">
       <textarea rows={3} className="input" value={content} onChange={(event) => setContent(event.target.value)} />
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-ink/45">
+        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
           Importance
           <select value={importance} onChange={(event) => setImportance(Number(event.target.value))} className="input w-16">
             {[1, 2, 3, 4, 5].map((level) => (
@@ -251,11 +251,11 @@ function EditRow({
         >
           {pending ? "Saving…" : "Save"}
         </Button>
-        <button type="button" onClick={onCancel} className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/45">
+        <button type="button" onClick={onCancel} className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
           Cancel
         </button>
       </div>
-      <p className="font-mono text-[9px] uppercase tracking-[.1em] text-ink/35">
+      <p className="font-mono text-[9px] uppercase tracking-[.1em] text-muted">
         Applies to every agent, on their next task.
       </p>
     </div>

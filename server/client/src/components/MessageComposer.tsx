@@ -227,7 +227,7 @@ export function MessageComposer({ target, open, onClose }: { target: MessageTarg
       }
     >
       <div className="space-y-5">
-        {error && <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
+        {error && <div className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error}</div>}
 
         {/* The window, said before anything is typed. */}
         {channel === "WHATSAPP" && <WindowNotice threadId={target?.threadId ?? null} hasTemplate={Boolean(templateName)} onUseLink={() => setRoute("LINK")} />}
@@ -257,12 +257,12 @@ export function MessageComposer({ target, open, onClose }: { target: MessageTarg
         </div>
 
         {reach && (
-          <div className={`rounded-xl border px-4 py-3 text-sm ${reach.channel ? "border-line bg-white" : "border-amber-300 bg-amber-50"}`}>
+          <div className={`rounded-xl border px-4 py-3 text-sm ${reach.channel ? "border-line bg-white" : "border-warn-line bg-warn-surface"}`}>
             <div className="flex flex-wrap items-center gap-2">
               {reach.phone && <span className="font-mono text-[12px]">{reach.phone.display}</span>}
               {reach.channel && <Badge tone={reach.channel === "EMAIL" ? "muted" : "positive"}>Best reached by {reach.channel.toLowerCase()}</Badge>}
             </div>
-            <p className="mt-1.5 text-xs text-ink/60">{reach.why}</p>
+            <p className="mt-1.5 text-xs text-muted">{reach.why}</p>
           </div>
         )}
 
@@ -307,7 +307,7 @@ export function MessageComposer({ target, open, onClose }: { target: MessageTarg
                 ))}
               </div>
             )}
-            <p className="mt-3 text-xs text-ink/50">
+            <p className="mt-3 text-xs text-muted">
               A variable cannot be left empty and cannot contain a line break — WhatsApp refuses both outright.
             </p>
           </div>
@@ -357,7 +357,7 @@ function WindowNotice({ threadId, hasTemplate, onUseLink }: { threadId: string |
   const open = data?.windowOpen ?? false;
   if (open) {
     return (
-      <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+      <div className="rounded-xl border border-positive-line bg-positive-surface px-3.5 py-2.5 text-sm text-positive-text">
         They replied recently, so you can write whatever you like for another {data?.windowMinutesLeft ?? 0} minutes. No template needed.
       </div>
     );
@@ -365,7 +365,7 @@ function WindowNotice({ threadId, hasTemplate, onUseLink }: { threadId: string |
   if (hasTemplate) return null;
 
   return (
-    <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+    <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
       <div className="font-medium">They haven't messaged us in the last 24 hours.</div>
       <p className="mt-1 text-xs">
         WhatsApp will only deliver an approved template to them — a written message is refused outright. Pick a template above, or send this one
@@ -388,7 +388,7 @@ function CostNotice({ cost, onConvert }: { cost: SmsCost & { gsm7: (SmsCost & { 
     );
   }
   return (
-    <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+    <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
       <div className="font-medium">
         This is being sent as Unicode, so it costs {cost.segments} message{cost.segments === 1 ? "" : "s"} instead of {cost.gsm7?.segments ?? 1}.
       </div>
@@ -410,19 +410,19 @@ function DraftNotes({ draft, blocked }: { draft: MessageDraftResponse; blocked: 
   return (
     <div className="space-y-3">
       {draft.caseStrength === "WEAK" || draft.caseStrength === "NONE" ? (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
           There is no strong case here — nothing found is worth writing to a stranger about. Sending anyway is a message about nothing.
         </div>
       ) : null}
 
       {draft.prepError && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">
           Nobody could look at this business first: {draft.prepError}
         </div>
       )}
 
       {blocked.length > 0 && (
-        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+        <div className="rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           <div className="font-medium">The checklist stopped this one.</div>
           <ul className="mt-1.5 space-y-1 text-xs">
             {blocked.map((check) => (
@@ -436,9 +436,9 @@ function DraftNotes({ draft, blocked }: { draft: MessageDraftResponse; blocked: 
       )}
 
       <div className="rounded-xl border border-line bg-white px-4 py-3">
-        <div className="font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Why this angle</div>
-        <p className="mt-1.5 text-sm text-ink/70">{draft.rationale}</p>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-ink/45">
+        <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Why this angle</div>
+        <p className="mt-1.5 text-sm text-ink">{draft.rationale}</p>
+        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted">
           <span>Written by {draft.model}</span>
           <span>·</span>
           <span>Confidence {Math.round(draft.confidence * 100)}%</span>

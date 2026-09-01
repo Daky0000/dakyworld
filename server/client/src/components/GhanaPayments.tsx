@@ -31,8 +31,8 @@ function Shell({ title, what, state, children }: { title: string; what: ReactNod
   return (
     <section className="rounded-2xl border border-line bg-white p-6">
       <h2 className="font-display text-2xl">{title}</h2>
-      <p className="mt-1 max-w-2xl text-sm text-ink/60">{what}</p>
-      <div className="mt-4 border-y border-ink/10 py-4">{state}</div>
+      <p className="mt-1 max-w-2xl text-sm text-muted">{what}</p>
+      <div className="mt-4 border-y border-line py-4">{state}</div>
       {children}
     </section>
   );
@@ -42,9 +42,9 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint: R
   const [copied, setCopied] = useState(false);
   return (
     <div className="mt-4">
-      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">{label}</p>
+      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</p>
       <div className="mt-1 flex flex-wrap items-center gap-2">
-        <code className="break-all border border-line bg-cream px-2 py-1 font-mono text-xs">{value}</code>
+        <code className="rounded-[10px] break-all border border-line bg-cream px-2 py-1 font-mono text-xs">{value}</code>
         <button
           type="button"
           className="font-mono text-[10px] uppercase tracking-[.12em] text-blue transition hover:underline"
@@ -57,19 +57,19 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint: R
           {copied ? "copied" : "copy"}
         </button>
       </div>
-      <p className="mt-1 max-w-2xl text-xs text-ink/50">{hint}</p>
+      <p className="mt-1 max-w-2xl text-xs text-muted">{hint}</p>
     </div>
   );
 }
 
 function ErrorNote({ error }: { error: unknown }) {
   if (!(error instanceof Error)) return null;
-  return <p className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error.message}</p>;
+  return <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error.message}</p>;
 }
 
 function EnvNote({ variable }: { variable: string }) {
   return (
-    <p className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+    <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">
       Pinned by the <code className="font-mono">{variable}</code> environment variable, so it can't be edited here.
     </p>
   );
@@ -107,7 +107,7 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
             {!paystack.envManaged && (
               <button
                 type="button"
-                className="font-mono text-[10px] uppercase tracking-[.12em] text-red-600/70 transition hover:text-red-600"
+                className="font-mono text-[10px] uppercase tracking-[.12em] text-danger-text/70 transition hover:text-danger-text"
                 onClick={() => remove.mutate()}
               >
                 disconnect
@@ -115,7 +115,7 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
             )}
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-3 text-sm text-ink/60">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
             <Badge tone="muted">not set up</Badge>
             <span>
               Secret key from{" "}
@@ -147,7 +147,7 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
         value={paystack.webhookUrl}
         hint={
           <>
-            Paste this into <span className="text-ink/70">Paystack → Settings → API Keys &amp; Webhooks</span>. Without it money is
+            Paste this into <span className="text-ink">Paystack → Settings → API Keys &amp; Webhooks</span>. Without it money is
             taken and the invoice is never marked paid — which looks exactly like the integration not working.
           </>
         }
@@ -200,11 +200,11 @@ export function HubtelPanel({ settings }: { settings: AppSettings }) {
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <Badge tone="positive">connected</Badge>
             <code className="font-mono text-xs">{hubtel.clientId}</code>
-            <span className="text-ink/50">merchant {hubtel.merchantId}</span>
+            <span className="text-muted">merchant {hubtel.merchantId}</span>
             {!hubtel.envManaged && (
               <button
                 type="button"
-                className="font-mono text-[10px] uppercase tracking-[.12em] text-red-600/70 transition hover:text-red-600"
+                className="font-mono text-[10px] uppercase tracking-[.12em] text-danger-text/70 transition hover:text-danger-text"
                 onClick={() => remove.mutate()}
               >
                 disconnect
@@ -212,7 +212,7 @@ export function HubtelPanel({ settings }: { settings: AppSettings }) {
             )}
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-3 text-sm text-ink/60">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
             <Badge tone="muted">not set up</Badge>
             <span>
               The API client id, secret and Merchant Account number from{" "}
@@ -261,9 +261,9 @@ export function HubtelPanel({ settings }: { settings: AppSettings }) {
         }
       />
 
-      <div className="mt-6 border-t border-ink/10 pt-5">
+      <div className="mt-6 border-t border-line pt-5">
         <h3 className="font-display text-lg">Text messages</h3>
-        <p className="mt-1 max-w-2xl text-sm text-ink/60">
+        <p className="mt-1 max-w-2xl text-sm text-muted">
           A payment reminder or an appointment confirmation, by SMS. <strong>Hubtel issues a different credential pair for this</strong>
           {" "}than for payments, and using one for the other returns an unhelpful 401 — so it is asked for separately.
         </p>
@@ -273,7 +273,7 @@ export function HubtelPanel({ settings }: { settings: AppSettings }) {
             <>
               <Badge tone="positive">connected</Badge>
               <code className="font-mono text-xs">{hubtel.sms.smsId}</code>
-              {hubtel.sms.sender && <span className="text-ink/50">from “{hubtel.sms.sender}”</span>}
+              {hubtel.sms.sender && <span className="text-muted">from “{hubtel.sms.sender}”</span>}
             </>
           ) : (
             <Badge tone="muted">not set up</Badge>
@@ -345,7 +345,7 @@ export function AgentReposPanel({ settings }: { settings: AppSettings }) {
             <code className="font-mono text-xs">{settings.agentRepos.repos}</code>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-3 text-sm text-ink/60">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
             <Badge tone="muted">read-only</Badge>
             <span>No repository is writable. Agents can read code and open issues, and change nothing.</span>
           </div>

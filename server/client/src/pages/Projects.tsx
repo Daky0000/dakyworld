@@ -14,13 +14,13 @@ export function Projects() {
     <div>
       <PageHeader title="Project & Delivery" subtitle="Scope, timeline, deliverables, team — once a deal closes, it lives here." />
       {isLoading ? (
-        <div className="text-sm text-ink/50">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       ) : !projects || projects.length === 0 ? (
         <EmptyState message="No projects yet. Projects are created automatically when a proposal is accepted." />
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-[.12em] text-ink/50">
+            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
               <th className="px-4 py-3">Project</th>
               <th className="px-4 py-3">Client</th>
               <th className="px-4 py-3">Budget</th>
@@ -30,12 +30,12 @@ export function Projects() {
           </thead>
           <tbody>
             {projects.map((p) => (
-              <tr key={p.id} className="border-b border-ink/5 last:border-0 hover:bg-ink/[.02]">
+              <tr key={p.id} className="border-b border-line last:border-0 hover:bg-sunken">
                 <td className="px-4 py-3">
                   <Link to={`/projects/${p.id}`} className="font-medium hover:underline">
                     {p.name}
                   </Link>
-                  <div className="text-xs text-ink/50">{p.serviceType}</div>
+                  <div className="text-xs text-muted">{p.serviceType}</div>
                 </td>
                 <td className="px-4 py-3">{p.client.name}</td>
                 <td className="px-4 py-3">{p.budgetAmount ? <Money amount={p.budgetAmount} /> : "—"}</td>

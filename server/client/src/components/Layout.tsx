@@ -94,6 +94,33 @@ const navItems: NavItem[] = [
 ];
 
 /**
+ * §18: a tab is quiet white until it is the one you are on, and then it is
+ * marked by a 2px lime rule rather than filled in.
+ *
+ * The filled ink pill this replaces was the single loudest object in the header
+ * and it was spent on saying "you are here", which is the one thing the page
+ * behind it already says. Underlining it gives the same information back for
+ * about a tenth of the ink, which is what leaves room for lime to still mean
+ * something when it turns up on an actual action.
+ */
+function tabClass(isActive: boolean) {
+  return `relative rounded-full px-2.5 py-1.5 text-[12px] font-semibold transition ${
+    isActive ? "text-white" : "text-white/60 hover:text-white"
+  }`;
+}
+
+function ActiveRule({ show }: { show: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`absolute inset-x-2.5 -bottom-[9px] h-[2px] origin-left rounded-full bg-lime transition-transform duration-300 ${
+        show ? "scale-x-100" : "scale-x-0"
+      }`}
+    />
+  );
+}
+
+/**
  * A nav entry with a menu under it. Opens on click rather than hover — a hover
  * menu over a working tool fires every time you cross it on the way somewhere
  * else.
@@ -124,19 +151,13 @@ function NavGroup({ item }: { item: NavItem }) {
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-semibold transition ${
-          active ? "bg-ink text-white" : "text-muted hover:bg-ink/[.05] hover:text-ink"
-        }`}
-      >
+      <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)} className={`${tabClass(active)} flex items-center gap-1`}>
         {item.label}
-        <span aria-hidden className={`text-[9px] transition ${open ? "rotate-180" : ""}`}>▾</span>
+        <span aria-hidden className={`text-[9px] transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+        <ActiveRule show={active} />
       </button>
       {open && (
-        <div className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[180px] overflow-hidden rounded-xl border border-line bg-white py-1 shadow-lg shadow-ink/5">
+        <div className="absolute left-0 top-[calc(100%+12px)] z-50 min-w-[180px] overflow-hidden rounded-xl border border-white/12 bg-ink py-1 shadow-menu">
           {children.map((child) => (
             <NavLink
               key={child.to}
@@ -144,7 +165,7 @@ function NavGroup({ item }: { item: NavItem }) {
               end={child.end}
               className={({ isActive }) =>
                 `block px-3.5 py-2 text-[12px] font-semibold transition ${
-                  isActive ? "bg-ink/[.06] text-ink" : "text-muted hover:bg-ink/[.03] hover:text-ink"
+                  isActive ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/[.06] hover:text-white"
                 }`
               }
             >
@@ -152,6 +173,92 @@ function NavGroup({ item }: { item: NavItem }) {
             </NavLink>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * §43. Below the width where thirteen sections fit on one line, the same
+ * hierarchy opens as a dark panel instead of being cut off by the edge of the
+ * window.
+ *
+ * It is worth being blunt about what this replaces: there was no mobile
+ * treatment at all. The nav was a single non-wrapping flex row, so on a phone
+ * it forced the document about 1300px wide and every screen in the product
+ * scrolled sideways — the dashboard figures, the lead tables, the buttons.
+ */
+function MobileNav({ items }: { items: NavItem[] }) {
+  const [open, setOpen] = useState(false);
+  const location = useLocation();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => setOpen(false), [location.pathname]);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
+    const onDown = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="xl:hidden" ref={ref}>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={open ? "Close menu" : "Open menu"}
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-10 w-10 items-center justify-center rounded-full border border-white/20 text-white transition hover:bg-white/10"
+      >
+        <span aria-hidden className="relative block h-[9px] w-4">
+          <span className={`absolute left-0 h-[1.5px] w-4 rounded bg-current transition-all ${open ? "top-[4px] rotate-45" : "top-0"}`} />
+          <span className={`absolute left-0 h-[1.5px] w-4 rounded bg-current transition-all ${open ? "top-[4px] -rotate-45" : "top-[7px]"}`} />
+        </span>
+      </button>
+
+      {open && (
+        <nav className="absolute right-4 top-[calc(100%+10px)] z-50 max-h-[calc(100vh-6rem)] w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-white/12 bg-ink p-2 shadow-menu">
+            {items.map((item) =>
+              item.children ? (
+                <div key={item.label} className="border-b border-white/[.08] py-2 last:border-0">
+                  <div className="px-3 pb-1 font-mono text-[10px] uppercase tracking-[.14em] text-white/50">{item.label}</div>
+                  {item.children.map((child) => (
+                    <NavLink
+                      key={child.to}
+                      to={child.to}
+                      end={child.end}
+                      className={({ isActive }) =>
+                        `block rounded-xl px-3 py-2.5 text-[13px] font-semibold transition ${
+                          isActive ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/[.06] hover:text-white"
+                        }`
+                      }
+                    >
+                      {child.label}
+                    </NavLink>
+                  ))}
+                </div>
+              ) : (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    `block rounded-xl px-3 py-2.5 text-[13px] font-semibold transition ${
+                      isActive ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/[.06] hover:text-white"
+                    }`
+                  }
+                >
+                  {item.label}
+                </NavLink>
+              ),
+            )}
+        </nav>
       )}
     </div>
   );
@@ -182,62 +289,75 @@ export function Layout() {
   const fullBleed = /^\/website\/pages\//.test(location.pathname);
   return (
     <div className={fullBleed ? "flex h-screen flex-col overflow-hidden bg-cream text-ink" : "min-h-screen bg-cream text-ink"}>
-      {/* Sticky, like the website's shell — navigation is the one thing you
-          should never have to scroll back up for. Light rather than dark
-          glass: this is a working tool, not a landing page. */}
+      {/* §16: the canonical Dakyworld header is a dark glass shell, and this is
+          the one place in the OS where the brand can carry its own weight
+          without getting in the way of the work. It is also what §04's colour
+          ratio asks for — a fifth of a screen in ink — on a product that was
+          otherwise white cards on cream from edge to edge, and read like any
+          other admin panel because of it.
+
+          Full-bleed rather than the website's floating rounded bar: the editor
+          runs the window to its edges, and a pill hovering over a page of
+          somebody's live site would be a landing-page device in a workshop. */}
       <header
         className={
           fullBleed
-            ? "z-40 flex-none border-b border-line bg-cream"
-            : "sticky top-0 z-40 border-b border-line bg-cream/85 backdrop-blur-xl"
+            ? "relative z-40 flex-none border-b border-white/10 bg-ink"
+            : "sticky top-0 z-40 border-b border-white/10 bg-ink/95 backdrop-blur-xl"
         }
       >
-        <div className={`flex items-center justify-between gap-6 px-6 py-3.5 ${fullBleed ? "" : "mx-auto max-w-7xl"}`}>
-          <div className="flex items-center gap-3">
-            <img src="/brand/mark-on-light-96.png" alt="" width={34} height={34} className="h-[34px] w-[34px]" />
-            <div className="leading-none">
-              <div className="font-display text-[15px] font-bold tracking-[-.03em]">
+        <div className={`flex items-center justify-between gap-6 px-4 py-3 sm:px-6 ${fullBleed ? "" : "mx-auto max-w-7xl"}`}>
+          <div className="flex min-w-0 items-center gap-3">
+            <img src="/brand/mark-on-dark-96.png" alt="" width={32} height={32} className="h-8 w-8 shrink-0" />
+            <div className="min-w-0 leading-none">
+              <div className="truncate font-display text-[15px] font-bold tracking-[-.03em] text-white">
                 Dakyworld OS
               </div>
-              <div className="mt-1 font-mono text-[10px] uppercase tracking-[.14em] text-ink/40">Internal Operations</div>
+              <div className="mt-1 hidden font-mono text-[10px] uppercase tracking-[.14em] text-white/55 sm:block">
+                Internal Operations
+              </div>
             </div>
           </div>
-          <nav className="flex items-center gap-1.5">
+
+          {/* Thirteen sections fit on one line from 1280px up and not below it,
+              so that is exactly where the line stops being one. */}
+          <nav className="hidden shrink-0 items-center gap-0.5 xl:flex">
             {visibleNav.map((item) =>
               item.children ? (
                 <NavGroup key={item.label} item={item} />
               ) : (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) =>
-                    `relative rounded-full px-3 py-1.5 text-[12px] font-semibold transition ${
-                      isActive ? "bg-ink text-white" : "text-muted hover:bg-ink/[.05] hover:text-ink"
-                    }`
-                  }
-                >
-                  {item.label}
+                <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => tabClass(isActive)}>
+                  {({ isActive }) => (
+                    <>
+                      {item.label}
+                      <ActiveRule show={isActive} />
+                    </>
+                  )}
                 </NavLink>
               ),
             )}
-            <span className="mx-2 h-5 w-px bg-line" aria-hidden />
-            <div className="flex items-center gap-3">
-              <span className="max-w-[140px] truncate whitespace-nowrap font-mono text-[10px] uppercase tracking-[.14em] text-ink/55" title={user?.email}>
-                {user?.name}
-              </span>
-              <button
-                type="button"
-                onClick={() => void logout()}
-                className="rounded-full border border-line px-3 py-1.5 text-[12px] font-semibold text-muted transition hover:border-ink/40 hover:text-ink"
-              >
-                Sign out
-              </button>
-            </div>
           </nav>
+
+          <div className="flex shrink-0 items-center gap-3">
+            <span
+              className="hidden max-w-[140px] shrink-0 truncate whitespace-nowrap font-mono text-[10px] uppercase tracking-[.14em] text-white/50 lg:block"
+              title={user?.email}
+            >
+              {user?.name}
+            </span>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="hidden shrink-0 whitespace-nowrap rounded-full border border-white/20 px-3 py-1.5 text-[12px] font-semibold text-white/70 transition hover:border-white/40 hover:text-white sm:block"
+            >
+              Sign out
+            </button>
+            <MobileNav items={visibleNav} />
+          </div>
         </div>
       </header>
-      <main className={fullBleed ? "min-h-0 flex-1" : "mx-auto max-w-7xl px-6 py-10"}>
+
+      <main className={fullBleed ? "min-h-0 flex-1" : "mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10"}>
         {canGoBack && !fullBleed && (
           <button
             type="button"

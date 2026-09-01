@@ -93,7 +93,7 @@ export function Team() {
             type="button"
             onClick={() => setTab(value)}
             className={`rounded-full px-3.5 py-1.5 text-[12px] font-semibold transition ${
-              tab === value ? "bg-ink text-white" : "text-muted hover:bg-ink/[.05] hover:text-ink"
+              tab === value ? "bg-ink text-white" : "text-muted hover:bg-sunken hover:text-ink"
             }`}
           >
             {label}
@@ -138,7 +138,7 @@ function People() {
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-line text-[10px] uppercase tracking-[.12em] text-ink/40">
+            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
               <th className="px-4 py-3 font-mono font-normal">Person</th>
               <th className="px-4 py-3 font-mono font-normal">Role</th>
               <th className="px-4 py-3 font-mono font-normal">Features</th>
@@ -152,7 +152,7 @@ function People() {
                 <td className="px-4 py-3">
                   <div className="font-semibold">
                     {member.name}
-                    {member.id === me?.id && <span className="ml-2 text-[11px] font-normal text-ink/40">you</span>}
+                    {member.id === me?.id && <span className="ml-2 text-[11px] font-normal text-muted">you</span>}
                   </div>
                   <div className="text-xs text-muted">{member.email}</div>
                 </td>
@@ -176,7 +176,7 @@ function People() {
                       {member.effectivePermissions.length}
                       {member.extraPermissions.length > 0 && <span className="text-blue"> +{member.extraPermissions.length}</span>}
                       {member.deniedPermissions.length > 0 && (
-                        <span className="text-amber-700"> −{member.deniedPermissions.length}</span>
+                        <span className="text-warn-text"> −{member.deniedPermissions.length}</span>
                       )}
                     </>
                   )}
@@ -185,7 +185,7 @@ function People() {
                   {!member.active ? (
                     <Badge tone="muted">Switched off</Badge>
                   ) : !member.canSignIn ? (
-                    <span className="text-ink/40" title="No password set — they appear in dropdowns but cannot log in.">
+                    <span className="text-muted" title="No password set — they appear in dropdowns but cannot log in.">
                       No password
                     </span>
                   ) : (
@@ -345,13 +345,13 @@ function MemberDrawer({
       }
     >
       {error && (
-        <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="mb-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           {error}
         </p>
       )}
 
       {isSelf && (
-        <p className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
+        <p className="mb-5 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-[13px] text-warn-text">
           This is your own account. Nobody can change their own access — an Owner who ticks the wrong box on themselves is
           locked out of the screen that would undo it. Ask another Owner.
         </p>
@@ -379,7 +379,7 @@ function MemberDrawer({
       )}
 
       {role?.superAdmin ? (
-        <Card className="bg-ink/[.03]">
+        <Card className="bg-sunken">
           <p className="text-[13px] text-muted">
             The Owner role has every feature and always will — that is what makes it impossible to lock everybody out of
             this screen. There is nothing to tick.
@@ -493,7 +493,7 @@ function InviteDrawer({ roles, onClose, onSaved }: { roles: Role[]; onClose: () 
       }
     >
       {error && (
-        <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="mb-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           {error}
         </p>
       )}
@@ -585,7 +585,7 @@ function Roles({ canManage }: { canManage: boolean }) {
               {role.description && <p className="mt-2 text-[13px] leading-relaxed text-muted">{role.description}</p>}
             </div>
             <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
-              <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+              <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                 {role.superAdmin ? "Every feature" : `${role.permissions.length} features`} ·{" "}
                 {role.userCount === 1 ? "1 person" : `${role.userCount} people`}
               </span>
@@ -699,13 +699,13 @@ function RoleDrawer({
       }
     >
       {error && (
-        <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="mb-4 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">
           {error}
         </p>
       )}
 
       {role?.superAdmin ? (
-        <Card className="bg-ink/[.03]">
+        <Card className="bg-sunken">
           <p className="text-[13px] leading-relaxed text-muted">
             The Owner role answers every permission check without reading a list, so there is nothing here to edit.
             That is deliberate: every other role can be narrowed to nothing safely, because there is always one that
@@ -722,7 +722,7 @@ function RoleDrawer({
                   onChange={(event) => setName(event.target.value)}
                   disabled={role?.system}
                   placeholder="Lead"
-                  className="w-full rounded-xl border border-line bg-white px-3 py-2 text-sm disabled:bg-ink/[.03] disabled:text-ink/50"
+                  className="w-full rounded-xl border border-line bg-white px-3 py-2 text-sm disabled:bg-sunken disabled:text-muted"
                 />
               </Field>
               <Field label="What this role is for" hint={role?.system ? "Built-in roles keep their shipped name and description." : undefined}>
@@ -731,7 +731,7 @@ function RoleDrawer({
                   onChange={(event) => setDescription(event.target.value)}
                   disabled={role?.system}
                   placeholder="Runs a delivery team. Sees the work, not the money."
-                  className="w-full rounded-xl border border-line bg-white px-3 py-2 text-sm disabled:bg-ink/[.03] disabled:text-ink/50"
+                  className="w-full rounded-xl border border-line bg-white px-3 py-2 text-sm disabled:bg-sunken disabled:text-muted"
                 />
               </Field>
             </div>
@@ -796,17 +796,17 @@ function PermissionMatrix({
         const isCollapsed = collapsed[module.key] ?? counts[module.key] === 0;
         return (
           <div key={module.key} className="overflow-hidden rounded-2xl border border-line">
-            <div className="flex items-center justify-between gap-3 bg-ink/[.02] px-4 py-3">
+            <div className="flex items-center justify-between gap-3 bg-sunken px-4 py-3">
               <button
                 type="button"
                 onClick={() => setCollapsed({ ...collapsed, [module.key]: !isCollapsed })}
                 className="flex items-center gap-2 text-left"
               >
-                <span aria-hidden className={`text-[9px] text-ink/40 transition ${isCollapsed ? "" : "rotate-90"}`}>
+                <span aria-hidden className={`text-[9px] text-muted transition ${isCollapsed ? "" : "rotate-90"}`}>
                   ▶
                 </span>
                 <span className="text-[13px] font-bold">{module.label}</span>
-                <span className="font-mono text-[10px] uppercase tracking-[.12em] text-ink/40">
+                <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
                   {counts[module.key]}/{module.permissions.length}
                 </span>
               </button>
@@ -832,18 +832,18 @@ function PermissionMatrix({
                       type="button"
                       disabled={!onToggle}
                       onClick={() => onToggle?.(permission.key)}
-                      className="flex w-full items-start gap-3 px-4 py-3 text-left transition disabled:cursor-default hover:bg-ink/[.02] disabled:hover:bg-transparent"
+                      className="flex w-full items-start gap-3 px-4 py-3 text-left transition disabled:cursor-default hover:bg-sunken disabled:hover:bg-transparent"
                     >
                       <span
                         aria-hidden
                         className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded text-[10px] leading-none ${
                           state === "denied"
-                            ? "bg-amber-100 text-amber-800"
+                            ? "bg-warn-surface text-warn-text"
                             : state === "extra"
                               ? "bg-blue text-white"
                               : on
                                 ? "bg-ink text-white"
-                                : "border border-ink/25"
+                                : "border border-line-strong"
                         }`}
                       >
                         {state === "denied" ? "−" : on ? "✓" : ""}

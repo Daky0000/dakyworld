@@ -87,7 +87,7 @@ export function WebsiteLayout() {
             {/* A dot rather than the word "planned": the label is what somebody
                 aims at, and three extra words on six of nine tabs would make the
                 two working ones harder to find. The screen itself says the rest. */}
-            {tab.unbuilt && <span aria-label=" (planned)" title="Planned — not built yet" className="ml-1.5 text-ink/25">•</span>}
+            {tab.unbuilt && <span aria-label=" (planned)" title="Planned — not built yet" className="ml-1.5 text-muted">•</span>}
           </NavLink>
         ))}
       </div>
