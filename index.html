@@ -124,7 +124,6 @@
 <body>
 <a href="#main" class="skip-link">Skip to content</a>
 <div class="page-progress" aria-hidden="true"><i id="pageProgress"></i></div>
-<div class="cursor-glow" id="cursorGlow" aria-hidden="true"></div>
 
 <header class="site-header" id="siteHeader">
   <div class="header-shell" id="headerShell">
@@ -207,12 +206,10 @@
   <div class="portal-content">
     <div class="portal-eyebrow"><i></i> Outsourced digital systems &amp; automation &middot; Kumasi, Ghana</div>
 
-    <!-- Two lines at a reduced size: the headline is longer than the 90px
-         default can hold inside the 950px hero column. -->
-    <h1 class="portal-title" style="font-size: clamp(40px,5.1vw,70px); text-align: center">
-      Build a better digital system<br>
-      <span>for your business.</span>
-    </h1>
+    <!-- Sized and wrapped by CSS (.portal-hero:not(--page) .portal-title). The
+         hard <br> this used to carry stranded the word "system" on its own
+         line on narrow screens; text-wrap:balance now splits it evenly. -->
+    <h1 class="portal-title">Build a better digital system <span>for your business.</span></h1>
 
     <p class="portal-copy">
       We build, connect, automate and improve the digital systems growing businesses use to
@@ -371,7 +368,7 @@
 <section id="evidence" class="section evidence on-dark reveal">
   <div class="wrap">
     <div class="section-head">
-      <div><div class="eyebrow">06 / Selected work</div><h2 class="display">Built for <span style="color:var(--lime)">practical business results.</span></h2></div>
+      <div><div class="eyebrow">06 / Selected work</div><h2 class="display">Built for <span>practical business results.</span></h2></div>
       <p>Real outcomes from website, automation and business-system work.</p>
     </div>
     <div class="evidence-grid">

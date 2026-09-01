@@ -21,6 +21,19 @@
   --soft:#edf1f7;
   --max:1440px;
 
+  /* Headline emphasis on dark grounds. The written system reserves lime for
+     action and positive status (~1-5% of a surface) and makes blue the
+     emphasis colour everywhere; large lime headline clauses on the dark
+     sections broke both rules, so dark surfaces now emphasise with blue,
+     lightened for contrast — the same job the light sections already do. */
+  --accent-dark:var(--blue-light);
+
+  /* One radius scale. Card corners had drifted across 20/21/22/24/26/27/28;
+     everything now lands on one of these three, pills stay 999px. */
+  --r-sm:12px;
+  --r-md:18px;
+  --r-lg:24px;
+
   /* Gap between the header shell and the mobile panel hanging below it. */
   --gap:9px;
   /* One easing curve everywhere, so the chrome moves like a single object. */
@@ -67,9 +80,9 @@ body.nav-open{overflow:hidden}
   border-radius:999px;font-size:14px;font-weight:700;transition:.25s ease;
 }
 .btn .pip{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:.25s ease}
-.btn-primary{background:var(--lime);color:var(--ink);box-shadow:0 12px 30px rgba(184,255,61,.18)}
+.btn-primary{background:var(--lime);color:var(--ink);box-shadow:0 6px 16px rgba(184,255,61,.12)}
 .btn-primary .pip{background:var(--ink);color:var(--lime)}
-.btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 36px rgba(184,255,61,.28)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(184,255,61,.2)}
 .btn-dark{background:var(--ink);color:#fff}
 .btn-dark .pip{background:var(--blue);color:#fff}
 .btn-dark:hover{transform:translateY(-2px)}
@@ -403,7 +416,14 @@ body.nav-open{overflow:hidden}
   line-height:.96;letter-spacing:-.06em;font-weight:500;
 }
 .portal-title span{color:#fff}
-.portal-title em{font-style:normal;color:var(--lime)}
+.portal-title em{font-style:normal;color:var(--accent-dark)}
+/* Home hero headline. It carried an inline font-size and a hard <br> to make it
+   fit the column; the <br> orphaned the word "system" on its own line on
+   phones. One clamp that fits at every width, wrapping on its own. */
+.portal-hero:not(.portal-hero--page) .portal-title{
+  font-size:clamp(38px,5.6vw,68px);
+  text-wrap:balance;
+}
 .portal-copy{
   max-width:740px;margin:27px auto 0;
   color:rgba(255,255,255,.66);
@@ -446,7 +466,7 @@ body.nav-open{overflow:hidden}
   padding-bottom:42px;
 }
 .portal-proof-label{
-  color:rgba(255,255,255,.25);font-size:9px;
+  color:rgba(255,255,255,.5);font-size:10px;
   font-weight:700;letter-spacing:.18em;text-transform:uppercase;
   margin-bottom:18px;
 }
@@ -454,15 +474,14 @@ body.nav-open{overflow:hidden}
   display:flex;justify-content:center;align-items:center;
   flex-wrap:wrap;gap:clamp(35px,6vw,80px);
 }
+/* Client names, set as one consistent line. They were previously each given a
+   different face and size (italic, serif, larger) to fake the look of varied
+   logotypes; that is a costume, not a wordmark, and it reads as one. */
 .portal-proof-row span{
-  color:rgba(255,255,255,.57);
-  font-family:"Space Grotesk";font-size:19px;font-weight:600;
-  letter-spacing:-.03em;
+  color:rgba(255,255,255,.62);
+  font-family:var(--font-display);font-size:19px;font-weight:600;
+  letter-spacing:-.02em;
 }
-.portal-proof-row span:nth-child(1){font-style:italic}
-.portal-proof-row span:nth-child(2){font-size:23px;letter-spacing:.02em}
-.portal-proof-row span:nth-child(3){font-family:Georgia,serif;font-size:20px}
-.portal-proof-row span:nth-child(4){font-size:17px;letter-spacing:.04em}
 .portal-orb{
   position:absolute;z-index:4;left:62%;top:54%;
   width:20px;height:20px;border-radius:50%;
@@ -478,7 +497,7 @@ body.nav-open{overflow:hidden}
   padding:58px 0 clamp(60px,7vw,96px);
 }
 .portal-meta{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:14px}
-.portal-index{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.26)}
+.portal-index{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.5)}
 .portal-hero--page .portal-title{margin:24px auto 0;max-width:17ch;font-size:clamp(44px,5.6vw,82px)}
 .portal-hero--page .portal-copy{margin:26px auto 0;max-width:64ch}
 .portal-hero--page .portal-actions,
@@ -532,7 +551,10 @@ body.nav-open{overflow:hidden}
 
 /* ── The gap section (home) ──────────────────────────────────────────── */
 .gap-section{background:#fff}
-.gap-grid{display:grid;grid-template-columns:.75fr 1.25fr;gap:100px}
+/* The left column is a short label + one sentence; the right is a full block.
+   The gap was a 100px canyon that left the sentence stranded; closing it and
+   evening the columns keeps the label tied to the content it introduces. */
+.gap-grid{display:grid;grid-template-columns:.82fr 1.18fr;gap:clamp(32px,5vw,72px);align-items:start}
 .gap-title{font-size:clamp(42px,5vw,70px);line-height:1}
 .gap-copy{display:grid;grid-template-columns:1fr 1fr;gap:35px;margin-top:34px}
 .gap-copy p{font-size:16px;line-height:1.75;color:#4f5a70}
@@ -545,7 +567,7 @@ body.nav-open{overflow:hidden}
 
 /* ── Arrangement cards ───────────────────────────────────────────────── */
 .arrangement{background:linear-gradient(135deg,#eef3ff 0%,#f8fafc 45%,#f1f6e9 100%)}
-.arrange-card{background:#fff;border:1px solid #dce3ef;border-radius:24px;padding:30px;box-shadow:0 20px 50px rgba(18,31,59,.06)}
+.arrange-card{background:#fff;border:1px solid #dce3ef;border-radius:var(--r-lg);padding:30px;box-shadow:0 20px 50px rgba(18,31,59,.06)}
 .arrange-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin-top:45px}
 .icon-box{
   width:45px;height:45px;border-radius:13px;background:var(--ink);color:var(--lime);
@@ -562,7 +584,7 @@ body.nav-open{overflow:hidden}
 .service-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:15px}
 .service-card{
   position:relative;overflow:hidden;background:#fff;border:1px solid var(--line);
-  border-radius:22px;padding:32px;min-height:235px;cursor:pointer;
+  border-radius:var(--r-lg);padding:32px;min-height:235px;cursor:pointer;
 }
 .service-card:after{
   content:"";position:absolute;width:150px;height:150px;right:-60px;bottom:-70px;
@@ -570,7 +592,7 @@ body.nav-open{overflow:hidden}
 }
 .service-card:hover:after{transform:scale(1.35)}
 .service-number{font-size:11px;font-weight:800;letter-spacing:.12em;color:#8993a6;display:inline-block;transition:color .25s ease,transform .35s ease,letter-spacing .3s ease}
-.service-card h3{font-family:"Space Grotesk";font-size:29px;letter-spacing:-.04em;margin:26px 0 10px;max-width:13ch;transition:transform .35s cubic-bezier(.16,1,.3,1)}
+.service-card h3{font-family:"Space Grotesk";font-size:29px;letter-spacing:-.04em;margin:26px 0 10px;max-width:20ch;transition:transform .35s cubic-bezier(.16,1,.3,1)}
 .service-card p{color:var(--muted);font-size:14px;line-height:1.7;max-width:48ch;transition:color .25s ease}
 .service-arrow{
   position:absolute;right:27px;top:28px;width:38px;height:38px;
@@ -591,7 +613,9 @@ body.nav-open{overflow:hidden}
 }
 .ownership-inner{position:relative;z-index:2;display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:end}
 .ownership h2{font-size:clamp(48px,6vw,88px);line-height:.95;max-width:11ch}
-.ownership h2 span,.band h2 span{color:var(--lime)}
+.ownership h2 span,.band h2 span{color:var(--accent-dark)}
+/* Any dark section that colours a headline clause uses the same blue emphasis. */
+.on-dark h2 span,.evidence h2 span{color:var(--accent-dark)}
 .ownership-copy{font-size:17px;line-height:1.75;color:rgba(255,255,255,.63)}
 .band .wrap{position:relative;z-index:2}
 .band .eyebrow{color:rgba(255,255,255,.55)}
@@ -602,7 +626,7 @@ body.nav-open{overflow:hidden}
 /* ── Governance cards ────────────────────────────────────────────────── */
 .governance{background:#fff}
 .governance-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
-.gov-card{position:relative;overflow:hidden;padding:35px;background:var(--cream);border:1px solid var(--line);border-radius:22px}
+.gov-card{position:relative;overflow:hidden;padding:35px;background:var(--cream);border:1px solid var(--line);border-radius:var(--r-lg)}
 .gov-card:before{
   content:"";position:absolute;left:0;top:0;width:3px;height:0;background:var(--blue);
   transition:height .45s cubic-bezier(.16,1,.3,1);
@@ -619,7 +643,7 @@ body.nav-open{overflow:hidden}
 .evidence-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
 .case{
   position:relative;overflow:hidden;cursor:pointer;
-  background:#121d35;border:1px solid rgba(255,255,255,.08);border-radius:24px;
+  background:#121d35;border:1px solid rgba(255,255,255,.08);border-radius:var(--r-lg);
   padding:30px;min-height:440px;display:flex;flex-direction:column;
 }
 .case:first-child{background:linear-gradient(145deg,#18284b,#10192c)}
@@ -639,12 +663,12 @@ body.nav-open{overflow:hidden}
 .case:hover .case-stat{transform:translateY(-3px)}
 .case-stat strong{font-family:"Space Grotesk";font-size:28px;color:var(--lime);display:block;position:relative;z-index:2;transition:text-shadow .3s ease}
 .case:hover .case-stat strong{text-shadow:0 0 20px rgba(184,255,61,.18)}
-.case-stat span{font-size:11px;color:rgba(255,255,255,.4)}
+.case-stat span{font-size:11px;color:rgba(255,255,255,.55)}
 
 /* ── Pricing ─────────────────────────────────────────────────────────── */
 .engagements{background:#fff}
 .price-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
-.price-card{position:relative;overflow:hidden;padding:35px;border:1px solid var(--line);border-radius:24px;background:#fff}
+.price-card{position:relative;overflow:hidden;padding:35px;border:1px solid var(--line);border-radius:var(--r-lg);background:#fff}
 .price-card:before{
   content:"";position:absolute;left:0;right:0;top:0;height:3px;
   background:linear-gradient(90deg,var(--blue),var(--cyan),var(--lime));
@@ -669,7 +693,7 @@ body.nav-open{overflow:hidden}
 .founder{background:var(--cream)}
 .founder-grid{display:grid;grid-template-columns:320px 1fr;gap:90px;align-items:center}
 .founder-photo{
-  position:relative;aspect-ratio:4/5;border-radius:24px;overflow:hidden;background:#dce3ed;
+  position:relative;aspect-ratio:4/5;border-radius:var(--r-lg);overflow:hidden;background:#dce3ed;
   box-shadow:0 25px 60px rgba(8,16,31,.12);
   transition:transform .45s cubic-bezier(.16,1,.3,1),box-shadow .45s ease;
 }
@@ -714,12 +738,12 @@ details[open] p{animation:faqIn .45s cubic-bezier(.16,1,.3,1)}
 
 /* ── CTA ─────────────────────────────────────────────────────────────── */
 .cta{background:var(--ink);color:#fff;position:relative;overflow:hidden}
-.cta:before{content:"";position:absolute;width:650px;height:650px;right:-200px;top:-330px;background:radial-gradient(circle,rgba(49,87,255,.45),transparent 67%)}
-.cta:after{content:"";position:absolute;width:450px;height:450px;left:-200px;bottom:-300px;background:radial-gradient(circle,rgba(184,255,61,.18),transparent 67%)}
-.cta-inner{position:relative;z-index:2;display:grid;grid-template-columns:1fr auto;gap:50px;align-items:end}
-.cta h2{font-size:clamp(52px,7vw,100px);line-height:.9;max-width:10ch}
-.cta h2 span{color:var(--lime)}
-.cta p{font-size:16px;line-height:1.7;color:rgba(255,255,255,.55);max-width:650px}
+.cta:before{content:"";position:absolute;width:650px;height:650px;right:-200px;top:-330px;background:radial-gradient(circle,rgba(49,87,255,.26),transparent 67%)}
+.cta:after{content:"";position:absolute;width:450px;height:450px;left:-200px;bottom:-300px;background:radial-gradient(circle,rgba(184,255,61,.1),transparent 67%)}
+.cta-inner{position:relative;z-index:2;display:grid;grid-template-columns:1fr auto;gap:clamp(40px,6vw,96px);align-items:end}
+.cta h2{font-size:clamp(48px,6vw,88px);line-height:.95;max-width:15ch}
+.cta h2 span{color:var(--accent-dark)}
+.cta p{font-size:16px;line-height:1.7;color:rgba(255,255,255,.6);max-width:760px}
 .cta a{color:inherit}
 .cta .btn-primary{color:var(--ink);box-shadow:0 0 0 rgba(184,255,61,0)}
 .cta .btn-primary:hover{color:var(--ink);box-shadow:0 16px 45px rgba(184,255,61,.2)}
@@ -802,7 +826,7 @@ footer{background:#050a14;color:#fff}
 
 /* Long-form case files */
 .case-file{
-  background:#fff;border:1px solid var(--line);border-radius:26px;
+  background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);
   padding:clamp(26px,3vw,44px);
   display:grid;grid-template-columns:minmax(0,.32fr) minmax(0,1fr);
   gap:30px clamp(30px,4vw,60px);
@@ -824,7 +848,7 @@ footer{background:#050a14;color:#fff}
 
 /* Service-level / response cards */
 .level-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
-.level-card{background:#fff;border:1px solid var(--line);border-radius:22px;padding:32px;transition:transform .35s cubic-bezier(.16,1,.3,1),box-shadow .35s ease}
+.level-card{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);padding:32px;transition:transform .35s cubic-bezier(.16,1,.3,1),box-shadow .35s ease}
 .level-card:hover{transform:translateY(-6px);box-shadow:0 24px 50px rgba(8,16,31,.09)}
 .level-card .k{font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#8993a6}
 .level-card .t{font-family:"Space Grotesk";font-size:clamp(32px,3.4vw,46px);letter-spacing:-.05em;margin:18px 0 14px;line-height:1}
@@ -832,12 +856,12 @@ footer{background:#050a14;color:#fff}
 
 /* Contact */
 .contact-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.72fr);gap:clamp(34px,5vw,80px)}
-.form-card{background:#fff;border:1px solid var(--line);border-radius:26px;padding:clamp(24px,3vw,40px)}
+.form-card{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);padding:clamp(24px,3vw,40px)}
 .form-grid{display:grid;gap:20px}
 .form-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .field-label{display:block;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#60708c;margin-bottom:9px}
 .field{
-  width:100%;background:var(--cream);border:1px solid var(--line);border-radius:14px;
+  width:100%;background:var(--cream);border:1px solid var(--line);border-radius:var(--r-sm);
   padding:14px 16px;font-family:inherit;font-size:15px;color:var(--ink);
   outline:none;transition:border-color .25s ease,box-shadow .25s ease,background .25s ease;
 }
@@ -880,20 +904,13 @@ a.v:hover{color:var(--blue)}
 .legal-head h2{font-family:"Space Grotesk";font-size:22px;letter-spacing:-.035em;margin:0}
 .legal-row p{margin:0;font-size:14.5px;line-height:1.9;color:#4f5a70;max-width:78ch}
 
-/* ── Chrome: progress bar + cursor glow ──────────────────────────────── */
+/* ── Chrome: reading-progress bar ────────────────────────────────────── */
 .page-progress{position:fixed;top:0;left:0;z-index:1000;width:100%;height:2px;pointer-events:none}
 .page-progress i{
   display:block;width:0;height:100%;
   background:linear-gradient(90deg,var(--blue),var(--cyan),var(--lime));
   box-shadow:0 0 10px rgba(101,231,255,.45);
 }
-.cursor-glow{
-  position:fixed;z-index:999;width:180px;height:180px;margin:-90px 0 0 -90px;
-  border-radius:50%;pointer-events:none;
-  background:radial-gradient(circle,rgba(49,87,255,.07),transparent 68%);
-  opacity:0;transition:opacity .3s ease;mix-blend-mode:screen;
-}
-@media(pointer:fine){.cursor-glow{opacity:1}}
 
 /* ── Shine on primary actions ────────────────────────────────────────── */
 .btn-primary,.portal-primary{position:relative;overflow:hidden}
@@ -915,16 +932,7 @@ a.v:hover{color:var(--blue)}
 }
 .link:hover:after{transform:scaleX(1)}
 
-/* Pointer-responsive local light on cards */
-.service-card,.gov-card,.price-card,.arrange-card,.case,.case-file,.level-card{--mx:50%;--my:50%}
-.service-card:before,.gov-card:after,.price-card:after,.arrange-card:after,.case-file:before,.level-card:before{
-  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  background:radial-gradient(circle at var(--mx) var(--my),rgba(80,115,255,.09),transparent 28%);
-  opacity:0;transition:opacity .3s ease;
-}
 .case-file,.level-card{position:relative;overflow:hidden}
-.service-card:hover:before,.gov-card:hover:after,.price-card:hover:after,
-.arrange-card:hover:after,.case-file:hover:before,.level-card:hover:before{opacity:1}
 
 .service-card,.gov-card,.case,.price-card,.arrange-card{
   transition:transform .35s cubic-bezier(.16,1,.3,1),box-shadow .35s ease,border-color .35s ease;
@@ -963,19 +971,23 @@ a.v:hover{color:var(--blue)}
 .portal-proof-row span{transition:transform .3s ease,opacity .3s ease}
 .portal-proof-row span:hover{transform:translateY(-4px);opacity:1}
 
+/* One quiet entrance: a short rise, no long slide. It marks that a section has
+   arrived and then gets out of the way. Children are not separately animated —
+   a per-card stagger on top of this read as theatrical rather than helpful.
+
+   Gated on html.reveal-ready, which site.js adds only once it has wired up the
+   observer. If the script fails before that point the content simply shows,
+   un-animated, rather than staying invisible. */
 .reveal{
-  opacity:0;transform:translateY(35px);
-  transition:opacity .8s cubic-bezier(.16,1,.3,1),transform .8s cubic-bezier(.16,1,.3,1);
+  transition:opacity .5s cubic-bezier(.16,1,.3,1),transform .5s cubic-bezier(.16,1,.3,1);
 }
-.reveal.in{opacity:1;transform:none}
+.reveal-ready .reveal{opacity:0;transform:translateY(14px)}
+.reveal-ready .reveal.in{opacity:1;transform:none}
 .reveal .service-card,.reveal .gov-card,.reveal .case,.reveal .price-card,
 .reveal .case-file,.reveal .level-card,.reveal .spec-row,.reveal .post-row,.reveal .rate-row{
-  opacity:0;transform:translateY(22px);
   transition:
-    opacity .65s cubic-bezier(.16,1,.3,1),
-    transform .65s cubic-bezier(.16,1,.3,1),
     background .3s ease,padding-left .3s ease,
-    box-shadow .35s ease,border-color .35s ease;
+    box-shadow .35s ease,border-color .35s ease,transform .35s cubic-bezier(.16,1,.3,1);
 }
 .reveal.in .service-card,.reveal.in .gov-card,.reveal.in .case,.reveal.in .price-card,
 .reveal.in .case-file,.reveal.in .level-card,.reveal.in .spec-row,.reveal.in .post-row,.reveal.in .rate-row{
@@ -1081,7 +1093,7 @@ a.v:hover{color:var(--blue)}
   .reveal .case-file,.reveal .level-card,.reveal .spec-row,.reveal .post-row,.reveal .rate-row{
     animation:none!important;opacity:1!important;transform:none!important;
   }
-  .cursor-glow,.page-progress{display:none}
+  .page-progress{display:none}
 }
 
 /* ── Breadcrumb ──────────────────────────────────────────────────────────────
@@ -1142,16 +1154,12 @@ a.v:hover{color:var(--blue)}
 .price-after{margin:18px 0 0;font-size:13px;line-height:1.7;color:#8993a6}
 .price-after strong{color:var(--ink);font-weight:600}
 
-/* Five arrangement cards: three, then two centred beneath them. */
-.arrange-grid--5{grid-template-columns:repeat(6,1fr)}
-.arrange-grid--5 > *{grid-column:span 2}
-.arrange-grid--5 > *:nth-child(4){grid-column:2/span 2}
-.arrange-grid--5 > *:nth-child(5){grid-column:4/span 2}
+/* Five arrangement items: a row of three, then two left-aligned beneath — the
+   same left edge as the row above. The previous version centred the last two
+   on a six-column grid, which broke the alignment between the two rows. */
+.arrange-grid--5{grid-template-columns:repeat(3,1fr)}
 @media(max-width:950px){
   .arrange-grid--5{grid-template-columns:1fr}
-  .arrange-grid--5 > *,
-  .arrange-grid--5 > *:nth-child(4),
-  .arrange-grid--5 > *:nth-child(5){grid-column:auto}
 }
 
 /* -- Numbered service rows: a lead line, a list and a "best for" ------- */
@@ -1170,13 +1178,16 @@ a.v:hover{color:var(--blue)}
 
 /* A bullet list on a dark band. `.features` lives in pages.css, which the
    homepage does not load, so a list marked up with it there rendered as
-   run-together text with no bullets at all. */
-.band-list{list-style:none;padding:0;margin:34px 0 0;display:grid;gap:11px;max-width:1040px}
+   run-together text with no bullets at all.
+   Two columns so seven short items fill the band rather than running down its
+   left edge with the right half empty. */
+.band-list{list-style:none;padding:0;margin:34px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:11px 48px;max-width:1040px}
 .band-list li{position:relative;padding-left:19px;color:rgba(255,255,255,.72);font-size:15px;line-height:1.6}
 .band-list li:before{
   content:"";position:absolute;left:0;top:9px;width:6px;height:6px;
-  border-radius:50%;background:var(--lime);
+  border-radius:50%;background:var(--accent-dark);
 }
+@media(max-width:680px){.band-list{grid-template-columns:1fr}}
 
 /* Four monthly-partnership cards read better as two rows of two than as
    three and a stray. */

@@ -136,7 +136,6 @@
 
   if (window.lucide) lucide.createIcons();
 
-  var fine = window.matchMedia('(pointer:fine)').matches;
   var progress = document.getElementById('pageProgress');
 
   /* ── Header ─────────────────────────────────────────────────────────────
@@ -268,42 +267,51 @@
     }
   }
 
-  /* Scroll reveals ------------------------------------------------------ */
-  var reveals = document.querySelectorAll('.reveal');
-  reveals.forEach(function (section) {
-    section
-      .querySelectorAll('.service-card,.gov-card,.case,.price-card,.case-file,.level-card,.spec-row,.post-row,.rate-row')
-      .forEach(function (card, i) {
-        card.style.transitionDelay = Math.min(i, 7) * 60 + 'ms';
-      });
-  });
+  /* Scroll reveals ----------------------------------------------------------
+     One quiet rise per section as it enters. No per-card stagger — the section
+     carries the whole group. And a hard guarantee that the content is shown:
+     if IntersectionObserver is missing, or has not fired for a section within
+     three seconds (a stalled load, a browser quirk), reveal everything anyway.
+     A .reveal that never gains .in is invisible, and that must not be possible. */
+  var reveals = [].slice.call(document.querySelectorAll('.reveal'));
 
-  /* Where several .reveal elements share a parent — a card grid, a plan
-     table — cascade them. A lone .reveal keeps a zero delay, so sections
-     far down the page still appear the moment they are reached. */
-  var groups = new Map();
-  reveals.forEach(function (el) {
-    var parent = el.parentElement;
-    if (!parent) return;
-    if (!groups.has(parent)) groups.set(parent, []);
-    groups.get(parent).push(el);
-  });
-  groups.forEach(function (siblings) {
-    if (siblings.length < 2) return;
-    siblings.forEach(function (el, i) {
-      if (el.style.transitionDelay) return;
-      el.style.transitionDelay = Math.min(i, 8) * 65 + 'ms';
-    });
-  });
-  var revealObserver = new IntersectionObserver(function (entries) {
-    entries.forEach(function (entry) {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('in');
-        revealObserver.unobserve(entry.target);
-      }
-    });
-  }, { threshold: 0.08, rootMargin: '0px 0px -45px 0px' });
-  reveals.forEach(function (el) { revealObserver.observe(el); });
+  function showAll() {
+    reveals.forEach(function (el) { el.classList.add('in'); });
+  }
+
+  /* Only now does the CSS start hiding .reveal — see the note in site.css. */
+  document.documentElement.classList.add('reveal-ready');
+
+  if (!('IntersectionObserver' in window)) {
+    showAll();
+  } else {
+    var revealObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in');
+          revealObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.08, rootMargin: '0px 0px -45px 0px' });
+    reveals.forEach(function (el) { revealObserver.observe(el); });
+    setTimeout(showAll, 3000);
+  }
+
+  /* Hero entrance safety net ---------------------------------------------
+     The hero content starts at opacity:0 and is brought in by a CSS
+     animation. That animation is deferred while a tab is loaded in the
+     background and, in rare cases, can be dropped entirely — leaving the
+     hero blank. Force it visible after four seconds regardless. */
+  setTimeout(function () {
+    document
+      .querySelectorAll('.portal-content > *, .portal-proof, .hero-inner > *')
+      .forEach(function (el) {
+        if (parseFloat(getComputedStyle(el).opacity) < 1) {
+          el.style.opacity = '1';
+          el.style.transform = 'none';
+        }
+      });
+  }, 4000);
 
   /* Count-up statistics ------------------------------------------------- */
   var counters = document.querySelectorAll('.count-up');
@@ -326,74 +334,6 @@
       });
     }, { threshold: 0.8 });
     counters.forEach(function (el) { countObserver.observe(el); });
-  }
-
-  /* Pointer-responsive local light on cards ----------------------------- */
-  if (fine) {
-    document
-      .querySelectorAll('.service-card,.gov-card,.price-card,.arrange-card,.case,.case-file,.level-card')
-      .forEach(function (card) {
-        card.addEventListener('pointermove', function (e) {
-          var r = card.getBoundingClientRect();
-          card.style.setProperty('--mx', ((e.clientX - r.left) / r.width) * 100 + '%');
-          card.style.setProperty('--my', ((e.clientY - r.top) / r.height) * 100 + '%');
-        }, { passive: true });
-      });
-  }
-
-  /* Desktop cursor atmosphere ------------------------------------------- */
-  var glow = document.getElementById('cursorGlow');
-  if (glow && fine) {
-    var x = window.innerWidth / 2, y = window.innerHeight / 2, tx = x, ty = y;
-    window.addEventListener('pointermove', function (e) { tx = e.clientX; ty = e.clientY; }, { passive: true });
-    (function moveGlow() {
-      x += (tx - x) * 0.1;
-      y += (ty - y) * 0.1;
-      glow.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
-      requestAnimationFrame(moveGlow);
-    })();
-  }
-
-  /* Magnetic CTAs -------------------------------------------------------- */
-  if (fine) {
-    document.querySelectorAll('.portal-primary,.btn-primary').forEach(function (button) {
-      button.addEventListener('pointermove', function (e) {
-        var r = button.getBoundingClientRect();
-        var mx = (e.clientX - r.left - r.width / 2) / r.width;
-        var my = (e.clientY - r.top - r.height / 2) / r.height;
-        button.style.transform = 'translate(' + mx * 5 + 'px,' + my * 4 + 'px)';
-      });
-      button.addEventListener('pointerleave', function () { button.style.transform = ''; });
-    });
-  }
-
-  /* Pointer tilt on plan and article cards -------------------------------- */
-  if (fine) {
-    document.querySelectorAll('.plan,.article').forEach(function (card) {
-      card.addEventListener('pointermove', function (e) {
-        if (card.closest('.reveal') && !card.closest('.reveal').classList.contains('in')) return;
-        var r = card.getBoundingClientRect();
-        var x = (e.clientX - r.left) / r.width - 0.5;
-        var y = (e.clientY - r.top) / r.height - 0.5;
-        var lift = card.classList.contains('featured') ? -11 : -6;
-        card.style.transform =
-          'perspective(950px) rotateX(' + (y * -1.1) + 'deg) rotateY(' + (x * 1.1) + 'deg) translateY(' + lift + 'px)';
-      });
-      card.addEventListener('pointerleave', function () { card.style.transform = ''; });
-    });
-
-    /* Contact orb drifts toward the pointer */
-    var orbStage = document.querySelector('.hero-side');
-    var orb = document.querySelector('.contact-orb');
-    if (orbStage && orb) {
-      orbStage.addEventListener('pointermove', function (e) {
-        var r = orbStage.getBoundingClientRect();
-        var x = (e.clientX - r.left - r.width / 2) / r.width;
-        var y = (e.clientY - r.top - r.height / 2) / r.height;
-        orb.style.transform = 'translate(' + x * 12 + 'px,' + y * 10 + 'px)';
-      });
-      orbStage.addEventListener('pointerleave', function () { orb.style.transform = ''; });
-    }
   }
 
   /* Insights category filter ---------------------------------------------- */
