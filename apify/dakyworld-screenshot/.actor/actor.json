@@ -1,0 +1,10 @@
+{
+    "actorSpecification": 1,
+    "name": "website-screenshot",
+    "title": "Dakyworld Website Screenshot",
+    "description": "Screenshots a batch of websites and returns one row per requested URL, carrying back the caller's own id.",
+    "version": "1.0",
+    "buildTag": "latest",
+    "input": "./input_schema.json",
+    "dockerfile": "./Dockerfile"
+}

@@ -1,0 +1,5 @@
+node_modules/
+dist/
+# Apify's local storage, written by `npm test` and `npm run start:dev`.
+storage/
+apify_storage/

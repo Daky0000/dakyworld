@@ -1,7 +1,11 @@
 import { apifyConfigured } from "../lib/apify.js";
-import { runActor } from "./actorRun.js";
-import { cropPngTop, downscalePng, pngSize } from "./png.js";
-import { buildScreenshotInput, runOptionsFor, screenshotActorId } from "./screenshotActors.js";
+import { pngSize } from "./png.js";
+import {
+  downloadScreenshot,
+  runScreenshotActor,
+  screenshotActorId,
+  type ScreenshotRow,
+} from "./apifyScreenshot.js";
 
 /**
  * A picture of a prospect's homepage.
@@ -18,12 +22,16 @@ import { buildScreenshotInput, runOptionsFor, screenshotActorId } from "./screen
  *
  *  - **Apify takes the screenshot, not this server.** A headless Chrome in the
  *    deployment is three hundred megabytes, a browser to keep patched, and a
- *    new way for a deploy to fail — in exchange for a job Apify's own actor
- *    has done two million times and this app already holds a token for.
- *  - **The top of the page only.** A full-page screenshot of a long homepage
- *    comes back taller than any vision model will accept, and the part of it
- *    the argument rests on is the part a visitor sees before scrolling.
- *    `cropPngTop` cuts it down here rather than paying to send the footer.
+ *    new way for a deploy to fail. Since 2 Sep 2026 the actor doing it is
+ *    Dakyworld's own — `apify/dakyworld-screenshot` in this repository — which
+ *    is what let the four external actors, their incompatible input schemas
+ *    and the layer that translated between them all leave this file.
+ *  - **The top of the page only, and the actor cuts it.** A full-page
+ *    screenshot of a long homepage comes back taller than any vision model
+ *    will accept, and the part the argument rests on is the part a visitor
+ *    sees before scrolling. `maxHeight` and `maxWidth` go out with the run, so
+ *    what comes back over the network is already the picture the model reads
+ *    rather than a 12,000px page this server then has to decode.
  *  - **It never throws.** No token, actor down, site refuses a headless
  *    browser — every one of those is a note, and the caller falls back to the
  *    structural audit, which needs nothing but a fetch.
@@ -35,11 +43,13 @@ export const VIEWPORT_WIDTH = 1280;
 /**
  * The window heights that go with the two widths.
  *
- * A real laptop and a real iPhone 14. The picture is taken full-page and cut to
- * `keepRows` afterwards, so this is not what decides how much page comes back —
- * it is what the page is told it is being viewed on, which decides where a
- * sticky header sits and how much a lazy-loading gallery brings in before the
- * shutter. Only some actors take it; the rest use their own.
+ * A real laptop and a real iPhone 14. The picture is taken full-page and cut
+ * to `keepRows` afterwards, so this is not what decides how much page comes
+ * back — it is what the page is told it is being viewed on, which decides
+ * where a sticky header sits and how much a lazy-loading gallery brings in
+ * before the shutter. It must be a real device height: deriving it from the
+ * width (the first version used three quarters) gives a phone a 293px-tall
+ * window, which is not a shape any site has been designed against.
  */
 const VIEWPORT_HEIGHT = 800;
 const PHONE_VIEWPORT_HEIGHT = 844;
@@ -88,6 +98,9 @@ export const MAX_BATCH = 20;
  * impression is made of.
  */
 const KEEP_ROWS = 2400;
+
+/** Milliseconds after load, for fonts and a hero image to arrive. */
+const DELAY_MS = 3000;
 
 /** Past this, the image is dropped rather than sent — every vendor rejects it anyway. */
 const MAX_IMAGE_BYTES = 4_500_000;
@@ -163,15 +176,21 @@ export async function captureHomepages(websites: string[], options: ShotOptions 
   const viewportHeight = options.viewportHeight ?? (viewportWidth <= 500 ? PHONE_VIEWPORT_HEIGHT : VIEWPORT_HEIGHT);
   const keepRows = options.keepRows ?? KEEP_ROWS;
 
-  // Normalise first, so an unusable address costs nothing and says so.
-  const wanted: { requested: string; url: string }[] = [];
+  // Normalise first, so an unusable address costs nothing and says so. The id
+  // is the position in this list: it is generated here, sent with the request
+  // and matched on the way back, so it never has to be guessed at either end.
+  const wanted: { id: string; requested: string; url: string }[] = [];
+  const seen = new Map<string, string>();
   for (const website of websites) {
+    if (results.has(website) || seen.has(website)) continue;
     const url = normaliseSiteUrl(website);
     if (!url) {
       results.set(website, none(`"${website}" is not a web address this could open, so no screenshot was taken.`));
       continue;
     }
-    wanted.push({ requested: website, url });
+    const id = `s${wanted.length}`;
+    seen.set(website, id);
+    wanted.push({ id, requested: website, url });
   }
   if (wanted.length === 0) return results;
 
@@ -186,136 +205,111 @@ export async function captureHomepages(websites: string[], options: ShotOptions 
     return results;
   };
 
-  const built = await buildScreenshotInput(
-    wanted.map((entry) => entry.url),
-    { viewportWidth, viewportHeight, delayMs: 3000 },
-  );
-
   // The clock scales with the batch: twenty pages genuinely take longer than
   // one, and giving up early would throw away a run that has been paid for.
   const giveUpAfterMs = Math.min(600_000, 60_000 + wanted.length * 20_000);
 
-  // Start, poll and read are `services/actorRun.ts` rather than a loop here.
-  // The loop that used to be in this function treated `ABORTING` and
-  // `TIMING-OUT` as finished — they are not terminal — so a run being killed
-  // was reported as a run that failed for no stated reason. Every message
-  // below is the one this function has always produced; only the machinery
-  // underneath them is now shared with the capture tools.
-  const result = await runActor(built.actorId, built.input, {
-    ...(await runOptionsFor(wanted.length, built.actorId)),
-    waitMs: giveUpAfterMs,
-    maxItemsRead: Math.max(10, wanted.length * 2),
-  });
+  const run = await runScreenshotActor(
+    {
+      urls: wanted.map((entry) => ({ id: entry.id, url: entry.url })),
+      viewport: { width: viewportWidth, height: viewportHeight },
+      fullPage: true,
+      delayMs: DELAY_MS,
+      maxWidth: MODEL_WIDTH,
+      maxHeight: keepRows,
+    },
+    { waitMs: giveUpAfterMs },
+  );
 
-  if (!result.ok) {
-    switch (result.code) {
+  if (!run.ok) {
+    switch (run.code) {
       case "APIFY_NOT_CONFIGURED":
       case "APIFY_AUTH_ERROR":
-        return failAll(result.message);
+        return failAll(run.message);
       case "STILL_RUNNING":
         return failAll(`No screenshot was taken — the run was still going after ${Math.round(giveUpAfterMs / 1000)} seconds.`);
       case "APIFY_UNREACHABLE":
-        return failAll(`No screenshot was taken — Apify stopped answering: ${result.message}`);
+        return failAll(`No screenshot was taken — Apify stopped answering: ${run.message}`);
       case "DATASET_RETRIEVAL_FAILED":
-        return failAll(`The screenshots were taken but could not be read back: ${result.message}`);
+        return failAll(`The screenshots were taken but could not be read back: ${run.message}`);
       case "ACTOR_FAILED":
       case "ACTOR_ABORTED":
       case "ACTOR_TIMEOUT":
-        return failAll(
-          `No screenshot was taken — the run ${(result.status ?? "failed").toLowerCase()}. Their site may block automated browsers.`,
-        );
+        return failAll(`No screenshot was taken — the run did not finish. ${run.message}`);
       default:
-        return failAll(`No screenshot was taken — Apify would not start the run: ${result.message}`);
+        return failAll(`No screenshot was taken — Apify would not start the run: ${run.message}`);
     }
   }
 
-  const items = result.items;
-  // What one page cost, which is the number worth knowing when choosing an
-  // actor. Apify reports per run, so it is shared out across the pictures that
+  // What one page cost, which is the number worth knowing when pricing a
+  // batch. Apify reports per run, so it is shared out across the pictures that
   // actually came back.
-  const withImages = items.filter((row) => typeof row.screenshotUrl === "string").length;
-  const perShot = result.costUsd != null && withImages > 0 ? result.costUsd / withImages : null;
+  const withImages = [...run.rows.values()].filter((row) => row.success).length;
+  const perShot = run.costUsd != null && withImages > 0 ? run.costUsd / withImages : null;
+  const takenAt = new Date().toISOString();
 
-  for (const [index, entry] of wanted.entries()) {
-    const item = matchItem(items, entry.url, index, wanted.length);
-    const imageUrl = item?.screenshotUrl as string | undefined;
-    if (!imageUrl) {
-      // Some actors say why in the row itself rather than failing the run.
-      // Carrying that sentence through is the difference between "no picture"
-      // and "their site timed out after 30 seconds".
-      const said = typeof item?.error === "string" && item.error.trim() ? ` ${item.error.trim()}` : "";
-      results.set(entry.requested, none(`No screenshot came back for ${entry.url} — the run finished without producing an image for it.${said}`));
+  for (const entry of wanted) {
+    // By id, and only by id. Nothing here looks at position, and a row that
+    // did not come back is a page with no picture rather than a reason to
+    // reach for the row next to it.
+    const row = run.rows.get(entry.id);
+    if (!row) {
+      results.set(entry.requested, none(`No screenshot came back for ${entry.url} — the run finished without producing a result for it.`));
       continue;
     }
-    results.set(entry.requested, await readShot(entry, item!, imageUrl, new Date().toISOString(), perShot, built, viewportWidth, keepRows));
+    if (!row.success || !row.screenshotUrl) {
+      results.set(entry.requested, none(describeRowFailure(entry.url, row)));
+      continue;
+    }
+    results.set(entry.requested, await readShot(entry, row, takenAt, perShot, viewportWidth));
   }
 
   return results;
 }
 
 /**
- * Which dataset row belongs to which request.
+ * Why one page in a finished run has no picture.
  *
- * By `startUrl` first, because that is the address we asked for and it survives
- * a redirect. Then by final URL. Position is the last resort: actors generally
- * preserve input order, but a run where one page failed shifts everything after
- * it, so matching on position alone would quietly attach the wrong picture to
- * the wrong business — which on a page carrying somebody's name is not a
- * cosmetic mistake.
+ * Each of these is an ordinary thing for a stranger's website to do, and each
+ * needs a different sentence — "their site timed out" and "that address does
+ * not resolve" send a person to two different places. The actor's own message
+ * is carried through when there is nothing better to say, which is the
+ * difference between "no picture" and a reason.
  */
-function matchItem(
-  items: Record<string, unknown>[],
-  url: string,
-  index: number,
-  wantedCount: number,
-): Record<string, unknown> | null {
-  const same = (value: unknown) => typeof value === "string" && (value === url || value.replace(/\/$/, "") === url.replace(/\/$/, ""));
-
-  const byStart = items.find((row) => same(row.startUrl));
-  if (byStart) return byStart;
-  const byFinal = items.find((row) => same(row.url));
-  if (byFinal) return byFinal;
-
-  // Some actors return the picture and nothing else — no startUrl, no url. For
-  // those, position is all there is, and it is only safe when every page came
-  // back: one failure part-way through a batch shifts the rest, and a picture
-  // attached to the wrong business is a page carrying somebody's name that is
-  // not theirs. So this insists the counts line up exactly.
-  const anyAddress = items.some((row) => typeof row.startUrl === "string" || typeof row.url === "string");
-  if (!anyAddress && items.length === wantedCount) return items[index] ?? null;
-
-  return null;
+function describeRowFailure(url: string, row: ScreenshotRow): string {
+  const said = row.error?.message?.trim();
+  switch (row.error?.code) {
+    case "PAGE_TIMEOUT":
+      return `No screenshot of ${url} — the page did not finish loading in time. A slow site, or one that never stops requesting.`;
+    case "NAVIGATION_ERROR":
+      return `No screenshot of ${url} — the page could not be opened.${said ? ` ${said}` : ""}`;
+    case "INVALID_URL":
+      return `No screenshot of ${url} — it is not an address a browser could open.`;
+    case "SCREENSHOT_FAILED":
+    case "IMAGE_PROCESSING_FAILED":
+      return `The page at ${url} opened but no usable picture came out of it.${said ? ` ${said}` : ""}`;
+    case "BROWSER_LAUNCH_FAILED":
+      return `No screenshot of ${url} — the screenshot actor could not start a browser.${said ? ` ${said}` : ""}`;
+    default:
+      return `No screenshot came back for ${url}.${said ? ` ${said}` : ""}`;
+  }
 }
 
 async function readShot(
   entry: { requested: string; url: string },
-  item: Record<string, unknown>,
-  imageUrl: string,
-  finishedAt: string | null,
+  row: ScreenshotRow,
+  takenAt: string,
   costUsd: number | null,
-  built: { actorId: string; ignored: string[]; guessed: boolean },
   viewportWidth: number,
-  keepRows: number,
 ): Promise<ShotResult> {
-  let raw: Buffer;
-  try {
-    const response = await fetch(imageUrl);
-    if (!response.ok) return none(`The screenshot of ${entry.url} could not be downloaded (HTTP ${response.status}).`);
-    raw = Buffer.from(await response.arrayBuffer());
-  } catch (err) {
-    return none(`The screenshot of ${entry.url} could not be downloaded: ${(err as Error).message}`);
-  }
+  const downloaded = await downloadScreenshot(row.screenshotUrl!);
+  if (!downloaded.ok) return none(`The screenshot of ${entry.url} could not be downloaded: ${downloaded.message}`);
+  const sent = downloaded.bytes;
 
-  const original = pngSize(raw);
-  // Crop first, then shrink: cropping is what removes the footer nobody is
-  // judging, and shrinking a 12,000px page before cutting it would waste the
-  // work on rows about to be thrown away.
-  const cropped = cropPngTop(raw, keepRows) ?? raw;
-  // Never *up*-scale: a 390px-wide phone shot blown up to 1024 is the same
-  // picture with softer edges and three times the tiles to pay for.
-  const sent = (original && original.width > MODEL_WIDTH ? downscalePng(cropped, MODEL_WIDTH) : null) ?? cropped;
-  const size = pngSize(sent);
-  const wasCropped = Boolean(original && size && original.height > keepRows);
+  // The actor reports the size it produced; this reads it off the file. They
+  // should agree, and the file is the one the model is actually being handed —
+  // so a disagreement means trusting the bytes rather than the claim.
+  const size = pngSize(sent) ?? (row.width && row.height ? { width: row.width, height: row.height } : null);
 
   if (!size || size.width > MAX_IMAGE_EDGE || size.height > MAX_IMAGE_EDGE) {
     return none(`The screenshot of ${entry.url} came back in a shape no model will read, so the look at their homepage was skipped.`);
@@ -324,28 +318,26 @@ async function readShot(
     return none(`The screenshot of ${entry.url} is ${(sent.byteLength / 1_000_000).toFixed(1)}MB, past what a model will accept, so it was skipped.`);
   }
 
-  const notes = [
-    wasCropped ? `Their homepage is longer than this; the picture is the top of the page, which is what a visitor sees first.` : null,
-    built.guessed ? `The screenshot actor (${built.actorId}) publishes no input schema, so its settings were guessed.` : null,
-    built.ignored.length ? `${built.actorId} ignored: ${built.ignored.join("; ")}.` : null,
-  ].filter(Boolean);
-
   return {
     shot: {
       requested: entry.url,
-      finalUrl: typeof item.url === "string" ? item.url : null,
-      takenAt: finishedAt ?? new Date().toISOString(),
+      finalUrl: row.finalUrl,
+      takenAt,
       viewportWidth,
       width: size.width,
       height: size.height,
-      cropped: wasCropped,
-      imageUrl,
+      cropped: row.cropped,
+      // The uncut capture when there is one, so a person opening this sees the
+      // whole page rather than the same crop the model was shown.
+      imageUrl: row.fullScreenshotUrl ?? row.screenshotUrl!,
       mediaType: "image/png",
       bytes: sent.byteLength,
       costUsd,
     },
     base64: sent.toString("base64"),
-    note: notes.length ? notes.join(" ") : null,
+    note: row.cropped
+      ? "Their homepage is longer than this; the picture is the top of the page, which is what a visitor sees first."
+      : null,
   };
 }
 

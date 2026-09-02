@@ -101,9 +101,13 @@ Two things already decided:
 - **No native image dependency.** `cloudinary` is already a dependency and is
   already configured-at-use from encrypted settings (`lib/cloudinary.ts`), so it
   is the resize/compress/strip pipeline. With no Cloudinary key — today's state —
-  it degrades rather than fails: PNG through `decodePng`/`downscalePng` in
-  `services/png.ts`, JPEG and WebP accepted under a size cap with a note saying
-  they were not recompressed.
+  it degrades rather than fails: JPEG and WebP accepted under a size cap with a
+  note saying they were not recompressed. **`downscalePng` no longer exists** —
+  it was removed on 2 Sep 2026 when screenshot resizing moved into Dakyworld's
+  own Apify actor, which does it with Sharp. `services/png.ts` still has
+  `decodePng`/`encodePng` for the audit's annotations, so a box filter could be
+  written back if it is ever wanted; the better precedent is the actor's, which
+  is to do the work where a real image library is already installed.
 - **The bytes are committed to the repository**, not linked from a CDN, so the
   published site depends on nothing external. The repository stays the source of
   truth for pictures as it is for words.

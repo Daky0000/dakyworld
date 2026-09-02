@@ -1,0 +1,72 @@
+{
+    "title": "Dakyworld Website Screenshot",
+    "description": "One stable contract. Everything the caller needs and nothing shaped by any particular actor's habits.",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "urls": {
+            "title": "Pages",
+            "type": "array",
+            "description": "The pages to photograph, each with the caller's own id. The id comes back on the matching result row unchanged, which is how a picture is matched to the business that asked for it. A bare string is accepted when running this by hand, and is given a positional id.",
+            "editor": "json",
+            "prefill": [{ "id": "example", "url": "https://example.com" }]
+        },
+        "viewport": {
+            "title": "Viewport",
+            "type": "object",
+            "description": "The browser window. A real device size: 1280x800 is a laptop, 390x844 is an iPhone 14. It is not a crop — it is what the page thinks it is being viewed on, which decides where a sticky header sits and how much a lazy-loading gallery brings in before the shutter.",
+            "editor": "json",
+            "default": { "width": 1280, "height": 800 },
+            "prefill": { "width": 1280, "height": 800 }
+        },
+        "fullPage": {
+            "title": "Full page",
+            "type": "boolean",
+            "description": "Capture the whole scrollable page rather than one window. Use `maxHeight` to keep only the top of it.",
+            "default": true
+        },
+        "delay": {
+            "title": "Delay after load (ms)",
+            "type": "integer",
+            "description": "How long to wait after the page has loaded, for fonts and a hero image to arrive.",
+            "default": 3000,
+            "minimum": 0,
+            "maximum": 30000,
+            "unit": "milliseconds"
+        },
+        "maxWidth": {
+            "title": "Maximum width (px)",
+            "type": "integer",
+            "description": "Resize the finished picture down to this width. Never up. Leave blank to keep the captured width.",
+            "minimum": 200,
+            "maximum": 3840,
+            "unit": "pixels"
+        },
+        "maxHeight": {
+            "title": "Maximum height (px)",
+            "type": "integer",
+            "description": "Keep this many rows from the top and throw the rest away. Measured in captured pixels, before the resize. Leave blank to keep the whole capture.",
+            "minimum": 200,
+            "maximum": 30000,
+            "unit": "pixels"
+        },
+        "navigationTimeoutMs": {
+            "title": "Page timeout (ms)",
+            "type": "integer",
+            "description": "How long one page may take before it is written off as a timeout. One broken website cannot hold the batch open.",
+            "default": 45000,
+            "minimum": 5000,
+            "maximum": 120000,
+            "unit": "milliseconds"
+        },
+        "proxy": {
+            "title": "Proxy",
+            "type": "object",
+            "description": "Apify proxy settings. The proxy is forced on whatever is set here — a datacentre IP with no proxy in front of it is refused by a good share of small-business sites behind Cloudflare — so this only chooses the groups and the country.",
+            "editor": "proxy",
+            "default": { "useApifyProxy": true },
+            "prefill": { "useApifyProxy": true }
+        }
+    },
+    "required": ["urls"]
+}

@@ -59,10 +59,14 @@ export const SETTING = {
   CAPTURE_MAX_RUNS_PER_TASK: "capture.maxRunsPerTask",
   /**
    * Which Apify actor takes the homepage screenshots. Blank uses the shipped
-   * default (`i-scraper/website-screenshot`). A setting rather than a constant
-   * because every screenshot actor does the same job at a different price, and
-   * switching to a cheaper one should be a dropdown rather than a deploy —
-   * see services/screenshotActors.ts.
+   * default (`dakyworld/website-screenshot`, the actor whose source is in
+   * `apify/dakyworld-screenshot/`).
+   *
+   * Still a setting rather than a constant, for a narrower reason than before:
+   * the username half of an actor id is the Apify account it was pushed to, so
+   * a deployment whose account is not `dakyworld` needs to say so, and a
+   * staging copy of the actor should be reachable without a deploy. It is no
+   * longer a choice between vendors — see services/apifyScreenshot.ts.
    */
   SCREENSHOT_ACTOR: "capture.screenshotActor",
 

@@ -11,6 +11,7 @@ Read this before touching anything at the root — the layout is not obvious.
 | `server/` | Dakyworld OS, the internal ops app (API + React client) | Railway → **os.dakyworld.com** |
 | repo root (`index.html`, `about.html`, … `assets/`) | the public marketing website, static HTML | GitHub Pages → **dakyworld.com** |
 | `website-drafts/` | superseded homepage explorations | served but unlinked |
+| `apify/dakyworld-screenshot/` | the screenshot actor Dakyworld OS calls | Apify, via `apify push` |
 
 The website sits *at the root, beside `server/`* because GitHub Pages can only
 serve from the root or `/docs` on this repo, and changing that needs a
@@ -45,6 +46,10 @@ npx tsc --noEmit         # typecheck
 # Client (from server/client/)
 npm run dev              # vite, http://localhost:5173
 npm run build            # tsc -b && vite build
+
+# The screenshot actor (from apify/dakyworld-screenshot/)
+npm test                 # a local misbehaving website, no Apify account needed
+apify push               # build and deploy it to Apify
 ```
 
 **There is no linter in this repo, and `server/checks/` is the only committed
@@ -476,7 +481,7 @@ drafted:
 2. `companyAudit.ts` — their site and mail domain, fetched and resolved. The
    checkable half.
 3. `siteShot.ts` + `homepageLook.ts` — a screenshot of the homepage through
-   Apify's `apify/screenshot-url`, read by a vision model (`job: "vision"`).
+   Dakyworld's own Apify actor, read by a vision model (`job: "vision"`).
    The half markup cannot answer: what a first-time visitor actually sees.
 
 **The scan writes back to the record.** It is not only evidence for a letter:
@@ -548,56 +553,101 @@ Results live on `LeadResearch` (one row per lead, `STALE_AFTER_DAYS = 30`), so
 the second draft to the same person costs nothing and the Owner can read what
 the email was argued from after it has gone.
 
-`services/png.ts` gained a decoder for this: a full-page screenshot arrives
-taller than any vision model accepts, so `cropPngTop` keeps the first 2400px and
-`downscalePng` then halves it to 1024 wide. It is sixty lines of
-`zlib.inflateSync` and an unfilter loop rather than an image library, and it
-refuses anything that is not 8-bit non-interlaced — which is everything a
-headless Chrome emits.
+**The screenshot actor is Dakyworld's own** — `apify/dakyworld-screenshot/`
+in this repository, pushed to Apify with `apify push`, called through
+`services/apifyScreenshot.ts`. Read that folder's README before changing
+anything about a picture; what follows is why the server half looks the way it
+does.
 
-**Screenshot cost is the actor booting, not the picture** — `siteShot.ts`,
-`screenshotActors.ts`. An Apify run starts a container and a browser before it
-does anything useful, and that boot is identical for one page or twenty. So
-`captureHomepages()` is the real function and `captureHomepage()` wraps it;
-`prepareLeads()` batches a whole selection into `ceil(n / MAX_BATCH)` runs
-instead of n. Sixty leads is three runs, not sixty. The other levers, in order
-of size: not re-shooting what is still fresh (`skipFresh`), `runOptionsFor()`
-sizing memory and timeout to the batch (compute is billed in gigabyte-hours),
-and `downscalePng` to 1024 — vision is billed in 512px tiles, so 1280×2400 is
-15 tiles and 1024×1920 is 8.
+Until 2 Sep 2026 it was four strangers' actors and a translation layer. Every
+screenshot actor on the store does the same job under a different input schema
+— `urls` vs `link_urls`, `viewportWidth` vs `window_Width` vs `width`, `proxy`
+vs `proxyConfig` vs `proxyConfiguration` — so `buildScreenshotInput()` read the
+configured actor's *published schema* at run time, cached it for six hours, and
+sent only keys that actor declared. That was the right answer to the problem it
+had, because **Apify ignores an unknown input key in silence**: the failure mode
+of guessing is a perfectly successful run at the wrong size with nothing
+anywhere saying so. Owning the actor deletes the problem rather than the
+defence. `screenshotActors.ts` and its four profiles are gone; the run body is
+now six fields and no lookup.
 
-**The actor is a setting, not a constant** (`capture.screenshotActor`,
-`GET`/`PUT /api/settings/capture/screenshot-actor`, which reports each
-candidate's *live* price). Every screenshot actor does the same job under a
-different input schema — `urls` vs `link_urls`, `viewportWidth` vs
-`window_Width` vs `width`, `proxy` vs `proxyConfig` vs `proxyConfiguration` — so
-`buildScreenshotInput()` maps them and **only ever sends a key the actor's own
-schema declares**. Apify ignores an unknown key silently, so the failure mode of
-guessing is a perfectly successful run at the wrong size with nothing to show
-for it.
+- **The id is the whole point, and it is a safeguard rather than a
+  convenience.** Every request carries one and every row carries it back, and
+  `siteShot` matches on nothing else. What it replaced looked for the address
+  inside the dataset row and **fell back to position**, so one page failing
+  part-way through a batch shifted every picture after it onto the *next*
+  business — a report, an email and sometimes a public demo page carrying
+  somebody's name that is not theirs. `matchItem()` is gone.
+  `checks/screenshots.ts` returns the rows shuffled with one missing, which is
+  the shape that makes position wrong.
+- **The actor cuts the picture down, so the server no longer decodes one.**
+  `maxWidth` (1024) and `maxHeight` (2400 desktop, 3200 phone) go out with the
+  run and Sharp does the work inside the actor. The server downloads roughly a
+  tenth of the bytes it used to — a 1024x1920 picture instead of a 1280x12000
+  page — and `cropPngTop`/`downscalePng` are gone from `services/png.ts`. The
+  **decoder stays**: `audit/annotate.ts` draws numbered boxes onto the picture
+  and pixel writes need pixels.
+- **`maxHeight` is measured in *captured* pixels, before the resize**, because
+  the crop happens first: 2400 rows of a 1280-wide capture is 1920 rows once it
+  is shrunk to 1024. Resizing first would throw away half the page.
+- **Two pictures come back for two readers.** `screenshotUrl` is the cut-down
+  one the model reads; `fullScreenshotUrl` is the capture, and is what
+  `Screenshot.imageUrl` points a person at. Null when the crop and the resize
+  both did nothing, in which case they are the same picture.
+- **The proxy moved into the actor**, where it is forced on and a page gets a
+  session of its own. The server no longer knows Apify has proxy settings, which
+  was the last actor-shaped thing in it.
+- **A private actor's key-value store can refuse an anonymous read.** A bare
+  `fetch` of the picture was right while the actor was somebody else's public
+  one; `downloadScreenshot()` retries a 401 or 403 with the token, because that
+  failure would otherwise look exactly like a website blocking us.
 
-Shipped default **`i-scraper/website-screenshot`** since 19 Aug 2026: $0.006 a
-picture, flat, nothing for the compute. It beats `apify/screenshot-url` (free
-beyond compute) on the shape this app actually runs — two pictures of one
-homepage in two runs, where a 2GB boot dwarfs a pair of flat fees — and loses on
-a batch of twenty, where one boot is spread across forty pictures.
+**Screenshot cost is the actor booting, not the picture** — an Apify run starts
+a container and a browser before it does anything useful, and that boot is
+identical for one page or twenty. So `captureHomepages()` is the real function
+and `captureHomepage()` wraps it; `prepareLeads()` batches a whole selection
+into `ceil(n / MAX_BATCH)` runs instead of n. Sixty leads is three runs, not
+sixty. The other levers, in order of size: not re-shooting what is still fresh
+(`skipFresh`), `runOptionsFor()` sizing memory and timeout to the batch (compute
+is billed in gigabyte-hours), and the resize to 1024 — vision is billed in 512px
+tiles, so 1280x2400 is 15 tiles and 1024x1920 is 8.
 
-Declaring a key is not the same as taking the value you meant, and swapping
-actors is where that bites:
+**The one batching gap left is desktop-plus-phone**, and it is named here rather
+than fixed. `audit/evidence.ts` takes two pictures of one homepage in **two
+runs**, because the viewport is one field for the whole batch — so the commonest
+shape this app runs pays two boots for two pictures. The phone shot is only
+taken when the desktop one worked, which is the guard that matters (a site that
+blocks headless browsers blocks both, and a second run is a second bill for the
+same refusal). Closing it properly means a per-URL viewport override in the
+Dakyworld contract and a change to `evidence.ts`, which is an audit change, not
+a screenshot one.
 
-- **`fullPage` is sent `true`.** `apify/screenshot-url` has no such key and is
-  always full-page; `cropPngTop` keeps 2400 rows afterwards. Sending `false`
-  silently shortens every picture to the window height.
+**The actor is still a setting** (`capture.screenshotActor`,
+`GET`/`PUT /api/settings/capture/screenshot-actor`) for a narrower reason than
+before. It is no longer a choice between vendors: the username half of an actor
+id is the Apify account it was pushed to, so a deployment whose account is not
+`dakyworld` has to say so, and a staging copy should be reachable without a
+deploy. **Until the actor is pushed, every screenshot fails with a sentence
+naming it and pointing at `apify/dakyworld-screenshot`** — Apify's own words
+("Actor was not found") read as an outage, and this is a five-minute job.
+
+Three things about the picture that are still exactly as they were, because
+getting any of them wrong is silent:
+
+- **`fullPage` is sent `true`** and the crop happens afterwards. Sending `false`
+  shortens every picture to the window height.
 - **`viewportHeight` is a real device height** (800 desktop, 844 phone), not a
-  fraction of the width. Three quarters of 390 is a 293px window, which is not
-  a shape any site was designed against.
-- **The proxy is forced on** whatever the actor's own default says, keeping any
-  groups it names. i-scraper defaults it off, and a datacentre IP with no proxy
-  is refused by a good share of small-business sites behind Cloudflare — which
-  arrives in the report as "their site could not be retrieved".
-- **`runOptionsFor` clamps to the band the actor's build declares.** i-scraper
-  declares 512–2048MB while its own default run option says 256MB, below its
-  own floor. Over the ceiling Apify rejects the run outright.
+  fraction of the width. Three quarters of 390 is a 293px window, which is not a
+  shape any site was designed against.
+- **`waitUntil` is `load`, never `networkidle`.** A page with a chat widget or
+  an ad script never goes idle, and waiting for it burns the whole timeout to
+  produce the same picture.
+
+`checks/screenshots.ts` (55, database only) drives the whole path against a
+local express playing Apify and hosting the pictures. Half of it is the
+negatives: a bad address must start no run, a site with no row must get no
+picture rather than its neighbour's, an empty dataset must not read as a broken
+run, and a missing actor must not read as an outage.
 
 `fetchSite` checks *both* spellings of the host even when the first works, so
 "only www resolves" is found whichever form the scrape happened to record. When
@@ -606,10 +656,10 @@ the record — swapping only the hostname, not adopting the redirect's landing
 path — which is the one case where overwriting stored data is a correction
 rather than a loss. The fault itself survives as a finding and a tag.
 
-Matching a dataset row back to the business that asked for it goes by
-`startUrl`, then final `url`, and only falls back to position when no row
-carries an address *and* the counts line up exactly. A picture attached to the
-wrong business is a page carrying somebody's name that is not theirs.
+Matching a dataset row back to the business that asked for it is done by the
+id the request went out with, and by nothing else. A picture attached to the
+wrong business is a page carrying somebody's name that is not theirs — see the
+screenshot section above for what the id replaced.
 
 **When a check fails, try the obvious alternative before reporting failure.**
 This is the habit, not a one-off: `fetchSite` swaps www for the bare host and
@@ -652,10 +702,15 @@ finding in the document with the issuer and expiry date read off the socket
 `Certificate warning` tag). **[SECURITY.md](SECURITY.md) is where the scope of
 that relaxation is written down** — one call, no credential sent, never
 `NODE_TLS_REJECT_UNAUTHORIZED`, and `routability()` re-checked on every redirect
-hop. The screenshot half cannot follow: none of the three screenshot actors
-declares an ignore-certificate input, and inventing one would be a key Apify
-silently drops, so `ux.ts` says that in those words rather than blaming a missing
-token.
+hop. The screenshot half does not follow, and the reason changed in Sep 2026
+without the behaviour changing: it used to be that none of the external
+screenshot actors declared an ignore-certificate input and inventing one would
+be a key Apify silently drops. Dakyworld's own actor *could* declare one
+(`ignoreHTTPSErrors` on the browser context), so it is now a decision rather
+than a limitation — and widening that relaxation belongs in
+[SECURITY.md](SECURITY.md) before it belongs in the actor. Until then `ux.ts`
+says a certificate warning is why there is no picture, rather than blaming a
+missing token.
 
 **The outreach doctrine is the authority** —
 [`server/src/services/outreachDoctrine.ts`](server/src/services/outreachDoctrine.ts).
@@ -3121,13 +3176,16 @@ substitute, so headings come out serif. The files are still correct — do not
   the global parser in `index.ts` (`UPLOAD_PATHS`) and each mounts its own
   larger one *inside* its router, after the role check. Adding a third upload
   route means touching both places or it fails at 100 kB.
-- **Both audit actors can be checked without a token.** `tmp/actorWiring.ts`
-  builds each run body against the actor's live published schema and asserts
-  every key sent is one it declares, then reads the actor's own documented
-  example output back through the parser. That is the trap: an undeclared key is
-  ignored in silence, so a misspelt `crawlPages` is not an error — it is a
-  five-page crawl at five times the price. `tmp/renderedFindings.ts` covers what
-  the speed section does with the measurements, including both suppressions.
+- **The SEO actor's run body can be checked without a token.**
+  `tmp/actorWiring.ts` builds it against the actor's live published schema and
+  asserts every key sent is one it declares, then reads the actor's own
+  documented example output back through the parser. That is the trap: an
+  undeclared key is ignored in silence, so a misspelt `crawlPages` is not an
+  error — it is a five-page crawl at five times the price. **The screenshot half
+  no longer needs it**: that actor is ours, its schema is in this repository, and
+  `checks/screenshots.ts` asserts the exact set of keys that goes over the wire.
+  `tmp/renderedFindings.ts` covers what the speed section does with the
+  measurements, including both suppressions.
 - **The audit team can be exercised without a key, a token or a real site.**
   `server/tmp/` is gitignored and is where the throwaway harnesses go: a stub
   screenshot built with `encodePng`, handed in as `desktopShot`, is what

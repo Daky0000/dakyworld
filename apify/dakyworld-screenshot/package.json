@@ -1,0 +1,26 @@
+{
+  "name": "dakyworld-screenshot",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Dakyworld's own website screenshot actor: Playwright and Chromium behind one stable input and output contract.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "start:dev": "tsx src/main.ts",
+    "test": "tsx test/local.ts"
+  },
+  "dependencies": {
+    "apify": "^3.2.6",
+    "playwright": "1.49.1",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,277 @@
+import { SETTING, getSetting } from "../lib/settings.js";
+import { getApifyToken } from "../lib/apify.js";
+import { runActor, type ActorRunCode } from "./actorRun.js";
+
+/**
+ * Talking to the Dakyworld screenshot actor.
+ *
+ * This file is the whole of what the server knows about taking a picture:
+ * which actor, what the body looks like, and how to read the rows back. It is
+ * about a fifth of what it replaced, and the reason is that the actor is ours
+ * now.
+ *
+ * What used to be here: a table of what four strangers' actors each called a
+ * viewport (`viewportWidth`, `window_Width`, `width`), a live read of the
+ * chosen actor's published input schema, a six-hour cache of that schema, a
+ * translation layer that dropped any key the actor did not declare, and a
+ * fallback profile for an actor nobody had mapped. All of it existed for one
+ * reason — Apify ignores an unknown input key in silence, so guessing produces
+ * a perfectly successful run at the wrong size with nothing anywhere saying
+ * so. With one actor that Dakyworld writes, there is nothing to guess.
+ *
+ * ## The contract
+ *
+ * Mirrored from `apify/dakyworld-screenshot/src/contract.ts`. The two are
+ * deployed separately and neither can import from the other, so a change to
+ * one is a change to both in the same commit.
+ *
+ * ## The id is a safeguard, not a convenience
+ *
+ * Every request carries an id and every row carries it back. The
+ * implementation this replaced matched rows to requests by looking for the
+ * address inside the row and, failing that, by position — so one page failing
+ * part-way through a batch shifted every picture after it onto the wrong
+ * business. A picture attached to the wrong business is a page carrying
+ * somebody's name that is not theirs.
+ */
+
+/**
+ * Dakyworld's own actor.
+ *
+ * The username half must match the Apify account the token belongs to. If the
+ * account is not `dakyworld`, set `capture.screenshotActor` (Settings → Lead
+ * Sources) to `<account>/website-screenshot` rather than editing this — the
+ * setting exists precisely so pointing at a different copy is not a deploy.
+ */
+export const DEFAULT_SCREENSHOT_ACTOR = "dakyworld/website-screenshot";
+
+/** Which actor takes the screenshots — the shipped one unless the Owner moved it. */
+export async function screenshotActorId(): Promise<string> {
+  const configured = (await getSetting(SETTING.SCREENSHOT_ACTOR))?.trim();
+  return configured || DEFAULT_SCREENSHOT_ACTOR;
+}
+
+export interface ScreenshotRequest {
+  /** The caller's own name for this page. Comes back unchanged. */
+  id: string;
+  url: string;
+}
+
+/** Why one page produced no picture. The actor's half of the vocabulary. */
+export type ScreenshotErrorCode =
+  | "INVALID_URL"
+  | "PAGE_TIMEOUT"
+  | "NAVIGATION_ERROR"
+  | "SCREENSHOT_FAILED"
+  | "IMAGE_PROCESSING_FAILED"
+  | "BROWSER_LAUNCH_FAILED";
+
+export interface ScreenshotRow {
+  id: string;
+  url: string;
+  finalUrl: string | null;
+  success: boolean;
+  /** The processed picture — cropped and resized, and what a model should read. */
+  screenshotUrl: string | null;
+  /** The capture before that, when it is a different picture. */
+  fullScreenshotUrl: string | null;
+  width: number | null;
+  height: number | null;
+  fullWidth: number | null;
+  fullHeight: number | null;
+  cropped: boolean;
+  viewportWidth: number;
+  viewportHeight: number;
+  format: string;
+  durationMs: number | null;
+  error: { code: ScreenshotErrorCode | string; message: string } | null;
+}
+
+export interface ScreenshotJob {
+  urls: ScreenshotRequest[];
+  viewport: { width: number; height: number };
+  fullPage: boolean;
+  delayMs: number;
+  /** Resize the finished picture down to this width. Never up. */
+  maxWidth?: number;
+  /** Rows to keep from the top, measured in captured pixels, before the resize. */
+  maxHeight?: number;
+}
+
+export interface ScreenshotRunSuccess {
+  ok: true;
+  actorId: string;
+  runId: string;
+  /** Keyed by the id that was sent. A request with no row is absent, not null. */
+  rows: Map<string, ScreenshotRow>;
+  /** What Apify billed for the whole run. Null is "not reported", never "free". */
+  costUsd: number | null;
+}
+
+export interface ScreenshotRunFailure {
+  ok: false;
+  actorId: string;
+  code: ActorRunCode;
+  /** One sentence, safe to show a person. Never carries a credential. */
+  message: string;
+  costUsd: number | null;
+}
+
+export type ScreenshotRunResult = ScreenshotRunSuccess | ScreenshotRunFailure;
+
+/**
+ * How much memory and how long to allow.
+ *
+ * Both are guesses from the batch size and both used to be clamped to whatever
+ * band the chosen stranger's actor declared, because asking a 256MB actor for
+ * 2GB is a run Apify refuses outright. Ours declares no band, so the numbers
+ * are simply the numbers: a browser wants a gigabyte, a batch big enough to
+ * run several pages wants two, and the clock has to cover a boot plus a page
+ * each with headroom.
+ *
+ * The actor works to the same clock from the inside — it reads Apify's timeout
+ * and writes a timed-out row for anything it has not reached — so a batch that
+ * overruns comes back with the pictures it did take instead of a run Apify
+ * kills and rows nobody reads.
+ */
+function runOptionsFor(count: number): { memoryMbytes: number; timeoutSecs: number } {
+  return {
+    memoryMbytes: count > 4 ? 2048 : 1024,
+    timeoutSecs: Math.min(600, 90 + count * 20),
+  };
+}
+
+/**
+ * Runs the actor once and hands back a row per requested id.
+ *
+ * It does not throw. Every failure is a value with a code, because each one
+ * needs a different sentence said about it and an exception makes that a
+ * `catch` with a string match in it.
+ */
+export async function runScreenshotActor(job: ScreenshotJob, options: { waitMs: number }): Promise<ScreenshotRunResult> {
+  const actorId = await screenshotActorId();
+
+  // The whole body. Four fields the caller decides and two that describe the
+  // picture the vision model is going to be sent; no compatibility keys, no
+  // schema lookup, nothing conditional.
+  const input = {
+    urls: job.urls.map((entry) => ({ id: entry.id, url: entry.url })),
+    viewport: job.viewport,
+    fullPage: job.fullPage,
+    delay: job.delayMs,
+    ...(job.maxWidth ? { maxWidth: job.maxWidth } : {}),
+    ...(job.maxHeight ? { maxHeight: job.maxHeight } : {}),
+  };
+
+  const result = await runActor(actorId, input, {
+    ...runOptionsFor(job.urls.length),
+    waitMs: options.waitMs,
+    // One row per URL is the contract; the headroom is for a version of the
+    // actor that ever writes more than that, so a batch is never half-read.
+    maxItemsRead: Math.max(10, job.urls.length * 2),
+  });
+
+  if (!result.ok) {
+    return { ok: false, actorId, code: result.code, message: describeRunFailure(result.code, result.message, actorId), costUsd: result.costUsd };
+  }
+
+  const rows = new Map<string, ScreenshotRow>();
+  for (const item of result.items) {
+    const row = readRow(item);
+    // A row with no id cannot be matched to anything, and guessing which
+    // request it belongs to is the exact defect the id was introduced to end.
+    if (row) rows.set(row.id, row);
+  }
+
+  return { ok: true, actorId, runId: result.runId, rows, costUsd: result.costUsd };
+}
+
+/**
+ * A dataset row, read defensively.
+ *
+ * The actor writes this shape, but the actor is deployed separately from the
+ * server and can be a version behind it. A row that has drifted should read as
+ * a page with no picture — which every caller already handles — rather than as
+ * a picture with `undefined` for its width.
+ */
+function readRow(item: Record<string, unknown>): ScreenshotRow | null {
+  const id = typeof item.id === "string" && item.id ? item.id : null;
+  if (!id) return null;
+
+  const text = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);
+  const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
+  const error = item.error as { code?: unknown; message?: unknown } | null | undefined;
+
+  const screenshotUrl = text(item.screenshotUrl);
+  return {
+    id,
+    url: text(item.url) ?? "",
+    finalUrl: text(item.finalUrl),
+    // Trusting the picture over the flag: a row claiming success with no image
+    // is a row the caller must not treat as a screenshot.
+    success: item.success === true && Boolean(screenshotUrl),
+    screenshotUrl,
+    fullScreenshotUrl: text(item.fullScreenshotUrl),
+    width: num(item.width),
+    height: num(item.height),
+    fullWidth: num(item.fullWidth),
+    fullHeight: num(item.fullHeight),
+    cropped: item.cropped === true,
+    viewportWidth: num(item.viewportWidth) ?? 0,
+    viewportHeight: num(item.viewportHeight) ?? 0,
+    format: text(item.format) ?? "png",
+    durationMs: num(item.durationMs),
+    error:
+      error && typeof error === "object"
+        ? { code: text(error.code) ?? "SCREENSHOT_FAILED", message: text(error.message) ?? "No reason was given." }
+        : null,
+  };
+}
+
+/**
+ * The one failure worth rewording.
+ *
+ * Everything else `runActor` says is already a sentence for a person. An actor
+ * that is not on the account is different: it is a setting somebody can fix in
+ * a minute, and Apify's own words for it ("Actor was not found") read as an
+ * outage. See the rule in `lib/errors.ts` — a fixable setting must never reach
+ * the Owner as "something went wrong".
+ */
+function describeRunFailure(code: ActorRunCode, message: string, actorId: string): string {
+  if (code === "ACTOR_START_FAILED" && /not found|404|does not exist/i.test(message)) {
+    return (
+      `The screenshot actor "${actorId}" is not on this Apify account. Deploy it from apify/dakyworld-screenshot in this repository, ` +
+      `or point Settings → Lead Sources → Screenshot actor at the copy that exists.`
+    );
+  }
+  return message;
+}
+
+/**
+ * Downloads a picture the actor stored.
+ *
+ * The key-value store record of a run is normally readable without a token,
+ * which is why this was a bare `fetch` for as long as the actor was somebody
+ * else's public one. Ours is private, and a private account's store can refuse
+ * an anonymous read — so a 401 or 403 is retried with the token rather than
+ * reported as a missing picture, which is a failure that would look exactly
+ * like a website blocking us.
+ */
+export async function downloadScreenshot(url: string): Promise<{ ok: true; bytes: Buffer } | { ok: false; message: string }> {
+  const attempt = async (token: string | null) => {
+    const response = await fetch(url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
+    return response;
+  };
+
+  try {
+    let response = await attempt(null);
+    if (response.status === 401 || response.status === 403) {
+      const token = await getApifyToken().catch(() => null);
+      if (token) response = await attempt(token);
+    }
+    if (!response.ok) return { ok: false, message: `HTTP ${response.status}` };
+    return { ok: true, bytes: Buffer.from(await response.arrayBuffer()) };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}

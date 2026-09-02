@@ -9,7 +9,7 @@ import { ImapError, imapConfigured, readImapConfig, suggestFromSmtp, verifyImap 
 import { restartWatcher, watcherStatus } from "../services/mailbox/watcher.js";
 import { nvidiaCooldown } from "../lib/claudeAgent.js";
 import { ApifyError, clearApifyCaches, getAccount, getActorPricing, getActorSchema, getMonthlyUsage } from "../lib/apify.js";
-import { DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS, screenshotActorId } from "../services/screenshotActors.js";
+import { DEFAULT_SCREENSHOT_ACTOR, screenshotActorId } from "../services/apifyScreenshot.js";
 import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
 import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
 import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from "../services/captureActors.js";
@@ -731,9 +731,18 @@ async function describeActorChoice(current: string, shipped: string, known: stri
   return { current, shipped, candidates };
 }
 
+/**
+ * Which actor takes the homepage screenshots.
+ *
+ * One candidate now rather than four. This used to be a comparison of every
+ * screenshot actor on the store, because the app spoke all of their input
+ * schemas and a cheaper one was a dropdown away; since Dakyworld owns the
+ * actor, the answer is that actor, and this endpoint exists to report whether
+ * the account can actually see it and what it is being billed.
+ */
 settingsRouter.get("/capture/screenshot-actor", async (_req, res, next) => {
   try {
-    res.json(await describeActorChoice(await screenshotActorId(), DEFAULT_SCREENSHOT_ACTOR, KNOWN_SCREENSHOT_ACTORS));
+    res.json(await describeActorChoice(await screenshotActorId(), DEFAULT_SCREENSHOT_ACTOR, [DEFAULT_SCREENSHOT_ACTOR]));
   } catch (err) {
     next(err);
   }

@@ -68,18 +68,19 @@ export function encodePng(width: number, height: number, pixels: Uint8Array): Bu
 // --- Reading one back -----------------------------------------------------
 
 /**
- * Enough of a PNG decoder to crop a screenshot, and no more.
+ * Enough of a PNG decoder to draw on a screenshot, and no more.
  *
- * A full-page screenshot of a homepage can come back 1280 by twelve thousand
- * pixels, which is past what every vision model will accept and several
- * megabytes of base64 nobody needed: the argument an email makes is about what
- * a visitor sees when the page opens, not about the footer. Cropping needs a
- * decoder, and a decoder for *this* — 8-bit, non-interlaced, straight out of a
- * headless Chrome — is sixty lines of `zlib.inflateSync` and an unfilter loop,
- * against an image library and its transitive tree.
+ * It was written for the crop — a full-page screenshot arrives taller than any
+ * vision model will accept — and that job has since moved into Dakyworld's own
+ * Apify actor, which does it with Sharp before the picture is ever downloaded.
+ * What kept the decoder here is `audit/annotate.ts`: the report draws numbered
+ * boxes onto the picture, and pixel writes need the pixels. Sixty lines of
+ * `zlib.inflateSync` and an unfilter loop is still a better trade for that than
+ * a native image library on a deploy that needs none.
  *
- * It handles what Chrome emits and refuses everything else by returning null.
- * A refusal is not a failure: the caller keeps the original bytes and says so.
+ * It handles what a browser emits — 8-bit, non-interlaced, greyscale or
+ * RGB(A) — and refuses everything else by returning null. A refusal is not a
+ * failure: the caller keeps the original bytes and says so.
  */
 
 export interface DecodedPng {
@@ -199,83 +200,6 @@ function paeth(a: number, b: number, c: number): number {
   const pb = Math.abs(p - b);
   const pc = Math.abs(p - c);
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-}
-
-/**
- * The top `rows` pixels of a PNG, re-encoded. Null when it could not be read,
- * and the original when it is already short enough — so a caller can write
- * `cropPngTop(png, 2400) ?? png` and be right either way.
- */
-export function cropPngTop(png: Buffer, rows: number): Buffer | null {
-  const size = pngSize(png);
-  if (!size) return null;
-  if (size.height <= rows) return png;
-
-  const decoded = decodePng(png);
-  if (!decoded) return null;
-
-  const kept = Math.min(rows, decoded.height);
-  return encodePng(decoded.width, kept, decoded.pixels.subarray(0, decoded.width * kept * 4));
-}
-
-/**
- * Halve a screenshot before a vision model reads it.
- *
- * Vision is billed by tiles, not by bytes: a 1280-wide shot cropped to 2400px
- * tall is 3 x 5 = 15 tiles of 512px, and the same picture at 1024 wide is
- * 2 x 4 = 8. Nothing a design judgement needs is lost between the two — the
- * question is whether the page looks dated and says what the business sells,
- * and that survives a halving comfortably.
- *
- * A box filter rather than anything cleverer. Downsampling by averaging is
- * what makes text legible at the smaller size; nearest-neighbour would alias
- * the type into mush and the model would report a blurry site.
- */
-export function downscalePng(png: Buffer, maxWidth: number): Buffer | null {
-  const size = pngSize(png);
-  if (!size) return null;
-  if (size.width <= maxWidth) return png;
-
-  const decoded = decodePng(png);
-  if (!decoded) return null;
-
-  const scale = size.width / maxWidth;
-  const outWidth = maxWidth;
-  const outHeight = Math.max(1, Math.round(decoded.height / scale));
-  const out = new Uint8Array(outWidth * outHeight * 4);
-
-  for (let y = 0; y < outHeight; y++) {
-    const y0 = Math.floor(y * scale);
-    const y1 = Math.min(decoded.height, Math.max(y0 + 1, Math.floor((y + 1) * scale)));
-    for (let x = 0; x < outWidth; x++) {
-      const x0 = Math.floor(x * scale);
-      const x1 = Math.min(decoded.width, Math.max(x0 + 1, Math.floor((x + 1) * scale)));
-
-      let r = 0;
-      let g = 0;
-      let b = 0;
-      let a = 0;
-      let n = 0;
-      for (let sy = y0; sy < y1; sy++) {
-        for (let sx = x0; sx < x1; sx++) {
-          const at = (sy * decoded.width + sx) * 4;
-          r += decoded.pixels[at];
-          g += decoded.pixels[at + 1];
-          b += decoded.pixels[at + 2];
-          a += decoded.pixels[at + 3];
-          n++;
-        }
-      }
-
-      const to = (y * outWidth + x) * 4;
-      out[to] = Math.round(r / n);
-      out[to + 1] = Math.round(g / n);
-      out[to + 2] = Math.round(b / n);
-      out[to + 3] = Math.round(a / n);
-    }
-  }
-
-  return encodePng(outWidth, outHeight, out);
 }
 
 // --- The ribbons ----------------------------------------------------------
