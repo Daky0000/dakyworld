@@ -236,20 +236,29 @@ console.log("\nThe boot pass");
   const second = await deployScreenshotActorIfMissing();
   check("and does nothing at all once it is there", second === null && calls.every((c) => c.method === "GET"));
 
-  // A build that failed must be retried, but not on every deploy: a repository
-  // that cannot build would otherwise cost a build every time anybody pushed.
+  // A build that failed must be retried, but not on every restart: a crash loop
+  // would otherwise cost a build every thirty seconds.
   await reset();
+  process.env.RAILWAY_DEPLOYMENT_ID = "deploy-one";
   buildStatus = "FAILED";
   await deployScreenshotActorIfMissing();
   calls = [];
-  const sameDay = await deployScreenshotActorIfMissing();
-  check("a failed build is not retried the same day", sameDay === null, sameDay?.message ?? "");
+  const restarted = await deployScreenshotActorIfMissing();
+  check("a failed build is not retried on a restart", restarted === null, restarted?.message ?? "");
   check("and nothing was built on that second boot", !calls.some((c) => c.path.endsWith("/builds")));
 
-  await prisma.appSetting.deleteMany({ where: { key: SETTING.SCREENSHOT_ACTOR_BUILD } });
-  settings.clearSettingsCache();
-  const nextDay = await deployScreenshotActorIfMissing();
-  check("but it is retried the next day", nextDay !== null, "nothing happened");
+  // **But a new deployment does retry**, and that is the whole reason the
+  // marker is keyed this way. The first live run of this failed on a one-line
+  // bug; a marker keyed on the date refused to try the fix until the next day,
+  // which put a rate limit meant to stop waste between a working fix and a
+  // working system.
+  process.env.RAILWAY_DEPLOYMENT_ID = "deploy-two";
+  buildStatus = "SUCCEEDED";
+  calls = [];
+  const redeployed = await deployScreenshotActorIfMissing();
+  check("but a new deployment tries again", redeployed?.ok === true, redeployed?.message ?? "nothing happened");
+  check("and really did build it", calls.some((c) => c.method === "POST" && c.path.endsWith("/builds")));
+  delete process.env.RAILWAY_DEPLOYMENT_ID;
 }
 
 // --- 5b. A different actor is not "already tried today" -----------------------

@@ -173,6 +173,22 @@ export async function deployScreenshotActor(): Promise<DeployResult> {
   }
 }
 
+/**
+ * Something that changes when a new version of this app is deployed and does
+ * not change when the same one restarts.
+ *
+ * Railway injects the deployment id; the commit is the fallback for a host that
+ * does not, and the date is the floor for running it anywhere else — which is
+ * no worse than the behaviour this replaced.
+ */
+function deploymentTag(): string {
+  return (
+    process.env.RAILWAY_DEPLOYMENT_ID?.trim() ||
+    process.env.RAILWAY_GIT_COMMIT_SHA?.trim() ||
+    new Date().toISOString().slice(0, 10)
+  );
+}
+
 async function watchBuild(buildId: string): Promise<{ buildId: string; status: string; message: string | null }> {
   const giveUpAt = Date.now() + WATCH_MS;
   let last = { buildId, status: "RUNNING", message: null as string | null };
@@ -192,19 +208,24 @@ async function watchBuild(buildId: string): Promise<{ buildId: string; status: s
 }
 
 /**
- * The boot pass: deploy the actor if it is missing, at most once a day.
+ * The boot pass: deploy the actor when it is missing or unbuilt, once per
+ * deployment.
  *
  * Automatic because the alternative is what actually happened — the app knew
  * the actor was missing, printed a line saying so on every deploy, and could do
  * nothing about it while holding the one credential that could. It only ever
- * fires when there is a token *and* the actor is genuinely absent, which is the
- * exact state in which every screenshot is already failing.
+ * fires when there is a token *and* the actor is absent or unbuilt, which is
+ * the exact state in which every screenshot is already failing.
  *
- * **Rate-limited to one attempt a day**, not one ever. Once ever would mean a
- * build that failed on a bad afternoon is never retried and the marker hides
- * why; every boot would mean a repository that cannot build costs a build every
- * deploy. A day is long enough to be cheap and short enough that a fix lands on
- * its own.
+ * **Once per deployment, and that is the third answer to this question.** Once
+ * ever hides a build that failed on a bad afternoon behind a marker nobody can
+ * see. Once a *day* was the second answer and it was wrong in a way only a real
+ * failure showed: a build failed at lunchtime, the fix was one line, and the
+ * marker then refused to try again until tomorrow — so the thing standing
+ * between a working fix and a working system was a rate limit meant to stop
+ * waste. A deployment is the right unit, because a new deployment is exactly
+ * the signal that something may have changed: a restart, a crash loop or a
+ * scale event keeps the same id and does not retry, and a push does.
  */
 export async function deployScreenshotActorIfMissing(): Promise<DeployResult | null> {
   if (!(await apifyConfigured())) return null;
@@ -216,12 +237,12 @@ export async function deployScreenshotActorIfMissing(): Promise<DeployResult | n
   const existing = await findActor(actorId).catch(() => null);
   if (existing?.hasBuild) return null;
 
-  // The marker names the actor as well as the day, and that is not tidiness.
-  // "We tried today" must not block a *different* actor: the first automatic
-  // deploy of this went out under the wrong account name, and a marker keyed on
-  // the date alone would have refused to try the corrected one until tomorrow —
-  // turning a one-line fix into a day's wait for no reason.
-  const attempt = `${new Date().toISOString().slice(0, 10)}:${actorId}`;
+  // The marker names the deployment *and* the actor, and both halves were
+  // learned from a real failure. The actor, because the first automatic run
+  // went out under the wrong account name and a marker without it would have
+  // refused to try the corrected one. The deployment, because the run after
+  // that failed on a one-line bug and the marker then refused to try the fix.
+  const attempt = `${deploymentTag()}:${actorId}`;
   const attempted = await getSetting(SETTING.SCREENSHOT_ACTOR_BUILD).catch(() => null);
   if (attempted === attempt) return null;
   await setSetting(SETTING.SCREENSHOT_ACTOR_BUILD, attempt).catch(() => undefined);

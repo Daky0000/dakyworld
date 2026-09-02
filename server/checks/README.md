@@ -18,6 +18,17 @@ Three rules, learned from the harnesses in `tmp/`:
 3. **A check that creates rows deletes them, including the ones it expected to
    be refused** — and the last call must be the delete-only half of `reset()`,
    or it re-creates on the way out exactly what it was there to remove.
+   **`LlmCall` counts.** A check that drives a real `callModel` writes ledger
+   rows, and `checks/costs.ts` sums those over an hour band: 23 uncached rows
+   left behind by `checks/screenshots.ts` moved the cache rate enough to fail
+   it, so the file that went red was not the file that was wrong. Delete them,
+   scoped to your own `purpose` and to a timestamp taken at the start of the
+   run, so a genuinely recorded call is never touched.
+
+**Never run one check by hand while `npm run checks` is going.** Four of these
+files bind port 4599 and several share database fixtures, so the collisions
+surface as EADDRINUSE and as impossible-looking failures in files nobody
+touched. New files should bind port 0 and read the port back.
 
 Run one directly while working on it:
 

@@ -529,7 +529,11 @@ ensureSystemRoles()
             void deployScreenshotActorIfMissing()
               .then((built) => {
                 if (built) console.log(`  → ${built.ok ? "" : "No screenshots. "}${built.message}`);
-                else console.log(`  → The actor was already built for today, so it was not tried again.`);
+                // Said accurately: it was *attempted* on this deployment, not
+                // built. Printing "already built" beside a boot line that has
+                // just said the actor has no build is the report contradicting
+                // itself on two consecutive lines.
+                else console.log(`  → Already attempted on this deployment, so it was not tried again. Push again, or use Settings → Lead Sources.`);
               })
               .catch((err: unknown) => console.error("Screenshot actor build failed:", err));
           }

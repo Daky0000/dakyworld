@@ -683,9 +683,14 @@ lives beside it.
   `GET /acts/:id` happily, and cannot be run — the first version skipped it as
   "already there" and called it ready, which would have left a permanently
   broken account looking healthy. `checks/screenshotDeploy.ts` caught that.
-- **The boot pass tries at most once a day**, not once ever: once ever hides a
-  build that failed on a bad afternoon behind a marker, and every boot costs a
-  build on every deploy for a repository that cannot build.
+- **The boot pass tries once per *deployment*** — the third answer to that
+  question and the one a real failure chose. Once ever hides a build that failed
+  on a bad afternoon behind a marker nobody can see; once a *day* was the second
+  answer, and when the next run failed on a one-line bug the marker refused to
+  try the fix until tomorrow, putting a rate limit meant to stop waste between a
+  working fix and a working system. A deployment is the right unit: a restart or
+  a crash loop keeps the same `RAILWAY_DEPLOYMENT_ID` and does not retry, a push
+  does.
 - **It will not build onto the wrong account.** The username half of an actor id
   is the account the token belongs to; Apify says which on create, and a
   mismatch stops with that name in the sentence rather than leaving a working

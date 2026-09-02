@@ -211,6 +211,21 @@ const shot = (key: string, overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/**
+ * When this run started, so the ledger rows it causes can be taken back out.
+ *
+ * The vision section below drives a real `callModel`, and a real `callModel`
+ * writes an `LlmCall` row. Those are money rows: `checks/costs.ts` sums them
+ * over an hour band and asserts on the cache rate, and a handful of uncached
+ * rows this file left behind moved that rate enough to fail it — a check
+ * failing because of a *different* check is the worst kind of red, because the
+ * file that fails is not the file that is wrong.
+ *
+ * checks/README.md rule 3, which this had broken: a check that creates rows
+ * deletes them.
+ */
+const startedAt = new Date();
+
 async function reset() {
   await prisma.appSetting.deleteMany({ where: { key: SETTING.SCREENSHOT_ACTOR } });
   settings.clearSettingsCache();
@@ -612,6 +627,10 @@ console.log("\nWhat the vision model is actually sent");
 }
 
 await reset();
+// The ledger rows the vision section caused. Scoped to this run's own purpose
+// and to the moment it started, so a real call recorded by anything else is
+// never touched.
+await prisma.llmCall.deleteMany({ where: { purpose: "lead.homepageLook", createdAt: { gte: startedAt } } });
 await prisma.$disconnect();
 server.close();
 
