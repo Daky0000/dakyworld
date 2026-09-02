@@ -22,6 +22,13 @@ export const SETTING = {
   CAPTURE_PROXY_MODE: "capture.proxyMode",
   CAPTURE_PROXY_COUNTRY: "capture.proxyCountry",
   CAPTURE_MONTHLY_BUDGET: "capture.monthlyBudgetUsd",
+  /**
+   * Set once, when the starting monthly Apify ceiling was written. A marker
+   * rather than a null check on the ceiling itself: clearing the ceiling to
+   * "no limit" is a decision, and a boot pass must not overrule it every
+   * morning. See services/captureConfig.seedCaptureBudget.
+   */
+  CAPTURE_BUDGET_SEEDED: "capture.budgetSeeded",
   CAPTURE_MAX_RUN_CHARGE: "capture.maxRunChargeUsd",
   CAPTURE_MAX_CONCURRENT: "capture.maxConcurrentRuns",
   CAPTURE_LOCATION: "capture.location",
@@ -69,6 +76,12 @@ export const SETTING = {
    * longer a choice between vendors — see services/apifyScreenshot.ts.
    */
   SCREENSHOT_ACTOR: "capture.screenshotActor",
+  /**
+   * The date the app last tried to build the screenshot actor itself, as
+   * YYYY-MM-DD. See services/screenshotActorDeploy.ts: the boot pass deploys a
+   * missing actor at most once a day, and this is what makes that "once".
+   */
+  SCREENSHOT_ACTOR_BUILD: "capture.screenshotActorBuild",
 
   /**
    * Which Apify actor opens the page in a real browser for the speed and SEO

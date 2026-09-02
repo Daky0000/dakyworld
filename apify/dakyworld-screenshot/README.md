@@ -19,7 +19,15 @@ and this reads a viewport.
 
 ## Deploying it
 
-Needs the [Apify CLI](https://docs.apify.com/cli) and an Apify account.
+**The app does this on its own.** Dakyworld OS holds the Apify token, and
+`services/screenshotActorDeploy.ts` uses it to create this actor and build it
+straight from the public repository — on boot when the actor is missing, or on
+demand from `POST /api/settings/capture/screenshot-actor/deploy`. Nothing below
+is needed unless you want to deploy from a terminal, or you are working on a
+branch the app does not know about.
+
+Everything under here is the manual path. Needs the
+[Apify CLI](https://docs.apify.com/cli) and an Apify account.
 
 ```bash
 npm install -g apify-cli

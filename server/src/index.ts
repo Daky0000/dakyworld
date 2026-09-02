@@ -35,6 +35,8 @@ import { costsRouter } from "./routes/costs.js";
 import { approvalsRouter } from "./routes/approvals.js";
 import { slackHealth } from "./services/slackHealth.js";
 import { screenshotActorReady } from "./services/apifyScreenshot.js";
+import { deployScreenshotActorIfMissing } from "./services/screenshotActorDeploy.js";
+import { seedCaptureBudget } from "./services/captureConfig.js";
 import { countPending } from "./services/approvals.js";
 import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
@@ -504,10 +506,32 @@ ensureSystemRoles()
           // arriving with no picture.
           const shots = await screenshotActorReady().catch(() => null);
           if (shots && !shots.ready) {
+            console.log(`  → The screenshot actor "${shots.actorId}" is not on this Apify account. Building it from the repository…`);
+            // The app holds the token, and until now nothing here could use it
+            // for this: `apify push` needs the CLI, Docker and a login on
+            // somebody's machine. Apify builds it from the public repository
+            // instead — see services/screenshotActorDeploy.ts. At most one
+            // attempt a day, and only ever when the actor is genuinely absent,
+            // which is the exact state in which every screenshot is failing.
+            //
+            // **Detached, like the other slow boot work above.** A build is
+            // minutes, and everything after this in the chain — the one-job
+            // narrowing, commissioning, standing work — would sit behind it.
+            // Nothing here depends on the outcome; the log line is the point.
+            void deployScreenshotActorIfMissing()
+              .then((built) => {
+                if (built) console.log(`  → ${built.ok ? "" : "No screenshots. "}${built.message}`);
+                else console.log(`  → The actor was already built for today, so it was not tried again.`);
+              })
+              .catch((err: unknown) => console.error("Screenshot actor build failed:", err));
+          }
+
+          // A monthly Apify ceiling to start from, written once as a real
+          // value the Owner can change or clear — see seedCaptureBudget.
+          const ceiling = await seedCaptureBudget().catch(() => null);
+          if (ceiling != null) {
             console.log(
-              `  → No screenshots: the actor "${shots.actorId}" is not on this Apify account. ` +
-                `Run \`apify push\` from apify/dakyworld-screenshot/, or point Settings → Lead Sources → Screenshot actor ` +
-                `at the copy that exists. Audits and lead scans will run without a picture until then.`,
+              `  → Monthly Apify ceiling set to $${ceiling}. Change it under Settings → Lead capture → Monthly budget; blank there means no ceiling.`,
             );
           }
 

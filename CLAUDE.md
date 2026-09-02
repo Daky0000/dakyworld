@@ -654,17 +654,51 @@ section with no reason must not invent one.
 before. It is no longer a choice between vendors: the username half of an actor
 id is the Apify account it was pushed to, so a deployment whose account is not
 `dakyworld` has to say so, and a staging copy should be reachable without a
-deploy. **Until the actor is pushed, every screenshot fails with a sentence
-naming it and pointing at `apify/dakyworld-screenshot`**, the boot log prints
-the same thing on every deploy (`screenshotActorReady()`), and the audit's UI/UX
-section carries that reason rather than a guess. Apify's own words ("Actor was
-not found") read as an outage, and this is a five-minute job:
+deploy. **The app deploys the actor itself** — `services/screenshotActorDeploy.ts`,
+`POST /api/settings/capture/screenshot-actor/deploy`, and a boot pass. This was
+the last thing standing between a good deploy and no screenshots: the actor's
+source is in this repository, `apify push` deploys it, and `apify push` needs
+the Apify CLI, Docker and a login on somebody's machine — while **the app holds
+the token and could do nothing with it**. Apify's `GIT_REPO` source type is the
+way round: an actor version names a public repository and a subdirectory and
+Apify clones and builds it. No Docker, no CLI, and nothing needed in the
+container, which matters because Railway's root is `server/` and the actor
+lives beside it.
+
+- **Present is not runnable.** `findActor` reports `hasBuild` from
+  `taggedBuilds`, and both the readiness check and the deploy pass require it.
+  An actor whose creation succeeded and whose build failed exists, answers
+  `GET /acts/:id` happily, and cannot be run — the first version skipped it as
+  "already there" and called it ready, which would have left a permanently
+  broken account looking healthy. `checks/screenshotDeploy.ts` caught that.
+- **The boot pass tries at most once a day**, not once ever: once ever hides a
+  build that failed on a bad afternoon behind a marker, and every boot costs a
+  build on every deploy for a repository that cannot build.
+- **It will not build onto the wrong account.** The username half of an actor id
+  is the account the token belongs to; Apify says which on create, and a
+  mismatch stops with that name in the sentence rather than leaving a working
+  actor nothing will ever call.
+- `SCREENSHOT_ACTOR_REPO` overrides the source for a fork or a branch.
+
+`apify push` still works and is the faster path at a terminal:
 `APIFY_TOKEN=<the one in Settings → Lead Sources → Connection> apify push`.
 
 **There is no half-measure while it is undeployed**, and that is the deliberate
 cost of having one actor instead of four: pointing `capture.screenshotActor` at
 a store actor no longer works, because the server sends the Dakyworld contract
-and nothing on the store reads it. The two positions are *push it* or *revert*.
+and nothing on the store reads it — and a run that comes back with rows carrying
+no `id` is reported as exactly that rather than as twenty pages that each
+"finished without producing a result".
+
+**The monthly Apify ceiling is seeded, not defaulted** —
+`SEEDED_MONTHLY_BUDGET_USD` (10) and `seedCaptureBudget()` in
+`captureConfig.ts`. The distinction is the whole design: **blank means no
+ceiling**, and a *default* of ten would make that unsayable, because clearing
+the box would put ten straight back. So ten is written once as a real stored
+value the Owner can raise, lower, or clear — behind a marker, so clearing it
+survives the next boot. Before this a deployment that never opened the settings
+screen had no ceiling at all, and the meter read Apify's own free-plan credit
+($5) as though it were one.
 
 Three things about the picture that are still exactly as they were, because
 getting any of them wrong is silent:

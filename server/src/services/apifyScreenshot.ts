@@ -1,5 +1,5 @@
 import { SETTING, getSetting } from "../lib/settings.js";
-import { apifyConfigured, getActorSchema, getApifyToken } from "../lib/apify.js";
+import { apifyConfigured, findActor, getApifyToken } from "../lib/apify.js";
 import { runActor, type ActorRunCode } from "./actorRun.js";
 
 /**
@@ -316,8 +316,14 @@ function describeRunFailure(code: ActorRunCode, message: string, actorId: string
 export async function screenshotActorReady(): Promise<{ actorId: string; ready: boolean } | null> {
   if (!(await apifyConfigured())) return null;
   const actorId = await screenshotActorId();
-  const schema = await getActorSchema(actorId).catch(() => null);
-  return { actorId, ready: Boolean(schema) };
+  // Present **and built**. An actor whose creation succeeded and whose build
+  // failed exists, answers `GET /acts/:id` perfectly happily, and cannot be run
+  // — so "the actor is there" is not the question. This one caught it: the
+  // deploy pass skipped an unbuilt actor as already done, and the boot check
+  // called it ready, which between them would have left a permanently broken
+  // account looking healthy.
+  const actor = await findActor(actorId).catch(() => null);
+  return { actorId, ready: Boolean(actor?.hasBuild) };
 }
 
 /**

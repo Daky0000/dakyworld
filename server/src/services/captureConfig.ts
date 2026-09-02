@@ -60,6 +60,22 @@ export interface CaptureConfig {
   retentionDays: number;
 }
 
+/**
+ * What a deployment starts with as its monthly Apify ceiling, written once.
+ *
+ * Not a *default*, which is the distinction that matters here. A default is
+ * what blank means, and blank has always meant **no ceiling** — changing that
+ * would make "no ceiling" unsayable, because clearing the box would put the
+ * default back. So this is seeded as an actual stored value the first time,
+ * which the Owner can then raise, lower, or clear.
+ *
+ * Ten dollars rather than nothing because an uncapped spend is a bad thing to
+ * arrive at by never having opened a settings screen, and ten is roughly a
+ * month of ordinary use: a few thousand screenshots, or a few dozen Google
+ * Maps searches. The number is the Owner's; only the starting point is ours.
+ */
+export const SEEDED_MONTHLY_BUDGET_USD = 10;
+
 export const CAPTURE_DEFAULTS: CaptureConfig = {
   maxItems: 100,
   minScore: 30,
@@ -75,6 +91,10 @@ export const CAPTURE_DEFAULTS: CaptureConfig = {
   proxyMode: "AUTO",
   proxyCountry: null,
 
+  // Null is **no ceiling**, and that stays the meaning of blank. What a fresh
+  // deployment gets is not this default but `SEEDED_MONTHLY_BUDGET_USD` below,
+  // written once as a real value — so the Owner can raise it, lower it, or clear
+  // it back to no ceiling, and blank does not silently mean ten.
   monthlyBudgetUsd: null,
   maxRunChargeUsd: null,
   maxConcurrentRuns: 2,
@@ -291,4 +311,26 @@ export function proxyInput(
 export function unknownInputKeys(input: Record<string, unknown>, schema: ApifyActorSchema | null): string[] {
   if (!schema || schema.properties.length === 0) return [];
   return Object.keys(input).filter((key) => !schema.properties.includes(key));
+}
+
+
+/**
+ * Writes the starting monthly ceiling, once ever.
+ *
+ * Behind a marker rather than a `null` check, for the reason every one-shot
+ * pass in this codebase is: checking whether the value is *absent* would
+ * resurrect it every boot for somebody who had deliberately cleared it to no
+ * ceiling. Clearing it is a decision, and a boot pass must not overrule one.
+ */
+export async function seedCaptureBudget(): Promise<number | null> {
+  if (await getSetting(SETTING.CAPTURE_BUDGET_SEEDED)) return null;
+  await setSetting(SETTING.CAPTURE_BUDGET_SEEDED, new Date().toISOString());
+
+  // Only if nothing is there. A deployment that already has a ceiling has one
+  // somebody chose, and this is a starting point, not a correction.
+  const existing = await getSetting(SETTING.CAPTURE_MONTHLY_BUDGET);
+  if (existing?.trim()) return null;
+
+  await setSetting(SETTING.CAPTURE_MONTHLY_BUDGET, String(SEEDED_MONTHLY_BUDGET_USD));
+  return SEEDED_MONTHLY_BUDGET_USD;
 }

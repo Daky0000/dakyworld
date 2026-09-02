@@ -36,6 +36,7 @@
  */
 import express from "express";
 import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 
 let bad = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -45,7 +46,16 @@ function check(label: string, ok: boolean, detail?: string) {
 
 // --- The fake Apify, and a fake picture host --------------------------------
 
-const PORT = 4601;
+/**
+ * Port 0, so the operating system picks a free one.
+ *
+ * Several checks in this folder bind the same hard-coded port — 4599 is claimed
+ * by four of them — which is harmless while `npm run checks` runs them one at a
+ * time and is a confusing EADDRINUSE the moment anything runs two at once, as
+ * happens whenever somebody works on one file while the suite is going. New
+ * files should not add to that.
+ */
+let PORT = 0;
 const TOKEN = "stub-token-never-print-me";
 
 /** What the next run will do. Set per scenario. */
@@ -84,7 +94,9 @@ app.get("/v2/acts/:actor", (req, res) => {
       title: "Dakyworld Website Screenshot",
       defaultRunOptions: { memoryMbytes: 1024, timeoutSecs: 300 },
       pricingInfos: [],
-      taggedBuilds: {},
+      // A tagged build, because an actor that exists and has never built is not
+      // a runnable actor — which is what `screenshotActorReady` now asks.
+      taggedBuilds: { latest: { buildId: "build-1" } },
     },
   });
 });
@@ -163,8 +175,9 @@ app.get("/images/:key", (req, res) => {
   res.type("image/png").send(image);
 });
 
-const server: Server = app.listen(PORT, "127.0.0.1");
+const server: Server = app.listen(0, "127.0.0.1");
 await new Promise((resolve) => server.once("listening", resolve));
+PORT = (server.address() as AddressInfo).port;
 
 process.env.APIFY_BASE_URL = `http://127.0.0.1:${PORT}/v2`;
 process.env.APIFY_TOKEN = TOKEN;

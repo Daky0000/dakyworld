@@ -10,6 +10,7 @@ import { restartWatcher, watcherStatus } from "../services/mailbox/watcher.js";
 import { nvidiaCooldown } from "../lib/claudeAgent.js";
 import { ApifyError, clearApifyCaches, getAccount, getActorPricing, getActorSchema, getMonthlyUsage } from "../lib/apify.js";
 import { DEFAULT_SCREENSHOT_ACTOR, screenshotActorId } from "../services/apifyScreenshot.js";
+import { deployScreenshotActor } from "../services/screenshotActorDeploy.js";
 import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
 import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
 import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from "../services/captureActors.js";
@@ -770,6 +771,30 @@ settingsRouter.put("/capture/seo-actor", async (req, res, next) => {
     if (wanted) await setSetting(SETTING.SEO_AUDIT_ACTOR, wanted);
     else await deleteSetting(SETTING.SEO_AUDIT_ACTOR);
     res.json({ current: await seoActorId() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Puts the screenshot actor onto this Apify account, using the token already
+ * saved here.
+ *
+ * The actor's source is in this repository and the documented way to deploy it
+ * is `apify push`, which needs the Apify CLI, Docker and a login on whatever
+ * machine runs it. This app has the token and nothing else reliably does, so
+ * without this a deployment could sit in front of an account that had never had
+ * the actor pushed — every screenshot failing, and no way to fix it from
+ * inside the product. Apify builds it from the public repository instead.
+ *
+ * Slow on purpose: it waits for the build rather than reporting that one has
+ * started, because the only question worth answering is whether screenshots
+ * work now.
+ */
+settingsRouter.post("/capture/screenshot-actor/deploy", async (_req, res, next) => {
+  try {
+    const result = await deployScreenshotActor();
+    res.status(result.ok ? 200 : 502).json(result);
   } catch (err) {
     next(err);
   }

@@ -66,7 +66,7 @@ export function displayActorId(actorId: string): string {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT";
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined>;
   /** Store search is public; everything else needs the Owner's token. */
@@ -377,6 +377,125 @@ async function fetchBuild(actor: any): Promise<any | null> {
   const buildId = actor?.taggedBuilds?.[buildTag]?.buildId;
   if (!buildId) return null;
   return request<any>(`/actor-builds/${buildId}`, { optionalAuth: true }).catch(() => null);
+}
+
+// --- Creating and building an actor ----------------------------------------
+
+/**
+ * Everything needed to put Dakyworld's own actor onto Dakyworld's own account,
+ * over the REST API, with the token the app already holds.
+ *
+ * This exists because of a gap that is obvious in hindsight: the actor's source
+ * lives in this repository, `apify push` deploys it, and `apify push` needs the
+ * Apify CLI, Docker and a login on whatever machine is running it. The app has
+ * the token and no way to use it for this, so a perfectly good deployment could
+ * sit in front of an account that had never had the actor pushed, with every
+ * screenshot failing for a reason nobody could act on from inside the product.
+ *
+ * The route around it is Apify's **`GIT_REPO` source type**: an actor version
+ * can name a public repository and a subdirectory, and Apify clones and builds
+ * it itself. No Docker here, no CLI, no files in the container — which matters,
+ * because Railway's root directory is `server/` and the actor's source is not
+ * in the image at all.
+ */
+
+export interface ApifyBuildState {
+  buildId: string;
+  /** Apify's own words: READY, RUNNING, SUCCEEDED, FAILED, TIMED-OUT, ABORTED. */
+  status: string;
+  /** The build log's tail, when there is one and it failed. */
+  message: string | null;
+}
+
+/**
+ * The actor's own record, or null when the account has never had it.
+ *
+ * `hasBuild` is the half that matters and the one that is easy to miss: an
+ * actor can exist and be completely unrunnable, because creating it and
+ * building it are two calls and the second can fail. Apify records a
+ * successful build under a tag; no tagged build means every run of it would
+ * fail on "the actor has no build", which is not a state anything should read
+ * as ready.
+ */
+export async function findActor(
+  actorId: string,
+): Promise<{ id: string; name: string; username: string; hasBuild: boolean } | null> {
+  try {
+    const actor = await request<any>(`/acts/${normalizeActorId(actorId)}`);
+    const tagged = (actor?.taggedBuilds ?? {}) as Record<string, { buildId?: string }>;
+    return {
+      id: actor.id,
+      name: actor.name,
+      username: actor.username,
+      hasBuild: Object.values(tagged).some((build) => Boolean(build?.buildId)),
+    };
+  } catch (err) {
+    if (err instanceof ApifyError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
+ * Creates the actor if the account has never had it, and returns its id either
+ * way.
+ *
+ * `name` is the second half of the id and the only part Apify lets us choose —
+ * the username half is the account the token belongs to, which is why a
+ * deployment on some other account has to point `capture.screenshotActor` at
+ * its own copy rather than at ours.
+ */
+export async function ensureActor(name: string, title: string, description: string): Promise<{ id: string; username: string }> {
+  const created = await request<any>("/acts", {
+    method: "POST",
+    body: { name, title, description, isPublic: false },
+  });
+  return { id: created.id, username: created.username };
+}
+
+/**
+ * Points a version of the actor at a public git repository and builds it.
+ *
+ * `PUT` rather than `POST` on the version, so running this twice updates the
+ * version in place instead of failing on one that already exists — which is
+ * the normal case: this is how the actor is *updated*, not only how it is
+ * first created.
+ */
+export async function setActorGitVersion(
+  actorId: string,
+  options: { versionNumber: string; gitRepoUrl: string; buildTag: string },
+): Promise<void> {
+  await request<any>(`/acts/${normalizeActorId(actorId)}/versions/${options.versionNumber}`, {
+    method: "PUT",
+    body: {
+      versionNumber: options.versionNumber,
+      sourceType: "GIT_REPO",
+      gitRepoUrl: options.gitRepoUrl,
+      buildTag: options.buildTag,
+    },
+  });
+}
+
+/** Starts a build. Returns as soon as Apify has accepted it, not when it is done. */
+export async function startActorBuild(actorId: string, versionNumber: string, tag: string): Promise<ApifyBuildState> {
+  const build = await request<any>(`/acts/${normalizeActorId(actorId)}/builds`, {
+    method: "POST",
+    query: { version: versionNumber, tag, useCache: true },
+    // A build is minutes, not seconds, and this only starts it.
+    timeoutMs: 60_000,
+  });
+  return { buildId: build.id, status: build.status ?? "RUNNING", message: null };
+}
+
+export async function getActorBuild(buildId: string): Promise<ApifyBuildState> {
+  const build = await request<any>(`/actor-builds/${buildId}`);
+  return {
+    buildId: build.id,
+    status: build.status ?? "RUNNING",
+    // Apify puts the reason on `statusMessage` and the compiler's own output in
+    // the log, which is a separate endpoint. One sentence is what a person
+    // needs; the log is a click away in the console.
+    message: typeof build.statusMessage === "string" && build.statusMessage.trim() ? build.statusMessage.trim() : null,
+  };
 }
 
 // --- Actor input schema ----------------------------------------------------
