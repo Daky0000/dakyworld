@@ -7,17 +7,36 @@
         "urls": {
             "title": "Pages",
             "type": "array",
-            "description": "The pages to photograph, each with the caller's own id. The id comes back on the matching result row unchanged, which is how a picture is matched to the business that asked for it. A bare string is accepted when running this by hand, and is given a positional id.",
+            "description": "The pages to photograph, each with the caller's own id. The id comes back on the matching result row unchanged, which is how a picture is matched to the business that asked for it. A page may also carry its own `viewport` and `maxHeight`, overriding the run's — that is what lets one run take the laptop picture and the phone picture of the same homepage instead of paying for two boots. A bare string is accepted when running this by hand, and is given a positional id.",
             "editor": "json",
-            "prefill": [{ "id": "example", "url": "https://example.com" }]
+            "prefill": [
+                {
+                    "id": "example-desktop",
+                    "url": "https://example.com"
+                },
+                {
+                    "id": "example-phone",
+                    "url": "https://example.com",
+                    "viewport": {
+                        "width": 390,
+                        "height": 844
+                    }
+                }
+            ]
         },
         "viewport": {
             "title": "Viewport",
             "type": "object",
             "description": "The browser window. A real device size: 1280x800 is a laptop, 390x844 is an iPhone 14. It is not a crop — it is what the page thinks it is being viewed on, which decides where a sticky header sits and how much a lazy-loading gallery brings in before the shutter.",
             "editor": "json",
-            "default": { "width": 1280, "height": 800 },
-            "prefill": { "width": 1280, "height": 800 }
+            "default": {
+                "width": 1280,
+                "height": 800
+            },
+            "prefill": {
+                "width": 1280,
+                "height": 800
+            }
         },
         "fullPage": {
             "title": "Full page",
@@ -64,9 +83,15 @@
             "type": "object",
             "description": "Apify proxy settings. The proxy is forced on whatever is set here — a datacentre IP with no proxy in front of it is refused by a good share of small-business sites behind Cloudflare — so this only chooses the groups and the country.",
             "editor": "proxy",
-            "default": { "useApifyProxy": true },
-            "prefill": { "useApifyProxy": true }
+            "default": {
+                "useApifyProxy": true
+            },
+            "prefill": {
+                "useApifyProxy": true
+            }
         }
     },
-    "required": ["urls"]
+    "required": [
+        "urls"
+    ]
 }

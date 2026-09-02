@@ -34,6 +34,7 @@ import { toolsRouter } from "./routes/tools.js";
 import { costsRouter } from "./routes/costs.js";
 import { approvalsRouter } from "./routes/approvals.js";
 import { slackHealth } from "./services/slackHealth.js";
+import { screenshotActorReady } from "./services/apifyScreenshot.js";
 import { countPending } from "./services/approvals.js";
 import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
@@ -493,6 +494,20 @@ ensureSystemRoles()
               `  → ${waiting} action(s) prepared by an agent are waiting for you to decide` +
                 `${slack.ready ? " — the cards are in Slack" : ", and nothing can post them to Slack yet"}. ` +
                 `They expire after a week.`,
+            );
+          }
+
+          // The screenshot actor lives in this repository and is deployed to
+          // Apify separately, so the app can be perfectly up to date in front
+          // of an account that has never had it pushed. Same reasoning as the
+          // Slack line above: the symptom otherwise is every audit quietly
+          // arriving with no picture.
+          const shots = await screenshotActorReady().catch(() => null);
+          if (shots && !shots.ready) {
+            console.log(
+              `  → No screenshots: the actor "${shots.actorId}" is not on this Apify account. ` +
+                `Run \`apify push\` from apify/dakyworld-screenshot/, or point Settings → Lead Sources → Screenshot actor ` +
+                `at the copy that exists. Audits and lead scans will run without a picture until then.`,
             );
           }
 

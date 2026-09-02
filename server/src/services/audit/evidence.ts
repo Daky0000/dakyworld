@@ -1,6 +1,6 @@
 import { fetchSite, type CertificateState, type SiteFetch } from "../companyAudit.js";
 import { runSeoAudit, type RenderedMeasurements } from "../seoAudit.js";
-import { PHONE_VIEWPORT_WIDTH, captureHomepage, normaliseSiteUrl, type ShotResult } from "../siteShot.js";
+import { PHONE_KEEP_ROWS, PHONE_VIEWPORT_WIDTH, captureHomepage, captureHomepageViews, normaliseSiteUrl, type ShotResult } from "../siteShot.js";
 
 export type { RenderedMeasurements };
 
@@ -779,24 +779,34 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
     notes.push(note);
   };
   if (!options.skipScreenshots) {
-    const desktop = options.desktopShot ?? (await captureHomepage(page.finalUrl));
-    if (desktop.shot) {
-      shots.push({ view: "desktop", result: desktop });
-      costUsd += desktop.shot.costUsd ?? 0;
-    }
-    if (desktop.note) shotNote(desktop.note);
+    // Both viewports in **one** Apify run. An Apify run boots a container and a
+    // browser before it does anything useful, and that boot is nearly the whole
+    // cost of a screenshot — so two pictures of the same homepage used to cost
+    // twice what one did, for a second page load against a browser that was
+    // already open. See `captureHomepageViews`.
+    //
+    // The desktop picture is handed in already taken when a batched run took
+    // it (`leadPrep`), and then only the phone view is left to ask for.
+    const both = options.desktopShot
+      ? { desktop: options.desktopShot, mobile: await captureHomepage(page.finalUrl, { viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS }) }
+      : await captureHomepageViews(page.finalUrl);
 
-    // Only worth a second Apify run when the first one worked. If a site blocks
-    // headless browsers it blocks both, and a second run is a second bill for
-    // the same refusal.
-    if (desktop.shot) {
-      const mobile = await captureHomepage(page.finalUrl, { viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: 3200 });
-      if (mobile.shot) {
-        shots.push({ view: "mobile", result: mobile });
-        costUsd += mobile.shot.costUsd ?? 0;
-      }
-      if (mobile.note) shotNote(`Phone view: ${mobile.note}`);
+    if (both.desktop.shot) {
+      shots.push({ view: "desktop", result: both.desktop });
+      costUsd += both.desktop.shot.costUsd ?? 0;
     }
+    if (both.desktop.note) shotNote(both.desktop.note);
+
+    if (both.mobile.shot) {
+      shots.push({ view: "mobile", result: both.mobile });
+      costUsd += both.mobile.shot.costUsd ?? 0;
+    }
+    // A site that blocks automated browsers blocks both viewports, and saying
+    // so twice in two sentences reads as two faults. The phone note is only
+    // worth printing when it says something the desktop one did not — which is
+    // exactly the case worth having: a page that serves a laptop and breaks on
+    // a phone, or the other way round.
+    if (both.mobile.note && (both.desktop.shot || both.mobile.shot)) shotNote(`Phone view: ${both.mobile.note}`);
   }
 
   if (!shots.length && !options.skipScreenshots) {

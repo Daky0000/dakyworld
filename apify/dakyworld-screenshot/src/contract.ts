@@ -24,6 +24,20 @@ export interface ScreenshotRequest {
    */
   id: string;
   url: string;
+  /**
+   * This page's own viewport, overriding the run's.
+   *
+   * It exists for one shape and it is the commonest one this actor runs: the
+   * website audit wants a laptop picture *and* a phone picture of the same
+   * homepage. With one viewport for the whole run that is two runs, and an
+   * Apify run boots a container and a browser before it does anything useful —
+   * so the boot, which is nearly the whole cost, was being paid twice for two
+   * pictures. A context is created per page here anyway, so this costs one
+   * extra page load instead.
+   */
+  viewport?: { width: number; height: number };
+  /** This page's own crop, overriding the run's. A phone page is taller. */
+  maxHeight?: number;
 }
 
 export interface ScreenshotInput {
@@ -112,6 +126,15 @@ export interface ScreenshotResult {
   fullHeight: number | null;
   /** True when the page was longer than `maxHeight` and the rest was cut. */
   cropped: boolean;
+  /**
+   * True when the page would only open with certificate verification off.
+   *
+   * The equivalent of a person clicking *Advanced -> Continue to site*, and
+   * it is on the row rather than silent because a report showing a picture
+   * taken over an unverified connection has to say so. See the README and
+   * SECURITY.md.
+   */
+  insecure: boolean;
   /** Echoed back, so a row says what it was taken at without the input beside it. */
   viewportWidth: number;
   viewportHeight: number;

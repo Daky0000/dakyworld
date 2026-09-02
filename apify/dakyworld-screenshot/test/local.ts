@@ -183,6 +183,77 @@ try {
     check("nothing was stored twice for an untouched picture", phone?.fullScreenshotUrl === null);
   }
 
+  // --- Two viewports of one page, in one run --------------------------------
+  //
+  // The shape the website audit asks for, and the reason a page may carry its
+  // own viewport. Two runs would be two container boots and two browser starts
+  // for two pictures of the same page, and the boot is nearly the whole cost.
+  console.log("\nThe laptop and the phone picture of one page, in one run");
+  {
+    const rows = await runActor({
+      urls: [
+        { id: "audit_desktop", url: site("/tall") },
+        { id: "audit_mobile", url: site("/tall"), viewport: { width: 390, height: 844 }, maxHeight: 3200 },
+      ],
+      viewport: { width: 1280, height: 800 },
+      fullPage: true,
+      delay: 0,
+      maxWidth: MAX_WIDTH,
+      maxHeight: MAX_HEIGHT,
+      navigationTimeoutMs: 8000,
+    });
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const desktop = byId.get("audit_desktop");
+    const mobile = byId.get("audit_mobile");
+
+    check("both pictures come out of one run", rows.length === 2 && rows.every((row) => row.success), rows.map((row) => row.error?.code).join(", "));
+    check("the run's viewport is used where a page named none", desktop?.viewportWidth === 1280 && desktop?.viewportHeight === 800);
+    check("and a page's own viewport overrides it", mobile?.viewportWidth === 390 && mobile?.viewportHeight === 844);
+    check("the laptop picture is the model width", desktop?.width === MAX_WIDTH, `${desktop?.width}`);
+    check("the phone picture stays at the phone width", mobile?.width === 390, `${mobile?.width}`);
+    // 2400 rows of a 1280 capture shrunk to 1024, against 3200 rows of a 390
+    // capture that is never shrunk: the crop travels with the page too.
+    check("each page is cropped by its own number", desktop?.height === 1920 && mobile?.height === 3200, `${desktop?.height} / ${mobile?.height}`);
+  }
+
+  // --- A certificate nothing trusts -----------------------------------------
+  //
+  // The gap this closed. `companyAudit` has clicked past a certificate warning
+  // since Aug 2026; the picture could not follow, because no external actor
+  // declared such an input — so a prospect whose certificate had expired got a
+  // report that read their page and showed nothing of it.
+  console.log("\nA site behind a certificate warning");
+  if (!fixtures.secureOrigin) {
+    console.log("  skip  no openssl on this machine, so no untrusted certificate to test against");
+  } else {
+    const rows = await runActor({
+      urls: [
+        { id: "expired", url: `${fixtures.secureOrigin}/ok` },
+        { id: "after_expired", url: site("/ok") },
+      ],
+      viewport: { width: 1280, height: 800 },
+      fullPage: true,
+      delay: 0,
+      maxWidth: MAX_WIDTH,
+      maxHeight: MAX_HEIGHT,
+      navigationTimeoutMs: 8000,
+    });
+
+    const past = rows.find((row) => row.id === "expired");
+    check("the picture is taken anyway, as a visitor would", past?.success === true, `${past?.error?.code} ${past?.error?.message ?? ""}`);
+    // Not silent. A report showing this picture has to be able to say the
+    // connection was not verified, exactly as every other section of it does.
+    check("and the row says the connection was not verified", past?.insecure === true);
+    check("it is the same page, at the same size", past?.width === MAX_WIDTH, `${past?.width}`);
+    check("and the page after it is unaffected", rows.find((row) => row.id === "after_expired")?.success === true);
+
+    // The negative that matters more than the positive: a good certificate is
+    // verified normally, so nothing about this makes ordinary pages insecure.
+    const plain = rows.find((row) => row.id === "after_expired");
+    check("an ordinary page is not marked insecure", plain?.insecure === false);
+  }
+
   // --- Twenty pages ---------------------------------------------------------
   console.log("\nA full batch");
   {

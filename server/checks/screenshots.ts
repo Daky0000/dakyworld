@@ -72,7 +72,7 @@ const images = new Map<string, Buffer>([
 ]);
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "25mb" }));
 
 app.get("/v2/acts/:actor", (req, res) => {
   if (req.params.actor === "dakyworld~missing") return res.status(404).json({ error: { message: "Actor was not found." } });
@@ -115,6 +115,45 @@ app.get("/v2/actor-runs/:id", (req, res) => {
 
 app.get("/v2/datasets/:id/items", (_req, res) => res.json(behaviour.rows));
 
+/** Every body the model layer sent, so an assertion can read the wire. */
+const modelRequests: any[] = [];
+
+/**
+ * A fake Anthropic, on the same express as the fake Apify.
+ *
+ * Here rather than in a file of its own because the thing being proved spans
+ * both: that the bytes one vendor produced are the bytes the other is handed.
+ * Splitting them would mean two harnesses agreeing about a picture, which is
+ * the arrangement this whole refactor exists to stop needing.
+ */
+app.post("/anthropic/v1/messages", (req, res) => {
+  modelRequests.push(req.body);
+  res.json({
+    id: "msg_check_shot",
+    type: "message",
+    role: "assistant",
+    model: req.body?.model ?? "claude-opus-5",
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          firstImpression: "A plain page with the practice name and a phone number.",
+          observations: [
+            { what: "Nothing above the fold says what the practice does.", severity: "HIGH", plainly: "A visitor cannot tell what you offer without scrolling.", region: null },
+          ],
+          fitsTheBusiness: "It looks like a template, not like an established local practice.",
+          worthFixing: { problem: "The first screen says nothing.", costsThem: "Visitors leave before they learn anything.", whyWorthPaying: "One screen of copy fixes it." },
+          theOneThing: "Say what you do, on the first screen.",
+          states: { trade: "Dental clinic", town: "Kumasi", services: [], phone: null },
+        }),
+      },
+    ],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 1200, output_tokens: 220, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+  });
+});
+
 app.get("/images/:key", (req, res) => {
   const authorised = req.header("authorization") === `Bearer ${TOKEN}`;
   imageRequests.push({ key: req.params.key, authorised });
@@ -134,8 +173,8 @@ const settings = await import("../src/lib/settings.js");
 settings.clearSettingsCache();
 
 const { prisma } = await import("../src/lib/prisma.js");
-const { captureHomepage, captureHomepages, normaliseSiteUrl, PHONE_VIEWPORT_WIDTH } = await import("../src/services/siteShot.js");
-const { DEFAULT_SCREENSHOT_ACTOR, screenshotActorId } = await import("../src/services/apifyScreenshot.js");
+const { captureHomepage, captureHomepages, captureHomepageViews, normaliseSiteUrl, PHONE_VIEWPORT_WIDTH } = await import("../src/services/siteShot.js");
+const { DEFAULT_SCREENSHOT_ACTOR, screenshotActorId, screenshotActorReady } = await import("../src/services/apifyScreenshot.js");
 const { SETTING } = settings;
 
 const shot = (key: string, overrides: Record<string, unknown> = {}) => ({
@@ -150,6 +189,7 @@ const shot = (key: string, overrides: Record<string, unknown> = {}) => ({
   fullWidth: 1280,
   fullHeight: 2400,
   cropped: false,
+  insecure: false,
   viewportWidth: 1280,
   viewportHeight: 800,
   format: "png",
@@ -307,6 +347,22 @@ console.log("\nReading the picture back");
   check("a cropped picture says so", Boolean(result.note?.includes("longer than this")), result.note ?? "");
   check("the bytes are what was fetched", result.shot?.bytes === images.get("desktop")!.byteLength);
 
+  // A picture taken by clicking past a certificate warning is still a picture,
+  // and it has to arrive saying so — a report that showed it silently would be
+  // presenting something that came over an unverified connection as if it had
+  // not. See SECURITY.md.
+  await reset();
+  behaviour = { status: "SUCCEEDED", rows: [shot("desktop", { insecure: true })] };
+  const past = await captureHomepage("example.com");
+  check("a picture taken past a certificate warning still arrives", Boolean(past.base64), past.note ?? "");
+  check("and is marked as such", past.shot?.insecure === true);
+  check("with a sentence a person will read", Boolean(past.note?.includes("unverified connection")), past.note ?? "");
+
+  await reset();
+  behaviour = { status: "SUCCEEDED", rows: [shot("desktop")] };
+  const ordinary = await captureHomepage("example.com");
+  check("an ordinary picture is not marked insecure", ordinary.shot?.insecure === false && ordinary.note === null, ordinary.note ?? "");
+
   await reset();
   behaviour = { status: "SUCCEEDED", rows: [shot("enormous", { width: 9000, height: 20 })] };
   const huge = await captureHomepage("example.com");
@@ -365,8 +421,18 @@ console.log("\nWhen the actor has not been deployed");
   check("and says where to get it", note.includes("apify/dakyworld-screenshot"), note);
   check("rather than reading as an outage", !/something went wrong/i.test(note));
 
+  // And said at boot, rather than waiting for the first audit of the day to
+  // come back with no picture and a sentence nobody was looking at.
+  const { clearApifyCaches } = await import("../src/lib/apify.js");
+  clearApifyCaches();
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "dakyworld/missing");
+  settings.clearSettingsCache();
+  check("the boot check notices a missing actor", (await screenshotActorReady())?.ready === false);
+
   await reset();
+  clearApifyCaches();
   check("clearing the setting goes back to the shipped actor", (await screenshotActorId()) === DEFAULT_SCREENSHOT_ACTOR);
+  check("and is quiet when the actor is there", (await screenshotActorReady())?.ready === true);
 }
 
 // --- 10. No Apify at all -----------------------------------------------------
@@ -379,8 +445,117 @@ console.log("\nWith no Apify token");
   const result = await captureHomepage("example.com");
   check("no run is started", startedRuns.length === 0, `${startedRuns.length}`);
   check("and the Owner is told what to connect", Boolean(result.note?.includes("Apify is not connected")), result.note ?? "");
+  // "No token" and "the actor is missing" are different states, and a boot
+  // warning about a missing actor shown to somebody who has not connected
+  // Apify at all is a warning about the wrong thing.
+  check("the boot check stays quiet with no token at all", (await screenshotActorReady()) === null);
 
   process.env.APIFY_TOKEN = TOKEN;
+  settings.clearSettingsCache();
+}
+
+// --- 11. Both viewports in one run -------------------------------------------
+//
+// The commonest shape this actor runs, and it used to be two runs. An Apify run
+// boots a container and a browser before it does anything useful, so two
+// pictures of one homepage cost twice what one did for a second page load
+// against a browser that was already open.
+console.log("\nThe laptop and the phone picture of one homepage");
+{
+  await reset();
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [
+      shot("desktop", { id: "desktop", url: "https://example.com/" }),
+      shot("phone", { id: "mobile", url: "https://example.com/", width: 390, height: 1400, viewportWidth: 390, viewportHeight: 844 }),
+    ],
+  };
+
+  const views = await captureHomepageViews("example.com");
+  const body = startedRuns[0]?.body;
+
+  check("it is one run, not two", startedRuns.length === 1, `${startedRuns.length} run(s)`);
+  check("carrying both pages", body?.urls?.length === 2, `${body?.urls?.length}`);
+
+  const [first, second] = body?.urls ?? [];
+  check("the first is a laptop", first?.viewport?.width === 1280 && first?.viewport?.height === 800, JSON.stringify(first?.viewport));
+  check("the second is a phone", second?.viewport?.width === 390 && second?.viewport?.height === 844, JSON.stringify(second?.viewport));
+  // A phone page is roughly three times as tall for the same content, so the
+  // crop has to travel with the page rather than with the run.
+  check("each page carries its own crop", first?.maxHeight === 2400 && second?.maxHeight === 3200, `${first?.maxHeight} / ${second?.maxHeight}`);
+
+  check("both pictures come back", Boolean(views.desktop.base64 && views.mobile.base64), `${views.desktop.note ?? ""} ${views.mobile.note ?? ""}`);
+  check("the laptop one is the laptop one", views.desktop.shot?.viewportWidth === 1280 && views.desktop.shot?.width === 1024);
+  check("and the phone one is the phone one", views.mobile.shot?.viewportWidth === 390 && views.mobile.shot?.width === 390);
+
+  // The reversal that came with putting them in one run: the phone picture used
+  // to be asked for only when the laptop one worked, because it meant a second
+  // bill. Inside one run it is one more page load, and a site that serves one
+  // viewport and breaks on the other is the thing the phone shot is *for*.
+  await reset();
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [
+      shot("desktop", { id: "desktop", url: "https://example.com/" }),
+      {
+        ...shot("phone", { id: "mobile", url: "https://example.com/" }),
+        success: false,
+        screenshotUrl: null,
+        error: { code: "PAGE_TIMEOUT", message: "The page did not finish loading within 45 seconds." },
+      },
+    ],
+  };
+  const half = await captureHomepageViews("example.com");
+  check("one viewport failing does not cost the other its picture", Boolean(half.desktop.base64) && half.mobile.shot === null);
+  check("and the failure is still a sentence", Boolean(half.mobile.note?.includes("did not finish loading")), half.mobile.note ?? "");
+
+  await reset();
+  const bad = await captureHomepageViews("not a web address");
+  check("a bad address still starts no run", startedRuns.length === 0 && bad.desktop.shot === null && bad.mobile.shot === null);
+}
+
+// --- 12. The picture reaches the vision model --------------------------------
+//
+// The end of the line, and the one assertion that spans the whole refactor: the
+// bytes the actor produced are the bytes a model is handed. Everything above
+// this proves a picture came back; this proves it arrives where it is going,
+// in the shape the vision half has always been given.
+console.log("\nWhat the vision model is actually sent");
+{
+  await reset();
+  behaviour = { status: "SUCCEEDED", rows: [shot("desktop", { cropped: true, fullScreenshotUrl: `http://127.0.0.1:${PORT}/images/full` })] };
+
+  process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${PORT}/anthropic`;
+  process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
+  // The other vendors must stay unconnected, or the routing chain reaches one
+  // of them and this asserts on the wrong wire.
+  for (const key of ["OPENAI_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY", "NVIDIA_API_KEY"]) {
+    process.env[key] = "";
+  }
+  settings.clearSettingsCache();
+
+  const { lookAtHomepage } = await import("../src/services/homepageLook.js");
+  const result = await lookAtHomepage({ website: "example.com", companyName: "Adom Dental" });
+
+  const body = modelRequests[0];
+  const image = (body?.messages?.[0]?.content ?? []).find((part: any) => part?.type === "image");
+  check("the model is sent a picture", Boolean(image), `${result.notes.join(" ")}`);
+  check("as PNG", image?.source?.media_type === "image/png", image?.source?.media_type);
+  check("base64, not a link that expires", image?.source?.type === "base64" && !String(image?.source?.data ?? "").startsWith("http"));
+  // The whole point. Not "a picture of the right size" — the actual bytes the
+  // actor produced and this server downloaded.
+  check("and the bytes are the ones the actor produced", image?.source?.data === images.get("desktop")!.toString("base64"));
+
+  const words = (body?.messages?.[0]?.content ?? []).find((part: any) => part?.type === "text")?.text ?? "";
+  check("the picture comes before the words", (body?.messages?.[0]?.content ?? [])[0]?.type === "image");
+  check("the model is told what it is looking at", words.includes("example.com"), words.slice(0, 80));
+  check("and at what size", words.includes("1024 by 1920"), words.slice(0, 200));
+  check("including that it was cut down", words.includes("cropped to the top of the page"));
+  check("the look comes back", result.look !== null, result.notes.join(" "));
+  check("with the picture beside it", result.shot?.width === 1024 && result.shot?.height === 1920);
+
+  process.env.ANTHROPIC_BASE_URL = "";
+  process.env.ANTHROPIC_API_KEY = "";
   settings.clearSettingsCache();
 }
 

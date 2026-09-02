@@ -1417,6 +1417,8 @@ export interface Screenshot {
   width: number;
   height: number;
   cropped: boolean;
+  /** The picture was taken by going past a certificate warning. */
+  insecure?: boolean;
   imageUrl: string;
   bytes: number;
   costUsd?: number | null;

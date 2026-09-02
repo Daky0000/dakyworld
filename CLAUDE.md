@@ -601,6 +601,14 @@ now six fields and no lookup.
   `fetch` of the picture was right while the actor was somebody else's public
   one; `downloadScreenshot()` retries a 401 or 403 with the token, because that
   failure would otherwise look exactly like a website blocking us.
+- **A certificate warning is clicked past here too, at last.** The actor retries
+  a TLS failure once with `ignoreHTTPSErrors` on that one browser context — the
+  same decision `companyAudit.fetchSite` has made since Aug 2026, which the
+  screenshot half could not follow while the actor belonged to somebody else.
+  The row comes back `insecure: true`, it reaches the report as
+  `Screenshot.insecure`, and the note beside the picture says the connection was
+  not verified. **[SECURITY.md](SECURITY.md) is where the scope is written
+  down**, and it now names both places.
 
 **Screenshot cost is the actor booting, not the picture** — an Apify run starts
 a container and a browser before it does anything useful, and that boot is
@@ -612,15 +620,21 @@ sixty. The other levers, in order of size: not re-shooting what is still fresh
 is billed in gigabyte-hours), and the resize to 1024 — vision is billed in 512px
 tiles, so 1280x2400 is 15 tiles and 1024x1920 is 8.
 
-**The one batching gap left is desktop-plus-phone**, and it is named here rather
-than fixed. `audit/evidence.ts` takes two pictures of one homepage in **two
-runs**, because the viewport is one field for the whole batch — so the commonest
-shape this app runs pays two boots for two pictures. The phone shot is only
-taken when the desktop one worked, which is the guard that matters (a site that
-blocks headless browsers blocks both, and a second run is a second bill for the
-same refusal). Closing it properly means a per-URL viewport override in the
-Dakyworld contract and a change to `evidence.ts`, which is an audit change, not
-a screenshot one.
+**Desktop and phone are one run** — `captureHomepageViews()`, used by
+`audit/evidence.ts`. Each page in the contract may carry its own `viewport` and
+`maxHeight`, so the two pictures of one homepage cost one container boot and one
+extra page load instead of two of everything. Measured on the actor
+(`test/timing.ts`): a run's fixed cost is ~3.1s of process start and browser
+launch before any page, against ~0.2s of marginal work per extra page — the
+whole reason batching is the design.
+
+That change reversed one guard on purpose. The phone picture used to be asked
+for **only when the desktop one worked**, which was right while it meant a
+second run and a second bill; inside one run it is one more page load against a
+browser that is already open, and a site that serves one viewport and breaks on
+the other is exactly what the phone shot is for. `evidence.ts` still prints one
+sentence rather than two when neither worked — a site that blocks automated
+browsers blocks both, and saying so twice reads as two faults.
 
 **The actor is still a setting** (`capture.screenshotActor`,
 `GET`/`PUT /api/settings/capture/screenshot-actor`) for a narrower reason than
@@ -643,11 +657,18 @@ getting any of them wrong is silent:
   an ad script never goes idle, and waiting for it burns the whole timeout to
   produce the same picture.
 
-`checks/screenshots.ts` (55, database only) drives the whole path against a
-local express playing Apify and hosting the pictures. Half of it is the
-negatives: a bad address must start no run, a site with no row must get no
-picture rather than its neighbour's, an empty dataset must not read as a broken
-run, and a missing actor must not read as an outage.
+`checks/screenshots.ts` (74, database only) drives the whole path against a
+local express playing Apify, hosting the pictures **and playing Anthropic** —
+the last of those is what proves the end of the line, that the bytes the actor
+produced are the bytes `lookAtHomepage` hands a vision model, base64, PNG,
+before the words. One harness rather than two because the thing being asserted
+spans both vendors, and two harnesses agreeing about a picture is the
+arrangement this refactor exists to stop needing.
+
+Half of it is the negatives: a bad address must start no run, a site with no row
+must get no picture rather than its neighbour's, an empty dataset must not read
+as a broken run, a missing actor must not read as an outage, and an ordinary
+picture must not come back marked insecure.
 
 `fetchSite` checks *both* spellings of the host even when the first works, so
 "only www resolves" is found whichever form the scrape happened to record. When
@@ -702,15 +723,15 @@ finding in the document with the issuer and expiry date read off the socket
 `Certificate warning` tag). **[SECURITY.md](SECURITY.md) is where the scope of
 that relaxation is written down** — one call, no credential sent, never
 `NODE_TLS_REJECT_UNAUTHORIZED`, and `routability()` re-checked on every redirect
-hop. The screenshot half does not follow, and the reason changed in Sep 2026
-without the behaviour changing: it used to be that none of the external
-screenshot actors declared an ignore-certificate input and inventing one would
-be a key Apify silently drops. Dakyworld's own actor *could* declare one
-(`ignoreHTTPSErrors` on the browser context), so it is now a decision rather
-than a limitation — and widening that relaxation belongs in
-[SECURITY.md](SECURITY.md) before it belongs in the actor. Until then `ux.ts`
-says a certificate warning is why there is no picture, rather than blaming a
-missing token.
+hop. **The screenshot half follows it now**, which it could not while the actor
+belonged to somebody else: none of the external ones declared an
+ignore-certificate input, and inventing a key Apify silently drops is not an
+implementation. Dakyworld's own actor retries a TLS failure once with
+`ignoreHTTPSErrors` on that one context and marks the row `insecure`, so the
+report shows the page *and* says the connection was not verified. `ux.ts` lost
+its third branch with it — the sentence explaining why a site behind a
+certificate warning had no picture would now be false, and a report explaining
+a limit that no longer exists is worse than one that says nothing.
 
 **The outreach doctrine is the authority** —
 [`server/src/services/outreachDoctrine.ts`](server/src/services/outreachDoctrine.ts).

@@ -99,6 +99,9 @@ export const MAX_BATCH = 20;
  */
 const KEEP_ROWS = 2400;
 
+/** The same two and a half screens on a phone, where the same content is taller. */
+export const PHONE_KEEP_ROWS = 3200;
+
 /** Milliseconds after load, for fonts and a hero image to arrive. */
 const DELAY_MS = 3000;
 
@@ -118,6 +121,16 @@ export interface Screenshot {
   height: number;
   /** True when the page was longer than `KEEP_ROWS` and the rest was cut. */
   cropped: boolean;
+  /**
+   * True when the page would only open by going past a certificate warning —
+   * what a person does at *Advanced → Continue to site*.
+   *
+   * On the picture rather than silent because a report showing it has to say
+   * so: what came back over an unverified connection may not be genuine, and
+   * the audit already labels every other section it read that way. See
+   * SECURITY.md, which is where the scope of that relaxation is written down.
+   */
+  insecure: boolean;
   /**
    * The signed Apify link to the **original** full-size picture, which expires.
    * Kept so a person can open what was actually captured — `width` and
@@ -157,7 +170,36 @@ export function normaliseSiteUrl(website: string): string | null {
 }
 
 /**
- * Screenshots for many businesses in one run.
+ * One picture that has been asked for: a page, and the shape to take it in.
+ *
+ * The unit of a run is a **view**, not a website, because the two things this
+ * app photographs are not the same shape. A batch of leads is one view each at
+ * a laptop viewport; an audit is two views of one homepage. Both are the same
+ * request to the actor, which takes a viewport per page.
+ */
+interface ShotRequest {
+  /** Generated here, sent with the request, matched on the way back. */
+  id: string;
+  /** What the caller looks this result up by. */
+  key: string;
+  url: string;
+  viewportWidth: number;
+  viewportHeight: number;
+  keepRows: number;
+}
+
+/** Fills in the defaults that go together, so a phone never gets a laptop's window. */
+function shapeOf(options: ShotOptions): { viewportWidth: number; viewportHeight: number; keepRows: number } {
+  const viewportWidth = options.viewportWidth ?? VIEWPORT_WIDTH;
+  return {
+    viewportWidth,
+    viewportHeight: options.viewportHeight ?? (viewportWidth <= 500 ? PHONE_VIEWPORT_HEIGHT : VIEWPORT_HEIGHT),
+    keepRows: options.keepRows ?? KEEP_ROWS,
+  };
+}
+
+/**
+ * One run, however many views it covers.
  *
  * This is where nearly all the cost of the feature lives, and almost none of
  * it is the picture. An Apify run boots a container and a browser before it
@@ -166,57 +208,46 @@ export function normaliseSiteUrl(website: string): string | null {
  * sixty boots — half an hour of waiting and sixty times the compute, for the
  * same sixty pictures a handful of runs would have produced.
  *
- * So the batch is the real function and `captureHomepage` is a wrapper on it.
- * A single lead in the drawer still gets its own run, because a person is
- * watching; bulk work goes through here in groups of `MAX_BATCH`.
+ * So this is the real function and everything exported is a wrapper on it.
  */
-export async function captureHomepages(websites: string[], options: ShotOptions = {}): Promise<Map<string, ShotResult>> {
+async function captureViews(requests: ShotRequest[]): Promise<Map<string, ShotResult>> {
   const results = new Map<string, ShotResult>();
-  const viewportWidth = options.viewportWidth ?? VIEWPORT_WIDTH;
-  const viewportHeight = options.viewportHeight ?? (viewportWidth <= 500 ? PHONE_VIEWPORT_HEIGHT : VIEWPORT_HEIGHT);
-  const keepRows = options.keepRows ?? KEEP_ROWS;
-
-  // Normalise first, so an unusable address costs nothing and says so. The id
-  // is the position in this list: it is generated here, sent with the request
-  // and matched on the way back, so it never has to be guessed at either end.
-  const wanted: { id: string; requested: string; url: string }[] = [];
-  const seen = new Map<string, string>();
-  for (const website of websites) {
-    if (results.has(website) || seen.has(website)) continue;
-    const url = normaliseSiteUrl(website);
-    if (!url) {
-      results.set(website, none(`"${website}" is not a web address this could open, so no screenshot was taken.`));
-      continue;
-    }
-    const id = `s${wanted.length}`;
-    seen.set(website, id);
-    wanted.push({ id, requested: website, url });
-  }
-  if (wanted.length === 0) return results;
+  const first = requests[0];
+  if (!first) return results;
 
   if (!(await apifyConfigured())) {
     const note = "No screenshot was taken — Apify is not connected. Add a token under Lead Sources → Connection.";
-    for (const entry of wanted) results.set(entry.requested, none(note));
+    for (const entry of requests) results.set(entry.key, none(note));
     return results;
   }
 
   const failAll = (note: string) => {
-    for (const entry of wanted) if (!results.has(entry.requested)) results.set(entry.requested, none(note));
+    for (const entry of requests) if (!results.has(entry.key)) results.set(entry.key, none(note));
     return results;
   };
 
   // The clock scales with the batch: twenty pages genuinely take longer than
   // one, and giving up early would throw away a run that has been paid for.
-  const giveUpAfterMs = Math.min(600_000, 60_000 + wanted.length * 20_000);
+  const giveUpAfterMs = Math.min(600_000, 60_000 + requests.length * 20_000);
 
   const run = await runScreenshotActor(
     {
-      urls: wanted.map((entry) => ({ id: entry.id, url: entry.url })),
-      viewport: { width: viewportWidth, height: viewportHeight },
+      // Every page carries its own viewport and its own crop, which is what
+      // lets one run hold the laptop picture and the phone picture of the same
+      // homepage. The run-level pair below is the same as the first page's:
+      // the actor only reaches for it when a page did not bring one, and
+      // nothing here depends on the two agreeing.
+      urls: requests.map((entry) => ({
+        id: entry.id,
+        url: entry.url,
+        viewport: { width: entry.viewportWidth, height: entry.viewportHeight },
+        maxHeight: entry.keepRows,
+      })),
+      viewport: { width: first.viewportWidth, height: first.viewportHeight },
       fullPage: true,
       delayMs: DELAY_MS,
       maxWidth: MODEL_WIDTH,
-      maxHeight: keepRows,
+      maxHeight: first.keepRows,
     },
     { waitMs: giveUpAfterMs },
   );
@@ -241,30 +272,102 @@ export async function captureHomepages(websites: string[], options: ShotOptions 
     }
   }
 
-  // What one page cost, which is the number worth knowing when pricing a
+  // What one picture cost, which is the number worth knowing when pricing a
   // batch. Apify reports per run, so it is shared out across the pictures that
   // actually came back.
   const withImages = [...run.rows.values()].filter((row) => row.success).length;
   const perShot = run.costUsd != null && withImages > 0 ? run.costUsd / withImages : null;
   const takenAt = new Date().toISOString();
 
-  for (const entry of wanted) {
+  for (const entry of requests) {
     // By id, and only by id. Nothing here looks at position, and a row that
     // did not come back is a page with no picture rather than a reason to
     // reach for the row next to it.
     const row = run.rows.get(entry.id);
     if (!row) {
-      results.set(entry.requested, none(`No screenshot came back for ${entry.url} — the run finished without producing a result for it.`));
+      results.set(entry.key, none(`No screenshot came back for ${entry.url} — the run finished without producing a result for it.`));
       continue;
     }
     if (!row.success || !row.screenshotUrl) {
-      results.set(entry.requested, none(describeRowFailure(entry.url, row)));
+      results.set(entry.key, none(describeRowFailure(entry.url, row)));
       continue;
     }
-    results.set(entry.requested, await readShot(entry, row, takenAt, perShot, viewportWidth));
+    results.set(entry.key, await readShot(entry, row, takenAt, perShot));
   }
 
   return results;
+}
+
+/**
+ * Screenshots for many businesses in one run.
+ *
+ * A single lead in the drawer still gets a run of its own, because a person is
+ * watching; bulk work goes through here in groups of `MAX_BATCH`.
+ */
+export async function captureHomepages(websites: string[], options: ShotOptions = {}): Promise<Map<string, ShotResult>> {
+  const results = new Map<string, ShotResult>();
+  const shape = shapeOf(options);
+
+  // Normalise first, so an unusable address costs nothing and says so. The id
+  // is the position in this list: it is generated here, sent with the request
+  // and matched on the way back, so it never has to be guessed at either end.
+  const requests: ShotRequest[] = [];
+  const seen = new Set<string>();
+  for (const website of websites) {
+    if (results.has(website) || seen.has(website)) continue;
+    const url = normaliseSiteUrl(website);
+    if (!url) {
+      results.set(website, none(`"${website}" is not a web address this could open, so no screenshot was taken.`));
+      continue;
+    }
+    seen.add(website);
+    requests.push({ id: `s${requests.length}`, key: website, url, ...shape });
+  }
+
+  for (const [key, result] of await captureViews(requests)) results.set(key, result);
+  return results;
+}
+
+/** One business. A person is waiting, so it gets a run of its own. */
+export async function captureHomepage(website: string, options: ShotOptions = {}): Promise<ShotResult> {
+  const results = await captureHomepages([website], options);
+  return results.get(website) ?? none(`No screenshot was taken for ${website}.`);
+}
+
+/**
+ * The laptop picture and the phone picture of one homepage, in **one** run.
+ *
+ * The audit needs both — a site that lays out correctly at 1280 and spills off
+ * the screen at 390 passes every check except the one that matches where their
+ * customers actually are — and taking them separately meant two runs, so two
+ * container boots and two browser starts for two pictures of the same page.
+ * The boot is nearly the whole cost of a screenshot, so this halves the price
+ * of the shape this app runs most often.
+ *
+ * **Both are attempted whatever happens to the other**, which is a deliberate
+ * reversal. Asking for the phone picture only when the laptop one had worked
+ * was the right guard while the second picture meant a second run and a second
+ * bill; inside one run it is one more page load against a browser that is
+ * already open, and a site that serves one viewport and refuses another is a
+ * real thing worth seeing. The caller decides what to say when both fail —
+ * `audit/evidence.ts` prints one sentence rather than the same sentence twice.
+ */
+export async function captureHomepageViews(website: string): Promise<{ desktop: ShotResult; mobile: ShotResult }> {
+  const url = normaliseSiteUrl(website);
+  if (!url) {
+    const note = `"${website}" is not a web address this could open, so no screenshot was taken.`;
+    return { desktop: none(note), mobile: none(note) };
+  }
+
+  const results = await captureViews([
+    { id: "desktop", key: "desktop", url, ...shapeOf({}) },
+    { id: "mobile", key: "mobile", url, ...shapeOf({ viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS }) },
+  ]);
+
+  return {
+    desktop: results.get("desktop") ?? none(`No screenshot was taken for ${website}.`),
+    mobile: results.get("mobile") ?? none(`No phone screenshot was taken for ${website}.`),
+  };
 }
 
 /**
@@ -295,13 +398,7 @@ function describeRowFailure(url: string, row: ScreenshotRow): string {
   }
 }
 
-async function readShot(
-  entry: { requested: string; url: string },
-  row: ScreenshotRow,
-  takenAt: string,
-  costUsd: number | null,
-  viewportWidth: number,
-): Promise<ShotResult> {
+async function readShot(entry: ShotRequest, row: ScreenshotRow, takenAt: string, costUsd: number | null): Promise<ShotResult> {
   const downloaded = await downloadScreenshot(row.screenshotUrl!);
   if (!downloaded.ok) return none(`The screenshot of ${entry.url} could not be downloaded: ${downloaded.message}`);
   const sent = downloaded.bytes;
@@ -323,10 +420,11 @@ async function readShot(
       requested: entry.url,
       finalUrl: row.finalUrl,
       takenAt,
-      viewportWidth,
+      viewportWidth: entry.viewportWidth,
       width: size.width,
       height: size.height,
       cropped: row.cropped,
+      insecure: row.insecure,
       // The uncut capture when there is one, so a person opening this sees the
       // whole page rather than the same crop the model was shown.
       imageUrl: row.fullScreenshotUrl ?? row.screenshotUrl!,
@@ -335,16 +433,16 @@ async function readShot(
       costUsd,
     },
     base64: sent.toString("base64"),
-    note: row.cropped
-      ? "Their homepage is longer than this; the picture is the top of the page, which is what a visitor sees first."
-      : null,
+    note:
+      [
+        row.cropped ? "Their homepage is longer than this; the picture is the top of the page, which is what a visitor sees first." : null,
+        row.insecure
+          ? "The picture was taken by going past a certificate warning, exactly as a visitor would — so what is in it came over an unverified connection."
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ") || null,
   };
-}
-
-/** One business. A person is waiting, so it gets a run of its own. */
-export async function captureHomepage(website: string, options: ShotOptions = {}): Promise<ShotResult> {
-  const results = await captureHomepages([website], options);
-  return results.get(website) ?? none(`No screenshot was taken for ${website}.`);
 }
 
 /** Which actor is doing this, for anything that needs to say so. */

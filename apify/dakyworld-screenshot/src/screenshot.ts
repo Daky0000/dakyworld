@@ -25,6 +25,8 @@ export interface CaptureSuccess {
   durationMs: number;
   /** True when the proxy failed and the page was fetched directly instead. */
   withoutProxy: boolean;
+  /** True when the page would only open with certificate verification off. */
+  insecure: boolean;
 }
 
 export interface CaptureFailure {
@@ -59,6 +61,13 @@ const USER_AGENT =
  */
 const PROXY_FAILURES = /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_NO_SUPPORTED_PROXIES|ERR_SOCKS_CONNECTION_FAILED/;
 
+/**
+ * Chromium's own errors for a certificate a browser will not accept: expired,
+ * self-signed, issued for another hostname, or signed by an authority nothing
+ * trusts. All four are warnings a visitor gets past by clicking through.
+ */
+const CERTIFICATE_FAILURES = /ERR_CERT_[A-Z_]+|ERR_SSL_[A-Z_]+|ERR_BAD_SSL_CLIENT_AUTH_CERT/;
+
 /** Apify hands out `http://groups-…:password@proxy.apify.com:8000`; Playwright wants the three parts apart. */
 export function splitProxyUrl(url: string): { server: string; username?: string; password?: string } | null {
   try {
@@ -80,6 +89,8 @@ export interface CaptureOptions {
   navigationTimeoutMs: number;
   /** A fresh proxy URL for this page, or null to go direct. */
   proxyUrl: string | null;
+  /** Set only by the certificate retry. Never a default, never a mode. */
+  ignoreCertificate?: boolean;
 }
 
 export async function capturePage(browser: Browser, request: ScreenshotRequest, options: CaptureOptions): Promise<CaptureResult> {
@@ -91,15 +102,46 @@ export async function capturePage(browser: Browser, request: ScreenshotRequest, 
   }
 
   const attempt = await openAndShoot(browser, url, options, startedAt);
-  // The one retry worth having. Everything else — a timeout, a refused
+  if (attempt.ok || attempt.error.code !== "NAVIGATION_ERROR") return attempt;
+
+  // Two retries worth having, and nothing else. A timeout, a refused
   // connection, a site that serves a 403 to every browser it has not seen
-  // before — gives the same answer the second time and costs another page load
-  // to say so.
-  if (!attempt.ok && options.proxyUrl && attempt.error.code === "NAVIGATION_ERROR" && PROXY_FAILURES.test(attempt.error.message)) {
+  // before — each gives the same answer the second time and costs another page
+  // load to say so.
+  if (options.proxyUrl && PROXY_FAILURES.test(attempt.error.message)) {
     const direct = await openAndShoot(browser, url, { ...options, proxyUrl: null }, startedAt);
-    if (direct.ok) return { ...direct, withoutProxy: true };
-    return direct;
+    return direct.ok ? { ...direct, withoutProxy: true } : direct;
   }
+
+  /**
+   * A certificate warning is clicked past, not reported as a dead end.
+   *
+   * The same decision `companyAudit.fetchSite` already makes on the server, for
+   * the same reason and inside the same limits: a prospect whose certificate
+   * had expired used to get a review whose entire content was "we could not
+   * open it", about a site every visitor reaches by clicking one button, with
+   * the expired certificate — the most urgent thing wrong with the business,
+   * and a free same-day fix — never named at all. The audit half was fixed in
+   * Aug 2026 and the picture half could not follow, because none of the
+   * external actors declared such an input. This one is ours.
+   *
+   * Four things keep it narrow, and all four are written down in SECURITY.md:
+   *
+   *  - **It only fires on a certificate failure.** A good certificate is
+   *    verified normally, and a host that does not resolve still fails.
+   *  - **It is one browser context, not a mode.** Never a browser-wide flag and
+   *    never `NODE_TLS_REJECT_UNAUTHORIZED`.
+   *  - **Nothing of ours is sent.** A page load for a public homepage: no
+   *    credential, no cookie, no body. The exposure from an unverified
+   *    connection is that what comes back may not be genuine, and what comes
+   *    back is only ever looked at.
+   *  - **The row says so**, so a report showing the picture can say so too.
+   */
+  if (!options.ignoreCertificate && CERTIFICATE_FAILURES.test(attempt.error.message)) {
+    const past = await openAndShoot(browser, url, { ...options, ignoreCertificate: true }, startedAt);
+    return past.ok ? { ...past, insecure: true } : past;
+  }
+
   return attempt;
 }
 
@@ -112,6 +154,9 @@ async function openAndShoot(browser: Browser, url: string, options: CaptureOptio
       viewport: options.viewport,
       userAgent: USER_AGENT,
       deviceScaleFactor: 1,
+      // Off unless the retry in `capturePage` turned it on for this one
+      // context. See the long note there; it is never a default.
+      ...(options.ignoreCertificate ? { ignoreHTTPSErrors: true } : {}),
       // **No mobile emulation, deliberately.** Turning Playwright's `isMobile`
       // on is more faithful to a real phone and it changes the picture: a page
       // with no viewport meta tag is laid out at Chrome's 980px default and
@@ -178,6 +223,7 @@ async function openAndShoot(browser: Browser, url: string, options: CaptureOptio
       pageHeight: pageHeight || 0,
       durationMs: Date.now() - startedAt,
       withoutProxy: !options.proxyUrl,
+      insecure: Boolean(options.ignoreCertificate),
     };
   } catch (err) {
     return fail("NAVIGATION_ERROR", `The page could not be opened: ${firstLine((err as Error).message ?? String(err))}`, startedAt);

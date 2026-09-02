@@ -80,6 +80,22 @@ change to both in the same commit**.
 }
 ```
 
+A page may carry its own `viewport` and `maxHeight`, overriding the run's. That
+is the whole of how the audit gets a laptop picture and a phone picture of one
+homepage without paying for two runs:
+
+```json
+{
+  "urls": [
+    { "id": "audit_desktop", "url": "https://example.com" },
+    { "id": "audit_mobile", "url": "https://example.com",
+      "viewport": { "width": 390, "height": 844 }, "maxHeight": 3200 }
+  ],
+  "viewport": { "width": 1280, "height": 800 },
+  "fullPage": true, "delay": 3000, "maxWidth": 1024, "maxHeight": 2400
+}
+```
+
 Out, one row per requested URL, always:
 
 ```json
@@ -93,6 +109,7 @@ Out, one row per requested URL, always:
   "width": 1024, "height": 1920,
   "fullWidth": 1280, "fullHeight": 9400,
   "cropped": true,
+  "insecure": false,
   "viewportWidth": 1280, "viewportHeight": 800,
   "format": "png",
   "durationMs": 6120,
@@ -153,9 +170,17 @@ Resizing first would throw away half the page.
   WAF serve a challenge page to anything announcing HeadlessChrome, and a
   challenge page photographed and read by a vision model becomes a report about
   a website that does not exist.
-- **One retry, and only for a proxy failure.** Everything else — a timeout, a
-  refused connection, a 403 — gives the same answer the second time and costs
-  another page load to say so.
+- **Two retries, and only two.** A proxy that could not carry the request is
+  retried without the proxy; a certificate a browser will not accept is retried
+  with `ignoreHTTPSErrors` on that one context, which is what a person does at
+  *Advanced → Continue to site* — and the row comes back `insecure: true` so a
+  report showing the picture can say the connection was not verified. The scope
+  of that second one is written down in the repository's `SECURITY.md`, and it
+  is narrow on purpose: only on a certificate failure, only one context, never
+  a browser-wide or process-wide switch, and nothing of ours is ever sent. A
+  good certificate is verified normally. Everything else — a timeout, a refused
+  connection, a 403 — gives the same answer the second time and costs another
+  page load to say so.
 - **The Docker tag and the `playwright` dependency move together.** The browsers
   baked into the base image live in a directory named for the Playwright version
   that installed them, so a package.json asking for a different version finds no
@@ -165,6 +190,41 @@ Resizing first would throw away half the page.
   this picture with a decoder that reads greyscale and RGB(A) at 8 bits and
   refuses everything else. A palette PNG would be quietly unmarkable and the
   report would lose its annotations without saying why.
+
+## What a run costs
+
+Apify bills platform compute in **compute units**: 1 CU is one gigabyte-hour, so
+a run at 2048 MB for T seconds is `2 × T / 3600` CU. That is the only charge —
+this actor is private and charges no per-result fee of its own.
+
+The shape of the bill is a fixed cost plus a marginal one, and both are
+measurable. Measured on this actor with `test/timing.ts` against instant local
+pages:
+
+| | measured |
+|---|---|
+| Fixed, per run (process start, Apify init, Chromium launch) | **~3.1 s** |
+| Marginal, per extra page (context, navigate, shoot, Sharp) | **~0.2 s** |
+
+On Apify add the container start to the fixed half, and add the real page to the
+marginal half — a page load plus the 3 s `delay`, so call it 6–10 s a page for a
+real website. Neither of those two is measured here, and they are the reason the
+live number still has to be read off one real run.
+
+What the arithmetic says, and why the design is the shape it is:
+
+- **The fixed cost dominates a single picture.** That is why `captureHomepages`
+  batches and why `captureHomepageViews` puts both viewports in one run: two
+  pictures of one homepage used to be two boots, and are now one boot and one
+  extra page.
+- **A batch of twenty spreads one boot across twenty pictures**, which is where
+  a compute-priced actor beats a flat per-picture fee outright.
+
+**Read the real number before quoting one.** After `apify push`, run one batch
+of twenty and one audit pair, then read Runs → the run → *Compute units* in the
+Apify console, or `usageTotalUsd` off the run record (the server already carries
+it through to `Screenshot.costUsd`, shared out across the pictures that came
+back).
 
 ## Two things deliberately not done
 
@@ -178,16 +238,17 @@ side effect of owning the actor.
   the phone screenshot comes back 980 wide instead of 390, which is not the
   picture the audit's UX reviewer and its prompts were written against. Turning
   it on is one line in `src/screenshot.ts` and a re-read of the UX section.
-- **WebP is not offered.** It would roughly halve the bytes. `format` is
-  reported as a constant `"png"` so adding it later does not change the row
-  shape, but shipping the option before testing it against the vision pipeline
-  would only invite somebody to flip it and break the one thing this exists to
-  feed.
+- **WebP is not offered, and the blocker is concrete rather than untested.** It
+  would roughly halve the bytes, and every vision vendor accepts `image/webp`.
+  What does not is Dakyworld's own report: `audit/annotate.ts` draws the
+  numbered boxes onto this picture with the small PNG decoder in
+  `services/png.ts`, and it refuses anything that is not a PNG — gracefully, by
+  returning the plain picture and a note. So a WebP screenshot would silently
+  cost every audit its annotations, which are the thing that makes a finding
+  arguable rather than assertable. Switching format means giving `annotate.ts` a
+  decoder that reads it, and that is a change to the report, not to this actor.
+  `format` is reported as a constant `"png"` so the row shape does not move when
+  it happens.
 
-One that now *could* be done and could not before: **ignoring an invalid
-certificate.** `companyAudit` already clicks past a certificate warning the way
-a person does at *Advanced → Continue to site*, and the screenshot half could
-not follow, because none of the external actors declared such an input. This one
-could — `ignoreHTTPSErrors` on the browser context. It is not done here because
-the scope of that relaxation is written down in `SECURITY.md` and widening it is
-a decision that belongs in that document first.
+The third item on this list used to be **ignoring an invalid certificate**, and
+it is done: see the retry bullet above and `SECURITY.md`.

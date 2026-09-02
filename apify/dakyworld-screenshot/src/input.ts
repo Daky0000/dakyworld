@@ -67,15 +67,33 @@ function readUrls(raw: unknown): ScreenshotRequest[] {
   const requests: ScreenshotRequest[] = [];
   const seen = new Set<string>();
   for (const [index, entry] of raw.entries()) {
-    const url = typeof entry === "string" ? entry : (entry as { url?: unknown })?.url;
-    const given = typeof entry === "object" && entry !== null ? (entry as { id?: unknown }).id : undefined;
+    const object = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : null;
+    const url = typeof entry === "string" ? entry : object?.url;
+    const given = object?.id;
     // Kept as the caller wrote it, not as it normalises — the server keys its
     // own results off the string it sent, and a row coming back under a
     // tidied-up id is a row it cannot find.
     const id = typeof given === "string" && given.trim() ? given.trim() : `url_${index}`;
     if (seen.has(id)) throw new InvalidInputError(`Two requests share the id "${id}". Ids must be unique within a run.`);
     seen.add(id);
-    requests.push({ id, url: typeof url === "string" ? url : "" });
+
+    // Both are overrides, so an absent one has to stay absent rather than
+    // becoming a default here — the default belongs to the run and is applied
+    // once, where it can be read.
+    const viewport = object?.viewport as Record<string, unknown> | undefined;
+    requests.push({
+      id,
+      url: typeof url === "string" ? url : "",
+      ...(viewport
+        ? {
+            viewport: {
+              width: number(viewport.width, DEFAULT_VIEWPORT.width, 320, 3840),
+              height: number(viewport.height, DEFAULT_VIEWPORT.height, 400, 4320),
+            },
+          }
+        : {}),
+      ...(object?.maxHeight == null ? {} : { maxHeight: number(object.maxHeight, 0, 200, 30_000) }),
+    });
   }
 
   if (requests.length === 0) throw new InvalidInputError('Input carried no URLs — "urls" was empty.');

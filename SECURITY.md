@@ -566,24 +566,31 @@ nothing depends on the builder injecting it.
    on a system holding every client relationship the business has, and it is
    currently off.
 
-## One control deliberately relaxed, in one place
+## One control deliberately relaxed, in two places
 
-**The audit's site fetch will go past a certificate warning, on purpose.**
+**The audit will go past a certificate warning, on purpose.**
 [`fetchSite`](server/src/services/companyAudit.ts) retries a TLS failure once
-with `rejectUnauthorized: false` — the code equivalent of clicking *Advanced →
-Continue to site*. It exists because the alternative was worse: a prospect whose
-certificate had expired got a review whose entire content was "we could not open
-it", about a site every visitor can reach by clicking the same button, and the
-expired certificate — the most urgent thing wrong with the business, and a free
-same-day fix — never appeared in the report at all.
+with `rejectUnauthorized: false`, and since 2 Sep 2026 the **screenshot actor**
+([`apify/dakyworld-screenshot`](apify/dakyworld-screenshot/src/screenshot.ts))
+retries the same failure once with `ignoreHTTPSErrors` on that one browser
+context — both the code equivalent of clicking *Advanced → Continue to site*.
+
+It exists because the alternative was worse: a prospect whose certificate had
+expired got a review whose entire content was "we could not open it", about a
+site every visitor can reach by clicking the same button, and the expired
+certificate — the most urgent thing wrong with the business, and a free same-day
+fix — never appeared in the report at all. The picture half followed a month
+later, for a narrower reason: no external screenshot actor declared such an
+input, so the audit could read the page and show nothing of it.
 
 Why this is acceptable here and would not be elsewhere:
 
-- **It is one call, not a mode.** `node:https` with the flag on that request
-  only. It is never `NODE_TLS_REJECT_UNAUTHORIZED`, which would disable
-  verification for every outbound call the process makes, including the ones
-  carrying Anthropic, Stripe and Apify keys. That variable must never be set on
-  this service.
+- **It is one call and one browser context, not a mode.** `node:https` with the
+  flag on that request only, and `ignoreHTTPSErrors` on the one Playwright
+  context the retry opens — never at browser launch, and never
+  `NODE_TLS_REJECT_UNAUTHORIZED`, which would disable verification for every
+  outbound call the process makes, including the ones carrying Anthropic,
+  Stripe and Apify keys. That variable must never be set on either service.
 - **Nothing of ours is sent.** A GET for a public homepage: no credential, no
   cookie, no token, no body. The exposure from an unverified connection is that
   what comes *back* may not be genuine; there is nothing going out to intercept.
@@ -594,7 +601,16 @@ Why this is acceptable here and would not be elsewhere:
 - **It only fires on a TLS failure.** A good certificate is verified normally, a
   domain that does not resolve is still reported as not resolving, and the
   bypass never runs on either. `server/tmp/certBypass.ts` asserts both of those
-  negatives against live hosts on badssl.com alongside the positive cases.
+  negatives against live hosts on badssl.com alongside the positive cases; the
+  actor's own `npm test` does the same against a self-signed server it generates
+  and throws away, including the negative that an ordinary page is **not**
+  marked insecure.
+- **A picture taken that way says so.** The dataset row carries `insecure`, it
+  reaches the report as `Screenshot.insecure`, and the note beside the picture
+  says the connection was not verified — the same labelling the retrieved HTML
+  already gets. Before this, the picture simply did not exist: no external
+  screenshot actor declared such an input, so the audit read the page and could
+  show nothing of it, which is what the relaxation was introduced to stop.
 - **The certificate becomes the loudest finding in the document**
   (`cert-untrusted`, CRITICAL, with the issuer and the expiry date read off the
   socket), and the `Certificate warning` tag makes it a filterable list.

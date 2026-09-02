@@ -81,7 +81,7 @@ try {
     const message = `Chromium would not start: ${(err as Error).message}`;
     log.error(message);
     for (const request of input.urls) {
-      await Actor.pushData(blank(request.id, request.url, input.viewport, { code: "BROWSER_LAUNCH_FAILED", message }, 0));
+      await Actor.pushData(blank(request.id, request.url, request.viewport ?? input.viewport, { code: "BROWSER_LAUNCH_FAILED", message }, 0));
     }
     await Actor.exit();
     throw err;
@@ -96,7 +96,7 @@ try {
       if (remaining < MINIMUM_PAGE_MS) {
         log.warning(`Out of time before ${request.url} — writing it as a timeout.`);
         await Actor.pushData(
-          blank(request.id, request.url, input.viewport, {
+          blank(request.id, request.url, request.viewport ?? input.viewport, {
             code: "PAGE_TIMEOUT",
             message: "The run ran out of time before this page was opened.",
           }, 0),
@@ -107,8 +107,15 @@ try {
       // Whichever is smaller: what this page is allowed, or what is left.
       const navigationTimeoutMs = Math.min(input.navigationTimeoutMs ?? 45_000, Math.max(MINIMUM_PAGE_MS, remaining - input.delay - 3_000));
 
+      // A page may carry its own viewport and its own crop. That is what lets
+      // one run take the laptop picture and the phone picture of the same
+      // homepage, which is the shape the website audit actually asks for and
+      // which used to be two runs and two boots.
+      const viewport = request.viewport ?? input.viewport;
+      const maxHeight = request.maxHeight ?? input.maxHeight;
+
       const captured = await capturePage(browser, request, {
-        viewport: input.viewport,
+        viewport,
         fullPage: input.fullPage,
         delay: input.delay,
         navigationTimeoutMs,
@@ -120,12 +127,12 @@ try {
 
       if (!captured.ok) {
         log.warning(`${request.url}: ${captured.error.code} — ${captured.error.message}`);
-        await Actor.pushData(blank(request.id, request.url, input.viewport, captured.error, captured.durationMs));
+        await Actor.pushData(blank(request.id, request.url, viewport, captured.error, captured.durationMs));
         continue;
       }
 
       try {
-        const processed = await processScreenshot(captured.capture, { maxWidth: input.maxWidth, maxHeight: input.maxHeight });
+        const processed = await processScreenshot(captured.capture, { maxWidth: input.maxWidth, maxHeight });
 
         // The key has to survive being a URL path segment, and the caller's id
         // is whatever the caller wanted it to be. The index keeps two ids that
@@ -154,11 +161,12 @@ try {
           // What was on the screen before any of this. A full-page capture is
           // taken at the viewport width, and the page's own scroll height is
           // the honest answer for how much of it there was.
-          fullWidth: processed.untouched ? processed.width : input.viewport.width,
+          fullWidth: processed.untouched ? processed.width : viewport.width,
           fullHeight: processed.untouched ? processed.height : captured.pageHeight || null,
           cropped: processed.cropped,
-          viewportWidth: input.viewport.width,
-          viewportHeight: input.viewport.height,
+          insecure: captured.insecure,
+          viewportWidth: viewport.width,
+          viewportHeight: viewport.height,
           format: "png",
           durationMs: captured.durationMs,
           error: null,
@@ -166,12 +174,15 @@ try {
         if (captured.withoutProxy && proxyConfiguration) {
           log.warning(`${request.url} was fetched without the proxy — it could not be reached through one.`);
         }
+        if (captured.insecure) {
+          log.warning(`${request.url} would only open with certificate verification off — the row is marked insecure.`);
+        }
         await Actor.pushData(result);
         log.info(`${request.url} → ${processed.width}x${processed.height}${processed.cropped ? " (cropped)" : ""} in ${captured.durationMs}ms`);
       } catch (err) {
         const message = `The picture was taken and could not be prepared: ${(err as Error).message}`;
         log.warning(`${request.url}: ${message}`);
-        await Actor.pushData(blank(request.id, request.url, input.viewport, { code: "IMAGE_PROCESSING_FAILED", message }, captured.durationMs));
+        await Actor.pushData(blank(request.id, request.url, viewport, { code: "IMAGE_PROCESSING_FAILED", message }, captured.durationMs));
       }
     }
   } finally {
@@ -210,6 +221,7 @@ function blank(
     fullWidth: null,
     fullHeight: null,
     cropped: false,
+    insecure: false,
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
     format: "png",

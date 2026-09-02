@@ -1,5 +1,5 @@
 import { SETTING, getSetting } from "../lib/settings.js";
-import { getApifyToken } from "../lib/apify.js";
+import { apifyConfigured, getActorSchema, getApifyToken } from "../lib/apify.js";
 import { runActor, type ActorRunCode } from "./actorRun.js";
 
 /**
@@ -55,6 +55,17 @@ export interface ScreenshotRequest {
   /** The caller's own name for this page. Comes back unchanged. */
   id: string;
   url: string;
+  /**
+   * This page's own viewport, overriding the run's.
+   *
+   * It exists for the shape the audit actually asks for: a laptop picture and
+   * a phone picture of the same homepage. With one viewport per run that is
+   * two runs, and the boot — which is nearly the whole cost — gets paid twice
+   * for two pictures.
+   */
+  viewport?: { width: number; height: number };
+  /** This page's own crop, overriding the run's. A phone page is taller. */
+  maxHeight?: number;
 }
 
 /** Why one page produced no picture. The actor's half of the vocabulary. */
@@ -80,6 +91,8 @@ export interface ScreenshotRow {
   fullWidth: number | null;
   fullHeight: number | null;
   cropped: boolean;
+  /** True when the page would only open with certificate verification off. */
+  insecure: boolean;
   viewportWidth: number;
   viewportHeight: number;
   format: string;
@@ -155,7 +168,12 @@ export async function runScreenshotActor(job: ScreenshotJob, options: { waitMs: 
   // picture the vision model is going to be sent; no compatibility keys, no
   // schema lookup, nothing conditional.
   const input = {
-    urls: job.urls.map((entry) => ({ id: entry.id, url: entry.url })),
+    urls: job.urls.map((entry) => ({
+      id: entry.id,
+      url: entry.url,
+      ...(entry.viewport ? { viewport: entry.viewport } : {}),
+      ...(entry.maxHeight ? { maxHeight: entry.maxHeight } : {}),
+    })),
     viewport: job.viewport,
     fullPage: job.fullPage,
     delay: job.delayMs,
@@ -217,6 +235,7 @@ function readRow(item: Record<string, unknown>): ScreenshotRow | null {
     fullWidth: num(item.fullWidth),
     fullHeight: num(item.fullHeight),
     cropped: item.cropped === true,
+    insecure: item.insecure === true,
     viewportWidth: num(item.viewportWidth) ?? 0,
     viewportHeight: num(item.viewportHeight) ?? 0,
     format: text(item.format) ?? "png",
@@ -245,6 +264,28 @@ function describeRunFailure(code: ActorRunCode, message: string, actorId: string
     );
   }
   return message;
+}
+
+/**
+ * Is the screenshot actor actually on this Apify account?
+ *
+ * Said at boot, because the alternative is that nobody finds out until the
+ * first audit of the day comes back with no picture and a sentence nobody was
+ * looking at. The actor is deployed separately from this server — `apify push`
+ * from `apify/dakyworld-screenshot/` — so a perfectly good deploy of the app
+ * can sit in front of an account that has never had the actor pushed to it,
+ * and every screenshot fails for a reason that is five minutes' work.
+ *
+ * Costs one free, read-only request, and only when a token exists. Null means
+ * "no token, so there is nothing to say" — which is a different state from
+ * "the actor is missing", and conflating the two would put a deploy warning in
+ * front of every developer who has not connected Apify.
+ */
+export async function screenshotActorReady(): Promise<{ actorId: string; ready: boolean } | null> {
+  if (!(await apifyConfigured())) return null;
+  const actorId = await screenshotActorId();
+  const schema = await getActorSchema(actorId).catch(() => null);
+  return { actorId, ready: Boolean(schema) };
 }
 
 /**
