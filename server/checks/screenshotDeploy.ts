@@ -58,6 +58,8 @@ let buildStatus = "SUCCEEDED";
 let buildMessage: string | null = null;
 /** Set when a build has succeeded, so the actor becomes runnable. */
 let builtOk = false;
+/** The versions the actor has. A new actor has none — the case that bit on live. */
+let versions: string[] = [];
 let calls: { method: string; path: string; body: any; query: any }[] = [];
 
 const app = express();
@@ -79,6 +81,21 @@ app.post("/v2/acts", (req, res) => {
   res.json({ data: { id: "act-1", name: req.body?.name, username: createdUsername } });
 });
 
+/** Which versions the actor has. Empty for a new one, which is the case that bit. */
+app.get("/v2/acts/:actor/versions", (req, res) => {
+  calls.push({ method: "GET", path: `/acts/${req.params.actor}/versions`, body: null, query: req.query });
+  res.json({ data: { items: versions.map((versionNumber) => ({ versionNumber })) } });
+});
+
+app.post("/v2/acts/:actor/versions", (req, res) => {
+  calls.push({ method: "POST", path: `/acts/${req.params.actor}/versions`, body: req.body, query: req.query });
+  if (versions.includes(String(req.body?.versionNumber))) {
+    return res.status(400).json({ error: { message: "Actor version already exists." } });
+  }
+  versions.push(String(req.body?.versionNumber));
+  res.json({ data: { versionNumber: req.body?.versionNumber } });
+});
+
 app.put("/v2/acts/:actor/versions/:version", (req, res) => {
   calls.push({ method: "PUT", path: `/acts/${req.params.actor}/versions/${req.params.version}`, body: req.body, query: req.query });
   res.json({ data: { versionNumber: req.params.version } });
@@ -86,6 +103,13 @@ app.put("/v2/acts/:actor/versions/:version", (req, res) => {
 
 app.post("/v2/acts/:actor/builds", (req, res) => {
   calls.push({ method: "POST", path: `/acts/${req.params.actor}/builds`, body: req.body, query: req.query });
+  // Apify's own behaviour, and the one this got wrong on the first live run: a
+  // build of a version that was never created is not a build failure, it is a
+  // 404 about the version — which reads as a problem with the build rather
+  // than with the call before it.
+  if (!versions.includes(String(req.query?.version))) {
+    return res.status(404).json({ error: { type: "record-not-found", message: "Actor version was not found" } });
+  }
   res.json({ data: { id: "build-1", status: "RUNNING" } });
 });
 
@@ -123,6 +147,7 @@ async function reset() {
   buildStatus = "SUCCEEDED";
   buildMessage = null;
   builtOk = false;
+  versions = [];
 }
 
 await reset();
@@ -139,7 +164,12 @@ console.log("\nDeploying an actor the account has never had");
   // publish on the store.
   check("and private", calls.find((c) => c.path === "/acts")?.body?.isPublic === false);
 
-  const version = calls.find((c) => c.method === "PUT");
+  // Created, not updated. `PUT /versions/{n}` only updates one that exists, so a
+  // brand-new actor that is only ever PUT at comes back looking fine and then
+  // fails at the *build* with "Actor version was not found" — which is what
+  // happened on the first live run of this.
+  const version = calls.find((c) => c.method === "POST" && c.path.endsWith("/versions"));
+  check("it creates the version rather than only updating one", Boolean(version), calls.map((c) => `${c.method} ${c.path}`).join(", "));
   check("it points a version at the repository", version?.body?.sourceType === "GIT_REPO", JSON.stringify(version?.body));
   check("naming the branch and the folder", version?.body?.gitRepoUrl === sourceRepoUrl(), String(version?.body?.gitRepoUrl));
   check("tagged so runs pick it up", version?.body?.buildTag === "latest");
@@ -159,6 +189,9 @@ console.log("\nRunning it a second time");
   calls = [];
   const again = await deployScreenshotActor();
   check("it does not try to create the actor twice", !calls.some((c) => c.path === "/acts"), calls.map((c) => c.path).join(", "));
+  // And the version that now exists is updated rather than created again,
+  // which is the other half of the same distinction.
+  check("it updates the version it already made", calls.some((c) => c.method === "PUT" && c.path.includes("/versions/")), calls.map((c) => `${c.method} ${c.path}`).join(", "));
   // The version is written with PUT precisely so this works: it is how a source
   // change reaches Apify, not only how the actor first arrives.
   check("it rebuilds instead", calls.some((c) => c.method === "POST" && c.path.endsWith("/builds")));

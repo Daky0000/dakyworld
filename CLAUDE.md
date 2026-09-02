@@ -672,6 +672,11 @@ Apify clones and builds it. No Docker, no CLI, and nothing needed in the
 container, which matters because Railway's root is `server/` and the actor
 lives beside it.
 
+- **Creating a version and updating one are different calls.**
+  `PUT /versions/{n}` only updates one that exists; a brand-new actor needs
+  `POST /versions`. PUT-only returns 200 and the *build* then fails with "Actor
+  version was not found", which points at the wrong call. `setActorGitVersion`
+  lists the versions and picks; both paths are live.
 - **Present is not runnable.** `findActor` reports `hasBuild` from
   `taggedBuilds`, and both the readiness check and the deploy pass require it.
   An actor whose creation succeeded and whose build failed exists, answers

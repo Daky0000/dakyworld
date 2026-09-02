@@ -453,26 +453,38 @@ export async function ensureActor(name: string, title: string, description: stri
 }
 
 /**
- * Points a version of the actor at a public git repository and builds it.
+ * Points a version of the actor at a public git repository.
  *
- * `PUT` rather than `POST` on the version, so running this twice updates the
- * version in place instead of failing on one that already exists — which is
- * the normal case: this is how the actor is *updated*, not only how it is
- * first created.
+ * **Create and update are two different calls, and getting that wrong fails at
+ * the *build* rather than here.** `PUT /versions/{n}` updates a version that
+ * exists and does not bring one into being; `POST /versions` creates. A first
+ * run against a brand-new actor that only ever PUTs comes back looking fine
+ * and then the build says "Actor version was not found", which reads as a
+ * problem with the build rather than with the call before it. So this asks
+ * which versions the actor has and picks accordingly — both paths matter,
+ * because this is how the actor is *updated* as well as how it first arrives.
  */
 export async function setActorGitVersion(
   actorId: string,
   options: { versionNumber: string; gitRepoUrl: string; buildTag: string },
 ): Promise<void> {
-  await request<any>(`/acts/${normalizeActorId(actorId)}/versions/${options.versionNumber}`, {
-    method: "PUT",
-    body: {
-      versionNumber: options.versionNumber,
-      sourceType: "GIT_REPO",
-      gitRepoUrl: options.gitRepoUrl,
-      buildTag: options.buildTag,
-    },
-  });
+  const id = normalizeActorId(actorId);
+  const body = {
+    versionNumber: options.versionNumber,
+    sourceType: "GIT_REPO",
+    gitRepoUrl: options.gitRepoUrl,
+    buildTag: options.buildTag,
+  };
+
+  const existing = await request<any>(`/acts/${id}/versions`, {}).catch(() => null);
+  const items: any[] = Array.isArray(existing?.items) ? existing.items : Array.isArray(existing) ? existing : [];
+  const already = items.some((version) => String(version?.versionNumber) === options.versionNumber);
+
+  if (already) {
+    await request<any>(`/acts/${id}/versions/${options.versionNumber}`, { method: "PUT", body });
+    return;
+  }
+  await request<any>(`/acts/${id}/versions`, { method: "POST", body });
 }
 
 /** Starts a build. Returns as soon as Apify has accepted it, not when it is done. */
