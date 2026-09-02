@@ -52,6 +52,26 @@ import { runActor, type ActorRunCode } from "./actorRun.js";
  */
 export const DEFAULT_SCREENSHOT_ACTOR = "daky_world/website-screenshot";
 
+/**
+ * Which version of the actor's source this app expects Apify to be running.
+ *
+ * **Bump it in the same commit as any change under
+ * `apify/dakyworld-screenshot/src/`.** Apify holds whatever was last built and
+ * nothing on an actor's record says which version of our source that was, so
+ * this is the only thing that can tell *deployed* from *up to date*. Without
+ * it a fixed actor stays broken on Apify for ever, because the boot pass only
+ * ever built one that was **missing** — while rebuilding on every deploy would
+ * spend an Apify build each time anybody pushed anything at all.
+ *
+ * The number is arbitrary and only ever compared with itself.
+ *
+ *  1. The first actor: id-matched rows, Sharp cropping, the proxy, the deadline.
+ *  2. Per-page viewports, the certificate retry, plain-English network errors,
+ *     the `domcontentloaded` rung with `window.stop()`, and a direct retry on a
+ *     connection timeout.
+ */
+export const ACTOR_SOURCE_VERSION = 2;
+
 /** Which actor takes the screenshots — the shipped one unless the Owner moved it. */
 export async function screenshotActorId(): Promise<string> {
   const configured = (await getSetting(SETTING.SCREENSHOT_ACTOR))?.trim();
@@ -323,9 +343,15 @@ function describeRunFailure(code: ActorRunCode, message: string, actorId: string
  * "the actor is missing", and conflating the two would put a deploy warning in
  * front of every developer who has not connected Apify.
  */
-export async function screenshotActorReady(): Promise<{ actorId: string; ready: boolean; exists: boolean } | null> {
+export async function screenshotActorReady(): Promise<
+  { actorId: string; ready: boolean; exists: boolean; upToDate: boolean } | null
+> {
   if (!(await apifyConfigured())) return null;
   const actorId = await screenshotActorId();
+  // What was last built out of this repository, if anything. *Deployed* and
+  // *up to date* are different questions, and only the second one keeps a fix
+  // from sitting in git while Apify runs the version that was broken.
+  const built = await getSetting(SETTING.SCREENSHOT_ACTOR_BUILT).catch(() => null);
   // Present **and built**. An actor whose creation succeeded and whose build
   // failed exists, answers `GET /acts/:id` perfectly happily, and cannot be run
   // — so "the actor is there" is not the question. This one caught it: the
@@ -336,7 +362,12 @@ export async function screenshotActorReady(): Promise<{ actorId: string; ready: 
   // `exists` and `ready` are different questions and the caller needs both: an
   // actor that was created and never built is half done, and telling somebody
   // it is "not on this account" sends them looking in the wrong place.
-  return { actorId, exists: Boolean(actor), ready: Boolean(actor?.hasBuild) };
+  return {
+    actorId,
+    exists: Boolean(actor),
+    ready: Boolean(actor?.hasBuild),
+    upToDate: built === `${ACTOR_SOURCE_VERSION}:${actorId}`,
+  };
 }
 
 /**

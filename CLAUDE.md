@@ -677,6 +677,16 @@ lives beside it.
   `POST /versions`. PUT-only returns 200 and the *build* then fails with "Actor
   version was not found", which points at the wrong call. `setActorGitVersion`
   lists the versions and picks; both paths are live.
+- **Deployed is not up to date, and this is the one that keeps a fix working.**
+  The actor's source ships in this repository and Apify holds whatever was last
+  built out of it; nothing on an actor's record says which version of ours that
+  was. `ACTOR_SOURCE_VERSION` in `apifyScreenshot.ts` is that answer — **bump it
+  in the same commit as any change under `apify/dakyworld-screenshot/src/`** —
+  and a successful build records it. The boot pass rebuilds when it differs.
+  Without it a fixed actor stays broken on Apify for ever, because the pass only
+  ever built one that was *missing*; rebuilding on every deploy instead would
+  spend an Apify build each time anybody pushed anything at all. A failed build
+  records nothing, or a broken actor looks current for ever.
 - **Present is not runnable.** `findActor` reports `hasBuild` from
   `taggedBuilds`, and both the readiness check and the deploy pass require it.
   An actor whose creation succeeded and whose build failed exists, answers

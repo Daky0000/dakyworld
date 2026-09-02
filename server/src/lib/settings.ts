@@ -83,6 +83,16 @@ export const SETTING = {
    * missing actor at most once a day, and this is what makes that "once".
    */
   SCREENSHOT_ACTOR_BUILD: "capture.screenshotActorBuild",
+  /**
+   * The actor source version last built successfully, as `<version>:<actorId>`.
+   *
+   * The difference between *deployed* and *up to date*. The actor's source
+   * lives in this repository and changes with it; Apify holds whatever was last
+   * built, and nothing about an actor's record says which version of our source
+   * that was. Without this a fixed actor stays broken on Apify for ever,
+   * because the boot pass only ever built a *missing* one.
+   */
+  SCREENSHOT_ACTOR_BUILT: "capture.screenshotActorBuilt",
 
   /**
    * Which Apify actor opens the page in a real browser for the speed and SEO

@@ -11,7 +11,7 @@ import {
   startActorBuild,
 } from "../lib/apify.js";
 import { SETTING, getSetting, setSetting } from "../lib/settings.js";
-import { screenshotActorId } from "./apifyScreenshot.js";
+import { ACTOR_SOURCE_VERSION, screenshotActorId } from "./apifyScreenshot.js";
 
 /**
  * Putting Dakyworld's own screenshot actor onto Dakyworld's own Apify account,
@@ -132,6 +132,10 @@ export async function deployScreenshotActor(): Promise<DeployResult> {
     const finished = await watchBuild(started.buildId);
 
     if (finished.status === "SUCCEEDED") {
+      // What was built, so the next boot can tell *deployed* from *up to date*.
+      // Written only on success: recording a version the build never produced
+      // would leave a broken actor looking current for ever.
+      await setSetting(SETTING.SCREENSHOT_ACTOR_BUILT, `${ACTOR_SOURCE_VERSION}:${actorId}`).catch(() => undefined);
       return {
         ok: true,
         actorId,
@@ -231,11 +235,14 @@ export async function deployScreenshotActorIfMissing(): Promise<DeployResult | n
   if (!(await apifyConfigured())) return null;
 
   const actorId = displayActorId(normalizeActorId(await screenshotActorId()));
-  // Present is not the same as runnable. An actor created by a run of this that
-  // then failed to build would otherwise be skipped for ever as "already
-  // there", while every screenshot went on failing.
+  // Three states, not two. Present is not runnable — an actor created by a run
+  // of this that then failed to build would otherwise be skipped for ever as
+  // "already there". And runnable is not current: the actor's source is in this
+  // repository and changes with it, so a fix could sit in git while Apify went
+  // on running the version that was broken.
   const existing = await findActor(actorId).catch(() => null);
-  if (existing?.hasBuild) return null;
+  const built = await getSetting(SETTING.SCREENSHOT_ACTOR_BUILT).catch(() => null);
+  if (existing?.hasBuild && built === `${ACTOR_SOURCE_VERSION}:${actorId}`) return null;
 
   // The marker names the deployment *and* the actor, and both halves were
   // learned from a real failure. The actor, because the first automatic run

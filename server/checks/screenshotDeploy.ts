@@ -132,12 +132,13 @@ settings.clearSettingsCache();
 const { prisma } = await import("../src/lib/prisma.js");
 const { clearApifyCaches } = await import("../src/lib/apify.js");
 const { deployScreenshotActor, deployScreenshotActorIfMissing, sourceRepoUrl } = await import("../src/services/screenshotActorDeploy.js");
+const { ACTOR_SOURCE_VERSION } = await import("../src/services/apifyScreenshot.js");
 const { seedCaptureBudget, SEEDED_MONTHLY_BUDGET_USD } = await import("../src/services/captureConfig.js");
 const { SETTING } = settings;
 
 async function reset() {
   await prisma.appSetting.deleteMany({
-    where: { key: { in: [SETTING.SCREENSHOT_ACTOR, SETTING.SCREENSHOT_ACTOR_BUILD, SETTING.CAPTURE_BUDGET_SEEDED, SETTING.CAPTURE_MONTHLY_BUDGET] } },
+    where: { key: { in: [SETTING.SCREENSHOT_ACTOR, SETTING.SCREENSHOT_ACTOR_BUILD, SETTING.SCREENSHOT_ACTOR_BUILT, SETTING.CAPTURE_BUDGET_SEEDED, SETTING.CAPTURE_MONTHLY_BUDGET] } },
   });
   settings.clearSettingsCache();
   clearApifyCaches();
@@ -284,6 +285,48 @@ console.log("\nSwitching the actor after a failed attempt");
   const other = await deployScreenshotActorIfMissing();
   check("a different actor is tried straight away", other?.ok === true, other?.message ?? "nothing happened");
   check("and it really did build it", calls.some((c) => c.method === "POST" && c.path.endsWith("/builds")));
+}
+
+// --- 5c. An actor that is built but out of date -------------------------------
+//
+// The third state, and the one that keeps a fix from sitting in git while Apify
+// runs the version that was broken. The actor's source ships in this repository
+// and Apify holds whatever was last built out of it; nothing on an actor's
+// record says which version of ours that was.
+console.log("\nAn actor running an older version of its source");
+{
+  await reset();
+  process.env.RAILWAY_DEPLOYMENT_ID = "deploy-src-1";
+  const first = await deployScreenshotActorIfMissing();
+  check("it builds the first time", first?.ok === true, first?.message ?? "nothing happened");
+  check("and records what it built", (await settings.getSetting(SETTING.SCREENSHOT_ACTOR_BUILT))?.startsWith(String(ACTOR_SOURCE_VERSION)) === true);
+
+  // Same source, new deployment: nothing to do. This is the negative that stops
+  // an Apify build being spent every time anybody pushes anything at all.
+  process.env.RAILWAY_DEPLOYMENT_ID = "deploy-src-2";
+  calls = [];
+  check("an unchanged actor is not rebuilt", (await deployScreenshotActorIfMissing()) === null);
+  check("and nothing was built", !calls.some((c) => c.path.endsWith("/builds")));
+
+  // Now the source moves on, as it does whenever the actor is edited.
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR_BUILT, `${ACTOR_SOURCE_VERSION - 1}:daky_world/website-screenshot`);
+  settings.clearSettingsCache();
+  process.env.RAILWAY_DEPLOYMENT_ID = "deploy-src-3";
+  calls = [];
+  const stale = await deployScreenshotActorIfMissing();
+  check("an out-of-date actor is rebuilt", stale?.ok === true, stale?.message ?? "nothing happened");
+  check("and really did build it", calls.some((c) => c.method === "POST" && c.path.endsWith("/builds")));
+  check("the recorded version moves with it", (await settings.getSetting(SETTING.SCREENSHOT_ACTOR_BUILT)) === `${ACTOR_SOURCE_VERSION}:daky_world/website-screenshot`);
+
+  // A build that fails must not record a version it never produced, or a broken
+  // actor looks current for ever.
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR_BUILT, `${ACTOR_SOURCE_VERSION - 1}:daky_world/website-screenshot`);
+  settings.clearSettingsCache();
+  buildStatus = "FAILED";
+  process.env.RAILWAY_DEPLOYMENT_ID = "deploy-src-4";
+  await deployScreenshotActorIfMissing();
+  check("a failed build records nothing", (await settings.getSetting(SETTING.SCREENSHOT_ACTOR_BUILT)) === `${ACTOR_SOURCE_VERSION - 1}:daky_world/website-screenshot`);
+  delete process.env.RAILWAY_DEPLOYMENT_ID;
 }
 
 // --- 6. No token at all -------------------------------------------------------

@@ -506,16 +506,23 @@ ensureSystemRoles()
           // Slack line above: the symptom otherwise is every audit quietly
           // arriving with no picture.
           const shots = await screenshotActorReady().catch(() => null);
-          if (shots && !shots.ready) {
+          // Missing, unbuilt, or running a version of the source older than
+          // this app expects. The third is the one that keeps a fix working:
+          // the actor's source ships in this repository and Apify holds
+          // whatever was last built out of it.
+          if (shots && (!shots.ready || !shots.upToDate)) {
             // Two states, and they need different sentences. An actor that has
             // never been created and one that was created and never built both
             // mean "no screenshots", and only the second one is half done —
             // saying "not on this account" about an actor sitting in the Apify
             // console is the kind of wrong that sends somebody looking in the
             // wrong place.
-            console.log(
-              `  → ${shots.exists ? `The screenshot actor "${shots.actorId}" has no build yet` : `The screenshot actor "${shots.actorId}" is not on this Apify account`}. Building it from the repository…`,
-            );
+            const state = !shots.exists
+              ? `is not on this Apify account`
+              : !shots.ready
+                ? `has no build yet`
+                : `is running an older version of its source`;
+            console.log(`  → The screenshot actor "${shots.actorId}" ${state}. Building it from the repository…`);
             // The app holds the token, and until now nothing here could use it
             // for this: `apify push` needs the CLI, Docker and a login on
             // somebody's machine. Apify builds it from the public repository
