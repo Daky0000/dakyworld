@@ -1329,8 +1329,8 @@ evidence.ts   fetch once, measure once, photograph twice (1280 and 390),
   ├ performance.ts measured, then job: "text" for the summary only
   ├ content.ts     job: "text"    — the visible words, markup stripped
   └ security.ts    no model at all
-redesign.ts   job: "redesign" — rebuild it, fix it, or leave it, and the
-              paragraph that goes into a proposal
+redesign.ts   job: "redesign" — ten weighted headings, one score, one of four
+              calls, and the paragraph that goes into a proposal
 synthesis.ts  callClaude, named rather than routed
 annotate.ts   draws the boxes; markdown.ts and pdf.ts render
 ```
@@ -1348,9 +1348,40 @@ sentence in a proposal to have got wrong, in both directions.
   reviewers do not talk to each other: a decider that has read a summary agrees
   with it. The UI/UX *findings* are handed over, though, so one document cannot
   say two things about one homepage.
-- **It is not a discipline and is deliberately unscored.** The four sections
-  measure a site; this one is the conclusion those measurements are for, and
-  scoring it would put "rebuild it" into the average as a fifth kind of fault.
+- **It is not a discipline, and its score never reaches `overallScore`.** The
+  four sections measure a site; this one is the conclusion those measurements
+  are for, and putting it in the average would make "rebuild it" a fifth kind
+  of fault. It shipped with no number at all on 2 Sep 2026 and gained a
+  scorecard the next day, because "needs rebuilding" is an assertion an owner
+  is entitled to see the working for and a paragraph is not working.
+- **Ten headings, weighted in code, and the model never sees the total.** It
+  scores each heading out of a hundred; `weighApart()` multiplies by the fixed
+  weights in `CATEGORY_WEIGHTS` and adds. Ask a model for eleven numbers where
+  the eleventh is a weighted mean of the other ten and it will give you eleven
+  numbers, one of which is wrong — noticed by the one reader who checks, who
+  is the owner holding the invoice. A heading the model omits scores nought and
+  says so in its own row, rather than being dropped out of a total that then
+  describes nine tenths of a page.
+- **The verdict has to be reachable from the working.** Four calls now
+  (LEAVE_IT, REFINE, REDESIGN, REBUILD, worst last), and the bands are stated
+  in the contract so the model can aim at them. `agreeWithTheNumbers()` allows
+  **one** band of disagreement — a well-made page that never says what the
+  company sells scores in the seventies and still needs rebuilding, and saying
+  so is why a model is asked rather than a spreadsheet — and pulls back two,
+  recording the move on `RedesignVerdict.adjusted`. That sentence is shown on
+  the internal screen and nowhere a client reads: it is a fact about how the
+  report was made, and a PDF that footnotes its own decider reads as though
+  nobody stood behind the verdict.
+- **Two numbers in one document is a fault unless the document says what each
+  measures.** The redesign score is about how the page *looks*; `overallScore`
+  is the whole site including three things no photograph shows. Both the PDF
+  band and the Markdown carry that sentence, and it is asserted.
+- **`TARGETED_FIXES` is `REFINE` now, and stored reports still hold it.** A PDF
+  is built from its row every time somebody asks for one, so a renamed enum is
+  not a migration — it is every old audit rendering a blank heading.
+  `normaliseCall()` and `categoryName()` absorb both renames (the nine-value
+  `RedesignArea` was folded into the ten scoring categories, so an issue now
+  names the heading it pulled down).
 - **LEAVE_IT is a real answer and the direction list is emptied when it is
   given.** A model that decides a page is fine and then lists five changes to it
   has answered both ways, and the list is the half a reader acts on.

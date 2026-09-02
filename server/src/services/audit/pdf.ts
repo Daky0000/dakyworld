@@ -17,7 +17,18 @@ import {
   stampLetterhead,
   type LetterheadIdentity,
 } from "../letterhead.js";
-import { AREA_NAMES, callLabel, type RedesignVerdict } from "./redesign.js";
+import {
+  ERA_NAMES,
+  NECESSITY_NAMES,
+  SEVERITY_NAMES,
+  WORTH_NAMES,
+  callLabel,
+  categoryName,
+  normaliseCall,
+  scoreBand as redesignBand,
+  type RedesignSeverity,
+  type RedesignVerdict,
+} from "./redesign.js";
 import { DISCIPLINE_AGENTS, DISCIPLINE_NAMES, reportScored, type AuditFindingDetail, type AuditSeverity, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
 
 /**
@@ -353,30 +364,89 @@ function screenshotBlock(doc: PDFDoc, image: Buffer, size: { width: number; heig
  * labelled for what they are.
  */
 function redesignSection(doc: PDFDoc, call: RedesignVerdict) {
+  const decision = normaliseCall(call.call);
   doc.addPage();
-  header(doc, "Does this page need a redesign?", callLabel(call.call));
+  header(doc, "Does this page need a redesign?", callLabel(decision));
+
+  if (typeof call.score === "number" && call.scores?.length) redesignScoreband(doc, call.score);
 
   doc.fillColor(INK).font("Helvetica-Bold").fontSize(11).text(pdfText(call.headline), MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 2 });
   doc.moveDown(0.6);
   paragraph(doc, call.assessment, 10);
 
+  if (typeof call.score === "number" && call.scores?.length) {
+    sectionTitle(doc, "How the ten add up", 140);
+    for (const row of call.scores) {
+      room(doc, 34);
+      const y = doc.y;
+      doc.fillColor(INK).font("Helvetica-Bold").fontSize(9).text(pdfText(categoryName(row.category)), MARGIN_X, y, { width: 150, lineGap: 1 });
+      const barLeft = MARGIN_X + 158;
+      const barWidth = RIGHT_EDGE - barLeft - 86;
+      scoreBar(doc, barLeft, y + 2.5, barWidth, row.score);
+      doc
+        .fillColor(MUTED)
+        .font("Helvetica")
+        .fontSize(8)
+        .text(pdfText(`${row.score}/100 - ${row.points.toFixed(1)} of ${row.weight}`), barLeft + barWidth + 8, y, { width: 78, lineBreak: false });
+      doc.y = Math.max(doc.y, y + 13);
+      doc.fillColor(MUTED).font("Helvetica").fontSize(8.2).text(pdfText(row.reasoning), MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 1.4 });
+      doc.moveDown(0.55);
+    }
+  }
+
   if (call.issues.length) {
     sectionTitle(doc, "What is wrong with it", 100);
     for (const issue of call.issues) {
-      room(doc, 40);
-      const y = doc.y;
+      room(doc, 48);
+      const top = doc.y;
+      const chipWidth = redesignChip(doc, issue.severity, MARGIN_X, top);
+      const titleLeft = MARGIN_X + chipWidth + 9;
+      doc
+        .fillColor(INK)
+        .font("Helvetica-Bold")
+        .fontSize(9.8)
+        .text(pdfText(issue.title || categoryName(issue.category)), titleLeft, top - 0.5, { width: RIGHT_EDGE - titleLeft, lineGap: 1 });
+      doc.y = Math.max(doc.y, top + 15) + 3;
       doc
         .fillColor(ACCENT)
         .font("Helvetica-Bold")
         .fontSize(7)
-        .text(pdfText(`${AREA_NAMES[issue.area].toUpperCase()} · ${issue.view === "mobile" ? "PHONE" : "DESKTOP"}`), MARGIN_X, y, {
-          width: CONTENT_W,
-          characterSpacing: 1,
-        });
+        .text(
+          pdfText(
+            `${categoryName(issue.category).toUpperCase()} · ${issue.view === "mobile" ? "PHONE" : "DESKTOP"}${
+              issue.necessity ? ` · ${NECESSITY_NAMES[issue.necessity].toUpperCase()}` : ""
+            }`,
+          ),
+          MARGIN_X,
+          doc.y,
+          { width: CONTENT_W, characterSpacing: 1 },
+        );
       doc.moveDown(0.25);
       doc.fillColor(INK).font("Helvetica").fontSize(9.4).text(pdfText(issue.observed), MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 1.8 });
       doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8.6).text(pdfText(issue.costsThem), MARGIN_X, doc.y + 1.5, { width: CONTENT_W, lineGap: 1.6 });
       doc.moveDown(0.7);
+    }
+  }
+
+  if (call.sections?.length) {
+    sectionTitle(doc, "The page, top to bottom", 110);
+    for (const part of call.sections) {
+      room(doc, 44);
+      const top = doc.y;
+      const chipWidth = redesignChip(doc, part.severity, MARGIN_X, top);
+      const titleLeft = MARGIN_X + chipWidth + 9;
+      doc
+        .fillColor(INK)
+        .font("Helvetica-Bold")
+        .fontSize(9.6)
+        .text(pdfText(`${part.name}${part.needsRebuilding ? "  (would have to be built again)" : ""}`), titleLeft, top - 0.5, {
+          width: RIGHT_EDGE - titleLeft,
+          lineGap: 1,
+        });
+      doc.y = Math.max(doc.y, top + 15) + 3;
+      if (part.works) labelled(doc, "What works", part.works);
+      if (part.doesNotWork) labelled(doc, "What does not", part.doesNotWork);
+      doc.moveDown(0.45);
     }
   }
 
@@ -385,6 +455,92 @@ function redesignSection(doc: PDFDoc, call: RedesignVerdict) {
   labelled(doc, "Finding things", call.impact.usability);
   labelled(doc, "Enquiries", call.impact.conversion);
   labelled(doc, "Landing on it", call.impact.howItFeels);
+
+  // Five seconds is the speed the page is actually used at, and the five
+  // answers are printed as answers rather than as prose: a reader scanning
+  // this page is looking for the ones that say No.
+  if (call.firstLook) {
+    sectionTitle(doc, `Five seconds on it - ${call.firstLook.score}/100`, 120);
+    const asked: [string, boolean][] = [
+      ["Whose website is this?", call.firstLook.whoTheyAre],
+      ["What does the business do?", call.firstLook.whatTheyDo],
+      ["Why should the visitor care?", call.firstLook.whyItMatters],
+      ["Is there anything making them believable?", call.firstLook.whyBelieveThem],
+      ["Is it obvious what to do next?", call.firstLook.whatToDoNext],
+    ];
+    for (const [question, had] of asked) {
+      room(doc, 18);
+      const y = doc.y;
+      doc.fillColor(MUTED).font("Helvetica").fontSize(9).text(pdfText(question), MARGIN_X, y, { width: CONTENT_W - 60, lineGap: 1 });
+      doc
+        .fillColor(had ? INK : ACCENT)
+        .font("Helvetica-Bold")
+        .fontSize(9)
+        .text(had ? "Yes" : "No", RIGHT_EDGE - 40, y, { width: 40, align: "right", lineBreak: false });
+      doc.y = Math.max(doc.y, y + 12) + 1.5;
+    }
+    doc.moveDown(0.4);
+    paragraph(doc, call.firstLook.explanation, 9.4);
+  }
+
+  if (call.standing?.assessment) {
+    sectionTitle(doc, call.standing.looksEstablished ? "It looks like a real firm" : "It does not look like a real firm", 100);
+    paragraph(doc, call.standing.assessment, 9.6);
+    for (const entry of call.standing.whatUnderminesIt) {
+      room(doc, 22);
+      doc.moveDown(0.3);
+      doc.fillColor(MUTED).font("Helvetica").fontSize(9).text(pdfText(`-  ${entry}`), MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 1.6 });
+    }
+  }
+
+  if (call.age?.why) {
+    sectionTitle(doc, `How old it looks - ${ERA_NAMES[call.age.era]}`, 80);
+    paragraph(doc, call.age.why, 9.6);
+  }
+
+  if (call.problems?.length) {
+    sectionTitle(doc, "The biggest problems, worst first", 110);
+    call.problems.forEach((problem, index) => {
+      room(doc, 46);
+      const y = doc.y;
+      doc.roundedRect(MARGIN_X, y, 18, 18, 4).fill(INK);
+      doc
+        .fillColor(CREAM)
+        .font("Helvetica-Bold")
+        .fontSize(9)
+        .text(String(index + 1), MARGIN_X, y + 5, { width: 18, align: "center", lineBreak: false });
+      const left = MARGIN_X + 27;
+      doc.fillColor(INK).font("Helvetica-Bold").fontSize(9.6).text(pdfText(problem.problem), left, y + 1, { width: RIGHT_EDGE - left, lineGap: 1 });
+      doc.fillColor(MUTED).font("Helvetica").fontSize(8.6).text(pdfText(problem.whyItMatters), left, doc.y + 1, { width: RIGHT_EDGE - left, lineGap: 1.4 });
+      doc
+        .fillColor(MUTED)
+        .font("Helvetica-Oblique")
+        .fontSize(8)
+        .text(pdfText(`Seen in the picture: ${problem.evidence}`), left, doc.y + 1, { width: RIGHT_EDGE - left, lineGap: 1.4 });
+      doc.y = Math.max(doc.y, y + 22) + 7;
+    });
+  }
+
+  // Never dropped when the news is bad. A document with nothing good in it is
+  // one the owner stops reading, and what survives a rebuild is a decision
+  // somebody has to make later out of this page.
+  if (call.strengths?.length) {
+    sectionTitle(doc, "What is already good", 100);
+    for (const entry of call.strengths) {
+      room(doc, 30);
+      const y = doc.y;
+      doc.roundedRect(MARGIN_X, y + 3, 6, 6, 3).fill(MARK);
+      const left = MARGIN_X + 14;
+      doc.fillColor(INK).font("Helvetica-Bold").fontSize(9.4).text(pdfText(entry.strength), left, y, { width: RIGHT_EDGE - left, lineGap: 1 });
+      doc.fillColor(MUTED).font("Helvetica").fontSize(8.6).text(pdfText(entry.why), left, doc.y + 1, { width: RIGHT_EDGE - left, lineGap: 1.4 });
+      doc.moveDown(0.5);
+    }
+  }
+
+  if (call.worthIt?.why) {
+    sectionTitle(doc, `Would paying somebody to do this work show? - ${WORTH_NAMES[call.worthIt.answer]}`, 80);
+    paragraph(doc, call.worthIt.why, 9.6);
+  }
 
   if (call.direction.length) {
     sectionTitle(doc, "What a redesign should change", 90);
@@ -411,6 +567,15 @@ function redesignSection(doc: PDFDoc, call: RedesignVerdict) {
     });
   }
 
+  if (call.bottomLine?.recommendation) {
+    sectionTitle(doc, "The bottom line", 140);
+    if (call.bottomLine.quality) labelled(doc, "As it stands", call.bottomLine.quality);
+    if (call.bottomLine.biggestReason) labelled(doc, "The strongest reason", call.bottomLine.biggestReason);
+    if (call.bottomLine.biggestStrength) labelled(doc, "The best of it", call.bottomLine.biggestStrength);
+    doc.moveDown(0.4);
+    doc.fillColor(INK).font("Helvetica-Bold").fontSize(10).text(pdfText(call.bottomLine.recommendation), MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 2 });
+  }
+
   sectionTitle(doc, "In one paragraph", 130);
   // Set apart, because it is the part meant to be read aloud or pasted into a
   // proposal, and the rule down its left edge is what tells a reader that.
@@ -424,9 +589,86 @@ function redesignSection(doc: PDFDoc, call: RedesignVerdict) {
     .fillColor(MUTED)
     .font("Helvetica")
     .fontSize(7.6)
-    .text(pdfText(`The ${call.reviewer} made this call from the pictures on the previous page and from nothing else. ${call.decidedBy}.`), MARGIN_X, doc.y, {
+    // Not "on the previous page" any more: the call runs to several pages now,
+    // and a sentence pointing at a page the pictures are no longer on is worse
+    // than one that does not point at all.
+    .text(pdfText(`The ${call.reviewer} made this call from the pictures in this report and from nothing else. ${call.decidedBy}.`), MARGIN_X, doc.y, {
       width: CONTENT_W,
     });
+}
+
+/**
+ * The scorecard's headline, in a band across the content width.
+ *
+ * The same shape as the report's own score band and deliberately smaller,
+ * because it is a different measurement and the document has to say which is
+ * which. **Two numbers in one report is a fault unless the report says what
+ * each of them measures**, so the sentence under the number is not decoration:
+ * without it a reader takes the two as a contradiction and believes neither.
+ */
+function redesignScoreband(doc: PDFDoc, score: number) {
+  const height = 62;
+  const y = doc.y;
+  doc.rect(MARGIN_X, y, CONTENT_W, height).fill(INK);
+  // Measured while the big font is still selected. `widthOfString` reads the
+  // font that is set *now*, so measuring after switching to the 9pt label put
+  // "/100" a third of the way through the number it was meant to follow.
+  doc.font("Helvetica-Bold").fontSize(30);
+  const numberWidth = doc.widthOfString(String(score));
+  doc.fillColor(CREAM).text(pdfText(String(score)), MARGIN_X + 18, y + 15, { width: 70, lineBreak: false });
+  doc
+    .fillColor(MUTED)
+    .font("Helvetica")
+    .fontSize(9)
+    .text("/100", MARGIN_X + 18 + numberWidth + 3, y + 34, { lineBreak: false });
+
+  const left = MARGIN_X + 104;
+  doc
+    .fillColor(MARK)
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .text(pdfText(`HOW THE PAGE LOOKS - ${redesignBand(score).toUpperCase()}`), left, y + 16, { width: RIGHT_EDGE - left - 18, characterSpacing: 1.2 });
+  doc
+    .fillColor(CREAM)
+    .font("Helvetica")
+    .fontSize(7.8)
+    .text(
+      pdfText(
+        "This number is about how the page looks, and only that. The score at the front of this report covers the whole site - its speed, how findable it is, the writing on it and its security.",
+      ),
+      left,
+      y + 30,
+      { width: RIGHT_EDGE - left - 18, lineGap: 1.4 },
+    );
+
+  doc.y = y + height + 16;
+}
+
+/**
+ * A severity chip for the redesign call, which has no GOOD.
+ *
+ * Its own function rather than a widened `severityChip`: that one is keyed on
+ * `AuditSeverity`, whose fifth value is the "nothing wrong here" state the four
+ * disciplines print, and adding a value to a type in order to reuse eight lines
+ * of drawing code is how one section starts printing a chip the other's reader
+ * has learned means something else.
+ */
+function redesignChip(doc: PDFDoc, severity: RedesignSeverity, x: number, y: number): number {
+  const label = (SEVERITY_NAMES[severity] ?? "").toUpperCase();
+  doc.font("Helvetica-Bold").fontSize(6.6);
+  const width = doc.widthOfString(label, { characterSpacing: 1 }) + 12;
+  const height = 13;
+
+  if (severity === "CRITICAL" || severity === "HIGH") {
+    doc.roundedRect(x, y, width, height, 3).fill(INK);
+    doc.fillColor(CREAM);
+  } else {
+    doc.roundedRect(x, y, width, height, 3).lineWidth(0.8).stroke(LINE);
+    doc.fillColor(MUTED);
+  }
+
+  doc.font("Helvetica-Bold").fontSize(6.6).text(label, x + 6, y + 3.6, { characterSpacing: 1, lineBreak: false });
+  return width;
 }
 
 // --- The document -----------------------------------------------------------

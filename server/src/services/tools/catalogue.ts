@@ -1409,7 +1409,9 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         // The decision, in two fields. Not the whole section: an agent that
         // wants the argument reads the Markdown, and an agent that wants to
         // know whether Dakyworld is proposing a rebuild wants this.
-        redesign: run.report.redesign ? { call: run.report.redesign.call, headline: run.report.redesign.headline } : null,
+        redesign: run.report.redesign
+          ? { call: run.report.redesign.call, score: run.report.redesign.score ?? null, headline: run.report.redesign.headline }
+          : null,
         pdfFileId: run.pdfFileId,
         markdownFileId: run.markdownFileId,
         couldNotCheck: run.report.notes,
@@ -1498,7 +1500,17 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         synthesis: { executiveSummary: string; theOneThing: string; emailBrief: unknown } | null;
         // Absent on rows written before the redesign call existed, which is why
         // it is optional here as well as on the report type itself.
-        redesign?: { call: string; headline: string; assessment: string; summary: string; decidedBy: string } | null;
+        redesign?: {
+          call: string;
+          score?: number;
+          headline: string;
+          assessment: string;
+          summary: string;
+          decidedBy: string;
+          bottomLine?: { recommendation: string };
+          strengths?: { strength: string; why: string }[];
+          worthIt?: { answer: string; why: string };
+        } | null;
         notes: string[];
       };
 
@@ -1542,8 +1554,19 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         redesign: report.redesign
           ? {
               call: report.redesign.call,
+              // The look of the page out of a hundred, which is a different
+              // measurement from `overallScore` above and is labelled as one.
+              // Absent on rows written before the scorecard existed, where a
+              // zero would read as a page that scored nothing.
+              howItLooksScore: report.redesign.score ?? null,
               headline: report.redesign.headline,
               assessment: report.redesign.assessment,
+              // What is worth keeping if it is built again. A proposal that
+              // opens by listing only faults reads as a pitch; one that names
+              // what is already good reads as an assessment.
+              alreadyGood: report.redesign.strengths ?? [],
+              worthPayingFor: report.redesign.worthIt ?? null,
+              recommendation: report.redesign.bottomLine?.recommendation ?? null,
               forAProposal: report.redesign.summary,
               decidedBy: report.redesign.decidedBy,
             }

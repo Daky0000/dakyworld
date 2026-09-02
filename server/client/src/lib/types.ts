@@ -1371,18 +1371,74 @@ export interface WebsiteAuditReport {
   costUsd: number;
 }
 
-export type RedesignCall = "REBUILD" | "TARGETED_FIXES" | "LEAVE_IT";
+/**
+ * Worst last. `TARGETED_FIXES` is what `REFINE` was called before the scorecard
+ * existed, and stored reports still carry it — see `normaliseRedesignCall`.
+ */
+export type RedesignCall = "REBUILD" | "REDESIGN" | "REFINE" | "LEAVE_IT";
 
-export type RedesignArea = "LAYOUT" | "TYPOGRAPHY" | "HIERARCHY" | "BRANDING" | "IMAGERY" | "CALL_TO_ACTION" | "MOBILE" | "CREDIBILITY" | "DATED";
+export type RedesignCategory =
+  | "VISUAL_DESIGN"
+  | "TYPOGRAPHY"
+  | "LAYOUT"
+  | "HIERARCHY"
+  | "NAVIGATION"
+  | "HERO"
+  | "BRANDING"
+  | "CONTENT"
+  | "IMAGERY"
+  | "CONVERSION";
 
-/** The call on whether a homepage needs rebuilding. See services/audit/redesign.ts. */
+export type RedesignSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+export type RedesignNecessity = "MUST_FIX" | "SHOULD_FIX" | "NICE_TO_HAVE";
+export type RedesignEra = "MODERN" | "SLIGHTLY_DATED" | "CLEARLY_OUTDATED" | "EXTREMELY_OUTDATED";
+export type RedesignWorthAnswer = "YES" | "PROBABLY" | "MAYBE" | "NO";
+
+/**
+ * The call on whether a homepage needs rebuilding, and the working behind it.
+ * See services/audit/redesign.ts — this is the same shape, and everything the
+ * scorecard added is optional here because a report written before it exists in
+ * the database and is rendered from its row.
+ */
 export interface RedesignVerdict {
   call: RedesignCall;
+  /** 0-100 for how the page looks. Worked out in code from `scores`. */
+  score?: number;
+  scores?: { category: RedesignCategory; score: number; weight: number; points: number; reasoning: string }[];
+  /** What the arithmetic alone would have called it, so a reader can see where judgement moved it. */
+  scoreCall?: RedesignCall;
+  /** Set when the verdict was pulled back to agree with the score. Internal — never in the client-facing PDF. */
+  adjusted?: string | null;
   headline: string;
   assessment: string;
-  issues: { area: RedesignArea; observed: string; view: "desktop" | "mobile"; costsThem: string }[];
+  issues: {
+    category: RedesignCategory;
+    title: string;
+    observed: string;
+    view: "desktop" | "mobile";
+    costsThem: string;
+    severity: RedesignSeverity;
+    necessity: RedesignNecessity;
+  }[];
+  sections?: { name: string; view: "desktop" | "mobile"; works: string; doesNotWork: string; severity: RedesignSeverity; needsRebuilding: boolean }[];
   impact: { trust: string; usability: string; conversion: string; howItFeels: string };
+  /** The five-second test, scored on its own and never folded into the ten. */
+  firstLook?: {
+    score: number;
+    whoTheyAre: boolean;
+    whatTheyDo: boolean;
+    whyItMatters: boolean;
+    whyBelieveThem: boolean;
+    whatToDoNext: boolean;
+    explanation: string;
+  };
+  standing?: { looksEstablished: boolean; assessment: string; whatUnderminesIt: string[] };
+  age?: { era: RedesignEra; why: string };
+  problems?: { problem: string; whyItMatters: string; evidence: string; severity: RedesignSeverity }[];
+  strengths?: { strength: string; why: string }[];
+  worthIt?: { answer: RedesignWorthAnswer; why: string };
   direction: { change: string; why: string }[];
+  bottomLine?: { quality: string; biggestReason: string; biggestStrength: string; recommendation: string };
   /** The paragraph that goes into a proposal unedited. */
   summary: string;
   /** The agent whose wording made the call, by name. */
@@ -1390,6 +1446,80 @@ export interface RedesignVerdict {
   decidedBy: string;
   decidedAt: string;
   sources: { title: string; url: string }[];
+}
+
+/**
+ * A stored report may carry the three-value call this replaced.
+ *
+ * The drawer renders whatever is in the row, however old, so the rename is
+ * absorbed here rather than left to produce a card with no chip on it.
+ */
+export function normaliseRedesignCall(value: string | null | undefined): RedesignCall {
+  if (value === "TARGETED_FIXES") return "REFINE";
+  return value === "REBUILD" || value === "REDESIGN" || value === "REFINE" || value === "LEAVE_IT" ? value : "REDESIGN";
+}
+
+export const REDESIGN_CATEGORY_NAMES: Record<RedesignCategory, string> = {
+  VISUAL_DESIGN: "How it looks",
+  TYPOGRAPHY: "Type and readability",
+  LAYOUT: "Layout and spacing",
+  HIERARCHY: "What the eye is led to",
+  NAVIGATION: "Getting around it",
+  HERO: "The first screen",
+  BRANDING: "Whether it looks like one company",
+  CONTENT: "How the writing is laid out",
+  IMAGERY: "The pictures",
+  CONVERSION: "Asking for the enquiry",
+};
+
+/** Tolerant of the nine-value list issues carried before the scorecard. */
+export function redesignCategoryName(value: string): string {
+  if (value in REDESIGN_CATEGORY_NAMES) return REDESIGN_CATEGORY_NAMES[value as RedesignCategory];
+  const legacy: Record<string, RedesignCategory> = {
+    CALL_TO_ACTION: "CONVERSION",
+    MOBILE: "LAYOUT",
+    CREDIBILITY: "BRANDING",
+    DATED: "VISUAL_DESIGN",
+  };
+  const mapped = legacy[value];
+  return mapped ? REDESIGN_CATEGORY_NAMES[mapped] : "Something else";
+}
+
+export const REDESIGN_SEVERITY_NAMES: Record<RedesignSeverity, string> = {
+  CRITICAL: "Critical",
+  HIGH: "Serious",
+  MEDIUM: "Worth fixing",
+  LOW: "Minor",
+};
+
+export const REDESIGN_NECESSITY_NAMES: Record<RedesignNecessity, string> = {
+  MUST_FIX: "Must be fixed",
+  SHOULD_FIX: "Should be fixed",
+  NICE_TO_HAVE: "Would be nice to improve",
+};
+
+export const REDESIGN_ERA_NAMES: Record<RedesignEra, string> = {
+  MODERN: "It looks current",
+  SLIGHTLY_DATED: "It looks a little behind",
+  CLEARLY_OUTDATED: "It clearly looks its age",
+  EXTREMELY_OUTDATED: "It looks many years old",
+};
+
+export const REDESIGN_WORTH_NAMES: Record<RedesignWorthAnswer, string> = {
+  YES: "Yes",
+  PROBABLY: "Probably",
+  MAYBE: "Maybe",
+  NO: "No",
+};
+
+/** The word beside the number. The same six bands the model was asked to aim at. */
+export function redesignScoreBand(score: number): string {
+  if (score >= 90) return "Excellent";
+  if (score >= 80) return "Strong";
+  if (score >= 70) return "Good";
+  if (score >= 60) return "Average";
+  if (score >= 40) return "Weak";
+  return "Poor";
 }
 
 /** What a list or a drawer shows. Never the report or the Markdown — both are large. */

@@ -222,10 +222,12 @@ export interface WebsiteAuditReport {
    * Whether the page needs rebuilding, decided from the pictures by whoever
    * serves the `redesign` job — Perplexity unless the Owner has moved it.
    *
-   * Not a discipline and deliberately not scored. The four sections measure a
-   * site; this one answers the question those measurements are for, and giving
-   * it a number out of a hundred would put it in the average as though
-   * "rebuild it" were a fifth kind of fault rather than the conclusion.
+   * Not a discipline, and its own score never reaches `overallScore`. The four
+   * sections measure a site; this one answers the question those measurements
+   * are for, and averaging it in would make "rebuild it" a fifth kind of fault
+   * rather than the conclusion. It carries a scorecard of its own — ten
+   * weighted headings about how the page *looks* — and every surface that
+   * prints both numbers says which is which.
    *
    * Optional, because rows written before this section existed have no such
    * field and there is nothing to infer from that absence but its date.

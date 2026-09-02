@@ -1,4 +1,4 @@
-import { AREA_NAMES, callLabel } from "./redesign.js";
+import { ERA_NAMES, NECESSITY_NAMES, SEVERITY_NAMES, WORTH_NAMES, callLabel, categoryName, normaliseCall, scoreBand } from "./redesign.js";
 import { DISCIPLINE_NAMES, reportScored, type AuditFindingDetail, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
 
 /**
@@ -144,21 +144,61 @@ export function auditMarkdown(report: WebsiteAuditReport, options: MarkdownOptio
   // the order the letter has to make its own argument in.
   if (report.redesign) {
     const call = report.redesign;
+    const decision = normaliseCall(call.call);
     say(
-      `## Does this page need a redesign? — ${callLabel(call.call)}`,
+      `## Does this page need a redesign? — ${callLabel(decision)}`,
       "",
       `*The ${call.reviewer} made this call from the pictures above and from nothing else. ${call.decidedBy}.*`,
       "",
-      `**${call.headline}**`,
-      "",
-      call.assessment,
-      "",
     );
+
+    // The scorecard, with the arithmetic shown rather than asserted. The
+    // divisor is printed as a total row for the same reason the working is
+    // printed at all: a weighted number a reader cannot reproduce is a number
+    // they either take on faith or ignore, and neither is what it is for.
+    if (typeof call.score === "number" && call.scores?.length) {
+      say(
+        `**How the page looks: ${call.score}/100 — ${scoreBand(call.score)}**`,
+        "",
+        // Two numbers in one document is a fault unless the document says what
+        // each of them measures. This one is about the look of the page; the
+        // score at the top is the whole site including three things nobody can
+        // see in a photograph.
+        "> This number is about how the page looks, and only that. The score at the top of this report covers the whole site — its speed, how findable it is, the writing on it and its security — and the two are not one measurement.",
+        "",
+        "| What was judged | Worth | Score | Points | Why |",
+        "|---|---:|---:|---:|---|",
+        ...call.scores.map(
+          (row) => `| ${categoryName(row.category)} | ${row.weight} | ${row.score}/100 | ${row.points.toFixed(1)} | ${escapeCell(row.reasoning)} |`,
+        ),
+        `| **Overall** | **100** | | **${call.score}** | |`,
+        "",
+      );
+    }
+
+    say(`**${call.headline}**`, "", call.assessment, "");
 
     if (call.issues.length) {
       say("### What is wrong with it", "");
       for (const issue of call.issues) {
-        say(`- **${AREA_NAMES[issue.area]}** (${issue.view === "mobile" ? "phone" : "desktop"}). ${issue.observed} ${issue.costsThem}`);
+        const title = issue.title ? `**${issue.title}** — ` : "";
+        say(
+          `- ${title}${categoryName(issue.category)} · ${issue.view === "mobile" ? "phone" : "desktop"}${
+            issue.severity ? ` · ${SEVERITY_NAMES[issue.severity]}` : ""
+          }${issue.necessity ? ` · ${NECESSITY_NAMES[issue.necessity]}` : ""}. ${issue.observed} ${issue.costsThem}`,
+        );
+      }
+      say("");
+    }
+
+    if (call.sections?.length) {
+      say("### The page, top to bottom", "");
+      for (const section of call.sections) {
+        say(
+          `- **${section.name}** (${section.view === "mobile" ? "phone" : "desktop"}, ${SEVERITY_NAMES[section.severity]}${
+            section.needsRebuilding ? ", would have to be built again" : ""
+          }). ${section.works}${section.doesNotWork ? ` ${section.doesNotWork}` : ""}`,
+        );
       }
       say("");
     }
@@ -176,10 +216,75 @@ export function auditMarkdown(report: WebsiteAuditReport, options: MarkdownOptio
       "",
     );
 
+    // Five seconds is the only speed this page is ever really used at, and it
+    // is scored apart from the ten so that a handsome page which says nothing
+    // cannot average its way out of the finding.
+    if (call.firstLook) {
+      const yes = (had: boolean) => (had ? "Yes" : "No");
+      say(
+        `### Five seconds on it — ${call.firstLook.score}/100`,
+        "",
+        `- Whose website is this? **${yes(call.firstLook.whoTheyAre)}**`,
+        `- What does the business do? **${yes(call.firstLook.whatTheyDo)}**`,
+        `- Why should the visitor care? **${yes(call.firstLook.whyItMatters)}**`,
+        `- Is there anything making them believable? **${yes(call.firstLook.whyBelieveThem)}**`,
+        `- Is it obvious what to do next? **${yes(call.firstLook.whatToDoNext)}**`,
+        "",
+        call.firstLook.explanation,
+        "",
+      );
+    }
+
+    if (call.standing) {
+      say(
+        `### Whether it looks like a real firm — ${call.standing.looksEstablished ? "it does" : "it does not"}`,
+        "",
+        call.standing.assessment,
+        "",
+        ...(call.standing.whatUnderminesIt.length ? ["What works against them:", "", ...call.standing.whatUnderminesIt.map((entry) => `- ${entry}`), ""] : []),
+      );
+    }
+
+    if (call.age) say(`### How old it looks — ${ERA_NAMES[call.age.era]}`, "", call.age.why, "");
+
+    if (call.problems?.length) {
+      say("### The biggest problems, worst first", "");
+      call.problems.forEach((problem, index) =>
+        say(`${index + 1}. **${problem.problem}** (${SEVERITY_NAMES[problem.severity]}) ${problem.whyItMatters} *Seen in the picture:* ${problem.evidence}`),
+      );
+      say("");
+    }
+
+    // Never omitted when it is empty, because a report with no strengths in it
+    // is a report the owner stops reading — and because what survives a
+    // rebuild is a decision somebody has to make later from this document.
+    if (call.strengths?.length) {
+      say("### What is already good", "");
+      for (const entry of call.strengths) say(`- **${entry.strength}** ${entry.why}`);
+      say("");
+    }
+
+    if (call.worthIt) say(`### Would paying somebody to do this work show? — ${WORTH_NAMES[call.worthIt.answer]}`, "", call.worthIt.why, "");
+
     if (call.direction.length) {
       say("### What a redesign should change", "");
       call.direction.forEach((step, index) => say(`${index + 1}. **${step.change}** ${step.why}`));
       say("");
+    }
+
+    if (call.bottomLine) {
+      say(
+        "### The bottom line",
+        "",
+        `**As it stands.** ${call.bottomLine.quality}`,
+        "",
+        `**The strongest reason.** ${call.bottomLine.biggestReason}`,
+        "",
+        `**The best thing about it.** ${call.bottomLine.biggestStrength}`,
+        "",
+        `**What we would tell them.** ${call.bottomLine.recommendation}`,
+        "",
+      );
     }
 
     // The one paragraph the founder asked this section for, marked so it can

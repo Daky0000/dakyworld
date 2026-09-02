@@ -6,8 +6,15 @@ import {
   type AuditDiscipline,
   type AuditDisciplineReport,
   type AuditFindingDetail,
+  REDESIGN_ERA_NAMES,
+  REDESIGN_NECESSITY_NAMES,
+  REDESIGN_SEVERITY_NAMES,
+  REDESIGN_WORTH_NAMES,
+  normaliseRedesignCall,
+  redesignCategoryName,
+  redesignScoreBand,
   type Lead,
-  type RedesignArea,
+  type RedesignSeverity,
   type RedesignVerdict,
   type WebsiteAudit,
 } from "../lib/types";
@@ -316,20 +323,22 @@ function AuditDetail({
   );
 }
 
-const REDESIGN_AREA_NAMES: Record<RedesignArea, string> = {
-  LAYOUT: "Layout and spacing",
-  TYPOGRAPHY: "Type and readability",
-  HIERARCHY: "What the eye is led to",
-  BRANDING: "Whether it looks like one company",
-  IMAGERY: "The pictures",
-  CALL_TO_ACTION: "What it asks the visitor to do",
-  MOBILE: "On a phone",
-  CREDIBILITY: "Whether it looks like a real business",
-  DATED: "Dated, cluttered or unfinished",
-};
+/** Ink for what matters, an outline for what does not. The palette has no red. */
+function RedesignSeverityChip({ severity }: { severity: RedesignSeverity }) {
+  const loud = severity === "CRITICAL" || severity === "HIGH";
+  return (
+    <span
+      className={`rounded-[10px] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[.12em] ${
+        loud ? "bg-ink text-cream" : "border border-line text-muted"
+      }`}
+    >
+      {REDESIGN_SEVERITY_NAMES[severity]}
+    </span>
+  );
+}
 
 /**
- * The call on whether the page needs rebuilding.
+ * The call on whether the page needs rebuilding, and the working behind it.
  *
  * Its own card above the four sections, because it is the answer the founder
  * is looking for when they open this drawer and the four scores are the
@@ -337,18 +346,27 @@ const REDESIGN_AREA_NAMES: Record<RedesignArea, string> = {
  * one gesture: it is written to go into a proposal unedited, and a paragraph
  * somebody has to select by dragging is a paragraph that gets retyped and
  * quietly reworded.
+ *
+ * Everything below the scorecard is behind a disclosure. The card answers the
+ * question in its first four lines and a reader who wants the ten headings,
+ * the page top to bottom, the five-second test and the ranked faults opens
+ * them — a card that prints all of it is a card nobody reaches the bottom of,
+ * and the four discipline sections underneath stop being findable.
  */
 function RedesignCard({ call }: { call: RedesignVerdict }) {
   const [copied, setCopied] = useState(false);
+  const decision = normaliseRedesignCall(call.call);
 
-  // Ink for a rebuild, blue for a fix, lime for a page that is fine. The same
-  // weight-not-hue rule the PDF follows — the palette has no red.
+  // Ink for a rebuild, blue for work in between, lime for a page that is fine.
+  // The same weight-not-hue rule the PDF follows — the palette has no red.
   const tone =
-    call.call === "REBUILD"
-      ? { chip: "bg-ink text-cream", label: "Needs rebuilding" }
-      : call.call === "TARGETED_FIXES"
-        ? { chip: "bg-blue text-cream", label: "Needs fixing in places" }
-        : { chip: "bg-lime text-ink", label: "No redesign needed" };
+    decision === "REBUILD"
+      ? { chip: "bg-ink text-cream", label: "Build it again" }
+      : decision === "REDESIGN"
+        ? { chip: "bg-ink text-cream", label: "Needs redesigning" }
+        : decision === "REFINE"
+          ? { chip: "bg-blue text-cream", label: "Needs sharpening" }
+          : { chip: "bg-lime text-ink", label: "No redesign needed" };
 
   return (
     <div className="rounded-2xl border border-line bg-white p-4">
@@ -357,15 +375,56 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
         <span className={`rounded-full px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.12em] ${tone.chip}`}>{tone.label}</span>
       </div>
 
+      {typeof call.score === "number" && (
+        <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-xl bg-sunken px-3 py-2">
+          <span className="font-mono text-2xl font-semibold text-ink">{call.score}</span>
+          <span className="font-mono text-xs text-muted">/100</span>
+          <span className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">{redesignScoreBand(call.score)}</span>
+          {/* Two numbers in one drawer is a contradiction unless it says which is which. */}
+          <span className="w-full text-[11px] text-muted">How the page looks. The score below is the whole site, including three things no picture shows.</span>
+        </div>
+      )}
+
       <p className="mt-2 text-base font-semibold text-ink">{call.headline}</p>
       <p className="mt-1.5 whitespace-pre-line text-sm text-muted">{call.assessment}</p>
+
+      {/* The decider overruled by its own arithmetic. Shown here and nowhere a
+          client reads: it is a fact about how the report was made. */}
+      {call.adjusted && <p className="mt-2 rounded-xl border border-line-strong bg-sunken p-2 text-[11px] text-muted">{call.adjusted}</p>}
+
+      {call.scores && call.scores.length > 0 && (
+        <details className="mt-3 rounded-xl border border-line">
+          <summary className="cursor-pointer px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">How the ten add up</summary>
+          <ul className="space-y-2 border-t border-line px-3 py-2">
+            {call.scores.map((row) => (
+              <li key={row.category}>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[13px] font-semibold text-ink">{redesignCategoryName(row.category)}</span>
+                  <span className="font-mono text-[11px] text-muted">
+                    {row.score}/100 · {row.points.toFixed(1)} of {row.weight}
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-line">
+                  <div className={`h-full rounded-full ${row.score >= 70 ? "bg-lime" : row.score >= 40 ? "bg-blue" : "bg-ink"}`} style={{ width: `${row.score}%` }} />
+                </div>
+                <p className="mt-0.5 text-[12px] text-muted">{row.reasoning}</p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {call.issues.length > 0 && (
         <ul className="mt-3 space-y-2">
           {call.issues.map((issue, index) => (
-            <li key={`${issue.area}-${index}`} className="border-l-2 border-line pl-3">
+            <li key={`${issue.category}-${index}`} className="border-l-2 border-line pl-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {issue.severity && <RedesignSeverityChip severity={issue.severity} />}
+                <span className="text-sm font-semibold text-ink">{issue.title || redesignCategoryName(issue.category)}</span>
+              </div>
               <p className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">
-                {REDESIGN_AREA_NAMES[issue.area]} · {issue.view === "mobile" ? "phone" : "desktop"}
+                {redesignCategoryName(issue.category)} · {issue.view === "mobile" ? "phone" : "desktop"}
+                {issue.necessity ? ` · ${REDESIGN_NECESSITY_NAMES[issue.necessity]}` : ""}
               </p>
               <p className="mt-0.5 text-sm text-ink">{issue.observed}</p>
               <p className="text-[12px] text-muted">{issue.costsThem}</p>
@@ -388,6 +447,110 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
         ))}
       </dl>
 
+      {call.firstLook && (
+        <div className="mt-3 rounded-xl border border-line p-3">
+          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Five seconds on it — {call.firstLook.score}/100</p>
+          <ul className="mt-1.5 space-y-1">
+            {(
+              [
+                ["Whose website is this?", call.firstLook.whoTheyAre],
+                ["What does the business do?", call.firstLook.whatTheyDo],
+                ["Why should the visitor care?", call.firstLook.whyItMatters],
+                ["Anything making them believable?", call.firstLook.whyBelieveThem],
+                ["Obvious what to do next?", call.firstLook.whatToDoNext],
+              ] as [string, boolean][]
+            ).map(([question, had]) => (
+              <li key={question} className="flex items-baseline justify-between gap-2 text-[13px]">
+                <span className="text-muted">{question}</span>
+                <span className={had ? "font-semibold text-ink" : "font-semibold text-blue"}>{had ? "Yes" : "No"}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-[12px] text-muted">{call.firstLook.explanation}</p>
+        </div>
+      )}
+
+      {(call.sections?.length || call.problems?.length || call.standing || call.age) && (
+        <details className="mt-3 rounded-xl border border-line">
+          <summary className="cursor-pointer px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">The rest of the audit</summary>
+          <div className="space-y-3 border-t border-line px-3 py-2">
+            {call.sections && call.sections.length > 0 && (
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">The page, top to bottom</p>
+                <ul className="mt-1 space-y-1.5">
+                  {call.sections.map((part, index) => (
+                    <li key={`${part.name}-${index}`} className="border-l-2 border-line pl-3">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <RedesignSeverityChip severity={part.severity} />
+                        <span className="text-[13px] font-semibold text-ink">{part.name}</span>
+                        {part.needsRebuilding && <span className="font-mono text-[9px] uppercase tracking-[.12em] text-blue">rebuild</span>}
+                      </div>
+                      {part.works && <p className="text-[12px] text-ink">{part.works}</p>}
+                      {part.doesNotWork && <p className="text-[12px] text-muted">{part.doesNotWork}</p>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {call.problems && call.problems.length > 0 && (
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">The biggest problems</p>
+                <ol className="mt-1 space-y-1.5">
+                  {call.problems.map((problem, index) => (
+                    <li key={`${problem.problem}-${index}`} className="flex gap-2 text-[13px]">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[10px] text-cream">{index + 1}</span>
+                      <span>
+                        <span className="font-semibold text-ink">{problem.problem}</span> <span className="text-muted">{problem.whyItMatters}</span>
+                        <span className="block text-[12px] text-faint">Seen: {problem.evidence}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {call.standing?.assessment && (
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                  {call.standing.looksEstablished ? "It looks like a real firm" : "It does not look like a real firm"}
+                </p>
+                <p className="mt-0.5 text-[13px] text-ink">{call.standing.assessment}</p>
+                {call.standing.whatUnderminesIt.length > 0 && (
+                  <ul className="mt-1 space-y-0.5">
+                    {call.standing.whatUnderminesIt.map((entry) => (
+                      <li key={entry} className="text-[12px] text-muted">
+                        — {entry}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {call.age?.why && (
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">How old it looks — {REDESIGN_ERA_NAMES[call.age.era]}</p>
+                <p className="mt-0.5 text-[13px] text-ink">{call.age.why}</p>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
+
+      {call.strengths && call.strengths.length > 0 && (
+        <div className="mt-3 rounded-xl border border-lime/40 bg-lime/10 p-3">
+          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink">What is already good</p>
+          <ul className="mt-1 space-y-1">
+            {call.strengths.map((entry) => (
+              <li key={entry.strength} className="text-[13px]">
+                <span className="font-semibold text-ink">{entry.strength}</span> <span className="text-muted">{entry.why}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {call.direction.length > 0 && (
         <ol className="mt-3 space-y-1.5">
           {call.direction.map((step, index) => (
@@ -400,6 +563,15 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
           ))}
         </ol>
       )}
+
+      {call.worthIt?.why && (
+        <p className="mt-3 text-[13px] text-muted">
+          <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Worth paying for? {REDESIGN_WORTH_NAMES[call.worthIt.answer]}.</span>{" "}
+          {call.worthIt.why}
+        </p>
+      )}
+
+      {call.bottomLine?.recommendation && <p className="mt-2 text-sm font-semibold text-ink">{call.bottomLine.recommendation}</p>}
 
       <div className="mt-3 rounded-xl border border-blue/25 bg-blue/5 p-3">
         <div className="flex items-center justify-between gap-2">
