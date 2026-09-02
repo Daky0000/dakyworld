@@ -53,7 +53,7 @@ const TOKEN = "stub-token-never-print-me";
 
 /** What the fake Apify does next. Set per scenario. */
 let actorExists = false;
-let createdUsername = "dakyworld";
+let createdUsername = "daky_world";
 let buildStatus = "SUCCEEDED";
 let buildMessage: string | null = null;
 /** Set when a build has succeeded, so the actor becomes runnable. */
@@ -69,7 +69,7 @@ app.get("/v2/acts/:actor", (req, res) => {
   // A tagged build only once one has actually succeeded — which is the whole
   // point: an actor that exists and has never built is not a runnable actor.
   res.json({
-    data: { id: "act-1", name: "website-screenshot", username: "dakyworld", taggedBuilds: builtOk ? { latest: { buildId: "build-1" } } : {} },
+    data: { id: "act-1", name: "website-screenshot", username: "daky_world", taggedBuilds: builtOk ? { latest: { buildId: "build-1" } } : {} },
   });
 });
 
@@ -119,7 +119,7 @@ async function reset() {
   clearApifyCaches();
   calls = [];
   actorExists = false;
-  createdUsername = "dakyworld";
+  createdUsername = "daky_world";
   buildStatus = "SUCCEEDED";
   buildMessage = null;
   builtOk = false;
@@ -217,6 +217,31 @@ console.log("\nThe boot pass");
   settings.clearSettingsCache();
   const nextDay = await deployScreenshotActorIfMissing();
   check("but it is retried the next day", nextDay !== null, "nothing happened");
+}
+
+// --- 5b. A different actor is not "already tried today" -----------------------
+//
+// The first automatic deploy of this went out naming the wrong Apify account.
+// A marker keyed on the date alone would have refused to try the corrected
+// actor until tomorrow, turning a one-line fix into a day's wait for nothing.
+console.log("\nSwitching the actor after a failed attempt");
+{
+  await reset();
+  buildStatus = "FAILED";
+  await deployScreenshotActorIfMissing();
+
+  // Deliberately not the shipped default: the point is that switching to a
+  // *different* actor is not "already tried today".
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "daky_world/website-screenshot-staging");
+  settings.clearSettingsCache();
+  clearApifyCaches();
+  actorExists = false;
+  buildStatus = "SUCCEEDED";
+  calls = [];
+
+  const other = await deployScreenshotActorIfMissing();
+  check("a different actor is tried straight away", other?.ok === true, other?.message ?? "nothing happened");
+  check("and it really did build it", calls.some((c) => c.method === "POST" && c.path.endsWith("/builds")));
 }
 
 // --- 6. No token at all -------------------------------------------------------

@@ -654,7 +654,14 @@ section with no reason must not invent one.
 before. It is no longer a choice between vendors: the username half of an actor
 id is the Apify account it was pushed to, so a deployment whose account is not
 `dakyworld` has to say so, and a staging copy should be reachable without a
-deploy. **The app deploys the actor itself** — `services/screenshotActorDeploy.ts`,
+deploy. **The Apify account is `daky_world`, with an underscore.** Not a guess and not
+lookup-able from a developer machine: the first automatic deploy shipped naming
+`dakyworld`, Apify created the actor under the account the **token** belongs to,
+and the mismatch guard stopped before building and said so in the boot log. The
+username half of an actor id is whichever account the token is on. Everything
+asserting against it carries the same spelling.
+
+**The app deploys the actor itself** — `services/screenshotActorDeploy.ts`,
 `POST /api/settings/capture/screenshot-actor/deploy`, and a boot pass. This was
 the last thing standing between a good deploy and no screenshots: the actor's
 source is in this repository, `apify push` deploys it, and `apify push` needs

@@ -50,7 +50,8 @@ thing most likely to go wrong about this.
 It lands as `<your-username>/website-screenshot`.
 
 **The username half matters.** Dakyworld OS ships pointing at
-`dakyworld/website-screenshot`. If the Apify account is not `dakyworld`, do not
+`daky_world/website-screenshot` — with the underscore, which is the account
+this company's token belongs to. If the Apify account is not `daky_world`, do not
 edit the constant — set the actor id under **Settings → Lead Sources →
 Screenshot actor** (`capture.screenshotActor`). That setting exists for this,
 and for pointing a staging deployment at a staging copy.

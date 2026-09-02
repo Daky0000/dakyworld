@@ -261,7 +261,7 @@ console.log("\nWhy a section did not run");
   const about = { name: "Adom Dental", trade: null, town: null };
 
   const actorMissing =
-    'No screenshot was taken \u2014 Apify would not start the run: The screenshot actor "dakyworld/website-screenshot" is not on this Apify account.';
+    'No screenshot was taken \u2014 Apify would not start the run: The screenshot actor "daky_world/website-screenshot" is not on this Apify account.';
   const missing = await reviewUx(evidence({ stepNotes: { screenshots: [actorMissing], rendered: [] } }), about);
   check("the section is unscored and left out", missing.scored === false && missing.score === 0);
   check("and it says what actually stopped it", missing.summary.includes("not on this Apify account"), missing.summary);

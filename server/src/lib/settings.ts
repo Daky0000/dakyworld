@@ -66,7 +66,8 @@ export const SETTING = {
   CAPTURE_MAX_RUNS_PER_TASK: "capture.maxRunsPerTask",
   /**
    * Which Apify actor takes the homepage screenshots. Blank uses the shipped
-   * default (`dakyworld/website-screenshot`, the actor whose source is in
+   * default (`daky_world/website-screenshot` — with the underscore, which is
+   * the account this company's token belongs to — the actor whose source is in
    * `apify/dakyworld-screenshot/`).
    *
    * Still a setting rather than a constant, for a narrower reason than before:

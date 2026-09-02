@@ -506,7 +506,15 @@ ensureSystemRoles()
           // arriving with no picture.
           const shots = await screenshotActorReady().catch(() => null);
           if (shots && !shots.ready) {
-            console.log(`  → The screenshot actor "${shots.actorId}" is not on this Apify account. Building it from the repository…`);
+            // Two states, and they need different sentences. An actor that has
+            // never been created and one that was created and never built both
+            // mean "no screenshots", and only the second one is half done —
+            // saying "not on this account" about an actor sitting in the Apify
+            // console is the kind of wrong that sends somebody looking in the
+            // wrong place.
+            console.log(
+              `  → ${shots.exists ? `The screenshot actor "${shots.actorId}" has no build yet` : `The screenshot actor "${shots.actorId}" is not on this Apify account`}. Building it from the repository…`,
+            );
             // The app holds the token, and until now nothing here could use it
             // for this: `apify push` needs the CLI, Docker and a login on
             // somebody's machine. Apify builds it from the public repository

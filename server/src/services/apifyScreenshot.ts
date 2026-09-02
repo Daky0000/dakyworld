@@ -38,12 +38,19 @@ import { runActor, type ActorRunCode } from "./actorRun.js";
 /**
  * Dakyworld's own actor.
  *
- * The username half must match the Apify account the token belongs to. If the
- * account is not `dakyworld`, set `capture.screenshotActor` (Settings → Lead
- * Sources) to `<account>/website-screenshot` rather than editing this — the
- * setting exists precisely so pointing at a different copy is not a deploy.
+ * **`daky_world`, with the underscore.** That is the Apify account this
+ * company's token belongs to, and it was not a guess: the first automatic
+ * deploy shipped as `dakyworld`, Apify created the actor under the account the
+ * token actually names, and the mismatch guard in `screenshotActorDeploy.ts`
+ * stopped and said so rather than leaving a working actor under a name nothing
+ * would ever call. The username half of an actor id is not ours to choose.
+ *
+ * A different deployment on a different account sets `capture.screenshotActor`
+ * (Settings → Lead Sources) to `<account>/website-screenshot` rather than
+ * editing this — the setting exists precisely so pointing at another copy is
+ * not a deploy.
  */
-export const DEFAULT_SCREENSHOT_ACTOR = "dakyworld/website-screenshot";
+export const DEFAULT_SCREENSHOT_ACTOR = "daky_world/website-screenshot";
 
 /** Which actor takes the screenshots — the shipped one unless the Owner moved it. */
 export async function screenshotActorId(): Promise<string> {
@@ -313,7 +320,7 @@ function describeRunFailure(code: ActorRunCode, message: string, actorId: string
  * "the actor is missing", and conflating the two would put a deploy warning in
  * front of every developer who has not connected Apify.
  */
-export async function screenshotActorReady(): Promise<{ actorId: string; ready: boolean } | null> {
+export async function screenshotActorReady(): Promise<{ actorId: string; ready: boolean; exists: boolean } | null> {
   if (!(await apifyConfigured())) return null;
   const actorId = await screenshotActorId();
   // Present **and built**. An actor whose creation succeeded and whose build
@@ -323,7 +330,10 @@ export async function screenshotActorReady(): Promise<{ actorId: string; ready: 
   // called it ready, which between them would have left a permanently broken
   // account looking healthy.
   const actor = await findActor(actorId).catch(() => null);
-  return { actorId, ready: Boolean(actor?.hasBuild) };
+  // `exists` and `ready` are different questions and the caller needs both: an
+  // actor that was created and never built is half done, and telling somebody
+  // it is "not on this account" sends them looking in the wrong place.
+  return { actorId, exists: Boolean(actor), ready: Boolean(actor?.hasBuild) };
 }
 
 /**

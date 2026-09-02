@@ -85,12 +85,12 @@ const app = express();
 app.use(express.json({ limit: "25mb" }));
 
 app.get("/v2/acts/:actor", (req, res) => {
-  if (req.params.actor === "dakyworld~missing") return res.status(404).json({ error: { message: "Actor was not found." } });
+  if (req.params.actor === "daky_world~missing") return res.status(404).json({ error: { message: "Actor was not found." } });
   res.json({
     data: {
       id: "stub-actor",
       name: "website-screenshot",
-      username: "dakyworld",
+      username: "daky_world",
       title: "Dakyworld Website Screenshot",
       defaultRunOptions: { memoryMbytes: 1024, timeoutSecs: 300 },
       pricingInfos: [],
@@ -102,7 +102,7 @@ app.get("/v2/acts/:actor", (req, res) => {
 });
 
 app.post("/v2/acts/:actor/runs", (req, res) => {
-  if (req.params.actor === "dakyworld~missing") {
+  if (req.params.actor === "daky_world~missing") {
     return res.status(404).json({ error: { type: "record-not-found", message: "Actor was not found." } });
   }
   startedRuns.push({ actor: req.params.actor, body: req.body, query: req.query as Record<string, unknown> });
@@ -115,7 +115,7 @@ app.get("/v2/actor-runs/:id", (req, res) => {
   res.json({
     data: {
       id: req.params.id,
-      actId: "dakyworld~website-screenshot",
+      actId: "daky_world~website-screenshot",
       status: behaviour.status,
       defaultDatasetId: "ds-1",
       startedAt: new Date().toISOString(),
@@ -245,7 +245,7 @@ console.log("\nThe run body");
   await captureHomepage("example.com");
 
   const body = startedRuns[0]?.body;
-  check("it runs the Dakyworld actor", startedRuns[0]?.actor === "dakyworld~website-screenshot", startedRuns[0]?.actor);
+  check("it runs the Dakyworld actor", startedRuns[0]?.actor === "daky_world~website-screenshot", startedRuns[0]?.actor);
   check("the address is normalised before it is sent", body?.urls?.[0]?.url === "https://example.com/", body?.urls?.[0]?.url);
   check("every request carries an id", typeof body?.urls?.[0]?.id === "string" && body.urls[0].id.length > 0);
   check("the viewport is a laptop", body?.viewport?.width === 1280 && body?.viewport?.height === 800, JSON.stringify(body?.viewport));
@@ -278,7 +278,7 @@ console.log("\nThe phone view differs only in the viewport");
   // designed against — the height must be a device height, not a fraction.
   check("its height is a device height, not a fraction of the width", body?.viewport?.height === 844);
   check("more of the page is kept, because a phone page is taller", body?.maxHeight === 3200, `${body?.maxHeight}`);
-  check("it is the same actor as the desktop run", startedRuns[0]?.actor === "dakyworld~website-screenshot");
+  check("it is the same actor as the desktop run", startedRuns[0]?.actor === "daky_world~website-screenshot");
   check("and the picture is not blown up to the model width", result.shot?.width === 390, `${result.shot?.width}`);
 }
 
@@ -421,16 +421,16 @@ console.log("\nWhen the run itself fails");
 console.log("\nWhen the actor has not been deployed");
 {
   await reset();
-  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "dakyworld/missing");
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "daky_world/missing");
   settings.clearSettingsCache();
-  check("the setting decides which actor runs", (await screenshotActorId()) === "dakyworld/missing");
+  check("the setting decides which actor runs", (await screenshotActorId()) === "daky_world/missing");
 
   const result = await captureHomepage("example.com");
   const note = result.note ?? "";
   // A fixable setting must never reach the Owner as "something went wrong" —
   // the rule in lib/errors.ts, applied to the one failure that is a deploy
   // somebody has not done yet.
-  check("it names the actor that is missing", note.includes("dakyworld/missing"), note);
+  check("it names the actor that is missing", note.includes("daky_world/missing"), note);
   check("and says where to get it", note.includes("apify/dakyworld-screenshot"), note);
   check("rather than reading as an outage", !/something went wrong/i.test(note));
 
@@ -438,7 +438,7 @@ console.log("\nWhen the actor has not been deployed");
   // come back with no picture and a sentence nobody was looking at.
   const { clearApifyCaches } = await import("../src/lib/apify.js");
   clearApifyCaches();
-  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "dakyworld/missing");
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "daky_world/missing");
   settings.clearSettingsCache();
   check("the boot check notices a missing actor", (await screenshotActorReady())?.ready === false);
 

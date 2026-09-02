@@ -216,10 +216,15 @@ export async function deployScreenshotActorIfMissing(): Promise<DeployResult | n
   const existing = await findActor(actorId).catch(() => null);
   if (existing?.hasBuild) return null;
 
-  const today = new Date().toISOString().slice(0, 10);
+  // The marker names the actor as well as the day, and that is not tidiness.
+  // "We tried today" must not block a *different* actor: the first automatic
+  // deploy of this went out under the wrong account name, and a marker keyed on
+  // the date alone would have refused to try the corrected one until tomorrow —
+  // turning a one-line fix into a day's wait for no reason.
+  const attempt = `${new Date().toISOString().slice(0, 10)}:${actorId}`;
   const attempted = await getSetting(SETTING.SCREENSHOT_ACTOR_BUILD).catch(() => null);
-  if (attempted === today) return null;
-  await setSetting(SETTING.SCREENSHOT_ACTOR_BUILD, today).catch(() => undefined);
+  if (attempted === attempt) return null;
+  await setSetting(SETTING.SCREENSHOT_ACTOR_BUILD, attempt).catch(() => undefined);
 
   return deployScreenshotActor();
 }
