@@ -69,11 +69,16 @@ async function main() {
     },
   });
 
+  // A Growth partnership on the Founding Partner rate — the shape most of the
+  // first clients are on, and the one worth having in a dev database: it is the
+  // only shape where the fee on the plan today is not the fee it bills forever.
   const carePlan = await prisma.carePlan.create({
     data: {
       clientId: client.id,
       tier: "GROWTH",
-      monthlyFee: 12500,
+      monthlyFee: 7000,
+      standardMonthlyFee: 12500,
+      foundingRateUntil: new Date("2026-11-01"),
       includedHours: 12,
       status: "ACTIVE",
     },

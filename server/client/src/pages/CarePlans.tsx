@@ -5,10 +5,11 @@ import type { BillOutcome, CarePlan, CarePlanCycle } from "../lib/types";
 import { Badge, Button, Card, EmptyState, Money, PageHeader, RelativeTime, StatTile, StatusDot } from "../components/ui";
 import { CarePlanEditor } from "../components/CarePlanEditor";
 
+/** The tiers as dakyworld.com names them. See `services/carePlanCatalogue.ts`. */
 const TIER_LABEL: Record<string, string> = {
-  SME_ESSENTIALS: "SME Essentials",
+  FOUNDATION: "Foundation",
   GROWTH: "Growth",
-  ENTERPRISE_CONCIERGE: "Enterprise Concierge",
+  TRANSFORMATION: "Transformation",
 };
 
 /**
@@ -184,6 +185,15 @@ function PlanCard({
               <Money amount={plan.monthlyFee} currency={plan.currency} />
               <span className="text-muted"> / month</span>
             </span>
+            {plan.standardMonthlyFee && plan.foundingRateUntil && (
+              // A discount with an end date is two facts, and the second one is
+              // the one that gets forgotten. The invoice that raises the price
+              // should not be the first place anybody reads about it.
+              <span>
+                then <Money amount={plan.standardMonthlyFee} currency={plan.currency} /> from{" "}
+                {new Date(plan.foundingRateUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              </span>
+            )}
             <span>Day {plan.billingDay}</span>
             {plan.status === "ACTIVE" && plan.autoInvoice && plan.nextBillingAt && (
               <span>

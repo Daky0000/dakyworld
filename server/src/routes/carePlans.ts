@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { isValidTimezone, safeZone } from "../lib/timezone.js";
+import { CARE_PLAN_TIERS, carePlanCatalogue, pricedFieldsFor } from "../services/carePlanCatalogue.js";
 import {
   billPlanNow,
   computeNextBillingAt,
@@ -37,8 +38,24 @@ carePlansRouter.use(
 const planInput = z.object({
   clientId: z.string().cuid(),
   projectId: z.string().cuid().nullish(),
-  tier: z.enum(["SME_ESSENTIALS", "GROWTH", "ENTERPRISE_CONCIERGE"]),
-  monthlyFee: z.number().nonnegative(),
+  tier: z.enum(CARE_PLAN_TIERS),
+  /**
+   * Optional, and usually absent. Leave it out and the plan is priced from the
+   * website — see `rate` below. Send it to override the published price for a
+   * client who negotiated one.
+   */
+  monthlyFee: z.number().nonnegative().optional(),
+  /**
+   * Which published rate to price at. This is what makes changing a tier
+   * change the money: a caller that moves a plan to another tier and says
+   * nothing about the fee gets the new tier's price, rather than the old
+   * tier's price under the new tier's name.
+   */
+  rate: z.enum(["FOUNDING", "STANDARD"]).optional(),
+  /** The rate waiting behind a Founding Partner one. Normally derived, not sent. */
+  standardMonthlyFee: z.number().nonnegative().nullish(),
+  /** When the founding rate ends. Normally derived, not sent. */
+  foundingRateUntil: z.coerce.date().nullish(),
   currency: z.string().min(1).default("GHS"),
   billingDay: z.number().int().min(1).max(28).default(1),
   timezone: z.string().refine(isValidTimezone, { message: "Unknown timezone" }).default("Africa/Accra"),
@@ -78,6 +95,24 @@ async function currentUsage(plan: Awaited<ReturnType<typeof prisma.carePlan.find
     hoursRemaining: included === null ? null : Math.round((included - hoursUsed) * 100) / 100,
   };
 }
+
+/** What the caller is told when the website publishes no price for a tier. */
+const NO_PUBLISHED_PRICE =
+  "The website publishes no monthly price for that tier, so there is nothing to price it from. Enter a monthly fee, or publish the price on the pricing page and re-sync the business context in Settings.";
+
+/**
+ * The tiers and what the website charges for them.
+ *
+ * Above `/:id` on purpose — Express matches in order, and `/catalogue` would
+ * otherwise be read as a plan id and 404.
+ */
+carePlansRouter.get("/catalogue", async (_req, res, next) => {
+  try {
+    res.json(await carePlanCatalogue());
+  } catch (err) {
+    next(err);
+  }
+});
 
 carePlansRouter.get("/", async (req, res, next) => {
   try {
@@ -121,18 +156,25 @@ carePlansRouter.post("/", async (req, res, next) => {
     const data = planInput.parse(req.body);
     const startedAt = data.startedAt ?? new Date();
 
+    const priced = await pricedFieldsFor(data, null);
+    if (priced === null) return res.status(400).json({ error: NO_PUBLISHED_PRICE });
+    const monthlyFee = data.monthlyFee ?? priced.monthlyFee;
+    if (monthlyFee === undefined) return res.status(400).json({ error: NO_PUBLISHED_PRICE });
+
     const plan = await prisma.carePlan.create({
       data: {
         clientId: data.clientId,
         projectId: data.projectId ?? null,
         tier: data.tier,
-        monthlyFee: data.monthlyFee,
+        monthlyFee,
+        standardMonthlyFee: data.standardMonthlyFee ?? priced.standardMonthlyFee ?? null,
+        foundingRateUntil: data.foundingRateUntil ?? priced.foundingRateUntil ?? null,
         currency: data.currency,
         billingDay: normaliseBillingDay(data.billingDay),
         timezone: data.timezone,
         autoInvoice: data.autoInvoice,
         dueDays: data.dueDays,
-        includedHours: data.includedHours ?? null,
+        includedHours: data.includedHours ?? priced.includedHours ?? null,
         overageHourlyRate: data.overageHourlyRate ?? null,
         reviewEveryMonths: data.reviewEveryMonths,
         notes: data.notes ?? null,
@@ -156,13 +198,25 @@ carePlansRouter.patch("/:id", async (req, res, next) => {
     const existing = await prisma.carePlan.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: "Care plan not found" });
 
+    // Moving this plan to another tier moves its price with it. See
+    // `pricedFieldsFor` for the cases where it deliberately does not.
+    const priced = await pricedFieldsFor(data, existing);
+    if (priced === null) return res.status(400).json({ error: NO_PUBLISHED_PRICE });
+
+    // `rate` is an instruction about how to price, not a column.
+    const { rate: _rate, ...fields } = data;
+
     await prisma.carePlan.update({
       where: { id: existing.id },
       data: {
-        ...data,
+        ...fields,
+        monthlyFee: data.monthlyFee ?? priced.monthlyFee,
+        standardMonthlyFee:
+          data.standardMonthlyFee !== undefined ? (data.standardMonthlyFee ?? null) : priced.standardMonthlyFee,
+        foundingRateUntil: data.foundingRateUntil !== undefined ? (data.foundingRateUntil ?? null) : priced.foundingRateUntil,
         billingDay: data.billingDay === undefined ? undefined : normaliseBillingDay(data.billingDay),
         projectId: data.projectId === undefined ? undefined : (data.projectId ?? null),
-        includedHours: data.includedHours === undefined ? undefined : (data.includedHours ?? null),
+        includedHours: data.includedHours !== undefined ? (data.includedHours ?? null) : priced.includedHours,
         overageHourlyRate: data.overageHourlyRate === undefined ? undefined : (data.overageHourlyRate ?? null),
         notes: data.notes === undefined ? undefined : (data.notes ?? null),
       },

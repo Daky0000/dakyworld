@@ -1033,8 +1033,35 @@ export interface Invoice {
 
 // --- Care plans ------------------------------------------------------------
 
-export type CarePlanTier = "SME_ESSENTIALS" | "GROWTH" | "ENTERPRISE_CONCIERGE";
+/** Named as dakyworld.com names the monthly partnerships. */
+export type CarePlanTier = "FOUNDATION" | "GROWTH" | "TRANSFORMATION";
 export type CarePlanStatus = "ACTIVE" | "PAUSED" | "CHURNED";
+/** Which of the two rates the website publishes a plan is sold at. */
+export type CarePlanRate = "FOUNDING" | "STANDARD";
+
+/** One tier, priced as the website prices it. From `GET /care-plans/catalogue`. */
+export interface CarePlanTierOption {
+  tier: CarePlanTier;
+  label: string;
+  standardMonthly: number | null;
+  foundingMonthly: number | null;
+  fromPrice: boolean;
+  discountNote: string;
+  for: string;
+  includedHours: number;
+  reviewEveryMonths: number;
+}
+
+export interface CarePlanCatalogue {
+  tiers: CarePlanTierOption[];
+  currency: string;
+  foundingMonths: number;
+  /** "shipped" means the site has not been read yet — the prices are the floor. */
+  source: "website" | "shipped";
+  syncedAt: string | null;
+  /** Plans on the site with no tier in this database. Normally empty. */
+  unmatched: string[];
+}
 
 /** One billed month. `settledAt` is null until its hours have been counted. */
 export interface CarePlanCycle {
@@ -1071,6 +1098,10 @@ export interface CarePlan {
   tier: CarePlanTier;
   status: CarePlanStatus;
   monthlyFee: string;
+  /** The rate that takes over when the founding period ends. Null on most plans. */
+  standardMonthlyFee?: string | null;
+  /** The first billing period that pays the standard rate. */
+  foundingRateUntil?: string | null;
   currency: string;
   billingDay: number;
   timezone: string;

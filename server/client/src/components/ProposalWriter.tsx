@@ -438,7 +438,7 @@ function Review({
           <Field label="Price (GHS)" hint={draft.investment.totalIsFirm ? "From the published catalogue." : "Estimated — check this."}>
             <input type="number" min={0} value={price} onChange={(event) => setPrice(Number(event.target.value))} className="input" />
           </Field>
-          <Field label="Tier" hint="Optional — SME Essentials, Growth, Enterprise Concierge.">
+          <Field label="Tier" hint="Optional — Foundation, Growth, Transformation.">
             <input value={priceTier} onChange={(event) => setPriceTier(event.target.value)} className="input" />
           </Field>
         </div>

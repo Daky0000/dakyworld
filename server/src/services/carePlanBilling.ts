@@ -1,6 +1,7 @@
 import { Prisma, type CarePlan, type CarePlanCycle } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { safeZone, zonedDateParts, zonedTimeToUtc } from "../lib/timezone.js";
+import { TIER_LABEL } from "./carePlanCatalogue.js";
 import { createNumberedInvoice } from "./invoiceNumber.js";
 
 /**
@@ -31,11 +32,14 @@ const BILL_HOUR = 6;
 /** A restart after a long outage bills at most this many missed months. */
 const MAX_CATCHUP_PERIODS = 3;
 
-export const TIER_LABEL: Record<CarePlan["tier"], string> = {
-  SME_ESSENTIALS: "SME Essentials",
-  GROWTH: "Growth",
-  ENTERPRISE_CONCIERGE: "Enterprise Concierge",
-};
+/**
+ * The tier names, re-exported from the one place that holds them.
+ *
+ * They used to be a second copy here, and a second copy is how an invoice came
+ * to name a plan the website had renamed a year earlier. See
+ * `services/carePlanCatalogue.ts`.
+ */
+export { TIER_LABEL };
 
 type SchedulableCarePlan = Pick<CarePlan, "billingDay" | "timezone" | "status">;
 
@@ -177,12 +181,28 @@ export async function billPeriod(planId: string, periodStart: Date): Promise<Bil
     settlement = { cycle: previous, hoursUsed, overageHours, overageAmount };
   }
 
+  // The Founding Partner rate runs for an agreed number of months and then the
+  // standard rate takes over. The step-up happens here, on the first period
+  // starting on or after the agreed date, rather than on a reminder somebody
+  // has to act on — a discount nobody remembers to end is a permanent one, and
+  // this is the only code that is guaranteed to run on the right month.
+  const stepsUp = plan.foundingRateUntil !== null && plan.standardMonthlyFee !== null && periodStart >= plan.foundingRateUntil;
+  const monthlyFee = stepsUp ? (plan.standardMonthlyFee as Prisma.Decimal) : plan.monthlyFee;
+  /** Still inside the founding period: a standard fee is waiting behind this one. */
+  const onFoundingRate = !stepsUp && plan.standardMonthlyFee !== null;
+
   const lineItems = [
     {
-      description: `${TIER_LABEL[plan.tier]} care plan — ${monthLabel(periodStart, zone)}`,
+      // "Monthly partnership" is what the website calls this, so it is what the
+      // invoice calls it. The rate is named on the line where one is unusual,
+      // because a client who sees 3,000 for three months and then 5,000 should
+      // be able to read why on the invoice rather than ask.
+      description:
+        `${TIER_LABEL[plan.tier]} monthly partnership — ${monthLabel(periodStart, zone)}` +
+        (onFoundingRate ? " (Founding Partner rate)" : ""),
       quantity: new Prisma.Decimal(1),
-      unitPrice: plan.monthlyFee,
-      amount: plan.monthlyFee,
+      unitPrice: monthlyFee,
+      amount: monthlyFee,
     },
   ];
   if (settlement && settlement.overageAmount > 0) {
@@ -223,7 +243,7 @@ export async function billPeriod(planId: string, periodStart: Date): Promise<Bil
             carePlanId: plan.id,
             periodStart,
             periodEnd,
-            monthlyFee: plan.monthlyFee,
+            monthlyFee,
             includedHours: plan.includedHours,
             invoiceId: created.id,
           },
@@ -241,7 +261,15 @@ export async function billPeriod(planId: string, periodStart: Date): Promise<Bil
           });
         }
 
-        await tx.carePlan.update({ where: { id: plan.id }, data: { lastBilledAt: issueDate } });
+        await tx.carePlan.update({
+          where: { id: plan.id },
+          // Stepping up clears both founding fields in the same transaction as
+          // the invoice that first charged the standard rate, so the step-up
+          // can happen exactly once however many times this is retried.
+          data: stepsUp
+            ? { lastBilledAt: issueDate, monthlyFee, standardMonthlyFee: null, foundingRateUntil: null }
+            : { lastBilledAt: issueDate },
+        });
         return created;
       }),
     issueDate,

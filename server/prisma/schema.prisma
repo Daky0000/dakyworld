@@ -1234,7 +1234,7 @@ model Proposal {
   serviceType  String // e.g. "Website Build", "Care Plan", "Automation"
   scopeSummary String
   priceAmount  Decimal        @db.Decimal(12, 2)
-  priceTier    String? // e.g. "SME Essentials", "Growth", "Enterprise Concierge"
+  priceTier    String? // e.g. "Foundation", "Growth", "Transformation"
   currency     String         @default("GHS")
   status       ProposalStatus @default(DRAFT)
   sentAt       DateTime?
@@ -1378,10 +1378,19 @@ model TimeEntry {
 // Care Plans & Recurring Revenue
 // ---------------------------------------------------------------------------
 
+/// The monthly partnership tiers, named exactly as dakyworld.com names them.
+///
+/// They were `SME_ESSENTIALS` / `GROWTH` / `ENTERPRISE_CONCIERGE` until Sep
+/// 2026, months after the website had renamed them and repriced them. What a
+/// client saw on the pricing page and what the invoice called their plan were
+/// two different products, and the price on the invoice was last year's. The
+/// enum is now the site's vocabulary, and the *numbers* behind each tier are
+/// not in the schema at all — they come from `services/carePlanCatalogue.ts`,
+/// which reads them off the website. See that file for why.
 enum CarePlanTier {
-  SME_ESSENTIALS
+  FOUNDATION
   GROWTH
-  ENTERPRISE_CONCIERGE
+  TRANSFORMATION
 }
 
 enum CarePlanStatus {
@@ -1399,8 +1408,24 @@ model CarePlan {
   project    Project?     @relation(fields: [projectId], references: [id])
   projectId  String?      @unique
   tier       CarePlanTier
+  /// What this plan bills each month *right now* — the Founding Partner rate
+  /// while that is running, the standard rate once it is not.
   monthlyFee Decimal      @db.Decimal(12, 2)
   currency   String       @default("GHS")
+
+  // --- Founding Partner rate -------------------------------------------
+  /// The rate that takes over when the founding period ends. Null on a plan
+  /// that was never sold at a promotional rate — the ordinary case.
+  ///
+  /// Two fields rather than a rewritten `monthlyFee` for the same reason the
+  /// website prints two numbers: "GHS 3,000 for three months, then GHS 5,000"
+  /// is the offer, and a plan that only knows one of those numbers either
+  /// bills the discount forever or forgets it was ever given.
+  standardMonthlyFee Decimal?  @db.Decimal(12, 2)
+  /// The first billing period that pays the standard rate. `billPeriod` moves
+  /// the plan onto `standardMonthlyFee` when it reaches this and clears both
+  /// fields, so the step-up happens once and leaves a record on the invoice.
+  foundingRateUntil  DateTime?
 
   // --- Billing ---------------------------------------------------------
   billingDay    Int       @default(1) // day of month, 1-28: every month has one
