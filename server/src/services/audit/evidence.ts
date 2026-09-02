@@ -681,6 +681,8 @@ export interface GatherOptions {
   skipRendered?: boolean;
   /** A desktop picture already taken for this address, from a batched run. */
   desktopShot?: ShotResult | null;
+  /** The phone picture from that same run, when there was one. */
+  mobileShot?: ShotResult | null;
 }
 
 export async function gatherEvidence(website: string, options: GatherOptions = {}): Promise<AuditEvidence> {
@@ -787,9 +789,19 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
     //
     // The desktop picture is handed in already taken when a batched run took
     // it (`leadPrep`), and then only the phone view is left to ask for.
+    //
+    // The whole page comes back as well as the top of it. The reviewer is
+    // still shown the crop — a 12,000px picture is past every vision model's
+    // edge limit — but the report is read by a person, and "show me the rest
+    // of the page" had no answer but an Apify link that expires.
     const both = options.desktopShot
-      ? { desktop: options.desktopShot, mobile: await captureHomepage(page.finalUrl, { viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS }) }
-      : await captureHomepageViews(page.finalUrl);
+      ? {
+          desktop: options.desktopShot,
+          mobile:
+            options.mobileShot ??
+            (await captureHomepage(page.finalUrl, { viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS, withFullImage: true })),
+        }
+      : await captureHomepageViews(page.finalUrl, { withFullImage: true });
 
     if (both.desktop.shot) {
       shots.push({ view: "desktop", result: both.desktop });

@@ -313,24 +313,29 @@ auditsRouter.get("/:id/markdown", async (req, res, next) => {
 /**
  * One of the pictures, by view.
  *
- * `desktop.png`, `desktop-marked.png`, `mobile.png`, `mobile-marked.png` — the
- * same names the Markdown links to, so a Markdown file opened against this API
- * shows its own images.
+ * `desktop.png`, `desktop-marked.png`, `desktop-full.png` and the same three
+ * for `mobile` — the first two are the names the Markdown links to, so a
+ * Markdown file opened against this API shows its own images, and the third is
+ * the whole page for somebody who wants to see past the fold.
  */
 auditsRouter.get("/:id/screenshot/:name", async (req, res, next) => {
   try {
-    const match = /^(desktop|mobile)(-marked)?\.png$/.exec(req.params.name);
+    const match = /^(desktop|mobile)(-marked|-full)?\.png$/.exec(req.params.name);
     if (!match) return res.status(404).json({ error: "No such picture." });
 
     const audit = await prisma.websiteAudit.findUnique({ where: { id: req.params.id }, select: { screenshots: true } });
     if (!audit) return res.status(404).json({ error: "No such review" });
 
-    const shots = (audit.screenshots ?? []) as { view: string; annotated: boolean; fileId: string }[];
-    const wanted = shots.find((shot) => shot.view === match[1] && shot.annotated === Boolean(match[2]));
-    // A marked-up picture only exists when something was drawn on it. Falling
-    // back to the plain one is right: the caller asked for that view of the
-    // page, and the boxes are a bonus rather than the subject.
-    const chosen = wanted ?? shots.find((shot) => shot.view === match[1]);
+    const shots = (audit.screenshots ?? []) as { view: string; annotated?: boolean; full?: boolean; fileId: string }[];
+    const marked = match[2] === "-marked";
+    const full = match[2] === "-full";
+    const wanted = shots.find((shot) => shot.view === match[1] && Boolean(shot.annotated) === marked && Boolean(shot.full) === full);
+    // A marked-up picture only exists when something was drawn on it, and the
+    // whole-page copy only when the page was longer than the crop. Falling
+    // back to the plain picture is right in both cases: the caller asked for
+    // that view of the page, and the boxes and the tail are a bonus rather
+    // than the subject.
+    const chosen = wanted ?? shots.find((shot) => shot.view === match[1] && !shot.annotated && !shot.full);
     if (!chosen) return res.status(404).json({ error: "No such picture." });
 
     const file = await readFile(chosen.fileId);

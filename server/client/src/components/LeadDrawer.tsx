@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api";
-import type { Lead, LeadFieldDef, LeadGroup, LeadResearch } from "../lib/types";
+import { api, apiUrl } from "../lib/api";
+import type { Lead, LeadFieldDef, LeadGroup, LeadResearch, StoredShot } from "../lib/types";
 import { CaptureTag, captureMethodLabel, useLeadFields } from "./LeadColumns";
 import { TagChip, TagPicker, useTagLookup } from "./LeadTags";
 import { LeadAuditSection } from "./LeadAudit";
@@ -577,6 +577,7 @@ function ResearchSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
         </div>
       ) : (
         <ResearchDetail
+          leadId={lead.id}
           research={research}
           stale={Boolean(lead.researchStale)}
           strength={lead.caseStrength ?? null}
@@ -700,7 +701,63 @@ const CASE_LABEL: Record<NonNullable<Lead["caseStrength"]>, string> = {
   NONE: "Nothing to say",
 };
 
+/**
+ * The pictures of their homepage: a laptop one and a phone one, each opening
+ * the whole page rather than the part the model was shown.
+ *
+ * Both views because most of the people who look this business up are on the
+ * second one, and a page that holds together at 1280 and falls apart at 390 is
+ * invisible in every other check. The whole page because the picture here is
+ * cropped to the top two and a half screens — which is the right evidence for
+ * a first impression and the wrong answer to "show me the rest of it".
+ *
+ * Served from this app where the pictures were kept, and from Apify where they
+ * were not: a lead prepared in a batch keeps the links, and those expire with
+ * the run's data. That is why a stored file is preferred wherever there is one.
+ */
+function HomepageShots({ leadId, research }: { leadId: string; research: LeadResearch }) {
+  const stored = research.shots ?? [];
+  // A look taken before both views existed has one picture and no files, and
+  // it still has to render — this is the record of what was sent to somebody.
+  const views: { view: StoredShot["view"]; shot: StoredShot["shot"]; fileId: string | null; fullFileId: string | null }[] = stored.length
+    ? stored.map((entry) => ({ view: entry.view, shot: entry.shot, fileId: entry.fileId, fullFileId: entry.fullFileId }))
+    : research.shot
+      ? [{ view: "desktop" as const, shot: research.shot, fileId: null, fullFileId: null }]
+      : [];
+  if (!views.length) return null;
+
+  const src = (view: StoredShot["view"], fileId: string | null, whole: boolean, fallback: string) =>
+    fileId ? apiUrl(`/leads/${leadId}/screenshot/${view}${whole ? "-full" : ""}.png`) : fallback;
+
+  return (
+    <div className={`grid gap-3 ${views.length > 1 ? "sm:grid-cols-2" : ""}`}>
+      {views.map((entry) => (
+        <a
+          key={entry.view}
+          href={src(entry.view, entry.fullFileId ?? entry.fileId, true, entry.shot.imageUrl)}
+          target="_blank"
+          rel="noreferrer"
+          className="block overflow-hidden rounded-2xl border border-line bg-white"
+          title={entry.shot.cropped ? "Open the whole page" : "Open the picture"}
+        >
+          <img
+            src={src(entry.view, entry.fileId, false, entry.shot.imageUrl)}
+            alt={entry.view === "mobile" ? "Their homepage on a phone" : "Their homepage"}
+            className="max-h-72 w-full object-cover object-top"
+            loading="lazy"
+          />
+          <span className="block border-t border-line px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+            {entry.view === "mobile" ? "On a phone" : "On a laptop"} · {entry.shot.width}×{entry.shot.height}
+            {entry.shot.cropped ? " · top of page, click for all of it" : ""}
+          </span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function ResearchDetail({
+  leadId,
   research,
   stale,
   strength,
@@ -708,6 +765,7 @@ function ResearchDetail({
   pending,
   error,
 }: {
+  leadId: string;
   research: LeadResearch;
   stale: boolean;
   strength: Lead["caseStrength"];
@@ -740,22 +798,8 @@ function ResearchDetail({
       </div>
       {error && <p className="text-sm text-danger-text">{error}</p>}
 
-      {/* The picture first: it is the fastest way to disagree with the model. */}
-      {research.shot && (
-        <a
-          href={research.shot.imageUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="block overflow-hidden rounded-2xl border border-line bg-white"
-          title="Open the full screenshot"
-        >
-          <img src={research.shot.imageUrl} alt="Their homepage" className="max-h-72 w-full object-cover object-top" loading="lazy" />
-          <span className="block border-t border-line px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
-            Their homepage · {research.shot.width}×{research.shot.height}
-            {research.shot.cropped ? " · top of page" : ""}
-          </span>
-        </a>
-      )}
+      {/* The pictures first: they are the fastest way to disagree with the model. */}
+      <HomepageShots leadId={leadId} research={research} />
 
       {research.look && (
         <div className="rounded-2xl border border-line bg-white p-4">
@@ -783,10 +827,21 @@ function ResearchDetail({
             <p className="mt-2 text-xs leading-relaxed text-muted">{research.look.fitNote}</p>
           )}
           {research.look.speed && <p className="mt-2 text-xs leading-relaxed text-muted">{research.look.speed}</p>}
+          {/* Its own line, because it is the view most of their customers get. */}
+          {research.look.onAPhone && (
+            <p className="mt-2 text-xs leading-relaxed text-muted">
+              <span className="font-mono text-[10px] uppercase tracking-[.1em] text-blue">On a phone</span> {research.look.onAPhone}
+            </p>
+          )}
           <ul className="mt-3 space-y-2 border-t border-line pt-3 text-xs text-ink">
             {research.look.observations.map((observation, index) => (
               <li key={index} className="leading-relaxed">
                 <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">{observation.severity}</span>{" "}
+                {observation.on && observation.on !== "desktop" && (
+                  <span className="font-mono text-[10px] uppercase tracking-[.1em] text-blue">
+                    {observation.on === "phone" ? "PHONE" : "BOTH"}{" "}
+                  </span>
+                )}
                 {observation.plainly || observation.observed} <span className="text-muted">— {observation.soWhat}</span>
               </li>
             ))}

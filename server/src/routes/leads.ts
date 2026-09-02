@@ -21,6 +21,8 @@ import { demoUrl } from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
 import { leadIdsMatchingCustomFields, searchClauses } from "../services/leadSearch.js";
 import { findEmptyLists, removeEmptyLists } from "../services/leadLists.js";
+import { storedShotsOf } from "../services/leadShots.js";
+import { readFile } from "../services/fileStore.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
 export const leadsRouter = Router();
@@ -1081,6 +1083,44 @@ leadsRouter.post("/:id/prepare", async (req, res, next) => {
     res.json(prep);
   } catch (err) {
     if ((err as Error).message === "Lead not found") return res.status(404).json({ error: "Lead not found" });
+    next(err);
+  }
+});
+
+/**
+ * A picture of this lead's homepage, by view.
+ *
+ * `desktop.png`, `desktop-full.png`, `mobile.png`, `mobile-full.png` — the
+ * crop the model read, and the whole page beside it. Served from here rather
+ * than from Apify because an Apify key-value-store link expires with the run's
+ * data, and a lead looked at last month would otherwise show a broken image on
+ * the one screen a person uses to disagree with the model.
+ */
+leadsRouter.get("/:id/screenshot/:name", async (req, res, next) => {
+  try {
+    const match = /^(desktop|mobile)(-full)?\.png$/.exec(req.params.name);
+    if (!match) return res.status(404).json({ error: "No such picture." });
+
+    const research = await prisma.leadResearch.findUnique({ where: { leadId: req.params.id }, select: { shots: true } });
+    const shots = storedShotsOf(research?.shots);
+    const shot = shots.find((entry) => entry.view === match[1]);
+    if (!shot) return res.status(404).json({ error: "No such picture." });
+
+    // Asking for the whole page of a page that fitted the crop is answered
+    // with the crop, which *is* the whole page. Falling back the other way is
+    // right too: the caller asked for that view.
+    const fileId = (match[2] ? shot.fullFileId ?? shot.fileId : shot.fileId) ?? shot.fullFileId;
+    if (!fileId) return res.status(404).json({ error: "That picture was not kept." });
+
+    const file = await readFile(fileId);
+    if (!file) return res.status(404).json({ error: "That picture is no longer stored." });
+
+    res
+      .status(200)
+      .type("image/png")
+      .set({ "Content-Disposition": `inline; filename="${file.filename}"`, "Cache-Control": "private, max-age=3600" })
+      .send(file.data);
+  } catch (err) {
     next(err);
   }
 });

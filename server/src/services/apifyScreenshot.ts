@@ -380,7 +380,10 @@ export async function screenshotActorReady(): Promise<
  * reported as a missing picture, which is a failure that would look exactly
  * like a website blocking us.
  */
-export async function downloadScreenshot(url: string): Promise<{ ok: true; bytes: Buffer } | { ok: false; message: string }> {
+export async function downloadScreenshot(
+  url: string,
+  options: { maxBytes?: number } = {},
+): Promise<{ ok: true; bytes: Buffer } | { ok: false; message: string }> {
   const attempt = async (token: string | null) => {
     const response = await fetch(url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
     return response;
@@ -393,7 +396,24 @@ export async function downloadScreenshot(url: string): Promise<{ ok: true; bytes
       if (token) response = await attempt(token);
     }
     if (!response.ok) return { ok: false, message: `HTTP ${response.status}` };
-    return { ok: true, bytes: Buffer.from(await response.arrayBuffer()) };
+
+    // A ceiling on the *whole-page* picture, which is the only one big enough
+    // for this to matter — the cut-down copy is a megabyte at the outside. The
+    // header is checked first so an enormous page costs a request rather than
+    // the bytes, and the buffer is checked afterwards because a store need not
+    // send a length.
+    const declared = Number(response.headers.get("content-length"));
+    if (options.maxBytes && Number.isFinite(declared) && declared > options.maxBytes) {
+      return { ok: false, message: `it is ${(declared / 1_000_000).toFixed(1)}MB, past the ${Math.round(options.maxBytes / 1_000_000)}MB ceiling` };
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (options.maxBytes && bytes.byteLength > options.maxBytes) {
+      return {
+        ok: false,
+        message: `it is ${(bytes.byteLength / 1_000_000).toFixed(1)}MB, past the ${Math.round(options.maxBytes / 1_000_000)}MB ceiling`,
+      };
+    }
+    return { ok: true, bytes };
   } catch (err) {
     return { ok: false, message: (err as Error).message };
   }

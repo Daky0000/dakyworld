@@ -1356,7 +1356,17 @@ export interface WebsiteAuditReport {
    * existed, and null when it could not be made — the reason is in `notes`.
    */
   redesign?: RedesignVerdict | null;
-  screenshots: { view: "desktop" | "mobile"; width: number; height: number; cropped: boolean; takenAt: string; annotatedBase64?: string | null }[];
+  screenshots: {
+    view: "desktop" | "mobile";
+    width: number;
+    height: number;
+    cropped: boolean;
+    takenAt: string;
+    annotatedBase64?: string | null;
+    /** The whole page's size, when it was longer than the crop. */
+    fullWidth?: number | null;
+    fullHeight?: number | null;
+  }[];
   notes: string[];
   costUsd: number;
 }
@@ -1393,7 +1403,7 @@ export interface WebsiteAuditSummary {
   verdict: string;
   pdfFileId?: string | null;
   markdownFileId?: string | null;
-  screenshots?: { view: "desktop" | "mobile"; annotated: boolean; fileId: string }[] | null;
+  screenshots?: { view: "desktop" | "mobile"; annotated: boolean; full?: boolean; fileId: string }[] | null;
   costUsd?: string | number;
 }
 
@@ -1417,6 +1427,8 @@ export interface HomepageObservation {
   plainly?: string;
   where: string;
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "GOOD";
+  /** Which picture it was seen in. Absent on looks taken before the phone view. */
+  on?: "desktop" | "phone" | "both";
 }
 
 export interface HomepageLook {
@@ -1428,6 +1440,8 @@ export interface HomepageLook {
   fitsTheBusiness?: boolean;
   fitNote?: string;
   speed?: string | null;
+  /** What the page does at phone width. Null when there was no phone picture. */
+  onAPhone?: string | null;
   observations: HomepageObservation[];
   /** The case for spending money, in the owner's own terms. */
   worthFixing?: { problem: string; costsThem: string; whyWorthPaying: string } | null;
@@ -1450,8 +1464,28 @@ export interface Screenshot {
   /** The page never finished loading; this is what had drawn itself. */
   partiallyLoaded?: boolean;
   imageUrl: string;
+  /** The whole page's size, as captured, before the crop and the resize. */
+  fullWidth?: number | null;
+  fullHeight?: number | null;
   bytes: number;
   costUsd?: number | null;
+}
+
+/**
+ * One view of a homepage as the record keeps it: the picture, and the files
+ * the bytes were kept in.
+ *
+ * `fileId` is the top of the page — what the model was shown — and
+ * `fullFileId` is the whole thing. Both are served from this app rather than
+ * from Apify, whose links expire with the run's data.
+ */
+export interface StoredShot {
+  view: "desktop" | "mobile";
+  shot: Screenshot;
+  fileId: string | null;
+  fullFileId: string | null;
+  /** True when the whole page and the crop are the same picture. */
+  wholePageIsTheCrop: boolean;
 }
 
 /**
@@ -1477,6 +1511,8 @@ export interface LeadResearch {
     checked: string[];
   } | null;
   shot?: Screenshot | null;
+  /** Both views, with the files they were kept in. Null for a lead prepared in a batch. */
+  shots?: StoredShot[] | null;
   look?: HomepageLook | null;
   facts: string[];
   notes: string[];

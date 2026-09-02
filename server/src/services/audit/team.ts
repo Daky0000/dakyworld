@@ -72,7 +72,13 @@ export interface StoredAudit {
   pdfFileId: string | null;
   markdownFileId: string | null;
   /** `{ view, annotated, fileId }` for every picture kept. */
-  screenshotFiles: { view: "desktop" | "mobile"; annotated: boolean; fileId: string }[];
+  screenshotFiles: {
+    view: "desktop" | "mobile";
+    annotated: boolean;
+    /** The whole page rather than the top of it. Never annotated. */
+    full: boolean;
+    fileId: string;
+  }[];
 }
 
 export interface RunOptions extends GatherOptions {
@@ -163,6 +169,12 @@ export async function reviewWebsite(subject: AuditSubject, options: RunOptions =
       width: shot.width,
       height: shot.height,
       annotatedBase64: marked.base64,
+      // Only when it is a different picture from the one above. A page that
+      // fitted the crop is already whole, and a second copy of it is a
+      // megabyte of database for a file nobody could tell apart.
+      fullBase64: shot.cropped ? entry.result.fullBase64 : null,
+      fullWidth: shot.fullWidth,
+      fullHeight: shot.fullHeight,
       imageUrl: shot.imageUrl,
       takenAt: shot.takenAt,
       cropped: shot.cropped,
@@ -242,19 +254,20 @@ export async function runWebsiteAudit(subject: AuditSubject, options: RunOptions
 
     if (options.skipFiles) continue;
 
-    for (const [annotated, base64] of [
-      [false, shot.base64],
-      [true, shot.annotatedBase64],
+    for (const [kind, base64] of [
+      ["plain", shot.base64],
+      ["marked", shot.annotatedBase64],
+      ["full", shot.fullBase64],
     ] as const) {
       if (!base64) continue;
       try {
         const file = await storeFile({
-          filename: `${slug(report.businessName)}-${shot.view}${annotated ? "-marked" : ""}.png`,
+          filename: `${slug(report.businessName)}-${shot.view}${kind === "plain" ? "" : `-${kind === "marked" ? "marked" : "full"}`}.png`,
           contentType: "image/png",
           dataBase64: base64,
           purpose: "WEBSITE_AUDIT",
         });
-        screenshotFiles.push({ view: shot.view, annotated, fileId: file.id });
+        screenshotFiles.push({ view: shot.view, annotated: kind === "marked", full: kind === "full", fileId: file.id });
       } catch (err) {
         report.notes.push(`A screenshot could not be filed: ${(err as Error).message}`);
       }
@@ -594,6 +607,9 @@ export async function rerunAuditSection(auditId: string, discipline: Discipline,
         imageUrl: entry.result.shot!.imageUrl,
         takenAt: entry.result.shot!.takenAt,
         cropped: entry.result.shot!.cropped,
+        fullBase64: entry.result.shot!.cropped ? entry.result.fullBase64 : null,
+        fullWidth: entry.result.shot!.fullWidth,
+        fullHeight: entry.result.shot!.fullHeight,
         fileId: null,
       }))
     : pictures;
@@ -609,6 +625,12 @@ export async function rerunAuditSection(auditId: string, discipline: Discipline,
       width: picture.width,
       height: picture.height,
       annotatedBase64: marked.base64,
+      // Carried rather than re-read: on a re-run that did not re-photograph,
+      // the whole-page file is untouched and its bytes are needed by nobody —
+      // the annotator works on the crop and the PDF takes the marked copy.
+      fullBase64: picture.fullBase64 ?? null,
+      fullWidth: picture.fullWidth ?? null,
+      fullHeight: picture.fullHeight ?? null,
       imageUrl: picture.imageUrl,
       takenAt: picture.takenAt,
       cropped: picture.cropped,
@@ -643,24 +665,27 @@ export async function rerunAuditSection(auditId: string, discipline: Discipline,
     screenshotFiles = [];
     retired.push(...existing.map((entry) => entry.fileId));
     for (const shot of report.screenshots) {
-      for (const [annotated, base64] of [
-        [false, shot.base64],
-        [true, shot.annotatedBase64],
+      for (const [kind, base64] of [
+        ["plain", shot.base64],
+        ["marked", shot.annotatedBase64],
+        ["full", shot.fullBase64],
       ] as const) {
         if (!base64) continue;
-        const filed = await storeAuditFile(report, `${shot.view}${annotated ? "-marked" : ""}.png`, "image/png", base64);
-        if (filed) screenshotFiles.push({ view: shot.view, annotated, fileId: filed });
+        const suffix = kind === "plain" ? "" : kind === "marked" ? "-marked" : "-full";
+        const filed = await storeAuditFile(report, `${shot.view}${suffix}.png`, "image/png", base64);
+        if (filed) screenshotFiles.push({ view: shot.view, annotated: kind === "marked", full: kind === "full", fileId: filed });
       }
     }
   } else if (discipline === "UX") {
-    // The photographs are the same bytes and stay where they are; the boxes on
-    // them are not, so only the marked-up copies are rewritten.
+    // The photographs are the same bytes and stay where they are — the crop
+    // and the whole-page copy both — and the boxes on them are not, so only
+    // the marked-up copies are rewritten.
     screenshotFiles = existing.filter((entry) => !entry.annotated);
     retired.push(...existing.filter((entry) => entry.annotated).map((entry) => entry.fileId));
     for (const shot of report.screenshots) {
       if (!shot.annotatedBase64) continue;
       const filed = await storeAuditFile(report, `${shot.view}-marked.png`, "image/png", shot.annotatedBase64);
-      if (filed) screenshotFiles.push({ view: shot.view, annotated: true, fileId: filed });
+      if (filed) screenshotFiles.push({ view: shot.view, annotated: true, full: false, fileId: filed });
     }
   } else {
     // Nothing about the pictures changed. Rewriting them would spend two
@@ -740,15 +765,32 @@ interface StoredPicture {
   imageUrl: string | null;
   takenAt: string;
   cropped: boolean;
+  /**
+   * The whole page, when this picture was freshly taken and the page was cut.
+   *
+   * Never read back from the store: a re-run that did not re-photograph leaves
+   * the whole-page file exactly where it is, and nothing between here and the
+   * PDF ever looks at those bytes.
+   */
+  fullBase64?: string | null;
+  fullWidth?: number | null;
+  fullHeight?: number | null;
   /** The `StoredFile` the bytes came from, or null when they were just captured. */
   fileId: string | null;
 }
 
 function shotFilesOf(screenshots: unknown): StoredAudit["screenshotFiles"] {
-  const rows = (screenshots ?? []) as { view?: unknown; annotated?: unknown; fileId?: unknown }[];
+  const rows = (screenshots ?? []) as { view?: unknown; annotated?: unknown; full?: unknown; fileId?: unknown }[];
   return rows
     .filter((row) => (row?.view === "desktop" || row?.view === "mobile") && typeof row?.fileId === "string")
-    .map((row) => ({ view: row.view as ScreenshotView, annotated: Boolean(row.annotated), fileId: row.fileId as string }));
+    .map((row) => ({
+      view: row.view as ScreenshotView,
+      annotated: Boolean(row.annotated),
+      // Absent on every row written before the whole page was kept, and false
+      // is the right reading of that: those are all crops.
+      full: Boolean(row.full),
+      fileId: row.fileId as string,
+    }));
 }
 
 /**
@@ -760,7 +802,10 @@ function shotFilesOf(screenshots: unknown): StoredAudit["screenshotFiles"] {
  * viewport they were taken at or whether the page was cut.
  */
 async function storedPictures(auditId: string, report: WebsiteAuditReport, screenshots: unknown): Promise<StoredPicture[]> {
-  const plain = shotFilesOf(screenshots).filter((entry) => !entry.annotated);
+  // The crop, and only the crop. The whole-page copy is stored under the same
+  // view with `annotated` false, so a filter on that alone would hand a
+  // 12,000px picture to the annotator and to the PDF.
+  const plain = shotFilesOf(screenshots).filter((entry) => !entry.annotated && !entry.full);
   const out: StoredPicture[] = [];
 
   for (const shot of report.screenshots ?? []) {
@@ -789,6 +834,9 @@ async function storedPictures(auditId: string, report: WebsiteAuditReport, scree
 function asShotResult(picture: StoredPicture, requested: string, finalUrl: string | null): ShotResult {
   return {
     base64: picture.base64,
+    // The whole page is a file of its own and is never read back — nothing
+    // between here and the PDF looks at those bytes.
+    fullBase64: null,
     note: null,
     shot: {
       requested,
@@ -797,6 +845,8 @@ function asShotResult(picture: StoredPicture, requested: string, finalUrl: strin
       viewportWidth: picture.view === "mobile" ? PHONE_VIEWPORT_WIDTH : VIEWPORT_WIDTH,
       width: picture.width,
       height: picture.height,
+      fullWidth: picture.fullWidth ?? null,
+      fullHeight: picture.fullHeight ?? null,
       cropped: picture.cropped,
       // A stored picture does not record how its connection was verified, and
       // the section that would say so has already been written. False is the
@@ -853,7 +903,14 @@ async function storeAuditFile(report: WebsiteAuditReport, suffix: string, conten
 function withoutImages(report: WebsiteAuditReport): WebsiteAuditReport {
   return {
     ...report,
-    screenshots: report.screenshots.map((shot) => ({ ...shot, base64: "", annotatedBase64: shot.annotatedBase64 ? "" : null })),
+    screenshots: report.screenshots.map((shot) => ({
+      ...shot,
+      base64: "",
+      annotatedBase64: shot.annotatedBase64 ? "" : null,
+      // The largest of the three by a distance, and the same argument: the
+      // bytes are in the file store and the row keeps what the picture *is*.
+      fullBase64: shot.fullBase64 ? "" : null,
+    })),
   };
 }
 

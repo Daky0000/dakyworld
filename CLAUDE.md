@@ -584,7 +584,10 @@ now six fields and no lookup.
   the shape that makes position wrong.
 - **The actor cuts the picture down, so the server no longer decodes one.**
   `maxWidth` (1024) and `maxHeight` (2400 desktop, 3200 phone) go out with the
-  run and Sharp does the work inside the actor. The server downloads roughly a
+  run and Sharp does the work inside the actor. The uncut capture is stored
+  beside it and fetched only when somebody asked for it (`withFullImage`),
+  refused above 10 MB — which is what `fileStore` will take — with the crop
+  surviving and a sentence saying only the top of the page was kept. The server downloads roughly a
   tenth of the bytes it used to — a 1024x1920 picture instead of a 1280x12000
   page — and `cropPngTop`/`downscalePng` are gone from `services/png.ts`. The
   **decoder stays**: `audit/annotate.ts` draws numbered boxes onto the picture
@@ -592,10 +595,17 @@ now six fields and no lookup.
 - **`maxHeight` is measured in *captured* pixels, before the resize**, because
   the crop happens first: 2400 rows of a 1280-wide capture is 1920 rows once it
   is shrunk to 1024. Resizing first would throw away half the page.
-- **Two pictures come back for two readers.** `screenshotUrl` is the cut-down
-  one the model reads; `fullScreenshotUrl` is the capture, and is what
-  `Screenshot.imageUrl` points a person at. Null when the crop and the resize
-  both did nothing, in which case they are the same picture.
+- **Two pictures come back for two readers, and both are now kept.**
+  `screenshotUrl` is the cut-down one the model reads; `fullScreenshotUrl` is
+  the capture, and is null when the crop and the resize both did nothing, in
+  which case they are the same picture. `ShotOptions.withFullImage` brings the
+  capture's *bytes* back as well as its link — off by default, on wherever a
+  person will look at the result (one lead being prepared, a website review) —
+  because an Apify key-value-store link expires with the run's data, and before
+  Sep 2026 a lead looked at last month showed a broken image on the one screen
+  a person uses to disagree with the model. The whole page is never sent to a
+  model: a 12,000px picture is past every vendor's edge limit, and the argument
+  rests on what a visitor sees first.
 - **The proxy moved into the actor**, where it is forced on and a page gets a
   session of its own. The server no longer knows Apify has proxy settings, which
   was the last actor-shaped thing in it.
@@ -622,13 +632,38 @@ sixty. The other levers, in order of size: not re-shooting what is still fresh
 is billed in gigabyte-hours), and the resize to 1024 — vision is billed in 512px
 tiles, so 1280x2400 is 15 tiles and 1024x1920 is 8.
 
-**Desktop and phone are one run** — `captureHomepageViews()`, used by
-`audit/evidence.ts`. Each page in the contract may carry its own `viewport` and
-`maxHeight`, so the two pictures of one homepage cost one container boot and one
-extra page load instead of two of everything. Measured on the actor
-(`test/timing.ts`): a run's fixed cost is ~3.1s of process start and browser
-launch before any page, against ~0.2s of marginal work per extra page — the
-whole reason batching is the design.
+**Desktop and phone are one run, everywhere a homepage is photographed** —
+`captureHomepageViews()` for one page, `captureHomepageViewsBatch()` for many,
+used by `audit/evidence.ts` and, since Sep 2026, by `leadPrep` as well. Each
+page in the contract may carry its own `viewport` and `maxHeight`, so the two
+pictures of one homepage cost one container boot and one extra page load
+instead of two of everything. Measured on the actor (`test/timing.ts`): a run's
+fixed cost is ~3.1s of process start and browser launch before any page,
+against ~0.2s of marginal work per extra page — the whole reason batching is
+the design. **The batching argument and the two-viewport argument are the same
+argument, so they compose**: `MAX_BATCH` counts *pages*, so a batch is chunked
+at ten businesses and each chunk is one run of twenty pages.
+
+**The lead scan sees both views too, and so does the model that reads them.**
+Until Sep 2026 the drawer showed one laptop picture and `lookAtHomepage` was
+handed one image, which meant the most saleable fault in this trade — a page
+that lays out correctly at 1280 and spills off the screen at 390, where nearly
+every one of these businesses is actually looked up — was invisible to the
+whole pipeline. `HomepageLook.onAPhone` and `on` per observation carry it into
+the letter. Both are refused outright when there was no phone picture: a claim
+about somebody's site at phone width, made from a laptop screenshot, is a false
+statement to the one person who can check it.
+
+**A lead's pictures are files now, not links** — `services/leadShots.ts`,
+`LeadResearch.shots`, `GET /api/leads/:id/screenshot/:name` (`desktop.png`,
+`desktop-full.png`, and the same two for `mobile`). Two rules keep the database
+from filling up with homepages: only where a person is going to look (one lead
+being prepared files its pictures, a batch of sixty keeps the links —
+`PrepOptions.keepPictures`), and a re-run replaces rather than adds. The
+website review files a third copy per view, `<view>-full.png`, beside the crop
+and the marked-up one; `shotFilesOf` carries a `full` flag, and **anything
+selecting "the plain picture" has to exclude it** or the annotator and the PDF
+are handed a 12,000px strip.
 
 That change reversed one guard on purpose. The phone picture used to be asked
 for **only when the desktop one worked**, which was right while it meant a

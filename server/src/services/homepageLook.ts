@@ -1,6 +1,6 @@
 import { callModel } from "../lib/models/call.js";
 import { PROVIDERS } from "../lib/models/registry.js";
-import { captureHomepage, type Screenshot, type ShotResult } from "./siteShot.js";
+import { captureHomepageViews, type Screenshot, type ShotResult } from "./siteShot.js";
 import { writerSystem } from "./writers/brief.js";
 import type { CompanyAudit } from "./companyAudit.js";
 
@@ -42,6 +42,15 @@ export interface HomepageObservation {
   /** Where on the page — "the hero", "the top navigation", "the first screen". */
   where: string;
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "GOOD";
+  /**
+   * Which picture this was seen in.
+   *
+   * Optional because rows written before the phone picture existed have no
+   * such field, and there is nothing to infer from that absence but its date —
+   * everything read then was read off a laptop screenshot. Anything reading
+   * this treats a missing value as `desktop`.
+   */
+  on?: "desktop" | "phone" | "both";
 }
 
 /**
@@ -98,6 +107,16 @@ export interface HomepageLook {
   fitNote: string;
   /** How the page behaves for somebody on a phone on a slow connection. */
   speed: string | null;
+  /**
+   * What the page does at phone width, from the phone picture.
+   *
+   * Null when there was no phone picture — which is a different thing from
+   * "nothing to say about it", and the difference matters: most of the people
+   * this app writes to are looked up on a phone, so a page that lays out
+   * correctly at 1280 and spills off the screen at 390 is the most saleable
+   * fault there is, and claiming it without the picture would be a guess.
+   */
+  onAPhone: string | null;
   observations: HomepageObservation[];
   /** The case for spending money, in the owner's own terms. */
   worthFixing: WorthFixing;
@@ -112,6 +131,8 @@ export interface HomepageLook {
 export interface LookResult {
   look: HomepageLook | null;
   shot: Screenshot | null;
+  /** The phone picture of the same page, when one was taken. */
+  mobileShot: Screenshot | null;
   /**
    * The picture itself, so a caller that wants a second thing done with it
    * does not pay for a second Apify run to get the same bytes.
@@ -123,6 +144,8 @@ export interface LookResult {
    * already holding.
    */
   captured: ShotResult | null;
+  /** The phone capture, handed on for the same reason. */
+  capturedMobile: ShotResult | null;
   /** Why there is no look, or what was cut from the picture. Never a failure. */
   notes: string[];
   costUsd: number;
@@ -139,6 +162,7 @@ const SCHEMA = {
     "fitsTheBusiness",
     "fitNote",
     "speed",
+    "onAPhone",
     "observations",
     "worthFixing",
     "theOneThing",
@@ -178,6 +202,11 @@ const SCHEMA = {
       description:
         "How it behaves for somebody on a phone on a Ghanaian mobile connection, given the measured load time you were told. Say it in seconds and in consequences. Empty string if the timing was not supplied or there is nothing to say.",
     },
+    onAPhone: {
+      type: "string",
+      description:
+        "What the second picture — the same page at phone width — shows: whether the layout holds, whether text and buttons are usable at that size, whether anything spills off the side or is cut off, and whether the phone version leads with the same thing the desktop one does. Empty string if you were shown only one picture. Never guess at this from the desktop picture.",
+    },
     observations: {
       type: "array",
       description:
@@ -185,7 +214,7 @@ const SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["observed", "soWhat", "plainly", "where", "severity"],
+        required: ["observed", "soWhat", "plainly", "where", "severity", "on"],
         properties: {
           observed: { type: "string", description: "What is visibly the case. Plain, specific, no jargon." },
           soWhat: { type: "string", description: "One sentence on what it costs them — a visitor who leaves, an enquiry not made, a comparison lost." },
@@ -195,6 +224,12 @@ const SCHEMA = {
               "The same point said across a desk to the owner, who is not technical. No web vocabulary at all: no hero, viewport, CTA, above the fold, responsive, UX. One sentence, second person.",
           },
           where: { type: "string", description: "Where on the page: 'the hero', 'the top navigation', 'the first screen'." },
+          on: {
+            type: "string",
+            enum: ["desktop", "phone", "both"],
+            description:
+              "Which picture you saw this in. 'phone' only for something the phone picture shows and the desktop one does not; 'both' when it is true of the page at either size. Use 'desktop' when you were shown one picture.",
+          },
           severity: {
             type: "string",
             enum: ["CRITICAL", "HIGH", "MEDIUM", "LOW", "GOOD"],
@@ -256,18 +291,21 @@ const SCHEMA = {
  * first read and the audit team's UX section — one craft, one wording, so the
  * two never disagree about the same homepage.
  */
-export const SHIPPED_DOCTRINE = `You are looking at a screenshot of one business's homepage, and reporting what is visibly true of it.
+export const SHIPPED_DOCTRINE = `You are looking at screenshots of one business's homepage, and reporting what is visibly true of it.
+
+You are normally shown two pictures of the same page: the first as it looks on a laptop, the second as it looks on a phone. They are the same page, not two pages, and the prompt says which is which. Most of the people who look this business up are on the second one, so a page that holds together on a laptop and falls apart at phone width is one of the most useful things you can find — and it is invisible in every check that is not this one. Say what each picture shows, mark each observation with the picture you saw it in, and never describe phone behaviour from the laptop picture. Where you are given only one picture, say nothing about the other.
 
 You are doing this so that a letter to that business can name something specific rather than something generic. "A modern website builds trust" is worthless; "the first thing on your homepage is a stock photo of a handshake, and nothing on that screen says you are a dental clinic" is worth replying to.
 
 You are doing a second job at the same time: reading what the page *states* about the business — the trade, the town, what they offer, a phone number. Those go in the states object, and they are facts rather than judgements. The record this feeds is usually half empty, and a trade printed on a business's own homepage is better evidence than anything a search infers. If the page does not say, leave it empty; do not deduce a trade from a photograph or a town from a phone code.
 
 What you may say:
-- Anything visible in the picture. Layout, typography, image quality, colour, spacing, how the logo is rendered, what the navigation offers, what the first screen leads with, whether there is a call to action and what it says.
+- Anything visible in the pictures. Layout, typography, image quality, colour, spacing, how the logo is rendered, what the navigation offers, what the first screen leads with, whether there is a call to action and what it says.
+- What the page *looks like* at phone width, where you were shown the phone picture: what is cut off, what overlaps, what has become unreadable, what has been dropped, and what a thumb has to do to reach the way of making contact.
 
 What you may not say, ever:
-- Anything about a page you were not shown. You have the homepage, cropped to what a visitor sees first, and nothing else.
-- Anything about how fast it loads, whether it works on a phone, what it is built on, or whether it is secure. Those were measured separately and you have no evidence for any of them.
+- Anything about a page you were not shown. You have the homepage, cropped to what a visitor sees first, at each size you were given a picture of, and nothing else.
+- Anything about how fast it loads, what it is built on, or whether it is secure. Those were measured separately and you have no evidence for any of them. How the page *behaves* on a phone — tapping, scrolling, a menu opening — is in the same category: you have a picture of it, not a phone in your hand.
 - Anything about their business beyond what the page itself states.
 
 How to judge — and this is the part that matters:
@@ -318,16 +356,44 @@ export async function lookAtHomepage(args: {
    * that boot is the same for one page as for twenty — see siteShot.
    */
   captured?: ShotResult | null;
+  /**
+   * The phone picture of the same page, from the same run.
+   *
+   * Both views are taken in one Apify run — one container boot, two page loads
+   * — so a caller that has the pair hands over both. When neither is given,
+   * this takes them itself.
+   */
+  capturedMobile?: ShotResult | null;
 }): Promise<LookResult> {
   const notes: string[] = [];
-  const captured = args.captured ?? (await captureHomepage(args.website));
-  if (captured.note) notes.push(captured.note);
-  if (!captured.shot || !captured.base64) return { look: null, shot: null, captured, notes, costUsd: 0 };
+
+  // Both views in one run when nothing was handed over. The pair is the point:
+  // the phone picture is where the most saleable fault in this trade shows up,
+  // and asking for it separately would be a second container boot for a page
+  // the browser has already opened.
+  const both = args.captured || args.capturedMobile ? null : await captureHomepageViews(args.website, { withFullImage: true });
+  const captured = args.captured ?? both?.desktop ?? null;
+  const capturedMobile = args.capturedMobile ?? both?.mobile ?? null;
+
+  if (captured?.note) notes.push(captured.note);
+  // Only when it says something the desktop note did not. A site that refuses
+  // a headless browser refuses both viewports, and printing that twice reads
+  // as two faults — the same rule `audit/evidence.ts` follows.
+  if (capturedMobile?.note && capturedMobile.note !== captured?.note) notes.push(`Phone view: ${capturedMobile.note}`);
+
+  if (!captured?.shot || !captured.base64) {
+    return { look: null, shot: null, mobileShot: capturedMobile?.shot ?? null, captured, capturedMobile, notes, costUsd: 0 };
+  }
 
   const structural = (args.audit?.findings ?? [])
     .filter((finding) => finding.severity !== "GOOD")
     .map((finding) => `- ${finding.observed}`)
     .slice(0, 8);
+
+  // Only a phone picture with bytes behind it counts. A row that came back
+  // with a note and no image must not put "you are being shown two pictures"
+  // into a prompt carrying one.
+  const phoneShot = capturedMobile?.shot && capturedMobile.base64 ? capturedMobile.shot : null;
 
   try {
     const result = await callModel<Omit<HomepageLook, "lookedBy">>({
@@ -345,18 +411,30 @@ export async function lookAtHomepage(args: {
           args.audit?.site?.responseMs != null
             ? `Measured just now: the page took ${(args.audit.site.responseMs / 1000).toFixed(1)} seconds to start responding.`
             : "",
-          `The picture is ${captured.shot!.width} by ${captured.shot!.height} pixels at a ${captured.shot!.viewportWidth}px-wide desktop viewport${
-            captured.shot!.cropped ? ", cropped to the top of the page" : ""
-          }.`,
+          phoneShot
+            ? `You are being shown two pictures of the same page. The first is ${captured.shot!.width} by ${
+                captured.shot!.height
+              } pixels at a ${captured.shot!.viewportWidth}px-wide laptop viewport${
+                captured.shot!.cropped ? ", cropped to the top of the page" : ""
+              }. The second is ${phoneShot.width} by ${phoneShot.height} pixels at a ${
+                phoneShot.viewportWidth
+              }px-wide phone viewport — an iPhone 14 — ${phoneShot.cropped ? "also cropped to the top of the page" : "the whole page"}. Same page, two sizes.`
+            : `The picture is ${captured.shot!.width} by ${captured.shot!.height} pixels at a ${captured.shot!.viewportWidth}px-wide desktop viewport${
+                captured.shot!.cropped ? ", cropped to the top of the page" : ""
+              }. There is no phone picture this time, so say nothing about what the page does at phone width.`,
           structural.length
             ? `Separate automated checks already found the following, so there is no need to repeat any of it — say what only the picture can show:\n${structural.join("\n")}`
             : "",
-          "Look at it and report what is visibly true.",
+          phoneShot ? "Look at both and report what is visibly true." : "Look at it and report what is visibly true.",
         ]
           .filter(Boolean)
           .join("\n\n"),
       schema: SCHEMA as unknown as Record<string, unknown>,
-      images: [{ mediaType: captured.shot.mediaType, base64: captured.base64 }],
+      // Laptop first, phone second, in the order the prompt describes them.
+      images: [
+        { mediaType: captured.shot.mediaType, base64: captured.base64 },
+        ...(phoneShot && capturedMobile?.base64 ? [{ mediaType: phoneShot.mediaType, base64: capturedMobile.base64 }] : []),
+      ],
       effort: "medium",
       maxTokens: 4000,
       messages: {
@@ -371,6 +449,16 @@ export async function lookAtHomepage(args: {
         ...result.data,
         looksDated: result.data.looksDated?.trim() ? result.data.looksDated.trim() : null,
         speed: result.data.speed?.trim() || null,
+        // Never kept without the picture behind it. A model that answers this
+        // having been shown one screenshot has described a phone it was not
+        // given, and a claim about somebody's site that nobody looked at is
+        // the one kind of sentence this whole pipeline exists to refuse.
+        onAPhone: phoneShot ? result.data.onAPhone?.trim() || null : null,
+        observations: (result.data.observations ?? []).map((observation) => ({
+          ...observation,
+          // A picture that was never taken cannot be where something was seen.
+          on: phoneShot ? (observation.on ?? "desktop") : "desktop",
+        })),
         states: {
           trade: result.data.states?.trade?.trim() || null,
           town: result.data.states?.town?.trim() || null,
@@ -380,14 +468,16 @@ export async function lookAtHomepage(args: {
         lookedBy: PROVIDERS[result.provider].name,
       },
       shot: captured.shot,
+      mobileShot: phoneShot,
       captured,
+      capturedMobile,
       notes,
       costUsd: result.costUsd,
     };
   } catch (err) {
     // A model that will not answer is not a reason to abandon the email.
     notes.push(`Their homepage was photographed but not reviewed: ${(err as Error).message}`);
-    return { look: null, shot: captured.shot, captured, notes, costUsd: 0 };
+    return { look: null, shot: captured.shot, mobileShot: phoneShot, captured, capturedMobile, notes, costUsd: 0 };
   }
 }
 
@@ -414,9 +504,15 @@ export function lookForPrompt(look: HomepageLook): string[] {
   if (!look.offerClear) lines.push("Nothing on the first screen of their homepage says what the business actually sells.");
   if (!look.contactClear) lines.push("No way to make contact is visible on the first screen of their homepage.");
   if (look.looksDated) lines.push(`Their homepage design dates itself: ${look.looksDated}`);
+  // Said as its own fact rather than folded into the observations, because it
+  // is the one most of their customers actually live with: a page looked up on
+  // a phone. The drafter is told where it was seen so it cannot write "on your
+  // phone" about something read off a laptop screenshot.
+  if (look.onAPhone) lines.push(`Their homepage seen at phone width, which is how most people will find them: ${look.onAPhone}`);
   for (const observation of look.observations) {
+    const seenOn = observation.on === "phone" ? " on a phone" : observation.on === "both" ? " on a laptop and on a phone" : "";
     lines.push(
-      `Seen on their homepage (${observation.where}, ${observation.severity.toLowerCase()}): ${observation.observed} — ${observation.soWhat} Say it to them like this: "${observation.plainly}"`,
+      `Seen on their homepage${seenOn} (${observation.where}, ${observation.severity.toLowerCase()}): ${observation.observed} — ${observation.soWhat} Say it to them like this: "${observation.plainly}"`,
     );
   }
   if (look.states.services.length) {

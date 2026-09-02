@@ -121,7 +121,17 @@ export function auditMarkdown(report: WebsiteAuditReport, options: MarkdownOptio
       if (annotated) {
         say("The numbered boxes mark roughly where each UI/UX point below applies. They are approximate — the area, not the pixel.", "");
       }
-      if (shot.cropped) say("_The page is longer than this; the picture is the top of it, which is what a visitor sees first._", "");
+      if (shot.cropped) {
+        // The whole page is filed beside the crop, so the sentence can carry a
+        // link rather than only an apology for what is missing from it.
+        const whole = options.screenshotBaseUrl ? `${options.screenshotBaseUrl.replace(/\/$/, "")}/${shot.view}-full.png` : null;
+        say(
+          whole
+            ? `_The page is longer than this; the picture is the top of it, which is what a visitor sees first. [The whole page](${whole})._`
+            : "_The page is longer than this; the picture is the top of it, which is what a visitor sees first._",
+          "",
+        );
+      }
     }
   }
 

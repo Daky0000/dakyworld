@@ -73,12 +73,26 @@ function picture(width: number, height: number): Buffer {
   return encodePng(width, height, pixels);
 }
 
+/**
+ * Eleven megabytes of bytes, which is what the one weight assertion needs.
+ *
+ * Deliberately not a real PNG: `picture()` fills every pixel with one byte and
+ * compresses to a few kilobytes whatever its dimensions, and encoding eleven
+ * megabytes of noise through this repository's own PNG encoder takes minutes —
+ * a check nobody will run. Nothing decodes the whole-page copy, and the ceiling
+ * it is testing is read off `content-length` before a byte is held, so the
+ * bytes only have to weigh what they weigh.
+ */
+const TOO_HEAVY = Buffer.alloc(11 * 1024 * 1024, 0x41);
+
 const images = new Map<string, Buffer>([
   ["desktop", picture(1024, 1920)],
   ["full", picture(1280, 9000)],
   ["phone", picture(390, 1400)],
   // Past MAX_IMAGE_EDGE. Every vendor rejects it, so this app has to first.
   ["enormous", picture(9000, 20)],
+  // Past MAX_FULL_IMAGE_BYTES (10 MB), which is what the file store will take.
+  ["huge", TOO_HEAVY],
 ]);
 
 const app = express();
@@ -186,7 +200,8 @@ const settings = await import("../src/lib/settings.js");
 settings.clearSettingsCache();
 
 const { prisma } = await import("../src/lib/prisma.js");
-const { captureHomepage, captureHomepages, captureHomepageViews, normaliseSiteUrl, PHONE_VIEWPORT_WIDTH } = await import("../src/services/siteShot.js");
+const { captureHomepage, captureHomepages, captureHomepageViews, captureHomepageViewsBatch, normaliseSiteUrl, PHONE_VIEWPORT_WIDTH } =
+  await import("../src/services/siteShot.js");
 const { DEFAULT_SCREENSHOT_ACTOR, screenshotActorId, screenshotActorReady } = await import("../src/services/apifyScreenshot.js");
 const { SETTING } = settings;
 
@@ -627,7 +642,94 @@ console.log("\nThe laptop and the phone picture of one homepage");
   check("a bad address still starts no run", startedRuns.length === 0 && bad.desktop.shot === null && bad.mobile.shot === null);
 }
 
-// --- 12. The picture reaches the vision model --------------------------------
+// --- 12. The whole page, for the person rather than the model ---------------
+//
+// Two pictures for two readers. The model gets the top two and a half screens,
+// because a 12,000px page is past every vendor's edge limit and the argument
+// rests on what a visitor sees first; a person gets the whole thing, because
+// "show me the rest of the page" is the first thing they ask of a crop.
+console.log("\nThe whole page as well as the top of it");
+{
+  await reset();
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [shot("desktop", { cropped: true, fullScreenshotUrl: `http://127.0.0.1:${PORT}/images/full` })],
+  };
+  const whole = await captureHomepage("example.com", { withFullImage: true });
+
+  check("the model's copy is still the crop", whole.shot?.width === 1024 && whole.shot?.height === 1920, `${whole.shot?.width}x${whole.shot?.height}`);
+  check("the whole page is fetched too", imageRequests.some((request) => request.key === "full"));
+  check("and comes back as its own bytes", whole.fullBase64 === images.get("full")!.toString("base64"));
+  check("which are not the bytes the model was given", whole.fullBase64 !== whole.base64);
+  check("the page's real size travels with it", whole.shot?.fullWidth === 1280 && whole.shot?.fullHeight === 2400, `${whole.shot?.fullWidth}x${whole.shot?.fullHeight}`);
+
+  // Nothing was cut, so there is no second picture to fetch — the crop *is*
+  // the whole page, and a second copy would be storage paid for twice.
+  await reset();
+  behaviour = { status: "SUCCEEDED", rows: [shot("desktop")] };
+  const uncut = await captureHomepage("example.com", { withFullImage: true });
+  check("a page that fitted is not downloaded twice", imageRequests.filter((request) => request.key === "desktop").length === 1);
+  check("and its whole page is the picture itself", uncut.fullBase64 === uncut.base64 && Boolean(uncut.fullBase64));
+
+  // The negative that keeps this affordable: nobody asked, so nothing is moved.
+  await reset();
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [shot("desktop", { cropped: true, fullScreenshotUrl: `http://127.0.0.1:${PORT}/images/full` })],
+  };
+  const cheap = await captureHomepage("example.com");
+  check("a batch that did not ask moves no extra bytes", !imageRequests.some((request) => request.key === "full"));
+  check("and gets no whole-page copy", cheap.fullBase64 === null);
+
+  // Past what the file store will take. The crop has to survive it, and the
+  // sentence has to say the top of the page is still there — a lead losing its
+  // screenshot because the page was long would be the wrong way round.
+  await reset();
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [shot("desktop", { cropped: true, fullScreenshotUrl: `http://127.0.0.1:${PORT}/images/huge` })],
+  };
+  const past = await captureHomepage("example.com", { withFullImage: true });
+  check("a whole page past the ceiling is refused", past.fullBase64 === null);
+  check("the crop survives it", past.shot?.width === 1024 && Boolean(past.base64));
+  check("and the note says so in words", Boolean(past.note?.includes("only the top of the page is stored")), past.note ?? "");
+}
+
+// --- 13. Both views of many businesses, still one run ------------------------
+//
+// The batching argument and the two-viewport argument are the same argument, so
+// they have to compose: a run's cost is its container boot and a view is a page.
+console.log("\nBoth views of a batch");
+{
+  await reset();
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [
+      shot("desktop", { id: "d0", url: "https://one.com/", finalUrl: "https://one.com/" }),
+      shot("phone", { id: "m1", url: "https://one.com/", width: 390, height: 1400, viewportWidth: 390, viewportHeight: 844 }),
+      shot("desktop", { id: "d2", url: "https://two.com/", finalUrl: "https://two.com/" }),
+      shot("phone", { id: "m3", url: "https://two.com/", width: 390, height: 1400, viewportWidth: 390, viewportHeight: 844 }),
+    ],
+  };
+  const pairs = await captureHomepageViewsBatch(["one.com", "two.com"]);
+
+  check("two businesses at two views each is one run", startedRuns.length === 1, `${startedRuns.length} run(s)`);
+  check("carrying four pages", startedRuns[0]?.body?.urls?.length === 4, `${startedRuns[0]?.body?.urls?.length}`);
+  const phones = (startedRuns[0]?.body?.urls ?? []).filter((entry: any) => entry?.viewport?.width === PHONE_VIEWPORT_WIDTH);
+  check("half of them at phone width", phones.length === 2, `${phones.length}`);
+
+  check("the first business gets both its own pictures", pairs.get("one.com")?.desktop.shot?.finalUrl === "https://one.com/" && pairs.get("one.com")?.mobile.shot?.viewportWidth === 390);
+  check("and so does the second", pairs.get("two.com")?.desktop.shot?.finalUrl === "https://two.com/" && pairs.get("two.com")?.mobile.shot?.viewportWidth === 390);
+  // The safeguard the whole contract exists for: a picture attached to the
+  // wrong business is a page carrying somebody's name that is not theirs.
+  check("neither business is handed the other's picture", pairs.get("one.com")?.desktop.shot?.finalUrl !== pairs.get("two.com")?.desktop.shot?.finalUrl);
+
+  await reset();
+  const refused = await captureHomepageViewsBatch(["not a web address"]);
+  check("a bad address in a batch starts no run", startedRuns.length === 0 && refused.get("not a web address")?.desktop.shot === null);
+}
+
+// --- 14. The picture reaches the vision model --------------------------------
 //
 // The end of the line, and the one assertion that spans the whole refactor: the
 // bytes the actor produced are the bytes a model is handed. Everything above
@@ -636,7 +738,15 @@ console.log("\nThe laptop and the phone picture of one homepage");
 console.log("\nWhat the vision model is actually sent");
 {
   await reset();
-  behaviour = { status: "SUCCEEDED", rows: [shot("desktop", { cropped: true, fullScreenshotUrl: `http://127.0.0.1:${PORT}/images/full` })] };
+  // Both views, because that is what `lookAtHomepage` asks for when nothing is
+  // handed to it — one run, two pages, and the ids the request went out with.
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [
+      shot("desktop", { id: "desktop", cropped: true, fullScreenshotUrl: `http://127.0.0.1:${PORT}/images/full` }),
+      shot("phone", { id: "mobile", width: 390, height: 1400, viewportWidth: 390, viewportHeight: 844, cropped: true }),
+    ],
+  };
 
   process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${PORT}/anthropic`;
   process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
@@ -666,6 +776,31 @@ console.log("\nWhat the vision model is actually sent");
   check("including that it was cut down", words.includes("cropped to the top of the page"));
   check("the look comes back", result.look !== null, result.notes.join(" "));
   check("with the picture beside it", result.shot?.width === 1024 && result.shot?.height === 1920);
+
+  // The phone half. Most of the people who look one of these businesses up are
+  // on a phone, so a look that only ever sees a laptop screenshot is a look at
+  // the wrong page.
+  const pictures = (body?.messages?.[0]?.content ?? []).filter((part: any) => part?.type === "image");
+  check("both pictures are sent, not one", pictures.length === 2, `${pictures.length}`);
+  check("the laptop one first", pictures[0]?.source?.data === images.get("desktop")!.toString("base64"));
+  check("then the phone one", pictures[1]?.source?.data === images.get("phone")!.toString("base64"));
+  check("the model is told which is which", words.includes("390px-wide phone viewport"), words.slice(0, 400));
+  check("and the phone picture comes back with the look", result.mobileShot?.viewportWidth === 390, `${result.mobileShot?.viewportWidth}`);
+
+  // The negative, which matters more: shown one picture, nothing may be said
+  // about the other. A claim about somebody's site at phone width, made from a
+  // laptop screenshot, is a false statement to the one person who can check it.
+  await reset();
+  behaviour = { status: "SUCCEEDED", rows: [shot("desktop", { id: "desktop" })] };
+  const { lookAtHomepage: lookAgain } = await import("../src/services/homepageLook.js");
+  const oneView = await lookAgain({ website: "example.com", companyName: "Adom Dental" });
+  const alone = modelRequests[modelRequests.length - 1];
+  const onePicture = (alone?.messages?.[0]?.content ?? []).filter((part: any) => part?.type === "image");
+  const aloneWords = (alone?.messages?.[0]?.content ?? []).find((part: any) => part?.type === "text")?.text ?? "";
+  check("one picture means one image on the wire", onePicture.length === 1, `${onePicture.length}`);
+  check("and the model is told to say nothing about a phone", aloneWords.includes("no phone picture"), aloneWords.slice(0, 400));
+  check("a phone verdict is never kept without the phone picture", oneView.look?.onAPhone === null, oneView.look?.onAPhone ?? "");
+  check("and no observation claims to have been seen on one", (oneView.look?.observations ?? []).every((entry) => entry.on === "desktop"));
 
   process.env.ANTHROPIC_BASE_URL = "";
   process.env.ANTHROPIC_API_KEY = "";

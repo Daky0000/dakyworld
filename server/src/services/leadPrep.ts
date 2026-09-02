@@ -5,7 +5,8 @@ import { registerTags } from "./leadTags.js";
 import { scoreLead, type NormalizedLead } from "./leadMapping.js";
 import { lookAtHomepage, lookForPrompt, type HomepageLook } from "./homepageLook.js";
 import { researchLead, type FillableField, type LeadResearchResult } from "./leadResearch.js";
-import { MAX_BATCH, captureHomepages, normaliseSiteUrl, type Screenshot, type ShotResult } from "./siteShot.js";
+import { MAX_BATCH, captureHomepageViewsBatch, normaliseSiteUrl, type Screenshot, type ShotResult } from "./siteShot.js";
+import { storeLeadShots, storedShotsOf, type StoredShot } from "./leadShots.js";
 import { runWebsiteAudit } from "./audit/team.js";
 
 /**
@@ -42,7 +43,16 @@ export interface LeadPrep {
   ranAt: string;
   research: LeadResearchResult | null;
   audit: CompanyAudit | null;
+  /** The laptop picture. Kept as its own field because everything already reads it. */
   shot: Screenshot | null;
+  /**
+   * Both pictures — laptop and phone — with the files they were kept in.
+   *
+   * `shot` is the first of these and stays for the callers that only ever
+   * wanted the one. This is what the drawer renders and what survives Apify
+   * throwing the run's data away.
+   */
+  shots: StoredShot[];
   look: HomepageLook | null;
   /** What was written into the lead record, and where each value came from. */
   filled: Partial<
@@ -90,11 +100,24 @@ export interface PrepOptions {
   /** Write the discovery note even though the lead already has one. */
   replaceDiscoveryNotes?: boolean;
   /**
-   * A screenshot already taken for this website, from a batched run. Used only
+   * Screenshots already taken for this website, from a batched run. Used only
    * when the address still matches — research can fill in a website that was
    * blank, and a picture of the old one would then be a picture of nothing.
+   *
+   * Both views, because a batch takes both in one run: the boot is nearly the
+   * whole cost of a screenshot and the phone picture is one more page load
+   * against a browser that is already open.
    */
-  captured?: { website: string; result: ShotResult } | null;
+  captured?: { website: string; desktop: ShotResult; mobile: ShotResult | null } | null;
+  /**
+   * Keep the pictures as files on this app, rather than as Apify links that
+   * expire.
+   *
+   * On for one lead somebody is looking at, off for a batch. A whole-page
+   * capture is megabytes and sixty leads prepared overnight would be storage
+   * nobody asked for; the links still work for as long as Apify keeps the run.
+   */
+  keepPictures?: boolean;
   /**
    * Run the four-reviewer website audit afterwards and produce the report.
    *
@@ -201,15 +224,18 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
 
   let look: HomepageLook | null = null;
   let shot: Screenshot | null = null;
+  let shots: StoredShot[] = [];
   let desktopShot: ShotResult | null = null;
+  let mobileShot: ShotResult | null = null;
   if (liveUrl && !options.skipLook) {
     // A batched picture is reused only when it was taken of this same address
     // *and* it worked. A failed shot of the address on file tells us nothing
-    // about the one that answers.
-    const alreadyTaken =
-      options.captured && options.captured.website === liveUrl && options.captured.result.shot ? options.captured.result : null;
+    // about the one that answers. The phone picture rides on the same
+    // decision: it was taken in the same run, of the same address.
+    const batched = options.captured && options.captured.website === liveUrl && options.captured.desktop.shot ? options.captured : null;
     const looked = await lookAtHomepage({
-      captured: alreadyTaken,
+      captured: batched?.desktop ?? null,
+      capturedMobile: batched?.mobile ?? null,
       website: liveUrl,
       companyName: subject.companyName,
       trade: subject.category,
@@ -221,8 +247,25 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     look = looked.look;
     shot = looked.shot;
     desktopShot = looked.captured;
+    mobileShot = looked.capturedMobile;
     costUsd += looked.costUsd;
     notes.push(...looked.notes);
+
+    // Kept as files, so the picture on this lead outlives Apify's own retention
+    // of the run that took it. Off for a batch — see `keepPictures`.
+    if (options.keepPictures !== false) {
+      const previous = storedShotsOf((await prisma.leadResearch.findUnique({ where: { leadId }, select: { shots: true } }))?.shots);
+      shots = await storeLeadShots({
+        leadId,
+        name: subject.companyName ?? lead.contactName ?? "lead",
+        views: [
+          ...(desktopShot?.shot ? [{ view: "desktop" as const, captured: desktopShot }] : []),
+          ...(mobileShot?.shot ? [{ view: "mobile" as const, captured: mobileShot }] : []),
+        ],
+        previous,
+        notes,
+      });
+    }
     if (liveUrl !== subject.website) {
       notes.push(`The address on the record (${subject.website}) does not answer, so the page was read at ${liveUrl} instead.`);
     }
@@ -289,7 +332,7 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
             trade: look?.states?.trade ?? subject.category,
             town: look?.states?.town ?? subject.city,
           },
-          { companyAudit: audit, desktopShot },
+          { companyAudit: audit, desktopShot, mobileShot },
         );
         websiteAudit = {
           auditId: run.auditId,
@@ -343,6 +386,11 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
       research: (research as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       audit: (audit as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       shot: (shot as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+      // `DbNull`, not `JsonNull`, and the difference is what makes the file
+      // sweep cheap: a column holding a JSON `null` is not SQL NULL, so
+      // `orphanedFiles` could not narrow to the leads that actually have
+      // pictures and would read every research row in the database.
+      shots: shots.length ? (shots as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
       look: (look as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       facts,
       notes,
@@ -354,6 +402,11 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
       research: (research as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       audit: (audit as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       shot: (shot as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+      // `DbNull`, not `JsonNull`, and the difference is what makes the file
+      // sweep cheap: a column holding a JSON `null` is not SQL NULL, so
+      // `orphanedFiles` could not narrow to the leads that actually have
+      // pictures and would read every research row in the database.
+      shots: shots.length ? (shots as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
       look: (look as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       facts,
       notes,
@@ -367,6 +420,7 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     research,
     audit,
     shot,
+    shots,
     look,
     filled,
     proposedContact: research?.proposedContact ?? null,
@@ -408,21 +462,29 @@ export async function prepareLeads(leadIds: string[], options: PrepOptions = {})
   const byId = new Map(leads.map((lead) => [lead.id, lead]));
 
   // 1. Every picture we can predict the need for, in as few runs as possible.
-  const shots = new Map<string, { website: string; result: ShotResult }>();
+  //
+  // Two pictures per lead now — a laptop one and a phone one — which is why a
+  // chunk is half of `MAX_BATCH`: the batch size is a count of *pages*, not of
+  // businesses, and twenty pages is where a run starts getting slow. The phone
+  // view costs one extra page load against a browser that is already open,
+  // against a container boot it would otherwise have to pay for on its own.
+  const shots = new Map<string, { website: string; desktop: ShotResult; mobile: ShotResult | null }>();
   let screenshotRuns = 0;
   let screenshotsTaken = 0;
 
   if (!options.skipLook) {
     const withSites = leads.filter((lead): lead is { id: string; website: string } => Boolean(lead.website));
-    for (let at = 0; at < withSites.length; at += MAX_BATCH) {
-      const chunk = withSites.slice(at, at + MAX_BATCH);
-      const captured = await captureHomepages(chunk.map((lead) => lead.website));
+    const perRun = Math.max(1, Math.floor(MAX_BATCH / 2));
+    for (let at = 0; at < withSites.length; at += perRun) {
+      const chunk = withSites.slice(at, at + perRun);
+      const captured = await captureHomepageViewsBatch(chunk.map((lead) => lead.website));
       screenshotRuns += 1;
       for (const lead of chunk) {
-        const result = captured.get(lead.website);
-        if (!result) continue;
-        if (result.shot) screenshotsTaken += 1;
-        shots.set(lead.id, { website: lead.website, result });
+        const pair = captured.get(lead.website);
+        if (!pair) continue;
+        if (pair.desktop.shot) screenshotsTaken += 1;
+        if (pair.mobile.shot) screenshotsTaken += 1;
+        shots.set(lead.id, { website: lead.website, desktop: pair.desktop, mobile: pair.mobile });
       }
     }
   }
@@ -446,6 +508,10 @@ export async function prepareLeads(leadIds: string[], options: PrepOptions = {})
         // asking still works.
         ...options,
         withAuditTeam: options.withAuditTeam ?? false,
+        // Nor does a batch keep the pictures. Sixty leads at two views each,
+        // with the whole page kept for both, is storage nobody asked for; the
+        // Apify links still work, and looking at one lead again files them.
+        keepPictures: options.keepPictures ?? false,
         captured: shots.get(leadId) ?? null,
       });
       prepared.push(prep);

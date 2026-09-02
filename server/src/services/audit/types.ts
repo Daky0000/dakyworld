@@ -174,6 +174,22 @@ export interface AuditScreenshot {
   height: number;
   /** The same picture with the findings boxed and numbered. */
   annotatedBase64: string | null;
+  /**
+   * The **whole page**, top to bottom, at the capture width.
+   *
+   * Not what the reviewer was shown and not what goes in the document: it is
+   * far past any vision model's edge limit and it would be a strip an inch
+   * wide on a page of A4. It is here because "show me the rest of the page" is
+   * the first thing a person asks of a screenshot cropped to the top, and
+   * before this the only answer was an Apify link that expires with the run.
+   *
+   * Null when the page fitted the crop — then the picture above already is the
+   * whole page — or when it was too big to keep.
+   */
+  fullBase64: string | null;
+  /** What was captured, before the crop and the resize. */
+  fullWidth: number | null;
+  fullHeight: number | null;
   /** The signed Apify link to the full-size original, which expires. */
   imageUrl: string | null;
   takenAt: string;

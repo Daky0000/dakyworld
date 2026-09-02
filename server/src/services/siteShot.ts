@@ -26,12 +26,15 @@ import {
  *    Dakyworld's own — `apify/dakyworld-screenshot` in this repository — which
  *    is what let the four external actors, their incompatible input schemas
  *    and the layer that translated between them all leave this file.
- *  - **The top of the page only, and the actor cuts it.** A full-page
- *    screenshot of a long homepage comes back taller than any vision model
- *    will accept, and the part the argument rests on is the part a visitor
- *    sees before scrolling. `maxHeight` and `maxWidth` go out with the run, so
- *    what comes back over the network is already the picture the model reads
- *    rather than a 12,000px page this server then has to decode.
+ *  - **The model gets the top of the page; a person gets the whole of it.** A
+ *    full-page screenshot of a long homepage comes back taller than any vision
+ *    model will accept, and the part the argument rests on is the part a
+ *    visitor sees before scrolling — so `maxHeight` and `maxWidth` go out with
+ *    the run and what comes back for the model is already cut down. The
+ *    capture itself is kept beside it, and `withFullImage` brings those bytes
+ *    back too wherever somebody is going to open the picture. Both, not one:
+ *    a crop cannot answer "show me the page", and the page cannot be sent to a
+ *    model.
  *  - **It never throws.** No token, actor down, site refuses a headless
  *    browser — every one of those is a note, and the caller falls back to the
  *    structural audit, which needs nothing but a fetch.
@@ -76,6 +79,18 @@ export interface ShotOptions {
    * cut it off part-way down the first screen.
    */
   keepRows?: number;
+  /**
+   * Also download the **whole page**, not only the part the model reads.
+   *
+   * Off by default, and the default is the expensive-sounding one being
+   * refused rather than the other way round: a full-page capture of a real
+   * homepage is a 1280x12000 PNG of several megabytes, and a batch of sixty
+   * leads would move that much over the network for pictures nobody has asked
+   * to see. On wherever a person is going to look at the result — one lead
+   * being prepared, a website review — because the crop is the top two and a
+   * half screens and *"show me the page"* is a question the crop cannot answer.
+   */
+  withFullImage?: boolean;
 }
 
 /**
@@ -107,6 +122,18 @@ const DELAY_MS = 3000;
 
 /** Past this, the image is dropped rather than sent — every vendor rejects it anyway. */
 const MAX_IMAGE_BYTES = 4_500_000;
+
+/**
+ * The ceiling on the whole-page picture, which is a different question.
+ *
+ * Nothing sends this to a model — a 12,000px page is past every vendor's edge
+ * limit whatever it weighs — so the only ceiling that matters is what can be
+ * kept and served, and that is `MAX_FILE_BYTES` in `fileStore.ts` (10 MB). A
+ * picture over it would be downloaded, held in memory and then refused by the
+ * store, so it is refused here, before the bytes move, with a sentence saying
+ * the top of the page is still there.
+ */
+const MAX_FULL_IMAGE_BYTES = 10 * 1024 * 1024;
 /** Claude's ceiling, and the lowest of the three. */
 const MAX_IMAGE_EDGE = 8000;
 
@@ -142,6 +169,16 @@ export interface Screenshot {
    * `height` above describe the cropped, shrunk copy the model was shown.
    */
   imageUrl: string;
+  /**
+   * The whole page's size, as captured, before the crop and the resize.
+   *
+   * Equal to `width`/`height` when nothing was cut. Worth carrying because it
+   * is the only place a caller can see how much page there was — a picture
+   * 1920 rows tall of a page 12,000 rows long is a different fact about a
+   * homepage from one that fits on two screens.
+   */
+  fullWidth: number | null;
+  fullHeight: number | null;
   mediaType: string;
   bytes: number;
   /** What Apify billed for the run, when it says. */
@@ -153,11 +190,20 @@ export interface ShotResult {
   shot: Screenshot | null;
   /** The image itself, base64, for handing to a model. Absent when `shot` is null. */
   base64: string | null;
+  /**
+   * The **whole page**, base64, for filing and for a person to open.
+   *
+   * Only when `withFullImage` was asked for, and null when the page was too
+   * big to be worth moving — the note says so. When nothing was cropped or
+   * shrunk this is the same bytes as `base64`, because then the crop *is* the
+   * whole page and a second copy would be storage paid for twice.
+   */
+  fullBase64: string | null;
   /** Plain words for a person: why there is no picture, or what was cut. */
   note: string | null;
 }
 
-const none = (note: string): ShotResult => ({ shot: null, base64: null, note });
+const none = (note: string): ShotResult => ({ shot: null, base64: null, fullBase64: null, note });
 
 /** `dakyworld.com` becomes `https://dakyworld.com`. Null for anything that is not a web address. */
 export function normaliseSiteUrl(website: string): string | null {
@@ -191,15 +237,23 @@ interface ShotRequest {
   viewportWidth: number;
   viewportHeight: number;
   keepRows: number;
+  /** Bring back the whole page as well as the part the model reads. */
+  withFullImage: boolean;
 }
 
 /** Fills in the defaults that go together, so a phone never gets a laptop's window. */
-function shapeOf(options: ShotOptions): { viewportWidth: number; viewportHeight: number; keepRows: number } {
+function shapeOf(options: ShotOptions): {
+  viewportWidth: number;
+  viewportHeight: number;
+  keepRows: number;
+  withFullImage: boolean;
+} {
   const viewportWidth = options.viewportWidth ?? VIEWPORT_WIDTH;
   return {
     viewportWidth,
     viewportHeight: options.viewportHeight ?? (viewportWidth <= 500 ? PHONE_VIEWPORT_HEIGHT : VIEWPORT_HEIGHT),
     keepRows: options.keepRows ?? KEEP_ROWS,
+    withFullImage: options.withFullImage ?? false,
   };
 }
 
@@ -357,22 +411,74 @@ export async function captureHomepage(website: string, options: ShotOptions = {}
  * real thing worth seeing. The caller decides what to say when both fail —
  * `audit/evidence.ts` prints one sentence rather than the same sentence twice.
  */
-export async function captureHomepageViews(website: string): Promise<{ desktop: ShotResult; mobile: ShotResult }> {
+export async function captureHomepageViews(
+  website: string,
+  options: Pick<ShotOptions, "withFullImage"> = {},
+): Promise<{ desktop: ShotResult; mobile: ShotResult }> {
   const url = normaliseSiteUrl(website);
   if (!url) {
     const note = `"${website}" is not a web address this could open, so no screenshot was taken.`;
     return { desktop: none(note), mobile: none(note) };
   }
 
+  const whole = { withFullImage: options.withFullImage };
   const results = await captureViews([
-    { id: "desktop", key: "desktop", url, ...shapeOf({}) },
-    { id: "mobile", key: "mobile", url, ...shapeOf({ viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS }) },
+    { id: "desktop", key: "desktop", url, ...shapeOf(whole) },
+    { id: "mobile", key: "mobile", url, ...shapeOf({ ...whole, viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS }) },
   ]);
 
   return {
     desktop: results.get("desktop") ?? none(`No screenshot was taken for ${website}.`),
     mobile: results.get("mobile") ?? none(`No phone screenshot was taken for ${website}.`),
   };
+}
+
+/**
+ * Both views of many businesses, still in **one** run.
+ *
+ * The batching argument and the two-viewport argument are the same argument,
+ * so they have to compose: a run's cost is its container boot, a page is
+ * ~0.2s of marginal work on top, and a *view* is a page. Ten businesses at two
+ * views each is one run of twenty pages — not two runs of ten, and certainly
+ * not twenty runs.
+ *
+ * Callers chunk by `MAX_BATCH / 2`, because the batch ceiling counts pages.
+ */
+export async function captureHomepageViewsBatch(
+  websites: string[],
+  options: Pick<ShotOptions, "withFullImage"> = {},
+): Promise<Map<string, { desktop: ShotResult; mobile: ShotResult }>> {
+  const results = new Map<string, { desktop: ShotResult; mobile: ShotResult }>();
+  const whole = { withFullImage: options.withFullImage };
+  const desktop = shapeOf(whole);
+  const phone = shapeOf({ ...whole, viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS });
+
+  const requests: ShotRequest[] = [];
+  const seen = new Set<string>();
+  for (const website of websites) {
+    if (results.has(website) || seen.has(website)) continue;
+    const url = normaliseSiteUrl(website);
+    if (!url) {
+      const note = `"${website}" is not a web address this could open, so no screenshot was taken.`;
+      results.set(website, { desktop: none(note), mobile: none(note) });
+      continue;
+    }
+    seen.add(website);
+    // Two requests, one page each, told apart by the id they carry — which is
+    // the same mechanism that keeps one business's picture off another's.
+    const at = requests.length;
+    requests.push({ id: `d${at}`, key: `d:${website}`, url, ...desktop });
+    requests.push({ id: `m${at + 1}`, key: `m:${website}`, url, ...phone });
+  }
+
+  const taken = await captureViews(requests);
+  for (const website of seen) {
+    results.set(website, {
+      desktop: taken.get(`d:${website}`) ?? none(`No screenshot was taken for ${website}.`),
+      mobile: taken.get(`m:${website}`) ?? none(`No phone screenshot was taken for ${website}.`),
+    });
+  }
+  return results;
 }
 
 /**
@@ -426,6 +532,22 @@ async function readShot(entry: ShotRequest, row: ScreenshotRow, takenAt: string,
     return none(`The screenshot of ${entry.url} is ${(sent.byteLength / 1_000_000).toFixed(1)}MB, past what a model will accept, so it was skipped.`);
   }
 
+  // The whole page, when somebody is going to look at it. The actor stores the
+  // capture beside the cut-down copy and only when the two differ — so no
+  // second download happens for a page that was never cropped, and `fullBase64`
+  // is the bytes already in hand.
+  let fullBase64: string | null = null;
+  let fullNote: string | null = null;
+  if (entry.withFullImage) {
+    if (!row.fullScreenshotUrl) {
+      fullBase64 = sent.toString("base64");
+    } else {
+      const whole = await downloadScreenshot(row.fullScreenshotUrl, { maxBytes: MAX_FULL_IMAGE_BYTES });
+      if (whole.ok) fullBase64 = whole.bytes.toString("base64");
+      else fullNote = `The whole-page picture of ${entry.url} could not be kept (${whole.message}), so only the top of the page is stored.`;
+    }
+  }
+
   return {
     shot: {
       requested: entry.url,
@@ -440,14 +562,18 @@ async function readShot(entry: ShotRequest, row: ScreenshotRow, takenAt: string,
       // The uncut capture when there is one, so a person opening this sees the
       // whole page rather than the same crop the model was shown.
       imageUrl: row.fullScreenshotUrl ?? row.screenshotUrl!,
+      fullWidth: row.fullWidth ?? size.width,
+      fullHeight: row.fullHeight ?? size.height,
       mediaType: "image/png",
       bytes: sent.byteLength,
       costUsd,
     },
     base64: sent.toString("base64"),
+    fullBase64,
     note:
       [
         row.cropped ? "Their homepage is longer than this; the picture is the top of the page, which is what a visitor sees first." : null,
+        fullNote,
         row.insecure
           ? "The picture was taken by going past a certificate warning, exactly as a visitor would — so what is in it came over an unverified connection."
           : null,

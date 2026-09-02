@@ -403,7 +403,15 @@ model LeadResearch {
   /// services/companyAudit.ts output as it stood at `ranAt`.
   audit    Json?
   /// The homepage screenshot: where the image is and what was asked for.
+  /// The laptop view, kept as its own column because everything already reads it.
   shot     Json?
+  /// Both views — laptop and phone — each with the `StoredFile` ids the picture
+  /// was kept in: the top of the page the model read, and the whole page beside
+  /// it. `shot.imageUrl` is an Apify link that expires with the run's data, so
+  /// this is what makes "what did their site look like when we wrote to them"
+  /// answerable a month later. Null for a lead prepared in a batch, which keeps
+  /// the links and files nothing — see `keepPictures` in leadPrep.ts.
+  shots    Json?
   /// What a model saw when it looked at that screenshot.
   look     Json?
 

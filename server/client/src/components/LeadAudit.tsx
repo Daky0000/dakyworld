@@ -206,26 +206,42 @@ function AuditDetail({
             The numbered boxes mark roughly where each UI/UX point applies — the area, not the pixel. Open one to see it full size.
           </p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {/*
+              The marked-up copy where there is one, the plain crop where there
+              is not — and never the whole-page copy, which is a 12,000px strip
+              and belongs behind the link below rather than in a grid.
+            */}
             {shots
               .filter((shot) => shot.annotated)
-              .concat(shots.filter((shot) => shot.annotated).length ? [] : shots)
+              .concat(shots.filter((shot) => shot.annotated).length ? [] : shots.filter((shot) => !shot.full))
               .map((shot) => (
-                <a
-                  key={`${shot.view}-${String(shot.annotated)}`}
-                  href={apiUrl(`/audits/${data.id}/screenshot/${shot.view}${shot.annotated ? "-marked" : ""}.png`)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block overflow-hidden rounded-xl border border-line transition hover:border-blue"
-                >
-                  <img
-                    src={apiUrl(`/audits/${data.id}/screenshot/${shot.view}${shot.annotated ? "-marked" : ""}.png`)}
-                    alt={`${shot.view === "mobile" ? "Phone" : "Desktop"} view of the homepage`}
-                    className="block max-h-64 w-full object-cover object-top"
-                  />
-                  <p className="border-t border-line px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
-                    {shot.view === "mobile" ? "On a phone" : "On a desktop"}
+                <div key={`${shot.view}-${String(shot.annotated)}`} className="overflow-hidden rounded-xl border border-line">
+                  <a
+                    href={apiUrl(`/audits/${data.id}/screenshot/${shot.view}${shot.annotated ? "-marked" : ""}.png`)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block transition hover:opacity-90"
+                  >
+                    <img
+                      src={apiUrl(`/audits/${data.id}/screenshot/${shot.view}${shot.annotated ? "-marked" : ""}.png`)}
+                      alt={`${shot.view === "mobile" ? "Phone" : "Desktop"} view of the homepage`}
+                      className="block max-h-64 w-full object-cover object-top"
+                    />
+                  </a>
+                  <p className="flex items-center justify-between gap-2 border-t border-line px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                    <span>{shot.view === "mobile" ? "On a phone" : "On a desktop"}</span>
+                    {shots.some((entry) => entry.full && entry.view === shot.view) && (
+                      <a
+                        href={apiUrl(`/audits/${data.id}/screenshot/${shot.view}-full.png`)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue underline-offset-2 hover:underline"
+                      >
+                        Whole page
+                      </a>
+                    )}
                   </p>
-                </a>
+                </div>
               ))}
           </div>
         </div>
