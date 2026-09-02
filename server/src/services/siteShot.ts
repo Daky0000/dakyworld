@@ -30,7 +30,7 @@ import { buildScreenshotInput, runOptionsFor, screenshotActorId } from "./screen
  */
 
 /** A desktop viewport. Wide enough that a responsive site shows its real layout. */
-const VIEWPORT_WIDTH = 1280;
+export const VIEWPORT_WIDTH = 1280;
 
 /**
  * The window heights that go with the two widths.

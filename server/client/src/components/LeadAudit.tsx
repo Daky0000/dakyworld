@@ -1,7 +1,14 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, apiUrl } from "../lib/api";
-import { AUDIT_DISCIPLINE_NAMES, type AuditDisciplineReport, type AuditFindingDetail, type Lead, type WebsiteAudit } from "../lib/types";
+import {
+  AUDIT_DISCIPLINE_NAMES,
+  type AuditDiscipline,
+  type AuditDisciplineReport,
+  type AuditFindingDetail,
+  type Lead,
+  type WebsiteAudit,
+} from "../lib/types";
 import { Badge, Button, RelativeTime } from "./ui";
 
 /**
@@ -78,9 +85,31 @@ function AuditDetail({
   pending: boolean;
   error: string | null;
 }) {
+  const queryClient = useQueryClient();
+  const [sectionError, setSectionError] = useState<string | null>(null);
+
   const { data, isLoading } = useQuery({
     queryKey: ["audit", auditId],
     queryFn: () => api.get<WebsiteAudit>(`/audits/${auditId}`),
+  });
+
+  /**
+   * One reviewer, run again, into the same review.
+   *
+   * A section fails for reasons that are nothing to do with the site — no Apify
+   * token when the pictures were due, no model that can look at one — and until
+   * this existed the only way to fill that hole was to commission the whole
+   * team again: four reviewers' worth of money to fix one, and three new
+   * answers replacing three the Owner had already read.
+   */
+  const rerun = useMutation({
+    mutationFn: (input: { discipline: AuditDiscipline; freshScreenshots?: boolean }) =>
+      api.post<{ auditId: string }>(`/audits/${auditId}/rerun`, input),
+    onMutate: () => setSectionError(null),
+    // The review keeps its id, so the drawer stays where it is and only the
+    // report underneath it is refetched.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["audit", auditId] }),
+    onError: (err: unknown) => setSectionError(err instanceof ApiError ? err.message : "That section did not finish"),
   });
 
   if (isLoading) return <div className="rounded-2xl border border-line bg-white p-4 text-sm text-muted">Reading the review…</div>;
@@ -201,7 +230,18 @@ function AuditDetail({
       )}
 
       {report.disciplines.map((discipline) => (
-        <DisciplineCard key={discipline.discipline} discipline={discipline} />
+        <DisciplineCard
+          key={discipline.discipline}
+          discipline={discipline}
+          hasPictures={shots.length > 0}
+          onRerun={(freshScreenshots) => rerun.mutate({ discipline: discipline.discipline, freshScreenshots })}
+          pending={rerun.isPending && rerun.variables?.discipline === discipline.discipline}
+          // Another section being re-run must not leave four buttons live: the
+          // report is rebuilt around whichever finishes, so two at once is two
+          // rebuilds racing over one row.
+          disabled={rerun.isPending}
+          error={rerun.variables?.discipline === discipline.discipline ? sectionError : null}
+        />
       ))}
 
       {report.notes.length > 0 && (
@@ -256,12 +296,30 @@ function AuditDetail({
   );
 }
 
-function DisciplineCard({ discipline }: { discipline: AuditDisciplineReport }) {
+function DisciplineCard({
+  discipline,
+  hasPictures,
+  onRerun,
+  pending,
+  disabled,
+  error,
+}: {
+  discipline: AuditDisciplineReport;
+  /** Whether this review has pictures on file, which decides what UI/UX can reuse. */
+  hasPictures: boolean;
+  onRerun: (freshScreenshots?: boolean) => void;
+  pending: boolean;
+  disabled: boolean;
+  error: string | null;
+}) {
   const problems = discipline.findings.filter((finding) => finding.severity !== "GOOD");
   const good = discipline.findings.filter((finding) => finding.severity === "GOOD");
+  // The one section that reads the pictures. Everything else re-runs on a fetch
+  // of the page, which costs nothing but a model call.
+  const readsPictures = discipline.discipline === "UX";
 
   return (
-    <details className="rounded-2xl border border-line bg-white">
+    <details className="rounded-2xl border border-line bg-white" open={!discipline.scored}>
       <summary className="flex cursor-pointer flex-wrap items-center gap-2 px-4 py-3">
         <span className="text-sm font-semibold text-ink">{AUDIT_DISCIPLINE_NAMES[discipline.discipline]}</span>
         <span className="font-mono text-xs text-muted">{discipline.scored ? `${discipline.score}/100` : "not scored"}</span>
@@ -271,13 +329,54 @@ function DisciplineCard({ discipline }: { discipline: AuditDisciplineReport }) {
       <div className="space-y-3 border-t border-line px-4 py-3">
         <p className="text-[11px] text-muted">
           Reviewed by the {discipline.reviewer} · {discipline.reviewedBy}
+          {discipline.rerunAt && (
+            <>
+              {" · "}
+              <span className="text-ink">
+                this section run again <RelativeTime value={discipline.rerunAt} />
+              </span>
+            </>
+          )}
         </p>
         {!discipline.scored && (
-          <p className="rounded-xl bg-warn-surface px-2.5 py-1.5 text-[11px] text-warn-text">
-            This section did not run, so it has no score and is left out of the overall. What follows is only what could be counted.
-          </p>
+          <div className="rounded-xl bg-warn-surface px-2.5 py-2 text-[11px] text-warn-text">
+            <p>This section did not run, so it has no score and is left out of the overall. What follows is only what could be counted.</p>
+            <p className="mt-1.5">
+              Once the reason is fixed — a token pasted, a model connected, a certificate replaced — run this one section again. The other
+              three are left exactly as they are, and so is the report's date and its place in this lead's history.
+            </p>
+          </div>
         )}
         <p className="whitespace-pre-line text-sm text-ink">{discipline.summary}</p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant={discipline.scored ? "secondary" : "primary"} onClick={() => onRerun()} disabled={disabled}>
+            {pending ? "Reviewing…" : `Run the ${AUDIT_DISCIPLINE_NAMES[discipline.discipline]} section again`}
+          </Button>
+          {readsPictures && hasPictures && (
+            // Reusing the pictures is the default because the commonest reason
+            // to re-run this section is that they were taken and nobody could
+            // look at them — paying Apify again for the same two images buys
+            // nothing. This is for a site that has actually changed.
+            <button
+              type="button"
+              className="text-[11px] text-muted underline decoration-line underline-offset-2 transition hover:text-blue disabled:opacity-50"
+              onClick={() => onRerun(true)}
+              disabled={disabled}
+            >
+              …and photograph the site again
+            </button>
+          )}
+          <span className="text-[11px] text-muted">
+            {readsPictures
+              ? hasPictures
+                ? "Reuses the pictures already taken; the other three sections are not re-run."
+                : "Photographs the site and reviews it. The other three sections are not re-run."
+              : "Reads their page again and re-runs this reviewer only. No new pictures."}
+          </span>
+        </div>
+
+        {error && <p className="text-sm text-danger-text">{error}</p>}
 
         {problems.map((finding) => (
           <FindingRow key={finding.id} finding={finding} />

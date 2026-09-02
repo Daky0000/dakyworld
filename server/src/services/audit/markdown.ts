@@ -129,7 +129,10 @@ export function auditMarkdown(report: WebsiteAuditReport, options: MarkdownOptio
     say(
       `## ${DISCIPLINE_NAMES[discipline.discipline]} — ${discipline.scored ? `${discipline.score}/100` : "not scored"}`,
       "",
-      `*Reviewed by the ${discipline.reviewer}. ${discipline.reviewedBy}.*`,
+      // A section run again on its own is newer than the rest of the document,
+      // and the next reader of this file is another model deciding what to
+      // argue from. It has to be able to tell which part is from when.
+      `*Reviewed by the ${discipline.reviewer}. ${discipline.reviewedBy}.${discipline.rerunAt ? ` This section was reviewed again on ${new Date(discipline.rerunAt).toISOString().slice(0, 10)}, on its own; the rest of this report is from the date above.` : ""}*`,
       "",
       discipline.scored ? null : "> This section did not run, so it has no score and is left out of the overall. What follows is only what could be counted.",
       discipline.scored ? null : "",

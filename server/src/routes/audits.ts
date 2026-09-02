@@ -3,9 +3,9 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { readFile } from "../services/fileStore.js";
 import { normaliseSiteUrl } from "../services/siteShot.js";
-import { runWebsiteAudit } from "../services/audit/team.js";
+import { rerunAuditSection, runWebsiteAudit } from "../services/audit/team.js";
 import { auditMarkdown } from "../services/audit/markdown.js";
-import type { WebsiteAuditReport } from "../services/audit/types.js";
+import { DISCIPLINES, DISCIPLINE_NAMES, type WebsiteAuditReport } from "../services/audit/types.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
 /**
@@ -160,6 +160,58 @@ auditsRouter.post("/run", async (req, res, next) => {
       screenshotFiles: run.screenshotFiles,
     });
   } catch (err) {
+    next(err);
+  }
+});
+
+const rerunInput = z.object({
+  discipline: z.enum(DISCIPLINES),
+  /**
+   * Photograph the site again rather than reusing the pictures already on file.
+   * Only means anything for UI/UX, which is the one section that reads them.
+   */
+  freshScreenshots: z.boolean().default(false),
+});
+
+/**
+ * Runs one section again and rebuilds the report around it.
+ *
+ * The reason this is a route rather than an argument to `/run`: a section fails
+ * for reasons that have nothing to do with the site — no Apify token when the
+ * pictures were due, no vision model connected, a browser that would not start
+ * — and the only remedy used to be commissioning the whole team again. That
+ * spends four reviewers' worth of money to fix one, and it replaces three
+ * answers the Owner has already read (and may already have quoted in a letter)
+ * with three new ones nobody asked for.
+ *
+ * The review keeps its id, its date and its place in the lead's history. What
+ * changes is one section, the score it feeds, the compile that weighs the four
+ * against each other, and both rendered files.
+ */
+auditsRouter.post("/:id/rerun", async (req, res, next) => {
+  try {
+    const input = rerunInput.parse(req.body ?? {});
+    const run = await rerunAuditSection(req.params.id, input.discipline, { freshScreenshots: input.freshScreenshots });
+
+    res.json({
+      auditId: run.auditId,
+      section: DISCIPLINE_NAMES[run.discipline],
+      report: run.report,
+      before: run.before,
+      after: run.after,
+      rerunCostUsd: run.rerunCostUsd,
+      rephotographed: run.rephotographed,
+      pdfFileId: run.pdfFileId,
+      markdownFileId: run.markdownFileId,
+      screenshotFiles: run.screenshotFiles,
+    });
+  } catch (err) {
+    // The two refusals this can make are about the review rather than about the
+    // request, so they are 404 and 409 rather than a 500 the Owner reads as
+    // "something went wrong" about a setting they could have changed.
+    const message = (err as Error).message ?? "";
+    if (message === "No such review.") return res.status(404).json({ error: message });
+    if (message.startsWith("There is no address")) return res.status(409).json({ error: message });
     next(err);
   }
 });

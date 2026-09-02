@@ -1137,7 +1137,7 @@ ${PROSE_CRAFT}`,
           "Being quoted by an assistant, not only ranked by a search engine",
         ],
         kpis: ["Technical faults fixed", "Impressions and clicks", "Local pack visibility", "Indexation coverage"],
-        toolkit: ["audit.website", "audit.read", "company.audit", "security.scan", "site.look", "content.draft", "analytics.read", "lead.read"],
+        toolkit: ["audit.website", "audit.section", "audit.read", "company.audit", "security.scan", "site.look", "content.draft", "analytics.read", "lead.read"],
         escalationPolicy: "Never promises a ranking or a timeline search engines do not guarantee. No paid links, no cloaking, no scraped content.",
         input_type: ["diagnosis", "site_structure"],
         output_type: ["seo_verdict", "contextRef"],
@@ -1198,7 +1198,7 @@ ${INTERFACE_CRAFT}`,
           "Reading a scan without overstating it",
         ],
         kpis: ["Confirmed findings", "False positives", "Time to remediation", "Findings a client disputes"],
-        toolkit: ["audit.website", "audit.read", "security.scan", "company.audit", "github.issue", "repo.read"],
+        toolkit: ["audit.website", "audit.section", "audit.read", "security.scan", "company.audit", "github.issue", "repo.read"],
         escalationPolicy:
           "Never probes, never tries a login, never touches anything on somebody else's system. Never reports a vulnerability it has not evidence for — a fabricated security finding about a stranger's business is an accusation, not a mistake.",
         process: `1. Check only what can be seen from outside, and record where each observation came from as you make it: the header, the DNS record, the certificate, the tag.
@@ -2228,7 +2228,7 @@ export const NARROWED_TOOLKIT: Record<string, string[]> = {
   // reviews, and `lead.read` stays because `audit.website` is addressed by
   // lead. Security belongs to the Security Analyst, what a visitor *sees*
   // belongs to the UX reviewer, and the words belong to the Copywriter.
-  "seo.specialist": ["audit.website", "audit.read", "company.audit", "lead.read"],
+  "seo.specialist": ["audit.website", "audit.section", "audit.read", "company.audit", "lead.read"],
 
   // The first message to a stranger. Deliberately the longest list here and it
   // is not an oversight: the letter is argued from evidence this agent gathers

@@ -122,6 +122,17 @@ export interface DisciplineReport {
   /** What could not be checked, and why. Never a failure. */
   notes: string[];
   costUsd: number;
+  /**
+   * Set when this one section was run again on its own, after the review.
+   *
+   * A section that failed for a reason that has since been fixed — no Apify
+   * token, no vision model, a certificate replaced — can be re-run by itself
+   * rather than by paying for the whole team again. When that happens this
+   * section is newer than the rest of the document, and every surface that
+   * prints it says so: a reader comparing a UI/UX section written today with a
+   * speed section from three weeks ago is entitled to know which is which.
+   */
+  rerunAt?: string | null;
 }
 
 /** What the whole team concluded, written by Claude from the four reports. */
@@ -193,6 +204,13 @@ export interface WebsiteAuditReport {
   screenshots: AuditScreenshot[];
   /** Everything the team could not check, gathered into one list. */
   notes: string[];
+  /**
+   * Which of `notes` came from the two paid steps — the pictures and the rented
+   * browser. Kept on the report so a re-run of one section can carry forward
+   * the notes for the step it deliberately skipped and drop the ones it has
+   * just disproved. Absent on rows written before section re-runs existed.
+   */
+  stepNotes?: { screenshots: string[]; rendered: string[] };
   costUsd: number;
 }
 

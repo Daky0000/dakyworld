@@ -479,7 +479,19 @@ export async function renderAuditPdf(data: AuditPdfData): Promise<Buffer> {
       .fillColor(MUTED)
       .font("Helvetica")
       .fontSize(8)
-      .text(`Reviewed by the ${discipline.reviewer} · ${DISCIPLINE_AGENTS[discipline.discipline].role} · ${discipline.reviewedBy}`, MARGIN_X, doc.y, { width: CONTENT_W });
+      .text(
+        // The date is on the section rather than only on the front page,
+        // because a section run again on its own is newer than the document
+        // around it and a reader comparing the two has to be told which.
+        `Reviewed by the ${discipline.reviewer} · ${DISCIPLINE_AGENTS[discipline.discipline].role} · ${discipline.reviewedBy}${
+          discipline.rerunAt
+            ? ` · this section reviewed again on ${new Date(discipline.rerunAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`
+            : ""
+        }`,
+        MARGIN_X,
+        doc.y,
+        { width: CONTENT_W },
+      );
     doc.moveDown(0.6);
     scoreBar(doc, MARGIN_X, doc.y, CONTENT_W, discipline.score, discipline.scored);
     doc.y += 20;

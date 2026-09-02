@@ -1322,6 +1322,11 @@ export interface AuditDisciplineReport {
   findings: AuditFindingDetail[];
   checked: string[];
   notes: string[];
+  /**
+   * Set when this section alone was run again after the review, so the card can
+   * say that this part of the document is newer than the rest of it.
+   */
+  rerunAt?: string | null;
 }
 
 export interface WebsiteAuditReport {

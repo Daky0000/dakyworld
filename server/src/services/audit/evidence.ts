@@ -169,6 +169,21 @@ export interface AuditEvidence {
   rendered: RenderedMeasurements | null;
   /** What could not be gathered, in plain words. Never a failure. */
   notes: string[];
+  /**
+   * The subset of `notes` that each of the two paid steps produced.
+   *
+   * Everything else in `notes` comes from the fetch, which is free and is
+   * therefore repeated in full by any re-run. The two paid steps are not, and a
+   * re-run of one section skips whichever of them that section does not argue
+   * from — so without this a re-run has no way to tell "the browser could not
+   * be rented" (still true, and still worth saying) from "no screenshot could
+   * be taken" (no longer true, because this run took one). Carrying the first
+   * forward and dropping the second is the whole difference between a report
+   * that reads correctly after a partial re-run and one that contradicts
+   * itself. Both arrays are also in `notes`; this is a view of them, not a
+   * second source.
+   */
+  stepNotes: { screenshots: string[]; rendered: string[] };
   /** Apify, for the pictures. */
   costUsd: number;
 }
@@ -687,6 +702,7 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
       shots: [],
       rendered: null,
       notes: [`"${website}" is not a web address this could open, so nothing was checked.`],
+      stepNotes: { screenshots: [], rendered: [] },
       costUsd: 0,
     };
   }
@@ -721,6 +737,7 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
       shots: [],
       rendered: null,
       notes,
+      stepNotes: { screenshots: [], rendered: [] },
       costUsd: 0,
     };
   }
@@ -754,13 +771,20 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
   // 1280 and spills off the screen at 390 passes every check except the one
   // that matches where their customers actually are.
   const shots: AuditEvidence["shots"] = [];
+  // Kept as well as pushed into `notes`, so a partial re-run can tell which of
+  // an earlier run's notes it has actually replaced. See `stepNotes`.
+  const stepNotes: AuditEvidence["stepNotes"] = { screenshots: [], rendered: [] };
+  const shotNote = (note: string) => {
+    stepNotes.screenshots.push(note);
+    notes.push(note);
+  };
   if (!options.skipScreenshots) {
     const desktop = options.desktopShot ?? (await captureHomepage(page.finalUrl));
     if (desktop.shot) {
       shots.push({ view: "desktop", result: desktop });
       costUsd += desktop.shot.costUsd ?? 0;
     }
-    if (desktop.note) notes.push(desktop.note);
+    if (desktop.note) shotNote(desktop.note);
 
     // Only worth a second Apify run when the first one worked. If a site blocks
     // headless browsers it blocks both, and a second run is a second bill for
@@ -771,12 +795,12 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
         shots.push({ view: "mobile", result: mobile });
         costUsd += mobile.shot.costUsd ?? 0;
       }
-      if (mobile.note) notes.push(`Phone view: ${mobile.note}`);
+      if (mobile.note) shotNote(`Phone view: ${mobile.note}`);
     }
   }
 
   if (!shots.length && !options.skipScreenshots) {
-    notes.push(
+    shotNote(
       "Nobody has seen how the site actually looks — only what it is made of. The design, the layout and the first impression are the half a business owner cares about, and none of it could be checked.",
     );
   }
@@ -785,7 +809,10 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
   if (renderedRun) {
     const result = await renderedRun.catch((err: unknown) => ({ measured: null, costUsd: null, note: `The page could not be opened in a real browser: ${(err as Error).message}`, actorId: "" }));
     rendered = result.measured;
-    if (result.note) notes.push(result.note);
+    if (result.note) {
+      stepNotes.rendered.push(result.note);
+      notes.push(result.note);
+    }
     costUsd += result.costUsd ?? 0;
   }
 
@@ -802,6 +829,7 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
     shots,
     rendered,
     notes,
+    stepNotes,
     costUsd,
   };
 }

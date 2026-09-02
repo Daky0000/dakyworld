@@ -10,8 +10,8 @@ import type { ToolDefinition } from "./types.js";
 import { auditCompany } from "../companyAudit.js";
 import { isStale, prepareLead, prepareLeads, storedPrep } from "../leadPrep.js";
 import { lookAtHomepage } from "../homepageLook.js";
-import { runWebsiteAudit } from "../audit/team.js";
-import { DISCIPLINE_NAMES } from "../audit/types.js";
+import { rerunAuditSection, runWebsiteAudit } from "../audit/team.js";
+import { DISCIPLINES, DISCIPLINE_NAMES, type Discipline } from "../audit/types.js";
 import { normaliseSiteUrl } from "../siteShot.js";
 import { polishEmail } from "../../lib/emailPolish.js";
 import { buildDemo, demoUrl, subjectFromLead } from "../demoBuilder.js";
@@ -1414,6 +1414,57 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     },
   },
   {
+    key: "audit.section",
+    name: "Run one section of a review again",
+    group: "Research",
+    purpose:
+      "Re-run a single reviewer — UI/UX, speed and findability, content or security — into a review that already exists, when that section could not run the first time. The other three sections, the review's date and its place in the lead's history are left alone. Use this rather than audit.website when a report has a hole in it: running the whole team again costs four reviewers to fix one, and replaces three answers somebody may already have quoted.",
+    scope: "write",
+    // Only the UI/UX section reads a picture, and it reuses the pictures the
+    // first run took wherever there are any — so the usual re-run spends a
+    // model call and nothing else. `requires` still names Apify, because the
+    // one case with nothing to reuse is the commonest reason to call this.
+    requires: "apify",
+    job: "vision",
+    spends: true,
+    outward: false,
+    // The reviewer quotes the site's own content back.
+    external: true,
+    input: z.object({
+      auditId: z.string().min(1).describe("The review to mend. audit.read gives it, and says which sections did not run."),
+      section: z.enum(DISCIPLINES).describe("Which reviewer to run again. Only a section marked not scored is usually worth re-running."),
+      freshScreenshots: z
+        .boolean()
+        .optional()
+        .describe(
+          "Photograph the site again rather than reusing the pictures on file. Only affects UX. Leave it off unless the site itself has changed — the usual reason this section failed is that the pictures were taken and nothing could look at them.",
+        ),
+    }),
+    preview: async (input) =>
+      `Run the ${DISCIPLINE_NAMES[input.section as Discipline]} reviewer again over the site in review ${input.auditId}, rebuild the score and the summary around it, and re-render the PDF and the Markdown. The other three sections are untouched.`,
+    run: async (input) => {
+      const run = await rerunAuditSection(input.auditId, input.section, { freshScreenshots: input.freshScreenshots });
+      return {
+        auditId: run.auditId,
+        section: DISCIPLINE_NAMES[run.discipline],
+        // Both, because "it ran this time" and "it scored 41" are different
+        // facts and only the first one is what was asked for.
+        ranThisTime: run.after.scored,
+        scoreBefore: run.before.score,
+        scoreNow: run.after.score,
+        headline: run.report.disciplines.find((entry) => entry.discipline === run.discipline)?.headline ?? null,
+        findings: run.report.disciplines.find((entry) => entry.discipline === run.discipline)?.findings.length ?? 0,
+        overallScore: run.report.scored ? run.report.overallScore : null,
+        verdict: run.report.verdict,
+        rephotographed: run.rephotographed,
+        pdfFileId: run.pdfFileId,
+        markdownFileId: run.markdownFileId,
+        couldNotCheck: run.report.notes,
+        costUsd: run.rerunCostUsd,
+      };
+    },
+  },
+  {
     key: "audit.read",
     name: "Read a website review",
     group: "Research",
@@ -1464,8 +1515,13 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         verdict: audit.verdict,
         sections: report.disciplines?.map((discipline) => ({
           section: DISCIPLINE_NAMES[discipline.discipline],
+          // The value `audit.section` takes, beside the name a person reads.
+          // Without it an agent that has just been told the UI/UX section did
+          // not run has to guess what to call it to mend it.
+          key: discipline.discipline,
           reviewer: discipline.reviewer,
           score: discipline.scored ? discipline.score : null,
+          didNotRun: !discipline.scored,
           headline: discipline.headline,
           summary: discipline.summary,
         })),
