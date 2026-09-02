@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma.js";
 import { renderInvoicePdf, type InvoicePdfData, type InvoiceStamp } from "./pdf.js";
 import type { InvoiceStatus } from "@prisma/client";
+import { TIER_LABEL } from "./carePlanCatalogue.js";
 
 /**
  * The one route from an Invoice row to the branded PDF.
@@ -63,7 +64,9 @@ export async function renderInvoicePdfFor(invoiceId: string): Promise<{ filename
     dueDate: invoice.dueDate,
     paidDate: invoice.paidAt,
     status: invoiceStamp(invoice.status, invoice.dueDate),
-    reference: invoice.project?.name ?? (invoice.carePlan ? `${invoice.carePlan.tier} care plan` : null),
+    // The tier as the website writes it, not the raw enum: a client should not
+    // read "TRANSFORMATION care plan" on a document they keep.
+    reference: invoice.project?.name ?? (invoice.carePlan ? `${TIER_LABEL[invoice.carePlan.tier]} monthly partnership` : null),
     paymentTerms: invoice.client.creditTerms,
     amountTotal: invoice.amountTotal.toString(),
     lineItems: invoice.lineItems.map((li) => ({

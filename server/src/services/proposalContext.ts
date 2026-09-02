@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma.js";
 import { auditCompany, type AuditSubject, type CompanyAudit } from "./companyAudit.js";
+import { TIER_LABEL } from "./carePlanCatalogue.js";
 
 /**
  * Everything the proposal writer is allowed to know about one company.
@@ -200,7 +201,7 @@ export async function clientProposalContext(clientId: string): Promise<ProposalC
   ].filter((entry): entry is string => entry !== null);
 
   for (const plan of client.carePlans) {
-    facts.push(`Already on a ${plan.tier.replace(/_/g, " ").toLowerCase()} care plan at GHS ${plan.monthlyFee}/month — this proposal must not sell them what they already pay for.`);
+    facts.push(`Already on the ${TIER_LABEL[plan.tier]} monthly partnership at GHS ${plan.monthlyFee}/month — this proposal must not sell them what they already pay for.`);
   }
   for (const project of client.projects) {
     facts.push(`Project "${project.name}" (${project.serviceType}) — ${project.status.toLowerCase()}`);
