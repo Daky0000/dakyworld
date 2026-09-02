@@ -217,6 +217,32 @@ try {
     check("each page is cropped by its own number", desktop?.height === 1920 && mobile?.height === 3200, `${desktop?.height} / ${mobile?.height}`);
   }
 
+  // --- A page that never finishes loading -----------------------------------
+  //
+  // The commonest real failure, and the one that produced "the page could not
+  // be opened" about a law firm's site that answers a plain request in 1.7
+  // seconds. `load` waits for every image, font and script; one that never
+  // returns holds it for ever, while the document itself rendered long ago.
+  console.log("\nA page held up by one dead asset");
+  {
+    const rows = await runActor({
+      urls: [{ id: "hung", url: site("/hangs-on-asset") }],
+      viewport: { width: 1280, height: 800 },
+      fullPage: true,
+      delay: 0,
+      maxWidth: MAX_WIDTH,
+      maxHeight: MAX_HEIGHT,
+      navigationTimeoutMs: 5000,
+    });
+
+    const hung = rows[0];
+    check("the picture is taken anyway", hung?.success === true, `${hung?.error?.code} ${hung?.error?.message ?? ""}`);
+    // Taking it is right; saying so is the honest half. A screenshot of a site
+    // that never finished loading carries a caveat, not silence.
+    check("and the row says it never finished loading", hung?.partiallyLoaded === true);
+    check("it is a real picture, at the model width", hung?.width === MAX_WIDTH, `${hung?.width}`);
+  }
+
   // --- A certificate nothing trusts -----------------------------------------
   //
   // The gap this closed. `companyAudit` has clicked past a certificate warning

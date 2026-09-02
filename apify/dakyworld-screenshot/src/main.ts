@@ -165,6 +165,7 @@ try {
           fullHeight: processed.untouched ? processed.height : captured.pageHeight || null,
           cropped: processed.cropped,
           insecure: captured.insecure,
+          partiallyLoaded: captured.partiallyLoaded,
           viewportWidth: viewport.width,
           viewportHeight: viewport.height,
           format: "png",
@@ -173,6 +174,9 @@ try {
         };
         if (captured.withoutProxy && proxyConfiguration) {
           log.warning(`${request.url} was fetched without the proxy — it could not be reached through one.`);
+        }
+        if (captured.partiallyLoaded) {
+          log.warning(`${request.url} never finished loading; the picture is the document as it stood.`);
         }
         if (captured.insecure) {
           log.warning(`${request.url} would only open with certificate verification off — the row is marked insecure.`);
@@ -222,6 +226,7 @@ function blank(
     fullHeight: null,
     cropped: false,
     insecure: false,
+    partiallyLoaded: false,
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
     format: "png",

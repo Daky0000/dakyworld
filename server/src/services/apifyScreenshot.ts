@@ -100,6 +100,8 @@ export interface ScreenshotRow {
   cropped: boolean;
   /** True when the page would only open with certificate verification off. */
   insecure: boolean;
+  /** True when the page never finished loading and the picture is what had rendered. */
+  partiallyLoaded: boolean;
   viewportWidth: number;
   viewportHeight: number;
   format: string;
@@ -275,6 +277,7 @@ function readRow(item: Record<string, unknown>): ScreenshotRow | null {
     fullHeight: num(item.fullHeight),
     cropped: item.cropped === true,
     insecure: item.insecure === true,
+    partiallyLoaded: item.partiallyLoaded === true,
     viewportWidth: num(item.viewportWidth) ?? 0,
     viewportHeight: num(item.viewportHeight) ?? 0,
     format: text(item.format) ?? "png",

@@ -203,6 +203,7 @@ const shot = (key: string, overrides: Record<string, unknown> = {}) => ({
   fullHeight: 2400,
   cropped: false,
   insecure: false,
+  partiallyLoaded: false,
   viewportWidth: 1280,
   viewportHeight: 800,
   format: "png",
@@ -318,7 +319,7 @@ console.log("\nA batch where one page fails");
         ...shot("desktop", { id: "s1", url: "https://two.com/" }),
         success: false,
         screenshotUrl: null,
-        error: { code: "PAGE_TIMEOUT", message: "The page did not finish loading within 45 seconds." },
+        error: { code: "PAGE_TIMEOUT", message: "it did not finish loading within 45 seconds." },
       },
     ],
   };
@@ -338,7 +339,7 @@ console.log("\nA batch where one page fails");
   check("a site with no row gets no picture", results.get("three.com")?.shot === null);
   check("and is told the run produced nothing for it", Boolean(results.get("three.com")?.note?.includes("three.com")), results.get("three.com")?.note ?? "");
   check("the sites after the gap keep their own pictures", results.get("four.com")?.shot?.finalUrl === "https://four.com/" && results.get("five.com")?.shot?.finalUrl === "https://five.com/");
-  check("a timed-out page says it timed out", Boolean(results.get("two.com")?.note?.includes("did not finish loading")), results.get("two.com")?.note ?? "");
+  check("a timed-out page says it timed out", Boolean(results.get("two.com")?.note?.includes("never finished loading")), results.get("two.com")?.note ?? "");
   check("and the successful pictures survive it", ["one.com", "four.com", "five.com"].every((site) => results.get(site)?.base64));
 
   // Apify bills the run; the number worth knowing is what one picture cost.
@@ -521,6 +522,51 @@ console.log("\nWith no Apify token");
   settings.clearSettingsCache();
 }
 
+// --- 10b. What a failure actually reads like ---------------------------------
+//
+// These are sentences that go into a document a business owner reads, and the
+// first version of them was written twice over. A real report said:
+//
+//   "... the page could not be opened. The page could not be opened:
+//    page.goto: net::ERR_TIMED_OUT at https://..."
+//
+// The actor sends the reason and the server puts the frame round it; both
+// halves were framing.
+console.log("\nHow a failure reads");
+{
+  await reset();
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [
+      {
+        ...shot("desktop"),
+        success: false,
+        screenshotUrl: null,
+        error: { code: "NAVIGATION_ERROR", message: "the server did not answer in time." },
+      },
+    ],
+  };
+  const failed = await captureHomepage("example.com");
+  const note = failed.note ?? "";
+  check("it names the site and the reason", note.includes("example.com") && note.includes("did not answer in time"), note);
+  check("and says it once", note.match(/could not be opened/g)?.length === 1, note);
+  // Chromium's own vocabulary has no place in a document sent to a business.
+  check("with none of Chromium's words in it", !/net::|page\.goto|ERR_/.test(note), note);
+
+  // A page that never finished loading is still a picture, and the caveat
+  // travels with it rather than being lost.
+  await reset();
+  behaviour = { status: "SUCCEEDED", rows: [shot("desktop", { partiallyLoaded: true })] };
+  const partial = await captureHomepage("example.com");
+  check("a half-loaded page still yields a picture", Boolean(partial.base64), partial.note ?? "");
+  check("and the report says so", Boolean(partial.note?.includes("never finished loading")), partial.note ?? "");
+
+  await reset();
+  behaviour = { status: "SUCCEEDED", rows: [shot("desktop")] };
+  const whole = await captureHomepage("example.com");
+  check("nothing is said about a page that loaded normally", whole.note === null, whole.note ?? "");
+}
+
 // --- 11. Both viewports in one run -------------------------------------------
 //
 // The commonest shape this actor runs, and it used to be two runs. An Apify run
@@ -568,13 +614,13 @@ console.log("\nThe laptop and the phone picture of one homepage");
         ...shot("phone", { id: "mobile", url: "https://example.com/" }),
         success: false,
         screenshotUrl: null,
-        error: { code: "PAGE_TIMEOUT", message: "The page did not finish loading within 45 seconds." },
+        error: { code: "PAGE_TIMEOUT", message: "it did not finish loading within 45 seconds." },
       },
     ],
   };
   const half = await captureHomepageViews("example.com");
   check("one viewport failing does not cost the other its picture", Boolean(half.desktop.base64) && half.mobile.shot === null);
-  check("and the failure is still a sentence", Boolean(half.mobile.note?.includes("did not finish loading")), half.mobile.note ?? "");
+  check("and the failure is still a sentence", Boolean(half.mobile.note?.includes("never finished loading")), half.mobile.note ?? "");
 
   await reset();
   const bad = await captureHomepageViews("not a web address");

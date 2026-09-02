@@ -103,6 +103,18 @@ export async function startFixtures(): Promise<Fixtures> {
       return;
     }
 
+    // A complete document that references an asset which never answers. The
+    // parser finishes and DOMContentLoaded fires; `load` waits for the image
+    // for ever. This is the commonest way a real small-business site fails to
+    // photograph — one third-party font, beacon or widget that hangs — and the
+    // page itself was on screen seconds ago.
+    if (path === "/hangs-on-asset") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      return res.end(
+        page("A page with one dead asset", `<header style="height:400px;background:#b8ff3d"><h1>Bridgefield</h1></header><img src="/never" alt="">`),
+      );
+    }
+
     res.writeHead(404, { "Content-Type": "text/html" });
     res.end(page("Not found", "<h1>404</h1>"));
   });

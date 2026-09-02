@@ -135,6 +135,16 @@ export interface ScreenshotResult {
    * SECURITY.md.
    */
   insecure: boolean;
+  /**
+   * True when the page never finished loading and the picture is of the
+   * document as it stood.
+   *
+   * `load` waits for every image, font and script; one third-party asset that
+   * never returns is the commonest way a real small-business site fails to
+   * photograph, and the document itself rendered seconds earlier. Taking the
+   * picture anyway is right, and saying so is the honest half of it.
+   */
+  partiallyLoaded: boolean;
   /** Echoed back, so a row says what it was taken at without the input beside it. */
   viewportWidth: number;
   viewportHeight: number;

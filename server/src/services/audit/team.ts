@@ -777,6 +777,7 @@ function asShotResult(picture: StoredPicture, requested: string, finalUrl: strin
       // honest default: the claim "this came over an unverified connection" is
       // one this cannot make about a picture taken on an earlier run.
       insecure: false,
+      partiallyLoaded: false,
       imageUrl: picture.imageUrl ?? "",
       mediaType: "image/png",
       bytes: Buffer.byteLength(picture.base64, "base64"),

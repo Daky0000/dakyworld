@@ -122,6 +122,11 @@ export interface Screenshot {
   /** True when the page was longer than `KEEP_ROWS` and the rest was cut. */
   cropped: boolean;
   /**
+   * True when the page never finished loading and the picture is of the
+   * document as it stood — usually one third-party asset that never returned.
+   */
+  partiallyLoaded: boolean;
+  /**
    * True when the page would only open by going past a certificate warning —
    * what a person does at *Advanced → Continue to site*.
    *
@@ -380,19 +385,25 @@ export async function captureHomepageViews(website: string): Promise<{ desktop: 
  * difference between "no picture" and a reason.
  */
 function describeRowFailure(url: string, row: ScreenshotRow): string {
+  // The actor sends the *reason* and this puts the frame round it. Both halves
+  // saying "the page could not be opened" produced, on a real report,
+  // "… the page could not be opened. The page could not be opened:
+  // net::ERR_TIMED_OUT at https://…" — the same sentence twice with Chromium's
+  // vocabulary after it.
   const said = row.error?.message?.trim();
+  const because = said ? ` ${said[0]!.toLowerCase()}${said.slice(1)}` : "";
   switch (row.error?.code) {
     case "PAGE_TIMEOUT":
-      return `No screenshot of ${url} — the page did not finish loading in time. A slow site, or one that never stops requesting.`;
+      return `No screenshot of ${url} — the page never finished loading, even after waiting for the document alone.`;
     case "NAVIGATION_ERROR":
-      return `No screenshot of ${url} — the page could not be opened.${said ? ` ${said}` : ""}`;
+      return `No screenshot of ${url} — the page could not be opened:${because || " no reason was given."}`;
     case "INVALID_URL":
       return `No screenshot of ${url} — it is not an address a browser could open.`;
     case "SCREENSHOT_FAILED":
     case "IMAGE_PROCESSING_FAILED":
-      return `The page at ${url} opened but no usable picture came out of it.${said ? ` ${said}` : ""}`;
+      return `The page at ${url} opened but no usable picture came out of it:${because || " no reason was given."}`;
     case "BROWSER_LAUNCH_FAILED":
-      return `No screenshot of ${url} — the screenshot actor could not start a browser.${said ? ` ${said}` : ""}`;
+      return `No screenshot of ${url} — the screenshot service could not start a browser:${because || " no reason was given."}`;
     default:
       return `No screenshot came back for ${url}.${said ? ` ${said}` : ""}`;
   }
@@ -425,6 +436,7 @@ async function readShot(entry: ShotRequest, row: ScreenshotRow, takenAt: string,
       height: size.height,
       cropped: row.cropped,
       insecure: row.insecure,
+      partiallyLoaded: row.partiallyLoaded,
       // The uncut capture when there is one, so a person opening this sees the
       // whole page rather than the same crop the model was shown.
       imageUrl: row.fullScreenshotUrl ?? row.screenshotUrl!,
@@ -438,6 +450,9 @@ async function readShot(entry: ShotRequest, row: ScreenshotRow, takenAt: string,
         row.cropped ? "Their homepage is longer than this; the picture is the top of the page, which is what a visitor sees first." : null,
         row.insecure
           ? "The picture was taken by going past a certificate warning, exactly as a visitor would — so what is in it came over an unverified connection."
+          : null,
+        row.partiallyLoaded
+          ? "Their page never finished loading — something on it, often a third-party script or font, never answered — so this is the page as it had drawn itself by then."
           : null,
       ]
         .filter(Boolean)

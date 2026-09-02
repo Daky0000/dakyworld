@@ -809,7 +809,12 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
     if (both.mobile.note && (both.desktop.shot || both.mobile.shot)) shotNote(`Phone view: ${both.mobile.note}`);
   }
 
-  if (!shots.length && !options.skipScreenshots) {
+  // Only when nothing above has already explained itself. The capture says why
+  // there is no picture — a timeout, an actor that is not deployed, an address
+  // that does not resolve — and `ux.ts` prints that reason; adding this on top
+  // put "Nobody has seen how the site looks" in the report twice, once with a
+  // cause and once without.
+  if (!shots.length && !options.skipScreenshots && stepNotes.screenshots.length === 0) {
     shotNote(
       "Nobody has seen how the site actually looks — only what it is made of. The design, the layout and the first impression are the half a business owner cares about, and none of it could be checked.",
     );

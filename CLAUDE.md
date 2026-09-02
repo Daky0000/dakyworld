@@ -717,6 +717,39 @@ survives the next boot. Before this a deployment that never opened the settings
 screen had no ceiling at all, and the meter read Apify's own free-plan credit
 ($5) as though it were one.
 
+**A page that never finishes loading is still photographed.** `load` waits for
+every image, font and script, and one third-party asset that never returns is
+the commonest way a real small-business site fails to photograph — the document
+itself rendered seconds earlier. A timeout drops one rung to
+`domcontentloaded`, presses `window.stop()` (leaving the requests open only
+moves the timeout from `goto` to `screenshot`), takes the picture, and marks the
+row `partiallyLoaded` so the report carries the caveat rather than silence. Only
+on a timeout: a refused connection gives the same answer twice.
+
+**A connection timeout earns the direct retry, not just a proxy error.** A law
+firm's site came back `net::ERR_TIMED_OUT` through the Apify proxy while
+answering a plain request in 1.7 seconds. A datacentre range a host drops on the
+floor does not announce itself as a proxy failure — it looks exactly like a dead
+website, and the report then says a live business's site could not be opened.
+
+**Chromium's vocabulary never reaches a business.** `NETWORK_REASONS` in the
+actor translates each `net::ERR_*` into a sentence, the way `lib/whatsapp.ts`
+translates Meta's codes. Two traps came with that, both caught by the actor's
+own tests:
+
+- **The retries must classify on the raw message, never the translated one.**
+  Translating `ERR_CERT_DATE_INVALID` deletes the token the certificate retry
+  tests for, which switched that retry off silently. `CaptureFailure.raw` keeps
+  Chromium's words for the code, and off the contract so nothing downstream
+  depends on them.
+- **Only one half may frame the sentence.** The actor sends the reason and
+  `describeRowFailure` puts the frame round it; both framing produced, in a real
+  report, *"the page could not be opened. The page could not be opened:
+  page.goto: net::ERR_TIMED_OUT at https://…"*. The same doubling hit
+  "Nobody has seen how the site looks", once from `ux.ts` with a cause and once
+  from `evidence.ts` without — that blanket note now only fires when nothing
+  else has explained itself.
+
 Three things about the picture that are still exactly as they were, because
 getting any of them wrong is silent:
 
