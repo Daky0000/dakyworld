@@ -324,13 +324,18 @@ export function unknownInputKeys(input: Record<string, unknown>, schema: ApifyAc
  */
 export async function seedCaptureBudget(): Promise<number | null> {
   if (await getSetting(SETTING.CAPTURE_BUDGET_SEEDED)) return null;
-  await setSetting(SETTING.CAPTURE_BUDGET_SEEDED, new Date().toISOString());
 
   // Only if nothing is there. A deployment that already has a ceiling has one
   // somebody chose, and this is a starting point, not a correction.
   const existing = await getSetting(SETTING.CAPTURE_MONTHLY_BUDGET);
-  if (existing?.trim()) return null;
+  const wrote = existing?.trim() ? null : SEEDED_MONTHLY_BUDGET_USD;
+  if (wrote != null) await setSetting(SETTING.CAPTURE_MONTHLY_BUDGET, String(wrote));
 
-  await setSetting(SETTING.CAPTURE_MONTHLY_BUDGET, String(SEEDED_MONTHLY_BUDGET_USD));
-  return SEEDED_MONTHLY_BUDGET_USD;
+  // **The marker goes last, after the value it is a marker for.** Written
+  // first, a failure between the two lines leaves a deployment marked as
+  // seeded with no ceiling in it — and because the marker is what makes this
+  // run once, nothing would ever put that right. Written last, the same
+  // failure simply tries again on the next boot.
+  await setSetting(SETTING.CAPTURE_BUDGET_SEEDED, new Date().toISOString());
+  return wrote;
 }

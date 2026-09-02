@@ -313,6 +313,13 @@ console.log("\nThe monthly Apify ceiling");
 
   check("it does not write a second time", (await seedCaptureBudget()) === null);
 
+  // The marker is written *after* the value it marks. Written first, a failure
+  // between the two lines leaves a deployment marked as seeded with no ceiling
+  // in it — and since the marker is what makes this run once, nothing would
+  // ever put that right. This is the observable half of that ordering: after a
+  // successful seed, both exist.
+  check("the marker and the value are both there", Boolean(await settings.getSetting(SETTING.CAPTURE_BUDGET_SEEDED)));
+
   // The whole reason this is seeded rather than defaulted. Blank means no
   // ceiling; a default of ten would make that unsayable, because clearing the
   // box would put ten straight back.

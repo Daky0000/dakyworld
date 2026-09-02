@@ -36,7 +36,8 @@ import { approvalsRouter } from "./routes/approvals.js";
 import { slackHealth } from "./services/slackHealth.js";
 import { screenshotActorReady } from "./services/apifyScreenshot.js";
 import { deployScreenshotActorIfMissing } from "./services/screenshotActorDeploy.js";
-import { seedCaptureBudget } from "./services/captureConfig.js";
+import { readCaptureConfig, seedCaptureBudget } from "./services/captureConfig.js";
+import { apifyConfigured } from "./lib/apify.js";
 import { countPending } from "./services/approvals.js";
 import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
@@ -540,10 +541,22 @@ ensureSystemRoles()
 
           // A monthly Apify ceiling to start from, written once as a real
           // value the Owner can change or clear — see seedCaptureBudget.
-          const ceiling = await seedCaptureBudget().catch(() => null);
-          if (ceiling != null) {
+          const seededCeiling = await seedCaptureBudget().catch(() => null);
+          if (seededCeiling != null) {
+            console.log(`  → Monthly Apify ceiling set to $${seededCeiling} to start from.`);
+          }
+          // And what it actually is, every boot, whether or not this run wrote
+          // it. A figure that is only ever announced on the one boot that set
+          // it is a figure nobody can check afterwards without a login — which
+          // is exactly the position this was in an hour after it shipped.
+          // Only where Apify is connected, because a ceiling on spending that
+          // cannot happen is noise.
+          if (await apifyConfigured().catch(() => false)) {
+            const { monthlyBudgetUsd } = await readCaptureConfig();
             console.log(
-              `  → Monthly Apify ceiling set to $${ceiling}. Change it under Settings → Lead capture → Monthly budget; blank there means no ceiling.`,
+              monthlyBudgetUsd == null
+                ? `  → No monthly Apify ceiling. Set one under Settings → Lead capture → Monthly budget.`
+                : `  → Monthly Apify ceiling: $${monthlyBudgetUsd}. Change it under Settings → Lead capture → Monthly budget; blank there means no ceiling.`,
             );
           }
 
