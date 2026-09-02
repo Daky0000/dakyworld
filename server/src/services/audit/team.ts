@@ -13,6 +13,7 @@ import { reviewContent } from "./content.js";
 import { reviewSpeedAndSeo } from "./performance.js";
 import { reviewSecurity } from "./security.js";
 import { reviewUx } from "./ux.js";
+import { decideRedesign } from "./redesign.js";
 import { synthesise } from "./synthesis.js";
 import {
   DISCIPLINES,
@@ -192,11 +193,25 @@ export async function reviewWebsite(subject: AuditSubject, options: RunOptions =
     costUsd: evidence.costUsd + disciplines.reduce((total, discipline) => total + discipline.costUsd, 0),
   };
 
-  // --- The compile ---------------------------------------------------------
-  const compiled = await synthesise(draft, evidence, { trade: subject.trade, town: subject.town });
+  // --- The compile, and the call -------------------------------------------
+  //
+  // Both read the sections rather than the site, so both go after them and
+  // neither goes after the other: the compile weighs the four against each
+  // other, and the redesign call answers what to do about the page. They are
+  // asked the same evidence and they are asked separately, which is the same
+  // reason the four reviewers do not talk to each other — a decider that has
+  // read a summary agrees with it.
+  //
+  // The call is given the UI/UX findings, though. Not to repeat them: so that
+  // one document cannot say two things about one homepage.
+  const [compiled, redesign] = await Promise.all([
+    synthesise(draft, evidence, { trade: subject.trade, town: subject.town }),
+    decideRedesign(evidence, business, byDiscipline.get("UX")?.findings ?? []),
+  ]);
   draft.synthesis = compiled.synthesis;
-  draft.costUsd += compiled.costUsd;
-  draft.notes = [...new Set([...draft.notes, ...compiled.notes])];
+  draft.redesign = redesign.verdict;
+  draft.costUsd += compiled.costUsd + redesign.costUsd;
+  draft.notes = [...new Set([...draft.notes, ...compiled.notes, ...redesign.notes])];
 
   return { report: draft, evidence };
 }
@@ -600,12 +615,23 @@ export async function rerunAuditSection(auditId: string, discipline: Discipline,
     };
   });
 
-  // --- The compile ---------------------------------------------------------
+  // --- The compile, and the call -------------------------------------------
+  //
+  // **The redesign call is made again only when the UI/UX section moved.** It
+  // is decided from the pictures and from what the reviewer found in them, so
+  // a security or content re-run changes nothing it was arguing from and
+  // paying for a second opinion would only give the document two answers a
+  // fortnight apart. A UI/UX re-run changes both, and carrying the old call
+  // forward under a new set of findings is exactly the contradiction the whole
+  // section is arranged to avoid.
+  const redesign = discipline === "UX" ? await decideRedesign(evidence, business, fresh.findings) : null;
+  if (redesign) report.redesign = redesign.verdict;
+
   const compiled = await synthesise(report, evidence, { trade: subject.trade, town: subject.town });
   report.synthesis = compiled.synthesis;
-  const rerunCostUsd = evidence.costUsd + fresh.costUsd + compiled.costUsd;
+  const rerunCostUsd = evidence.costUsd + fresh.costUsd + compiled.costUsd + (redesign?.costUsd ?? 0);
   report.costUsd = (stored.costUsd ?? 0) + rerunCostUsd;
-  report.notes = [...new Set([...report.notes, ...annotateNotes, ...compiled.notes])];
+  report.notes = [...new Set([...report.notes, ...annotateNotes, ...compiled.notes, ...(redesign?.notes ?? [])])];
 
   // --- The files -----------------------------------------------------------
   const existing = shotFilesOf(row.screenshots);

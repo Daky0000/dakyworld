@@ -20,6 +20,7 @@
  */
 
 import type { AuditSeverity } from "../companyAudit.js";
+import type { RedesignVerdict } from "./redesign.js";
 
 export type { AuditSeverity };
 
@@ -201,6 +202,19 @@ export interface WebsiteAuditReport {
   verdict: string;
   disciplines: DisciplineReport[];
   synthesis: AuditSynthesis | null;
+  /**
+   * Whether the page needs rebuilding, decided from the pictures by whoever
+   * serves the `redesign` job — Perplexity unless the Owner has moved it.
+   *
+   * Not a discipline and deliberately not scored. The four sections measure a
+   * site; this one answers the question those measurements are for, and giving
+   * it a number out of a hundred would put it in the average as though
+   * "rebuild it" were a fifth kind of fault rather than the conclusion.
+   *
+   * Optional, because rows written before this section existed have no such
+   * field and there is nothing to infer from that absence but its date.
+   */
+  redesign?: RedesignVerdict | null;
   screenshots: AuditScreenshot[];
   /** Everything the team could not check, gathered into one list. */
   notes: string[];

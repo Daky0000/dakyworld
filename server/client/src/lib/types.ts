@@ -592,7 +592,8 @@ export type ModelJob =
   | "factcheck"
   | "research"
   | "humanise"
-  | "vision";
+  | "vision"
+  | "redesign";
 
 export interface ModelProvider {
   key: ProviderKey;
@@ -1349,9 +1350,36 @@ export interface WebsiteAuditReport {
     whatIsWorking: string[];
     emailBrief: { openOn: string; consequence: string; ask: "DEMO" | "FIX" | "NOTHING"; whyThatAsk: string; doNotSay: string[] };
   } | null;
+  /**
+   * Whether the page needs rebuilding, decided from the pictures by whoever
+   * serves the redesign job. Absent on reports written before that section
+   * existed, and null when it could not be made — the reason is in `notes`.
+   */
+  redesign?: RedesignVerdict | null;
   screenshots: { view: "desktop" | "mobile"; width: number; height: number; cropped: boolean; takenAt: string; annotatedBase64?: string | null }[];
   notes: string[];
   costUsd: number;
+}
+
+export type RedesignCall = "REBUILD" | "TARGETED_FIXES" | "LEAVE_IT";
+
+export type RedesignArea = "LAYOUT" | "TYPOGRAPHY" | "HIERARCHY" | "BRANDING" | "IMAGERY" | "CALL_TO_ACTION" | "MOBILE" | "CREDIBILITY" | "DATED";
+
+/** The call on whether a homepage needs rebuilding. See services/audit/redesign.ts. */
+export interface RedesignVerdict {
+  call: RedesignCall;
+  headline: string;
+  assessment: string;
+  issues: { area: RedesignArea; observed: string; view: "desktop" | "mobile"; costsThem: string }[];
+  impact: { trust: string; usability: string; conversion: string; howItFeels: string };
+  direction: { change: string; why: string }[];
+  /** The paragraph that goes into a proposal unedited. */
+  summary: string;
+  /** The agent whose wording made the call, by name. */
+  reviewer: string;
+  decidedBy: string;
+  decidedAt: string;
+  sources: { title: string; url: string }[];
 }
 
 /** What a list or a drawer shows. Never the report or the Markdown — both are large. */

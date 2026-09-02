@@ -17,6 +17,7 @@ import {
   stampLetterhead,
   type LetterheadIdentity,
 } from "../letterhead.js";
+import { AREA_NAMES, callLabel, type RedesignVerdict } from "./redesign.js";
 import { DISCIPLINE_AGENTS, DISCIPLINE_NAMES, reportScored, type AuditFindingDetail, type AuditSeverity, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
 
 /**
@@ -335,6 +336,99 @@ function screenshotBlock(doc: PDFDoc, image: Buffer, size: { width: number; heig
   doc.moveDown(1);
 }
 
+// --- The redesign call ------------------------------------------------------
+
+/**
+ * The decision, on its own page.
+ *
+ * Its own page rather than a block under the pictures, and that is a judgement
+ * about how the document is read rather than about layout: this is the page
+ * somebody prints, or turns their screen round to show a partner. A verdict
+ * that begins two thirds of the way down a page of screenshots is a verdict
+ * nobody quotes.
+ *
+ * The sources are not printed here. They are pages about how sites in a trade
+ * look now, not evidence about this business, and a list of links under a
+ * verdict reads as though the verdict came off them. They are in the Markdown,
+ * labelled for what they are.
+ */
+function redesignSection(doc: PDFDoc, call: RedesignVerdict) {
+  doc.addPage();
+  header(doc, "Does this page need a redesign?", callLabel(call.call));
+
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(11).text(pdfText(call.headline), MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 2 });
+  doc.moveDown(0.6);
+  paragraph(doc, call.assessment, 10);
+
+  if (call.issues.length) {
+    sectionTitle(doc, "What is wrong with it", 100);
+    for (const issue of call.issues) {
+      room(doc, 40);
+      const y = doc.y;
+      doc
+        .fillColor(ACCENT)
+        .font("Helvetica-Bold")
+        .fontSize(7)
+        .text(pdfText(`${AREA_NAMES[issue.area].toUpperCase()} · ${issue.view === "mobile" ? "PHONE" : "DESKTOP"}`), MARGIN_X, y, {
+          width: CONTENT_W,
+          characterSpacing: 1,
+        });
+      doc.moveDown(0.25);
+      doc.fillColor(INK).font("Helvetica").fontSize(9.4).text(pdfText(issue.observed), MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 1.8 });
+      doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(8.6).text(pdfText(issue.costsThem), MARGIN_X, doc.y + 1.5, { width: CONTENT_W, lineGap: 1.6 });
+      doc.moveDown(0.7);
+    }
+  }
+
+  sectionTitle(doc, "What it does to the business", 120);
+  labelled(doc, "Trust", call.impact.trust);
+  labelled(doc, "Finding things", call.impact.usability);
+  labelled(doc, "Enquiries", call.impact.conversion);
+  labelled(doc, "Landing on it", call.impact.howItFeels);
+
+  if (call.direction.length) {
+    sectionTitle(doc, "What a redesign should change", 90);
+    call.direction.forEach((step, index) => {
+      room(doc, 42);
+      const y = doc.y;
+      doc.roundedRect(MARGIN_X, y, 18, 18, 4).fill(INK);
+      doc
+        .fillColor(CREAM)
+        .font("Helvetica-Bold")
+        .fontSize(9)
+        .text(String(index + 1), MARGIN_X, y + 5, { width: 18, align: "center", lineBreak: false });
+      doc
+        .fillColor(INK)
+        .font("Helvetica-Bold")
+        .fontSize(9.6)
+        .text(pdfText(step.change), MARGIN_X + 27, y + 1, { width: RIGHT_EDGE - MARGIN_X - 27, lineGap: 1 });
+      doc
+        .fillColor(MUTED)
+        .font("Helvetica")
+        .fontSize(8.4)
+        .text(pdfText(step.why), MARGIN_X + 27, doc.y + 1, { width: RIGHT_EDGE - MARGIN_X - 27, lineGap: 1.4 });
+      doc.y = Math.max(doc.y, y + 22) + 7;
+    });
+  }
+
+  sectionTitle(doc, "In one paragraph", 130);
+  // Set apart, because it is the part meant to be read aloud or pasted into a
+  // proposal, and the rule down its left edge is what tells a reader that.
+  room(doc, 90);
+  const top = doc.y;
+  doc.fillColor(INK).font("Helvetica").fontSize(10).text(pdfText(call.summary), MARGIN_X + 14, top, { width: CONTENT_W - 14, lineGap: 3 });
+  doc.strokeColor(ACCENT).lineWidth(2).moveTo(MARGIN_X + 2, top + 1).lineTo(MARGIN_X + 2, doc.y - 2).stroke();
+  doc.moveDown(0.9);
+
+  doc
+    .fillColor(MUTED)
+    .font("Helvetica")
+    .fontSize(7.6)
+    .text(pdfText(`The ${call.reviewer} made this call from the pictures on the previous page and from nothing else. ${call.decidedBy}.`), MARGIN_X, doc.y, {
+      width: CONTENT_W,
+    });
+}
+
 // --- The document -----------------------------------------------------------
 
 export interface AuditPdfData {
@@ -469,6 +563,11 @@ export async function renderAuditPdf(data: AuditPdfData): Promise<Buffer> {
       }
     }
   }
+
+  // --- The call -------------------------------------------------------------
+  // After the pictures it was made from and before the four sections it is the
+  // conclusion of, which is the order the questions arrive in.
+  if (report.redesign) redesignSection(doc, report.redesign);
 
   // --- The four sections ----------------------------------------------------
   for (const discipline of report.disciplines) {

@@ -104,6 +104,18 @@ export const WRITER_JOBS: WriterJob[] = [
     outward: true,
   },
   {
+    key: "audit.redesign",
+    label: "Audit — the redesign call",
+    // The UI/UX Designer, not the Page Reviewer, and the split is the point of
+    // the section: one of them says what is visibly true of the page and the
+    // other decides what should be done about it. "Knowing when to refine and
+    // when to replace" is a skill on this agent and on no other.
+    agentKey: "design.ux",
+    where: "services/audit/redesign.ts",
+    what: "The call on whether a homepage needs rebuilding, needs fixing in places, or is fine — and the paragraph that goes into a proposal.",
+    outward: true,
+  },
+  {
     key: "audit.speed",
     label: "Audit — speed and findability",
     agentKey: "seo.specialist",

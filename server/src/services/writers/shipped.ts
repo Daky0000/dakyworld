@@ -29,6 +29,7 @@ const LOADERS: Record<string, () => Promise<string>> = {
   "message.phone": async () => (await import("../../lib/messageDrafter.js")).SHIPPED_DOCTRINE,
   proposal: async () => (await import("../../lib/proposalWriter.js")).SHIPPED_DOCTRINE,
   "audit.ux": async () => (await import("../audit/ux.js")).SHIPPED_DOCTRINE,
+  "audit.redesign": async () => (await import("../audit/redesign.js")).SHIPPED_DOCTRINE,
   "audit.speed": async () => (await import("../audit/performance.js")).SHIPPED_DOCTRINE,
   "audit.content": async () => (await import("../audit/content.js")).SHIPPED_DOCTRINE,
   "audit.synthesis": async () => (await import("../audit/synthesis.js")).SHIPPED_DOCTRINE,

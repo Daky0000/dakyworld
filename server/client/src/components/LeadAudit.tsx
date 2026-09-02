@@ -7,6 +7,8 @@ import {
   type AuditDisciplineReport,
   type AuditFindingDetail,
   type Lead,
+  type RedesignArea,
+  type RedesignVerdict,
   type WebsiteAudit,
 } from "../lib/types";
 import { Badge, Button, RelativeTime } from "./ui";
@@ -229,6 +231,8 @@ function AuditDetail({
         </div>
       )}
 
+      {report.redesign && <RedesignCard call={report.redesign} />}
+
       {report.disciplines.map((discipline) => (
         <DisciplineCard
           key={discipline.discipline}
@@ -292,6 +296,119 @@ function AuditDetail({
           </div>
         </details>
       )}
+    </div>
+  );
+}
+
+const REDESIGN_AREA_NAMES: Record<RedesignArea, string> = {
+  LAYOUT: "Layout and spacing",
+  TYPOGRAPHY: "Type and readability",
+  HIERARCHY: "What the eye is led to",
+  BRANDING: "Whether it looks like one company",
+  IMAGERY: "The pictures",
+  CALL_TO_ACTION: "What it asks the visitor to do",
+  MOBILE: "On a phone",
+  CREDIBILITY: "Whether it looks like a real business",
+  DATED: "Dated, cluttered or unfinished",
+};
+
+/**
+ * The call on whether the page needs rebuilding.
+ *
+ * Its own card above the four sections, because it is the answer the founder
+ * is looking for when they open this drawer and the four scores are the
+ * working behind it. The paragraph at the bottom is set apart and copyable in
+ * one gesture: it is written to go into a proposal unedited, and a paragraph
+ * somebody has to select by dragging is a paragraph that gets retyped and
+ * quietly reworded.
+ */
+function RedesignCard({ call }: { call: RedesignVerdict }) {
+  const [copied, setCopied] = useState(false);
+
+  // Ink for a rebuild, blue for a fix, lime for a page that is fine. The same
+  // weight-not-hue rule the PDF follows — the palette has no red.
+  const tone =
+    call.call === "REBUILD"
+      ? { chip: "bg-ink text-cream", label: "Needs rebuilding" }
+      : call.call === "TARGETED_FIXES"
+        ? { chip: "bg-blue text-cream", label: "Needs fixing in places" }
+        : { chip: "bg-lime text-ink", label: "No redesign needed" };
+
+  return (
+    <div className="rounded-2xl border border-line bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Does this page need a redesign?</p>
+        <span className={`rounded-full px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.12em] ${tone.chip}`}>{tone.label}</span>
+      </div>
+
+      <p className="mt-2 text-base font-semibold text-ink">{call.headline}</p>
+      <p className="mt-1.5 whitespace-pre-line text-sm text-muted">{call.assessment}</p>
+
+      {call.issues.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {call.issues.map((issue, index) => (
+            <li key={`${issue.area}-${index}`} className="border-l-2 border-line pl-3">
+              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">
+                {REDESIGN_AREA_NAMES[issue.area]} · {issue.view === "mobile" ? "phone" : "desktop"}
+              </p>
+              <p className="mt-0.5 text-sm text-ink">{issue.observed}</p>
+              <p className="text-[12px] text-muted">{issue.costsThem}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+        {[
+          ["Trust", call.impact.trust],
+          ["Finding things", call.impact.usability],
+          ["Enquiries", call.impact.conversion],
+          ["Landing on it", call.impact.howItFeels],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-xl border border-line p-2.5">
+            <dt className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</dt>
+            <dd className="mt-0.5 text-[13px] text-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {call.direction.length > 0 && (
+        <ol className="mt-3 space-y-1.5">
+          {call.direction.map((step, index) => (
+            <li key={step.change} className="flex gap-2 text-sm">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[10px] text-cream">{index + 1}</span>
+              <span>
+                <span className="font-semibold text-ink">{step.change}</span> <span className="text-muted">{step.why}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      <div className="mt-3 rounded-xl border border-blue/25 bg-blue/5 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">The paragraph for a proposal</p>
+          <button
+            type="button"
+            className="font-mono text-[10px] uppercase tracking-[.12em] text-blue transition hover:text-ink"
+            onClick={() => {
+              void navigator.clipboard?.writeText(call.summary).then(
+                () => setCopied(true),
+                // A clipboard a browser will not give up is not an error worth
+                // a red line in a review of somebody's website.
+                () => setCopied(false),
+              );
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+        <p className="mt-1.5 text-sm text-ink">{call.summary}</p>
+      </div>
+
+      <p className="mt-2 text-[11px] text-muted">
+        The {call.reviewer} made this call from the pictures and nothing else. {call.decidedBy}.
+      </p>
     </div>
   );
 }

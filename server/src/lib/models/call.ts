@@ -85,6 +85,24 @@ const DEFAULT_MAX_TOKENS = 8000;
  */
 const PERPLEXITY_MIN_TOKENS = 16;
 
+/**
+ * The largest picture Perplexity documents itself as accepting: 5 MB, measured
+ * on the base64 as sent.
+ *
+ * Enforced here rather than left to the vendor because of what a 413 halfway
+ * through a batch would cost — but more because of what dropping the image
+ * quietly would cost, which is the failure this guard actually exists for. A
+ * request that arrived with the words and without the screenshot gets a
+ * confident answer about a page nothing looked at, and there is no way to tell
+ * that answer from a real one afterwards. So an oversized image fails the
+ * attempt with a sentence saying so, and the chain moves to a vendor that can
+ * take it.
+ *
+ * A cropped homepage at 1024x1920 is a few hundred kilobytes, so nothing this
+ * app sends is near the ceiling. It is here for the day something changes that.
+ */
+const PERPLEXITY_MAX_IMAGE_BASE64 = 5 * 1024 * 1024;
+
 const DEFAULT_MESSAGES: Record<FailureKind, string> = {
   noKey: "No model is connected for this. Add a key under Settings → AI models.",
   auth: "That model provider rejected the API key. Check it under Settings → AI models.",
@@ -122,11 +140,14 @@ export interface ModelRequest {
    */
   searchDomains?: string[];
   /**
-   * Pictures to look at alongside the prompt — job `vision`, in practice.
+   * Pictures to look at alongside the prompt — jobs `vision` and `redesign`.
    *
-   * Only the vendors that declare `vision` are ever routed a job that sends
-   * these, so an adapter that ignores them is not a silent downgrade: it is
-   * unreachable. Perplexity's is, deliberately.
+   * Only the vendors that declare one of those jobs are ever routed a request
+   * that carries these, so an adapter that ignored them would not be a silent
+   * downgrade — it would be unreachable. **Every adapter here reads them now.**
+   * Perplexity's did not until the redesign call was given to it, and the rule
+   * that made that safe still holds: a vendor that cannot be shown the picture
+   * must not be in the chain for a job that has one.
    */
   images?: PromptImage[];
 }
@@ -571,7 +592,7 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
       max_tokens: Math.max(request.maxTokens ?? DEFAULT_MAX_TOKENS, PERPLEXITY_MIN_TOKENS),
       messages: [
         { role: "system", content: request.system },
-        { role: "user", content: request.prompt() },
+        { role: "user", content: perplexityContent(request) },
       ],
       response_format: { type: "json_schema", json_schema: { schema: request.schema } },
       ...(request.recency ? { search_recency_filter: request.recency } : {}),
@@ -601,6 +622,42 @@ async function callPerplexity(apiKey: string, model: string, request: ModelReque
     sources: sources.filter((source) => source.url),
     truncated: choice?.finish_reason === "length",
   };
+}
+
+/**
+ * A user turn for Perplexity: a bare string with nothing to look at, and the
+ * parts array with a picture in it.
+ *
+ * The same two shapes as `openAiContent` and one difference — the words go
+ * first here, which is the order Perplexity's own documentation puts them in.
+ *
+ * **This vendor is only ever handed a picture for the redesign call**, never
+ * for `vision`: see the note on its `jobs` list. Describing a screenshot and
+ * deciding what to do about one are different questions, and the vendor whose
+ * every answer is shaped by a live search is the right instrument for only the
+ * second of them.
+ */
+function perplexityContent(request: ModelRequest): unknown {
+  const images = request.images ?? [];
+  if (!images.length) return request.prompt();
+
+  const tooBig = images.find((image) => image.base64.length > PERPLEXITY_MAX_IMAGE_BASE64);
+  if (tooBig) {
+    // Thrown rather than dropped. See PERPLEXITY_MAX_IMAGE_BASE64: an answer
+    // written without the picture is indistinguishable from one written with
+    // it, and this job's whole evidence is the picture.
+    throw new Error(
+      `A ${(tooBig.base64.length / (1024 * 1024)).toFixed(1)}MB picture is past the 5MB Perplexity accepts, so it was not sent one it could not open.`,
+    );
+  }
+
+  return [
+    { type: "text", text: request.prompt() },
+    ...images.map((image) => ({
+      type: "image_url",
+      image_url: { url: `data:${image.mediaType};base64,${image.base64}` },
+    })),
+  ];
 }
 
 // --- NVIDIA -----------------------------------------------------------------

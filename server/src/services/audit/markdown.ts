@@ -1,3 +1,4 @@
+import { AREA_NAMES, callLabel } from "./redesign.js";
 import { DISCIPLINE_NAMES, reportScored, type AuditFindingDetail, type DisciplineReport, type WebsiteAuditReport } from "./types.js";
 
 /**
@@ -121,6 +122,71 @@ export function auditMarkdown(report: WebsiteAuditReport, options: MarkdownOptio
         say("The numbered boxes mark roughly where each UI/UX point below applies. They are approximate — the area, not the pixel.", "");
       }
       if (shot.cropped) say("_The page is longer than this; the picture is the top of it, which is what a visitor sees first._", "");
+    }
+  }
+
+  // --- The call -------------------------------------------------------------
+  //
+  // Directly under the pictures, because it is the answer to the question a
+  // reader has while looking at them, and above the four sections because it
+  // is the conclusion they are evidence for. The cold lead writer reads this
+  // file top to bottom and reaches the decision before the detail, which is
+  // the order the letter has to make its own argument in.
+  if (report.redesign) {
+    const call = report.redesign;
+    say(
+      `## Does this page need a redesign? — ${callLabel(call.call)}`,
+      "",
+      `*The ${call.reviewer} made this call from the pictures above and from nothing else. ${call.decidedBy}.*`,
+      "",
+      `**${call.headline}**`,
+      "",
+      call.assessment,
+      "",
+    );
+
+    if (call.issues.length) {
+      say("### What is wrong with it", "");
+      for (const issue of call.issues) {
+        say(`- **${AREA_NAMES[issue.area]}** (${issue.view === "mobile" ? "phone" : "desktop"}). ${issue.observed} ${issue.costsThem}`);
+      }
+      say("");
+    }
+
+    say(
+      "### What it does to the business",
+      "",
+      `**Trust.** ${call.impact.trust}`,
+      "",
+      `**Finding things.** ${call.impact.usability}`,
+      "",
+      `**Enquiries.** ${call.impact.conversion}`,
+      "",
+      `**What it feels like to land on.** ${call.impact.howItFeels}`,
+      "",
+    );
+
+    if (call.direction.length) {
+      say("### What a redesign should change", "");
+      call.direction.forEach((step, index) => say(`${index + 1}. **${step.change}** ${step.why}`));
+      say("");
+    }
+
+    // The one paragraph the founder asked this section for, marked so it can
+    // be found without reading the rest of the file.
+    say("### The paragraph for a proposal", "", "> " + call.summary.replace(/\n+/g, " "), "");
+
+    if (call.sources.length) {
+      say(
+        "<details><summary>What the decider read while deciding</summary>",
+        "",
+        "These are pages about how sites of this kind look now, not evidence about this business. They belong to the judgement, not to the findings.",
+        "",
+        ...call.sources.map((source) => `- [${escapeCell(source.title)}](${source.url})`),
+        "",
+        "</details>",
+        "",
+      );
     }
   }
 

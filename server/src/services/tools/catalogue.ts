@@ -1406,6 +1406,10 @@ export const TOOLS: ToolDefinition<any, any>[] = [
           findings: discipline.findings.length,
         })),
         theOneThing: run.report.synthesis?.theOneThing ?? null,
+        // The decision, in two fields. Not the whole section: an agent that
+        // wants the argument reads the Markdown, and an agent that wants to
+        // know whether Dakyworld is proposing a rebuild wants this.
+        redesign: run.report.redesign ? { call: run.report.redesign.call, headline: run.report.redesign.headline } : null,
         pdfFileId: run.pdfFileId,
         markdownFileId: run.markdownFileId,
         couldNotCheck: run.report.notes,
@@ -1492,6 +1496,9 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         scored?: boolean;
         disciplines: { discipline: keyof typeof DISCIPLINE_NAMES; reviewer: string; score: number; scored: boolean; headline: string; summary: string }[];
         synthesis: { executiveSummary: string; theOneThing: string; emailBrief: unknown } | null;
+        // Absent on rows written before the redesign call existed, which is why
+        // it is optional here as well as on the report type itself.
+        redesign?: { call: string; headline: string; assessment: string; summary: string; decidedBy: string } | null;
         notes: string[];
       };
 
@@ -1528,6 +1535,19 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         executiveSummary: report.synthesis?.executiveSummary ?? null,
         theOneThing: report.synthesis?.theOneThing ?? null,
         emailBrief: report.synthesis?.emailBrief ?? null,
+        // The redesign call, with the paragraph it was written to be quoted
+        // from. A proposal writer asking what Dakyworld thinks of this site is
+        // asking for exactly this, and without it here the only honest answer
+        // it can give is one it has made up.
+        redesign: report.redesign
+          ? {
+              call: report.redesign.call,
+              headline: report.redesign.headline,
+              assessment: report.redesign.assessment,
+              forAProposal: report.redesign.summary,
+              decidedBy: report.redesign.decidedBy,
+            }
+          : null,
         // Handed over with the findings rather than left for somebody to ask
         // about: a writer who does not know what was skipped will state the
         // gap as a fault.

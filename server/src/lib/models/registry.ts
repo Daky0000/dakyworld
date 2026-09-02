@@ -53,9 +53,27 @@ export type ModelJob =
   /** The same text, in plain English a person would actually say. */
   | "humanise"
   /** Looking at a picture and saying what is in it — a screenshot of a page, mostly. */
-  | "vision";
+  | "vision"
+  /** Looking at the same picture and deciding whether the page needs rebuilding. */
+  | "redesign";
 
-export const MODEL_JOBS: ModelJob[] = ["text", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision"];
+export const MODEL_JOBS: ModelJob[] = ["text", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign"];
+
+/**
+ * The jobs that are handed a picture, and therefore may only ever be served by
+ * a model that can see one.
+ *
+ * Two of them now, which is why this is a list rather than a comparison against
+ * the word "vision" written out in three places. The cost of getting it wrong
+ * is the same for both and it is a quiet one: a screenshot bought at Apify,
+ * sent to a model that cannot open it, and described convincingly anyway.
+ */
+export const PICTURE_JOBS: ModelJob[] = ["vision", "redesign"];
+
+/** True for a job whose request carries an image. */
+export function needsSight(job: ModelJob | "agent"): boolean {
+  return (PICTURE_JOBS as string[]).includes(job);
+}
 
 /**
  * How much a job is worth paying for, before anybody has said otherwise.
@@ -235,6 +253,31 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
       "Reads a screenshot of a prospect's homepage and says what a first-time visitor actually sees — the half of a site audit that markup cannot answer.",
     defaultProvider: "nvidia",
     fallback: "anthropic",
+  },
+  redesign: {
+    job: "redesign",
+    name: "The redesign call",
+    phrase: "deciding whether a page needs a redesign",
+    blurb:
+      "Looks at the same pictures the reviewer read and answers the question the business owner is actually asking — rebuild it, fix a few things, or leave it alone — with the paragraph that goes into a proposal.",
+    // **Perplexity, and it is the only job routed there for something other
+    // than searching.** The Owner's call, and it separates two questions that
+    // one model was answering in one breath: what is visibly true of this page,
+    // and what should be done about it. A reviewer that has just listed six
+    // faults slides into recommending a rebuild, because that is where a list
+    // of faults leads — and "you need a new website" is the most expensive
+    // sentence in a proposal to have got wrong.
+    //
+    // What the vendor brings that a describing model does not is the live half:
+    // the judgement is made against what a page in this trade looks like now
+    // rather than against whatever was current when a model finished training.
+    //
+    // NVIDIA behind it rather than Claude, because this is a picture job before
+    // it is a writing one and the free vision ladder does it for nothing.
+    // Claude is still in the chain underneath. Every vendor that can be reached
+    // for this job can see — `standInsFor` guarantees it.
+    defaultProvider: "perplexity",
+    fallback: "nvidia",
   },
 };
 
@@ -617,7 +660,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // it would work, because the chain is now what runs when the first choice
     // fails and a candidate that cannot do the work is a wasted attempt with
     // a confusing error at the end of it.
-    jobs: ["text", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision"],
+    jobs: ["text", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision", "redesign"],
     models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
   },
   openai: {
@@ -631,7 +674,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     economyModel: "gpt-5.4-mini",
     console: "https://platform.openai.com/api-keys",
     keyHint: "sk-proj-…",
-    jobs: ["text", "spreadsheet", "organise", "triage", "image", "html", "vision"],
+    jobs: ["text", "spreadsheet", "organise", "triage", "image", "html", "vision", "redesign"],
     models: ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini"],
   },
   gemini: {
@@ -649,14 +692,14 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // this app doesn't wire up, and offering a route that silently can't serve
     // is worse than not offering it. It does read pictures, though, which is a
     // different model family it does wire up — so `vision` is on the list.
-    jobs: ["text", "spreadsheet", "organise", "triage", "html", "vision"],
+    jobs: ["text", "spreadsheet", "organise", "triage", "html", "vision", "redesign"],
     models: ["gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
   },
   perplexity: {
     key: "perplexity",
     name: "Perplexity",
     vendor: "Perplexity",
-    purpose: "Checks claims against live sources, and rewrites drafts into plain English.",
+    purpose: "Checks claims against live sources, rewrites drafts into plain English, and makes the redesign call on a homepage it has been shown.",
     keySetting: SETTING.PERPLEXITY_KEY,
     modelSetting: SETTING.PERPLEXITY_MODEL,
     defaultModel: "sonar",
@@ -665,7 +708,16 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     keyHint: "pplx-…",
     // It searches the live web on every call, which is what makes it the right
     // answer for "is this still true" and the wrong one for drawing a picture.
-    jobs: ["text", "triage", "factcheck", "research", "humanise"],
+    //
+    // **`redesign` and not `vision`, and the difference is the whole point.**
+    // This vendor takes an image now (see `callPerplexity`), so the temptation
+    // is to list both. They are not the same job. `vision` is description —
+    // what is visibly true of this page, boxed and numbered onto the
+    // screenshot — and a vendor that answers every question with the live web
+    // behind it is the wrong instrument for describing a picture in front of
+    // it. `redesign` is a decision about what to do, and there the live half
+    // is exactly what is wanted.
+    jobs: ["text", "triage", "factcheck", "research", "humanise", "redesign"],
     models: ["sonar", "sonar-pro", "sonar-reasoning-pro"],
   },
   nvidia: {
@@ -687,7 +739,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     name: "NVIDIA",
     vendor: "NVIDIA",
     purpose:
-      "The default for every job it can do, and every model on it is free. One key covers writing, sorting, triage, pages, research, fact-checking, plain English and looking at a page — each on the free model picked for that job.",
+      "The default for every job it can do, and every model on it is free. One key covers writing, sorting, triage, pages, research, fact-checking, plain English, looking at a page and the redesign call — each on the free model picked for that job.",
     keySetting: SETTING.NVIDIA_KEY,
     modelSetting: SETTING.NVIDIA_MODEL,
     // What NVIDIA is asked for when the free ladders are switched off, which
@@ -710,7 +762,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // that the app now speaks a second image wire. NVIDIA's image models are
     // not on this vendor's chat host at all — they are Cloud Functions on
     // `api.nvcf.nvidia.com`, addressed by function id. See `IMAGE_MODELS`.
-    jobs: ["text", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision"],
+    jobs: ["text", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign"],
     // The dropdown offers what this app has actually verified against the
     // endpoint, which is a narrower list than NVIDIA's catalogue on purpose —
     // see `FREE_MODELS`. Anything else can still be typed.
@@ -997,6 +1049,14 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // describing a screenshot with a model that cannot see it.
   vision: ["meta/llama-3.2-90b-vision-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "moonshotai/kimi-k3"],
 
+  // The redesign call is made from the same two pictures, so it is the vision
+  // ladder — a model that cannot see cannot decide whether a page needs
+  // rebuilding, however well it writes. The order differs by one place and the
+  // reason is the job: this answer is a page of prose a client reads rather
+  // than a list of observations, so Kimi K3 comes up behind the largest vision
+  // model and ahead of the small omni one.
+  redesign: ["meta/llama-3.2-90b-vision-instruct", "moonshotai/kimi-k3", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
+
   // The workforce loop. Every rung has to call tools — a model that cannot
   // fails on turn one, having read the whole system prompt first — and has to
   // hold a long conversation without losing the thread. All three are verified
@@ -1009,7 +1069,7 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
 /**
  * A heading, a clause and an explanation for each thing a ladder serves.
  *
- * Nine of the eleven are already written down in `JOBS`; this exists for the
+ * Ten of the twelve are already written down in `JOBS`; this exists for the
  * two that are not. `agent` is not a `ModelJob` — it is the loop that runs the
  * workforce — and `image` has no ladder at all, so a screen listing every
  * ladder needs a sentence for both or it shows a blank row and a job the Owner
@@ -1314,8 +1374,10 @@ export interface Routing {
  * pictures perfectly well sat connected and unasked one line away.
  *
  * A vendor that cannot do the job is never in this list, so the chain can only
- * ever end at somebody who can. Perplexity is not a stand-in for looking at a
- * screenshot no matter how many keys are missing.
+ * ever end at somebody who can. Perplexity is not a stand-in for `vision` no
+ * matter how many keys are missing — it declares `redesign`, which is a
+ * decision made from a picture, and not the describing job that draws boxes on
+ * one.
  */
 function standInsFor(job: ModelJob, chosen: ProviderKey): ProviderKey[] {
   const fallback = JOBS[job].fallback;

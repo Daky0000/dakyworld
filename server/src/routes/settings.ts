@@ -34,6 +34,7 @@ import {
   freeLadderFor,
   freeLadderSource,
   isLadderKey,
+  needsSight,
   isModelJob,
   isPricedModel,
   isProviderKey,
@@ -1178,8 +1179,10 @@ settingsRouter.put("/models/nvidia/free", async (req, res, next) => {
       // The one hard refusal. Everything else below is a warning, because
       // everything else is a judgement the Owner is allowed to make; this one
       // is not a judgement, it is a job the model cannot do. A blind model in
-      // the vision ladder means an Apify screenshot bought and never read.
-      if (job === "vision" && found.known && !found.vision) {
+      // a picture ladder means an Apify screenshot bought and never read —
+      // and that is true of the redesign call as much as of the looking, which
+      // is why this asks `needsSight` rather than naming one job.
+      if (needsSight(job) && found.known && !found.vision) {
         return res.status(400).json({ error: `“${id}” cannot look at a picture, so it cannot do ${label.phrase}. Pick one of the models marked as reading images.` });
       }
     }

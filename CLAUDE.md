@@ -122,8 +122,10 @@ as descriptions; nothing in one is ever executed.
 says `callModel({ job: "text" })` and the routing decides who serves it:
 **NVIDIA is the shipped default for every job except
 images**, ChatGPT draws, and Perplexity researches companies, checks facts
-against live sources and rewrites drafts into plain English when it is asked
-for by name. **A job whose chosen vendor has no key — or whose call fails
+against live sources, rewrites drafts into plain English, and **makes the
+redesign call on a homepage it has been shown** — the one job routed to it for
+something other than searching, and the reason its adapter takes a picture at
+all. **A job whose chosen vendor has no key — or whose call fails
 mid-flight — falls through a chain: the declared fallback first, then every
 other vendor that can actually do that job**, so nothing waits on a credential
 and each key the Owner pastes moves one job onto its chosen model.
@@ -1292,9 +1294,42 @@ evidence.ts   fetch once, measure once, photograph twice (1280 and 390),
   ├ performance.ts measured, then job: "text" for the summary only
   ├ content.ts     job: "text"    — the visible words, markup stripped
   └ security.ts    no model at all
+redesign.ts   job: "redesign" — rebuild it, fix it, or leave it, and the
+              paragraph that goes into a proposal
 synthesis.ts  callClaude, named rather than routed
 annotate.ts   draws the boxes; markdown.ts and pdf.ts render
 ```
+
+**Describing the page and deciding about it are two questions, and one model
+answering both is what this splits up.** `ux.ts` says what is visibly true and
+boxes each point onto the screenshot; `redesign.ts` reads the same two pictures
+and answers the one the business owner actually has. A reviewer that has just
+listed six faults recommends a rebuild, because a list of faults is what a
+rebuild is argued from — and "you need a new website" is the most expensive
+sentence in a proposal to have got wrong, in both directions.
+
+- **It runs beside the compile, not before it.** Both read the sections rather
+  than the site, and they are asked separately for the same reason the four
+  reviewers do not talk to each other: a decider that has read a summary agrees
+  with it. The UI/UX *findings* are handed over, though, so one document cannot
+  say two things about one homepage.
+- **It is not a discipline and is deliberately unscored.** The four sections
+  measure a site; this one is the conclusion those measurements are for, and
+  scoring it would put "rebuild it" into the average as a fifth kind of fault.
+- **LEAVE_IT is a real answer and the direction list is emptied when it is
+  given.** A model that decides a page is fine and then lists five changes to it
+  has answered both ways, and the list is the half a reader acts on.
+- **A vendor that cannot be shown the picture never answers.** Perplexity
+  declares `redesign` and not `vision`; if it refuses the image the chain moves
+  to a model that can see, and the document says who decided. An oversized
+  picture fails the attempt rather than being dropped from it — an answer
+  written without the screenshot is indistinguishable from one written with it.
+- **A UI/UX re-run decides again; any other section's re-run does not.** Nothing
+  the call was argued from has moved, and paying for a second opinion would give
+  the document two answers a fortnight apart.
+- **The searched sources are printed in the Markdown only.** They are pages
+  about how sites in a trade look now, not evidence about this business, and a
+  list of links under a client-facing verdict reads as though it were.
 
 - **Two reviewers have no judgement in them and that is the point.** Every
   speed, SEO and security finding is arithmetic on a header, a tag, a DNS
