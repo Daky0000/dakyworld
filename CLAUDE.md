@@ -636,14 +636,35 @@ the other is exactly what the phone shot is for. `evidence.ts` still prints one
 sentence rather than two when neither worked — a site that blocks automated
 browsers blocks both, and saying so twice reads as two faults.
 
+**A section that did not run says why, and the reason is the real one.** The
+UI/UX reviewer used to print a *guess* when it had no pictures — "it usually
+means no Apify token is connected" — whatever had actually happened, and the
+first time that guess was wrong it sent somebody to check a token that was fine
+while the real cause (an actor that had never been deployed) went unnamed on the
+one screen that had been handed it. `reviewUx` reads
+`evidence.stepNotes.screenshots` now, and the fallback mentions no cause at all,
+because every reason `siteShot` can have already comes back as a sentence — no
+token, an actor not on the account, a run that failed, a page that timed out, a
+picture no model will read. A branch that invents a cause can only disagree with
+one of them. `checks/auditRerun.ts` holds it, including the negative that a
+section with no reason must not invent one.
+
 **The actor is still a setting** (`capture.screenshotActor`,
 `GET`/`PUT /api/settings/capture/screenshot-actor`) for a narrower reason than
 before. It is no longer a choice between vendors: the username half of an actor
 id is the Apify account it was pushed to, so a deployment whose account is not
 `dakyworld` has to say so, and a staging copy should be reachable without a
 deploy. **Until the actor is pushed, every screenshot fails with a sentence
-naming it and pointing at `apify/dakyworld-screenshot`** — Apify's own words
-("Actor was not found") read as an outage, and this is a five-minute job.
+naming it and pointing at `apify/dakyworld-screenshot`**, the boot log prints
+the same thing on every deploy (`screenshotActorReady()`), and the audit's UI/UX
+section carries that reason rather than a guess. Apify's own words ("Actor was
+not found") read as an outage, and this is a five-minute job:
+`APIFY_TOKEN=<the one in Settings → Lead Sources → Connection> apify push`.
+
+**There is no half-measure while it is undeployed**, and that is the deliberate
+cost of having one actor instead of four: pointing `capture.screenshotActor` at
+a store actor no longer works, because the server sends the Dakyworld contract
+and nothing on the store reads it. The two positions are *push it* or *revert*.
 
 Three things about the picture that are still exactly as they were, because
 getting any of them wrong is silent:

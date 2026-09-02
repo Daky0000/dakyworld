@@ -23,10 +23,20 @@ Needs the [Apify CLI](https://docs.apify.com/cli) and an Apify account.
 
 ```bash
 npm install -g apify-cli
-apify login                     # the account whose token Dakyworld OS holds
 cd apify/dakyworld-screenshot
+
+# Either sign in interactively (opens a browser)…
+apify login
 apify push
+
+# …or use the token Dakyworld OS already holds, with no browser at all.
+# Copy it from the app: Settings → Lead Sources → Connection.
+APIFY_TOKEN=apify_api_xxx apify push
 ```
+
+The second form is the quicker one and it is the same token the app runs on, so
+the actor lands on the account the app is already pointed at — which is the
+thing most likely to go wrong about this.
 
 `apify push` builds the Docker image on Apify and creates or updates the actor.
 It lands as `<your-username>/website-screenshot`.
@@ -38,9 +48,18 @@ Screenshot actor** (`capture.screenshotActor`). That setting exists for this,
 and for pointing a staging deployment at a staging copy.
 
 Until it is deployed, every screenshot fails with a sentence naming the actor
-and pointing at this folder. That is deliberate: an actor that has not been
-pushed yet is a five-minute job, and Apify's own words for it ("Actor was not
-found") read as an outage.
+and pointing at this folder, the server's boot log prints the same thing on
+every deploy, and the audit's UI/UX section carries that exact reason rather
+than a guess. All three are deliberate: an actor that has not been pushed yet is
+a five-minute job, and Apify's own words for it ("Actor was not found") read as
+an outage.
+
+**There is no half-measure while it is undeployed.** Pointing
+`capture.screenshotActor` at a store actor does not work any more: the server
+sends this contract — `urls: [{ id, url }]`, a `viewport` object — and no actor
+on the store reads it. That is the deliberate consequence of having one actor
+instead of four and a translation layer, and it is why the only two positions
+are *push this* or *revert the commit that introduced it*.
 
 ## Running it locally
 

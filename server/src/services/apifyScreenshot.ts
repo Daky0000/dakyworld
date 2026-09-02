@@ -201,6 +201,38 @@ export async function runScreenshotActor(job: ScreenshotJob, options: { waitMs: 
     if (row) rows.set(row.id, row);
   }
 
+  /**
+   * A run that produced rows, none of which this can read, is one signature and
+   * only one: the actor is not ours.
+   *
+   * `capture.screenshotActor` exists so a deployment on a different Apify
+   * account can name its own copy — and it looks exactly like the setting it
+   * used to be, which was a choice between four actors on the store. Somebody
+   * reading the Settings screen may well still put one of those in it, and
+   * Apify will happily run it: it ignores every input key it does not declare,
+   * so `urls: [{ id, url }]` and a `viewport` object are silently dropped and
+   * what comes back is a dataset in that actor's own shape with no `id` on any
+   * row.
+   *
+   * Without this, every page in the batch gets "the run finished without
+   * producing a result for it" — true, useless, and pointing at the website
+   * rather than at the setting that caused it. There is no adapter behind this
+   * message on purpose: one actor and one contract is the whole point, and the
+   * answer to a foreign actor is to stop using it, not to translate for it.
+   */
+  if (rows.size === 0 && result.items.length > 0) {
+    return {
+      ok: false,
+      actorId,
+      code: "ACTOR_FAILED",
+      message:
+        `The run finished, but not one of its ${result.items.length} result(s) carried an id — so "${actorId}" is not the Dakyworld ` +
+        `screenshot actor. Only that actor speaks this app's screenshot contract; an actor from the Apify store cannot be substituted for it. ` +
+        `Deploy it from apify/dakyworld-screenshot in this repository, or set Settings → Lead Sources → Screenshot actor back to a copy of it.`,
+      costUsd: result.costUsd,
+    };
+  }
+
   return { ok: true, actorId, runId: result.runId, rows, costUsd: result.costUsd };
 }
 

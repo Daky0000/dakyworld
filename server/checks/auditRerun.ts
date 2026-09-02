@@ -29,6 +29,8 @@
  * No database, no key, no network.
  */
 import { SECTION_EVIDENCE, mergeRerunReport } from "../src/services/audit/team.js";
+import { reviewUx } from "../src/services/audit/ux.js";
+import type { AuditEvidence } from "../src/services/audit/evidence.js";
 import { DISCIPLINES, MIN_SCORED_WEIGHT, type Discipline, type DisciplineReport, type WebsiteAuditReport } from "../src/services/audit/types.js";
 import { prisma } from "../src/lib/prisma.js";
 
@@ -236,6 +238,46 @@ console.log("\n── the address that answered ──────────�
     at: "2026-09-02T10:00:00.000Z",
   });
   check("and a site that did not answer keeps the one on file", unreachable.website === "https://example.test/", String(unreachable.website));
+}
+
+// --- The reason a section did not run has to be the real one ----------------
+//
+// The same defect this whole file is about, one layer down. A UI/UX section
+// with no pictures used to print a **guess** at the cause — "it usually means
+// no Apify token is connected" — whatever had actually happened. The first time
+// that guess was wrong it was wrong expensively: a deployment whose token was
+// perfectly good, and whose screenshot actor had simply never been deployed,
+// printed that sentence on the one screen that had been handed the true reason,
+// and sent somebody to check a setting that was not the problem.
+//
+// `reviewUx` returns before any model call when there are no pictures, so this
+// needs no key. The negatives matter as much as the positive: a real reason
+// must not be paraphrased away, and a section with no reason must not invent
+// one.
+console.log("\nWhy a section did not run");
+{
+  const evidence = (over: Partial<AuditEvidence>): AuditEvidence =>
+    ({ shots: [], reachable: true, notes: [], stepNotes: { screenshots: [], rendered: [] }, ...over }) as unknown as AuditEvidence;
+  const about = { name: "Adom Dental", trade: null, town: null };
+
+  const actorMissing =
+    'No screenshot was taken \u2014 Apify would not start the run: The screenshot actor "dakyworld/website-screenshot" is not on this Apify account.';
+  const missing = await reviewUx(evidence({ stepNotes: { screenshots: [actorMissing], rendered: [] } }), about);
+  check("the section is unscored and left out", missing.scored === false && missing.score === 0);
+  check("and it says what actually stopped it", missing.summary.includes("not on this Apify account"), missing.summary);
+  check("rather than guessing at a token", !/token/i.test(missing.summary), missing.summary);
+
+  const noToken = await reviewUx(
+    evidence({ stepNotes: { screenshots: ["No screenshot was taken \u2014 Apify is not connected. Add a token under Lead Sources \u2192 Connection."], rendered: [] } }),
+    about,
+  );
+  check("a missing token is still named, because that is what was said", noToken.summary.includes("Add a token"), noToken.summary);
+
+  const nothingSaid = await reviewUx(evidence({}), about);
+  check("with no reason to give, it invents none", !/token|actor/i.test(nothingSaid.summary), nothingSaid.summary);
+
+  const dead = await reviewUx(evidence({ reachable: false }), about);
+  check("and a site that never answered says that instead", dead.summary.includes("could not be retrieved"), dead.summary);
 }
 
 await prisma.$disconnect();

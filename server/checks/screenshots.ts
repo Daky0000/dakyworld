@@ -435,6 +435,45 @@ console.log("\nWhen the actor has not been deployed");
   check("and is quiet when the actor is there", (await screenshotActorReady())?.ready === true);
 }
 
+// --- 9b. An actor from the store, pointed at by mistake -----------------------
+//
+// `capture.screenshotActor` still looks like the setting it used to be, which
+// was a choice between four store actors. Somebody may well still put one in
+// it — and Apify runs it perfectly happily, because it ignores every input key
+// an actor does not declare. So the contract is dropped in silence and the
+// dataset comes back in that actor's own shape, with no id on any row.
+console.log("\nAn actor that does not speak this contract");
+{
+  await reset();
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "i-scraper/website-screenshot");
+  settings.clearSettingsCache();
+
+  // What a store screenshot actor actually returns: a picture and an address,
+  // and nothing that says which request it belongs to.
+  behaviour = {
+    status: "SUCCEEDED",
+    rows: [
+      { url: "https://example.com/", screenshotUrl: `http://127.0.0.1:${PORT}/images/desktop`, startUrl: "https://example.com/" },
+      { url: "https://other.com/", screenshotUrl: `http://127.0.0.1:${PORT}/images/desktop`, startUrl: "https://other.com/" },
+    ],
+  };
+
+  const result = await captureHomepage("example.com");
+  const note = result.note ?? "";
+  check("no picture is taken from it", result.shot === null && result.base64 === null);
+  // The failure worth having. Without it every page in the batch reads "the run
+  // finished without producing a result for it" — true, useless, and pointing
+  // at the website rather than at the setting that caused it.
+  check("it says the actor is the wrong one", note.includes("is not the Dakyworld"), note);
+  check("and names the actor that was asked for", note.includes("i-scraper/website-screenshot"), note);
+  check("and says a store actor cannot stand in", note.includes("cannot be substituted"), note);
+  // No adapter behind the message, on purpose: one actor and one contract is
+  // the point, and the answer to a foreign actor is to stop using it.
+  check("nothing tries to read its rows anyway", !note.includes("without producing a result"), note);
+
+  await reset();
+}
+
 // --- 10. No Apify at all -----------------------------------------------------
 console.log("\nWith no Apify token");
 {

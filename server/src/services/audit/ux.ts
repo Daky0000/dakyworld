@@ -169,20 +169,31 @@ export async function reviewUx(
 
   const shots = evidence.shots;
   if (!shots.length) {
-    // Two different reasons, and saying the wrong one is how a report gets
-    // argued with.
-    //
-    // There used to be three. A site behind a certificate warning was its own
-    // case, because the browser taking the picture stopped at the same warning
-    // and no external screenshot actor declared a way to tell it to continue —
-    // so the audit read the page and could show nothing of it. Dakyworld's own
-    // actor clicks past the warning exactly as a visitor does, so that is no
-    // longer a reason for there to be no picture, and the sentence that
-    // explained it would now be false.
+    /**
+     * Say what actually happened, never what usually happens.
+     *
+     * This branch used to guess, and the guess was written into the section a
+     * person reads: *"It usually means no Apify token is connected."* The first
+     * time it was wrong it was wrong expensively — a deployment whose token was
+     * perfectly good and whose **actor had never been deployed** printed that
+     * sentence on the one screen that had been told the real reason, and sent
+     * somebody to check a setting that was not the problem. The capture itself
+     * always knew; `stepNotes.screenshots` is what it said.
+     *
+     * There is nothing left to guess with, either, which is why the fallback
+     * below no longer mentions a token: every reason `siteShot` can have for
+     * producing no picture already comes back as a sentence — no token, an
+     * actor that is not on the account, a run that failed, a page that timed
+     * out, a picture no model will read. A branch here that invented a cause
+     * could only ever disagree with one of them.
+     */
+    const said = evidence.stepNotes.screenshots.filter((note) => note.trim());
     notes.push(
-      evidence.reachable
-        ? "No screenshot could be taken, so nobody has seen how the site actually looks — only what it is made of. This is the half a business owner cares about, and none of it was checked. It usually means no Apify token is connected."
-        : "Their site could not be retrieved, so there was nothing to photograph.",
+      said.length
+        ? `Nobody has seen how the site looks, so none of what a visitor actually sees was checked. ${said.join(" ")}`
+        : evidence.reachable
+          ? "No screenshot was taken for this run, so nobody has seen how the site actually looks — only what it is made of. This is the half a business owner cares about, and none of it was checked."
+          : "Their site could not be retrieved, so there was nothing to photograph.",
     );
     return {
       discipline: "UX",
