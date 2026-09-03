@@ -36,6 +36,8 @@ export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "nv
 export type ModelJob =
   /** Prose. Emails, proposals, ad copy, briefs — anything a person reads. */
   | "text"
+  /** The first approach to a stranger: a cold email, a follow-up, a WhatsApp or a text. */
+  | "outreach"
   /** Reading an imported spreadsheet of leads into tables and columns. */
   | "spreadsheet"
   /** Sorting a written instruction into the sections an agent prompt is made of. */
@@ -57,7 +59,7 @@ export type ModelJob =
   /** Looking at the same picture and deciding whether the page needs rebuilding. */
   | "redesign";
 
-export const MODEL_JOBS: ModelJob[] = ["text", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign"];
+export const MODEL_JOBS: ModelJob[] = ["text", "outreach", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign"];
 
 /**
  * The jobs that are handed a picture, and therefore may only ever be served by
@@ -124,9 +126,36 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     job: "text",
     name: "Writing",
     phrase: "writing",
-    blurb: "Every piece of prose the system produces — proposal copy, email drafts, ad concepts, page copy, cold outreach.",
+    blurb: "Every piece of prose the system produces — proposal copy, client email, ad concepts, page copy.",
     defaultProvider: "nvidia",
     fallback: "anthropic",
+  },
+  outreach: {
+    job: "outreach",
+    name: "Cold outreach",
+    phrase: "writing to a stranger",
+    blurb:
+      "The first approach to a business that has never heard of Dakyworld — the cold email, the follow-ups, and the WhatsApp and SMS messages. Split out of Writing because it is the shortest and most-read thing the company produces and it is worth routing on its own.",
+    // **Perplexity, and it is the second job routed there for something other
+    // than searching.** The Owner's call, for the same reason `redesign` went
+    // there: the live half is what the job actually needs. A cold message is
+    // judged on whether it sounds like somebody who went and looked, and a
+    // model whose every answer is shaped by a live search writes about a
+    // business as it is now rather than as it was when training stopped.
+    //
+    // **The live search is fenced, and that fence is load-bearing.** A model
+    // that searches is a model that can return a fact nobody in this system
+    // checked, and `EVIDENCE_RULES` says every negative claim must trace to a
+    // supplied fact. So the outreach drafters pass `searchDomains` — the
+    // prospect's own domain and nothing else — and the contract tells the
+    // model that anything it reads live may confirm what it was handed and may
+    // never introduce a fault. See `lib/messageDrafter.ts`.
+    //
+    // NVIDIA behind it rather than Claude, because that is where every other
+    // writing job starts and a free rung writing 40 words is not the place to
+    // spend. Claude is still in the chain underneath.
+    defaultProvider: "perplexity",
+    fallback: "nvidia",
   },
   spreadsheet: {
     job: "spreadsheet",
@@ -660,7 +689,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // it would work, because the chain is now what runs when the first choice
     // fails and a candidate that cannot do the work is a wasted attempt with
     // a confusing error at the end of it.
-    jobs: ["text", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision", "redesign"],
+    jobs: ["text", "outreach", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision", "redesign"],
     models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
   },
   openai: {
@@ -674,7 +703,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     economyModel: "gpt-5.4-mini",
     console: "https://platform.openai.com/api-keys",
     keyHint: "sk-proj-…",
-    jobs: ["text", "spreadsheet", "organise", "triage", "image", "html", "vision", "redesign"],
+    jobs: ["text", "outreach", "spreadsheet", "organise", "triage", "image", "html", "vision", "redesign"],
     models: ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini"],
   },
   gemini: {
@@ -692,7 +721,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // this app doesn't wire up, and offering a route that silently can't serve
     // is worse than not offering it. It does read pictures, though, which is a
     // different model family it does wire up — so `vision` is on the list.
-    jobs: ["text", "spreadsheet", "organise", "triage", "html", "vision", "redesign"],
+    jobs: ["text", "outreach", "spreadsheet", "organise", "triage", "html", "vision", "redesign"],
     models: ["gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
   },
   perplexity: {
@@ -717,7 +746,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // behind it is the wrong instrument for describing a picture in front of
     // it. `redesign` is a decision about what to do, and there the live half
     // is exactly what is wanted.
-    jobs: ["text", "triage", "factcheck", "research", "humanise", "redesign"],
+    jobs: ["text", "outreach", "triage", "factcheck", "research", "humanise", "redesign"],
     models: ["sonar", "sonar-pro", "sonar-reasoning-pro"],
   },
   nvidia: {
@@ -762,7 +791,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // that the app now speaks a second image wire. NVIDIA's image models are
     // not on this vendor's chat host at all — they are Cloud Functions on
     // `api.nvcf.nvidia.com`, addressed by function id. See `IMAGE_MODELS`.
-    jobs: ["text", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign"],
+    jobs: ["text", "outreach", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign"],
     // The dropdown offers what this app has actually verified against the
     // endpoint, which is a narrower list than NVIDIA's catalogue on purpose —
     // see `FREE_MODELS`. Anything else can still be typed.
@@ -985,6 +1014,20 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // Prose a customer reads. The two biggest models here, then a reasoning
   // model that writes cleanly, across three houses.
   text: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
+
+  // The same three, and deliberately not a shorter ladder. A cold message is
+  // forty words, so the temptation is a small fast model — but forty words to
+  // a stranger is the highest-stakes writing this system does, and the failure
+  // it has already paid for twice is the generic message a weaker model
+  // retreats to when the evidence is thin. Free either way, so there is
+  // nothing to save by asking a smaller one.
+  //
+  // These are the rungs used when the Owner has routed this job to NVIDIA, or
+  // when Perplexity is not connected. None of them searches the live web,
+  // which is exactly what Perplexity was chosen for — so a draft written here
+  // is written from the handed facts alone, which is the safe direction to
+  // degrade in.
+  outreach: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
 
   // A spreadsheet is the one job where context length is the whole game: forty
   // columns across three tables, and the plan is wrong if the model only saw

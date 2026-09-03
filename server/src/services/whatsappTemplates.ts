@@ -294,6 +294,31 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     variables: ["Their first name", "Their website address"],
   },
   {
+    // **The one that can carry what was actually found.** The other three name
+    // a fault in their fixed wording, so each is only sendable to a business
+    // with that exact fault — and a cold WhatsApp is always a template, because
+    // the free-form window has never been open. The consequence was that the
+    // drafter could write a message argued from a four-reviewer review and the
+    // only way to send it through the API was to pick whichever of three
+    // stock faults came closest. This one leaves the observation as a variable,
+    // so the evidence reaches the person.
+    //
+    // Three variables is the ceiling worth trying: Meta's reviewer has to be
+    // able to tell what the message says, and a body that is mostly `{{n}}` is
+    // a body that gets refused. Fill {{3}} with one short clause in the
+    // owner's own terms — "the page is hard to read on a phone" — never a
+    // paragraph and never anything the facts did not establish.
+    label: "Something noticed — carries the finding",
+    name: "site_observation",
+    category: "MARKETING",
+    purpose: "COLD_OUTREACH",
+    body:
+      "Hi {{1}}, Daky here from Dakyworld — we look after IT and websites for businesses in Ghana. I had a look at {{2}} before messaging and noticed {{3}}, which makes it harder for anyone trying to reach you.\n\nHappy to send you what I saw so whoever looks after it can sort it. Want me to?",
+    footer: "Reply STOP to opt out",
+    examples: ["Kwame", "accradental.com", "the phone number isn't tappable on a phone"],
+    variables: ["Their first name", "Their website address", "The one thing noticed, as a short clause"],
+  },
+  {
     label: "Invoice reminder",
     name: "invoice_reminder",
     category: "UTILITY",

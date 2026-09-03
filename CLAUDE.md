@@ -121,11 +121,26 @@ as descriptions; nothing in one is ever executed.
 **Models are chosen by job, never by vendor** — `src/lib/models/`. A caller
 says `callModel({ job: "text" })` and the routing decides who serves it:
 **NVIDIA is the shipped default for every job except
-images**, ChatGPT draws, and Perplexity researches companies, checks facts
-against live sources, rewrites drafts into plain English, and **makes the
-redesign call on a homepage it has been shown** — the one job routed to it for
-something other than searching, and the reason its adapter takes a picture at
-all. **A job whose chosen vendor has no key — or whose call fails
+images and cold outreach**, ChatGPT draws, and Perplexity researches companies,
+checks facts against live sources, rewrites drafts into plain English, **makes
+the redesign call on a homepage it has been shown** — the reason its adapter
+takes a picture at all — and **writes the first message to a stranger**
+(`job: "outreach"`).
+
+**`outreach` is split out of `text` for two reasons and neither is style.** A
+letter to a stranger and a project update to a client we have billed for a year
+were the same job, so routing one moved the other — the shortest and most-read
+thing this company produces could not be put on a different vendor from an
+invoice covering note. And the thing that makes Perplexity right for it is the
+live half: a cold message is judged on whether it sounds like somebody who went
+and looked. **That is also the one way it could break `EVIDENCE_RULES`** — a
+model that searches can return a fault about a business nobody in this system
+checked, stated to the one person who knows whether it is true. So the search is
+fenced: `ownDomain()` in `emailContext.ts` pins `search_domain_filter` to the
+prospect's own hostname, one implementation imported by both drafters, and both
+contracts carry the rule in words for the leads that have no domain to pin to —
+a live search may **confirm** a handed fact and may never introduce one. The
+cold and follow-up purposes route there; every other email stays on `text`. **A job whose chosen vendor has no key — or whose call fails
 mid-flight — falls through a chain: the declared fallback first, then every
 other vendor that can actually do that job**, so nothing waits on a credential
 and each key the Owner pastes moves one job onto its chosen model.
@@ -1195,6 +1210,50 @@ click is an outbox nobody can trust about anything.
   a different shape, because there is no signature to append (the name goes *in*
   the words, which the email drafter is explicitly forbidden from doing) and 70
   words is the ceiling rather than the floor.
+- **A forty-word message is not handed a letter's evidence.** `buildFacts()`
+  composes the case for a cold *email* and says so in the words — "THIS LETTER
+  ARGUES FROM IT", "put it in the letter on its own line", "I have put them in a
+  short report and attached it" — and all twenty-five lines of it, plus the lead
+  score and the deal size, were going to a writer producing a chat bubble with
+  no attachment and no room. That is instructions for a different job, and a
+  model given instructions for a different job falls back to the generic message
+  it already knew: the reported symptom was drafts "not related to context",
+  produced from a prompt containing everything anybody had found out about the
+  business. `phoneFacts()` **selects, and never rewrites** — rewriting is the
+  tempting version and it turns "We already emailed them 3 days ago" into a
+  false statement about what this company did. The strongest point, the guard on
+  what may not be claimed, what to offer and the demo link lead; the letter's own
+  mechanics and our pipeline's bookkeeping are dropped; the rest are capped at
+  eight with one line saying how many were held back and forbidding any mention
+  of them.
+- **The phone drafter has an `angle()` now, and the email drafter had one since
+  August.** It is the one choice no amount of evidence can make, because it is
+  about the *absence* of it — a business with no website is a different message
+  from a business whose site somebody has looked at — and on forty words that
+  choice is most of the draft.
+- **`caseStrength` was computed and thrown away.** `POST /messages/draft` worked
+  it out, returned it so the composer could print the amber warning, and never
+  told the drafter — so a business with nothing wrong with it got a confident
+  pitch, because writing one is what the drafter was asked to do.
+- **The `message.draft` tool now looks before it writes.** The HTTP route has
+  prepared the lead since the phone channels shipped; the tool went straight to
+  `resolveContext`, so every message an *agent* wrote to an unprepared lead was
+  generic by construction — one fact, "Nobody has looked at this business yet" —
+  and nothing on any screen said which of the two paths had produced a draft. It
+  takes the same `prepare: auto | always | never`, degrades a failed look to a
+  note rather than an error, and returns `lookedAtThemFirst` and `caseStrength`
+  so a thin draft can be told from a thin business.
+- **A cold WhatsApp is always a template, so one starter template carries the
+  finding as a variable** (`site_observation`). The other three name a fault in
+  their fixed wording, which made them sendable only to a business with that
+  exact fault — a drafter arguing from a four-reviewer review and a template set
+  that knows three stock faults are two halves that do not meet. The `wa.me`
+  route is the other answer and carries the drafted words verbatim.
+- `checks/coldOutreach.ts` (48) holds all of it plus the routing, database and a
+  fake Perplexity on localhost. Half of it is the negatives: a fact is never
+  reworded, the demo link and the guard are never among the lines cut, a client
+  email must not route to the outreach job, and a lead with no website must not
+  be fenced to a guessed domain.
 - **`coldEmailChecks.preSendCheck` took a `channel` rather than being forked.**
   One doctrine with three sets of numbers: the subject check does not run where
   there is no subject, and the length band differs. Two copies of a checklist

@@ -6,7 +6,12 @@ import { brandBlock } from "../services/context/business.js";
 import { PHONE_MESSAGE_DOCTRINE } from "../services/outreachDoctrine.js";
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { writerSystem } from "../services/writers/brief.js";
+import { ownDomain } from "../services/emailContext.js";
 import type { RecipientContext } from "../services/emailContext.js";
+// Type only. `services/leadPrep.ts` pulls in Apify, the audit team and the
+// screenshot actor, and none of that belongs behind a drafter — an import that
+// erases at compile time is the whole of what is wanted here.
+import type { CaseStrength } from "../services/leadPrep.js";
 
 /**
  * The WhatsApp and SMS drafter.
@@ -45,8 +50,20 @@ export interface MessageDraftRequest {
   channel: MessageChannel;
   purpose: EmailPurpose;
   context: RecipientContext;
-  /** Force a playbook scenario rather than letting the findings choose. */
-  scenarioKey?: string | null;
+  /**
+   * How strong the evidence behind this message is.
+   *
+   * Worked out by `caseStrength()` from the review when there is one and from
+   * the two quick checks when there is not, and **it was computed and thrown
+   * away**: `POST /messages/draft` had it, returned it to the screen so the
+   * composer could print the amber warning, and never told the drafter. So a
+   * business with nothing wrong with it got a confident forty-word pitch,
+   * because a model asked to write a message writes one — the same failure the
+   * email side already names in `buildFacts()`, minus the one line that fixes
+   * it. Null means nobody worked it out, which is not the same as WEAK and is
+   * left unsaid rather than guessed at.
+   */
+  caseStrength?: CaseStrength | null;
   /** What this particular message is for, in the sender's words. */
   brief?: string | null;
   /** Rewrite an existing draft rather than starting from nothing. */
@@ -161,6 +178,199 @@ function briefFor(purpose: EmailPurpose): string {
   );
 }
 
+// --- What a forty-word message is allowed to be told ------------------------
+
+/**
+ * **The facts are written for a letter, and this is where that stops being
+ * somebody else's problem.**
+ *
+ * `leadPrep.buildFacts()` composes the evidence for a cold *email*, and it says
+ * so in the words: "THE FULL REVIEW WAS RUN AND THIS LETTER ARGUES FROM IT",
+ * "put it in the letter on its own line", "Never put that number in the
+ * letter", "a few other things came up — I have put them in a short report and
+ * attached it". That block is exactly right for the thing it was written for
+ * and it was being handed, unchanged and in full, to a writer producing forty
+ * words in a chat window with no attachment, no letterhead and no room.
+ *
+ * Two separate faults came out of that, and only the second one is obvious:
+ *
+ *  - **It is instructions for a different job.** A model told at length how to
+ *    structure a letter, and then told to write a WhatsApp, does what this
+ *    codebase has already paid for twice — it retreats to the generic message
+ *    it already knew. That is the reported symptom: drafts that read as though
+ *    nobody had looked at the business, from a prompt containing everything
+ *    anybody found out about it.
+ *  - **Twenty-five lines to write thirty-five words is not context, it is
+ *    noise.** The strongest finding, the guard on what may not be claimed and
+ *    the demo link are in there — somewhere, in the middle of the pipeline's
+ *    own bookkeeping, the lead score and every finding the review turned up.
+ *    A writer with one sentence to spend needs to be told which one thing to
+ *    spend it on, not handed the file.
+ *
+ * So the lines are **selected, never rewritten**. Rewriting is the tempting
+ * version and it is wrong: swapping "letter" for "message" across the block
+ * would turn "We already emailed them 3 days ago" — a true statement about
+ * what this company did — into a false one, and a fact that has been edited on
+ * its way to a model is a fact nobody can trace back to the record.
+ */
+
+/**
+ * Lines that exist to shape a letter and mean nothing on a phone.
+ *
+ * Matched on the marker `buildFacts` and `reviewFacts` actually write. They are
+ * dropped rather than reworded for the reason above, and dropping them loses no
+ * evidence: everything they frame — the strongest point, the findings, the
+ * redesign call — is emitted separately and kept.
+ */
+const LETTER_ONLY = [
+  "THE FULL REVIEW WAS RUN",
+  "HOW THE REVIEW PUT IT TO THEM",
+  "MORE THAN ONE RED FLAG",
+];
+
+/**
+ * Lines about our own pipeline rather than about them.
+ *
+ * A lead score, a deal size and a pipeline stage are facts about how Dakyworld
+ * files this business, and the drafter is told the facts are the only things it
+ * may use — which makes every one of them a sentence a model is entitled to
+ * reach for. "I see you're in our qualifying stage" is not a message anybody
+ * should be able to send by accident.
+ */
+const INTERNAL_ONLY = [
+  "Which list:",
+  "Pipeline status:",
+  "Lead score",
+  "Estimated deal size:",
+  "How we found them:",
+];
+
+/**
+ * What a message of this length is actually written from, in the order a writer
+ * needs it: who they are, the one thing to say, what may not be said, what to
+ * offer — then whatever is left, up to a ceiling.
+ */
+const LEADS_WITH = [
+  "THE STRONGEST THING TO OPEN ON",
+  "THERE IS NO STRONG CASE HERE",
+  "WHAT YOU MAY NOT CLAIM",
+  "THE REVIEW'S OWN VIEW IS THAT THERE IS NOTHING TO OFFER HERE",
+  "WHAT TO OFFER",
+  "THEY HAVE NO WEBSITE, SO THE DEMO PAGE IS THE ASK",
+  "A demo page has been built for them",
+  "NOBODY HAS ACTUALLY SEEN THEIR PAGE",
+  "Nobody has looked at this business yet",
+  "WHAT THE PAGE ITSELF IS WORTH",
+  "WORTH PAYING TO FIX",
+  "Contact name:",
+  "Business:",
+  "Business type:",
+  "City:",
+  "Website:",
+  "Google rating:",
+  "What research found about them",
+];
+
+/**
+ * How many of the remaining lines to carry.
+ *
+ * Eight, against a message of thirty-five to seventy words. Not a token
+ * saving — the whole prompt is a fraction of a penny either way — but the
+ * difference between a writer that has been told what to say and one that has
+ * been handed a file and left to choose. Everything cut is named in a line of
+ * its own, so a reviewer asking "did it see the certificate finding" gets an
+ * answer rather than an absence.
+ */
+const SUPPORTING_LIMIT = 8;
+
+function startsWithAny(fact: string, markers: string[]): boolean {
+  return markers.some((marker) => fact.startsWith(marker));
+}
+
+export function phoneFacts(facts: string[]): string[] {
+  const kept: string[] = [];
+  const supporting: string[] = [];
+
+  for (const marker of LEADS_WITH) {
+    for (const fact of facts) {
+      if (fact.startsWith(marker) && !kept.includes(fact)) kept.push(fact);
+    }
+  }
+
+  for (const fact of facts) {
+    if (kept.includes(fact)) continue;
+    if (startsWithAny(fact, LETTER_ONLY) || startsWithAny(fact, INTERNAL_ONLY)) continue;
+    supporting.push(fact);
+  }
+
+  const shown = supporting.slice(0, SUPPORTING_LIMIT);
+  const heldBack = supporting.length - shown.length;
+
+  return [
+    ...kept,
+    ...shown,
+    ...(heldBack > 0
+      ? [
+          `${heldBack} further thing${heldBack === 1 ? " was" : "s were"} found and ${
+            heldBack === 1 ? "is" : "are"
+          } deliberately not listed here. A message this short names one thing, so the rest would only be something to choose wrongly between. Do not refer to them, do not count them, and do not say there is more.`,
+        ]
+      : []),
+  ];
+}
+
+/**
+ * Which of the two messages this is.
+ *
+ * The email drafter has had this since August and the phone drafter never did,
+ * which is most of why a WhatsApp read as though it had been written about
+ * nobody in particular. It is the one distinction no amount of evidence can
+ * make, because it is about the *absence* of it: a business with no website is
+ * a different message from a business whose website somebody has looked at, and
+ * on forty words the choice between those two is nearly the whole draft.
+ *
+ * Deliberately shorter than `emailDrafter.angle()` and deliberately not shared
+ * with it. That one describes a four-paragraph letter, and a writer given a
+ * letter's angle writes a letter — in a chat window.
+ */
+function angle(context: RecipientContext): string | null {
+  if (context.kind !== "lead") return null;
+
+  if (!context.variables.website?.trim()) {
+    return `They have no website. That is the message.
+
+One line on what that means for this business specifically — somebody hears about them, searches, and there is nothing to look at before deciding whether to ring. Use their trade and their town by name; those two words are what make it about them.
+
+**If the facts carry a demo link, the link is the ask** and it is the only ask: say you put a page together, give the address, and ask what they think. If they carry no link, no page exists — offer to put one together, and never write as though one is coming.`;
+  }
+
+  return `They have a website and somebody has looked at it.
+
+Open on the one thing named as the strongest, and on nothing else. Not a list, not two things, not "among other things".
+
+**Say something the owner can see, not something a tool measured.** A record, a header, a certificate, a tag — all true, and worth nothing to somebody reading a message on a phone, because they cannot picture any of them. What they can picture is a person opening their page and not finding what they came for. Where a fact carries a "say it to them like this" wording, use that wording: it is already in words a business owner would use.`;
+}
+
+/**
+ * How much weight the evidence will bear.
+ *
+ * WEAK and NONE are the ones that matter, and the wording is deliberately the
+ * same instruction the email side gives, because it is the same judgement: a
+ * business that is doing fine, told by a stranger on their own phone that it is
+ * not, remembers that.
+ */
+function strengthNote(strength: CaseStrength | null | undefined): string | null {
+  if (!strength) return null;
+  if (strength === "STRONG") {
+    return "The evidence here is strong. Write the whole message about the single thing named as strongest, and leave everything else out.";
+  }
+  if (strength === "MODERATE") {
+    return "The evidence here is moderate — one real thing, and no more weight on it than it will bear. Say it plainly and do not dress it up into an emergency.";
+  }
+  return "**There is no real case here.** Nothing found is worth writing to a stranger about. Do not write a pitch. Say the one true good thing about their set-up in a sentence, offer the one small thing that was actually found, set confidence low, and say in the rationale that this business may not be worth messaging at all. A polished message about nothing is worse than no message.";
+}
+
+
 /**
  * The doctrine Dakyworld ships for a message to a phone.
  *
@@ -193,7 +403,9 @@ function contractFor(channel: MessageChannel): string {
 
 ${LENGTH[channel]}
 
-Return the body as plain text. Do not add a sign-off, a name at the end, or an opt-out line — the app appends the opt-out itself, and the name belongs in your opening.`;
+Return the body as plain text. Do not add a sign-off, a name at the end, or an opt-out line — the app appends the opt-out itself, and the name belongs in your opening.
+
+**If anything you write is informed by a live search, that search may only confirm.** This job is served by a model that reads the web as it answers. What comes back may tell you a fact you were given is still true, and it may never introduce one: not a fault, not a figure, not a person's name, not a claim about this business that is absent from the facts below. The facts are the complete account of what was checked, and the one person reading this message is the one person who knows what is actually true about their own business.`;
 }
 
 async function draftSystem(channel: MessageChannel): Promise<string> {
@@ -204,6 +416,26 @@ async function draftSystem(channel: MessageChannel): Promise<string> {
   });
 }
 
+/**
+ * The facts this channel is actually written from.
+ *
+ * **Only a lead's are selected from, and the distinction is not a detail.** A
+ * lead carries a letter's evidence pack — a scan, a review, a dozen findings —
+ * of which one thing is the message. A client carries invoices, projects, care
+ * plans and milestones, and on a client message *any* of them may be the entire
+ * point: capping those would be a payment reminder that never reaches the
+ * overdue invoice, which is a worse failure than the one this selection exists
+ * to fix.
+ *
+ * Exported because `POST /messages/draft` hands the facts to the composer for a
+ * person to check the draft against, and returning a list the writer never saw
+ * is a quiet lie on the one screen where somebody decides whether the message
+ * is true.
+ */
+export function factsForMessage(context: RecipientContext): string[] {
+  return context.kind === "lead" ? phoneFacts(context.facts) : context.facts;
+}
+
 function buildPrompt(request: MessageDraftRequest): string {
   const { context } = request;
 
@@ -211,8 +443,10 @@ function buildPrompt(request: MessageDraftRequest): string {
     `Purpose: ${request.purpose.replace(/_/g, " ").toLowerCase()}`,
     briefFor(request.purpose),
     "",
-    "Everything known about the recipient. These are the only facts you may use — you may leave any of them out, but you may not add to them:",
-    context.facts.map((fact) => `- ${fact}`).join("\n"),
+    "Everything you may use about the recipient, strongest first. These are the only facts you may use — you may leave any of them out, but you may not add to them:",
+    factsForMessage(context)
+      .map((fact) => `- ${fact}`)
+      .join("\n"),
   ];
 
   // Decided in code for the same reason as in the email drafter: `firstName`
@@ -226,9 +460,28 @@ function buildPrompt(request: MessageDraftRequest): string {
       : "No first name is known for this person, so do not use one. Open by naming yourself and Dakyworld, then go straight to what you noticed.",
   );
 
-  // The eighteen-scenario playbook was removed in Aug 2026; the doctrine now
-  // decides the angle from the facts it is given, and there is nothing to
-  // inject here. See `services/outreachDoctrine.ts`.
+  // The eighteen-scenario playbook was removed in Aug 2026; what replaced it is
+  // not "let the model decide from a list", which is what this file actually
+  // did for a year. See `services/outreachDoctrine.ts` for the doctrine, and
+  // `angle()` above for the one choice that is still made in code.
+  //
+  // **A first approach only.** The angle tells the writer to open on the single
+  // strongest observation, which is exactly what a follow-up must not do (it
+  // keeps the same issue and brings something new) and exactly what a
+  // demo-ready message must not do (the link is the whole message). Emitting it
+  // alongside either brief would put two accounts of one message in front of
+  // the model, and a model given two does not merge them — it falls back to the
+  // generic one. That failure is already written up twice in this repository.
+  const chosen = request.purpose === "COLD_OUTREACH" ? angle(context) : null;
+  if (chosen) parts.push("", "Which message this is:", chosen);
+
+  // Cold and follow-up only, for the same reason: how far the evidence goes is
+  // a question about writing to a stranger. It has no bearing on a demo link,
+  // an invoice or a thank-you, and a "there is no real case here" note attached
+  // to a payment chase is an instruction not to send one.
+  const strength =
+    request.purpose === "COLD_OUTREACH" || request.purpose === "FOLLOW_UP" ? strengthNote(request.caseStrength) : null;
+  if (strength) parts.push("", "How far the evidence goes:", strength);
 
   if (request.extraFacts?.length) {
     parts.push("", "The sender has added these facts for this message specifically:", request.extraFacts.map((fact) => `- ${fact}`).join("\n"));
@@ -261,11 +514,20 @@ export async function draftMessage(request: MessageDraftRequest): Promise<Messag
 
   const { data, model, inputTokens, outputTokens } = await callModel<{ body: string; rationale: string; confidence: number }>({
     purpose: "message.draft",
-    // Prose, routed with everything else the system writes — never a vendor.
-    job: "text",
+    // **`outreach`, not `text`** — the Owner's call, and the first thing in
+    // this file that is a routing decision rather than a wording one. A first
+    // message to a stranger is judged on whether it sounds like somebody who
+    // went and looked, so it is served by the vendor that reads the live web
+    // while it answers, with the free writing ladder behind it. Never a vendor
+    // name here: which company serves this is a row in a settings table.
+    job: "outreach",
     system,
     prompt: () => buildPrompt(request),
     schema: SCHEMA as unknown as Record<string, unknown>,
+    // Read only their own site, when we know it. The fence is what makes a
+    // searching model safe on a job whose whole discipline is "claim nothing
+    // that was not checked" — see `searchFence`.
+    searchDomains: ownDomain(request.context),
     // High, for the same reason the cold email is: this is forty words that a
     // stranger judges the company by, and the difference in cost between the
     // two settings on forty words is a fraction of a penny.

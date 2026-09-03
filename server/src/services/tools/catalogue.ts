@@ -8,7 +8,7 @@ import { resolveContext } from "../emailContext.js";
 import { agentBranchName, commitFiles, createBranch, createRepo, getPullRequest, listTree, mergePullRequest, openPullRequest, readFile } from "../../lib/github.js";
 import type { ToolDefinition } from "./types.js";
 import { auditCompany } from "../companyAudit.js";
-import { isStale, prepareLead, prepareLeads, storedPrep } from "../leadPrep.js";
+import { caseStrength, isStale, latestAuditReport, prepareLead, prepareLeads, storedPrep } from "../leadPrep.js";
 import { lookAtHomepage } from "../homepageLook.js";
 import { rerunAuditSection, runWebsiteAudit } from "../audit/team.js";
 import { DISCIPLINES, DISCIPLINE_NAMES, type Discipline } from "../audit/types.js";
@@ -1830,10 +1830,10 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     name: "Draft a WhatsApp or a text",
     group: "Communication",
     purpose:
-      "Writes a short message for a phone, from what is on the record. Returns the words and never sends them. Forty words on WhatsApp, fewer by text — a message on somebody's phone is not a shorter email.",
+      "Writes a short message for a phone, from what is on the record — looking at the business first if nobody has lately. Returns the words and never sends them. Forty words on WhatsApp, fewer by text — a message on somebody's phone is not a shorter email.",
     scope: "write",
     requires: "models",
-    job: "text",
+    job: "outreach",
     spends: true,
     outward: false,
     input: z.object({
@@ -1846,14 +1846,57 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         .enum(["COLD_OUTREACH", "FOLLOW_UP", "MEETING_REQUEST", "DEMO_READY", "INVOICE_DELIVERY", "INVOICE_REMINDER", "PROJECT_UPDATE", "THANK_YOU", "ONBOARDING", "REACTIVATION", "CUSTOM"])
         .default("COLD_OUTREACH"),
       brief: z.string().max(1200).optional().describe("What this message is for, in your words."),
+      prepare: z
+        .enum(["auto", "always", "never"])
+        .default("auto")
+        .describe(
+          "Whether to go and look at the business first — research them, check their site, photograph their homepage. 'auto' looks only when nobody has for a month. 'never' writes from whatever is already on the record.",
+        ),
     }),
     run: async (input) => {
+      // **Look before writing, exactly as `POST /messages/draft` does.**
+      //
+      // This was the whole of the defect on the agent path. The HTTP route has
+      // prepared the lead since the phone channels shipped; the tool went
+      // straight to `resolveContext`, so an agent drafting a WhatsApp for a
+      // scraped row was handed one fact — "Nobody has looked at this business
+      // yet" — and asked to write something specific from it. Every message an
+      // agent wrote to an unprepared lead was generic by construction, and
+      // nothing on any screen said which of the two paths had produced a
+      // draft.
+      let lookedNow = false;
+      let prepError: string | null = null;
+      let strength: Awaited<ReturnType<typeof caseStrength>> | null = null;
+
+      if (input.leadId && input.prepare !== "never") {
+        const stored = await storedPrep(input.leadId);
+        if (input.prepare === "always" || isStale(stored?.ranAt)) {
+          try {
+            const prep = await prepareLead(input.leadId);
+            strength = prep.strength;
+            lookedNow = true;
+          } catch (err) {
+            // A note, never an error — the same rule the whole prep pipeline
+            // follows. A message written from a thin record is still a message
+            // somebody can read and fix; a tool that throws leaves the agent
+            // with nothing and no way to say why.
+            prepError = (err as Error).message;
+          }
+        }
+      }
+
+      if (!strength && input.leadId) {
+        const [stored, team] = await Promise.all([storedPrep(input.leadId), latestAuditReport(input.leadId)]);
+        if (stored) strength = caseStrength(stored.audit as never, stored.look as never, team);
+      }
+
       const context = await resolveMessageContext(input);
       const draft = await draftMessage({
         channel: input.channel,
         purpose: input.purpose,
         context,
         brief: input.brief ?? null,
+        caseStrength: strength,
       });
       return {
         body: draft.body,
@@ -1862,6 +1905,12 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         writtenBy: draft.model,
         words: draft.body.trim().split(/\s+/).length,
         cost: draft.cost ?? null,
+        // What the message was actually argued from, so an agent can tell a
+        // thin draft from a thin business rather than reporting either as the
+        // other.
+        lookedAtThemFirst: lookedNow,
+        caseStrength: strength,
+        couldNotLook: prepError,
       };
     },
   },

@@ -86,6 +86,39 @@ export interface RecipientContext {
   clientId?: string;
 }
 
+/**
+ * The prospect's own domain, and the only place a searching model may read.
+ *
+ * Cold outreach is routed to a vendor that searches the live web while it
+ * answers (`job: "outreach"`), which is what it was chosen for and is also the
+ * one thing that could break `EVIDENCE_RULES`: a model that searches can come
+ * back with a fault about this business that nobody in this system checked,
+ * stated in a letter to the one person who knows whether it is true.
+ *
+ * Pinning the search to their own domain is what makes the live half safe
+ * rather than merely current. Anything read there is the business's own
+ * published words, so at worst it confirms what the scan already found — it
+ * cannot import a claim from a directory, a review aggregator or a competitor.
+ *
+ * **One implementation, imported by both drafters.** Written twice it would be
+ * one edit away from two different fences, which is the failure this codebase
+ * has already had once over `vendorBase`.
+ *
+ * Undefined where there is no website, or where what is stored is not a URL.
+ * The search is then unfenced, which is why the drafters' contracts carry the
+ * rule in words as well as in the request.
+ */
+export function ownDomain(context: RecipientContext): string[] | undefined {
+  const website = context.variables.website?.trim();
+  if (!website) return undefined;
+  try {
+    const host = new URL(website.startsWith("http") ? website : `https://${website}`).hostname;
+    return host ? [host.replace(/^www\./, "")] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function line(label: string, value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   return `${label}: ${value}`;

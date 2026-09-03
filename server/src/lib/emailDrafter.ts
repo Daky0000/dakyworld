@@ -7,6 +7,7 @@ import { COLD_EMAIL_DOCTRINE, EVIDENCE_RULES, FOLLOW_UP_DOCTRINE } from "../serv
 import { companyProfile, contactBlock } from "../services/systemProfile.js";
 import { writerSystem } from "../services/writers/brief.js";
 import { emailJobFor } from "../services/writers/registry.js";
+import { ownDomain } from "../services/emailContext.js";
 import type { RecipientContext } from "../services/emailContext.js";
 
 /**
@@ -318,6 +319,27 @@ export function shippedDoctrineFor(job: string): string {
 }
 
 /**
+ * Which model job writes this email.
+ *
+ * A letter to a stranger and a project update to a client we have billed for a
+ * year are both prose, and they were both `text` — so routing one moved the
+ * other, and the shortest, most-read thing this company produces could not be
+ * put on a different vendor from an invoice covering note. `outreach` is that
+ * separation, and it is deliberately keyed off the same two purposes that have
+ * their own doctrine: cold and follow-up are the messages judged by somebody
+ * who has never heard of us.
+ *
+ * Note the two axes are different questions and must stay separate. The
+ * **writer** job (`emailJobFor`) says whose wording writes it — an agent on the
+ * Agents screen. The **model** job says who serves the call. Four writer jobs,
+ * two model jobs, and neither is derivable from the other.
+ */
+export function modelJobFor(purpose: EmailPurpose): "outreach" | "text" {
+  return purpose === "COLD_OUTREACH" || purpose === "FOLLOW_UP" ? "outreach" : "text";
+}
+
+
+/**
  * The mechanics of the answer, which no prompt edit can reach.
  *
  * The signature rule is here rather than in the doctrine on purpose: the app
@@ -327,7 +349,9 @@ export function shippedDoctrineFor(job: string): string {
  */
 const CONTRACT = `Return the body as plain text with blank lines between paragraphs. No HTML.
 
-End on the ask. Do not type a sign-off or a name at the end — the app appends the signature, and a name typed above it arrives directly on top of the real one.`;
+End on the ask. Do not type a sign-off or a name at the end — the app appends the signature, and a name typed above it arrives directly on top of the real one.
+
+**If anything you write is informed by a live search, that search may only confirm.** A first approach may be served by a model that reads the web as it answers. What comes back may tell you a fact you were given is still true, and it may never introduce one: not a fault, not a figure, not a person's name, not a claim about this business that is absent from the facts you were handed. Those facts are the complete account of what was checked, and the person reading this letter is the one person who knows what is actually true about their own business.`;
 
 async function draftSystem(purpose: EmailPurpose): Promise<string> {
   const job = emailJobFor(purpose);
@@ -346,11 +370,13 @@ export async function draftEmail(request: DraftRequest): Promise<DraftResult> {
     confidence: number;
   }>({
     purpose: "email.draft",
-    // Prose. Routed with everything else the system writes — see lib/models.
-    job: "text",
+    // A first approach routes on its own job; everything written to somebody we
+    // already know goes with the rest of the prose. See `modelJobFor`.
+    job: modelJobFor(request.purpose),
     system,
     prompt: () => buildPrompt(request),
     schema: SCHEMA as unknown as Record<string, unknown>,
+    searchDomains: ownDomain(request.context),
     // High, and it was medium — which is hard to defend once written down. A
     // proposal was already high and so was a demo page, while the cold email,
     // the shortest and most-read thing this company produces and the one a

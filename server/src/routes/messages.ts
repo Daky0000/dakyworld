@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { defaultCallingCode, displayPhone, smsCost, toE164, toGsm7, waLink } from "../lib/phone.js";
 import { hubtelSmsConfigured } from "../lib/hubtel.js";
 import { describeNumber, whatsappConfigured, whatsappTemplatesConfigured } from "../lib/whatsapp.js";
-import { draftMessage } from "../lib/messageDrafter.js";
+import { draftMessage, factsForMessage } from "../lib/messageDrafter.js";
 import { analystConfigured } from "../lib/anthropic.js";
 import { preSendCheck } from "../services/coldEmailChecks.js";
 import { chooseScenario, exampleWording, manualScenarios } from "../services/coldEmailScenarios.js";
@@ -474,7 +474,10 @@ messagesRouter.post("/draft", async (req, res, next) => {
       brief: input.brief,
       existingBody: input.existingBody,
       extraFacts: input.extraFacts,
-      scenarioKey: input.scenarioKey,
+      // Worked out above and, until now, only ever returned to the screen. A
+      // drafter that is not told the case is weak writes a confident message
+      // about nothing, because writing one is what it was asked to do.
+      caseStrength: strength,
     });
 
     // 3. Check what would actually be sent.
@@ -495,7 +498,10 @@ messagesRouter.post("/draft", async (req, res, next) => {
       ...draft,
       channel: input.channel,
       checks,
-      facts: context.facts,
+      // What the writer was actually given, not everything on the record —
+      // see `factsForMessage`. A reviewer checking a draft against a list the
+      // model never saw is checking the wrong thing.
+      facts: factsForMessage(context),
       variables: context.variables,
       recipient: { name: context.name, phone: context.phone, email: context.email },
       caseStrength: strength,
