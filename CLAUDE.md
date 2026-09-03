@@ -2188,6 +2188,48 @@ permission gate, so a replay whose grant has been revoked is refused like
 anything else. `dispatchWebhook` also carries an `X-Dakyworld-Event-Id` now, for
 the receivers we cannot dedupe for.
 
+**And so can every other tool, inside the one window where "again" can only
+mean a replay** — `InvokeOptions.replayOfLostTurn`, `AgentToolCallMeta` in
+`lib/claudeAgent.ts`. Outward-only was the right first narrowing and it left
+the larger half of the crash window open: the tools most often lost between a
+call landing and the checkpoint saying so are not outward at all. They are the
+ones that spend money without leaving the building — a capture run, a homepage
+photographed, a section of an audit — and the ones that write a row a person
+then finds twice, like `proposal.draft`. Thirteen of the twenty-one tools that
+spend are not outward.
+
+- **The window is the turn a resume restored, and nothing else.** The loop
+  collects the `tool_use` ids out of `pendingAssistant` before anything runs and
+  clears them the moment that turn completes, so every call the model asks for
+  afterwards is a fresh decision and is never deduplicated. That distinction is
+  the whole design: an agent that photographs a page, changes it and photographs
+  it again is doing that deliberately, and a blanket "same arguments, same call"
+  rule would hand it the old picture.
+- **`meta` is optional and absent means not a replay.** A harness or a route
+  driving one tool directly is not resuming a conversation, and defaulting the
+  other way would answer a check's first call with some earlier run's output.
+- **`delegate` and `handOff` do not go through `invokeTool`**, so they carry the
+  guard themselves: on a restored turn, a child task with the same parent, taker
+  and title is already theirs and a second one is another agent waking up to do
+  work that is done.
+
+`checks/replayGuard.ts` (12) holds all three, and half of it is the negatives —
+a deliberate repeat must still run, a call with no run behind it must still run,
+and a manager who raises the same title twice on purpose must still get two
+tasks.
+
+**A question waiting on a person is read two ways, and they have to agree.**
+`blockedTasks()` reads `status`; `openEscalations()` reads `escalationStatus`,
+which is written inside `transition()` and is the column the weekly digest and
+the close endpoint work from. The migration that added it did not backfill, and
+a task already sitting in BLOCKED never transitions again until somebody answers
+it — at which point it is written ANSWERED. So the oldest questions in the
+system were the only ones the digest could not see, while the Agents screen
+listed them the whole time. A backfill fixes the rows that exist and
+`WAITING_ON_A_PERSON` fixes the reading, taking a null as pending **only**
+alongside BLOCKED: a closed question stays closed, and a task that never asked
+anything has no null to interpret.
+
 **Approving a task will not close it while its actions wait.**
 `POST /agents/tasks/:id/approve` predates the approval queue, and once the queue
 existed the two disagreed: the route wrote DONE while the letter that task had

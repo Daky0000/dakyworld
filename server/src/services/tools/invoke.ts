@@ -144,6 +144,24 @@ export interface InvokeOptions extends Omit<ToolContext, "taskId"> {
    */
   idempotencyKey?: string;
   /**
+   * This call is one a previous run of the task may already have made.
+   *
+   * Set by the runner for the calls inside a turn a resume restored, and for
+   * nothing else. It widens `idempotencyKey` from outward tools to **every**
+   * tool, which is the right reading for exactly that window: the crash the
+   * checkpoint cannot cover is a tool that ran and was never written down, and
+   * the tools most often lost that way are not outward at all. They are the
+   * ones that spend money without leaving the building — a capture run, a
+   * homepage photographed, a section of an audit — and the ones that write a
+   * row a person then finds twice, like `proposal.draft`.
+   *
+   * Deliberately not the default. Outside that window two identical calls can
+   * both be meant — a page looked at again after it was changed is the case —
+   * and a replay guard on every call would answer the second one with the
+   * first one's stale output. See `AgentToolCallMeta` in `lib/claudeAgent.ts`.
+   */
+  replayOfLostTurn?: boolean;
+  /**
    * This call belongs to a rehearsal, so anything it prepares is a specimen.
    *
    * Set by the runner from `AgentTask.rehearsal`. It changes nothing about the
@@ -473,15 +491,18 @@ export async function invokeTool(key: string, rawInput: unknown, options: Invoke
     };
   }
 
-  // Has this exact call already happened? Only asked for outward tools, and
-  // only when the caller supplied a key — see `idempotencyKey` above for why
-  // the caller rather than this function decides what "the same call" means.
+  // Has this exact call already happened? Asked for outward tools always, and
+  // for every tool when the runner says this call is one a dead process may
+  // already have made — and in both cases only when the caller supplied a key,
+  // since the caller rather than this function decides what "the same call"
+  // means. See `replayOfLostTurn` above for why those are two different tests
+  // rather than one.
   //
   // Checked here rather than before the permission gate on purpose: a replay
   // that no longer has the grant, or whose integration has been disconnected,
   // must be refused like any other call. Being a repeat is not a way past the
   // checks.
-  if (options.idempotencyKey && tool.outward) {
+  if (options.idempotencyKey && (tool.outward || options.replayOfLostTurn)) {
     const already = await priorCall(options.idempotencyKey);
     if (already) {
       const durationMs = Date.now() - startedAt;

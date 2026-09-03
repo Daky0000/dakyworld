@@ -171,6 +171,43 @@ console.log("\nWhat the listing shows");
   );
 }
 
+console.log("\nA question raised before the column existed");
+{
+  // The migration that added `escalationStatus` did not backfill, and the
+  // column is only ever written *during* a transition — so a task already
+  // sitting in BLOCKED keeps a null for ever, and the next thing that happens
+  // to it writes ANSWERED. The oldest questions in the system were the only
+  // ones the digest could not see, while the Agents screen listed them the
+  // whole time, because `blockedTasks()` reads `status` instead.
+  //
+  // The backfill fixes the rows; this fixes the reading, so the two roads
+  // agree whatever order a database was migrated in.
+  const legacy = await newTask();
+  await transition(legacy.id, { to: "RUNNING", reason: "claimed", actor: "check" });
+  await transition(legacy.id, {
+    to: "BLOCKED",
+    reason: "asked",
+    actor: "runner",
+    data: { blockedReason: "Do we take unregistered businesses?", finishedAt: new Date() },
+  });
+  await prisma.agentTask.update({ where: { id: legacy.id }, data: { escalationStatus: null } });
+
+  const open = await openEscalations();
+  check("it is listed even with nothing recorded", open.some((entry) => entry.id === legacy.id));
+
+  // And it can be dealt with. A row the listing shows and the close endpoint
+  // refuses is a question that cannot be taken off the wall.
+  check("and it can be closed", await closeEscalation(legacy.id, { who: "Dan" }, "Answered in Slack at the time."));
+  check("which records it as closed", (await statusOf(legacy.id)) === "CLOSED");
+  check("and it leaves the listing", !(await openEscalations()).some((entry) => entry.id === legacy.id));
+
+  // The other direction, and the half that stops this being a wildcard: a null
+  // is only a question when the task is stopped. A queued task carrying
+  // nothing has not asked anything.
+  const quiet = await newTask();
+  check("a task that never asked anything is not a question", !(await openEscalations()).some((entry) => entry.id === quiet.id));
+}
+
 console.log("\nThe digest");
 {
   // Slack is not configured in a check, which is the branch worth exercising:

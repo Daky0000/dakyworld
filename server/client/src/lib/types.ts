@@ -2182,6 +2182,26 @@ export interface AgentTaskDetail extends Omit<AgentTask, "steps"> {
     proposal: { id: string; title: string } | null;
     invoice: { id: string; invoiceNumber: string } | null;
   };
+  /** What the model side of this run actually cost, in tokens as well as money. */
+  spend: { inputTokens: number; outputTokens: number; modelCalls: number; costUsd: number };
+  /**
+   * Where the run stands against its own ceiling, summed from the `LlmCall`
+   * ledger rather than stored. Every field is null when the task has no
+   * ceiling — which is most of them, and is why the meter is only drawn when
+   * there is something to draw.
+   */
+  budget: {
+    ceilingUsd: number | null;
+    spentUsd: number;
+    remainingUsd: number | null;
+    fraction: number | null;
+    averageCallUsd: number | null;
+    /** What the turns still available would cost at the rate so far. */
+    estimatedToFinishUsd: number | null;
+    /** Where it moves to the cheaper model on its own. */
+    willEaseOffAt: number | null;
+    easedOff: boolean;
+  };
 }
 
 /** An agent's board, split the way a person reads it. */

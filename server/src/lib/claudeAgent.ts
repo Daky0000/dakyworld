@@ -64,7 +64,36 @@ export interface AgentTool {
    * the text of a refusal. A tool that was refused is information the model
    * needs, not an error that should end the run.
    */
-  run: (input: Record<string, unknown>) => Promise<AgentToolOutcome>;
+  run: (input: Record<string, unknown>, meta?: AgentToolCallMeta) => Promise<AgentToolOutcome>;
+}
+
+/**
+ * What the loop knows about this call that the arguments cannot say.
+ *
+ * One field, and it exists for one window. A checkpoint is written after every
+ * tool call, so a process that dies between the call landing and the write
+ * leaves a side effect on the record and no trace of it in the conversation.
+ * The resumed run restores that same half-finished turn, finds the call
+ * unanswered, and makes it again — which for a capture is a second Apify
+ * charge, for `proposal.draft` a second document, and for `delegate` a second
+ * agent doing the same work.
+ *
+ * `replay` is true only for the calls inside the turn a resume *restored*, and
+ * only until that turn completes. Everything the model asks for afterwards is
+ * a fresh decision and is never deduplicated, which is the distinction that
+ * matters: an agent that photographs a page, changes it and photographs it
+ * again is doing that deliberately, and a blanket "same arguments, same call"
+ * rule would hand it the old picture.
+ *
+ * **Optional, and absent means not a replay.** The loop always passes it; what
+ * does not is a harness or a route driving one tool directly, and a call made
+ * from outside a resumed conversation cannot be a repeat of one. Defaulting
+ * the other way would have a check's first call answered with some earlier
+ * run's output.
+ */
+export interface AgentToolCallMeta {
+  /** This call is one a previous process may already have made. */
+  replay: boolean;
 }
 
 export interface AgentToolOutcome {
@@ -1183,6 +1212,15 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   let pendingResults: Anthropic.Beta.BetaToolResultBlockParam[] | null = resumed?.pendingResults ?? null;
   let pendingStop = resumed?.pendingStop ?? false;
 
+  // The calls a previous process may already have made. Taken from the turn
+  // being restored, before anything runs, and emptied as soon as that turn is
+  // finished — see `AgentToolCallMeta`.
+  const restoredCalls = new Set(
+    (resumed?.pendingAssistant ?? [])
+      .filter((block): block is Anthropic.Beta.BetaToolUseBlockParam => block.type === "tool_use")
+      .map((block) => block.id),
+  );
+
   // Carried in from earlier runs. These are the *task's* totals; the `run`
   // ones below are this process's, and only those reach the ledger.
   let toolCalls = resumed?.toolCalls ?? 0;
@@ -1647,7 +1685,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
 
       let outcome: AgentToolOutcome;
       try {
-        outcome = await tool.run((call.input ?? {}) as Record<string, unknown>);
+        outcome = await tool.run((call.input ?? {}) as Record<string, unknown>, { replay: restoredCalls.has(call.id) });
       } catch (err) {
         outcome = { content: `That call failed: ${(err as Error).message}`, isError: true };
       }
@@ -1675,6 +1713,8 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     pendingAssistant = null;
     pendingResults = null;
     pendingStop = false;
+    // The restored turn is over, so nothing after this is a replay of it.
+    restoredCalls.clear();
     // Counted here rather than in a loop header: the turn is over, so what a
     // resume from this point would do next is the *next* turn, and a
     // checkpoint that says otherwise hands the task a free iteration every

@@ -371,6 +371,8 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
             )}
           </section>
 
+          <RunCost task={task} />
+
           <section>
             <h4 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
               What it did{task.status === "RUNNING" && <span className="ml-2 text-blue">· still going</span>}
@@ -420,6 +422,69 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
         </div>
       )}
     </Drawer>
+  );
+}
+
+/**
+ * What this run has cost, and what is going to happen to it without anybody
+ * doing anything.
+ *
+ * `GET /agents/tasks/:id` has answered all of this since the ceilings shipped —
+ * the money summed from the `LlmCall` ledger, the tokens, the point where the
+ * run finishes on the cheaper model and the point where it stops — and nothing
+ * in the client had ever read it. The footer showed a dollar figure with
+ * nothing to compare it against, which is the one number that cannot be acted
+ * on: an Owner deciding whether to raise a ceiling needs to see the ceiling.
+ *
+ * **The two forward-looking lines are the point.** Easing off and stopping are
+ * things the run does to itself, and a person who learns about them afterwards
+ * reads them as a fault — a task that "went quiet" or "came back worse" — which
+ * is exactly how the economy-model switch was reported before it was visible.
+ *
+ * A task with no ceiling gets the tokens and nothing else. Drawing an empty
+ * meter for the common case would teach people to ignore the one that matters,
+ * and there is no fraction to draw: `budget.fraction` is null and inventing a
+ * denominator from the spend so far would show every run at 100%.
+ */
+function RunCost({ task }: { task: AgentTaskDetail }) {
+  const { budget, spend } = task;
+  const tokens = spend.inputTokens + spend.outputTokens;
+  const fraction = budget.fraction === null ? null : Math.min(1, budget.fraction);
+  const overCeiling = budget.remainingUsd !== null && budget.remainingUsd <= 0;
+
+  return (
+    <section>
+      <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it is costing</h4>
+      <div className="flex flex-wrap items-baseline gap-2 text-sm">
+        <span className="font-medium text-ink">${budget.spentUsd.toFixed(4)}</span>
+        <span className="text-muted">
+          {budget.ceilingUsd !== null ? `of a $${budget.ceilingUsd.toFixed(2)} ceiling` : "on this task"}
+          {tokens > 0 && ` · ${tokens.toLocaleString()} tokens over ${spend.modelCalls} model call${spend.modelCalls === 1 ? "" : "s"}`}
+        </span>
+        {budget.easedOff && <Badge tone="muted">on the cheaper model</Badge>}
+      </div>
+
+      {fraction !== null && (
+        <div className="mt-1.5 h-1 w-full max-w-sm bg-line">
+          <div
+            className={`h-1 ${overCeiling ? "bg-danger" : fraction > 0.8 ? "bg-warn" : "bg-ink"}`}
+            style={{ width: `${Math.max(2, fraction * 100)}%` }}
+          />
+        </div>
+      )}
+
+      {budget.ceilingUsd !== null && (
+        <p className="mt-1.5 text-xs text-muted">
+          {overCeiling
+            ? "It is at its ceiling, so it stops rather than starting anything else. Raise the ceiling on the task to let it carry on."
+            : budget.easedOff
+              ? `Past four fifths of its ceiling, so it is finishing on the economy model. It stops at $${budget.ceilingUsd.toFixed(2)}.`
+              : `It moves to the economy model at $${(budget.willEaseOffAt ?? 0).toFixed(2)} and stops at $${budget.ceilingUsd.toFixed(2)}.`}
+          {budget.estimatedToFinishUsd !== null &&
+            ` About $${budget.estimatedToFinishUsd.toFixed(2)} more at the rate so far, if it uses every turn it has left.`}
+        </p>
+      )}
+    </section>
   );
 }
 

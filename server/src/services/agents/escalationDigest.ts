@@ -25,6 +25,28 @@ import { sendSlackBlocks, slackConfigured } from "../../lib/slack.js";
 /** A question this old has stopped being a question and become a problem. */
 const STALE_AFTER_DAYS = 7;
 
+/**
+ * A task that is waiting on a person, in the two spellings a database can hold.
+ *
+ * `escalationStatus` is written inside `transition()`, so every task that has
+ * stopped to ask since the column shipped carries PENDING. What it cannot
+ * carry is a question raised *before* it shipped: the migration added the
+ * column without a backfill, and a task already sitting in BLOCKED does not
+ * transition again until somebody answers it — at which point it is written as
+ * ANSWERED. So a question that had been waiting the longest was the one thing
+ * the digest could never see, while the Agents screen listed it, because
+ * `blockedTasks()` reads `status` instead. Two readings of "waiting on
+ * somebody", disagreeing about exactly the oldest rows.
+ *
+ * A backfill fixes the rows that exist; this fixes the reading, so the two
+ * roads agree whatever order a database was migrated in. `null` is only ever
+ * taken as pending **with** BLOCKED — a CLOSED question stays closed, and a
+ * task that never asked anything has no null to interpret.
+ */
+const WAITING_ON_A_PERSON = {
+  OR: [{ escalationStatus: "PENDING" as const }, { escalationStatus: null, status: "BLOCKED" as const }],
+};
+
 export interface OpenEscalation {
   id: string;
   title: string;
@@ -45,7 +67,7 @@ export interface OpenEscalation {
  */
 export async function openEscalations(limit = 50): Promise<OpenEscalation[]> {
   const tasks = await prisma.agentTask.findMany({
-    where: { escalationStatus: "PENDING", rehearsal: false },
+    where: { ...WAITING_ON_A_PERSON, rehearsal: false },
     orderBy: [{ finishedAt: "asc" }],
     take: limit,
     select: {
@@ -94,7 +116,7 @@ export async function closeEscalation(
 ): Promise<boolean> {
   const text = note?.trim().slice(0, 1000) || null;
   const done = await prisma.agentTask.updateMany({
-    where: { id: taskId, escalationStatus: "PENDING" },
+    where: { id: taskId, ...WAITING_ON_A_PERSON },
     data: { escalationStatus: "CLOSED", escalationResolvedAt: new Date(), escalationNote: text },
   });
   if (done.count === 0) return false;

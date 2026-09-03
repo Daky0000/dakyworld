@@ -555,7 +555,7 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
       needsCase(tool) ? " Before this runs, you must say why, what it gains and what the risk is — a person may have to approve it." : ""
     }`,
     inputSchema: withCase(zodToJsonSchema(tool.input, { target: "jsonSchema7", $refStrategy: "none" }) as JsonSchema, tool),
-    run: async (input) => {
+    run: async (input, meta) => {
       // Taken out before the tool sees them: they are the agent's case for
       // acting, not an argument to the action. A handler receiving an
       // unexpected `why` would fail its own schema check.
@@ -591,6 +591,13 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
         // the same payload raised by a different task next month is a second
         // deliberate send. `invokeTool` only acts on it for outward tools.
         idempotencyKey: outwardKey(task.id, tool.key, toolInput),
+        // And whether the key should be acted on for a tool that is not
+        // outward. True only inside the turn a resume restored, where "again"
+        // means a process died between the tool landing and the checkpoint
+        // saying so — the one gap the checkpoint cannot close on its own. An
+        // Apify capture, a homepage photographed, a proposal drafted: none of
+        // them leave the building, all of them cost something the second time.
+        replayOfLostTurn: meta?.replay ?? false,
       });
       counters.toolCalls += 1;
 
@@ -674,7 +681,7 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
     if (siteLookTool) {
       const leadId = task.leadId;
       const runSiteLook = siteLookTool.run;
-      siteLookTool.run = async (input) => {
+      siteLookTool.run = async (input, meta) => {
         const existingResearch = await prisma.leadResearch.findUnique({ where: { leadId } });
         if (existingResearch) {
           const summary = existingResearch.facts.length > 0 ? existingResearch.facts.join("\n") : "No facts were recorded on that run.";
@@ -682,7 +689,7 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
             content: `Using research already on file from ${new Date(existingResearch.ranAt).toLocaleDateString()} rather than looking again.\n\n${summary}`,
           };
         }
-        return runSiteLook(input);
+        return runSiteLook(input, meta);
       };
     }
   }
@@ -1044,6 +1051,26 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
     },
   };
 
+  /**
+   * The child task a dead process may already have raised for this call.
+   *
+   * `delegate` and `handOff` do not go through `invokeTool`, so the replay
+   * guard there cannot cover them — and they are the two calls whose second
+   * run is the most expensive thing on this list: another agent, waking up and
+   * doing the same work, spending its own tokens on it.
+   *
+   * Matched on parent, taker and title, which is what the call is: the same
+   * manager giving the same person the same job. Asked **only** on a restored
+   * turn, so a manager that deliberately raises two pieces of work with one
+   * title still gets two tasks.
+   */
+  const childAlreadyRaised = async (targetKey: string, title: string) =>
+    prisma.agentTask.findFirst({
+      where: { parentId: task.id, agentKey: targetKey, title },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+
   const delegate: AgentTool = {
     name: "delegate",
     description:
@@ -1056,9 +1083,15 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
-    run: async (input) => {
+    run: async (input, meta) => {
       const target = await prisma.agent.findUnique({ where: { key: String(input.agentKey ?? "") } });
       if (!target) return { content: `There is no agent with the key ${input.agentKey}.`, isError: true };
+      // A resume re-running a turn whose result was never written down. The
+      // work is already queued for them; raising it again would be two agents
+      // on one job.
+      if (meta?.replay && (await childAlreadyRaised(target.key, String(input.title ?? "").slice(0, 120)))) {
+        return { content: `Already queued for ${target.name} — this was raised before the run was interrupted. Carry on with your own part.` };
+      }
       // Down the chart only. An agent handing work sideways or upward is an
       // agent routing around the person who owns that lane.
       if (target.managerKey !== agent.key) {
@@ -1285,13 +1318,18 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
-    run: async (input) => {
+    run: async (input, meta) => {
       if (counters.handedOff >= MAX_HANDOFFS) {
         return { content: `You have already handed off ${MAX_HANDOFFS} pieces of this task. Anything more and the brief belongs to somebody else entirely — escalate instead.`, isError: true };
       }
       const target = await prisma.agent.findUnique({ where: { key: String(input.agentKey ?? "") } });
       if (!target) return { content: `There is no agent with the key ${input.agentKey}. Use findAgent to see who exists.`, isError: true };
       if (target.key === agent.key) return { content: "You cannot hand work to yourself.", isError: true };
+      // Same window as `delegate`, and the same answer: the task exists, it is
+      // theirs, and a second copy of it is a second agent doing the work.
+      if (meta?.replay && (await childAlreadyRaised(target.key, String(input.title ?? "").slice(0, 120)))) {
+        return { content: `Already queued for ${target.name} — this was handed over before the run was interrupted. Finish your own part.` };
+      }
       if (target.status === "RETIRED" || target.status === "PAUSED") {
         return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work. Try findAgent again, or use needSkill if nobody else can.`, isError: true };
       }
