@@ -18,6 +18,7 @@ import {
 } from "../services/spreadsheet.js";
 import { buildPreviews, buildPreviewsFrom, commitPlan, loadCheckpoint, normalizePlanFrom, type TablePreview } from "../services/leadImport.js";
 import { sourceFromDrive, sourceFromUpload, type GridSource } from "../services/sheetSource.js";
+import { FileTypeError, assertSpreadsheetBytes } from "../lib/fileType.js";
 
 export const importsRouter = Router();
 
@@ -68,7 +69,21 @@ function cacheFile(importId: string, buffer: Buffer, fileName: string) {
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-function decodeUpload(dataBase64: string): Buffer {
+/**
+ * The bytes behind an upload, checked against the name that came with them.
+ *
+ * `fileName` is not optional, and that is the whole point. Every caller here
+ * had already checked the *name* against `isSpreadsheetName` and then handed
+ * the bytes straight to a parser — so `.xlsx` reached a zip reader on the
+ * strength of four characters at the end of a string the client chose.
+ * `assertSpreadsheetBytes` was written for exactly this and was wired to
+ * nothing: a 20 MB archive whose own headers declare that it expands to
+ * gigabytes was opened, and opened again on each of the reader's retries.
+ *
+ * Taking the name as a required argument is what stops the check being
+ * forgotten at a fourth call site later.
+ */
+function decodeUpload(dataBase64: string, fileName: string): Buffer {
   // Accepts a bare base64 string or a data: URL, since both are one line of
   // client code away and neither is worth failing over.
   const payload = dataBase64.includes(",") && dataBase64.startsWith("data:") ? dataBase64.slice(dataBase64.indexOf(",") + 1) : dataBase64;
@@ -76,6 +91,15 @@ function decodeUpload(dataBase64: string): Buffer {
   if (!buffer.length) throw new SpreadsheetError("That file came through empty.");
   if (buffer.length > MAX_UPLOAD_BYTES) {
     throw new SpreadsheetError("That file is over 20 MB. Split it, or import it from Google Drive instead.");
+  }
+  // Reported as a SpreadsheetError so these routes' own `catch` blocks answer
+  // with the sentence rather than letting a 400 fall through to the central
+  // handler as "Something went wrong."
+  try {
+    assertSpreadsheetBytes(buffer, fileName);
+  } catch (err) {
+    if (err instanceof FileTypeError) throw new SpreadsheetError(err.message);
+    throw err;
   }
   return buffer;
 }
@@ -111,7 +135,7 @@ importsRouter.post("/sheets", async (req, res, next) => {
     if (!isSpreadsheetName(fileName)) {
       return res.status(400).json({ error: "Upload an .xlsx, .csv or .tsv file." });
     }
-    res.json({ sheets: await listWorkbookSheets(decodeUpload(dataBase64), fileName) });
+    res.json({ sheets: await listWorkbookSheets(decodeUpload(dataBase64, fileName), fileName) });
   } catch (err) {
     if (err instanceof SpreadsheetError) return res.status(err.status).json({ error: err.message });
     next(err);
@@ -167,7 +191,13 @@ function sourceFor(record: { id: string; driveFileId: string | null; fileName: s
   if (!input.dataBase64 || !name) {
     throw new SpreadsheetError("The uploaded file is no longer on the server. Choose it again to carry on.");
   }
-  const buffer = decodeUpload(input.dataBase64);
+  // Checked here as well as when the import was opened. This is the re-send
+  // path — the browser hands back the file after the cache has let it go — and
+  // the name it sends is the one `sourceFromUpload` picks the parser from, so
+  // an unchecked one arriving here chooses between the CSV reader and the zip
+  // reader on its own.
+  if (!isSpreadsheetName(name)) throw new SpreadsheetError("Upload an .xlsx, .csv or .tsv file.");
+  const buffer = decodeUpload(input.dataBase64, name);
   cacheFile(record.id, buffer, name);
   return sourceFromUpload(buffer, name);
 }
@@ -203,7 +233,7 @@ importsRouter.post("/analyze", async (req, res, next) => {
         if (!isSpreadsheetName(input.fileName)) throw new SpreadsheetError("Upload an .xlsx, .csv or .tsv file.");
       }
 
-      const buffer = input.driveFileId ? null : decodeUpload(input.dataBase64 as string);
+      const buffer = input.driveFileId ? null : decodeUpload(input.dataBase64 as string, input.fileName as string);
       const opening = buffer ? sourceFromUpload(buffer, input.fileName as string) : sourceFromDrive(input.driveFileId as string);
 
       const available = await opening.names();

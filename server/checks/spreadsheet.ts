@@ -43,12 +43,32 @@ import ExcelJS from "exceljs";
 import {
   MAX_COLUMNS,
   MAX_ROWS_PER_SHEET,
+  isSpreadsheetName,
   listWorkbookSheets,
   parseCsvCapped,
   parseWorkbook,
   toGrid,
   type SheetGrid,
 } from "../src/services/spreadsheet.js";
+import { assertSpreadsheetBytes } from "../src/lib/fileType.js";
+
+/**
+ * A zip whose local file header declares `uncompressed` bytes of contents.
+ *
+ * Built rather than committed, for the same reason as every other fixture
+ * here. It only has to be well-formed as far as `assertSafeZip` reads — the
+ * signature, the two sizes and the two lengths — because the whole point is
+ * that the declared size is refused before any reader unpacks it.
+ */
+function declaredZip(uncompressed: number): Buffer {
+  const header = Buffer.alloc(30);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt32LE(64, 18); // compressed size
+  header.writeUInt32LE(uncompressed, 22);
+  header.writeUInt16LE(0, 26); // name length
+  header.writeUInt16LE(0, 28); // extra length
+  return Buffer.concat([header, Buffer.alloc(64, 0x41)]);
+}
 
 const failures: string[] = [];
 let passed = 0;
@@ -251,6 +271,100 @@ async function main() {
     refusedOld = (err as Error).message;
   }
   check("an .xls is still turned away with the instruction to re-save it", refusedOld.includes("save it as .xlsx"), refusedOld);
+
+  // --- A quote in the middle of a field ------------------------------------
+  //
+  // The worst defect this file has held, and it was silent in the direction
+  // that loses the most: a quote opened a quoted field wherever it appeared,
+  // so `6" pipe,Accra` swallowed its delimiter, then its newline, then every
+  // remaining row of the file into one field — because the closing quote it
+  // was waiting for never came. A 46,000-row sheet imported as one lead and
+  // reported success. Inch marks, unquoted nicknames and sizes are ordinary
+  // content in a list of Ghanaian trade businesses.
+  const cascade = parseCsvCapped('name,city\n6" pipe,Accra\nAda,Kumasi\nKofi,Tema').rows;
+  check("a quote mid-field does not swallow the rest of the file", cascade.length === 4, JSON.stringify(cascade));
+  check("...and the row it sits on keeps both of its columns", JSON.stringify(cascade[1]) === '["6\\" pipe","Accra"]', JSON.stringify(cascade[1]));
+  check("...and the quote survives as a character", cascade[1]?.[0] === '6" pipe', cascade[1]?.[0]);
+  check("...and the rows below it are still their own rows", cascade[3]?.[0] === "Kofi", JSON.stringify(cascade[3]));
+
+  // The negatives. A quote at the *start* of a field is the one that must go
+  // on delimiting, or fixing the above breaks every properly-quoted export.
+  check("a quoted field still holds its delimiter", JSON.stringify(parseCsvCapped('a,b\n"x,y",z').rows[1]) === '["x,y","z"]');
+  check('a doubled "" is still one quote', parseCsvCapped('a,b\n"say ""hi""",z').rows[1]?.[0] === 'say "hi"');
+  check("a quoted field still holds its newline", parseCsvCapped('a,b\n"line1\nline2",z').rows[1]?.[0] === "line1\nline2");
+  check("an empty quoted field is still empty", JSON.stringify(parseCsvCapped('a,b,c\n1,"",3').rows[1]) === '["1","","3"]');
+  // Some exporters leave a space after the delimiter. That quote is still an
+  // opening one, which is why the guard tests the trimmed field rather than an
+  // empty one — every push here trims, so the space was being discarded anyway.
+  check("a quote after a space still opens a quoted field", JSON.stringify(parseCsvCapped('a,b\nx, "Accra, GH"').rows[1]) === '["x","Accra, GH"]');
+
+  // --- Which character is the delimiter ------------------------------------
+  //
+  // The sniffer counted every candidate across the sample without regard for
+  // quoting, so one quoted address holding four commas outvoted the semicolons
+  // actually separating the fields — and a semicolon-delimited export, which
+  // is what Excel produces by default across much of Europe, arrived with
+  // every row as a single column.
+  const semi = parseCsvCapped('a;b\n"x,y,z,w";2').rows;
+  check("a semicolon file is not read as comma-delimited by its quoted commas", JSON.stringify(semi[1]) === '["x,y,z,w","2"]', JSON.stringify(semi));
+  check("a tab file is still read as tab-delimited", JSON.stringify(parseCsvCapped('a\tb\n"x,y"\t2').rows[1]) === '["x,y","2"]');
+  check("an ordinary comma file is still read as comma-delimited", JSON.stringify(parseCsvCapped("name,city\nAda,Accra").rows[1]) === '["Ada","Accra"]');
+
+  // --- The bytes are judged, not the name ---------------------------------
+  //
+  // `assertSpreadsheetBytes` was written for exactly this, documented in
+  // SECURITY.md as the rule ("uploads are judged on their bytes, never on the
+  // filename"), and wired to nothing — so `.xlsx` reached a zip reader on the
+  // strength of four characters of a string the client chose.
+  const bomb = declaredZip(900 * 1024 * 1024);
+  let bombRefusal = "";
+  try {
+    assertSpreadsheetBytes(bomb, "leads.xlsx");
+  } catch (err) {
+    bombRefusal = (err as Error).message;
+  }
+  check("a zip declaring gigabytes of expansion is refused unopened", bombRefusal.includes("has not been opened"), bombRefusal || "accepted");
+
+  let wrongBytes = "";
+  try {
+    assertSpreadsheetBytes(Buffer.from("id,name\n1,Ada"), "leads.xlsx");
+  } catch (err) {
+    wrongBytes = (err as Error).message;
+  }
+  check("a CSV renamed .xlsx is refused before the zip reader sees it", wrongBytes.includes("is not a spreadsheet"), wrongBytes || "accepted");
+
+  let binaryCsv = "";
+  try {
+    assertSpreadsheetBytes(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]), "leads.csv");
+  } catch (err) {
+    binaryCsv = (err as Error).message;
+  }
+  check("a zip renamed .csv is refused before the text reader sees it", binaryCsv.includes("is not text"), binaryCsv || "accepted");
+
+  // The extension lists have to stay level with `isSpreadsheetName` and
+  // `isCsvName`, which are what the routes accept. They were not: this
+  // refused `.xlsm` and `.txt` while the routes took both, so wiring it in as
+  // it stood would have started turning away two formats that imported fine.
+  for (const name of ["leads.csv", "leads.tsv", "leads.txt"]) {
+    let refusal = "";
+    try {
+      assertSpreadsheetBytes(Buffer.from("id,name\n1,Ada"), name);
+    } catch (err) {
+      refusal = (err as Error).message;
+    }
+    check(`a text ${name.slice(name.lastIndexOf("."))} the routes accept is accepted here too`, refusal === "", refusal);
+    check(`...and ${name} is a name the routes accept`, isSpreadsheetName(name));
+  }
+  for (const name of ["leads.xlsx", "leads.xlsm"]) {
+    let refusal = "";
+    try {
+      assertSpreadsheetBytes(declaredZip(1024), name);
+    } catch (err) {
+      refusal = (err as Error).message;
+    }
+    check(`a real zip named ${name.slice(name.lastIndexOf("."))} is accepted`, refusal === "", refusal);
+    check(`...and ${name} is a name the routes accept`, isSpreadsheetName(name));
+  }
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length > 0) {

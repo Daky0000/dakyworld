@@ -174,6 +174,36 @@ column to the model can never quietly widen an existing response.
   bytes are sniffed against the declared type, an `.xlsx` is checked for a
   declared expansion a spreadsheet would never have, and an SVG is refused if it
   carries a script, an event handler or an external reference.
+
+  **The spreadsheet half of that was written and wired to nothing until Sep
+  2026**, which is the reason
+  [`checks/uploadBytes.ts`](server/checks/uploadBytes.ts) exists and drives the
+  import route over real HTTP rather than calling the validator directly. The
+  rule above was true of the logo upload and false of the import: the route
+  checked `isSpreadsheetName(fileName)` and handed the bytes to a zip reader, so
+  a 20 MB archive declaring gigabytes of expansion was opened — and opened again
+  on each of the reader's three retries. A guard that nothing calls is the defect
+  class this codebase keeps producing, so **assert that a route calls it, not
+  that the function works.**
+
+  Two narrower things came out of the same pass. An SVG's markup is now
+  character-reference-decoded before the scriptable test runs, and an event
+  handler installed indirectly (`<set attributeName="onload">`, `<handler>`) is
+  refused — both were evasions of rules already intended, by spelling rather
+  than by meaning. And a webp is matched on `RIFF` *and* the offset-8 `WEBP`
+  marker; on the marker alone, any file with those four bytes in the ninth
+  position sniffed as a webp, and since the image rule is "sniffed must equal
+  declared", declaring `image/webp` was a way to store arbitrary bytes as
+  company artwork.
+
+  None of the SVG evasions was executable when it was found, and that is worth
+  writing down rather than leaving to be rediscovered: an uploaded logo is
+  rendered through `<img src="data:…">` in the OS UI and in email, and through
+  PDFKit (PNG and JPEG only) on documents. SVG in an `<img>` is in the browser's
+  secure static mode — no script runs, no external reference is fetched. **The
+  inertness is a property of the render path, not of the file.** An inline
+  `<svg>` or an `<object>` on a screen later makes every one of them live, which
+  is why they are refused now.
 - **The public webhook is the only anonymous write**, and it is public for a good
   reason ([`src/routes/webhooks.ts`](server/src/routes/webhooks.ts)). It is rate
   limited, size capped, recorded before it is acted on, and filtered by

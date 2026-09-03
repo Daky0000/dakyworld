@@ -34,9 +34,23 @@ export class SpreadsheetError extends Error {
 
 // --- CSV -------------------------------------------------------------------
 
-/** Comma, semicolon or tab — whichever appears most in the first few lines. */
+/** Comma, semicolon or tab — whichever appears most in the first few lines, outside quotes. */
 function sniffDelimiter(text: string): string {
-  const sample = text.split(/\r?\n/).slice(0, 10).join("\n");
+  // Sliced before it is split. `text` is the whole file — up to 20 MB — and
+  // splitting all of it to keep ten lines builds an array of every line in the
+  // file, which is the same way of running out of memory that `parseCsvCapped`
+  // below exists to avoid.
+  const head = text.slice(0, 64 * 1024);
+  // Quoted fields are removed before counting, because a delimiter inside one
+  // is not a delimiter. A semicolon-delimited export — the default from Excel
+  // in much of Europe — whose first row holds one quoted address with four
+  // commas in it was being read as comma-delimited, and then every row of it
+  // arrived as a single column.
+  const sample = head
+    .replace(/"(?:[^"]|"")*"/g, "")
+    .split(/\r?\n/)
+    .slice(0, 10)
+    .join("\n");
   const counts = [",", ";", "\t"].map((delimiter) => ({
     delimiter,
     count: sample.split(delimiter).length - 1,
@@ -45,10 +59,15 @@ function sniffDelimiter(text: string): string {
   return counts[0].count > 0 ? counts[0].delimiter : ",";
 }
 
-/** RFC 4180: quoted fields may contain the delimiter, newlines, and `""` escapes. */
-export function parseCsv(text: string, delimiter = sniffDelimiter(text)): string[][] {
-  return parseCsvCapped(text, delimiter, Infinity).rows;
-}
+// `parseCsv` used to sit here: the same parse with the cap set to `Infinity`.
+// Nothing called it, and it was the one door in this module to the failure the
+// function below exists to prevent — a 20 MB CSV is several million rows, and
+// building every one of them as its own array is the cheapest way there is to
+// run this server out of memory. An uncapped parser kept as a convenience is a
+// convenience for whoever next needs "just the rows", which is everybody.
+// Removed rather than documented, on the same reasoning as the three
+// permission keys that were deleted rather than shipped because no route could
+// enforce them. Pass an explicit `cap` if you genuinely want a different one.
 
 /**
  * The same parse, stopping at `cap` rows but counting to the end.
@@ -97,7 +116,18 @@ export function parseCsvCapped(
       continue;
     }
 
-    if (char === '"') {
+    if (char === '"' && field.trim() === "") {
+      // A quote only opens a quoted field at the *start* of one. Anywhere else
+      // it is a literal character, and reading it as an opening quote is how a
+      // single inch mark destroyed a whole import: `6" pipe,Accra` swallowed
+      // the delimiter, then the newline, then every remaining row of the file
+      // into one field, because the quote it was waiting for never came. A
+      // 46,000-row sheet arrived as one lead and reported success.
+      //
+      // `field.trim()` rather than `field` so that `, "Accra, GH"` — a quote
+      // after the space some exporters leave — still opens a quoted field. The
+      // whitespace is discarded either way; every push below trims.
+      field = "";
       quoted = true;
     } else if (char === delimiter) {
       row.push(field.trim());

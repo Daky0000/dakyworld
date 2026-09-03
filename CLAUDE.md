@@ -3494,6 +3494,23 @@ substitute, so headings come out serif. The files are still correct — do not
 
 ## Gotchas that cost real time
 
+- **The CSV parser is hand-rolled, and a quote is only a quote at the start of
+  a field.** `parseCsvCapped` opened a quoted field on *any* `"`, so
+  `6" pipe,Accra` swallowed its delimiter, then its newline, then every
+  remaining row of the file into a single field — because the closing quote it
+  was waiting for never came. A 46,000-row sheet imported as **one lead and
+  reported success**. Inch marks, sizes and unquoted nicknames are ordinary
+  content in a list of trade businesses, so this was reachable from a perfectly
+  normal export. The guard is `field.trim() === ""` rather than `field === ""`,
+  so `, "Accra, GH"` — a quote after the space some exporters leave — still
+  opens a quoted field. Relatedly, `sniffDelimiter` counted `,` `;` and tab
+  **inside** quoted fields and split the whole file to keep ten lines: one
+  quoted address holding four commas outvoted the semicolons actually
+  separating the fields, so a semicolon-delimited export (Excel's default
+  across much of Europe) arrived with every row as one column. It strips quoted
+  spans and slices to 64 KB before splitting now. `checks/spreadsheet.ts` holds
+  both, and half of those assertions are the negatives — a properly quoted
+  field must still keep its delimiter, its newline and its doubled `""`.
 - **ExcelJS is read by streaming, and both halves of that bite.**
   `workbook.xlsx.load()` builds the entire file as an object model — a 4.5 MB
   workbook peaked at ~600 MB resident and never gave it back, and the wizard

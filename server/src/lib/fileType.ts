@@ -18,8 +18,18 @@ export class FileTypeError extends Error {
   status = 400;
 }
 
-/** Bytes every one of these formats starts with. */
-const SIGNATURES: Array<{ kind: string; bytes: number[]; offset?: number }> = [
+/**
+ * Bytes every one of these formats starts with.
+ *
+ * `also` is a second run of bytes that must match as well, for the container
+ * formats whose first four bytes say only which container it is.
+ */
+const SIGNATURES: Array<{
+  kind: string;
+  bytes: number[];
+  offset?: number;
+  also?: { bytes: number[]; offset: number };
+}> = [
   // A .xlsx is a zip. So is a .docx, an .odt and a .jar — the extension is
   // checked separately; this only establishes that it is a zip at all.
   { kind: "zip", bytes: [0x50, 0x4b, 0x03, 0x04] },
@@ -28,7 +38,12 @@ const SIGNATURES: Array<{ kind: string; bytes: number[]; offset?: number }> = [
   { kind: "image/png", bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
   { kind: "image/jpeg", bytes: [0xff, 0xd8, 0xff] },
   { kind: "image/gif", bytes: [0x47, 0x49, 0x46, 0x38] },
-  { kind: "image/webp", bytes: [0x57, 0x45, 0x42, 0x50], offset: 8 }, // "WEBP" after the RIFF header
+  // "RIFF" then a four-byte length then "WEBP". Both halves are checked: on
+  // the offset-8 marker alone, any file at all with those four bytes in the
+  // ninth position identified as a webp, and `assertImageBytes` only compares
+  // what was sniffed against what the caller declared — so declaring
+  // `image/webp` was a way to store arbitrary bytes as artwork.
+  { kind: "image/webp", bytes: [0x52, 0x49, 0x46, 0x46], also: { bytes: [0x57, 0x45, 0x42, 0x50], offset: 8 } },
   { kind: "application/pdf", bytes: [0x25, 0x50, 0x44, 0x46] },
   // The old binary Excel format, which exceljs does not read but which people
   // rename to .xlsx and then wonder why it fails.
@@ -41,7 +56,9 @@ const startsWith = (buffer: Buffer, bytes: number[], offset = 0) =>
 /** The format the bytes are, or null when nothing matches (which includes every text format). */
 export function sniff(buffer: Buffer): string | null {
   for (const signature of SIGNATURES) {
-    if (startsWith(buffer, signature.bytes, signature.offset)) return signature.kind;
+    if (!startsWith(buffer, signature.bytes, signature.offset)) continue;
+    if (signature.also && !startsWith(buffer, signature.also.bytes, signature.also.offset)) continue;
+    return signature.kind;
   }
   return null;
 }
@@ -60,26 +77,34 @@ export function looksLikeText(buffer: Buffer): boolean {
 /**
  * A spreadsheet upload, checked against its own extension.
  *
- * `.xlsx` must be a zip and `.csv`/`.tsv` must be text — which is the pairing
- * that matters, because those are the two entirely different parsers behind
- * them and feeding either the other's input is where a crash lives.
+ * `.xlsx`/`.xlsm` must be a zip and `.csv`/`.tsv`/`.txt` must be text — which
+ * is the pairing that matters, because those are the two entirely different
+ * parsers behind them and feeding either the other's input is where a crash
+ * lives.
+ *
+ * The two lists have to stay level with `isSpreadsheetName` and `isCsvName` in
+ * `services/spreadsheet.ts`, which are what the routes use to decide whether a
+ * name is acceptable at all. They were not level: this accepted `.xlsx`, `.csv`
+ * and `.tsv` while the routes accepted `.xlsm` and `.txt` as well, so wiring
+ * this in as it stood would have started refusing two formats that had been
+ * importing fine.
  */
 export function assertSpreadsheetBytes(buffer: Buffer, fileName: string): void {
   const extension = fileName.toLowerCase().slice(fileName.lastIndexOf("."));
 
-  if (extension === ".xlsx") {
+  if (extension === ".xlsx" || extension === ".xlsm") {
     const kind = sniff(buffer);
     if (kind === "application/vnd.ms-excel") {
       throw new FileTypeError("That is an old .xls file renamed to .xlsx. Open it in Excel and save it as .xlsx properly.");
     }
     if (kind !== "zip") {
-      throw new FileTypeError("That file is named .xlsx but is not a spreadsheet.");
+      throw new FileTypeError(`That file is named ${extension} but is not a spreadsheet.`);
     }
     assertSafeZip(buffer);
     return;
   }
 
-  if (extension === ".csv" || extension === ".tsv") {
+  if (extension === ".csv" || extension === ".tsv" || extension === ".txt") {
     if (!looksLikeText(buffer)) throw new FileTypeError(`That file is named ${extension} but is not text.`);
     return;
   }
@@ -147,13 +172,45 @@ export function assertSafeZip(buffer: Buffer): void {
  * recognised as SVG and judged as SVG — which here means allowed only when the
  * caller said so, and only after the obviously executable parts are ruled out.
  */
-const SCRIPTABLE_SVG = /<\s*script|\son\w+\s*=|javascript:|<\s*foreignObject|<\s*use[^>]+href\s*=\s*["']\s*http/i;
+const SCRIPTABLE_SVG =
+  /<\s*script|\son\w+\s*=|javascript:|<\s*foreignObject|<\s*use[^>]+href\s*=\s*["']\s*http|<\s*handler|attributeName\s*=\s*["']\s*on\w/i;
+
+/**
+ * Numeric and named character references, resolved before the test above runs.
+ *
+ * `href="&#106;avascript:alert(1)"` is the same attribute as
+ * `href="javascript:alert(1)"` to every parser that will read this file, and
+ * the literal substring the rule looks for is not in it. Decoding first is
+ * what makes the rule about the *meaning* rather than about the spelling —
+ * the same reasoning as `decodeEntities` in the website parser.
+ *
+ * Only the references that matter here are resolved: this feeds a regex, not a
+ * renderer, so an unrecognised entity is left as it is rather than guessed at.
+ */
+function decodeCharRefs(text: string): string {
+  return text
+    .replace(/&#x([0-9a-f]+);?/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);?/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&(quot|apos|amp|lt|gt|colon|Tab|NewLine);/gi, (whole, name: string) => {
+      const named: Record<string, string> = {
+        quot: '"',
+        apos: "'",
+        amp: "&",
+        lt: "<",
+        gt: ">",
+        colon: ":",
+        tab: "\t",
+        newline: "\n",
+      };
+      return named[name.toLowerCase()] ?? whole;
+    });
+}
 
 export function assertImageBytes(buffer: Buffer, declaredType: string): void {
   if (declaredType === "image/svg+xml") {
     const head = buffer.subarray(0, 4096).toString("utf8");
     if (!/<\s*svg[\s>]/i.test(head)) throw new FileTypeError("That file is declared as SVG but does not contain SVG markup.");
-    if (SCRIPTABLE_SVG.test(buffer.toString("utf8"))) {
+    if (SCRIPTABLE_SVG.test(decodeCharRefs(buffer.toString("utf8")))) {
       throw new FileTypeError("That SVG contains a script, an event handler or an external reference. Export it as a plain SVG or a PNG.");
     }
     return;

@@ -292,9 +292,21 @@ async function readEventStream(response: Response, id: number, safeToRetry: bool
           .join("");
 
         if (data) {
-          const parsed = JSON.parse(data) as RpcAnswer & { id?: number };
           // Servers are free to push logs and progress down the same stream;
           // only the frame carrying our id is the answer.
+          //
+          // Which is also why a frame that is not JSON is skipped rather than
+          // thrown on. The line above anticipates traffic we did not ask for,
+          // and a `JSON.parse` outside the loop's own `catch` made any one
+          // unparseable frame end the whole call — reported as "the stream
+          // could not be read", naming a syntax error, about a request the
+          // server may have answered perfectly well one frame later.
+          let parsed: (RpcAnswer & { id?: number }) | null = null;
+          try {
+            parsed = JSON.parse(data) as RpcAnswer & { id?: number };
+          } catch {
+            parsed = null;
+          }
           if (parsed?.id === id) return parsed;
         }
         split = boundary.exec(buffer);
