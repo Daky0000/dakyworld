@@ -13,7 +13,7 @@ import { reviewContent } from "./content.js";
 import { reviewSpeedAndSeo } from "./performance.js";
 import { reviewSecurity } from "./security.js";
 import { reviewUx } from "./ux.js";
-import { decideRedesign } from "./redesign.js";
+import { decideRedesign, type RedesignVerdict } from "./redesign.js";
 import { synthesise } from "./synthesis.js";
 import {
   DISCIPLINES,
@@ -181,7 +181,24 @@ export async function reviewWebsite(subject: AuditSubject, options: RunOptions =
     };
   });
 
-  const { score, scored } = overallScore(disciplines);
+  // --- The call, then the score, then the compile --------------------------
+  //
+  // **The redesign call runs before the compile rather than beside it, and the
+  // ordering is the price of the score.** These two used to go together in one
+  // `Promise.all` because neither needs the other's answer, which is still
+  // true — the compile is not shown the verdict and the decider is not shown
+  // the summary, for the same reason the four reviewers do not talk to each
+  // other. What changed is that the call's scorecard is now part of the site's
+  // one number, and the synthesis is *told* that number. Handing it a total
+  // worked out without a section that was about to be added is how a summary
+  // comes to quote a figure the front page does not carry.
+  //
+  // The call is given the UI/UX findings. Not to repeat them: so that one
+  // document cannot say two things about one homepage.
+  const redesign = await decideRedesign(evidence, business, byDiscipline.get("UX")?.findings ?? []);
+  notes.push(...redesign.notes.filter((note) => !notes.includes(note)));
+
+  const { score, scored } = overallScore(disciplines, redesign.verdict?.score ?? null);
   if (!scored) {
     notes.push(
       disciplines.some((discipline) => discipline.scored)
@@ -199,31 +216,17 @@ export async function reviewWebsite(subject: AuditSubject, options: RunOptions =
     verdict: scored ? verdictFor(score) : "Not scored",
     disciplines,
     synthesis: null,
+    redesign: redesign.verdict,
     screenshots,
     notes: [...new Set(notes)],
     stepNotes: evidence.stepNotes,
-    costUsd: evidence.costUsd + disciplines.reduce((total, discipline) => total + discipline.costUsd, 0),
+    costUsd: evidence.costUsd + redesign.costUsd + disciplines.reduce((total, discipline) => total + discipline.costUsd, 0),
   };
 
-  // --- The compile, and the call -------------------------------------------
-  //
-  // Both read the sections rather than the site, so both go after them and
-  // neither goes after the other: the compile weighs the four against each
-  // other, and the redesign call answers what to do about the page. They are
-  // asked the same evidence and they are asked separately, which is the same
-  // reason the four reviewers do not talk to each other — a decider that has
-  // read a summary agrees with it.
-  //
-  // The call is given the UI/UX findings, though. Not to repeat them: so that
-  // one document cannot say two things about one homepage.
-  const [compiled, redesign] = await Promise.all([
-    synthesise(draft, evidence, { trade: subject.trade, town: subject.town }),
-    decideRedesign(evidence, business, byDiscipline.get("UX")?.findings ?? []),
-  ]);
+  const compiled = await synthesise(draft, evidence, { trade: subject.trade, town: subject.town });
   draft.synthesis = compiled.synthesis;
-  draft.redesign = redesign.verdict;
-  draft.costUsd += compiled.costUsd + redesign.costUsd;
-  draft.notes = [...new Set([...draft.notes, ...compiled.notes, ...redesign.notes])];
+  draft.costUsd += compiled.costUsd;
+  draft.notes = [...new Set([...draft.notes, ...compiled.notes])];
 
   return { report: draft, evidence };
 }
@@ -415,12 +418,20 @@ export interface SectionRerun extends StoredAudit {
 export function mergeRerunReport(input: {
   stored: WebsiteAuditReport;
   fresh: DisciplineReport;
+  /**
+   * The call as decided again, on a UI/UX re-run. Absent on every other
+   * section's re-run, where the stored call stands — and where its **score**
+   * still has to reach the arithmetic, or re-running the security section
+   * would silently drop the look out of the site's number.
+   */
+  redesign?: RedesignVerdict | null;
   evidence: Pick<AuditEvidence, "notes" | "stepNotes" | "finalUrl">;
   /** Which of the two paid steps this re-run actually performed. */
   ran: { screenshots: boolean; rendered: boolean };
   at: string;
 }): WebsiteAuditReport {
   const { stored, evidence, ran } = input;
+  const redesign = input.redesign !== undefined ? input.redesign : (stored.redesign ?? null);
   const fresh: DisciplineReport = { ...input.fresh, rerunAt: input.at };
 
   const byDiscipline = new Map(stored.disciplines.map((discipline) => [discipline.discipline, discipline]));
@@ -432,7 +443,7 @@ export function mergeRerunReport(input: {
     rendered: ran.rendered ? evidence.stepNotes.rendered : (stored.stepNotes?.rendered ?? []),
   };
 
-  const { score, scored } = overallScore(disciplines);
+  const { score, scored } = overallScore(disciplines, redesign?.score ?? null);
   const notes = [
     ...evidence.notes,
     ...(ran.screenshots ? [] : carried.screenshots),
@@ -457,6 +468,7 @@ export function mergeRerunReport(input: {
     scored,
     verdict: scored ? verdictFor(score) : "Not scored",
     disciplines,
+    redesign,
     notes: [...new Set(notes)],
     stepNotes: carried,
   };
@@ -585,9 +597,15 @@ export async function rerunAuditSection(auditId: string, discipline: Discipline,
           ? await reviewContent(evidence, companyAudit, business)
           : reviewSecurity(evidence, companyAudit);
 
+  // Made before the merge, because the merge is where the score is worked out
+  // and the call's scorecard is part of it now. On any other section's re-run
+  // this is null and the stored call's score is what the merge reads.
+  const redesign = discipline === "UX" ? await decideRedesign(evidence, business, fresh.findings) : null;
+
   const report = mergeRerunReport({
     stored,
     fresh,
+    redesign: redesign ? redesign.verdict : undefined,
     evidence,
     ran: { screenshots: takeShots, rendered: needs.rendered },
     at: new Date().toISOString(),
@@ -637,18 +655,14 @@ export async function rerunAuditSection(auditId: string, discipline: Discipline,
     };
   });
 
-  // --- The compile, and the call -------------------------------------------
-  //
-  // **The redesign call is made again only when the UI/UX section moved.** It
-  // is decided from the pictures and from what the reviewer found in them, so
-  // a security or content re-run changes nothing it was arguing from and
-  // paying for a second opinion would only give the document two answers a
-  // fortnight apart. A UI/UX re-run changes both, and carrying the old call
-  // forward under a new set of findings is exactly the contradiction the whole
-  // section is arranged to avoid.
-  const redesign = discipline === "UX" ? await decideRedesign(evidence, business, fresh.findings) : null;
-  if (redesign) report.redesign = redesign.verdict;
-
+  // **The redesign call is made again only when the UI/UX section moved** (see
+  // where it is awaited, above the merge). It is decided from the pictures and
+  // from what the reviewer found in them, so a security or content re-run
+  // changes nothing it was arguing from and paying for a second opinion would
+  // only give the document two answers a fortnight apart. A UI/UX re-run
+  // changes both, and carrying the old call forward under a new set of
+  // findings is exactly the contradiction the whole section is arranged to
+  // avoid.
   const compiled = await synthesise(report, evidence, { trade: subject.trade, town: subject.town });
   report.synthesis = compiled.synthesis;
   const rerunCostUsd = evidence.costUsd + fresh.costUsd + compiled.costUsd + (redesign?.costUsd ?? 0);

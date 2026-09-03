@@ -138,9 +138,56 @@ console.log("\n── what it does to the score ──────────�
     at: "2026-09-02T10:00:00.000Z",
   });
 
-  // 0.32·40 + 0.28·70 + 0.18·80 + 0.22·72 = 62.64, all four now scored.
-  check("the overall is recomputed over four sections", merged.overallScore === 63, `${before} → ${merged.overallScore}`);
+  // 0.16·40 + 0.28·70 + 0.18·80 + 0.22·72 = 56.24 over 0.84 of coverage — the
+  // redesign call's own 0.16 is absent here, because this fixture has no call
+  // on it. That is the point of the next section.
+  check("the overall is recomputed over four sections", merged.overallScore === 67, `${before} → ${merged.overallScore}`);
   check("and it may be shown", merged.scored && merged.verdict === "Needs work", merged.verdict);
+}
+
+console.log("\n── and what the redesign call is worth of it ─────────────────────");
+{
+  // The look of a page is measured twice: the UI/UX section subtracts points
+  // per fault, and the redesign call scores ten headings out of a hundred.
+  // Both are in the site's one number, and this is the arithmetic that says so.
+  const withCall = mergeRerunReport({
+    stored: storedReport(),
+    fresh: section("UX", { score: 40 }),
+    redesign: { call: "REBUILD", score: 30, headline: "", assessment: "", issues: [], impact: { trust: "", usability: "", conversion: "", howItFeels: "" }, direction: [], summary: "", reviewer: "UI/UX Designer", decidedBy: "Perplexity", decidedAt: "2026-09-03T10:00:00.000Z", sources: [] } as never,
+    evidence: { notes: [], stepNotes: { screenshots: [], rendered: [] }, finalUrl: "https://example.test/" },
+    ran: { screenshots: true, rendered: false },
+    at: "2026-09-03T10:00:00.000Z",
+  });
+  // 56.24 + 0.16·30 = 61.04 over a full 1.0 of coverage.
+  check("the call's scorecard is part of the site's score", withCall.overallScore === 61, String(withCall.overallScore));
+  check("and the call itself is on the merged report", withCall.redesign?.call === "REBUILD");
+
+  // Another section's re-run does not decide again — and the stored call's
+  // score still has to reach the arithmetic, or mending the security section
+  // would silently drop the look out of the site's number.
+  const carried = mergeRerunReport({
+    stored: { ...storedReport(), redesign: { call: "REBUILD", score: 30 } as never },
+    fresh: section("SECURITY", { score: 72 }),
+    evidence: { notes: [], stepNotes: { screenshots: [], rendered: [] }, finalUrl: "https://example.test/" },
+    ran: { screenshots: false, rendered: false },
+    at: "2026-09-03T10:00:00.000Z",
+  });
+  // UI/UX still unscored: 0.28·70 + 0.18·80 + 0.22·72 + 0.16·30 = 54.64 over 0.84.
+  check("a re-run of something else carries the stored call's score", carried.overallScore === 65, String(carried.overallScore));
+  check("and does not decide the call again", carried.redesign?.call === "REBUILD");
+
+  // A call that could not be made is left out, exactly as an unscored section
+  // is. Arriving as a zero would state that the page looks as bad as a page
+  // can look, about a business nobody photographed.
+  const noCall = mergeRerunReport({
+    stored: storedReport(),
+    fresh: section("UX", { score: 40 }),
+    redesign: null,
+    evidence: { notes: [], stepNotes: { screenshots: [], rendered: [] }, finalUrl: "https://example.test/" },
+    ran: { screenshots: true, rendered: false },
+    at: "2026-09-03T10:00:00.000Z",
+  });
+  check("a call that could not be made counts as nothing, not as zero", noCall.overallScore === 67, String(noCall.overallScore));
 }
 
 console.log("\n── a re-run that failed again ────────────────────────────────────");

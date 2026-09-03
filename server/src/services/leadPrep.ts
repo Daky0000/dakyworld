@@ -8,6 +8,8 @@ import { researchLead, type FillableField, type LeadResearchResult } from "./lea
 import { MAX_BATCH, captureHomepageViewsBatch, normaliseSiteUrl, type Screenshot, type ShotResult } from "./siteShot.js";
 import { storeLeadShots, storedShotsOf, type StoredShot } from "./leadShots.js";
 import { runWebsiteAudit } from "./audit/team.js";
+import { callLabel, normaliseCall, REDESIGN_FLOOR } from "./audit/redesign.js";
+import { reportScored, type WebsiteAuditReport } from "./audit/types.js";
 
 /**
  * Look before you write.
@@ -287,34 +289,40 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
     filled.website = { value: corrected, source: `${subject.website} does not resolve; this host answers` };
   }
 
-  const strength = caseStrength(audit, look);
-  const flags = redFlags(audit, look);
   const needsDemo = demoIsTheArgument({ website: subject.website, audit });
   if (subject.website && !look) {
     notes.push(
       "Nobody has seen how their site actually looks — only what it is made of. The design, the layout and the first impression are the half a business owner cares about, and none of it was checked.",
     );
   }
-  const facts = buildFacts({ research, audit, look, filled, strength, hasWebsite: Boolean(subject.website), redFlags: flags });
 
   // --- 5. The audit team, when it was asked for ----------------------------
   //
-  // Deliberately last, and deliberately after `facts` is built. The scan
-  // decides what the *letter* argues, and it has always done that on its own;
-  // the audit team produces the *report*, which is a different document for a
-  // different reader. Running it here rather than folding it into the stages
-  // above means nothing about the email pipeline changes when this is off.
+  // **This used to run last, after the letter's facts had already been built,
+  // and that was the defect.** The reasoning was that the scan decides what the
+  // *letter* argues and the team produces the *report* for a different reader.
+  // They are not different readers: the report is attached to the letter. So a
+  // business whose review found nothing on the first screen saying what they
+  // sell, no way to make contact, and a page worth rebuilding got an email
+  // opening on the year in their footer — with that review attached to it.
+  // A letter arguing something weaker than its own attachment is worse than a
+  // letter with no attachment at all.
   //
   // Two things are handed over rather than redone: the DNS audit, which asked
-  // the same questions of the same domain a minute ago, and the desktop
-  // screenshot, which cost an Apify container boot. The phone view is the only
-  // new picture.
+  // the same questions of the same domain a minute ago, and the screenshots,
+  // which cost an Apify container boot — and which are handed over *only when
+  // they are pictures*, see `audit/evidence.ts`.
   let websiteAudit: LeadPrep["websiteAudit"] = null;
+  let team: WebsiteAuditReport | null = null;
   // Asked for, or earned by the findings: more than one red flag means the
   // letter will name one and attach the rest, and there is nothing to attach
   // without this. `withAuditTeam: false` still refuses — a caller that has
   // said no is not overruled by arithmetic.
-  const auditTeamWanted = options.withAuditTeam ?? flags.length > 1;
+  //
+  // Counted from the scan alone, because it is what decides whether the team
+  // runs at all and the team cannot be its own trigger.
+  const scanFlags = redFlags(audit, look);
+  const auditTeamWanted = options.withAuditTeam ?? scanFlags.length > 1;
   if (auditTeamWanted) {
     // The address that answered, in preference to the one on file. `corrected`
     // is only ever a hostname swap, so it is the fallback rather than the
@@ -334,6 +342,7 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
           },
           { companyAudit: audit, desktopShot, mobileShot },
         );
+        team = run.report;
         websiteAudit = {
           auditId: run.auditId,
           overallScore: run.report.overallScore,
@@ -345,7 +354,7 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
         notes.push(...run.report.notes.filter((note) => !notes.includes(note)));
         if (options.withAuditTeam === undefined) {
           notes.push(
-            `The full review was run because ${flags.length} serious faults were found: the letter names one and the report carries the rest.`,
+            `The full review was run because ${scanFlags.length} serious faults were found: the letter names one and the report carries the rest.`,
           );
         }
       } catch (err) {
@@ -356,6 +365,15 @@ export async function prepareLead(leadId: string, options: PrepOptions = {}): Pr
       }
     }
   }
+
+  // --- 6. What the letter argues from --------------------------------------
+  //
+  // Worked out after the review rather than before it, so the strongest thing
+  // to open on is chosen across everything that was found rather than across
+  // the two checks the scan happened to make.
+  const strength = caseStrength(audit, look, team);
+  const flags = redFlags(audit, look, team);
+  const facts = buildFacts({ research, audit, look, team, filled, strength, hasWebsite: Boolean(subject.website), redFlags: flags });
 
   // Said last, and said only once the report either exists or provably does
   // not. A drafter told "the rest are attached" on a lead whose report failed
@@ -796,7 +814,76 @@ export interface StrongestPoint {
   kind: "seen" | "checked";
 }
 
-export function strongestPoint(audit: CompanyAudit | null, look: HomepageLook | null): StrongestPoint | null {
+/**
+ * What the four-reviewer report found, flattened and worst first.
+ *
+ * **When this ran, it is what the letter argues from and the scan is not.**
+ * The team read the same site with four reviewers instead of two checks and a
+ * glance, its security section is handed the very `CompanyAudit` the scan
+ * produced, and its UI/UX section read the same photographs the homepage look
+ * did — so it is a superset, not a second opinion. Giving the drafter both
+ * lists would put two overlapping descriptions of one page into one prompt,
+ * which is how a model ends up averaging them into the blandest sentence
+ * available.
+ *
+ * `plainly` is preferred over `observed` for the same reason it is everywhere
+ * else here: it is the version with no web vocabulary in it, and the owner is
+ * not a developer.
+ */
+export function auditTeamFindings(team: WebsiteAuditReport | null | undefined): { say: string; costs: string; evidence: string; severity: string; kind: "seen" | "checked" }[] {
+  // A report read back out of a JSON column is whatever was written there,
+  // possibly by a version of this app that predates half these fields. Every
+  // reader here treats it as untrusted shape rather than as the type it is
+  // cast to — the alternative is a `TypeError` inside the path that decides
+  // what a cold email says.
+  if (!team || !Array.isArray(team.disciplines)) return [];
+  const rank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+  return team.disciplines
+    .flatMap((discipline) =>
+      (Array.isArray(discipline?.findings) ? discipline.findings : [])
+        .filter((finding) => finding.severity !== "GOOD")
+        .map((finding) => ({
+          say: finding.plainly || finding.observed,
+          costs: finding.impact,
+          evidence: finding.evidence,
+          severity: finding.severity as string,
+          // The UI/UX section is the one a business owner can check by opening
+          // their own site, which is what the tie-break below is for.
+          kind: (discipline.discipline === "UX" ? "seen" : "checked") as "seen" | "checked",
+        })),
+    )
+    .sort((a, b) => {
+      const bySeverity = (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0);
+      return bySeverity !== 0 ? bySeverity : Number(b.kind === "seen") - Number(a.kind === "seen");
+    });
+}
+
+export function strongestPoint(audit: CompanyAudit | null, look: HomepageLook | null, team?: WebsiteAuditReport | null): StrongestPoint | null {
+  // **The compiler already answered this question, and nothing was reading its
+  // answer.** `synthesis.emailBrief.openOn` is written by the model that read
+  // all four sections against each other, for this exact purpose — it is the
+  // reason the audit Markdown exists at all — and until now the letter was
+  // still being written from the scan's two checks while that paragraph sat in
+  // a JSON column. A letter opening on the year in a footer, with a report
+  // attached saying the page needs rebuilding, is one document contradicting
+  // its own attachment in front of the person it is trying to persuade.
+  const brief = team?.synthesis?.emailBrief;
+  if (brief?.openOn?.trim()) {
+    const worst = auditTeamFindings(team)[0];
+    return {
+      say: brief.openOn.trim(),
+      costs: brief.consequence?.trim() ?? "",
+      evidence: worst?.evidence ?? "the full review of their site",
+      severity: worst?.severity ?? "HIGH",
+      kind: worst?.kind ?? "seen",
+    };
+  }
+
+  // The review ran but produced no brief — a compile that failed, or an older
+  // report. Its findings are still better evidence than the scan's.
+  const fromTeam = auditTeamFindings(team)[0];
+  if (fromTeam) return fromTeam;
+
   const candidates: StrongestPoint[] = [];
 
   for (const observation of look?.observations ?? []) {
@@ -849,11 +936,23 @@ export type CaseStrength = "STRONG" | "MODERATE" | "WEAK" | "NONE";
 
 const RANK: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
 
-export function caseStrength(audit: CompanyAudit | null, look: HomepageLook | null): CaseStrength {
-  const severities = [
-    ...(audit?.findings ?? []).map((finding) => finding.severity),
-    ...(look?.observations ?? []).map((observation) => observation.severity),
-  ].filter((severity) => severity !== "GOOD");
+export function caseStrength(audit: CompanyAudit | null, look: HomepageLook | null, team?: WebsiteAuditReport | null): CaseStrength {
+  // A page the review decided should be rebuilt or redesigned is a strong case
+  // whatever the individual severities came out at. The ten headings are a
+  // judgement about the page as a whole, and a site scoring under the redesign
+  // floor with nothing worse than four MEDIUMs on it is precisely the business
+  // that needs telling — it is the "nothing is broken and none of it is
+  // working" case, which no per-fault severity can express.
+  const call = team?.redesign ? normaliseCall(team.redesign.call) : null;
+  if (call === "REBUILD" || call === "REDESIGN") return "STRONG";
+
+  const fromTeam = auditTeamFindings(team);
+  const severities = fromTeam.length
+    ? fromTeam.map((finding) => finding.severity)
+    : [
+        ...(audit?.findings ?? []).map((finding) => finding.severity),
+        ...(look?.observations ?? []).map((observation) => observation.severity),
+      ].filter((severity) => severity !== "GOOD");
 
   const worst = Math.max(0, ...severities.map((severity) => RANK[severity] ?? 0));
   if (worst >= 3) return "STRONG";
@@ -877,8 +976,21 @@ export function caseStrength(audit: CompanyAudit | null, look: HomepageLook | nu
  * sentence saying so. See `outreachDoctrine.ts` → "When there is more than one
  * red flag".
  */
-export function redFlags(audit: CompanyAudit | null, look: HomepageLook | null): { say: string; severity: string; kind: "seen" | "checked" }[] {
+export function redFlags(
+  audit: CompanyAudit | null,
+  look: HomepageLook | null,
+  team?: WebsiteAuditReport | null,
+): { say: string; severity: string; kind: "seen" | "checked" }[] {
   const serious = (severity: string) => severity === "CRITICAL" || severity === "HIGH";
+
+  // The superseding rule again: when the full review ran, its findings are the
+  // count. Adding the scan's on top would double-count the same faults — the
+  // review's security section is handed the scan's own audit — and the number
+  // this returns decides whether a report is attached and whether the letter
+  // says "a few other things came up".
+  const fromTeam = auditTeamFindings(team);
+  if (fromTeam.length) return fromTeam.filter((finding) => serious(finding.severity)).map(({ say, severity, kind }) => ({ say, severity, kind }));
+
   const flags: { say: string; severity: string; kind: "seen" | "checked" }[] = [];
 
   for (const observation of look?.observations ?? []) {
@@ -927,6 +1039,8 @@ function buildFacts(input: {
   research: LeadResearchResult | null;
   audit: CompanyAudit | null;
   look: HomepageLook | null;
+  /** The four-reviewer report, when it ran. It supersedes the two below. */
+  team?: WebsiteAuditReport | null;
   filled: LeadPrep["filled"];
   strength: CaseStrength;
   hasWebsite: boolean;
@@ -940,12 +1054,15 @@ function buildFacts(input: {
     );
   }
 
-  if (input.audit) {
+  const teamFindings = auditTeamFindings(input.team);
+  const reviewed = teamFindings.length > 0;
+
+  if (input.audit || reviewed) {
     // Named separately and first, because left to itself a drafter opens on
     // whichever finding reads most neatly rather than the one that costs them
     // most — which is how a letter ends up leading with missing link-preview
     // tags at a business whose site has been insecure since 2019.
-    const headline = strongestPoint(input.audit, input.look);
+    const headline = strongestPoint(input.audit, input.look, input.team);
     if (headline && (input.strength === "STRONG" || input.strength === "MODERATE")) {
       facts.push(
         `THE STRONGEST THING TO OPEN ON (${headline.severity.toLowerCase()}, ${
@@ -957,7 +1074,11 @@ function buildFacts(input: {
         "THERE IS NO STRONG CASE HERE. Their site and their email set-up were checked and nothing serious is wrong with either — the worst of it is minor housekeeping. Do not inflate it into a problem: a business that is doing fine, told by a stranger that it is not, remembers that. Either write three honest sentences that say what is good and offer one small improvement, or say plainly in the rationale that this lead is not worth a cold email and let the sender decide.",
       );
     }
+  }
 
+  if (reviewed && input.team) {
+    facts.push(...reviewFacts(input.team, teamFindings));
+  } else if (input.audit) {
     const findings = sortFindings(input.audit.findings);
     for (const finding of findings) {
       facts.push(
@@ -981,9 +1102,12 @@ function buildFacts(input: {
     );
   }
 
-  if (input.look) {
+  // Only when the review did not run. Both describe the same two photographs,
+  // and a prompt carrying two accounts of one homepage is a prompt a model
+  // averages into the blandest sentence available to it.
+  if (input.look && !reviewed) {
     facts.push(...lookForPrompt(input.look));
-  } else if (input.hasWebsite) {
+  } else if (!input.look && input.hasWebsite) {
     // Without this the drafter has only the technical checks and no way to
     // know that the interesting half is missing — which is how a letter about
     // a DNS record gets written to a business whose real problem is that their
@@ -994,6 +1118,109 @@ function buildFacts(input: {
   }
 
   return facts;
+}
+
+/**
+ * The four-reviewer report, as lines the drafter can argue from.
+ *
+ * Everything here already existed and none of it was reaching a letter. The
+ * order is the order a writer needs it in: what to say, what may not be said,
+ * what the page is actually worth, then the evidence, then what is good about
+ * them — because a letter that opens on a fault and never concedes anything
+ * reads as a sales audit, which is the thing the whole doctrine exists to
+ * avoid.
+ */
+function reviewFacts(team: WebsiteAuditReport, findings: ReturnType<typeof auditTeamFindings>): string[] {
+  const facts: string[] = [];
+  const brief = team.synthesis?.emailBrief;
+
+  facts.push(
+    `THE FULL REVIEW WAS RUN AND THIS LETTER ARGUES FROM IT, NOT FROM THE QUICK CHECKS. Four reviewers went over their site — how it looks, how fast and findable it is, the writing on it, and its security.${
+      Array.isArray(team.disciplines) && reportScored(team) ? ` It came out at ${team.overallScore} out of 100 — "${team.verdict}".` : ""
+    } Never put that number in the letter: it is a report somebody reads, not a thing to open a cold email with.`,
+  );
+
+  // The guard, and it is the reason this block is worth having as much as the
+  // evidence is. `doNotSay` is the compiler naming what the findings will not
+  // support — and a drafter that never sees it will reach for exactly those
+  // claims, because they are the ones that would make the strongest letter.
+  if (brief?.doNotSay?.length) {
+    facts.push(`WHAT YOU MAY NOT CLAIM, because the evidence does not support it: ${brief.doNotSay.join("; ")}`);
+  }
+  if (brief?.ask) {
+    facts.push(
+      brief.ask === "NOTHING"
+        ? `THE REVIEW'S OWN VIEW IS THAT THERE IS NOTHING TO OFFER HERE. ${brief.whyThatAsk ?? ""} Say so in the rationale rather than manufacturing an ask.`
+        : `WHAT TO OFFER: ${brief.ask === "DEMO" ? "a page built for them to look at" : "the fix itself"}. ${brief.whyThatAsk ?? ""}`,
+    );
+  }
+
+  // The redesign call. Said in the owner's terms, with the number kept out of
+  // the letter for the same reason the site score is.
+  const call = team.redesign;
+  if (call) {
+    const decision = normaliseCall(call.call);
+    const needsWork = decision === "REBUILD" || decision === "REDESIGN";
+    facts.push(
+      `WHAT THE PAGE ITSELF IS WORTH, decided from the photographs: ${callLabel(decision)}.${
+        typeof call.score === "number" ? ` It scored ${call.score} out of 100 for how it looks${call.score < REDESIGN_FLOOR ? ", which is below the line where a redesign is the honest answer" : ""}.` : ""
+      } ${call.headline} ${
+        needsWork
+          ? "You may say plainly that the page needs rebuilding, in those words, because that is the conclusion of a review that looked at it. Do not put the score in the letter."
+          : "Do not suggest a rebuild: the review decided the page does not need one, and offering one anyway is the thing that loses a reader's trust in everything else in the letter."
+      }`,
+    );
+    // Written to be quoted, in plain words, with no web vocabulary in it. The
+    // drafter is told what it is for rather than being left to paste it.
+    if (call.summary) {
+      facts.push(`HOW THE REVIEW PUT IT TO THEM, in full — use its language, do not use the whole paragraph: ${call.summary}`);
+    }
+  }
+
+  for (const finding of findings) {
+    facts.push(`Found in the review — ${finding.severity.toLowerCase()}: ${finding.say}${finding.costs ? ` What it costs them: ${finding.costs}` : ""} (${finding.evidence})`);
+  }
+
+  const good = [
+    ...(Array.isArray(team.synthesis?.whatIsWorking) ? team.synthesis.whatIsWorking : []),
+    ...(Array.isArray(team.redesign?.strengths) ? team.redesign.strengths : []).map((entry) => entry.strength),
+  ];
+  if (good.length) {
+    facts.push(`Already good, and worth conceding in a sentence: ${[...new Set(good)].slice(0, 4).join("; ")}`);
+  }
+
+  const checked = team.disciplines.flatMap((discipline) => (Array.isArray(discipline?.checked) ? discipline.checked : []));
+  if (checked.length) {
+    facts.push(
+      `What was actually checked: ${checked.slice(0, 20).join("; ")}. Anything not on that list was not looked at, and nothing may be claimed about it.`,
+    );
+  }
+
+  const didNotRun = team.disciplines.filter((discipline) => discipline && !discipline.scored).map((discipline) => discipline.reviewer);
+  if (didNotRun.length) {
+    facts.push(`Part of the review did not run (${didNotRun.join(", ")}), so say nothing about what those sections would have covered.`);
+  }
+
+  return facts;
+}
+
+/**
+ * The most recent four-reviewer report for a lead, read from its own row.
+ *
+ * Everything that decides what a letter says has to agree about what was
+ * found, and there are five places that ask: the prep itself, the strength
+ * shown beside the draft on three screens, and the rule that attaches the
+ * report to the email. Copying the findings onto `LeadResearch` would give
+ * each of them its own copy to drift from; `WebsiteAudit` is already the row
+ * that holds them, keyed by lead, so it is read instead.
+ *
+ * Null is a real answer and means the review has not been run for this lead.
+ */
+export async function latestAuditReport(leadId: string): Promise<WebsiteAuditReport | null> {
+  const row = await prisma.websiteAudit
+    .findFirst({ where: { leadId }, orderBy: { ranAt: "desc" }, select: { report: true } })
+    .catch(() => null);
+  return (row?.report as unknown as WebsiteAuditReport | undefined) ?? null;
 }
 
 /** The stored prep, if there is one, without running anything. */

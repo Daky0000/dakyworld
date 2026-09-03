@@ -6,7 +6,7 @@ import { draftEmail } from "../lib/emailDrafter.js";
 import { preSendCheck } from "../services/coldEmailChecks.js";
 import { chooseScenario, exampleWording, manualScenarios } from "../services/coldEmailScenarios.js";
 import { polishEmail } from "../lib/emailPolish.js";
-import { caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
+import { caseStrength, isStale, latestAuditReport, prepareLead, storedPrep } from "../services/leadPrep.js";
 import { ensureDemoForLead } from "../services/leadDemo.js";
 import { analystConfigured } from "../lib/anthropic.js";
 import { resolveContext } from "../services/emailContext.js";
@@ -308,8 +308,10 @@ emailsRouter.post("/draft", async (req, res, next) => {
     // to come back out of the stored JSON.
     let storedStrength: ReturnType<typeof caseStrength> | null = prep?.strength ?? null;
     if (!storedStrength && input.leadId) {
-      const stored = await storedPrep(input.leadId);
-      if (stored) storedStrength = caseStrength(stored.audit as never, stored.look as never);
+      // The review as well as the scan, or the strength shown beside the draft
+      // disagrees with the draft: the letter is written from the review now.
+      const [stored, team] = await Promise.all([storedPrep(input.leadId), latestAuditReport(input.leadId)]);
+      if (stored) storedStrength = caseStrength(stored.audit as never, stored.look as never, team);
     }
 
     // --- 2. Draft ---------------------------------------------------------

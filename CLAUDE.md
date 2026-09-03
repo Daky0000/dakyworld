@@ -501,8 +501,54 @@ attach the wrong company to a name. An address read out of the homepage we just
 fetched is written straight in when the field is empty — it cannot be somebody
 else's, and the worst case is that it is stale.
 
+**When the four-reviewer report ran, it is what the letter argues from — and
+for a month it was not.** `buildFacts()` read the `CompanyAudit` and the
+`HomepageLook` and nothing else, while the review itself sat in a column and
+went out **attached to the same email**. A business whose review found nothing
+on the first screen saying what they sell, no way to make contact, and a page
+worth rebuilding got a letter opening on the year in their footer, with that
+review stapled to it. A letter arguing something weaker than its own attachment
+is worse than one with no attachment at all.
+
+- **The review runs before the facts are built, not after.** It used to be
+  last, on the reasoning that the scan decides what the *letter* says and the
+  team produces the *report* for a different reader. They are not different
+  readers.
+- **It supersedes the scan rather than adding to it.** The review's security
+  section is handed the very `CompanyAudit` the scan produced and its UI/UX
+  section read the same photographs, so it is a superset. Giving the drafter
+  both lists puts two overlapping descriptions of one page into one prompt,
+  which is how a model averages them into the blandest sentence available.
+  `auditTeamFindings()` is the flattened list; `redFlags`, `caseStrength` and
+  `strongestPoint` all take it and all prefer it.
+- **`synthesis.emailBrief` was written for this and nothing read it.**
+  `openOn` is the opening line, chosen by the model that weighed all four
+  sections against each other; `doNotSay` is the guard naming what the evidence
+  will not support, which a drafter that never sees it reaches for first
+  *because* those are the claims that would make the strongest letter.
+- **A page the review says to rebuild is a strong case whatever the severities
+  are.** The ten headings judge the page as a whole, and a site under the
+  redesign floor with nothing worse than four MEDIUMs on it is exactly the
+  business that needs telling — the "nothing is broken and none of it is
+  working" case, which no per-fault severity can express.
+- **Everything that asks agrees, because they all read the same row.**
+  `latestAuditReport(leadId)` reads `WebsiteAudit`; the three screens that show
+  a case strength beside a draft, and `reportToAttach()`, all go through it.
+  Copying the findings onto `LeadResearch` would give each of them a copy to
+  drift from.
+- **The scenario chooser was already built to accept the review's ids and was
+  never given them.** `coldEmailScenarios.ts` lists both vocabularies against
+  every scenario — `cert-untrusted` *and* `sec-cert-untrusted` — so a lead whose
+  review found six faults was choosing its letter's shape from whatever the two
+  quick checks happened to see. `emailContext` reads both now.
+- **A report read out of a JSON column is untrusted shape**, not the type it is
+  cast to: every reader guards `Array.isArray` before touching it, because the
+  alternative is a `TypeError` inside the path that decides what a cold email
+  says.
+
 **A weak case is an output, not a gap.** `caseStrength()` reads the worst
-non-GOOD severity across the audit and the look. When it is WEAK or NONE the
+non-GOOD severity across the review when there is one, and across the audit and
+the look when there is not. When it is WEAK or NONE the
 drafter is told **THERE IS NO STRONG CASE HERE** in those words and instructed
 to write three honest sentences or to say the lead is not worth writing to; the
 polish fails an email built on minor housekeeping whatever else is right about
@@ -1329,8 +1375,9 @@ evidence.ts   fetch once, measure once, photograph twice (1280 and 390),
   ├ performance.ts measured, then job: "text" for the summary only
   ├ content.ts     job: "text"    — the visible words, markup stripped
   └ security.ts    no model at all
-redesign.ts   job: "redesign" — ten weighted headings, one score, one of four
-              calls, and the paragraph that goes into a proposal
+redesign.ts   job: "redesign" — ten weighted headings, one score (0.16 of the
+              site's own), one of four calls, and the proposal paragraph.
+              Runs before synthesis.ts, because its score is in that number.
 synthesis.ts  callClaude, named rather than routed
 annotate.ts   draws the boxes; markdown.ts and pdf.ts render
 ```
@@ -1348,12 +1395,29 @@ sentence in a proposal to have got wrong, in both directions.
   reviewers do not talk to each other: a decider that has read a summary agrees
   with it. The UI/UX *findings* are handed over, though, so one document cannot
   say two things about one homepage.
-- **It is not a discipline, and its score never reaches `overallScore`.** The
-  four sections measure a site; this one is the conclusion those measurements
-  are for, and putting it in the average would make "rebuild it" a fifth kind
-  of fault. It shipped with no number at all on 2 Sep 2026 and gained a
-  scorecard the next day, because "needs rebuilding" is an assertion an owner
-  is entitled to see the working for and a paragraph is not working.
+- **It is not a discipline, and its score is 0.16 of the site's own** —
+  `LOOK_WEIGHT` in `audit/types.ts`, taken out of UX's old 0.32 rather than
+  added on top. The look of a page is measured twice now and that is the point:
+  the UI/UX section subtracts a fixed number of points per fault, which answers
+  *what is wrong with it* and cannot answer *how well is it made* — a plain,
+  competent, forgettable page has no faults to subtract and scores in the
+  nineties. The ten headings answer the second question directly. Appearance
+  keeps exactly the weight it always had, split evenly between the two ways of
+  asking. It is still not a discipline: no findings, no reviewer row, no
+  section, never re-run on its own. **A call that could not be made is left out
+  of the average, never scored zero** — a zero states that the page looks as bad
+  as a page can look, about a business nobody photographed.
+- **So the call runs before the compile rather than beside it.** They used to
+  go together in one `Promise.all` because neither needs the other's answer,
+  which is still true — the compile is not shown the verdict. What changed is
+  that the synthesis is *told* the site's number, and handing it a total worked
+  out without a section about to be added is how a summary comes to quote a
+  figure the front page does not carry.
+- **Under 70, a redesign is the answer and judgement may not say otherwise** —
+  `REDESIGN_FLOOR`. One band of latitude would let a page scoring 65 be called
+  a sharpening job, which is the one direction the error is expensive in: the
+  owner buys the smaller job and the smaller job does not work. Harshness
+  inside one band is left alone; two bands is still refused in both directions.
 - **Ten headings, weighted in code, and the model never sees the total.** It
   scores each heading out of a hundred; `weighApart()` multiplies by the fixed
   weights in `CATEGORY_WEIGHTS` and adds. Ask a model for eleven numbers where
@@ -1419,6 +1483,18 @@ sentence in a proposal to have got wrong, in both directions.
   When a browser has since measured no delay and no movement, neither finding is
   printed — telling somebody their page keeps visitors waiting, when a browser
   timed it and it does not, is a false statement dressed up as arithmetic.
+- **The audit reuses the scan's screenshots, and only when they are
+  screenshots.** `picturesToReuse()` in `evidence.ts` used to branch on whether
+  the option had been *passed*, and `leadPrep` passes what its own capture
+  returned whether or not that produced anything — a `ShotResult` with
+  `shot: null` and the reason in `note` is an ordinary return from `siteShot`.
+  So one flaky Apify run during the scan switched off the audit's capture as
+  well, and the UI/UX section reported "Nobody has seen how the site looks"
+  about a site that photographs perfectly well. Re-running that section on its
+  own worked every time, because a re-run has no handed-over picture to
+  inherit — which is what made it look like a fault in the section. The
+  discarded result's reason is kept and printed only if this run's own capture
+  fails too.
 - **A section that could not run is unscored, never zero and never a hundred.**
   `DisciplineReport.scored` exists because the first render read "Content
   100/100 — nobody read the writing on the page": no findings scores a hundred.

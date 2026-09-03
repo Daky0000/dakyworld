@@ -262,12 +262,16 @@ export async function reportToAttach(args: { purpose: EmailMessage["purpose"]; l
     prisma.websiteAudit.findFirst({
       where: { leadId: args.leadId, pdfFileId: { not: null } },
       orderBy: { ranAt: "desc" },
-      select: { id: true },
+      // The report as well as the id: the count below decides whether this is
+      // attached at all, and counting the scan's two checks while the review
+      // sitting in the same row found six is how a letter comes to say "a few
+      // other things came up" about a document nobody read.
+      select: { id: true, report: true },
     }),
     prisma.leadResearch.findUnique({ where: { leadId: args.leadId }, select: { audit: true, look: true } }),
   ]);
   if (!audit || !research) return null;
-  if (redFlags(research.audit as never, research.look as never).length < 2) return null;
+  if (redFlags(research.audit as never, research.look as never, audit.report as never).length < 2) return null;
 
   return { kind: "audit", auditId: audit.id };
 }

@@ -291,7 +291,28 @@ export function scoreFindings(findings: { severity: AuditSeverity }[]): number {
  * the thing that costs them a customer first is what the page looks like when
  * it opens.
  */
-const DISCIPLINE_WEIGHT: Record<Discipline, number> = { UX: 0.32, SPEED_SEO: 0.28, CONTENT: 0.18, SECURITY: 0.22 };
+const DISCIPLINE_WEIGHT: Record<Discipline, number> = { UX: 0.16, SPEED_SEO: 0.28, CONTENT: 0.18, SECURITY: 0.22 };
+
+/**
+ * What the redesign call's own scorecard is worth of the same hundred.
+ *
+ * **The look of the page is measured twice now, and this is the second half of
+ * one weight rather than a fifth reviewer bolted on.** How a page looks used to
+ * be UX's 0.32 alone, worked out the way every other section works it out — a
+ * hundred with a fixed number of points subtracted per fault. That answers
+ * *what is wrong with it* and it cannot answer *how well is it made*: a plain,
+ * competent, forgettable page has no faults to subtract and scores in the
+ * nineties. The redesign call's ten weighted headings answer the second
+ * question directly.
+ *
+ * So appearance keeps exactly the weight it always had and is now split evenly
+ * between the two ways of asking. Nothing else moved.
+ *
+ * It is still not a discipline: it has no findings, no reviewer row, no section
+ * in the document, and it is never re-run on its own. It is one number, from a
+ * decision made about the same two pictures the UI/UX reviewer read.
+ */
+export const LOOK_WEIGHT = 0.16;
 
 /**
  * How much of the table has to have sat down before the document puts one
@@ -303,16 +324,26 @@ const DISCIPLINE_WEIGHT: Record<Discipline, number> = { UX: 0.32, SPEED_SEO: 0.2
  */
 export const MIN_SCORED_WEIGHT = 0.5;
 
-export function overallScore(reports: DisciplineReport[]): { score: number; scored: boolean } {
+export function overallScore(reports: DisciplineReport[], lookScore?: number | null): { score: number; scored: boolean } {
   // A discipline that could not run is left out of the average rather than
   // scored either way. "Nobody looked" is not "it is broken" and it is not
   // "it is perfect"; averaging in a zero states the first and averaging in a
   // hundred states the second, and both are claims about a stranger's website
   // that nothing checked.
   const present = reports.filter((report) => report.scored);
-  if (!present.length) return { score: 0, scored: false };
-  const covered = present.reduce((sum, report) => sum + DISCIPLINE_WEIGHT[report.discipline], 0);
-  const weighted = present.reduce((sum, report) => sum + report.score * DISCIPLINE_WEIGHT[report.discipline], 0);
+  let covered = present.reduce((sum, report) => sum + DISCIPLINE_WEIGHT[report.discipline], 0);
+  let weighted = present.reduce((sum, report) => sum + report.score * DISCIPLINE_WEIGHT[report.discipline], 0);
+
+  // The redesign call's scorecard, on exactly the terms every section is on: it
+  // counts when it was made and is left out when it was not. A call that could
+  // not be made must never arrive here as a zero — that would state the page
+  // looks as bad as a page can look, about a business nobody photographed.
+  if (typeof lookScore === "number" && Number.isFinite(lookScore)) {
+    covered += LOOK_WEIGHT;
+    weighted += lookScore * LOOK_WEIGHT;
+  }
+
+  if (covered <= 0) return { score: 0, scored: false };
   // Rescaling to the sections that ran is what makes leaving one out fair — and
   // it is also what makes one section alone come out as the whole site's score,
   // so the coverage gate below is not optional. The epsilon is there because

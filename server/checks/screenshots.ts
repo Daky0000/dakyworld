@@ -807,6 +807,59 @@ console.log("\nWhat the vision model is actually sent");
   settings.clearSettingsCache();
 }
 
+// --- A picture handed over that is not a picture -----------------------------
+//
+// The audit reuses the scan's screenshots, because an Apify container boot is
+// nearly the whole cost of one. It used to reuse them on the strength of the
+// option having been *passed* — and `leadPrep` passes what its own capture
+// returned whether or not that produced anything. One flaky run during the scan
+// therefore switched off the audit's capture as well: `shots` came back empty
+// and the UI/UX section reported "Nobody has seen how the site looks" about a
+// site that photographs perfectly well. Re-running that section on its own
+// worked every time, which is what made it look like a fault in the section.
+//
+// Asserted on `picturesToReuse` rather than through `gatherEvidence` because
+// that path begins with `fetchSite`, which refuses to resolve a loopback
+// address on purpose — see SECURITY.md. Relaxing an SSRF guard so a harness
+// can reach its own express is not a trade worth making.
+console.log("\nWhen the scan's own capture failed");
+{
+  const { picturesToReuse } = await import("../src/services/audit/evidence.js");
+
+  // What `siteShot` returns when the run produced nothing: an object, with the
+  // reason in `note` and no picture on it.
+  const failed = { shot: null, base64: null, fullBase64: null, note: "The page could not be opened: it timed out." } as never;
+  const worked = (view: "desktop" | "mobile") =>
+    ({
+      shot: { id: view, requested: "https://example.com/", finalUrl: "https://example.com/", imageUrl: null, mediaType: "image/png", width: 8, height: 8, viewportWidth: view === "mobile" ? 390 : 1280, cropped: false, insecure: false, partiallyLoaded: false, takenAt: new Date().toISOString(), costUsd: 0.03 },
+      base64: picture(8, 8).toString("base64"),
+      fullBase64: null,
+      note: null,
+    }) as never;
+
+  const rescued = picturesToReuse({ desktopShot: failed, mobileShot: failed });
+  check("a failed capture is not reused as a picture", rescued.desktop === null && rescued.mobile === null);
+  // Which is what sends `gatherEvidence` down the `captureHomepageViews` branch
+  // and gets the audit its own photographs.
+  check("so the audit falls through to taking its own", !rescued.desktop);
+  check("and the scan's reason is kept in case this run cannot do better", rescued.inheritedNotes.length === 2, rescued.inheritedNotes.join(" "));
+
+  // The saving this guard must not undo: a picture that *is* a picture is
+  // still reused, and no run is started for it.
+  const good = picturesToReuse({ desktopShot: worked("desktop"), mobileShot: worked("mobile") });
+  check("a picture that works is still reused", Boolean(good.desktop && good.mobile));
+  check("and nothing is inherited to say about it", good.inheritedNotes.length === 0);
+
+  // A row with a `shot` and no bytes is the shape that reaches a vision model
+  // as `base64: undefined`, so it counts as no picture too.
+  const bodiless = picturesToReuse({ desktopShot: { ...(worked("desktop") as never as Record<string, unknown>), base64: null } as never, mobileShot: null });
+  check("a row with no bytes on it is not a picture either", bodiless.desktop === null);
+
+  // Nothing handed over is the ordinary case and must inherit nothing.
+  const nothing = picturesToReuse({});
+  check("nothing handed over inherits nothing", !nothing.desktop && !nothing.mobile && nothing.inheritedNotes.length === 0);
+}
+
 await reset();
 // The ledger rows the vision section caused. Scoped to this run's own purpose
 // and to the moment it started, so a real call recorded by anything else is

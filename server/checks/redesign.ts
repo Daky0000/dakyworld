@@ -210,7 +210,7 @@ function picture(width: number, height: number): string {
 const DESKTOP = picture(64, 96);
 const PHONE = picture(32, 64);
 
-const { decideRedesign, callLabel, callForScore, weighApart, agreeWithTheNumbers, normaliseCall, CATEGORY_WEIGHTS, CATEGORIES } = await import(
+const { decideRedesign, callLabel, callForScore, weighApart, agreeWithTheNumbers, normaliseCall, CATEGORY_WEIGHTS, CATEGORIES, REDESIGN_FLOOR } = await import(
   "../src/services/audit/redesign.js"
 );
 const { auditMarkdown } = await import("../src/services/audit/markdown.js");
@@ -465,6 +465,41 @@ console.log("\nWhen the verdict and the scores disagree");
   // A stored report from before the four-call split still renders.
   check("the call this replaced still reads", normaliseCall("TARGETED_FIXES") === "REFINE");
   check("and an unknown one does not crash the page", normaliseCall("SOMETHING_ELSE") === "REDESIGN");
+}
+
+// --- 5d. The one line judgement may not cross --------------------------------
+console.log("\nUnder seventy, a redesign is the answer");
+{
+  check("the floor is seventy", REDESIGN_FLOOR === 70);
+
+  // One band of latitude would otherwise let a page scoring 65 be answered
+  // "needs sharpening" — the one direction the error is expensive in, because
+  // the owner buys the smaller job and the smaller job does not work.
+  const sixtyFive = agreeWithTheNumbers("REFINE", 65);
+  check("a page at 65 may not be called a sharpening job", sixtyFive.call === "REDESIGN", sixtyFive.call);
+  check("and the raise is written down", Boolean(sixtyFive.adjusted), sixtyFive.adjusted ?? "nothing");
+
+  const seventy = agreeWithTheNumbers("REFINE", 70);
+  check("at seventy exactly it is a judgement again", seventy.call === "REFINE" && seventy.adjusted === null);
+
+  // Harshness inside one band is left alone: a page at 65 called a rebuild has
+  // seen something the ten headings do not measure, which is what a model is
+  // for. Two bands is still refused in that direction too — a scorecard in the
+  // high eighties under the word "rebuild" argues with itself just as loudly.
+  const harsh = agreeWithTheNumbers("REBUILD", 65);
+  check("a harsher call inside one band is not talked down", harsh.call === "REBUILD" && harsh.adjusted === null);
+  check("but two bands is refused upwards as well", agreeWithTheNumbers("REBUILD", 88).call === "LEAVE_IT");
+
+  reset();
+  perplexity.call = "LEAVE_IT";
+  perplexity.scoreEach = 65;
+  const argued = await decideRedesign(evidenceWith([shot("desktop", DESKTOP)]), BUSINESS, []);
+  check("and it holds on the wire, not only in the function", argued.verdict?.call === "REDESIGN", `${argued.verdict?.call} at ${argued.verdict?.score}`);
+  check("so a page under the floor never comes back with no changes to make", (argued.verdict?.direction.length ?? 0) > 0);
+
+  // The model is told the line as well, or it aims at one the code then moves.
+  const sent = perplexityRequests[perplexityRequests.length - 1]?.messages?.[0]?.content ?? "";
+  check("the model was told the line, not only held to it", sent.includes("under 70"), "the contract no longer names the floor");
 }
 
 // --- 6. No picture, no call ---------------------------------------------------

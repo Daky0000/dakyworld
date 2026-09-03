@@ -685,6 +685,47 @@ export interface GatherOptions {
   mobileShot?: ShotResult | null;
 }
 
+/**
+ * Which of the handed-over pictures may be used, and what to say about the rest.
+ *
+ * **A handed-over picture is reused only when it is a picture.** This used to
+ * branch on whether the option was *passed*, and `leadPrep` passes what the
+ * scan's own capture returned whether or not it produced anything — a
+ * `ShotResult` with `shot: null` and the reason in `note` is a perfectly
+ * ordinary return from `siteShot`. So one flaky Apify run during the scan
+ * silently disabled the audit's capture as well, `shots` came back empty, and
+ * the UI/UX section reported "Nobody has seen how the site looks" about a site
+ * that photographs perfectly well — which is exactly what re-running that
+ * section on its own then proved, because a re-run has no handed-over picture
+ * to inherit and takes its own.
+ *
+ * The reason the scan gave is not thrown away with the empty result: it comes
+ * back in `inheritedNotes` and is printed only if this run's own capture fails
+ * as well, so a site that genuinely refuses a browser says so once rather than
+ * twice — and a site that simply had a bad minute says nothing at all.
+ *
+ * Its own function, and exported, because `gatherEvidence` cannot be exercised
+ * against a local server: `fetchSite` refuses to resolve a loopback address on
+ * purpose (SSRF, see SECURITY.md) and weakening that guard to make a check
+ * pass would be trading a real protection for a convenience.
+ */
+export function picturesToReuse(options: Pick<GatherOptions, "desktopShot" | "mobileShot">): {
+  desktop: ShotResult | null;
+  mobile: ShotResult | null;
+  /** What the discarded results said, in case this run cannot do better. */
+  inheritedNotes: string[];
+} {
+  const given = (result: ShotResult | null | undefined) => (result?.shot && result.base64 ? result : null);
+  return {
+    desktop: given(options.desktopShot),
+    mobile: given(options.mobileShot),
+    inheritedNotes: [options.desktopShot, options.mobileShot]
+      .filter((result): result is ShotResult => Boolean(result) && !given(result))
+      .map((result) => result.note)
+      .filter((note): note is string => Boolean(note)),
+  };
+}
+
 export async function gatherEvidence(website: string, options: GatherOptions = {}): Promise<AuditEvidence> {
   const notes: string[] = [];
   let costUsd = 0;
@@ -794,14 +835,21 @@ export async function gatherEvidence(website: string, options: GatherOptions = {
     // still shown the crop — a 12,000px picture is past every vision model's
     // edge limit — but the report is read by a person, and "show me the rest
     // of the page" had no answer but an Apify link that expires.
-    const both = options.desktopShot
+    const reuse = picturesToReuse(options);
+    const both = reuse.desktop
       ? {
-          desktop: options.desktopShot,
+          desktop: reuse.desktop,
           mobile:
-            options.mobileShot ??
-            (await captureHomepage(page.finalUrl, { viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS, withFullImage: true })),
+            reuse.mobile ?? (await captureHomepage(page.finalUrl, { viewportWidth: PHONE_VIEWPORT_WIDTH, keepRows: PHONE_KEEP_ROWS, withFullImage: true })),
         }
       : await captureHomepageViews(page.finalUrl, { withFullImage: true });
+
+    // Said only when this run's own capture did not answer the question. A
+    // second attempt that worked makes the scan's failure a piece of history
+    // rather than a fault in the report.
+    if (!both.desktop.shot && !both.mobile.shot) {
+      for (const note of reuse.inheritedNotes) if (!stepNotes.screenshots.includes(note)) shotNote(note);
+    }
 
     if (both.desktop.shot) {
       shots.push({ view: "desktop", result: both.desktop });

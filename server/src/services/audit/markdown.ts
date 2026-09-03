@@ -164,7 +164,7 @@ export function auditMarkdown(report: WebsiteAuditReport, options: MarkdownOptio
         // each of them measures. This one is about the look of the page; the
         // score at the top is the whole site including three things nobody can
         // see in a photograph.
-        "> This number is about how the page looks, and only that. The score at the top of this report covers the whole site — its speed, how findable it is, the writing on it and its security — and the two are not one measurement.",
+        "> This number is about how the page looks, and only that. It is one of the five things the score at the top of this report is worked out from — the others are how fast the site is, how findable it is, the writing on it and its security.",
         "",
         "| What was judged | Worth | Score | Points | Why |",
         "|---|---:|---:|---:|---|",

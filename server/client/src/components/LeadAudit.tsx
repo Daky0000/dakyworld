@@ -380,8 +380,8 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
           <span className="font-mono text-2xl font-semibold text-ink">{call.score}</span>
           <span className="font-mono text-xs text-muted">/100</span>
           <span className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">{redesignScoreBand(call.score)}</span>
-          {/* Two numbers in one drawer is a contradiction unless it says which is which. */}
-          <span className="w-full text-[11px] text-muted">How the page looks. The score below is the whole site, including three things no picture shows.</span>
+          {/* Two numbers in one drawer needs saying how they relate, or a reader takes them as a contradiction. */}
+          <span className="w-full text-[11px] text-muted">How the page looks. It is one of the five things the site's own score is worked out from.</span>
         </div>
       )}
 

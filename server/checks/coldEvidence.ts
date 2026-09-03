@@ -36,7 +36,7 @@
  */
 import { prisma } from "../src/lib/prisma.js";
 import { composeMessage, parseAttachments, reportToAttach, resolveAttachments } from "../src/services/emailSender.js";
-import { caseStrength, demoIsTheArgument, redFlags } from "../src/services/leadPrep.js";
+import { auditTeamFindings, caseStrength, demoIsTheArgument, redFlags, strongestPoint } from "../src/services/leadPrep.js";
 import { ensureDemoForLead } from "../src/services/leadDemo.js";
 import { COLD_EMAIL_DOCTRINE } from "../src/services/outreachDoctrine.js";
 import type { CompanyAudit } from "../src/services/companyAudit.js";
@@ -81,6 +81,74 @@ const auditWith = (severities: string[]) =>
 const lookWith = (severities: string[]) =>
   ({ observations: severities.map((severity, at) => observation(severity, `seen ${at}`)) }) as unknown as HomepageLook;
 
+/**
+ * A four-reviewer report, as a `WebsiteAudit.report` column holds one.
+ *
+ * Only the fields the letter is written from. That is the point of the shape:
+ * the drafter reads `facts`, and this file is about which findings get in.
+ */
+const reportWith = (input: {
+  ux?: string[];
+  security?: string[];
+  openOn?: string | null;
+  call?: string;
+  lookScore?: number;
+  doNotSay?: string[];
+}) =>
+  ({
+    overallScore: 61,
+    scored: true,
+    verdict: "Needs work",
+    disciplines: [
+      {
+        discipline: "UX",
+        reviewer: "UI/UX Designer",
+        scored: true,
+        score: 45,
+        checked: ["how the homepage looks"],
+        findings: (input.ux ?? []).map((severity, at) => ({
+          id: `ux-${at + 1}`,
+          severity,
+          observed: `ux ${at} observed`,
+          plainly: `nothing on the first screen says what they sell (${at})`,
+          impact: "a buyer goes back to the search results",
+          evidence: "the first screen, desktop view",
+        })),
+      },
+      {
+        discipline: "SECURITY",
+        reviewer: "Security Analyst",
+        scored: true,
+        score: 70,
+        checked: ["their mail domain"],
+        findings: (input.security ?? []).map((severity, at) => ({
+          id: `sec-no-dmarc`,
+          severity,
+          observed: `security ${at} observed`,
+          plainly: "",
+          impact: "anybody can send mail as them",
+          evidence: "their DNS records",
+        })),
+      },
+    ],
+    synthesis:
+      input.openOn === null
+        ? null
+        : {
+            executiveSummary: "",
+            theOneThing: "",
+            whatIsWorking: ["the photographs are their own"],
+            emailBrief: {
+              openOn: input.openOn ?? "nothing on your first screen says what you sell",
+              consequence: "a buyer comparing three suppliers opens the next result",
+              ask: "FIX",
+              whyThatAsk: "it is one afternoon's work",
+              doNotSay: input.doNotSay ?? [],
+            },
+          },
+    redesign: input.call ? { call: input.call, score: input.lookScore ?? 42, headline: "", summary: "", strengths: [] } : null,
+  }) as never;
+
 async function reset() {
   const leads = await prisma.lead.findMany({ where: { contactName: { contains: MARK } }, select: { id: true } });
   const ids = leads.map((lead) => lead.id);
@@ -107,6 +175,39 @@ async function main() {
   // The severity ladder these sit on is the same one the case strength reads,
   // so a lead with red flags is never simultaneously "nothing worth writing".
   check("red flags and a strong case agree with each other", caseStrength(auditWith(["HIGH"]), null) === "STRONG");
+
+  console.log("\nWhen the full review ran, it is what the letter argues from");
+  // The defect this section exists for produced a real letter: a business
+  // whose review found nothing on the first screen saying what they sell, and
+  // whose email opened on the year in their footer — with that review attached
+  // to it. The review was in the database the whole time and nothing read it.
+  const review = reportWith({ ux: ["CRITICAL", "HIGH"], security: ["MEDIUM"] });
+  check("its findings are what get counted", redFlags(auditWith(["MEDIUM"]), lookWith(["LOW"]), review).length === 2);
+  // Not added to the scan's: the review's security section is handed the scan's
+  // own audit, so counting both counts the same faults twice.
+  check("and the scan's are not counted on top", redFlags(auditWith(["CRITICAL"]), lookWith(["CRITICAL"]), review).length === 2);
+  check("worst first, and what a visitor can see wins a tie", auditTeamFindings(review)[0].kind === "seen");
+  check("nothing good ever counts", auditTeamFindings(reportWith({ ux: ["GOOD", "GOOD"] })).length === 0);
+
+  // The compiler wrote the opening line for this exact purpose and nothing
+  // was reading it.
+  const opener = strongestPoint(auditWith(["CRITICAL"]), lookWith(["CRITICAL"]), review);
+  check("the review's own opening line wins", opener?.say === "nothing on your first screen says what you sell", opener?.say);
+  check("with what it costs them beside it", opener?.costs.includes("opens the next result") === true);
+  // A compile that failed still leaves findings better than the scan's.
+  const noBrief = strongestPoint(auditWith(["CRITICAL"]), null, reportWith({ ux: ["CRITICAL"], openOn: null }));
+  check("no brief falls back to the review's worst finding", noBrief?.say.startsWith("nothing on the first screen") === true, noBrief?.say);
+  // And no review at all is the old behaviour, untouched.
+  check("no review falls back to the scan", strongestPoint(auditWith(["CRITICAL"]), null)?.say === "f0 is wrong");
+
+  // A page under the redesign floor is a case even when no single fault is
+  // serious — the "nothing is broken and none of it is working" business.
+  check("a page the review says to rebuild is a strong case", caseStrength(auditWith(["LOW"]), null, reportWith({ ux: ["MEDIUM"], call: "REBUILD" })) === "STRONG");
+  check("and so is one it says to redesign", caseStrength(null, null, reportWith({ ux: ["LOW"], call: "REDESIGN" })) === "STRONG");
+  check("a page it says to leave alone is judged on its faults", caseStrength(null, null, reportWith({ ux: ["LOW"], call: "LEAVE_IT" })) === "WEAK");
+  // Rows written before any of this must not throw inside the path that
+  // decides what a cold email says.
+  check("a stored report of the wrong shape is not a crash", auditTeamFindings({ businessName: "x" } as never).length === 0);
 
   console.log("\nThe doctrine says what to do with more than one");
   check("it tells the writer to name one", /names \*\*one\*\*/.test(COLD_EMAIL_DOCTRINE));

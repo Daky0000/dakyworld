@@ -8,7 +8,7 @@ import { draftMessage } from "../lib/messageDrafter.js";
 import { analystConfigured } from "../lib/anthropic.js";
 import { preSendCheck } from "../services/coldEmailChecks.js";
 import { chooseScenario, exampleWording, manualScenarios } from "../services/coldEmailScenarios.js";
-import { caseStrength, isStale, prepareLead, storedPrep } from "../services/leadPrep.js";
+import { caseStrength, isStale, latestAuditReport, prepareLead, storedPrep } from "../services/leadPrep.js";
 import { resolveContext } from "../services/emailContext.js";
 import {
   MessagingError,
@@ -460,8 +460,10 @@ messagesRouter.post("/draft", async (req, res, next) => {
 
     const context = await resolveContext(input);
     if (!strength && input.leadId) {
-      const stored = await storedPrep(input.leadId);
-      if (stored) strength = caseStrength(stored.audit as never, stored.look as never);
+      // Same rule as the email route: the review decides the strength when
+      // there is one, because it is what the message is written from.
+      const [stored, team] = await Promise.all([storedPrep(input.leadId), latestAuditReport(input.leadId)]);
+      if (stored) strength = caseStrength(stored.audit as never, stored.look as never, team);
     }
 
     // 2. Write.

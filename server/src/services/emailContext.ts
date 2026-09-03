@@ -29,6 +29,26 @@ function findingIdsFrom(audit: unknown): string[] {
     .map((finding) => finding.id as string);
 }
 
+/**
+ * And the ids from the four-reviewer report, which the chooser was already
+ * built to accept and was never given.
+ *
+ * `coldEmailScenarios.ts` lists both vocabularies against every scenario —
+ * `cert-untrusted` **and** `sec-cert-untrusted`, `no-spf` **and** `sec-no-spf`
+ * — so the audit team's ids were expected here from the day that file was
+ * written. Nothing passed them, so a lead whose review found six faults chose
+ * its letter's shape from whatever the two quick checks happened to see.
+ */
+function findingIdsFromReport(report: unknown): string[] {
+  const disciplines = (report as { disciplines?: { findings?: { id?: unknown; severity?: unknown }[] }[] } | null)?.disciplines;
+  if (!Array.isArray(disciplines)) return [];
+  return disciplines.flatMap((discipline) =>
+    (Array.isArray(discipline?.findings) ? discipline.findings : [])
+      .filter((finding) => typeof finding?.id === "string" && finding.severity !== "GOOD")
+      .map((finding) => finding.id as string),
+  );
+}
+
 export interface RecipientContext {
   kind: "lead" | "client" | "address" | "phone";
   /** Who the email actually goes to. */
@@ -102,6 +122,9 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
       emails: { where: { status: "SENT" }, orderBy: { sentAt: "desc" }, take: 5, select: { subject: true, sentAt: true } },
       research: true,
       demos: { orderBy: { updatedAt: "desc" }, take: 2 },
+      // Only the newest, and only its report — the Markdown and the pictures
+      // on that row are megabytes and nothing here reads them.
+      websiteAudits: { orderBy: { ranAt: "desc" }, take: 1, select: { report: true } },
     },
   });
   if (!lead) throw new Error("Lead not found");
@@ -174,7 +197,7 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
     phone: lead.contactPhone,
     name: lead.contactName,
     facts,
-    findingIds: findingIdsFrom(lead.research?.audit),
+    findingIds: [...new Set([...findingIdsFromReport(lead.websiteAudits[0]?.report), ...findingIdsFrom(lead.research?.audit)])],
     variables: {
       first_name: firstName(lead.contactName),
       contact_name: lead.contactName,

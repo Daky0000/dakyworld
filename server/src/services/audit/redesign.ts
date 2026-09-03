@@ -492,6 +492,18 @@ export function scoreBand(score: number): string {
 }
 
 /**
+ * Below this, a redesign is needed and the verdict has to say so.
+ *
+ * The founder's rule, and the one place judgement is not allowed to move the
+ * answer. Everything from 70 up is a matter of opinion about a page that is
+ * basically working; below it the scorecard is describing a page with several
+ * real problems in it, and "sharpen it" is then a sentence that costs a
+ * business money — they buy the smaller job, the smaller job does not fix what
+ * was wrong, and what failed is Dakyworld.
+ */
+export const REDESIGN_FLOOR = 70;
+
+/**
  * Keeps the verdict within reach of the working.
  *
  * A model is asked for a verdict rather than told to read one off a table
@@ -501,15 +513,36 @@ export function scoreBand(score: number): string {
  * and is the point of asking**. Two is not a judgement, it is a document whose
  * verdict and whose scorecard argue with each other in front of the person
  * paying for it, and the half a reader can check is the arithmetic.
+ *
+ * **The latitude does not reach downwards across `REDESIGN_FLOOR`.** One band
+ * would otherwise let a page scoring 65 be answered "needs sharpening, not
+ * rebuilding", which is the one direction the error is expensive in: an owner
+ * who buys the smaller job on that advice has bought something that will not
+ * work. Harshness inside one band is left alone — a page at 65 called a
+ * rebuild has seen something the ten headings do not measure, which is exactly
+ * what a model is being asked for. Two bands is still two bands in either
+ * direction: a scorecard in the high eighties under the word "rebuild" is a
+ * document arguing with itself just as loudly as the reverse.
  */
 export function agreeWithTheNumbers(said: RedesignCall, score: number): { call: RedesignCall; adjusted: string | null } {
   const fromScore = callForScore(score);
   const distance = Math.abs(CALL_ORDER.indexOf(said) - CALL_ORDER.indexOf(fromScore));
-  if (distance <= 1) return { call: said, adjusted: null };
-  return {
-    call: fromScore,
-    adjusted: `The decider answered "${callLabel(said)}" over a scorecard of ${score}/100, which is two steps from what those scores add up to. The verdict was moved to "${callLabel(fromScore)}" to match its own working.`,
-  };
+
+  if (distance > 1) {
+    return {
+      call: fromScore,
+      adjusted: `The decider answered "${callLabel(said)}" over a scorecard of ${score}/100, which is two steps from what those scores add up to. The verdict was moved to "${callLabel(fromScore)}" to match its own working.`,
+    };
+  }
+
+  if (score < REDESIGN_FLOOR && (said === "LEAVE_IT" || said === "REFINE")) {
+    return {
+      call: "REDESIGN",
+      adjusted: `The decider answered "${callLabel(said)}" over a scorecard of ${score}/100. Anything under ${REDESIGN_FLOOR} is a page with real problems in it, so the verdict was raised to "${callLabel("REDESIGN")}".`,
+    };
+  }
+
+  return { call: said, adjusted: null };
 }
 
 // --- What it is asked --------------------------------------------------------
@@ -556,6 +589,8 @@ What a score means, and it means the same for one heading as it does for the who
 - 0-39 — poor. Badly out of date, badly built, or wrong for what it is for.
 
 Your verdict must be one a reader could arrive at from your own scores. Those totals land as: 80 and above, no redesign needed; 70-79, a light visual refinement; 60-69, a redesign is justified; below 60, a major rebuild. **You may sit one step away from that** — a page can be well made and still fail at the only job it has, and saying so is why you are being asked rather than a spreadsheet. You may not sit two steps away from it.
+
+**One line is not a matter of opinion: if the ten headings put this page under 70, it needs redesigning.** You may still say it needs rebuilding outright. You may not say it is fine or that sharpening would carry it, however the page strikes you — under 70 is a page with several real problems in it, and an owner who is told to buy the smaller job on that advice has bought something that will not work.
 
 Never review a part of the page you cannot see. If there is no team, no client logos, no reviews and no footer in the picture, the page has none, and you say so — you never assess one you were not shown.
 

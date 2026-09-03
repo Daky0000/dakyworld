@@ -634,7 +634,7 @@ function redesignScoreband(doc: PDFDoc, score: number) {
     .fontSize(7.8)
     .text(
       pdfText(
-        "This number is about how the page looks, and only that. The score at the front of this report covers the whole site - its speed, how findable it is, the writing on it and its security.",
+        "This number is about how the page looks, and only that. It is one of the five things the score at the front of this report is worked out from - the others are speed, findability, the writing and security.",
       ),
       left,
       y + 30,

@@ -16,7 +16,7 @@ import {
 import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
 import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLeads, tagSlug } from "../services/leadTags.js";
 import { BulkCountChanged, countTarget, deleteLeads, targetIds, updateLeads } from "../services/leadBulk.js";
-import { STALE_AFTER_DAYS, caseStrength, isStale, prepareLead, prepareLeads, storedPrep } from "../services/leadPrep.js";
+import { STALE_AFTER_DAYS, caseStrength, isStale, latestAuditReport, prepareLead, prepareLeads, storedPrep } from "../services/leadPrep.js";
 import { demoUrl } from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
 import { leadIdsMatchingCustomFields, searchClauses } from "../services/leadSearch.js";
@@ -925,7 +925,7 @@ leadsRouter.get("/:id", async (req, res, next) => {
       researchStale: isStale(lead.research?.ranAt),
       // Derived rather than stored: it is a reading of the findings, and a
       // stored copy would drift the day the thresholds change.
-      caseStrength: lead.research ? caseStrength(lead.research.audit as never, lead.research.look as never) : null,
+      caseStrength: lead.research ? caseStrength(lead.research.audit as never, lead.research.look as never, await latestAuditReport(lead.id)) : null,
       // Assembled here rather than in the client, so there is one spelling of
       // a demo's address in the whole system.
       demos: lead.demos.map((demo) => ({ ...demo, url: demoUrl(demo.slug, base) })),
