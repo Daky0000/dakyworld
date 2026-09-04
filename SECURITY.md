@@ -478,12 +478,74 @@ changes to a live site and the choice belongs to whoever owns it:
   not a patch — roughly 116 places on the site use a Tailwind class, and the rest
   is already served by `assets/site.css`.
 
-Analytics is [`assets/analytics.js`](assets/analytics.js), loaded by every page
-and doing **nothing at all** until a Measurement ID is filled in at the top of
-the file — no third-party script fetched, no cookie set. It honours Do Not Track
-and Global Privacy Control, truncates the IP address (Act 843 treats one as
-personal data, and the site's own privacy policy is written on that basis), and
-skips localhost so preview traffic never enters the real numbers.
+Since 4 Sep 2026 there is a second reason to do both, and it is not a security
+one. Every visitor's IP address goes to Cloudflare (unpkg) and to Tailwind's
+CDN on every page load, before anything has been consented to. That is the
+same transfer the Google Fonts link was removed for, and the same answer
+applies: it cannot be fixed with a banner, because it happens whether or not
+anybody agrees to anything. It is a smaller exposure than the fonts one was —
+neither host is an advertising company building a profile — but the honest
+position is that the site is not fully free of unconsented third-party
+requests until both are vendored.
+
+### Cookies, consent and the fonts (added 4 Sep 2026)
+
+**Nothing is stored on a visitor's device, and no request reaches a third
+party, until they have said yes.** That is one sentence and it is the whole
+control; everything below is how it is held up.
+
+[`assets/consent.js`](assets/consent.js) is the gate — no third-party consent
+platform, because a consent platform is a script from somebody else's server
+that reads every visitor before they have agreed to anything, which is a
+strange thing to install in order to comply with a law about reading visitors.
+This site sets one category of optional storage, so the honest implementation
+is its own file.
+
+- **Prior.** Analytics is not loaded and then suppressed; it is not loaded.
+  [`assets/analytics.js`](assets/analytics.js) asks
+  `dakyworldConsent.onAllowed("analytics", …)` and does nothing if the consent
+  layer is not there — a broken consent layer fails to measuring nobody, never
+  to measuring everybody.
+- **Unambiguous.** No box is pre-ticked, closing the banner decides nothing,
+  and Reject is the same size as Accept and first in the tab order.
+- **Withdrawable.** A *Cookie settings* control sits in the footer of every
+  page. Turning analytics off deletes the `_ga` cookies immediately and
+  reloads, **and** every refused category is swept again on every page load —
+  gtag is still running at the moment the switch is thrown and will re-set a
+  cookie in the instant between the delete and the reload, which was observed
+  leaving one behind. The guarantee cannot rest on winning a race with
+  somebody else's script.
+- **Recorded.** `dakyworld.consent.v1` in local storage holds the choice, the
+  date and a version. Bumping `CONSENT_VERSION` re-asks everybody, which is
+  what keeps consent *specific* when a vendor or a purpose is added.
+
+It still truncates the IP address, still honours Do Not Track and Global
+Privacy Control (as a refusal, and without recording one — an explicit opt-in
+from the panel still wins), still skips localhost, and still does nothing at
+all until a Measurement ID is filled in at the top of the file. Google Consent
+Mode goes out with every advertising purpose denied.
+
+**The typefaces are served from this origin** —
+[`assets/fonts.css`](assets/fonts.css) and `assets/fonts/`. A `<link>` to
+fonts.googleapis.com is not a styling decision, it is a transfer: the browser
+sends the visitor's IP address, user agent and referring page to a US company
+before the page paints, with no consent asked and no way to refuse. A German
+court awarded damages on exactly that point (LG München I, 20 Jan 2022,
+3 O 17493/20), on the reasoning that the transfer was avoidable. No cookie
+banner can fix it either, because it happens whether or not anyone consents.
+`style-src` and `font-src` no longer name either Google host, and **that
+absence is load-bearing** — leaving them would let the request quietly return.
+
+`npm run consent:check` is the proof. It drives real Chrome against a real
+copy of the site with a measurement ID filled in, and asserts on **what leaves
+the browser**: no request to Google before a decision, none after a refusal,
+the cookies actually gone after a withdrawal, and the fonts local on every
+page. Two environment details in it are not incidental and are commented at
+length in the file — it serves over HTTPS on a made-up hostname, because
+`upgrade-insecure-requests` exempts loopback (so an http test on 127.0.0.1
+passes while a realistic one loads nothing), and because analytics.js refuses
+to run on localhost by design (so a test there cannot tell a working gate from
+a preview guard). Both false results were seen while it was being written.
 
 ---
 

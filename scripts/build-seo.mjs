@@ -169,7 +169,7 @@ const PAGES = [
     priority: "0.3",
     changefreq: "yearly",
     breadcrumb: [["Privacy", "/privacy"]],
-    keywords: "privacy policy, data protection Ghana, Act 843",
+    keywords: "privacy policy, cookie policy, GDPR, data protection Ghana, Act 843, data subject rights",
     schema: ["webpage"],
   },
   {
@@ -373,6 +373,19 @@ function schemaFor(page, title, description) {
  * Those three CDN entries are the weakest part of this policy and the honest
  * thing to say about it is that a CSP naming a host does not protect against
  * that host. See the note in SECURITY.md.
+ *
+ * `style-src` and `font-src` no longer name fonts.googleapis.com or
+ * fonts.gstatic.com, and that absence is load-bearing rather than tidying: the
+ * typefaces are served from this origin now (assets/fonts.css), because a
+ * <link> to Google Fonts sends every visitor's IP address to a US company
+ * before the page paints, with no consent asked and no way to refuse. Leaving
+ * the hosts in the policy would let that request quietly return. If either
+ * host ever needs to come back, the privacy policy has to change with it.
+ *
+ * googletagmanager.com and google-analytics.com are still named, but nothing
+ * reaches them until a visitor turns analytics on: assets/analytics.js is
+ * gated behind assets/consent.js. A CSP entry is permission for a request that
+ * the code may make, not proof that it makes one.
  */
 const CSP = [
   "default-src 'self'",
@@ -380,8 +393,8 @@ const CSP = [
   "object-src 'none'",
   "form-action 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://www.googletagmanager.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' data: https://fonts.gstatic.com",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
   "img-src 'self' data: https://www.googletagmanager.com https://www.google-analytics.com",
   "connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com",
   "frame-src 'none'",
@@ -426,7 +439,12 @@ function headBlock(page, title, description) {
     json,
     `</script>`,
     ``,
-    `<!-- Does nothing until the GA4 Measurement ID is filled in at the top of that file. -->`,
+    `<!-- Cookie consent. Must be parsed before analytics.js, which asks it for -->`,
+    `<!-- permission and does nothing at all if it is not there. -->`,
+    `<link rel="stylesheet" href="/assets/consent.css">`,
+    `<script src="/assets/consent.js" defer></script>`,
+    `<!-- Does nothing until the GA4 Measurement ID is filled in at the top of -->`,
+    `<!-- that file, and nothing then until the visitor allows analytics. -->`,
     `<script src="/assets/analytics.js" defer></script>`,
     END,
   ].join("\n");

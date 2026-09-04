@@ -78,6 +78,7 @@
     '          <li><a href="/contact">Let&#39;s Talk</a></li>',
     '          <li><a href="/privacy">Privacy</a></li>',
     '          <li><a href="/terms">Terms</a></li>',
+    '          <li><button type="button" class="dw-consent-reopen" data-consent-open>Cookie settings</button></li>',
     '        </ul>',
     '      </div>',
     '      <div>',

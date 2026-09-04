@@ -877,6 +877,62 @@ a.v:hover{color:var(--blue)}
 .legal-head h2{font-family:"Space Grotesk";font-size:22px;letter-spacing:-.035em;margin:0}
 .legal-row p{margin:0;font-size:14.5px;line-height:1.9;color:#4f5a70;max-width:78ch}
 
+/* The second column of a legal row, when it holds more than one paragraph.
+   .legal-row is a two-column grid, so every direct child takes a cell: a
+   section with a heading and three paragraphs would lay itself out as a
+   staircase. Everything after the heading goes in here instead. */
+.legal-body{min-width:0;display:flex;flex-direction:column;gap:16px}
+.legal-body p{margin:0;font-size:14.5px;line-height:1.9;color:#4f5a70;max-width:78ch}
+.legal-body h3{
+  font-family:"Space Grotesk";font-size:15px;letter-spacing:-.01em;
+  margin:6px 0 -6px;color:var(--ink);
+}
+.legal-body ul{margin:0;padding-left:20px;max-width:78ch}
+.legal-body li{font-size:14.5px;line-height:1.9;color:#4f5a70;margin-bottom:8px}
+.legal-body li:last-child{margin-bottom:0}
+.legal-body a{color:var(--blue);text-decoration:underline;text-underline-offset:2px}
+.legal-body a:hover{color:var(--ink)}
+.legal-body strong{color:var(--ink);font-weight:600}
+
+/* A definition list, for the short question-and-answer runs (who the
+   supervisory authority is, what each right means). Cheaper to read than a
+   table when there are only two columns and no numbers to compare. */
+.legal-defs{margin:0;font-size:14.5px;line-height:1.9;max-width:78ch}
+.legal-defs dt{color:var(--ink);font-weight:600}
+.legal-defs dd{margin:0 0 14px;color:#4f5a70}
+.legal-defs dd:last-child{margin-bottom:0}
+
+/* The purposes table. It scrolls inside its own box rather than pushing the
+   page sideways — a legal page that scrolls horizontally on a phone is one
+   nobody finishes. */
+.legal-table-scroll{
+  overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0;
+  /* Four layers: two solid covers pinned to the box (background-attachment
+     local) and two shadows that scroll with the content. A shadow is only
+     visible once its cover has scrolled away, so the hint appears exactly when
+     there is something off-screen and never on a table that fits. Without it a
+     phone shows a column sliced down the middle with nothing saying it moves. */
+  background:
+    linear-gradient(to right, #fff 30%, rgba(255,255,255,0)) left center,
+    linear-gradient(to left,  #fff 30%, rgba(255,255,255,0)) right center,
+    radial-gradient(farthest-side at 0 50%, rgba(8,16,31,.14), rgba(8,16,31,0)) left center,
+    radial-gradient(farthest-side at 100% 50%, rgba(8,16,31,.14), rgba(8,16,31,0)) right center;
+  background-repeat:no-repeat;
+  background-size:44px 100%, 44px 100%, 15px 100%, 15px 100%;
+  background-attachment:local, local, scroll, scroll;
+}
+.legal-table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
+.legal-table th,.legal-table td{
+  text-align:left;vertical-align:top;padding:13px 16px;
+  border-bottom:1px solid var(--line);line-height:1.75;color:#4f5a70;
+}
+.legal-table th{
+  font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  color:#8993a6;border-bottom:1px solid var(--ink);white-space:nowrap;
+}
+.legal-table tbody tr:last-child td{border-bottom:0}
+.legal-table td:first-child{color:var(--ink);font-weight:600}
+
 /* ── Chrome: reading-progress bar ────────────────────────────────────── */
 .page-progress{position:fixed;top:0;left:0;z-index:1000;width:100%;height:2px;pointer-events:none}
 .page-progress i{
