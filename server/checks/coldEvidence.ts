@@ -35,7 +35,7 @@
  *   npx tsx checks/coldEvidence.ts
  */
 import { prisma } from "../src/lib/prisma.js";
-import { composeMessage, parseAttachments, reportToAttach, resolveAttachments } from "../src/services/emailSender.js";
+import { automaticAttachments, composeMessage, parseAttachments, reportToAttach, resolveAttachments } from "../src/services/emailSender.js";
 import { auditTeamFindings, caseStrength, demoIsTheArgument, redFlags, strongestPoint } from "../src/services/leadPrep.js";
 import { ensureDemoForLead } from "../src/services/leadDemo.js";
 import { COLD_EMAIL_DOCTRINE } from "../src/services/outreachDoctrine.js";
@@ -305,6 +305,48 @@ async function main() {
     attachReport: false,
   });
   check("a sender can refuse the attachment", parseAttachments(refused.attachments).length === 0);
+
+  // A file that appears on the sent record and appeared nowhere on the screen
+  // the sender pressed Send on is the same class of mistake as a letter
+  // referring to an attachment that is not there — the sender is answering for
+  // a document they were never shown. That happened: a cold letter went out
+  // carrying a website review and the composer listed no attachments at all.
+  // The fix is one function feeding both, so these assert that the list the
+  // composer draws is the list the send uses.
+  console.log("\nWhat the sender sees is what leaves");
+  const visible = await automaticAttachments({ purpose: "COLD_OUTREACH", leadId: lead.id });
+  check("the composer is told about the review before anything is sent", visible.length === 1 && (visible[0] as { kind?: string }).kind === "audit");
+  check(
+    "and it is the same review the send attaches",
+    (visible[0] as { auditId?: string }).auditId === (parseAttachments(composed.attachments)[0] as { auditId?: string }).auditId,
+  );
+
+  const kindsOf = (entries: unknown[]) => entries.map((entry) => (entry as { kind?: string }).kind ?? "file").sort();
+  check(
+    "nothing reaches the message that the composer could not have drawn",
+    kindsOf(parseAttachments(composed.attachments)).join() === kindsOf(visible).join(),
+  );
+
+  const refusedVisible = await automaticAttachments({ purpose: "COLD_OUTREACH", leadId: lead.id, attachReport: false });
+  check("taking it off empties the chip and the letter together", refusedVisible.length === 0 && parseAttachments(refused.attachments).length === 0);
+
+  // The dedupe, in both directions. A draft opened to be finished hands its own
+  // attachments back, and the review must not be added a second time.
+  const alreadyThere = await automaticAttachments({
+    purpose: "COLD_OUTREACH",
+    leadId: lead.id,
+    existing: [{ kind: "audit", auditId: audit.id }],
+  });
+  check("a review already on the draft is not attached twice", alreadyThere.length === 0);
+
+  const withInvoice = await automaticAttachments({ purpose: "INVOICE_DELIVERY", invoiceId: "inv-1" });
+  check("an email about an invoice shows the invoice", withInvoice.length === 1 && (withInvoice[0] as { invoiceId?: string }).invoiceId === "inv-1");
+  const invoicePicked = await automaticAttachments({
+    purpose: "INVOICE_DELIVERY",
+    invoiceId: "inv-1",
+    existing: [{ kind: "invoice", invoiceId: "inv-1" }],
+  });
+  check("one the sender listed themselves is left as they listed it", invoicePicked.length === 0);
 
   console.log("\nThe business with no website");
   check("no website means the demo is the argument", demoIsTheArgument({ website: null, audit: null }));

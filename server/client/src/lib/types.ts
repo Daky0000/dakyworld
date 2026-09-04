@@ -1164,7 +1164,9 @@ export type EmailAttachment =
   | { kind: "stored"; fileId: string; name: string; contentType?: string; size?: number }
   | { kind?: "file"; name: string; url: string; contentType?: string }
   | { kind: "invoice"; invoiceId: string; name?: string }
-  | { kind: "proposal"; proposalId: string; name?: string };
+  | { kind: "proposal"; proposalId: string; name?: string }
+  /** The website review a first letter carries — added by the server, shown in the composer. */
+  | { kind: "audit"; auditId: string; name?: string };
 
 /** What the upload endpoint answers with. */
 export interface StoredFile {
@@ -1177,7 +1179,7 @@ export interface StoredFile {
 
 /** One attachment as the preview describes it — enough to draw a chip. */
 export interface PreviewAttachment {
-  kind: "stored" | "file" | "invoice" | "proposal";
+  kind: "stored" | "file" | "invoice" | "proposal" | "audit";
   name: string;
   contentType: string | null;
   size: number | null;
@@ -1186,6 +1188,13 @@ export interface PreviewAttachment {
   note?: string | null;
   /** True when the file it names is gone and the send will skip it. */
   missing: boolean;
+  /**
+   * True when the server attached this from what the message is about — the
+   * invoice, the proposal, the website review — rather than the sender picking
+   * it. Drawn differently, because a file nobody chose is the one a sender is
+   * most likely to be answering for without knowing it left.
+   */
+  automatic?: boolean;
 }
 
 /**

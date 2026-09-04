@@ -11,6 +11,7 @@ import type {
   EmailPurpose,
   EmailTemplate,
   Lead,
+  PreviewAttachment,
   StoredFile,
 } from "../lib/types";
 import { Badge, Button, Drawer, Field, StatusDot } from "./ui";
@@ -71,6 +72,15 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
   const [toEmail, setToEmail] = useState("");
   const [scheduleAt, setScheduleAt] = useState("");
   const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
+  /**
+   * Whether the website review still goes with this letter.
+   *
+   * True is the doctrine and stays the default — a first letter that names one
+   * fault out of several carries the rest. This is only ever set false by a
+   * person who has looked at the chip and decided this particular email should
+   * not have it.
+   */
+  const [attachReport, setAttachReport] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [rationale, setRationale] = useState<string | null>(null);
   const [draftResult, setDraftResult] = useState<EmailDraft | null>(null);
@@ -104,6 +114,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
           ...(target?.proposalId ? [{ kind: "proposal" as const, proposalId: target.proposalId }] : []),
         ],
     );
+    setAttachReport(true);
     setBrief("");
     setNotice(null);
     setRationale(null);
@@ -134,6 +145,46 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
     queryFn: () => api.get<{ templates: EmailTemplate[] }>("/emails/templates/all"),
     enabled: open,
   });
+
+  /**
+   * What the server attaches on its own: the invoice this letter is about, the
+   * proposal it carries, the website review a first approach leaves with.
+   *
+   * Asked for from the same function the send uses, and asked again whenever
+   * the recipient or the purpose changes, because both decide the answer. A
+   * file that turns up on the sent record and appeared nowhere on the screen
+   * the sender pressed Send on is a document they are answering for without
+   * having seen it — which is what happened before this existed.
+   *
+   * Deliberately not keyed on `attachReport`: the chip has to stay on screen
+   * after the review is taken off, or removing it is a one-way door.
+   */
+  const { data: planned } = useQuery({
+    queryKey: ["email-auto-attachments", recipient.leadId, recipient.clientId, purpose, target?.invoiceId, target?.proposalId],
+    queryFn: () =>
+      api.get<{ attachments: PreviewAttachment[] }>(
+        `/emails/context/attachments?${new URLSearchParams({
+          purpose,
+          ...(recipient.leadId ? { leadId: recipient.leadId } : {}),
+          ...(target?.invoiceId ? { invoiceId: target.invoiceId } : {}),
+          ...(target?.proposalId ? { proposalId: target.proposalId } : {}),
+        }).toString()}`,
+      ),
+    enabled: open && hasRecipient,
+  });
+
+  /**
+   * The automatic ones minus anything already sitting in the picked list — a
+   * draft opened to be finished carries them in its own attachments, and the
+   * server dedupes on the way out, so drawing both would show one file twice.
+   */
+  const automatic = useMemo(
+    () =>
+      (planned?.attachments ?? []).filter(
+        (entry) => !attachments.some((listed) => (("kind" in listed && listed.kind) || "file") === entry.kind),
+      ),
+    [planned, attachments],
+  );
 
   const relevantTemplates = useMemo(
     () => (templateData?.templates ?? []).filter((template) => template.active && (purpose === "CUSTOM" || template.purpose === purpose)),
@@ -222,6 +273,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
         invoiceId: target?.invoiceId ?? null,
         carePlanId: target?.carePlanId ?? null,
         attachments,
+        attachReport,
         scheduledFor: mode === "schedule" && scheduleAt ? new Date(scheduleAt).toISOString() : null,
         send: mode === "send",
       }),
@@ -318,6 +370,11 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
             toEmail: toEmail || null,
             toName: recipient.toName ?? context?.name ?? null,
             attachments,
+            // So the envelope lists what actually leaves, not only what was
+            // picked by hand.
+            invoiceId: target?.invoiceId ?? null,
+            proposalId: target?.proposalId ?? null,
+            attachReport,
           }}
         />
       )}
@@ -450,7 +507,13 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
             </div>
           )}
 
-          <AttachmentPanel attachments={attachments} onChange={setAttachments} />
+          <AttachmentPanel
+            attachments={attachments}
+            onChange={setAttachments}
+            automatic={automatic}
+            attachReport={attachReport}
+            onAttachReport={setAttachReport}
+          />
         </>
       )}
     </Drawer>
@@ -545,8 +608,16 @@ function attachmentLabel(attachment: EmailAttachment): string {
   if ("name" in attachment && attachment.name) return attachment.name;
   if ("invoiceId" in attachment) return "Invoice PDF";
   if ("proposalId" in attachment) return "Proposal PDF";
+  if ("auditId" in attachment) return "Website review PDF";
   return "attachment";
 }
+
+/** Why this file is going, said in the words the sender would use. */
+const AUTOMATIC_BECAUSE: Record<string, string> = {
+  invoice: "Goes with the invoice this email is about.",
+  proposal: "Goes with the proposal this email carries.",
+  audit: "The letter names one fault; more than one was found, so the rest go as a report.",
+};
 
 /**
  * Attaching a file, two ways.
@@ -559,13 +630,25 @@ function attachmentLabel(attachment: EmailAttachment): string {
  *
  * **Or link it.** Anything large has a better answer than an inbox, and the
  * link form stays for exactly that.
+ *
+ * **Or it is already going.** `automatic` is what the server attaches from
+ * what this message is *about* — the invoice, the proposal, the website review
+ * — listed here beside the picked files, because those are the ones a sender
+ * would otherwise find out about from the sent record. Only the review can be
+ * taken off: the invoice and the proposal are what the letter is for.
  */
 function AttachmentPanel({
   attachments,
   onChange,
+  automatic = [],
+  attachReport = true,
+  onAttachReport,
 }: {
   attachments: EmailAttachment[];
   onChange: (next: EmailAttachment[]) => void;
+  automatic?: PreviewAttachment[];
+  attachReport?: boolean;
+  onAttachReport?: (next: boolean) => void;
 }) {
   const [uploading, setUploading] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -611,11 +694,16 @@ function AttachmentPanel({
   // why each upload appends to the prop rather than to a local queue.
   const remove = (index: number) => onChange(attachments.filter((_, position) => position !== index));
 
+  // What will actually leave: the picked files plus the automatic ones, less
+  // the review if it has been taken off. The count in the heading is the whole
+  // answer to "what is going with this", so it counts both.
+  const going = attachments.length + automatic.filter((entry) => entry.kind !== "audit" || attachReport).length;
+
   return (
     <div className="mt-5 border-t border-line pt-4">
       <div className="mb-2 flex items-center justify-between">
         <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
-          Attachments{attachments.length > 0 ? ` (${attachments.length})` : ""}
+          Attachments{going > 0 ? ` (${going})` : ""}
         </span>
         <button
           type="button"
@@ -626,6 +714,49 @@ function AttachmentPanel({
         </button>
       </div>
 
+      {/* The ones nobody picked. Drawn first and marked, because these are the
+          files a sender would otherwise never see before pressing Send. */}
+      {automatic.length > 0 && (
+        <div className="mb-3 space-y-1.5">
+          {automatic.map((entry, index) => {
+            const off = entry.kind === "audit" && !attachReport;
+            const size = formatBytes(entry.size);
+            return (
+              <div
+                key={`auto-${index}`}
+                className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm ${
+                  off ? "border-line bg-sunken" : entry.missing ? "border-danger-line bg-danger-surface" : "border-info-line bg-info-surface"
+                }`}
+              >
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Badge tone={off ? "muted" : "info"}>{off ? "removed" : "automatic"}</Badge>
+                    <span className={`truncate ${off ? "text-muted line-through" : ""}`}>{entry.name}</span>
+                    {size && <span className="shrink-0 text-xs text-muted">{size}</span>}
+                  </span>
+                  <span className="text-xs text-muted">
+                    {entry.missing
+                      ? "The file is missing — it will be left off rather than stopping the send."
+                      : off
+                        ? "Taken off this email. The letter must not refer to a report it is not carrying."
+                        : AUTOMATIC_BECAUSE[entry.kind] ?? entry.note ?? "attached by the system"}
+                  </span>
+                </span>
+                {entry.kind === "audit" && onAttachReport && (
+                  <button
+                    type="button"
+                    onClick={() => onAttachReport(!attachReport)}
+                    className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-muted transition hover:text-ink"
+                  >
+                    {off ? "Attach it again" : "Remove"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {attachments.length > 0 && (
         <div className="mb-3 space-y-1.5">
           {attachments.map((attachment, index) => {
@@ -634,10 +765,10 @@ function AttachmentPanel({
             return (
               <div key={index} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 py-2 text-sm">
                 <span className="flex min-w-0 items-center gap-2">
-                  <Badge tone="muted">{kind === "stored" ? "file" : kind}</Badge>
+                  <Badge tone="muted">{kind === "stored" ? "file" : kind === "audit" ? "review" : kind}</Badge>
                   <span className="truncate">{attachmentLabel(attachment)}</span>
                   {size && <span className="shrink-0 text-xs text-muted">{size}</span>}
-                  {(kind === "invoice" || kind === "proposal") && (
+                  {(kind === "invoice" || kind === "proposal" || kind === "audit") && (
                     <span className="shrink-0 text-xs text-muted">rendered when it sends</span>
                   )}
                 </span>
@@ -791,6 +922,9 @@ export function EmailPreviewPane({
                   >
                     {attachment.name}
                     {formatBytes(attachment.size) && <span className="text-muted">{formatBytes(attachment.size)}</span>}
+                    {/* Which of these nobody picked — same distinction the
+                        composer draws, on the screen that shows the envelope. */}
+                    {attachment.automatic && !attachment.missing && <span className="text-muted">· automatic</span>}
                     {attachment.missing && <span>· missing</span>}
                   </span>
                 ))}
@@ -988,8 +1122,8 @@ function DraftReport({
         <div className="rounded-2xl border border-line bg-white p-4">
           <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">The full review goes with this email</div>
           <p className="text-xs leading-relaxed text-ink">
-            More than one serious fault was found, so the letter names the strongest one and the rest are attached as a PDF. The
-            report is attached when the email is composed — nothing to tick.
+            More than one serious fault was found, so the letter names the strongest one and the rest are attached as a PDF. It is
+            on the letter already — see the chip under Attachments, which is also where it can be taken off.
           </p>
         </div>
       )}

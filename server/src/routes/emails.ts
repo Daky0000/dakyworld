@@ -10,7 +10,16 @@ import { caseStrength, isStale, latestAuditReport, prepareLead, storedPrep } fro
 import { ensureDemoForLead } from "../services/leadDemo.js";
 import { analystConfigured } from "../lib/anthropic.js";
 import { resolveContext } from "../services/emailContext.js";
-import { COLD_PURPOSES, composeMessage, isSuppressed, parseAttachments, reportToAttach, sendMessage, type StoredAttachment } from "../services/emailSender.js";
+import {
+  COLD_PURPOSES,
+  automaticAttachments,
+  composeMessage,
+  isSuppressed,
+  parseAttachments,
+  reportToAttach,
+  sendMessage,
+  type StoredAttachment,
+} from "../services/emailSender.js";
 import { fillPlaceholders, renderEmail, toHtml, verifyUnsubscribeToken } from "../services/emailRender.js";
 import { BUILTIN_TEMPLATES, ensureBuiltinTemplates } from "../services/emailTemplates.js";
 import { enrol, nextSendSlot, runDueSequences, stopEnrollment, stopOnReply } from "../services/emailSequences.js";
@@ -82,6 +91,10 @@ const attachment = z.union([
   z.object({ kind: z.literal("file").optional(), name: z.string(), url: z.string().url(), contentType: z.string().optional() }),
   z.object({ kind: z.literal("invoice"), invoiceId: z.string().cuid(), name: z.string().optional() }),
   z.object({ kind: z.literal("proposal"), proposalId: z.string().cuid(), name: z.string().optional() }),
+  // The website review. Accepted here because the composer now *shows* the
+  // automatic attachments and hands the list back on save — without this,
+  // opening a draft that carries a report and pressing Send answers 400.
+  z.object({ kind: z.literal("audit"), auditId: z.string().cuid(), name: z.string().optional() }),
 ]);
 
 // Writing to a client under the company's name is not a junior privilege.
@@ -195,6 +208,42 @@ emailsRouter.get("/context/lookup", async (req, res, next) => {
     });
     const suppressed = context.email ? await isSuppressed(context.email) : null;
     res.json({ ...context, suppressed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * What this email will carry that nobody picked.
+ *
+ * The composer asks the moment it knows who the letter is to and what it is —
+ * both of which can change while it is open — because the alternative is what
+ * this route was written for: a cold letter went out with a website review
+ * attached, and the screen the sender pressed Send on showed no file at all.
+ * The list comes from `automaticAttachments`, which is the same function
+ * `composeMessage` uses at send, so the chips and the letter cannot disagree.
+ *
+ * Purely a read. Nothing here decides what is attached; it reports what would
+ * be, from the arguments the composer is currently holding.
+ */
+emailsRouter.get("/context/attachments", async (req, res, next) => {
+  try {
+    const query = z
+      .object({
+        purpose: z.enum(PURPOSES).default("CUSTOM"),
+        leadId: z.string().cuid().nullish(),
+        invoiceId: z.string().cuid().nullish(),
+        proposalId: z.string().cuid().nullish(),
+        // "false" is the sender having taken the review off this one letter.
+        attachReport: z
+          .enum(["true", "false"])
+          .optional()
+          .transform((value) => (value === undefined ? undefined : value === "true")),
+      })
+      .parse(req.query);
+
+    const automatic = await automaticAttachments(query);
+    res.json({ attachments: await describeAttachments(automatic, true) });
   } catch (err) {
     next(err);
   }
@@ -456,6 +505,13 @@ const composeInput = z.object({
   carePlanId: z.string().cuid().nullish(),
   templateId: z.string().cuid().nullish(),
   attachments: z.array(attachment).max(10).optional(),
+  /**
+   * The sender taking the website review off this one letter, from the chip in
+   * the composer. Only a person ever sends `false` — the report is what makes
+   * "several other things came up" an honest sentence, so nothing automatic
+   * removes it.
+   */
+  attachReport: z.boolean().optional(),
   /** ISO instant. Absent sends now (or saves a draft, if `send` is false). */
   scheduledFor: z.coerce.date().nullish(),
   send: z.boolean().default(false),
@@ -612,6 +668,12 @@ emailsRouter.post("/preview", async (req, res, next) => {
           .transform((value) => (value && /^\S+@\S+\.\S+$/.test(value) ? value : null)),
         toName: z.string().nullish(),
         attachments: z.array(attachment).max(10).optional(),
+        // The three things the send would attach on its own. A preview that
+        // leaves them out is a picture of a different letter from the one that
+        // goes.
+        invoiceId: z.string().cuid().nullish(),
+        proposalId: z.string().cuid().nullish(),
+        attachReport: z.boolean().optional(),
       })
       .parse(req.body);
 
@@ -638,7 +700,20 @@ emailsRouter.post("/preview", async (req, res, next) => {
       from: await describeSender(),
       variables: context.variables,
       unresolved: unresolvedPlaceholders([input.subject, input.body].join("\n"), context.variables),
-      attachments: await describeAttachments(input.attachments ?? []),
+      attachments: [
+        ...(await describeAttachments(input.attachments ?? [])),
+        ...(await describeAttachments(
+          await automaticAttachments({
+            purpose: input.purpose,
+            leadId: input.leadId,
+            invoiceId: input.invoiceId,
+            proposalId: input.proposalId,
+            attachReport: input.attachReport,
+            existing: input.attachments ?? [],
+          }),
+          true,
+        )),
+      ],
       suppressed: await isSuppressed(toEmail),
       historical: false,
     });
@@ -743,8 +818,15 @@ async function inlineCids(html: string): Promise<string> {
   return out;
 }
 
-/** Each attachment as a chip: what it is, how big, and whether it still exists. */
-async function describeAttachments(entries: StoredAttachment[]) {
+/**
+ * Each attachment as a chip: what it is, how big, and whether it still exists.
+ *
+ * `automatic` says the server added this one from what the message is about
+ * rather than the sender picking it — see `automaticAttachments`. The composer
+ * draws those differently, because a file somebody chose and a file that
+ * arrived on its own are two different things to be answering for.
+ */
+async function describeAttachments(entries: StoredAttachment[], automatic = false) {
   return Promise.all(
     entries.map(async (entry) => {
       if ("kind" in entry && entry.kind === "stored") {
@@ -759,6 +841,29 @@ async function describeAttachments(entries: StoredAttachment[]) {
           note: null as string | null,
           // The one state worth shouting about: the send skips it silently.
           missing: !file,
+          automatic,
+        };
+      }
+      if ("kind" in entry && entry.kind === "audit") {
+        // Keyed on the review rather than on its file, so this is what the PDF
+        // *will* be when the letter goes rather than what it was at drafting.
+        const audit = await prisma.websiteAudit.findUnique({
+          where: { id: entry.auditId },
+          select: { pdfFileId: true, businessName: true },
+        });
+        const safeName = (audit?.businessName ?? "").replace(/[^\w\- ]+/g, "").slice(0, 60) || "Website";
+        const file = audit?.pdfFileId ? await fileSummary(audit.pdfFileId) : null;
+        return {
+          kind: "audit" as const,
+          name: entry.name ?? `${safeName} — website review.pdf`,
+          contentType: "application/pdf",
+          size: file?.size ?? null,
+          fileId: audit?.pdfFileId ?? null,
+          url: null,
+          note: "The website review this letter argues from.",
+          // No PDF is the same silence as a deleted upload: the send skips it.
+          missing: !file,
+          automatic,
         };
       }
       if ("kind" in entry && entry.kind === "invoice") {
@@ -772,6 +877,7 @@ async function describeAttachments(entries: StoredAttachment[]) {
           url: null,
           note: "Rendered fresh when it sends.",
           missing: !invoice,
+          automatic,
         };
       }
       if ("kind" in entry && entry.kind === "proposal") {
@@ -785,6 +891,7 @@ async function describeAttachments(entries: StoredAttachment[]) {
           url: null,
           note: "Rendered fresh when it sends.",
           missing: !proposal,
+          automatic,
         };
       }
       const linked = entry as { name: string; url: string; contentType?: string };
@@ -797,6 +904,7 @@ async function describeAttachments(entries: StoredAttachment[]) {
         url: linked.url,
         note: null,
         missing: false,
+        automatic,
       };
     }),
   );

@@ -276,6 +276,58 @@ export async function reportToAttach(args: { purpose: EmailMessage["purpose"]; l
   return { kind: "audit", auditId: audit.id };
 }
 
+/**
+ * What the server attaches on its own, on top of whatever the sender listed.
+ *
+ * An email written about an invoice carries the invoice, and one written about
+ * a proposal carries the proposal — whoever wrote it and however it was asked
+ * for. The link fields decide what the message is *about*; this is what makes
+ * the document actually leave with it, so "attach the PDF" is never a step
+ * somebody can forget. And a first letter that names one fault out of several
+ * carries the rest: the doctrine tells the writer to say "a few other things
+ * came up and they are in the attached report", and a rule that has to hold on
+ * every message cannot depend on whoever composed it remembering to tick a box.
+ *
+ * It is a function of its own — rather than five lines inside `composeMessage`
+ * — because the composer has to be able to *show* these before anything is
+ * sent. A file that appears on the sent record and appeared nowhere on the
+ * screen the sender was looking at is the same class of mistake as a letter
+ * referring to an attachment that is not there: the sender is answering for a
+ * document they were never shown. `GET /emails/context/attachments` and the
+ * preview both read this, so what the composer draws and what leaves with the
+ * letter are worked out by one piece of code.
+ *
+ * Anything the caller listed themselves is left exactly as they listed it, and
+ * never repeated here.
+ */
+export async function automaticAttachments(args: {
+  purpose: EmailMessage["purpose"];
+  leadId?: string | null;
+  invoiceId?: string | null;
+  proposalId?: string | null;
+  attachReport?: boolean;
+  existing?: StoredAttachment[];
+}): Promise<StoredAttachment[]> {
+  const listed = args.existing ?? [];
+  const added: StoredAttachment[] = [];
+  const already = (match: (entry: StoredAttachment) => boolean) => listed.some(match) || added.some(match);
+
+  if (args.invoiceId && !already((entry) => (entry as { kind?: string }).kind === "invoice" && (entry as { invoiceId?: string }).invoiceId === args.invoiceId)) {
+    added.push({ kind: "invoice", invoiceId: args.invoiceId });
+  }
+  if (args.proposalId && !already((entry) => (entry as { kind?: string }).kind === "proposal" && (entry as { proposalId?: string }).proposalId === args.proposalId)) {
+    added.push({ kind: "proposal", proposalId: args.proposalId });
+  }
+
+  const report = args.attachReport === false ? null : await reportToAttach(args);
+  const auditId = (report as { auditId?: string } | null)?.auditId;
+  if (report && !already((entry) => (entry as { kind?: string }).kind === "audit" && (entry as { auditId?: string }).auditId === auditId)) {
+    added.push(report);
+  }
+
+  return added;
+}
+
 export async function composeMessage(args: {
   subject: string;
   body: string;
@@ -328,30 +380,11 @@ export async function composeMessage(args: {
     includeUnsubscribe: COLD_PURPOSES.has(args.purpose),
   });
 
-  // An email written about an invoice carries the invoice, and one written
-  // about a proposal carries the proposal — whoever wrote it and however it
-  // was asked for. The link fields decide what the message is *about*; this is
-  // what makes the document actually leave with it, so "attach the PDF" is
-  // never a step somebody can forget. An attachment the caller listed
-  // themselves is left exactly as they listed it.
+  // The invoice, the proposal and the website review — see
+  // `automaticAttachments`, which the composer also reads so the sender sees
+  // these on screen before pressing Send.
   const attachments = [...(args.attachments ?? [])];
-  if (args.invoiceId && !attachments.some((entry) => (entry as { kind?: string }).kind === "invoice" && (entry as { invoiceId?: string }).invoiceId === args.invoiceId)) {
-    attachments.push({ kind: "invoice", invoiceId: args.invoiceId });
-  }
-  if (args.proposalId && !attachments.some((entry) => (entry as { kind?: string }).kind === "proposal" && (entry as { proposalId?: string }).proposalId === args.proposalId)) {
-    attachments.push({ kind: "proposal", proposalId: args.proposalId });
-  }
-
-  // And a first letter that names one fault out of several carries the rest.
-  //
-  // The doctrine tells the writer to say "a few other things came up and they
-  // are in the attached report" — and a rule that has to hold on every message
-  // cannot depend on whoever composed it remembering to tick a box. Same
-  // reasoning as the invoice above, and the same failure if it is left to a
-  // person: a letter that refers to an attachment which is not there is the
-  // one mistake in this pipeline a prospect definitely notices.
-  const report = args.attachReport === false ? null : await reportToAttach(args);
-  if (report) attachments.push(report);
+  attachments.push(...(await automaticAttachments({ ...args, existing: attachments })));
 
   return prisma.emailMessage.create({
     data: {
