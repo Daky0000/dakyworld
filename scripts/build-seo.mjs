@@ -110,47 +110,12 @@ const PAGES = [
     priority: "0.9",
     changefreq: "monthly",
     breadcrumb: [["Pricing", "/pricing"]],
-    keywords: "digital systems pricing Ghana, monthly partnership cost, website build cost Ghana, automation project pricing",
-    schema: ["webpage"],
-  },
-  {
-    file: "monthly-support.html",
-    path: "/monthly-support",
-    priority: "0.8",
-    changefreq: "monthly",
-    breadcrumb: [["Pricing", "/pricing"], ["Monthly Partnerships", "/monthly-support"]],
-    keywords: "monthly digital systems partnership Ghana, ongoing website improvement, automation partnership, CRM and integration support",
+    keywords: "monthly digital systems partnership Ghana, retainer pricing Ghana, ongoing website improvement, automation and CRM integration support",
     schema: ["service"],
     service: {
       name: "Monthly Digital Systems Partnerships",
       description:
         "Ongoing improvement of the website, customer journey, workflow automation and connected business systems, under a written scope and a defined monthly capacity.",
-    },
-  },
-  {
-    file: "one-time-projects.html",
-    path: "/one-time-projects",
-    priority: "0.8",
-    changefreq: "monthly",
-    breadcrumb: [["Pricing", "/pricing"], ["One-Time Projects", "/one-time-projects"]],
-    keywords: "one-time digital projects, website build Ghana, workflow automation project, systems integration project, AI training Kumasi",
-    schema: ["service"],
-    service: {
-      name: "One-Time Digital Systems Projects",
-      description: "Focused projects with a defined outcome: website and digital foundation builds, workflow automation and systems connection, connected growth system builds, and AI, automation and digital systems advisory.",
-    },
-  },
-  {
-    file: "foundation-build.html",
-    path: "/foundation-build",
-    priority: "0.8",
-    changefreq: "monthly",
-    breadcrumb: [["Pricing", "/pricing"], ["One-Time Projects", "/one-time-projects"], ["Website & Digital Foundation Build", "/foundation-build"]],
-    keywords: "website and digital foundation build, business website build Ghana, lead capture setup, enquiry form and WhatsApp connection",
-    schema: ["service"],
-    service: {
-      name: "Website & Digital Foundation Build",
-      description: "A defined project to build the customer-facing digital foundation: website, page structure, enquiry forms, lead connections, analytics and team handover.",
     },
   },
   {
@@ -281,7 +246,7 @@ const localBusiness = {
   description: COMPANY.positioning,
   email: COMPANY.email,
   telephone: COMPANY.phone,
-  priceRange: "GHS 3,000 – GHS 35,000+",
+  priceRange: "GHS 3,000 – GHS 25,000+ per month",
   currenciesAccepted: COMPANY.currency,
   address: {
     "@type": "PostalAddress",

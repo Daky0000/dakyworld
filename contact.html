@@ -104,33 +104,7 @@
       <a href="/services">Services</a>
       <a href="/work">Work</a>
       <a href="/how-we-work">How We Work</a>
-
-      <!-- Pricing is a page, not just a menu: the trigger goes to it, and the
-           three ways of working hang underneath. -->
-      <div class="nav-dropdown">
-        <a class="nav-dropdown-trigger" href="/pricing">
-          Pricing
-          <span aria-hidden="true">&#8964;</span>
-        </a>
-
-        <div id="pricing-menu" class="nav-dropdown-menu" hidden>
-          <a href="/monthly-support">
-            <span>Monthly Partnerships</span>
-            <small>Ongoing digital systems improvement</small>
-          </a>
-
-          <a href="/one-time-projects">
-            <span>One-Time Projects</span>
-            <small>Focused work with a defined outcome</small>
-          </a>
-
-          <a href="/foundation-build">
-            <span>Website &amp; Digital Foundation Build</span>
-            <small>The customer-facing foundation, built once</small>
-          </a>
-        </div>
-      </div>
-
+      <a href="/pricing">Pricing</a>
       <a href="/about">About</a>
       <a href="/insights">Insights</a>
 
@@ -185,9 +159,6 @@
   </div>
 </nav>
 <!-- END BREADCRUMB -->
-
-
-
 <section class="contact-section">
   <div class="wrap contact-layout">
 
@@ -236,7 +207,7 @@
     <div class="form-card reveal">
       <div class="form-head">
         <div>
-          <h3 class="display">Start a project</h3>
+          <h3 class="display">Start a conversation</h3>
           <p>Tell us a little about your goal.</p>
         </div>
         <div class="form-badge">WE USUALLY REPLY WITHIN 1 BUSINESS DAY</div>
@@ -272,10 +243,6 @@
               <option value="foundation-partnership">Monthly partnership &mdash; Foundation</option>
               <option value="growth-partnership">Monthly partnership &mdash; Growth</option>
               <option value="transformation-partnership">Monthly partnership &mdash; Transformation</option>
-              <option value="website-and-digital-foundation-build">Website &amp; Digital Foundation Build</option>
-              <option value="workflow-automation-and-systems-connection">Workflow automation and systems connection</option>
-              <option value="connected-growth-system-build">Connected Growth System Build</option>
-              <option value="ai-automation-and-digital-systems-advisory">AI, automation and digital systems advisory</option>
               <option value="founding-partner-programme">Founding Partner programme</option>
               <option value="not-sure-yet">Not sure yet &mdash; help me choose</option>
             </select>
@@ -411,9 +378,6 @@
           <li><a href="/work">Work</a></li>
           <li><a href="/how-we-work">How We Work</a></li>
           <li><a href="/pricing">Pricing</a></li>
-          <li><a href="/monthly-support">Monthly Partnerships</a></li>
-          <li><a href="/one-time-projects">One-Time Projects</a></li>
-          <li><a href="/foundation-build">Website &amp; Digital Foundation Build</a></li>
         </ul>
       </div>
       <div>
@@ -457,10 +421,7 @@
       'foundation': 'foundation-partnership',
       'growth': 'growth-partnership',
       'transformation': 'transformation-partnership',
-      'foundation-build': 'website-and-digital-foundation-build',
-      'automation': 'workflow-automation-and-systems-connection',
-      'growth-system': 'connected-growth-system-build',
-      'training-advisory': 'ai-automation-and-digital-systems-advisory',
+      'monthly-partnership': 'not-sure-yet',
       'founding-partner': 'founding-partner-programme'
     };
 
@@ -473,9 +434,6 @@
     var sourceValue = 'direct';
     var pathname = window.location.pathname;
     if (pathname.indexOf('contact') !== -1) sourceValue = 'contact-page';
-    else if (pathname.indexOf('monthly-support') !== -1) sourceValue = 'monthly-support-page';
-    else if (pathname.indexOf('one-time-projects') !== -1) sourceValue = 'one-time-projects-page';
-    else if (pathname.indexOf('foundation-build') !== -1) sourceValue = 'foundation-build-page';
     else if (pathname.indexOf('pricing') !== -1) sourceValue = 'pricing-page';
     else if (pathname.indexOf('services') !== -1) sourceValue = 'services-page';
     else if (pathname.indexOf('how-we-work') !== -1) sourceValue = 'how-we-work-page';

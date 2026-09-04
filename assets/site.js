@@ -26,33 +26,7 @@
     '      <a href="/services">Services</a>',
     '      <a href="/work">Work</a>',
     '      <a href="/how-we-work">How We Work</a>',
-    '',
-    '      <!-- Pricing is a page, not just a menu: the trigger goes to it, and the',
-    '           three ways of working hang underneath. -->',
-    '      <div class="nav-dropdown">',
-    '        <a class="nav-dropdown-trigger" href="/pricing">',
-    '          Pricing',
-    '          <span aria-hidden="true">&#8964;</span>',
-    '        </a>',
-    '',
-    '        <div id="pricing-menu" class="nav-dropdown-menu" hidden>',
-    '          <a href="/monthly-support">',
-    '            <span>Monthly Partnerships</span>',
-    '            <small>Ongoing digital systems improvement</small>',
-    '          </a>',
-    '',
-    '          <a href="/one-time-projects">',
-    '            <span>One-Time Projects</span>',
-    '            <small>Focused work with a defined outcome</small>',
-    '          </a>',
-    '',
-    '          <a href="/foundation-build">',
-    '            <span>Website &amp; Digital Foundation Build</span>',
-    '            <small>The customer-facing foundation, built once</small>',
-    '          </a>',
-    '        </div>',
-    '      </div>',
-    '',
+    '      <a href="/pricing">Pricing</a>',
     '      <a href="/about">About</a>',
     '      <a href="/insights">Insights</a>',
     '',
@@ -94,9 +68,6 @@
     '          <li><a href="/work">Work</a></li>',
     '          <li><a href="/how-we-work">How We Work</a></li>',
     '          <li><a href="/pricing">Pricing</a></li>',
-    '          <li><a href="/monthly-support">Monthly Partnerships</a></li>',
-    '          <li><a href="/one-time-projects">One-Time Projects</a></li>',
-    '          <li><a href="/foundation-build">Website &amp; Digital Foundation Build</a></li>',
     '        </ul>',
     '      </div>',
     '      <div>',
@@ -146,7 +117,6 @@
   var nav = document.getElementById('mainNav');
   var navLinks = nav ? [].slice.call(nav.querySelectorAll('a')) : [];
 
-  var MOBILE = 760;   // keep in sync with the media query in site.css
   var SHRINK = 30;    // px before the shell tightens
 
   /* Stagger index for the mobile reveal. */
@@ -205,25 +175,71 @@
   }, { passive: true });
   onScroll();
 
-  /* Check if nav is overflowing and needs dropdown */
+  /* Collapse the row into a panel exactly when the row stops fitting.
+
+     The width of the nav has to be its width AS A ROW, and once the panel is
+     showing it is not a row any more — it is absolutely positioned across the
+     whole shell. Measuring it in that state returned the shell's own width, so
+     the comparison was `shellWidth + brand + 42 + padding > shellWidth`: true
+     forever. The header collapsed at a narrow width and then stayed collapsed
+     on the way back out to a wide one, however far you dragged, until a
+     reload. So the row width is measured once while it is still a row and
+     kept — the links never change, so the number never needs to.
+
+     It is re-taken after the webfonts land, because the first measurement is
+     of fallback type and is usually a little narrower than the real thing. */
   var headerShell = document.querySelector('.header-shell');
-  
+  var brand = document.querySelector('.brand');
+  var navRowWidth = 0;
+
+  var TOGGLE_W = 42;   // .menu-toggle, which only exists once collapsed
+  var BREATH   = 44;   // the least space that may sit between brand and nav
+
+  function measureNavRow() {
+    if (!headerShell || !nav) return;
+    var collapsed = headerShell.getAttribute('data-nav-overflow') === 'true';
+    /* Force the row back, read it, put it straight back — all in one task, so
+       no paint happens in between. The catch is transitions: the panel fades
+       its opacity and visibility, and a transition does not care that the
+       change was undone in the same task. It saw the row, so it animated the
+       panel back out over a quarter-second, in full view of the visitor. The
+       .measuring class switches those transitions off for the two lines they
+       would otherwise ruin.
+
+       scrollWidth, not offsetWidth: a nav that does not fit has been squeezed
+       by the flex row, and since its links are nowrap they overflow it. Only
+       scrollWidth counts what is really there. */
+    if (collapsed) {
+      headerShell.classList.add('measuring');
+      headerShell.setAttribute('data-nav-overflow', 'false');
+    }
+    navRowWidth = Math.max(navRowWidth, nav.scrollWidth);
+    if (collapsed) {
+      headerShell.setAttribute('data-nav-overflow', 'true');
+      void headerShell.offsetWidth;   // settle the panel before transitions return
+      headerShell.classList.remove('measuring');
+    }
+  }
+
   function checkNavOverflow() {
     if (!headerShell || !nav) return;
-    
-    // Get the shell's scrollable width
-    var shellWidth = headerShell.offsetWidth;
-    var navWidth = nav.offsetWidth;
-    var brandWidth = document.querySelector('.brand') ? document.querySelector('.brand').offsetWidth : 100;
-    var toggleWidth = toggle ? 42 : 0;
-    var padding = 20; // approximate padding buffer
-    
-    // Check if content would overflow
-    var totalWidth = brandWidth + navWidth + toggleWidth + padding;
-    var hasOverflow = totalWidth > shellWidth;
-    
-    // Set the data attribute
+
+    measureNavRow();
+    if (!navRowWidth) return;
+
+    var cs = getComputedStyle(headerShell);
+    var inner = headerShell.clientWidth
+      - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var brandWidth = brand ? brand.offsetWidth : 100;
+
+    var hasOverflow = brandWidth + BREATH + navRowWidth > inner;
+
+    /* The toggle costs 42px that the row does not pay, so a width where the
+       row fits but the collapsed header would not is still a row. */
+    if (!hasOverflow && brandWidth + TOGGLE_W > inner) hasOverflow = true;
+
     headerShell.setAttribute('data-nav-overflow', hasOverflow ? 'true' : 'false');
+    if (!hasOverflow) setMenu(false);
   }
 
   if (toggle && nav) {
@@ -248,20 +264,22 @@
       }
     });
 
-    /* Resizing past the breakpoint with the menu open would otherwise leave a
-       stale state: body still locked, panel rendering as a desktop row. */
-    var wasMobile = window.innerWidth <= MOBILE;
+    /* Resizing back out to a row with the menu still open would otherwise
+       leave a stale state — body locked, panel rendering as a desktop row.
+       checkNavOverflow closes it as part of expanding. */
+    var resizePending = false;
     window.addEventListener('resize', function () {
-      var isMobile = window.innerWidth <= MOBILE;
-      if (isMobile !== wasMobile) {
-        wasMobile = isMobile;
-        if (!isMobile) setMenu(false);
-      }
-      checkNavOverflow();
+      if (resizePending) return;
+      resizePending = true;
+      window.requestAnimationFrame(function () {
+        resizePending = false;
+        checkNavOverflow();
+      });
     });
-    
-    /* Initial check and check after fonts load */
+
     checkNavOverflow();
+    /* Again once the webfonts land: the first reading is of fallback type and
+       is usually a little narrower than the row will actually be. */
     if (document.fonts) {
       document.fonts.ready.then(checkNavOverflow);
     }

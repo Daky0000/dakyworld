@@ -43,7 +43,12 @@
   --font-display:"Space Grotesk","DM Sans","Segoe UI",system-ui,sans-serif;
 }
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
+html{
+  scroll-behavior:smooth;
+  /* The header is fixed and 94px tall, so without this every in-page anchor
+     — the skip link included — parks its target underneath it. */
+  scroll-padding-top:110px;
+}
 body{
   margin:0;background:var(--cream);color:var(--ink);
   font-family:var(--font-body);
@@ -105,15 +110,21 @@ body.nav-open{overflow:hidden}
   padding:16px 0;
 }
 
-.header-wrap{
-  /* The mobile panel anchors HERE. With nothing positioned it would resolve
-     against .site-header and inherit its 16px padding, turning the intended
-     9px gap into 25px. */
+/* The shell IS the wrapper. There used to be a .header-wrap rule here holding
+   the width and the positioning, and no .header-wrap element anywhere in the
+   markup to carry it — so the bar ran edge to edge at every width, its 18px
+   corners rounding against nothing, and on a display wider than 1440 it
+   overhung the page content beneath it. The two are one element now, which is
+   the only version that cannot drift apart again.
+
+   position:relative is not decoration: the mobile panel hangs off this box.
+   backdrop-filter already made it the containing block for that panel, so the
+   declaration states what was true implicitly and would break silently if the
+   blur were ever removed. */
+.header-shell{
   position:relative;
   width:min(var(--max),calc(100% - 40px));
   margin:auto;
-}
-.header-shell{
   min-height:62px;
   padding:8px 10px 8px 21px;
   display:flex;align-items:center;justify-content:space-between;
@@ -167,53 +178,26 @@ body.nav-open{overflow:hidden}
 .main-nav a:hover:not(.nav-cta)::after,
 .main-nav a[aria-current="page"]:not(.nav-cta)::after{transform:scaleX(1)}
 
-.nav-dropdown{position:relative}
-.nav-dropdown-trigger{
-  appearance:none;border:0;background:transparent;color:rgba(255,255,255,.62);
-  font:inherit;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;
-  padding:0;cursor:pointer;white-space:nowrap;transition:color .25s ease
-}
-.nav-dropdown-trigger:hover,.nav-dropdown-trigger[aria-expanded="true"]{color:#fff}
-.nav-dropdown-menu{
-  position:absolute;top:calc(100% + 16px);left:50%;transform:translateX(-50%);
-  width:290px;display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:18px;
-  background:rgba(8,16,31,.96);border:1px solid rgba(255,255,255,.12);
-  box-shadow:0 26px 60px rgba(0,0,0,.28);z-index:30
-}
-.nav-dropdown-menu a{
-  display:block;gap:6px;padding:12px 14px;border-radius:12px;color:#fff;background:transparent;
-  text-decoration:none;transition:background .2s ease,transform .2s ease
-}
-.nav-dropdown-menu a small{display:block;color:rgba(255,255,255,.58);margin-top:4px;line-height:1.5}
-.nav-dropdown-menu a:hover{background:rgba(255,255,255,.05);transform:translateX(2px)}
-.nav-dropdown-menu[hidden]{display:none}
-
-/* The trigger is a link to the pricing page, so the menu cannot open on click
-   — clicking has to navigate. It opens on hover, and on focus so the keyboard
-   reaches it: tabbing to Pricing reveals the two ways of working underneath.
-   The `hidden` attribute stays in the markup as the no-CSS default. */
-.header-shell:not([data-nav-overflow="true"]) .nav-dropdown:hover .nav-dropdown-menu[hidden],
-.header-shell:not([data-nav-overflow="true"]) .nav-dropdown:focus-within .nav-dropdown-menu[hidden]{display:flex}
-/* A hover menu is meaningless on the stacked panel, where there is no pointer
-   to hover with — the two links simply sit under Pricing, indented. */
-.header-shell[data-nav-overflow="true"] .nav-dropdown-menu[hidden]{
-  display:flex;position:static;transform:none;width:auto;gap:0;
-  padding:0 0 0 14px;border:0;background:transparent;box-shadow:none
-}
-.header-shell[data-nav-overflow="true"] .nav-dropdown-menu a{padding:10px 0}
-.header-shell[data-nav-overflow="true"] .nav-dropdown-menu a small{display:none}
-
 /* Hovering one link dims the rest — the row reads as one group, not six items. */
 @media(min-width:901px){
   .main-nav:hover a:not(:hover):not(.nav-cta){color:rgba(255,255,255,.4)}
 }
 
-/* Show menu toggle and hide nav when nav is marked as needing dropdown */
+/* The row collapses into a panel when the row genuinely stops fitting, and at
+   no other time. data-nav-overflow, set from a measurement in site.js, is the
+   single switch for that: there used to be a second one, a max-width:760px
+   media query carrying a near-identical copy of every rule below, so the two
+   could disagree and any change had to be made twice. The media query now
+   only changes sizes.
+
+   The panel hangs off .header-shell. Its padding box sits inside the shell's
+   1px border, so -1px pulls the panel back out to the shell's own edges and
+   the extra 1px in `top` makes the gap a true var(--gap) below the shell. */
 .header-shell[data-nav-overflow="true"] .menu-toggle{
   display:grid;place-items:center
 }
 .header-shell[data-nav-overflow="true"] .main-nav{
-  position:absolute;top:calc(100% + var(--gap));left:0;right:0;
+  position:absolute;top:calc(100% + 1px + var(--gap));left:-1px;right:-1px;
   flex-direction:column;align-items:stretch;gap:0;
   padding:10px;
   border:1px solid rgba(255,255,255,.12);
@@ -233,6 +217,7 @@ body.nav-open{overflow:hidden}
   opacity:0;transform:translateY(-6px);
   transition:opacity .3s ease,transform .3s var(--ease),background .2s ease;
 }
+/* Links arrive one after another, once the panel itself has landed. */
 .header-shell[data-nav-overflow="true"] .main-nav.open a{
   opacity:1;transform:none;
   transition-delay:calc(60ms + var(--i,0) * 45ms);
@@ -243,6 +228,23 @@ body.nav-open{overflow:hidden}
 .header-shell[data-nav-overflow="true"] .main-nav a:not(.nav-cta)::after{
   display:none
 }
+.header-shell[data-nav-overflow="true"] .nav-cta{
+  justify-content:space-between;
+  margin-top:6px;
+  /* 13px vertical = 46px tall, a proper touch target. */
+  padding:13px 13px 13px 15px!important;
+  font-size:15px!important;
+}
+
+/* Set by site.js for the single line on which it puts the panel back into a
+   row to measure it. Without this the undo animates, and the panel fades out
+   across the page every time the window is resized. */
+.header-shell.measuring .main-nav,
+.header-shell.measuring .main-nav a{transition:none!important}
+/* Without JavaScript nothing sets the attribute, so the row never collapses.
+   Let it wrap rather than run off the side of a phone. */
+html:not(.js) .header-shell{flex-wrap:wrap;row-gap:10px}
+html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
 
 .nav-cta{
   display:inline-flex;align-items:center;gap:7px;
@@ -292,51 +294,14 @@ body.nav-open{overflow:hidden}
 .menu-toggle[aria-expanded="true"] span::before{top:0;transform:rotate(45deg)}
 .menu-toggle[aria-expanded="true"] span::after{top:0;transform:rotate(-45deg)}
 
-/* Mobile: the same nav becomes a panel anchored under the shell */
+/* Mobile: sizes only. Which layout the nav is in is decided by the
+   measurement in site.js, not by a second breakpoint here. */
 @media(max-width:760px){
-  .header-wrap{width:calc(100% - 28px)}
-  .header-shell{padding:8px 9px 8px 14px}
+  .header-shell{width:calc(100% - 28px);padding:8px 9px 8px 14px}
   /* Small enough that the lockup and the menu button never contend for the
      row on a 360px screen. */
   .brand-logo{height:28px}
   .brand-footer img{height:38px}
-
-  .main-nav{
-    position:absolute;top:calc(100% + var(--gap));left:0;right:0;
-    flex-direction:column;align-items:stretch;gap:0;
-    padding:10px;
-    border:1px solid rgba(255,255,255,.12);
-    border-radius:17px;
-    background:rgba(8,16,31,.97);
-    backdrop-filter:blur(20px);
-    -webkit-backdrop-filter:blur(20px);
-    box-shadow:0 22px 55px rgba(0,0,0,.25);
-    opacity:0;visibility:hidden;transform:translateY(-8px);
-    transition:opacity .25s ease,transform .3s var(--ease),visibility .3s;
-  }
-  .main-nav.open{opacity:1;visibility:visible;transform:none}
-
-  .main-nav a{
-    padding:14px 13px;border-radius:11px;font-size:15px;
-    opacity:0;transform:translateY(-6px);
-    transition:opacity .3s ease,transform .3s var(--ease),background .2s ease;
-  }
-  /* Links arrive one after another, once the panel itself has landed. */
-  .main-nav.open a{
-    opacity:1;transform:none;
-    transition-delay:calc(60ms + var(--i,0) * 45ms);
-  }
-  .main-nav a:hover{background:rgba(255,255,255,.06)}
-  .main-nav a:not(.nav-cta)::after{display:none}
-
-  .nav-cta{
-    justify-content:space-between;
-    margin-top:6px;
-    /* 13px vertical = 46px tall, a proper touch target. */
-    padding:13px 13px 13px 15px!important;
-    font-size:15px!important;
-  }
-  .menu-toggle{display:grid;place-items:center}
 }
 
 /* ── Portal hero ─────────────────────────────────────────────────────── */
@@ -519,6 +484,7 @@ body.nav-open{overflow:hidden}
 .section-head{display:flex;justify-content:space-between;gap:35px;align-items:end;margin-bottom:60px}
 .section-head h2,
 .head-2 h2,
+.no-lock h2,
 .expect-head h2,
 .band h2,
 .contact-intro h2,
@@ -823,6 +789,13 @@ footer{background:#050a14;color:#fff}
 .rate-price{font-family:"Space Grotesk";font-size:21px;letter-spacing:-.03em;color:var(--blue);white-space:nowrap}
 .rate-note{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#8993a6;margin-top:6px;font-weight:700}
 .rate-note.save{color:#4e8c1f}
+.rate-head{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8993a6;padding:16px 0}
+.rate-head:hover{background:none;padding-left:0}
+/* The column headings only head anything while the row is still a row. Once it
+   stacks they become three orphan labels above the table, so each cell carries
+   its own name instead — a price with no label is the one thing a pricing table
+   may never show. */
+.rate-label{display:none}
 
 /* Long-form case files */
 .case-file{
@@ -1039,6 +1012,11 @@ a.v:hover{color:var(--blue)}
   .post-row{grid-template-columns:1fr;gap:8px}
   .post-row .post-tag{order:-1}
   .rate-row{grid-template-columns:1fr;gap:8px}
+  .rate-head{display:none}
+  .rate-label{
+    display:block;font-size:11px;font-weight:700;letter-spacing:.12em;
+    text-transform:uppercase;color:#8993a6;margin-bottom:3px;
+  }
   .form-2{grid-template-columns:1fr}
 }
 @media(max-width:680px){
@@ -1046,7 +1024,11 @@ a.v:hover{color:var(--blue)}
   .trust-item{padding:18px 12px}
   .trust-item strong{font-size:23px}
   .trust-item:hover{padding-left:12px;transform:none}
+  /* Stacked, the two halves are no longer separated by the flex gap, and the
+     heading sets line-height:1 — so its descenders ran straight into the
+     paragraph, on every section head on the site. */
   .section-head{display:block;margin-bottom:40px}
+  .section-head p{margin-top:22px;max-width:none}
   .gap-copy{grid-template-columns:1fr}
   .founder-grid{grid-template-columns:1fr}
   .founder-photo{max-width:280px}

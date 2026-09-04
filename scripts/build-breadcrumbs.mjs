@@ -34,13 +34,6 @@ const TRAILS = {
   "work.html": [["Work", "/work"]],
   "how-we-work.html": [["How We Work", "/how-we-work"]],
   "pricing.html": [["Pricing", "/pricing"]],
-  "monthly-support.html": [["Pricing", "/pricing"], ["Monthly Partnerships", "/monthly-support"]],
-  "one-time-projects.html": [["Pricing", "/pricing"], ["One-Time Projects", "/one-time-projects"]],
-  "foundation-build.html": [
-    ["Pricing", "/pricing"],
-    ["One-Time Projects", "/one-time-projects"],
-    ["Website & Digital Foundation Build", "/foundation-build"],
-  ],
   "insights.html": [["Insights", "/insights"]],
   "contact.html": [["Contact", "/contact"]],
   "privacy.html": [["Privacy", "/privacy"]],
@@ -108,7 +101,11 @@ for (const [file, trail] of Object.entries(TRAILS)) {
   if (begin !== -1) {
     // Re-place rather than edit in situ, so a corrected anchor actually moves it.
     const end = html.indexOf(END, begin);
-    const stripped = (html.slice(0, begin) + html.slice(end + END.length)).replace(/\n{3,}/g, "\n\n");
+    // (?:\r?\n) rather than \n. The working tree on Windows is CRLF, where three
+    // blank lines never contain two consecutive \n — so this collapse quietly did
+    // nothing there and did its job in CI, and `--check` then failed on the very
+    // machine that had just run the generator.
+    const stripped = (html.slice(0, begin) + html.slice(end + END.length)).replace(/(?:\r?\n){3,}/g, "\n\n");
     const at = insertionPoint(stripped, file);
     next = `${stripped.slice(0, at)}\n\n${block}\n${stripped.slice(at).replace(/^\n+/, "")}`;
   } else {
