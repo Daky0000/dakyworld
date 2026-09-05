@@ -360,6 +360,102 @@ The Inbox routes are behind the `inbox.view` permission, which the three roles
 that ship with outreach access carry — on the grounds that what a stranger wrote
 to the company is at least as sensitive as what the company sent.
 
+### Telling people where we got their details (added 5 Sep 2026)
+
+Everything the outreach pipeline touches is data we went and found — a
+business scraped off Google Maps, an address read off a homepage, a company
+in a directory. **That is Article 14 GDPR, not Article 13**, and it asks for
+more rather than less, because the person had no idea it was happening.
+
+One item on its list cannot live in a privacy policy: **Art 14(2)(f), the
+source**. Everything else — who we are, why, the basis, the retention, the
+rights — is the same for everybody and may be linked to, which Art 14(3)(a)
+permits. The source differs per person, so it has to travel with the message.
+And Art 14(3)(b) puts the deadline at the first communication, which is why
+it is appended by code rather than asked of a model: a rule that must hold on
+every message cannot depend on anybody remembering it. Same argument, and the
+same place in the file, as the reply-based opt-out.
+
+`services/dataSourceNotice.ts` is the one implementation, shared by email and
+the phone channels, because written twice it would be one edit away from two
+different disclosures.
+
+- **Email** carries the full notice in the footer, in both the HTML and the
+  plain-text part — a notice given in one half has not been given to somebody
+  reading the other. It is furniture, not the letter: a cold email whose body
+  opens on data protection is a cold email nobody answers.
+- **WhatsApp and SMS** carry a short form, and **only on the first message**.
+  Art 14(3)(b) asks for the first communication, and here that distinction is
+  worth making: the notice is about a hundred characters, and on a
+  160-character SMS segment repeating it buys a second segment on every
+  message of a sequence. The email footer repeats it because a footer is free.
+- **A WhatsApp template carries none of it, and that is a real gap rather than
+  a decision.** Meta approved an exact string and appending to it would send
+  something it did not approve — the same rule that already keeps the opt-out
+  out of a template body. Every cold WhatsApp to somebody who has never
+  written to us is a template, so the notice has to go **inside** the wording
+  submitted for approval. `whatsappTemplates.ts` puts an opt-out in every
+  marketing template it proposes and should put this there too; until it does,
+  the WhatsApp template path is the one channel not covered.
+- **It never names a source we do not have.** `OTHER`, `COLD_EMAIL` and
+  `OUTREACH` describe our own pipeline rather than a place anything was found,
+  so they fall through to an honest general phrase. The recipient is the one
+  person alive who can check where we found them, and being told the wrong
+  thing about their own data is worse than being told a vague true thing.
+
+**The email template no longer fetches its typefaces from Google either.** A
+`<link>` or `@import` there is honoured by some mail clients, which tells
+Google the recipient's IP address and that they opened a message they never
+asked for — the same transfer taken off the website the day before, and one no
+footer can consent away. Every rule in the shell already named a full fallback
+stack, so the cost was nil.
+
+`checks/sourceNotice.ts` (40) holds all of it, database only. Half of it is
+negatives: a client's invoice covering note must carry no notice, a lead with
+no recorded source must never be told one, a follow-up SMS must not repeat it,
+and the shell must request no webfont.
+
+### Deleting what the policy says will be deleted (added 5 Sep 2026)
+
+Art 5(1)(e) GDPR and s.24 of Act 843 both say personal data may be kept no
+longer than necessary. Neither is satisfied by intending to.
+
+Publishing a period per category on 4 Sep made the obligation concrete and
+created a sharper problem beside it: **a published retention period that
+nothing enforces is a false statement in a privacy policy**, which is worse
+than the vague "as long as necessary" it replaced. Vague and true beats
+specific and untrue.
+
+`services/retention.ts` sweeps **one** of the five published periods and the
+file says why for each of the other four: billing is a legal obligation to
+*keep*, client systems data lives in the client's own systems and its clock
+starts at an offboarding a scheduler cannot see, analytics retention is set in
+GA4's admin, and the 24-month enquiry period has nothing to sweep because the
+contact form is still a stub. That leaves the category this pipeline creates
+by the thousand and which has the weakest claim to be kept: business contact
+details we found ourselves, twelve months, on a business that never became
+anything.
+
+**It is off until somebody turns it on** — `privacy.retentionEnforced`,
+default false — and the housekeeping tick reports the number it would remove.
+Deleting rows from the Owner's lead database on a schedule they did not ask
+for is their decision, and the first run is where a wrong guard costs most. On
+the database as it stands the answer is **0**, because nothing in it is a year
+old yet; switching it on today deletes nothing and starts mattering next year.
+
+Not to be confused with `capture.retentionDays`, which prunes `ScraperRun`
+history and whose own comment correctly says captured leads are never touched.
+Until now there was no other half: the bookkeeping about a scrape expired
+after ninety days and the businesses it found were kept for ever.
+
+`checks/retention.ts` (23) is almost entirely the guards, because the failure
+here is not a missed sweep — it is deleting somebody's pipeline. A referral, a
+website enquiry, a lead touched last week, one that was ever written to, one
+with a logged call, one attached to a client: each must survive, and each is
+asserted through a **real** delete rather than only through the query that
+feeds it, since a widened `where` would pass every read-only assertion and
+still empty the table.
+
 ### Running an actor on an agent's say-so (added Sep 2026)
 
 `capture.find` and `capture.read` let an agent start an Apify run without a

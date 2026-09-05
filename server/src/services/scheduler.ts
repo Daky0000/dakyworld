@@ -13,6 +13,7 @@ import { readMailboxOnce } from "./mailbox/watcher.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { pruneMemories } from "./agents/memory.js";
+import { enforceRetention, retentionEnforced } from "./retention.js";
 import { refreshStaleServers } from "./tools/mcpTools.js";
 import { syncBusinessOffer } from "./context/business.js";
 import { ensureGapReviews, expireStaleHireRequests, postGapNotice } from "./agents/hiring.js";
@@ -248,6 +249,35 @@ async function housekeepingTick(now: Date) {
   // is not evidence a house rule stopped being true.
   const forgotten = await pruneMemories();
   if (forgotten) console.log(`[scheduler] cleared ${forgotten} agent memory/memories nothing had recalled`);
+
+  // Personal data past the period the privacy policy publishes for it.
+  //
+  // A published retention period that nothing enforces is a false statement in
+  // a privacy policy, which is worse than the vague "as long as necessary" it
+  // replaced — so this is what makes dakyworld.com/privacy §03 true rather than
+  // aspirational. Only one of the five published periods is this tick's to
+  // enforce; services/retention.ts says why for each of the other four.
+  //
+  // **It reports until somebody switches it on.** Deleting rows from the
+  // Owner's lead database on a schedule they did not ask for is their decision,
+  // and the first run is where a wrong guard costs most. The log line is what
+  // makes that decision an informed one.
+  try {
+    const apply = await retentionEnforced();
+    const swept = await enforceRetention({ apply });
+    if (swept.deleted) {
+      console.log(`[scheduler] deleted ${swept.deleted} lead(s) past the published retention period`);
+    } else if (swept.due) {
+      console.log(
+        `[scheduler] ${swept.due} lead(s) are past the published 12-month retention period and nothing is deleting them — ` +
+          `set privacy.retentionEnforced to "true" to enforce it. For example: ${swept.sample.join(", ")}`,
+      );
+    }
+  } catch (err) {
+    // Never fatal, exactly as the business-context refresh is not: a tick that
+    // throws here loses every sweep below it.
+    console.warn(`[scheduler] the retention sweep could not run: ${(err as Error).message}`);
+  }
 
   // What the company sells, from the company's own website.
   //

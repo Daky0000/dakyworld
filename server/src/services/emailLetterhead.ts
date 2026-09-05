@@ -118,8 +118,13 @@ ${escapeHtml(profile.location)}<br>${link(`mailto:${profile.email}`, profile.ema
 </tr>`;
 }
 
-/** The letter, its signature, and the opt-out when there is one. */
-function letter(bodyHtml: string, signature: string | null, unsubscribeUrl: string | null): string {
+/** The letter, its signature, and the legal furniture when there is any. */
+function letter(
+  bodyHtml: string,
+  signature: string | null,
+  unsubscribeUrl: string | null,
+  sourceNoticeHtml: string | null,
+): string {
   const signatureBlock = signature
     ? `<tr><td style="padding:26px 0 0">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top:1px solid ${LINE};padding:16px 0 0;font-family:${BODY_FONT};font-size:13px;line-height:22px;color:${MUTED}">${signature}</td></tr></table>
@@ -134,12 +139,21 @@ function letter(bodyHtml: string, signature: string | null, unsubscribeUrl: stri
       )} and we will not write again.</td></tr>`
     : "";
 
+  // Where we found them, on a first message to somebody who never contacted
+  // us — Art 14(2)(f) GDPR. Same small type as the opt-out and directly under
+  // it: it has to be provided and legible, not made the subject of the letter.
+  // See services/dataSourceNotice.ts for why it is a footer.
+  const sourceNotice = sourceNoticeHtml
+    ? `<tr><td style="padding:10px 0 0;font-family:${BODY_FONT};font-size:11px;line-height:18px;color:#8993A6">${sourceNoticeHtml}</td></tr>`
+    : "";
+
   return `<tr>
 <td class="pad" style="padding:30px 32px 34px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr><td style="font-family:${BODY_FONT};font-size:15px;line-height:26px;color:${INK}">${bodyHtml}</td></tr>
 ${signatureBlock}
 ${optOut}
+${sourceNotice}
 </table>
 </td>
 </tr>`;
@@ -213,6 +227,11 @@ export interface ShellArgs {
   bodyText: string;
   signature: string | null;
   unsubscribeUrl: string | null;
+  /**
+   * The Art 14 source notice, already escaped and linked, or null where it does
+   * not apply — which is every message to somebody who contacted us first.
+   */
+  sourceNoticeHtml?: string | null;
   /** Who is sending. Defaults to the shipped constants when nothing is stored. */
   profile?: CompanyProfile;
   /**
@@ -225,11 +244,28 @@ export interface ShellArgs {
   footerLogoSrc?: string | null;
 }
 
+/**
+ * The whole document.
+ *
+ * **No webfont is requested, and that absence is deliberate.** A `<link>` to
+ * fonts.googleapis.com — or an `@import` of it — is fetched by whichever mail
+ * clients honour it, which tells Google the recipient's IP address and that
+ * they opened a message they never asked for. It is the same transfer that was
+ * taken off the website on 4 Sep 2026, it happens before anyone can consent to
+ * anything, and no footer can consent it away.
+ *
+ * The cost is nil: every rule below names the full fallback stack, Gmail and
+ * Outlook stripped both tags anyway, and the Word engine was never going to
+ * render a webfont in the first place.
+ *
+ * `checks/sourceNotice.ts` asserts both tags stay absent.
+ */
 export function wrapEmail({
   bodyHtml,
   bodyText,
   signature,
   unsubscribeUrl,
+  sourceNoticeHtml = null,
   profile = DEFAULT_PROFILE,
   logoSrc = `cid:${LOGO_CID}`,
   footerLogoSrc = `cid:${LOGO_DARK_CID}`,
@@ -244,9 +280,8 @@ export function wrapEmail({
 <meta name="supported-color-schemes" content="light">
 <title>${escapeHtml(profile.displayName)}</title>
 <!--[if mso]><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<!-- Deliberately no webfont. See the note above wrapEmail(). -->
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap');
 body{margin:0;padding:0;width:100%!important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}
 img{-ms-interpolation-mode:bicubic}
 a{color:${ACCENT}}
@@ -267,7 +302,7 @@ ${preheader(bodyText)}
 <tr><td align="center" style="padding:28px 12px 34px">
 <table role="presentation" class="sheet" width="${WIDTH}" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAPER}" style="width:${WIDTH}px;max-width:${WIDTH}px;background:${PAPER};border:1px solid ${LINE};border-radius:4px">
 ${header(profile, logoSrc)}
-${letter(bodyHtml, signature, unsubscribeUrl)}
+${letter(bodyHtml, signature, unsubscribeUrl, sourceNoticeHtml)}
 ${footer(profile, footerLogoSrc)}
 </table>
 </td></tr>
@@ -281,13 +316,21 @@ ${footer(profile, footerLogoSrc)}
  * after the signature looks truncated next to the HTML one, and it is the part
  * spam filters read most closely.
  */
-export function textFooter(unsubscribeUrl: string | null, profile: CompanyProfile = DEFAULT_PROFILE): string {
+export function textFooter(
+  unsubscribeUrl: string | null,
+  profile: CompanyProfile = DEFAULT_PROFILE,
+  sourceNoticeText: string | null = null,
+): string {
   const contact = [profile.location, profile.email, profile.phone, profile.phoneAlt, profile.web].filter(Boolean).join(" · ");
   return [
     "--",
     `${profile.displayName} — ${profile.promise}`,
     contact,
     unsubscribeUrl ? `Unsubscribe: ${unsubscribeUrl}` : "",
+    // The text part is not a courtesy copy — it is what a plain-text client
+    // shows and what a filter reads. A notice that exists only in the HTML half
+    // has not been given to somebody reading the other one.
+    sourceNoticeText ?? "",
   ]
     .filter(Boolean)
     .join("\n");

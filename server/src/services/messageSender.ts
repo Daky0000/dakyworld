@@ -1,10 +1,11 @@
-import type { EmailKind, EmailPurpose, Message, MessageChannel, MessageRoute, MessageThread } from "@prisma/client";
+import type { EmailKind, EmailPurpose, LeadSource, Message, MessageChannel, MessageRoute, MessageThread } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { defaultCallingCode, displayPhone, smsCost, toE164, waLink, type ParsedNumber } from "../lib/phone.js";
 import { HubtelError, hubtelSmsConfigured, sendSms } from "../lib/hubtel.js";
 import { SERVICE_WINDOW_MS, WhatsAppError, sendTemplate, sendText, whatsappConfigured } from "../lib/whatsapp.js";
 import { resolveContext } from "./emailContext.js";
 import { fillPlaceholders } from "./emailRender.js";
+import { privacyPolicyUrl, shortSourceNotice } from "./dataSourceNotice.js";
 
 /**
  * Sending on the phone channels.
@@ -361,6 +362,30 @@ async function renderBody(args: ComposeArgs, variables: Record<string, string>, 
     body = `${body}\n\n${OPT_OUT[args.channel]}`;
   }
 
+  // Where we found them — Art 14(2)(f) GDPR, and s.18 of Ghana's Act 843, both
+  // of which require telling somebody the source of data that did not come
+  // from them.
+  //
+  // **Only on the first message, unlike the email footer.** Art 14(3)(b) sets
+  // the obligation at "the first communication", and here that distinction is
+  // worth making: the notice is about a hundred characters, and on a
+  // 160-character SMS segment that is a second segment bought on every message
+  // of a sequence to repeat something already said. The email footer repeats it
+  // because a footer costs nothing.
+  //
+  // A template carries none of this, and that is not a shortcut — see the note
+  // on renderBody. Meta approved an exact string, so appending to it would send
+  // something it did not approve. A cold WhatsApp template has to carry the
+  // notice inside the wording Meta approved; whatsappTemplates.ts is where that
+  // belongs, exactly as the opt-out already does.
+  if (COLD_PURPOSES.has(args.purpose) && (await isFirstOutbound(thread.id))) {
+    const notice = shortSourceNotice({
+      source: await leadSourceFor(args.leadId),
+      privacyUrl: await privacyPolicyUrl(),
+    });
+    if (!body.includes(notice)) body = `${body}\n\n${notice}`;
+  }
+
   // A written WhatsApp is capped by Meta at 4096; Hubtel truncates a text at
   // 1000. Both are cut here rather than at the provider, so what is stored is
   // what was sent — an outbox showing words the recipient never received is
@@ -368,8 +393,37 @@ async function renderBody(args: ComposeArgs, variables: Record<string, string>, 
   const limit = args.channel === "WHATSAPP" ? 4096 : 1000;
   if (body.length > limit) body = `${body.slice(0, limit - 1)}…`;
 
-  void thread;
   return body;
+}
+
+/**
+ * Whether anything has actually gone out on this thread before.
+ *
+ * OUTBOUND rows only, and only ones that really went: an inbound message means
+ * they wrote to *us*, at which point Art 13 takes over from Art 14, and a draft
+ * that was written and discarded told nobody anything. Counting a draft would
+ * mean a message composed, deleted and composed again silently loses the
+ * notice — and erring towards telling somebody twice is the safe direction
+ * here, where erring the other way is the omission this exists to prevent.
+ */
+async function isFirstOutbound(threadId: string): Promise<boolean> {
+  const alreadySent = await prisma.message.count({
+    where: { threadId, direction: "OUTBOUND", status: { in: ["SENT", "DELIVERED", "READ"] } },
+  });
+  return alreadySent === 0;
+}
+
+/**
+ * The lead's recorded source, or null when there is no lead behind the number.
+ *
+ * Null is a real answer rather than a failure: `shortSourceNotice` turns it
+ * into an honest general phrase, which is the right thing to say about a number
+ * somebody typed in by hand.
+ */
+async function leadSourceFor(leadId: string | null | undefined): Promise<LeadSource | null> {
+  if (!leadId) return null;
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { source: true } });
+  return lead?.source ?? null;
 }
 
 // --- Sending ---------------------------------------------------------------

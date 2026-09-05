@@ -515,6 +515,18 @@ export const SETTING = {
    * One pass, marked here, so a fixed number does not take a month to arrive.
    */
   AGENT_COST_BACKFILL: "agents.costBackfill",
+
+  /**
+   * Whether the retention sweep may actually delete, or only report.
+   *
+   * Off unless explicitly "true". The privacy policy publishes a twelve-month
+   * period for business contact details we found ourselves, and
+   * services/retention.ts is what makes that true — but deleting rows from
+   * somebody's lead database on a schedule they did not ask for is their
+   * decision, not a default. Until it is on, the housekeeping tick reports the
+   * number it would have removed.
+   */
+  RETENTION_ENFORCED: "privacy.retentionEnforced",
   /**
    * Every tool that has ever been offered to an agent, as {agentKey: [toolKey]}.
    *

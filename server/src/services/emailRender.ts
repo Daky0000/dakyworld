@@ -2,8 +2,10 @@ import { createHmac } from "node:crypto";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { LOGO_CID, LOGO_DARK_CID, brandDataUrl, hasBrandImage } from "../lib/brandAssets.js";
 import { textFooter, wrapEmail } from "./emailLetterhead.js";
+import { privacyPolicyUrl, sourceNotice, type SourceNotice } from "./dataSourceNotice.js";
 import { companyProfile, type CompanyProfile } from "./systemProfile.js";
 import type { RecipientContext } from "./emailContext.js";
+import type { LeadSource } from "@prisma/client";
 
 /**
  * Turning a written email into the thing that actually leaves the building:
@@ -53,7 +55,12 @@ export function toHtml(
   body: string,
   signature: string | null,
   unsubscribeUrl: string | null,
-  shell: { profile?: CompanyProfile; logoSrc?: string | null; footerLogoSrc?: string | null } = {},
+  shell: {
+    profile?: CompanyProfile;
+    logoSrc?: string | null;
+    footerLogoSrc?: string | null;
+    sourceNoticeHtml?: string | null;
+  } = {},
 ): string {
   const paragraphs = body
     .split(/\n{2,}/)
@@ -75,8 +82,14 @@ export function toHtml(
  * The text alternative — the same words and signature, closed by the same
  * details the footer band carries, so the two parts say the same thing.
  */
-export function toText(body: string, signature: string | null, unsubscribeUrl: string | null, profile?: CompanyProfile): string {
-  return [body.trim(), signature ? `\n${signature}` : "", `\n${textFooter(unsubscribeUrl, profile)}`]
+export function toText(
+  body: string,
+  signature: string | null,
+  unsubscribeUrl: string | null,
+  profile?: CompanyProfile,
+  sourceNoticeText?: string | null,
+): string {
+  return [body.trim(), signature ? `\n${signature}` : "", `\n${textFooter(unsubscribeUrl, profile, sourceNoticeText ?? null)}`]
     .filter(Boolean)
     .join("\n");
 }
@@ -134,6 +147,16 @@ export async function renderEmail(args: {
   appUrl: string;
   includeUnsubscribe: boolean;
   /**
+   * Where this business was found, when we found them rather than being
+   * contacted by them. Drives the Art 14 notice in the footer.
+   *
+   * Undefined and null are the same thing here and both are handled: a lead
+   * whose origin was never recorded still gets the notice, phrased generally,
+   * because "we do not know where we got this" is not a reason to tell somebody
+   * nothing. See services/dataSourceNotice.ts.
+   */
+  leadSource?: LeadSource | null;
+  /**
    * True when the result will be shown on a page rather than sent. The two
    * differ in one respect and it matters: an `<iframe>` cannot resolve a
    * `cid:` reference, so the preview carries the artwork as data URLs and a
@@ -160,12 +183,42 @@ ${OPT_OUT_SENTENCE}` : filled;
   const [sign, profile, shell] = await Promise.all([signature(), companyProfile(), logoSources(args.forPreview ?? false)]);
   const optOut = args.includeUnsubscribe ? await unsubscribeUrl(args.toEmail, args.appUrl) : null;
 
+  // Art 14 GDPR: where somebody's details came from has to be told to them at
+  // the latest when we first write, and it applies to exactly the messages the
+  // unsubscribe link applies to — the ones going to a business that never
+  // contacted us. Appended here rather than asked of the drafter, for the same
+  // reason as the opt-out: a rule that must hold on every single message cannot
+  // depend on a model remembering it.
+  const notice: SourceNotice | null = args.includeUnsubscribe
+    ? sourceNotice({
+        source: args.leadSource ?? null,
+        privacyUrl: await privacyPolicyUrl(),
+        companyName: profile.displayName,
+        privacyEmail: privacyAddress(profile.email),
+      })
+    : null;
+
   return {
     subject,
     bodyText: body,
-    html: toHtml(body, sign, optOut, { profile, ...shell }),
-    text: toText(body, sign, optOut, profile),
+    html: toHtml(body, sign, optOut, { profile, ...shell, sourceNoticeHtml: notice?.html ?? null }),
+    text: toText(body, sign, optOut, profile, notice?.text ?? null),
   };
+}
+
+/**
+ * Where a data request should land, derived rather than stored.
+ *
+ * The privacy policy publishes privacy@ and promises an answer in ten business
+ * days, so that is the address a notice pointing at the policy has to give —
+ * sending somebody to info@ makes the two documents disagree about how to
+ * reach us. Falls back to whatever address the profile carries when the domain
+ * cannot be read, because an address that exists beats a correct-looking one
+ * that does not.
+ */
+function privacyAddress(companyEmail: string): string {
+  const at = companyEmail.lastIndexOf("@");
+  return at > 0 ? `privacy@${companyEmail.slice(at + 1)}` : companyEmail;
 }
 
 /** The wording the playbook requires, in Dan's own voice. */

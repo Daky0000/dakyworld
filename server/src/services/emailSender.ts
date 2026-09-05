@@ -378,6 +378,9 @@ export async function composeMessage(args: {
     toEmail,
     appUrl: await appUrl(),
     includeUnsubscribe: COLD_PURPOSES.has(args.purpose),
+    // Only a lead has one. A client wrote to us first, which is Art 13 and
+    // carries no source to disclose.
+    leadSource: context.leadSource,
   });
 
   // The invoice, the proposal and the website review — see

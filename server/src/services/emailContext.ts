@@ -1,3 +1,4 @@
+import type { LeadSource } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { demoUrl } from "./demoBuilder.js";
 import { appUrl } from "./emailSender.js";
@@ -84,6 +85,17 @@ export interface RecipientContext {
   variables: Record<string, string>;
   leadId?: string;
   clientId?: string;
+  /**
+   * Where this business was found, for the Art 14 notice a first message has to
+   * carry. Present only for a lead — a client gave us their details themselves,
+   * which is Art 13 and a different obligation with nothing to disclose here.
+   *
+   * It is on the context rather than re-read at render time because
+   * `resolveContext` has already loaded the lead, and a second query for one
+   * enum would be a second chance for the two to disagree about which lead this
+   * message is to.
+   */
+  leadSource?: LeadSource;
 }
 
 /**
@@ -226,6 +238,7 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
     preparedAt: lead.research?.ranAt.toISOString() ?? null,
     prepNotes: lead.research?.notes ?? [],
     leadId: lead.id,
+    leadSource: lead.source,
     email: lead.contactEmail,
     phone: lead.contactPhone,
     name: lead.contactName,
