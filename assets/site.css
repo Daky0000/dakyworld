@@ -14,7 +14,15 @@
   --lime:#b8ff3d;
   --cream:#f4f5f0;
   --white:#ffffff;
-  --muted:#69758a;
+  /* Secondary text. #69758a came to 4.25:1 on the cream this site is mostly
+     made of — under the 4.5:1 that normal-size text needs — and five more
+     hand-picked greys sat around it doing the same job a unit or two apart,
+     none of them passing either. They are all this one value now, which does
+     pass on every ground here: cream, white, --soft and the field grey. */
+  --muted:#636f82;
+  /* The uppercase eyebrow and field label. Bluer than --muted on purpose, and
+     kept as its own token so the two can be told apart when one has to move. */
+  --label:#5c6b86;
   --line:#dfe4eb;
   /* Site-level extra: the one step between --cream and --white, used for
      inset panels. No equivalent in the written system. */
@@ -28,6 +36,21 @@
      lightened for contrast — the same job the light sections already do. */
   --accent-dark:var(--blue-light);
 
+  /* The two label sizes — the uppercase, wide-tracked eyebrows, numbers, tags
+     and field labels. They were written as literal 9/10/11px in thirty-six
+     places across two files, which is why nothing ever raised them: there was
+     no one place to raise.
+
+     On a phone they are the least legible thing on the site. 11px of uppercase
+     at .12em tracking is small before you account for a hand, a bus, and
+     daylight; 9px is smaller than the smallest text most people can read
+     comfortably at arm's length. The desktop composition depends on the
+     contrast between these labels and the display type, so the sizes stay as
+     drawn on a large screen and lift to a 12px floor on a small one, where the
+     composition has already collapsed to a single column anyway. */
+  --label-sm:11px;
+  --label-xs:10px;
+
   /* One radius scale. Card corners had drifted across 20/21/22/24/26/27/28;
      everything now lands on one of these three, pills stay 999px. */
   --r-sm:12px;
@@ -36,6 +59,10 @@
 
   /* Gap between the header shell and the mobile panel hanging below it. */
   --gap:9px;
+  /* Everything above the mobile panel's top edge, plus a margin below it:
+     the header's own 16px offset, the shell, --gap, and 24px of air. Used to
+     bound the panel's height so it can never run off the bottom of a screen. */
+  --panel-offset:120px;
   /* One easing curve everywhere, so the chrome moves like a single object. */
   --ease:cubic-bezier(.16,1,.3,1);
   /* Fallbacks matter: the header is fixed and paints before webfonts land. */
@@ -52,7 +79,24 @@ html{
 body{
   margin:0;background:var(--cream);color:var(--ink);
   font-family:var(--font-body);
-  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
+  /* This is a net, not a layout technique, and the difference matters.
+
+     overflow-x:hidden on the body turns it into a scroll container. That is
+     what hid the contact page's 466px floor from every visual check for as
+     long as it existed: the page really was too wide for the phone, the bar
+     was simply not drawn. It also silently disables position:sticky for
+     everything inside.
+
+     overflow-x:clip does the one useful half — a decorative element that
+     reaches past the edge is not allowed to make the page scroll sideways —
+     without creating a scroll container and without breaking sticky. The
+     hidden line before it is the fallback for Safari 15 and older, which does
+     not know clip; anything newer takes the second line. Neither is allowed to
+     be the reason a layout looks fine: nothing on this site depends on the
+     clip any more, and the responsive audit runs with it switched off. */
+  overflow-x:hidden;
+  overflow-x:clip;
 }
 a{text-decoration:none}
 ::selection{background:var(--lime);color:var(--ink)}
@@ -60,7 +104,7 @@ a{text-decoration:none}
 
 .wrap{width:min(var(--max),calc(100% - 40px));margin:auto}
 .display{font-family:var(--font-display);letter-spacing:-.055em}
-.eyebrow{display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:#60708c}
+.eyebrow{display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--label)}
 .eyebrow:before{content:"";width:22px;height:3px;border-radius:99px;background:var(--lime)}
 .muted{color:var(--muted)}
 .rule{border-top:1px solid var(--line)}
@@ -93,7 +137,7 @@ body.nav-open{overflow:hidden}
 .btn-dark:hover{transform:translateY(-2px)}
 .btn-ghost{border:1px solid var(--line);background:#fff;color:var(--ink)}
 .btn-ghost .pip{background:var(--soft);color:var(--ink)}
-.link{font-weight:700;font-size:14px;color:var(--ink);border-bottom:1px solid #aab2c0;padding-bottom:3px}
+.link{font-weight:700;font-size:14px;color:var(--ink);border-bottom:1px solid #808ca1;padding-bottom:3px}
 .link:hover{color:var(--blue);border-color:var(--blue)}
 
 /* ==========================================================================
@@ -180,7 +224,7 @@ body.nav-open{overflow:hidden}
 
 /* Hovering one link dims the rest — the row reads as one group, not six items. */
 @media(min-width:901px){
-  .main-nav:hover a:not(:hover):not(.nav-cta){color:rgba(255,255,255,.4)}
+  .main-nav:hover a:not(:hover):not(.nav-cta){color:rgba(255,255,255,.46)}
 }
 
 /* The row collapses into a panel when the row genuinely stops fitting, and at
@@ -200,6 +244,23 @@ body.nav-open{overflow:hidden}
   position:absolute;top:calc(100% + 1px + var(--gap));left:-1px;right:-1px;
   flex-direction:column;align-items:stretch;gap:0;
   padding:10px;
+  /* The panel has to fit the screen it opens on, and on a phone held sideways
+     it did not. Seven items and a CTA come to 381px; a landscape phone is
+     360px tall. The panel ran 108px past the bottom edge, and because
+     body.nav-open locks the page there was no way to scroll to what was cut
+     off — which was Insights and "Let's Talk", the site's primary call to
+     action. It was unreachable on any phone in landscape.
+
+     Bounding the height and letting the panel scroll itself fixes that at
+     every viewport, including a short desktop window. dvh first, because a
+     mobile browser's toolbars are part of vh but not of the visible page;
+     the vh line before it is the fallback for a browser without dvh.
+     overscroll-behavior stops a flick at the end of the list from scrolling
+     the locked page underneath. */
+  max-height:calc(100vh - var(--panel-offset));
+  max-height:calc(100dvh - var(--panel-offset));
+  overflow-y:auto;
+  overscroll-behavior:contain;
   border:1px solid rgba(255,255,255,.12);
   border-radius:17px;
   background:rgba(8,16,31,.97);
@@ -296,6 +357,35 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
 
 /* Mobile: sizes only. Which layout the nav is in is decided by the
    measurement in site.js, not by a second breakpoint here. */
+/* A phone held sideways: wide enough for two columns, too short for one. The
+   panel becomes a two-up grid so the whole menu is visible without scrolling,
+   with the CTA across the foot where it reads as the conclusion of the list. */
+@media(orientation:landscape) and (max-height:520px){
+  .header-shell[data-nav-overflow="true"] .main-nav{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:2px 6px;
+    align-content:start;
+  }
+  .header-shell[data-nav-overflow="true"] .main-nav .nav-cta{
+    grid-column:1/-1;
+    margin-top:8px;
+  }
+  .header-shell[data-nav-overflow="true"] .main-nav a{padding:11px 13px}
+
+  /* The consent banner is fixed to the bottom and deliberately sits above
+     everything, so that consent is always reachable — see the note on its
+     z-index in consent.css. On a screen this short the two overlays were
+     fighting for the same 360px and the banner covered half the menu. Rather
+     than re-layer somebody's legal design, the panel simply stops above it.
+     :has() is the whole mechanism; a browser without it falls back to the
+     scrollable panel set above, which is still correct, just tighter. */
+  body:has(.dw-consent) .header-shell[data-nav-overflow="true"] .main-nav{
+    max-height:calc(100vh - var(--panel-offset) - 150px);
+    max-height:calc(100dvh - var(--panel-offset) - 150px);
+  }
+}
+
 @media(max-width:760px){
   .header-shell{width:calc(100% - 28px);padding:8px 9px 8px 14px}
   /* Small enough that the lockup and the menu button never contend for the
@@ -370,7 +460,7 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
 .portal-eyebrow{
   display:inline-flex;align-items:center;gap:9px;
   color:rgba(255,255,255,.48);
-  font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;
+  font-size:var(--label-sm);font-weight:700;letter-spacing:.15em;text-transform:uppercase;
 }
 .portal-eyebrow i{width:20px;height:2px;border-radius:99px;background:#4b8cff}
 .portal-title{
@@ -420,7 +510,7 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
 .portal-pills span{
   padding:8px 13px;border:1px solid rgba(255,255,255,.11);
   border-radius:999px;background:rgba(255,255,255,.035);
-  color:rgba(255,255,255,.66);font-size:11px;
+  color:rgba(255,255,255,.66);font-size:var(--label-sm);
   backdrop-filter:blur(8px);
 }
 .portal-pills .active{border-color:rgba(77,130,255,.45);background:rgba(59,89,178,.18);color:#fff}
@@ -431,7 +521,7 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
   padding-bottom:42px;
 }
 .portal-proof-label{
-  color:rgba(255,255,255,.5);font-size:10px;
+  color:rgba(255,255,255,.5);font-size:var(--label-xs);
   font-weight:700;letter-spacing:.18em;text-transform:uppercase;
   margin-bottom:18px;
 }
@@ -462,7 +552,7 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
   padding:58px 0 clamp(60px,7vw,96px);
 }
 .portal-meta{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:14px}
-.portal-index{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.5)}
+.portal-index{font-size:var(--label-sm);font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.5)}
 .portal-hero--page .portal-title{margin:24px auto 0;max-width:17ch;font-size:clamp(44px,5.6vw,82px)}
 .portal-hero--page .portal-copy{margin:26px auto 0;max-width:64ch}
 .portal-hero--page .portal-actions,
@@ -540,6 +630,10 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
   display:grid;place-items:center;margin-bottom:20px;
   transition:transform .35s cubic-bezier(.16,1,.3,1),border-radius .35s ease,box-shadow .35s ease;
 }
+/* The icons are inline SVG in the markup now, not an <i> that a script from
+   unpkg swapped out after the page had already painted. They take .icon-box's
+   colour through stroke:currentColor, and are sized here, once. */
+.icon-box .icon{width:24px;height:24px;display:block}
 .arrange-card:hover .icon-box,.gov-card:hover .icon-box{
   transform:translateY(-4px) rotate(-4deg);border-radius:17px;box-shadow:0 12px 25px rgba(8,16,31,.14);
 }
@@ -557,7 +651,7 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
   background:radial-gradient(circle,rgba(49,87,255,.15),transparent 70%);transition:.3s;
 }
 .service-card:hover:after{transform:scale(1.35)}
-.service-number{font-size:11px;font-weight:800;letter-spacing:.12em;color:#8993a6;display:inline-block;transition:color .25s ease,transform .35s ease,letter-spacing .3s ease}
+.service-number{font-size:var(--label-sm);font-weight:800;letter-spacing:.12em;color:var(--muted);display:inline-block;transition:color .25s ease,transform .35s ease,letter-spacing .3s ease}
 .service-card h3{font-family:"Space Grotesk";font-size:29px;letter-spacing:-.04em;margin:26px 0 10px;max-width:20ch;transition:transform .35s cubic-bezier(.16,1,.3,1)}
 .service-card p{color:var(--muted);font-size:14px;line-height:1.7;max-width:48ch;transition:color .25s ease}
 .service-arrow{
@@ -619,7 +713,7 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
   opacity:0;transition:opacity .4s ease,transform .5s ease;
 }
 .case:hover:after{opacity:1;transform:scale(1.25)}
-.case-label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--lime);font-weight:700;display:inline-block;transition:letter-spacing .3s ease}
+.case-label{font-size:var(--label-sm);letter-spacing:.1em;text-transform:uppercase;color:var(--lime);font-weight:700;display:inline-block;transition:letter-spacing .3s ease}
 .case:hover .case-label{letter-spacing:.16em}
 .case h3{font-family:"Space Grotesk";font-size:31px;margin:22px 0 8px;position:relative;z-index:2;transition:transform .35s ease}
 .case:hover h3{transform:translateX(4px)}
@@ -629,7 +723,7 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
 .case:hover .case-stat{transform:translateY(-3px)}
 .case-stat strong{font-family:"Space Grotesk";font-size:28px;color:var(--lime);display:block;position:relative;z-index:2;transition:text-shadow .3s ease}
 .case:hover .case-stat strong{text-shadow:0 0 20px rgba(184,255,61,.18)}
-.case-stat span{font-size:11px;color:rgba(255,255,255,.55)}
+.case-stat span{font-size:var(--label-sm);color:rgba(255,255,255,.55)}
 
 /* ── Pricing ─────────────────────────────────────────────────────────── */
 .engagements{background:#fff}
@@ -642,10 +736,10 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
 }
 .price-card:hover:before,.price-card.featured:before{transform:scaleX(1)}
 .price-card.featured{border:2px solid var(--ink);box-shadow:0 25px 60px rgba(8,16,31,.1);transform:translateY(-10px)}
-.badge{display:inline-block;background:var(--lime);color:var(--ink);padding:7px 10px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
-.tier-name{font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#8993a6}
+.badge{display:inline-block;background:var(--lime);color:var(--ink);padding:7px 10px;border-radius:999px;font-size:var(--label-xs);font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.tier-name{font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
 .price{font-family:"Space Grotesk";font-size:43px;letter-spacing:-.05em;margin:24px 0 10px}
-.price small{font-size:14px;font-weight:500;color:#8993a6;letter-spacing:0}
+.price small{font-size:14px;font-weight:500;color:var(--muted);letter-spacing:0}
 .price-card ul{padding:0;margin:25px 0 0;list-style:none}
 .price-card li{font-size:14px;color:#536078;margin:12px 0;padding-left:18px;position:relative;transition:transform .25s ease,color .25s ease}
 .price-card li:before{content:"";position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:50%;background:var(--blue)}
@@ -678,9 +772,12 @@ html:not(.js) .main-nav{flex-wrap:wrap;justify-content:flex-end;gap:10px 18px}
 .faq-grid{display:grid;grid-template-columns:.6fr 1.4fr;gap:100px}
 details{border-top:1px solid var(--line);padding:23px 0;transition:padding .3s ease,background .3s ease}
 details:last-child{border-bottom:1px solid var(--line)}
-/* Written as `details > summary` rather than bare `summary`: the Tailwind CDN
-   injects its stylesheet into <head> after ours, and its preflight resets
-   summary's display. A two-element selector outranks it. */
+/* Written as `details > summary` rather than bare `summary` because the reset
+   sets summary's display, and a two-element selector outranks it. That reset
+   used to be the Tailwind CDN's, injected into <head> after this file; it is
+   assets/base.css now, which loads before this file and would lose the tie
+   anyway. The selector stays as it is: it is correct either way, and it is the
+   version that does not depend on which of the two files loads first. */
 details > summary{
   cursor:pointer;list-style:none;
   display:flex;justify-content:space-between;align-items:center;gap:25px;
@@ -717,19 +814,31 @@ details[open] p{animation:faqIn .45s cubic-bezier(.16,1,.3,1)}
 /* ── Footer ──────────────────────────────────────────────────────────── */
 footer{background:#050a14;color:#fff}
 .footer-grid{display:grid;grid-template-columns:1.8fr 1fr 1fr 1.2fr;gap:40px;padding:68px 0 52px;align-items:start}
-.footer-grid h3{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.35)}
+.footer-grid h3{font-size:var(--label-sm);text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.46)}
 .footer-grid ul{list-style:none;padding:0;margin:18px 0 0}
 .footer-grid li{margin:11px 0}
-.footer-blurb{margin:20px 0 0;max-width:34ch;font-size:14px;line-height:1.75;color:rgba(255,255,255,.45)}
+.footer-blurb{margin:20px 0 0;max-width:34ch;font-size:14px;line-height:1.75;color:rgba(255,255,255,.46)}
 /* The one action in the footer, so the last column ends on an invitation
    rather than trailing off after an address. */
-.footer-cta{
+/* Scoped to .footer-grid, and that is the whole point of the selector rather
+   than a tidy-up.
+
+   .footer-cta sits inside .footer-grid, so the two generic rules below it —
+   `.footer-grid a` and `.footer-grid a:hover` — outrank a bare `.footer-cta`
+   by one element in the selector. The colour on this button never applied.
+   Resting, it was the .58 grey of an ordinary footer link instead of white.
+   Hovered, it took `color:var(--lime)` from the link rule while keeping its own
+   `background:var(--lime)`, so the one call to action in the footer turned lime
+   text on a lime pill and disappeared under the pointer, on every page. */
+.footer-grid .footer-cta{
   display:inline-flex;align-items:center;gap:7px;margin-top:22px;
   padding:9px 15px;border:1px solid rgba(255,255,255,.16);border-radius:999px;
   font-size:12px;font-weight:600;color:#fff;white-space:nowrap;
   transition:border-color .25s ease,background .25s ease,color .25s ease
 }
-.footer-cta:hover{border-color:var(--lime);background:var(--lime);color:var(--ink);transform:none}
+.footer-grid .footer-cta:hover{
+  border-color:var(--lime);background:var(--lime);color:var(--ink);transform:none
+}
 .footer-grid a,.footer-grid li{font-size:13px;color:rgba(255,255,255,.58)}
 .footer-grid a{display:inline-block;transition:transform .25s ease,color .25s ease}
 .footer-grid a:hover{color:var(--lime);transform:translateX(4px)}
@@ -739,7 +848,7 @@ footer{background:#050a14;color:#fff}
 }
 .brand-footer img{display:block;height:44px;width:auto}
 .brand-footer:hover{transform:translateY(-2px)}
-.footer-bottom{border-top:1px solid rgba(255,255,255,.09);padding:22px 0 30px;color:rgba(255,255,255,.35);font-size:12px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.footer-bottom{border-top:1px solid rgba(255,255,255,.09);padding:22px 0 30px;color:rgba(255,255,255,.46);font-size:12px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
 .footer-bottom a{color:inherit}
 .footer-bottom a:hover{color:var(--lime)}
 
@@ -756,14 +865,14 @@ footer{background:#050a14;color:#fff}
   transition:background .3s ease,padding-left .3s ease;
 }
 .spec-row:hover{background:rgba(49,87,255,.035);padding-left:14px}
-.spec-n{font-size:11px;font-weight:800;letter-spacing:.14em;color:#8993a6;padding-top:9px;transition:color .3s ease}
+.spec-n{font-size:var(--label-sm);font-weight:800;letter-spacing:.14em;color:var(--muted);padding-top:9px;transition:color .3s ease}
 .spec-row:hover .spec-n{color:var(--blue)}
 .spec-row h3{font-family:"Space Grotesk",sans-serif;font-size:clamp(20px,2vw,26px);letter-spacing:-.04em;margin:0;line-height:1.15}
 .spec-body p{margin:0;color:#4f5a70;font-size:15px;line-height:1.8}
-.spec-proof{margin-top:14px;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blue)}
+.spec-proof{margin-top:14px;font-size:var(--label-sm);font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blue)}
 .spec-proof span{color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0;font-size:13px}
 .spec-row--step{grid-template-columns:minmax(0,.4fr) minmax(0,1fr);gap:14px 30px}
-.step-n{font-family:"Space Grotesk";font-size:clamp(40px,4.4vw,62px);line-height:.9;letter-spacing:-.05em;color:#c9d3e2;transition:color .35s ease}
+.step-n{font-family:"Space Grotesk";font-size:clamp(40px,4.4vw,62px);line-height:.9;letter-spacing:-.05em;color:#738db4;transition:color .35s ease}
 .spec-row--step:hover .step-n{color:var(--blue)}
 .step-head{display:flex;align-items:baseline;gap:22px}
 .step-head h3{font-family:"Space Grotesk";font-size:clamp(20px,2vw,26px);letter-spacing:-.04em;margin:0}
@@ -776,7 +885,7 @@ footer{background:#050a14;color:#fff}
 }
 .post-row:hover{background:rgba(49,87,255,.035);padding-left:14px}
 .post-row h3{font-family:"Space Grotesk";font-size:clamp(18px,1.8vw,23px);letter-spacing:-.035em;margin:0;line-height:1.32;max-width:58ch}
-.post-tag{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blue);white-space:nowrap}
+.post-tag{font-size:var(--label-sm);font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blue);white-space:nowrap}
 
 /* Rate rows — one-time pricing */
 .rate-row{
@@ -787,9 +896,9 @@ footer{background:#050a14;color:#fff}
 .rate-row:hover{background:rgba(49,87,255,.035);padding-left:14px}
 .rate-row h3{font-family:"Space Grotesk";font-size:22px;letter-spacing:-.035em;margin:0}
 .rate-price{font-family:"Space Grotesk";font-size:21px;letter-spacing:-.03em;color:var(--blue);white-space:nowrap}
-.rate-note{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#8993a6;margin-top:6px;font-weight:700}
-.rate-note.save{color:#4e8c1f}
-.rate-head{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8993a6;padding:16px 0}
+.rate-note{font-size:var(--label-sm);text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-top:6px;font-weight:700}
+.rate-note.save{color:#457b1b}
+.rate-head{font-size:var(--label-sm);font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:16px 0}
 .rate-head:hover{background:none;padding-left:0}
 /* The column headings only head anything while the row is still a row. Once it
    stacks they become three orphan labels above the table, so each cell carries
@@ -810,20 +919,24 @@ footer{background:#050a14;color:#fff}
 .case-file h2{font-family:"Space Grotesk";font-size:clamp(28px,3.2vw,42px);letter-spacing:-.045em;margin:14px 0 6px;line-height:1}
 .case-file .meta{font-size:13px;color:var(--muted)}
 .car-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:26px}
-.car h4{font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#8993a6;margin:0 0 10px}
+/* h3, not h4: each case study is an h2 and these are its first subheadings,
+   so an h4 here skipped a level three times on work.html. A screen reader
+   announces that as a missing section, and the outline is the only structure
+   a non-visual reader has. */
+.car h3{font-size:var(--label-sm);font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
 .car p{margin:0;font-size:14px;line-height:1.8;color:#4f5a70}
 .stat-row{display:flex;flex-wrap:wrap;gap:16px 44px;margin-top:32px}
 .stat-row .s strong{display:block;font-family:"Space Grotesk";font-size:clamp(26px,2.6vw,34px);letter-spacing:-.04em;color:var(--ink)}
 .stat-row .s span{font-size:12px;color:var(--muted)}
 .pull{border-left:4px solid var(--lime);padding:6px 0 6px 22px;margin:32px 0 0}
 .pull p{font-family:"Space Grotesk";font-size:clamp(17px,1.7vw,21px);line-height:1.35;margin:0;letter-spacing:-.02em}
-.pull cite{display:block;margin-top:12px;font-style:normal;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#8993a6}
+.pull cite{display:block;margin-top:12px;font-style:normal;font-size:var(--label-sm);font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 
 /* Service-level / response cards */
 .level-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
 .level-card{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);padding:32px;transition:transform .35s cubic-bezier(.16,1,.3,1),box-shadow .35s ease}
 .level-card:hover{transform:translateY(-6px);box-shadow:0 24px 50px rgba(8,16,31,.09)}
-.level-card .k{font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#8993a6}
+.level-card .k{font-size:var(--label-sm);font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
 .level-card .t{font-family:"Space Grotesk";font-size:clamp(32px,3.4vw,46px);letter-spacing:-.05em;margin:18px 0 14px;line-height:1}
 .level-card p{margin:0;color:var(--muted);font-size:14px;line-height:1.75}
 
@@ -832,13 +945,13 @@ footer{background:#050a14;color:#fff}
 .form-card{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);padding:clamp(24px,3vw,40px)}
 .form-grid{display:grid;gap:20px}
 .form-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
-.field-label{display:block;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#60708c;margin-bottom:9px}
+.field-label{display:block;font-size:var(--label-sm);font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--label);margin-bottom:9px}
 .field{
   width:100%;background:var(--cream);border:1px solid var(--line);border-radius:var(--r-sm);
   padding:14px 16px;font-family:inherit;font-size:15px;color:var(--ink);
   outline:none;transition:border-color .25s ease,box-shadow .25s ease,background .25s ease;
 }
-.field::placeholder{color:#9aa4b6}
+.field::placeholder{color:#616e86}
 .field:focus{border-color:var(--blue);background:#fff;box-shadow:0 0 0 4px rgba(49,87,255,.1)}
 textarea.field{resize:vertical;min-height:132px}
 select.field{
@@ -847,10 +960,10 @@ select.field{
   background-position:calc(100% - 21px) 22px,calc(100% - 16px) 22px;
   background-size:5px 5px,5px 5px;background-repeat:no-repeat;
 }
-.form-note{margin:0;font-size:13px;font-weight:700;color:#3f7d17}
+.form-note{margin:0;font-size:13px;font-weight:700;color:#3f7c17}
 .contact-list{border-top:1px solid var(--line)}
 .contact-item{padding:22px 0;border-bottom:1px solid var(--line)}
-.contact-item .k{font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#8993a6}
+.contact-item .k{font-size:var(--label-sm);font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
 .contact-item .v{display:block;font-family:"Space Grotesk";font-size:23px;letter-spacing:-.035em;margin-top:9px;color:var(--ink);transition:color .25s ease}
 a.v:hover{color:var(--blue)}
 .contact-item p{margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--muted)}
@@ -873,7 +986,7 @@ a.v:hover{color:var(--blue)}
   padding:30px 0;border-bottom:1px solid var(--line);
 }
 .legal-head{display:flex;align-items:baseline;gap:18px}
-.legal-head .n{font-size:11px;font-weight:800;letter-spacing:.14em;color:#8993a6}
+.legal-head .n{font-size:var(--label-sm);font-weight:800;letter-spacing:.14em;color:var(--muted)}
 .legal-head h2{font-family:"Space Grotesk";font-size:22px;letter-spacing:-.035em;margin:0}
 .legal-row p{margin:0;font-size:14.5px;line-height:1.9;color:#4f5a70;max-width:78ch}
 
@@ -927,8 +1040,8 @@ a.v:hover{color:var(--blue)}
   border-bottom:1px solid var(--line);line-height:1.75;color:#4f5a70;
 }
 .legal-table th{
-  font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
-  color:#8993a6;border-bottom:1px solid var(--ink);white-space:nowrap;
+  font-size:var(--label-sm);font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);border-bottom:1px solid var(--ink);white-space:nowrap;
 }
 .legal-table tbody tr:last-child td{border-bottom:0}
 .legal-table td:first-child{color:var(--ink);font-weight:600}
@@ -1070,12 +1183,14 @@ a.v:hover{color:var(--blue)}
   .rate-row{grid-template-columns:1fr;gap:8px}
   .rate-head{display:none}
   .rate-label{
-    display:block;font-size:11px;font-weight:700;letter-spacing:.12em;
-    text-transform:uppercase;color:#8993a6;margin-bottom:3px;
+    display:block;font-size:var(--label-sm);font-weight:700;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:3px;
   }
   .form-2{grid-template-columns:1fr}
 }
 @media(max-width:680px){
+  /* The label floor. See the note beside the two custom properties. */
+  :root{--label-sm:12px;--label-xs:12px}
   .wrap{width:min(var(--max),calc(100% - 28px))}
   .trust-item{padding:18px 12px}
   .trust-item strong{font-size:23px}
@@ -1092,6 +1207,38 @@ a.v:hover{color:var(--blue)}
   .footer-grid>div:first-child{grid-column:1/-1}
   .service-card:hover,.gov-card:hover,.case:hover,.price-card:hover{transform:translateY(-4px)}
 }
+/* ── Tablet ───────────────────────────────────────────────────────────────
+   Everything above collapses from three or two columns straight to one at
+   950px, and nothing widens it again until 950px on the way back up. So from
+   950px all the way down to 320px the site was a single column — the same
+   layout on an iPad in portrait as on the narrowest phone sold. A card that
+   suits a 340px screen is a 900px-wide band of one sentence on a tablet, and
+   the homepage came to 14,548px of scrolling at 768px.
+
+   This is the missing middle. Card grids — things that are a set of peers —
+   go two-up. The editorial two-part layouts above (a heading beside its
+   paragraph, .split, .gap-grid, .cta-inner) are deliberately not in this list:
+   those are one idea in two parts and they genuinely do want to stack.
+
+   620px is where two of these cards stop being comfortable, measured rather
+   than guessed: below it the pair is narrower than the 45ch the body copy in
+   them wants. */
+@media(min-width:620px) and (max-width:950px){
+  .arrange-grid,
+  .governance-grid,
+  .evidence-grid,
+  .level-grid,
+  .service-grid,
+  .car-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  /* Cards get their measure back once there are two of them. */
+  .service-card{min-height:0}
+
+  /* .arrange-grid--5 and .governance-grid--4 are handled at the foot of this
+     file, beside the rules that define them. */
+}
+
 @media(max-width:900px){
   .portal-content{padding-top:50px}
   .portal-arch{opacity:.78}
@@ -1107,7 +1254,7 @@ a.v:hover{color:var(--blue)}
   .portal-hero--page .portal-title{font-size:clamp(36px,10.5vw,56px)}
   .portal-copy{font-size:14px}
   .portal-pills{margin-top:22px}
-  .portal-pills span{font-size:10px;padding:7px 10px}
+  .portal-pills span{font-size:var(--label-xs);padding:7px 10px}
   .portal-proof{margin-top:34px;padding-bottom:28px}
   .portal-proof-row{gap:20px 30px}
   .portal-proof-row span{font-size:14px!important}
@@ -1116,6 +1263,87 @@ a.v:hover{color:var(--blue)}
   .portal-cut-left{left:-140px}
   .portal-cut-right{right:-140px}
   .portal-orb{width:15px;height:15px;left:72%;top:51%}
+}
+
+/* ── Short viewports ──────────────────────────────────────────────────────
+   Every hero on the site declared a min-height in the 650-780px range and no
+   query ever reduced it, because the queries were all about width. A phone
+   held sideways is 360px tall: the homepage hero was more than twice the
+   height of the screen, so the first thing a visitor saw was a headline with
+   no call to action under it and no sign there was one. The same happens in a
+   short desktop window and on a laptop with a browser bar and a dock.
+
+   Height, not width, is the thing that ran out, so height is what this asks
+   about. The hero keeps its composition and simply stops reserving space it
+   has not been given. */
+@media(max-height:620px){
+  .portal-hero{min-height:0}
+  .portal-header-space{height:64px}
+  .portal-content{padding-top:26px;padding-bottom:clamp(28px,4vh,48px)}
+  .portal-proof{margin-top:26px;padding-bottom:26px}
+  .portal-title{font-size:clamp(34px,6.4vh,60px)}
+  .portal-copy{margin-top:14px}
+  .portal-actions{margin-top:20px}
+  .portal-pills{margin-top:16px}
+}
+
+/* ── Touch ────────────────────────────────────────────────────────────────
+   Keyed on the pointer, not on the screen. Width does not tell you what is
+   doing the pointing: a laptop can have a touchscreen and a tablet can have a
+   trackpad, and it is the finger, not the viewport, that needs 44px.
+
+   Measured before this block: the footer's navigation links were 20px tall,
+   the contact links 18px, the inline "View all services" links 22-25px, the
+   FAQ rows 28px, the menu button 42px. A fingertip covers about 9mm, which is
+   44 CSS pixels; everything here was between a third and a half of that, on
+   the only pointing device that cannot be aimed precisely.
+
+   Nothing here changes a layout. The links that could take real padding got
+   it, the ones set in running text got an invisible box around them instead,
+   and the pointer query keeps all of it away from the mouse. */
+@media(pointer:coarse){
+  /* Footer columns. The padding replaces the list spacing rather than adding
+     to it, so the rhythm of the column is unchanged and each row is 44px. */
+  .footer-grid li{margin:0}
+  .footer-grid li > a,
+  .footer-grid li > button{
+    display:inline-flex;align-items:center;min-height:44px;
+  }
+  /* Scoped like the base rule above it, and for the same reason: a bare
+     .footer-cta loses to .footer-grid a and this padding would never land. */
+  .footer-grid .footer-cta{padding-block:13px}
+  .brand-footer{display:inline-flex;align-items:center;min-height:44px}
+  /* 43px, one pixel short, on the homepage's second hero action. */
+  .portal-secondary{min-height:44px}
+
+  /* The header lockup. The shell is 62px tall, so this costs nothing. */
+  .site-header .brand{min-height:44px}
+  .menu-toggle{width:44px;height:44px}
+  .skip-link{padding:13px 20px}
+
+  /* An inline call to action carries its underline at a fixed offset, so it
+     cannot be padded without moving the rule away from the text. The hit area
+     is extended around it instead, which the layout never sees. */
+  .link{position:relative}
+  .link::before{
+    content:"";position:absolute;left:0;right:0;top:-14px;bottom:-14px;
+  }
+
+  /* The whole FAQ row, not the 28px of type inside it. */
+  details > summary{min-height:44px}
+
+  /* Email and phone are addresses, not prose, so the target-size exemption
+     for a link inside a sentence does not apply to them. Both the contact
+     list and the line under the closing call to action. */
+  .contact-item .v a,
+  .cta p a{display:inline-flex;align-items:center;min-height:44px}
+
+  /* Breadcrumbs. "Home" was a 33x20 target on every page but the homepage. */
+  .breadcrumb a,
+  .breadcrumb [aria-current="page"]{
+    display:inline-flex;align-items:center;min-height:44px;
+  }
+  .breadcrumb{padding-top:14px;padding-bottom:0}
 }
 
 @media(prefers-reduced-motion:reduce){
@@ -1171,8 +1399,15 @@ a.v:hover{color:var(--blue)}
    focusable, fillable input as far as a script is concerned. */
 .hp-field{
   position:absolute!important;
-  left:-9999px;top:auto;
-  width:1px;height:1px;overflow:hidden;
+  width:1px;height:1px;
+  margin:-1px;padding:0;border:0;overflow:hidden;
+  /* Clipped in place rather than parked at left:-9999px. Off-screen positioning
+     makes the element part of the document's scrollable width, so it only ever
+     looked harmless because body{overflow-x:hidden} was hiding it. Clipping
+     leaves it exactly as fillable and focusable as before — which is the whole
+     point of a honeypot — while taking it out of the layout entirely. */
+  clip-path:inset(50%);
+  white-space:nowrap;
 }
 
 /* -- Founding Partner rates -------------------------------------------
@@ -1181,7 +1416,7 @@ a.v:hover{color:var(--blue)}
    .plan, so the two pricing layouts share one treatment. */
 .price-was{
   display:block;margin:22px 0 0;font-family:"Space Grotesk",sans-serif;
-  font-size:20px;letter-spacing:-.03em;color:#8993a6;
+  font-size:20px;letter-spacing:-.03em;color:var(--muted);
   text-decoration:line-through;text-decoration-thickness:1px;
 }
 .price-was + .price{margin-top:4px}
@@ -1189,20 +1424,34 @@ a.v:hover{color:var(--blue)}
   margin:0 0 16px;font-size:12px;font-weight:800;letter-spacing:.06em;
   text-transform:uppercase;color:var(--blue);
 }
-.price-after{margin:18px 0 0;font-size:13px;line-height:1.7;color:#8993a6}
+.price-after{margin:18px 0 0;font-size:13px;line-height:1.7;color:var(--muted)}
 .price-after strong{color:var(--ink);font-weight:600}
 
 /* Five arrangement items: a row of three, then two left-aligned beneath — the
    same left edge as the row above. The previous version centred the last two
    on a six-column grid, which broke the alignment between the two rows. */
 .arrange-grid--5{grid-template-columns:repeat(3,1fr)}
-@media(max-width:950px){
+@media(min-width:620px) and (max-width:950px){
+  .arrange-grid--5{grid-template-columns:repeat(2,minmax(0,1fr))}
+  /* Five items two-up leaves the last one alone on its row. Given the full
+     width it reads as the closing item rather than as a gap. */
+  .arrange-grid--5 > :last-child:nth-child(odd){grid-column:1/-1}
+}
+@media(max-width:619px){
   .arrange-grid--5{grid-template-columns:1fr}
 }
 
 /* -- Numbered service rows: a lead line, a list and a "best for" ------- */
 .spec-body p + p,
 .spec-body ul + p{margin-top:14px}
+/* "Typical work includes:" and "Best for:". The class was on eight paragraphs
+   in services.html and defined nowhere, so each of those lines sat exactly
+   halfway between the paragraph it follows and the list it introduces, and
+   read as belonging to neither. Pushed away from the paragraph above and
+   pulled towards the list below, it reads as the list's opening line. */
+.spec-body p.spec-deliverable{margin-top:24px}
+.spec-body p.spec-deliverable + ul{margin-top:8px}
+.spec-body p.spec-deliverable strong{color:var(--ink);font-weight:700}
 .spec-body p.spec-lead{
   font-family:"Space Grotesk",sans-serif;font-size:19px;line-height:1.35;
   letter-spacing:-.03em;color:var(--ink);
@@ -1230,6 +1479,60 @@ a.v:hover{color:var(--blue)}
 /* Four monthly-partnership cards read better as two rows of two than as
    three and a stray. */
 .governance-grid--4{grid-template-columns:repeat(2,1fr)}
-@media(max-width:950px){
+@media(min-width:620px) and (max-width:950px){
+  .governance-grid--4{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:619px){
   .governance-grid--4{grid-template-columns:1fr}
 }
+
+/* ==========================================================================
+   UTILITIES
+
+   The twenty-eight Tailwind classes the markup actually used, written out.
+   They live at the end of the file for the same reason Tailwind's own layer
+   did: a utility on an element has to beat the component rule above it.
+
+   Values are Tailwind v3's defaults at a 16px root, so the markup did not have
+   to change when the CDN went away. Nothing new may be added here — a spacing
+   decision belongs to the component, not to a class in the HTML.
+   ========================================================================== */
+.flex{display:flex}
+.flex-wrap{flex-wrap:wrap}
+.items-center{align-items:center}
+.inline-block{display:inline-block}
+
+.gap-4{gap:1rem}
+.gap-5{gap:1.25rem}
+.gap-6{gap:1.5rem}
+
+.mt-0{margin-top:0}
+.mt-4{margin-top:1rem}
+.mt-5{margin-top:1.25rem}
+.mt-6{margin-top:1.5rem}
+.mt-7{margin-top:1.75rem}
+.mt-8{margin-top:2rem}
+.mt-9{margin-top:2.25rem}
+.mt-10{margin-top:2.5rem}
+.mt-12{margin-top:3rem}
+
+.p-3{padding:.75rem}
+
+.max-w-xs{max-width:20rem}
+.max-w-sm{max-width:24rem}
+.max-w-3xl{max-width:48rem}
+.max-w-4xl{max-width:56rem}
+.max-w-5xl{max-width:64rem}
+
+.text-sm{font-size:.875rem;line-height:1.25rem}
+.text-5xl{font-size:3rem;line-height:1}
+.text-6xl{font-size:3.75rem;line-height:1}
+@media(min-width:768px){
+  .md\:text-6xl{font-size:3.75rem;line-height:1}
+}
+
+/* Line height after font size, which is the order Tailwind emitted these in.
+   The other way round, .text-sm carries its own 1.25rem line-height and beats
+   .leading-7, and every "text-sm leading-7" paragraph loses 8px of leading. */
+.leading-none{line-height:1}
+.leading-7{line-height:1.75rem}

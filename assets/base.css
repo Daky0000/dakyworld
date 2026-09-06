@@ -1,0 +1,120 @@
+/* ==========================================================================
+   Dakyworld — base reset
+
+   WHY THIS FILE EXISTS
+   --------------------
+   Every page used to load https://cdn.tailwindcss.com. Almost none of Tailwind
+   was used — twenty-eight utility classes across eleven pages, listed at the
+   foot of site.css — but the CDN also shipped Tailwind's Preflight reset, and
+   the site's own CSS was written on top of it. `.ownership h2` and `.founder h2`
+   set no margin because Preflight had already zeroed it; paragraphs, lists and
+   form controls are the same story throughout.
+
+   So the reset could not simply be deleted with the CDN. This file is the part
+   of Preflight the site actually stands on, written out so it is readable,
+   auditable and served from this origin. It must load BEFORE site.css.
+
+   Preflight is MIT-licensed (Tailwind Labs). This is an equivalent, not a copy:
+   rules the site never relied on are gone, and the ones that remain are here
+   because removing them moved something on a real page.
+   ========================================================================== */
+
+*,
+*::before,
+*::after{
+  box-sizing:border-box;
+  /* Preflight zeroes border width so `border-style` alone never draws. Several
+     components here declare `border:1px solid ...` in full, so this only
+     matters for the ones that set a colour and expect nothing to show. */
+  border-width:0;
+  border-style:solid;
+  border-color:currentColor;
+}
+
+html{
+  line-height:1.5;
+  /* Stops iOS Safari inflating text in a rotated viewport, which is its own
+     responsive bug: the phone silently overrides the type scale in landscape. */
+  -webkit-text-size-adjust:100%;
+  tab-size:4;
+}
+
+body{margin:0;line-height:inherit}
+
+/* Headings inherit until a component says otherwise. The whole type scale on
+   this site is set by class, never by tag. */
+h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit;margin:0}
+
+p,figure,blockquote,dl,dd,pre,hr{margin:0}
+
+/* Lists are layout here, not prose. The two places that want real bullets
+   (.legal-body ul, .spec-body li) restore them themselves. */
+ol,ul,menu{list-style:none;margin:0;padding:0}
+
+hr{height:0;color:inherit;border-top-width:1px}
+
+a{color:inherit;text-decoration:inherit}
+
+b,strong{font-weight:bolder}
+
+
+sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}
+sub{bottom:-.25em}
+sup{top:-.5em}
+
+table{text-indent:0;border-color:inherit;border-collapse:collapse}
+
+/* Form controls inherit the page's type instead of the OS's. Without this the
+   contact form renders in the platform UI font at the platform's size. */
+button,input,optgroup,select,textarea{
+  font-family:inherit;
+  font-feature-settings:inherit;
+  font-variation-settings:inherit;
+  font-size:100%;
+  font-weight:inherit;
+  line-height:inherit;
+  letter-spacing:inherit;
+  color:inherit;
+  margin:0;
+  padding:0;
+}
+
+button,select{text-transform:none}
+
+button,
+input:where([type="button"],[type="reset"],[type="submit"]){
+  -webkit-appearance:button;
+  appearance:button;
+  background-color:transparent;
+  background-image:none;
+}
+
+:-moz-focusring{outline:auto}
+
+progress{vertical-align:baseline}
+
+::-webkit-inner-spin-button,
+::-webkit-outer-spin-button{height:auto}
+
+[type="search"]{-webkit-appearance:textfield;outline-offset:-2px}
+
+::-webkit-search-decoration{-webkit-appearance:none}
+
+::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}
+
+textarea{resize:vertical}
+
+::placeholder{opacity:1;color:#9aa4b6}
+
+/* `display:block` stops the inline-layout descender gap under every image, and
+   the max-width line is the one rule that keeps an oversized asset from being
+   the thing that makes a phone scroll sideways. */
+img,svg,video,canvas,audio,iframe,embed,object{display:block;vertical-align:middle}
+img,video{max-width:100%;height:auto}
+
+summary{display:list-item}
+
+fieldset{margin:0;padding:0}
+legend{padding:0}
+
+[hidden]{display:none}

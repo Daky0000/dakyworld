@@ -204,12 +204,12 @@ async function evaluate(expression) {
 }
 
 /**
- * index.html loads cdn.tailwindcss.com and unpkg.com with plain blocking
- * script tags, so the parser stalls on two third-party round trips before it
- * reaches <body> — and consent.js is deferred, so it does not run until
- * parsing finishes. Wait for the thing itself, never for a fixed delay: a
- * 1.4s wait reported a broken consent layer that was working perfectly,
- * several seconds later.
+ * Wait for the thing itself, never for a fixed delay. consent.js is deferred,
+ * so it does not run until parsing finishes, and how long that takes is not
+ * something this script gets to assume — a 1.4s wait once reported a broken
+ * consent layer that was working perfectly, several seconds later. The two
+ * blocking third-party scripts that made the stall long enough to notice are
+ * gone as of 6 Sep 2026, which makes the race less likely and no less real.
  */
 async function goto(path) {
   requests.length = 0;

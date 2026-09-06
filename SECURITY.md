@@ -548,41 +548,53 @@ thing, and the difference matters in two places:**
   setting is on.
 
 What the meta CSP does buy is real: an injected script from an origin other than
-the three named cannot run, a form cannot be repointed at somebody else's
-server, `<base>` cannot be rewritten to redirect every relative link, and no
-plugin content can be embedded at all.
+this one cannot run, a form cannot be repointed at somebody else's server,
+`<base>` cannot be rewritten to redirect every relative link, and no plugin
+content can be embedded at all.
 
-### The two CDN scripts — the largest remaining exposure on the website
+### The two CDN scripts — removed 6 Sep 2026
 
-Every page loads `https://cdn.tailwindcss.com` and
-`https://unpkg.com/lucide@latest`. Both run with full privileges on
+This section used to describe the largest remaining exposure on the website:
+every page loaded `https://cdn.tailwindcss.com` and
+`https://unpkg.com/lucide@latest`, both running with full privileges on
 dakyworld.com, and **a CSP naming a host does not protect against that host**.
-`lucide@latest` is worse than Tailwind: the version is unpinned, so the file
-served can change at any time without anything in this repo changing, and an
+`lucide@latest` was the worse of the two — an unpinned version, so the file
+served could change at any time without anything in this repo changing, and an
 unpinned URL cannot carry an SRI hash either.
 
-This was left alone rather than fixed quietly, because both fixes are real
-changes to a live site and the choice belongs to whoever owns it:
+Both are gone. What replaced them:
 
-- **lucide** — pin a version and vendor it into `assets/vendor/`, or inline the
-  handful of icons actually used as SVG and drop the dependency. Small, contained,
-  removes an unpinned remote script entirely.
-- **Tailwind** — `cdn.tailwindcss.com` is the Play CDN, which Tailwind's own docs
-  say is not for production: it ships a compiler to every visitor, is the reason
-  the CSP needs `'unsafe-eval'`, and costs a render-blocking download on every
-  page. The fix is a build step producing one small CSS file. That is a project,
-  not a patch — roughly 116 places on the site use a Tailwind class, and the rest
-  is already served by `assets/site.css`.
+- **Tailwind** — the Play CDN was shipping a ~400KB in-browser compiler to every
+  visitor in order to serve twenty-eight utility classes. Those classes are now
+  the last block of [`assets/site.css`](assets/site.css), written out. The reset
+  that came with the CDN, and that the site's own CSS was built on top of, is
+  [`assets/base.css`](assets/base.css). No build step: there was never enough
+  Tailwind here to need one.
+- **lucide** — five icons, on one page, are inline SVG in
+  [`index.html`](index.html).
 
-Since 4 Sep 2026 there is a second reason to do both, and it is not a security
-one. Every visitor's IP address goes to Cloudflare (unpkg) and to Tailwind's
-CDN on every page load, before anything has been consented to. That is the
-same transfer the Google Fonts link was removed for, and the same answer
-applies: it cannot be fixed with a banner, because it happens whether or not
-anybody agrees to anything. It is a smaller exposure than the fonts one was —
-neither host is an advertising company building a profile — but the honest
-position is that the site is not fully free of unconsented third-party
-requests until both are vendored.
+Three consequences, in order of how much they matter:
+
+1. **`'unsafe-eval'` is out of the CSP**, along with both host names. The policy
+   now permits scripts from this origin only. `'unsafe-eval'` existed solely
+   because the Play CDN compiles classes at runtime.
+2. **No page makes a third-party request any more.** Measured before and after
+   on the homepage: 15 requests and 1080KB became 11 requests and 244KB, of
+   which 817KB and both third-party connections were the two CDNs. This closes
+   the gap left open on 4 Sep 2026, when the Google Fonts link was removed for
+   the same reason: every visitor's IP address was reaching Cloudflare (unpkg)
+   and Tailwind's CDN on every page load, before anything had been consented
+   to, and no banner can fix a transfer that happens whether or not anybody
+   agrees to anything. **The site is now free of unconsented third-party
+   requests.**
+3. First contentful paint on the homepage went from 1444ms to 192ms on a local
+   server with no network latency. The two scripts were render-blocking in
+   `<head>`; on a mobile connection in Ghana the difference is larger, not
+   smaller.
+
+The swap was verified to change nothing visually: every computed style and
+bounding box on all eleven pages, at 390px, 768px and 1440px, was compared
+before and after and came back identical.
 
 ### Cookies, consent and the fonts (added 4 Sep 2026)
 

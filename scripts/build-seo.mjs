@@ -365,14 +365,18 @@ function schemaFor(page, title, description) {
  * server, `<base>` cannot be rewritten to redirect every relative link, and no
  * plugin content can be embedded at all.
  *
- * The permissiveness is inherited, not chosen:
+ * What remains permissive, and why:
  * - `'unsafe-inline'` on scripts, because contact.html carries an inline block.
- * - `'unsafe-eval'`, because the Tailwind Play CDN compiles classes at runtime.
- * - cdn.tailwindcss.com and unpkg.com, because the site loads both.
+ * - `'unsafe-inline'` on styles, because the markup carries style attributes.
  *
- * Those three CDN entries are the weakest part of this policy and the honest
- * thing to say about it is that a CSP naming a host does not protect against
- * that host. See the note in SECURITY.md.
+ * What used to be here and is not any more: `'unsafe-eval'`, cdn.tailwindcss.com
+ * and unpkg.com. The Tailwind Play CDN compiled classes in the browser, which is
+ * what `'unsafe-eval'` was granted for, and unpkg served an unpinned `lucide@latest`
+ * for five icons on one page. Both are gone — Preflight is assets/base.css, the
+ * utilities are the last block of assets/site.css, and the icons are inline SVG —
+ * so the policy no longer has to name a host it cannot vouch for. A CSP naming a
+ * third party does not protect against that third party; the fix was to stop
+ * needing one. Nothing outside this origin may execute a script now.
  *
  * `style-src` and `font-src` no longer name fonts.googleapis.com or
  * fonts.gstatic.com, and that absence is load-bearing rather than tidying: the
@@ -392,7 +396,7 @@ const CSP = [
   "base-uri 'self'",
   "object-src 'none'",
   "form-action 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://www.googletagmanager.com",
+  "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
   "img-src 'self' data: https://www.googletagmanager.com https://www.google-analytics.com",

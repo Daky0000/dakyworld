@@ -81,7 +81,7 @@
   margin: 0;
   font-size: .9rem;
   line-height: 1.55;
-  color: #69758a;
+  color: #636f82;
 }
 
 .dw-consent__text a {
@@ -142,7 +142,7 @@
 .dw-consent__btn--settings {
   background: transparent;
   border-color: transparent;
-  color: #69758a;
+  color: #636f82;
   text-decoration: underline;
   text-underline-offset: 3px;
   padding-inline: 8px;
@@ -203,7 +203,7 @@
   border: 0;
   font-size: 1.6rem;
   line-height: 1;
-  color: #69758a;
+  color: #636f82;
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 8px;
@@ -215,7 +215,7 @@
   margin: 0 0 20px;
   font-size: .9rem;
   line-height: 1.6;
-  color: #69758a;
+  color: #636f82;
 }
 .dw-consent-modal__intro a { color: #3157ff; text-decoration: underline; text-underline-offset: 2px; }
 
@@ -246,14 +246,14 @@
   margin: 8px 0 0;
   font-size: .85rem;
   line-height: 1.6;
-  color: #69758a;
+  color: #636f82;
 }
 
 .dw-consent-cat__detail {
   margin: 12px 0 0;
   font-size: .78rem;
   line-height: 1.6;
-  color: #69758a;
+  color: #636f82;
   border-top: 1px dashed #dfe4eb;
   padding-top: 12px;
 }
@@ -312,11 +312,14 @@
    offering a switch that silently refuses to move. */
 .dw-consent-cat__locked {
   flex: 0 0 auto;
-  font-size: .72rem;
+  /* .72rem is 11.5px. Nothing else in the consent UI goes below 12px and this
+     is the one word that tells someone a category cannot be refused, so it is
+     the last place to set type smaller than the rest. */
+  font-size: .78rem;
   font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: #69758a;
+  color: #636f82;
   background: #edf1f7;
   border-radius: 999px;
   padding: 7px 12px;
@@ -355,7 +358,7 @@
   margin: 18px 0 0;
   font-size: .76rem;
   line-height: 1.6;
-  color: #69758a;
+  color: #636f82;
 }
 
 /* --- the reopen control --------------------------------------------------- */
@@ -402,6 +405,48 @@
   .dw-consent-modal__panel { padding: 22px 22px 0; border-radius: 18px; }
   .dw-consent-modal__actions { padding-bottom: 22px; }
   .dw-consent-modal__actions .dw-consent__btn { flex: 1 0 100%; }
+}
+
+/* --- touch ---------------------------------------------------------------- */
+
+/* The banner's buttons were 42px tall. Two pixels, but they are the two
+   buttons the whole mechanism exists for, and a consent choice that is fiddly
+   to tap is not one that has been made freely. */
+@media (pointer: coarse) {
+  .dw-consent__btn { min-height: 44px; }
+  .dw-consent-modal__close { min-width: 44px; min-height: 44px; }
+  .dw-consent-reopen { display: inline-flex; align-items: center; min-height: 44px; }
+}
+
+/* --- short screens -------------------------------------------------------- */
+
+/* A phone held sideways is 360px tall and 740px wide, so it matched none of
+   the narrow-screen rules above and got the full desktop banner: title, two
+   sentences, a link and three buttons, filling most of the screen and covering
+   the open navigation panel behind it.
+
+   Keyed on height rather than width, because that is what actually ran out.
+   The copy is not cut and no button is hidden — the banner must stay a real
+   choice, freely given, on every device — it is set tighter and allowed to
+   scroll itself if it still does not fit. */
+@media (max-height: 520px) {
+  .dw-consent { padding: 8px; }
+  .dw-consent__inner {
+    padding: 14px 16px;
+    gap: 10px 18px;
+    border-radius: 14px;
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .dw-consent__title { font-size: .98rem; margin-bottom: 3px; }
+  .dw-consent__text { font-size: .82rem; line-height: 1.5; }
+  .dw-consent__actions { gap: 8px; }
+  .dw-consent-modal__panel {
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
 }
 
 /* --- motion preference ---------------------------------------------------- */

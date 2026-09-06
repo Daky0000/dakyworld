@@ -19,6 +19,7 @@
     '        alt="Dakyworld"',
     '        width="379"',
     '        height="68"',
+    '        decoding="async"',
     '      >',
     '    </a>',
     '',
@@ -58,7 +59,7 @@
     '  <div class="wrap">',
     '    <div class="footer-grid">',
     '      <div>',
-    '        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96"></a>',
+    '        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96" loading="lazy" decoding="async"></a>',
     '        <p class="footer-blurb">Dakyworld is your outsourced digital systems and automation team for growing businesses in Ghana and West Africa. We build, connect and improve the systems that help businesses win customers and operate more efficiently.</p>',
     '      </div>',
     '      <div>',
@@ -105,8 +106,6 @@
   }
 
   replaceGlobalMarkup();
-
-  if (window.lucide) lucide.createIcons();
 
   var progress = document.getElementById('pageProgress');
 
