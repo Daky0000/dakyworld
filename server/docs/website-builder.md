@@ -46,7 +46,7 @@ reverse any of them.
 | 3.5 | Human-readable change summaries | **Built** | `describeChanges`, `categoriseChanges` |
 | 4.1 | Stage 1 — text and links | **Built** | the editor as it stands |
 | 4.2 | Stage 2 — image management | **Skeleton** | `WebsiteAssets.tsx`, below |
-| 4.3 | Stage 3 — controlled visual styles | **Built** (tokens outstanding) | `StylePanel.tsx`, `safeStyle` |
+| 4.3 | Stage 3 — controlled visual styles | **Built** (tokens outstanding) | `ElementInspector.tsx`, `lib/elementInspector.ts`, `safeStyle` |
 | 4.4 | Stage 4 — repeatable content | **Not started** | below |
 | 5 | Stable field identity (`data-dw-field`) | **Not started** | below — the highest-value item left |
 | 6 | AI as a validated change plan | **Skeleton** | `WebsiteAI.tsx`, below |
@@ -537,6 +537,30 @@ was dead.
 HTTP with `DEV_NO_AUTH=false`, following `tmp/accessOverHttp.ts`. `.env` sets it
 true, and against an implicit Owner every refusal assertion passes for the wrong
 reason. A lying green run is the specific trap.
+
+---
+
+## Context-aware inspector and shared elements
+
+A separate specification (`dakyworld-website-editor-inspector-shared-elements-spec.md`,
+Sep 2026) redesigns the left pane. Its five phases, and where they stand:
+
+| Phase | What it asks for | Status | Where |
+|---|---|---|---|
+| 1 | Contextual inspector — one owner per property, capabilities, parent-aware and conditional sections, Basic/Advanced | **Built** | `lib/elementInspector.ts`, `components/ElementInspector.tsx` |
+| 2 | Effective values — source/computed/override/effective, origin, reset, device-aware, readable colours and fonts | **Built** | `inspectorValue`, `Origin` in `ElementInspector.tsx` |
+| 3 | Shared elements across pages — linked/detached instances, edit scope, draft propagation, publish review and conflicts | **Not started** | needs a data model, detection, and publish validation |
+| 4 | Stronger shared detection — `data-dw-shared`, structural fingerprints, JSX/TSX source identity, confidence scoring | **Not started** | after phase 3 |
+| 5 | Global site styles — typography, colour, button and spacing tokens | **Not started** | deliberately separate from shared elements |
+
+Phases 1 and 2 replaced `LayoutInspector` and `StylePanel`, which both edited the
+same style string and drew every control for every element. Their widgets survive
+in `components/InspectorControls.tsx`; what changed is who decides which of them
+a selected element gets.
+
+**Phase 3 is all-or-nothing.** A shared edit that propagates without the publish
+validation in §37 of that spec would write six of seven pages and report success,
+which is worse than not having the feature. Do not ship half of it.
 
 ---
 

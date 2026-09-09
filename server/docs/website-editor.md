@@ -7,7 +7,8 @@ The editor supports imported or repository-backed HTML pages and a separate stat
 The visual sidebar includes a searchable Layers tree in document order, expand/collapse controls, changed/error filters, keyboard navigation and selection breadcrumbs. Filtering preserves ancestor context so nested elements remain understandable.
 
 - **Sites:** connect a public address and optional GitHub repository, scan existing pages, or import HTML files (up to 2 MB). Additional pages can be imported into an existing site. JavaScript app shells without rendered content are refused with a source-editor explanation.
-- **Visual editing:** select page content or parent containers; edit text, links, images, and design controls. Layout controls cover flex/grid, dimensions, constraints, spacing, position, stacking, image fitting, gradients, typography, colours, borders and effects. CSS units and expressions are retained. Image replacements update the canvas immediately and discard the old `srcset` candidates.
+- **Visual editing:** select page content or parent containers; edit text, links, images, and design controls. The inspector is contextual: the sections drawn are derived from what the selected element is in the rendered page — its kind, tag, computed `display`, its parent's computed `display`, whether it has text of its own and whether it has children — so an image is never offered typography, flex controls appear only on a flex container, flex-child controls only inside one, and position offsets only once the element is positioned. Every CSS property has exactly one section that owns it; less common properties are under Advanced rather than removed. Layout controls cover flex/grid, dimensions, constraints, spacing, position, stacking, image fitting, gradients, typography, colours, borders and effects. CSS units and expressions are retained. Image replacements update the canvas immediately and discard the old `srcset` candidates.
+- **Effective values:** every control shows the value actually governing the element, read from the preview frame at the active viewport, with a word saying where it came from — the website's stylesheet, a `style` attribute in the page's HTML, or an override made here at desktop, tablet or phone width. An override can be reset to the website's value one property at a time. Opening an element writes nothing: computed values are displayed, never stored, so looking at a page cannot change it. A declaration identical to the one in the page's source is not reported as somebody's override, because a desktop draft carries the element's whole `style` attribute.
 - **Responsive styling:** Desktop edits base styles; Tablet edits overrides at 1024px and below; Phone edits overrides at 640px and below. Phones inherit tablet values until explicitly overridden. The canvas uses 1280/820/390px viewports with zoom; changing widths preserves the frame and pending edits. Clear one property or all overrides to inherit again. The full device map travels through undo, draft recovery, conflict resolution, version restore, export and publish review. A shared browser/server sanitizer and renderer keep live and exported media rules consistent.
 - **Page structure:** drag Layers or use Move up/down to reorder editable siblings, duplicate static blocks, and remove elements. Copies can be edited independently before publishing. Actions save a revision-checked document checkpoint, retain prior content/style changes in review, and support server-side undo/redo. Persistent `data-dw-node` identities prevent positional edits from moving to another element. Clients cannot submit raw document checkpoints. Concurrent writes and full-source hash checks protect changes made by another editor or developer.
 - **Drafts:** autosave with revision checks, conflict resolution, undo/redo, and per-user tab recovery for unsaved changes. Saving a draft does not publish. Failed saves retain local changes. Publish review binds the draft revision to the current source hash.
@@ -60,6 +61,7 @@ npx tsx checks/websiteAssistant.ts
 npx tsx checks/websiteFetch.ts
 npx tsx checks/websiteGitHub.ts
 npx tsx checks/websiteLayers.ts
+npx tsx checks/websiteInspector.ts
 npx tsx checks/websiteResponsive.ts
 npx tsx checks/websitePreviewRuntime.ts
 npx tsx checks/websiteStructure.ts
@@ -70,6 +72,18 @@ npx tsx checks/websiteAccess.ts --database
 
 `websiteBuilder.ts` exercises the existing live-source fallback against a local fixture; run it with `NODE_ENV=development` and `DEV_NO_AUTH=true`. Permission checks authenticate real sessions independently of that bypass. GitHub/source/AI checks use local responders or validated fixture plans and make no external writes or model calls.
 
-The responsive suite covers 73 core cases, and the real API suite covers device and structural drafts, concurrent edits, review/export, restoration and removal. `websiteStructure.ts` checks stable identities, independent copy editing, undo/redo and stale-source protection. `websitePreviewRuntime.ts` executes the actual nonce picker script against a controlled DOM double to check message origins, live media rules, image replacement and viewer controls. It does not render CSS or replace browser verification. Stored draft additions are backward compatible; editor core version is now 3.
+The responsive suite covers 73 core cases, and the real API suite covers device and structural drafts, concurrent edits, review/export, restoration and removal. `websiteStructure.ts` checks stable identities, independent copy editing, undo/redo and stale-source protection. `websitePreviewRuntime.ts` executes the actual nonce picker script against a controlled DOM double to check message origins, live media rules, image replacement and viewer controls. It does not render CSS or replace browser verification.
+
+`websiteInspector.ts` covers the inspector's rules without a browser: single property ownership, capability derivation, parent-aware sections, conditional position offsets, the source/computed/override/effective value model and readable colour and font display.
+
+The inspector is also checked in a real browser, because asserting that a control exists in the source is not evidence that the right control was drawn. Playwright is not a dependency of this project; the driver finds an installed copy, or is given one:
+
+```powershell
+npm --prefix client exec vite -- --port 5199 --strictPort --host 127.0.0.1
+$env:PLAYWRIGHT_URL = "file:///C:/Users/<you>/AppData/Local/npm-cache/_npx/<hash>/node_modules/playwright/index.mjs"
+node checks/browser/inspector.mjs
+```
+
+It renders `client/inspector-harness.html` — a mount for the inspector alone, not part of the app and not bundled by `vite build`, which takes only `index.html` as an entry — and asks the browser which sections and controls each kind of element got, what value each control shows, and that opening an element wrote nothing into the draft. 52 checks. Stored draft additions are backward compatible; editor core version is now 3.
 
 The assembled client builds successfully. Interactive browser and visual verification remain outstanding: the computer-use inventory had no available browser and automatic approval review blocked a headless Chrome launch. A build alone does not establish visual correctness.

@@ -1,8 +1,13 @@
-import { CssValueField } from "./CssValueField";
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 
 /**
- * The style half of the visual editor.
+ * The controls the inspector is built from, and the style string they write.
+ *
+ * These were the `StylePanel`, which both owned this set of widgets and decided
+ * which of them a selected element got. `ElementInspector` now makes that second
+ * decision — from what the element is, rather than from what CSS exists — and
+ * this file is left holding only the widgets and the parsing. Everything below
+ * is unchanged in behaviour; the notes are the original ones and still apply.
  *
  * Deliberately a fixed set of controls over an inline `style` attribute, not a
  * CSS box. Two reasons, and the second is the one that matters:
@@ -34,8 +39,8 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
  */
 
 /** Ink, blue, lime and the neutrals — the design system, as swatches. */
-const PaletteContext = createContext<{ label: string; value: string }[] | null>(null);
-const COLOURS = [
+export const PaletteContext = createContext<{ label: string; value: string }[] | null>(null);
+export const COLOURS = [
   { label: "Ink", value: "#08101F" },
   { label: "Muted", value: "#69758A" },
   { label: "Blue", value: "#3157FF" },
@@ -47,7 +52,7 @@ const COLOURS = [
 ];
 
 /** The faces the site actually uses, plus the two obvious fallbacks. */
-const FONTS = [
+export const FONTS = [
   { label: "As designed", value: "" },
   { label: "Space Grotesk (display)", value: '"Space Grotesk", sans-serif' },
   { label: "DM Sans (body)", value: '"DM Sans", sans-serif' },
@@ -56,7 +61,7 @@ const FONTS = [
   { label: "Monospace", value: "ui-monospace, SFMono-Regular, Menlo, monospace" },
 ];
 
-const WEIGHTS = [
+export const WEIGHTS = [
   { label: "As designed", value: "" },
   { label: "Light", value: "300" },
   { label: "Normal", value: "400" },
@@ -66,7 +71,7 @@ const WEIGHTS = [
   { label: "Black", value: "900" },
 ];
 
-const CASES = [
+export const CASES = [
   { label: "As designed", value: "" },
   { label: "UPPERCASE", value: "uppercase" },
   { label: "lowercase", value: "lowercase" },
@@ -74,8 +79,8 @@ const CASES = [
   { label: "Normal", value: "none" },
 ];
 
-const OVERFLOWS = ["", "visible", "hidden", "auto", "scroll"];
-const BORDER_STYLES = ["solid", "dashed", "dotted", "double", "none"];
+export const OVERFLOWS = ["", "visible", "hidden", "auto", "scroll"];
+export const BORDER_STYLES = ["solid", "dashed", "dotted", "double", "none"];
 
 /** `"color: red; font-size: 20px"` → `{ color: "red", "font-size": "20px" }`. */
 export function parseStyle(style: string | undefined): Record<string, string> {
@@ -100,15 +105,15 @@ export function writeStyle(declarations: Record<string, string>): string {
 
 /* ------------------------------------------------------------------ values */
 
-const SIDES = ["top", "right", "bottom", "left"] as const;
-type Side = (typeof SIDES)[number];
+export const SIDES = ["top", "right", "bottom", "left"] as const;
+export type Side = (typeof SIDES)[number];
 
 /**
  * A developer may have written `padding: 4px 8px`. The panel edits four sides,
  * so the shorthand is expanded on the way in and only the longhands are written
  * on the way out — otherwise the two would fight and the shorthand would win.
  */
-function expandBox(declarations: Record<string, string>, property: "padding" | "margin"): Record<string, string> {
+export function expandBox(declarations: Record<string, string>, property: "padding" | "margin"): Record<string, string> {
   const shorthand = declarations[property];
   if (!shorthand) return declarations;
   const parts = shorthand.split(/\s+/).filter(Boolean);
@@ -123,7 +128,7 @@ function expandBox(declarations: Record<string, string>, property: "padding" | "
   return next;
 }
 
-function toNumber(value: string | undefined): number | null {
+export function toNumber(value: string | undefined): number | null {
   if (value === undefined || value === "") return null;
   const match = /^-?[\d.]+/.exec(value.trim());
   if (!match) return null;
@@ -144,9 +149,9 @@ function rgbToHex(r: number, g: number, b: number): string {
   return `#${part(r)}${part(g)}${part(b)}`.toUpperCase();
 }
 
-type Colour = { hex: string; alpha: number };
+export type Colour = { hex: string; alpha: number };
 
-function readColour(value: string | undefined): Colour {
+export function readColour(value: string | undefined): Colour {
   const raw = (value ?? "").trim();
   if (!raw) return { hex: "#08101F", alpha: 1 };
   const rgba = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.%]+))?\s*\)$/i.exec(raw);
@@ -162,7 +167,7 @@ function readColour(value: string | undefined): Colour {
   return { hex: "#08101F", alpha: 1 };
 }
 
-function writeColour({ hex, alpha }: Colour): string {
+export function writeColour({ hex, alpha }: Colour): string {
   if (alpha >= 1) return hex.toUpperCase();
   const rgb = hexToRgb(hex);
   if (!rgb) return hex;
@@ -171,13 +176,13 @@ function writeColour({ hex, alpha }: Colour): string {
 
 /* ------------------------------------------------------------- primitives */
 
-const FIELD =
+export const FIELD =
   "flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-xl border border-line bg-white px-2 focus-within:border-blue focus-within:ring-2 focus-within:ring-blue/15";
 const NUM = "w-full min-w-0 bg-transparent text-right font-mono text-[11px] text-ink outline-none";
 const SELECT = "w-full min-w-0 bg-transparent text-right text-[11px] text-ink outline-none cursor-pointer";
-const LABEL = "shrink-0 text-[10px] uppercase tracking-[.08em] text-muted";
+export const LABEL = "shrink-0 text-[10px] uppercase tracking-[.08em] text-muted";
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+export function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="border-b border-line px-4 py-3.5 last:border-b-0">
       <div className="mb-2.5 font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted">{title}</div>
@@ -193,7 +198,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
  * element keeping whatever the stylesheet gives it. That is why these are text
  * fields holding numbers rather than `<input type="number">` with a zero in it.
  */
-function NumberField({
+export function NumberField({
   label,
   value,
   unit,
@@ -266,6 +271,7 @@ function NumberField({
         {label}
       </span>
       <input
+        aria-label={label}
         className={NUM}
         value={text}
         placeholder={placeholder}
@@ -289,7 +295,7 @@ function NumberField({
   );
 }
 
-function SelectField({
+export function SelectField({
   label,
   value,
   options,
@@ -305,7 +311,7 @@ function SelectField({
   return (
     <div className={FIELD}>
       <span className={LABEL}>{label}</span>
-      <select className={SELECT} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+      <select aria-label={label} className={SELECT} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -326,7 +332,7 @@ const CHECKER =
  * time; the picker, the hex box and the alpha slider are underneath for the
  * times they are not.
  */
-function ColourField({
+export function ColourField({
   label,
   value,
   allowNone,
@@ -370,6 +376,8 @@ function ColourField({
         <span className={LABEL}>{label}</span>
         <button
           type="button"
+          aria-label={label}
+          aria-expanded={open}
           disabled={disabled}
           onClick={() => setOpen((was) => !was)}
           className="ml-auto flex items-center gap-1.5"
@@ -458,7 +466,7 @@ function ColourField({
   );
 }
 
-function IconToggle({
+export function IconToggle({
   on,
   title,
   disabled,
@@ -486,7 +494,7 @@ function IconToggle({
   );
 }
 
-function Segmented({
+export function Segmented({
   value,
   options,
   disabled,
@@ -517,7 +525,7 @@ function Segmented({
   );
 }
 
-function SubBlock({ title, onRemove, children }: { title: string; onRemove: () => void; children: React.ReactNode }) {
+export function SubBlock({ title, onRemove, children }: { title: string; onRemove: () => void; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-line bg-cream/60 p-2.5">
       <div className="mb-2 flex items-center justify-between">
@@ -533,23 +541,23 @@ function SubBlock({ title, onRemove, children }: { title: string; onRemove: () =
 
 /* ------------------------------------------------------------------ panel */
 
-type Extra = "box-shadow" | "text-shadow" | "transform" | "filter";
+export type Extra = "box-shadow" | "text-shadow" | "transform" | "filter";
 
-const EXTRA_LABEL: Record<Extra, string> = {
+export const EXTRA_LABEL: Record<Extra, string> = {
   "box-shadow": "shadow",
   "text-shadow": "text shadow",
   transform: "transform",
   filter: "filter",
 };
 
-const EXTRA_SEED: Record<Extra, string> = {
+export const EXTRA_SEED: Record<Extra, string> = {
   "box-shadow": "0 4px 12px 0 rgba(8, 16, 31, 0.15)",
   "text-shadow": "0 2px 6px rgba(8, 16, 31, 0.15)",
   transform: "translate(0px, 0px) rotate(0deg) scale(1, 1)",
   filter: "blur(0px)",
 };
 
-function readShadow(value: string | undefined, spread: boolean) {
+export function readShadow(value: string | undefined, spread: boolean) {
   const parts = (value ?? "").trim().match(/^(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(?:(-?[\d.]+)px\s+)?(.+)$/);
   if (!parts) return { x: 0, y: spread ? 4 : 2, blur: spread ? 12 : 6, spread: 0, colour: "rgba(8, 16, 31, 0.15)" };
   return {
@@ -561,7 +569,7 @@ function readShadow(value: string | undefined, spread: boolean) {
   };
 }
 
-function readTransform(value: string | undefined) {
+export function readTransform(value: string | undefined) {
   const source = value ?? "";
   const translate = /translate\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px\s*\)/.exec(source);
   const rotate = /rotate\(\s*(-?[\d.]+)deg\s*\)/.exec(source);
@@ -575,355 +583,8 @@ function readTransform(value: string | undefined) {
   };
 }
 
-export function StylePanel({
-  palette, fonts,
-  style,
-  onChange,
-  onReset,
-  onCommit,
-  readOnly,
-}: {
-  palette?: string[]; fonts?: string[];
-  style: string | undefined;
-  onChange: (next: string) => void;
-  onReset: () => void;
-  /** Called when a continuous gesture ends, so history can record one step. */
-  onCommit?: () => void;
-  readOnly?: boolean;
-}) {
-  const declarations = useMemo(() => expandBox(parseStyle(style), "padding"), [style]);
-  const disabled = !!readOnly;
-
-  const set = (property: string, value: string) => {
-    const next = { ...declarations };
-    if (value) next[property] = value;
-    else delete next[property];
-    onChange(writeStyle(next));
-  };
-  const setMany = (patch: Record<string, string>) => {
-    const next = { ...declarations };
-    for (const [property, value] of Object.entries(patch)) {
-      if (value) next[property] = value;
-      else delete next[property];
-    }
-    onChange(writeStyle(next));
-  };
-  const px = (property: string, value: number | null) => set(property, value === null ? "" : `${value}px`);
-
-  const extras = (Object.keys(EXTRA_LABEL) as Extra[]).filter((key) => declarations[key] !== undefined);
-  const missing = (Object.keys(EXTRA_LABEL) as Extra[]).filter((key) => declarations[key] === undefined);
-
-  // Every property this panel does not own, so the person editing can see that
-  // the developer's own styling is still there rather than wondering where it
-  // went.
-  const owned = new Set([
-    "color",
-    "background-color",
-    "font-family",
-    "font-size",
-    "font-weight",
-    "font-style",
-    "text-decoration",
-    "text-align",
-    "text-transform",
-    "line-height",
-    "letter-spacing",
-    "width",
-    "height",
-    "opacity",
-    "border-radius",
-    "overflow",
-    "border",
-    "display",
-    "box-shadow",
-    "text-shadow",
-    "transform",
-    "filter",
-    ...SIDES.map((side) => `padding-${side}`),
-  ]);
-  const untouched = Object.entries(declarations).filter(([property]) => !owned.has(property));
-
-  const decoration = declarations["text-decoration"] ?? "";
-  const border = declarations.border;
-  const borderParts = border ? /^(-?[\d.]+)px\s+(\w+)\s+(.+)$/.exec(border.trim()) : null;
-
-  return (
-    <PaletteContext.Provider value={palette?.length ? palette.map(value => ({ label: value, value })) : null}><div className={disabled ? "pointer-events-none opacity-50" : ""}>
-      <Section title="Appearance">
-        <ColourField
-          label="Background"
-          value={declarations["background-color"] ?? ""}
-          allowNone
-          disabled={disabled}
-          onChange={(next) => set("background-color", next)}
-          onCommit={onCommit}
-        />
-
-        <div className="flex gap-1.5">
-          <CssValueField property="width" label="W" value={declarations["width"] ?? ""} disabled={disabled} onChange={next => set("width", next)} />
-          <CssValueField property="height" label="H" value={declarations["height"] ?? ""} disabled={disabled} onChange={next => set("height", next)} />
-        </div>
-
-        <div className="flex gap-1.5">
-          <NumberField
-            label="Opacity"
-            value={toNumber(declarations.opacity)}
-            step={0.05}
-            min={0}
-            max={1}
-            onChange={(next) => set("opacity", next === null ? "" : String(next))}
-            onCommit={onCommit}
-          />
-          <CssValueField property="border-radius" label="Radius" value={declarations["border-radius"] ?? ""} disabled={disabled} onChange={next => set("border-radius", next)} />
-        </div>
-
-        <SelectField
-          label="Overflow"
-          value={declarations.overflow ?? ""}
-          disabled={disabled}
-          onChange={(next) => set("overflow", next)}
-          options={OVERFLOWS.map((value) => ({ value, label: value || "As designed" }))}
-        />
-
-        {extras.map((key) => {
-          if (key === "filter") {
-            return (
-              <SubBlock key={key} title="Filter" onRemove={() => set("filter", "")}>
-                <input
-                  className="h-8 w-full rounded-xl border border-line bg-white px-2 font-mono text-[11px] text-ink outline-none focus:border-blue"
-                  value={declarations.filter ?? ""}
-                  placeholder="blur(2px) grayscale(.4)"
-                  onChange={(event) => set("filter", event.target.value)}
-                  onBlur={() => onCommit?.()}
-                />
-              </SubBlock>
-            );
-          }
-          if (key === "transform") {
-            const t = readTransform(declarations.transform);
-            const write = (patch: Partial<typeof t>) => {
-              const next = { ...t, ...patch };
-              set("transform", `translate(${next.x}px, ${next.y}px) rotate(${next.rotate}deg) scale(${next.scaleX}, ${next.scaleY})`);
-            };
-            return (
-              <SubBlock key={key} title="Transform" onRemove={() => set("transform", "")}>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <NumberField label="X" unit="px" value={t.x} placeholder="0" onChange={(next) => write({ x: next ?? 0 })} onCommit={onCommit} />
-                  <NumberField label="Y" unit="px" value={t.y} placeholder="0" onChange={(next) => write({ y: next ?? 0 })} onCommit={onCommit} />
-                  <NumberField label="Rotate" unit="°" value={t.rotate} placeholder="0" onChange={(next) => write({ rotate: next ?? 0 })} onCommit={onCommit} />
-                  <NumberField
-                    label="Scale"
-                    value={t.scaleX}
-                    step={0.05}
-                    placeholder="1"
-                    onChange={(next) => write({ scaleX: next ?? 1, scaleY: next ?? 1 })}
-                    onCommit={onCommit}
-                  />
-                </div>
-              </SubBlock>
-            );
-          }
-          const spread = key === "box-shadow";
-          const shadow = readShadow(declarations[key], spread);
-          const write = (patch: Partial<typeof shadow>) => {
-            const next = { ...shadow, ...patch };
-            set(
-              key,
-              spread
-                ? `${next.x}px ${next.y}px ${next.blur}px ${next.spread}px ${next.colour}`
-                : `${next.x}px ${next.y}px ${next.blur}px ${next.colour}`,
-            );
-          };
-          return (
-            <SubBlock key={key} title={spread ? "Shadow" : "Text shadow"} onRemove={() => set(key, "")}>
-              <div className="grid grid-cols-2 gap-1.5">
-                <NumberField label="X" unit="px" value={shadow.x} placeholder="0" onChange={(next) => write({ x: next ?? 0 })} onCommit={onCommit} />
-                <NumberField label="Y" unit="px" value={shadow.y} placeholder="0" onChange={(next) => write({ y: next ?? 0 })} onCommit={onCommit} />
-                <NumberField label="Blur" unit="px" value={shadow.blur} min={0} placeholder="0" onChange={(next) => write({ blur: next ?? 0 })} onCommit={onCommit} />
-                {spread && (
-                  <NumberField label="Spread" unit="px" value={shadow.spread} placeholder="0" onChange={(next) => write({ spread: next ?? 0 })} onCommit={onCommit} />
-                )}
-              </div>
-              <ColourField label="Colour" value={shadow.colour} disabled={disabled} onChange={(next) => write({ colour: next })} onCommit={onCommit} />
-            </SubBlock>
-          );
-        })}
-
-        {missing.length > 0 && (
-          <div className="pt-1 text-[11px] text-muted">
-            Add:{" "}
-            {missing.map((key, index) => (
-              <span key={key}>
-                {index > 0 && " · "}
-                <button
-                  type="button"
-                  onClick={() => {
-                    set(key, EXTRA_SEED[key]);
-                    onCommit?.();
-                  }}
-                  className="border-b border-dashed border-line text-ink transition hover:border-blue hover:text-blue"
-                >
-                  {EXTRA_LABEL[key]}
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-      </Section>
-
-      <Section title="Typography">
-        <SelectField label="Font" value={declarations["font-family"] ?? ""} disabled={disabled} onChange={(next) => set("font-family", next)} options={[...FONTS, ...(fonts ?? []).filter(value => !FONTS.some(font => font.value === value)).map(value => ({ label: value, value }))]} />
-
-        <div className="flex gap-1.5">
-          <CssValueField property="font-size" label="Size" value={declarations["font-size"] ?? ""} disabled={disabled} onChange={next => set("font-size", next)} />
-          <ColourField label="Colour" value={declarations.color ?? ""} allowNone disabled={disabled} onChange={(next) => set("color", next)} onCommit={onCommit} />
-        </div>
-
-        <SelectField label="Weight" value={declarations["font-weight"] ?? ""} disabled={disabled} onChange={(next) => set("font-weight", next)} options={WEIGHTS} />
-
-        <div className="flex gap-1.5">
-          <IconToggle
-            on={declarations["font-style"] === "italic"}
-            title="Italic"
-            disabled={disabled}
-            onClick={() => {
-              set("font-style", declarations["font-style"] === "italic" ? "" : "italic");
-              onCommit?.();
-            }}
-          >
-            <span className="font-serif italic">I</span>
-          </IconToggle>
-          <IconToggle
-            on={decoration.includes("underline")}
-            title="Underline"
-            disabled={disabled}
-            onClick={() => {
-              set("text-decoration", decoration.includes("underline") ? decoration.replace("underline", "").trim() : `${decoration} underline`.trim());
-              onCommit?.();
-            }}
-          >
-            <span className="font-serif underline">U</span>
-          </IconToggle>
-          <IconToggle
-            on={decoration.includes("line-through")}
-            title="Strikethrough"
-            disabled={disabled}
-            onClick={() => {
-              set(
-                "text-decoration",
-                decoration.includes("line-through") ? decoration.replace("line-through", "").trim() : `${decoration} line-through`.trim(),
-              );
-              onCommit?.();
-            }}
-          >
-            <span className="font-serif line-through">S</span>
-          </IconToggle>
-          <div className="flex-1" />
-        </div>
-
-        <Segmented
-          value={declarations["text-align"] ?? ""}
-          disabled={disabled}
-          onChange={(next) => {
-            set("text-align", next);
-            onCommit?.();
-          }}
-          options={[
-            { value: "left", title: "Left", label: <Lines widths={[12, 8, 10]} align="start" /> },
-            { value: "center", title: "Centre", label: <Lines widths={[12, 8, 10]} align="center" /> },
-            { value: "right", title: "Right", label: <Lines widths={[12, 8, 10]} align="end" /> },
-            { value: "justify", title: "Justify", label: <Lines widths={[12, 12, 12]} align="start" /> },
-          ]}
-        />
-
-        <div className="flex gap-1.5">
-          <CssValueField property="line-height" label="Leading" value={declarations["line-height"] ?? ""} disabled={disabled} onChange={next => set("line-height", next)} />
-          <CssValueField property="letter-spacing" label="Tracking" value={declarations["letter-spacing"] ?? ""} disabled={disabled} onChange={next => set("letter-spacing", next)} />
-        </div>
-
-        <SelectField label="Case" value={declarations["text-transform"] ?? ""} disabled={disabled} onChange={(next) => set("text-transform", next)} options={CASES} />
-      </Section>
-
-      <Section title="Border">
-        {borderParts ? (
-          <SubBlock
-            title="Border"
-            onRemove={() => {
-              set("border", "");
-              onCommit?.();
-            }}
-          >
-            <div className="flex gap-1.5">
-              <NumberField
-                label="Width"
-                unit="px"
-                value={Number(borderParts[1])}
-                min={0}
-                placeholder="1"
-                onChange={(next) => set("border", `${next ?? 0}px ${borderParts[2]} ${borderParts[3]}`)}
-                onCommit={onCommit}
-              />
-              <SelectField
-                label="Style"
-                value={borderParts[2]!}
-                disabled={disabled}
-                onChange={(next) => {
-                  set("border", `${borderParts[1]}px ${next} ${borderParts[3]}`);
-                  onCommit?.();
-                }}
-                options={BORDER_STYLES.map((value) => ({ value, label: value }))}
-              />
-            </div>
-            <ColourField
-              label="Colour"
-              value={borderParts[3]!}
-              disabled={disabled}
-              onChange={(next) => set("border", `${borderParts[1]}px ${borderParts[2]} ${next}`)}
-              onCommit={onCommit}
-            />
-          </SubBlock>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              set("border", "1px solid #08101F");
-              onCommit?.();
-            }}
-            className="w-full rounded-xl border border-dashed border-line py-2 text-[11px] font-semibold text-muted transition hover:border-blue hover:text-blue"
-          >
-            + Add border
-          </button>
-        )}
-      </Section>
-
-      {(untouched.length > 0 || style) && (
-        <div className="px-4 py-3.5">
-          {untouched.length > 0 && (
-            <div className="mb-2 rounded-xl bg-cream/70 px-2.5 py-2 text-[10px] leading-relaxed text-muted">
-              <span className="font-semibold text-muted">Also on this element, left alone:</span>{" "}
-              <span className="font-mono">{untouched.map(([property, value]) => `${property}: ${value}`).join("; ")}</span>
-            </div>
-          )}
-          {style && (
-            <button
-              type="button"
-              onClick={() => {
-                onReset();
-                onCommit?.();
-              }}
-              className="text-[11px] text-muted underline-offset-2 transition hover:text-ink hover:underline"
-            >
-              Put this element back as designed
-            </button>
-          )}
-        </div>
-      )}
-    </div></PaletteContext.Provider>
-  );
-}
-
 /** The three little bars on an alignment button. */
-function Lines({ widths, align }: { widths: number[]; align: "start" | "center" | "end" }) {
+export function Lines({ widths, align }: { widths: number[]; align: "start" | "center" | "end" }) {
   return (
     <span className={`flex w-[14px] flex-col gap-[2px] ${align === "center" ? "items-center" : align === "end" ? "items-end" : "items-start"}`}>
       {widths.map((width, index) => (

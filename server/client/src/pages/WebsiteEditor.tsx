@@ -7,8 +7,8 @@ import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFiel
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { WebsiteAssetLibrary } from "../components/WebsiteAssetLibrary";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
-import { LayoutInspector, INSPECTED_PROPERTIES } from "../components/LayoutInspector";
-import { StylePanel } from "../components/StylePanel";
+import { ElementInspector } from "../components/ElementInspector";
+import { INSPECTED_PROPERTIES, type ElementFacts } from "../lib/elementInspector";
 import { WebsiteLayers, WebsiteBreadcrumbs } from "../components/WebsiteLayers";
 import { WebsiteVersions } from "../components/WebsiteVersions";
 import { WebsiteAssistant } from "../components/WebsiteAssistant";
@@ -514,7 +514,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const latestEdits = useRef(edits);
   latestEdits.current = edits;
   const [computed, setComputed] = useState<Record<string, string>>({});
-  const [inspectorTab, setInspectorTab] = useState<"content" | "design">("design");
+  /** What the frame says the selected element is, as opposed to what it holds. */
+  const [domFacts, setDomFacts] = useState<Omit<ElementFacts, "kind"> | null>(null);
   const [styleClipboard, setStyleClipboard] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [sectionId, setSectionId] = useState<string | null>(null);
@@ -571,15 +572,40 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   /** Optional assistant proposals join the same local draft and undo history. */
   const [showAI, setShowAI] = useState(false);
 
+  /**
+   * What the page is really doing with the selected element, at this width.
+   *
+   * Two things come back and they answer different questions. The computed
+   * values are what every control shows when nobody has overridden it — the
+   * site's own 72px rather than an empty box marked "As designed". The facts
+   * are what the inspector decides *which* controls to draw from: an element's
+   * own display and its parent's, which is the only way to know that a `div` is
+   * a grid or that an `a` is sitting in a flex row.
+   *
+   * Reading is all this does. Nothing here goes into the draft, so opening an
+   * element cannot rewrite the page.
+   */
   useEffect(() => {
     const inspect = () => {
       try {
         const doc = frame.current?.contentDocument;
         const element = pickedId ? doc?.querySelector('[data-dw-field="' + CSS.escape(pickedId) + '"]') : null;
-        if (!element || !doc?.defaultView) { setComputed({}); return; }
-        const style = doc.defaultView.getComputedStyle(element);
+        if (!element || !doc?.defaultView) { setComputed({}); setDomFacts(null); return; }
+        const view = doc.defaultView;
+        const style = view.getComputedStyle(element);
         setComputed(Object.fromEntries(INSPECTED_PROPERTIES.map(key => [key, style.getPropertyValue(key)])));
-      } catch { setComputed({}); }
+        const parent = element.parentElement;
+        setDomFacts({
+          tag: element.tagName.toLowerCase(),
+          display: style.display,
+          position: style.position,
+          parentDisplay: parent ? view.getComputedStyle(parent).display : "",
+          // Text of its own, not a child's: a section wrapping a heading is not
+          // a thing anybody sets a line height on.
+          hasText: Array.from(element.childNodes).some(node => node.nodeType === 3 && (node.textContent ?? "").trim().length > 0),
+          childCount: element.childElementCount,
+        });
+      } catch { setComputed({}); setDomFacts(null); }
     };
     inspect();
     const iframe = frame.current;
@@ -1474,7 +1500,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               <p className="mt-2 text-[10px] text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
 
-            <div className="flex border-y border-line">{(["content", "design"] as const).map(tab => <button key={tab} type="button" onClick={() => setInspectorTab(tab)} aria-pressed={inspectorTab === tab} className={`flex-1 py-2 text-xs capitalize ${inspectorTab === tab ? "bg-blue/10 text-ink font-semibold" : "text-muted"}`}>{tab}</button>)}</div>
             <div className="max-h-[70%] min-h-0 flex-none overflow-y-auto">
               {!picked ? (
                 <div className="px-4 py-6 text-center">
@@ -1488,63 +1513,85 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </div>
               ) : (
                 <>
-                  {inspectorTab === "content" && <div className="border-b border-line px-4 py-3.5">
-                    <div className="mb-2.5 flex items-center justify-between">
-                      <span className="font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted">Content</span>
-                      {picked.kind !== "image" && picked.kind !== "container" && (
-                        <button
-                          type="button"
-                          onClick={() => tell({ type: "edit", id: picked.id })}
-                          className="text-[10px] text-muted underline-offset-2 transition hover:text-blue hover:underline"
-                        >
-                          {typingId === picked.id ? "Typing on the page" : "Type on the page"}
-                        </button>
-                      )}
+                  <div className="border-b border-line px-4 py-3">
+                    <p className="mb-2 text-xs font-semibold">{device === "desktop" ? "Base styles · all sizes" : device === "tablet" ? "Tablet styles · 1024px and below" : "Phone styles · 640px and below"}</p>
+                    <p className="mb-3 text-[10px] leading-relaxed text-muted">{device === "desktop" ? "Tablet and phone overrides take precedence at smaller widths." : "Only the controls you change override the larger layout. Reset a value to inherit it again."}</p>
+                    {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && <p className="mb-3 text-[10px] leading-relaxed text-warn-text">This element has a base style marked !important. That property keeps its base value at every size until you change it under Desktop.</p>}
+                    <div className="flex gap-3 text-[11px]">
+                      <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="text-blue">Copy style</button>
+                      <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="text-blue disabled:text-faint">Paste style</button>
+                      {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="text-blue disabled:text-faint">Clear overrides</button>}
                     </div>
-                    {absentIds.has(picked.id) && (
-                      <p className="mb-2 rounded-xl bg-cream/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
-                        {picked.id.startsWith("meta.")
-                          ? "This one is not on the page itself — it is what browsers and search results show. Nothing here will change in the preview."
-                          : "This one cannot be shown while you type. It appears in the page once the draft saves."}
-                      </p>
-                    )}
-                    {picked.kind === "image" && !readOnly && <div className="mb-4"><WebsiteAssetLibrary siteId={site.id} onSelect={asset => change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt })} /></div>}
-                    <FieldRow
-                      key={`${loadToken}:${frameEdit}:${picked.id}`}
-                      field={picked}
-                      edit={edits[picked.id]}
-                      problem={problems.get(picked.id)}
-                      publicUrl={site.publicUrl}
-                      links={links ?? []}
-                      readOnly={readOnly}
-                      onChange={(next) => change(picked.id, next)}
-                      bare
-                    />
-                  </div>}
-                  {inspectorTab === "design" && <>
-                    <div className="border-b border-line px-4 py-3">
-                      <p className="mb-2 text-xs font-semibold">{device === "desktop" ? "Base styles · all sizes" : device === "tablet" ? "Tablet styles · 1024px and below" : "Phone styles · 640px and below"}</p>
-                      <p className="mb-3 text-[10px] leading-relaxed text-muted">{device === "desktop" ? "Tablet and phone overrides take precedence at smaller widths." : "Only the controls you change override the larger layout. Clear a value to inherit it."}</p>
-                      {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && <p className="mb-3 text-[10px] leading-relaxed text-warn-text">This element has a base style marked !important. That property keeps its base value at every size until you change it under Desktop.</p>}
-                      <div className="flex gap-3 text-[11px]">
-                        <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="text-blue">Copy style</button>
-                        <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="text-blue disabled:text-faint">Paste style</button>
-                        {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="text-blue disabled:text-faint">Clear overrides</button>}
-                      </div>
-                      <p className="mt-2 text-[10px] text-muted">{computed.width || "—"} × {computed.height || "—"} · {picked.confidence === "annotated" ? "Stable field" : "Discovered element"}</p>
-                    </div>
-                    <LayoutInspector key={`${picked.id}:${device}`} style={pickedStyle} computed={computed} readOnly={readOnly} onChange={next => changePickedStyle(next, true)} />
-                  <StylePanel
+                    <p className="mt-2 text-[10px] text-muted">{computed.width || "—"} × {computed.height || "—"} · {picked.confidence === "annotated" ? "Stable field" : "Discovered element"}</p>
+                  </div>
+
+                  {/* One inspector, drawn from what the element is. The frame is
+                      what knows that — its display, its parent's, whether it has
+                      words of its own — and when the frame cannot be reached the
+                      field row is the only thing left to go on. */}
+                  <ElementInspector
                     key={`${picked.id}:${device}`}
+                    facts={{
+                      kind: picked.kind,
+                      ...(domFacts ?? {
+                        tag: picked.tag,
+                        display: "block",
+                        parentDisplay: "",
+                        position: "static",
+                        hasText: picked.kind !== "container",
+                        childCount: picked.kind === "container" ? 1 : 0,
+                      }),
+                    }}
+                    device={device}
+                    style={pickedStyle}
+                    source={{
+                      sourceStyle: picked.style ?? "",
+                      // Only meaningful under a smaller viewport, where the base
+                      // edit is what a phone inherits until it overrides it.
+                      baseStyle: device === "desktop" ? "" : edits[picked.id]?.style ?? picked.style ?? "",
+                      computed,
+                    }}
                     palette={design.data?.options.colours}
                     fonts={design.data?.options.fonts}
-                    style={pickedStyle}
                     readOnly={readOnly}
                     onChange={(next) => changePickedStyle(next)}
                     onCommit={() => commitHistory(edits)}
                     onReset={() => changePickedStyle(device === "desktop" ? picked.style ?? "" : picked.responsive?.[device] ?? "", true)}
+                    content={
+                      <>
+                        {picked.kind !== "image" && picked.kind !== "container" && (
+                          <div className="mb-2 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => tell({ type: "edit", id: picked.id })}
+                              className="text-[10px] text-muted underline-offset-2 transition hover:text-blue hover:underline"
+                            >
+                              {typingId === picked.id ? "Typing on the page" : "Type on the page"}
+                            </button>
+                          </div>
+                        )}
+                        {absentIds.has(picked.id) && (
+                          <p className="mb-2 rounded-xl bg-cream/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+                            {picked.id.startsWith("meta.")
+                              ? "This one is not on the page itself — it is what browsers and search results show. Nothing here will change in the preview."
+                              : "This one cannot be shown while you type. It appears in the page once the draft saves."}
+                          </p>
+                        )}
+                        {picked.kind === "image" && !readOnly && <div className="mb-4"><WebsiteAssetLibrary siteId={site.id} onSelect={asset => change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt })} /></div>}
+                        <FieldRow
+                          key={`${loadToken}:${frameEdit}:${picked.id}`}
+                          field={picked}
+                          edit={edits[picked.id]}
+                          problem={problems.get(picked.id)}
+                          publicUrl={site.publicUrl}
+                          links={links ?? []}
+                          readOnly={readOnly}
+                          onChange={(next) => change(picked.id, next)}
+                          bare
+                        />
+                      </>
+                    }
                   />
-                  </>}
                 </>
               )}
             </div>
