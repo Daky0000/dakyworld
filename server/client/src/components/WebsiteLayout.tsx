@@ -55,6 +55,7 @@ export const WEBSITE_TABS: Tab[] = [
   { to: "/website", label: "Overview", end: true },
   { to: "/website/sites", label: "Sites" },
   { to: "/website/assets", label: "Assets" },
+  { to: "/website/compatibility", label: "Compatibility" },
   { to: "/website/ai", label: "AI Assistant", needs: "website.manage", unbuilt: true },
   { to: "/website/updates", label: "Updates", needs: "website.manage", unbuilt: true },
   { to: "/website/team", label: "Team & Permissions" },

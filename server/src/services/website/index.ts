@@ -74,6 +74,8 @@ export type { JsxField, JsxFieldKind, JsxChange, JsxDiscovery, JsxSourceReferenc
 
 export { applyValues, readPage, safeStyle, checkLink, sanitizePlain, sanitizeRich, isVariantOfStem, resolveVariantChange, variantLabel };
 export type { ApplyResult, FieldKind, FieldValue, PageContent, PreviewDocument, SiteField, SiteSection };
+export { analysePage, summariseCompatibility, READINESS_LABEL } from "./compatibility.js";
+export type { CompatibilityFinding, CompatibilityGrade, PageCompatibility, SiteCompatibility, SiteReadiness } from "./compatibility.js";
 export {
   SHARED_ATTRIBUTE, SHARED_FIELD_ATTRIBUTE, detachSnapshot, elementFingerprint, instanceShape,
   resolveSharedValues, sharedCandidates, slotFieldIds, slotForField,

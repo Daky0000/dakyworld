@@ -23,6 +23,10 @@ The visual sidebar includes a searchable Layers tree in document order, expand/c
 - **AI:** an optional proposal panel scoped to one selected field or the page. Suggestions include the unsaved draft, pass the editor validator and existing budget checks, and require explicit application into the draft. The assistant never publishes. No paid model calls were made during implementation checks.
 - **Source files:** browse JSX/TSX inside the site's configured repository folder, edit literal native-element text and existing `href`/`src`/`alt` strings, review a byte-preserving change, download source, or publish with both source and publish permission. Full-file hashes reject stale edits. Dynamic values, custom component props, class names and component structure remain code-controlled. Unsupported or ambiguous fields are explained. Source code is parsed, never executed.
 
+## Compatibility
+
+`docs/website-compatibility.md` is the contract — exactly what is supported, what is supported with limits, what stays with a developer and what is not supported at all. `services/website/compatibility.ts` is the same judgement as code, applied to one website by `Website → Compatibility`: every page is read and graded, findings are merged and counted across the site, and the site gets a rating and a readiness state. Readiness is a separate question from grading, so a perfectly editable site with no repository connected reads as `PUBLISH_BLOCKED` rather than as a problem with its pages. Run the report before a client is given access to a website; every finding in it is written as a sentence somebody can act on.
+
 ## Preview and compatibility
 
 Imported scripts, forms and embedded frames do not run in the editor. A CSP sandbox and nonce permit only the trusted picker; styles, fonts and images may render from the public site. This isolates the OS session, but JavaScript-driven menus, animations and client-rendered content will not behave like the live website. Test the live site after deployment.
@@ -68,6 +72,7 @@ npx tsx checks/websiteLayers.ts
 npx tsx checks/websiteInspector.ts
 npx tsx checks/websiteShared.ts
 npx tsx checks/websiteSharedApi.ts
+npx tsx checks/websiteCompatibility.ts
 npx tsx checks/websiteResponsive.ts
 npx tsx checks/websitePreviewRuntime.ts
 npx tsx checks/websiteStructure.ts

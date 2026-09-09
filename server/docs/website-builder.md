@@ -568,6 +568,30 @@ affected page is hashed at review and checked again before anything is written.
 
 ---
 
+## The commercial path (Sep 2026)
+
+The order the founder set, after the inspector and shared elements landed:
+
+| # | What | Status |
+|---|---|---|
+| 1 | Contextual inspector | **Built** |
+| 2 | Computed/effective property values | **Built** |
+| 3 | Shared elements, detach and re-link | **Built** |
+| 4 | Compatibility checker | **Built** — `services/website/compatibility.ts`, `docs/website-compatibility.md` |
+| 5 | Durable `PublishJob` | Not started |
+| 6 | Live deployment verification | Not started |
+| 7 | External/customer-focused workspace | Not started |
+| 8 | Managed onboarding flow | Not started |
+| 9 | Real customer usability tests | Not started — needs real people |
+| 10 | GitHub App instead of one shared token | Not started |
+
+Deliberately **not** being built yet, and the list is as much a part of the plan
+as the one above: a React visual canvas, a Next.js builder, WordPress or Shopify
+integration, SFTP publishing, template or plugin marketplaces, AI site
+generation, an animation builder, white-labelling and self-hosted installs.
+
+---
+
 ## Order to build in
 
 1. **Field identity (§5)** — it makes every draft after it more durable, and
