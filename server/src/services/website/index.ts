@@ -74,6 +74,11 @@ export type { JsxField, JsxFieldKind, JsxChange, JsxDiscovery, JsxSourceReferenc
 
 export { applyValues, readPage, safeStyle, checkLink, sanitizePlain, sanitizeRich, isVariantOfStem, resolveVariantChange, variantLabel };
 export type { ApplyResult, FieldKind, FieldValue, PageContent, PreviewDocument, SiteField, SiteSection };
+export {
+  SHARED_ATTRIBUTE, SHARED_FIELD_ATTRIBUTE, detachSnapshot, elementFingerprint, instanceShape,
+  resolveSharedValues, sharedCandidates, slotFieldIds, slotForField,
+} from "./shared.js";
+export type { ElementFingerprint, SharedCandidate, SharedConfidence, SharedInstanceShape, SharedSlot } from "./shared.js";
 export { normalizeResponsive, responsiveEqual, safeResponsiveStyle, renderResponsiveCss, responsiveStyleCss, regenerateResponsiveStyles, RESPONSIVE_BREAKPOINTS, RESPONSIVE_TOKEN } from "./responsive.js";
 export type { ResponsiveStyles, ResponsiveStyleEntry } from "./responsive.js";
 
@@ -148,6 +153,41 @@ export function sanitizeValue(
   if (field.alt !== undefined) next.originalAlt = field.alt;
   if (field.variant !== undefined) next.originalVariant = field.variant;
   if (field.newTab !== undefined) next.originalNewTab = field.newTab;
+  return next;
+}
+
+/**
+ * The same cleaning, for a value that is going to more than one page.
+ *
+ * Two rules of `sanitizeValue` are deliberately dropped here, and both for the
+ * same reason: a shared value is not about the page it was typed on.
+ *
+ * It **keeps** a value identical to what the typing page already says, because
+ * the other six pages say something else and that is the whole point of the
+ * change. And it stamps **no `original`**, because there is no one thing the
+ * page said — there are seven. What protects a shared publish instead is
+ * stricter: every affected page's whole source is hashed at review and checked
+ * again before anything is written, so a shared change refuses if *anything* on
+ * any affected page moved underneath it.
+ */
+export function sanitizeSharedValue(
+  field: SiteField,
+  raw: { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean },
+): FieldValue {
+  const next: FieldValue = {};
+
+  if (raw.value !== undefined && field.kind !== "container") {
+    next.value = field.kind === "richtext" ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
+  }
+  if (raw.href !== undefined) next.href = raw.href.trim();
+  if (raw.alt !== undefined) next.alt = raw.alt;
+  if (raw.style !== undefined) next.style = safeStyle(raw.style, field.style);
+  if (raw.responsive !== undefined && field.attrInsert !== undefined) next.responsive = normalizeResponsive(raw.responsive);
+  if (raw.variant !== undefined && field.kind === "button" && field.classes !== undefined) {
+    const wanted = raw.variant === null ? null : raw.variant.trim();
+    if (resolveVariantChange(field.classes, wanted)) next.variant = wanted;
+  }
+  if (raw.newTab !== undefined && field.kind === "button" && field.hrefSpan) next.newTab = raw.newTab;
   return next;
 }
 

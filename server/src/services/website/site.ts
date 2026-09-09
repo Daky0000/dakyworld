@@ -286,6 +286,28 @@ export async function publishPage(input: {
   message: string;
   expectedSource?: string;
 }): Promise<{ sha: string; url: string }> {
+  return publishPages({
+    site: input.site,
+    message: input.message,
+    pages: [{ page: input.page, html: input.html, expectedSource: input.expectedSource }],
+  });
+}
+
+/**
+ * The same, for a change that belongs to several pages at once.
+ *
+ * One commit, not one per page. A shared element edited once and landing on
+ * seven pages is one change to the website, and committing it seven times would
+ * make it seven — reviewable as seven, revertable as seven, and capable of
+ * being half-done if the fourth request fails. Every affected file's expected
+ * content goes with it, so GitHub refuses the whole commit if any one of them
+ * moved underneath the review.
+ */
+export async function publishPages(input: {
+  site: Site;
+  message: string;
+  pages: Array<{ page: SitePage; html: string; expectedSource?: string }>;
+}): Promise<{ sha: string; url: string }> {
   const repo = siteRepo(input.site);
   if (!repo) {
     throw new WebsiteError(
@@ -303,22 +325,34 @@ export async function publishPage(input: {
       "Publishing needs a GitHub token with permission to write to the website's repository. Add one under Settings → Developer.",
     );
   }
+  if (!input.pages.length) throw new WebsiteError(400, "There are no pages to publish.");
 
   try {
+    const assets = await Promise.all(input.pages.map((entry) => websiteAssetFiles(input.site, entry.html)));
+    const files = [
+      ...input.pages.map((entry) => ({ path: repoFilePath(input.site, entry.page), content: entry.html })),
+      // One asset can be referenced by two of the pages in the same commit.
+      ...[...new Map(assets.flat().map((file) => [file.path, file])).values()],
+    ];
+    const expected = input.pages
+      .filter((entry) => entry.expectedSource !== undefined)
+      .map((entry) => ({ path: repoFilePath(input.site, entry.page), content: entry.expectedSource!, allowMissing: entry.page.sourceHtml !== null }));
+
     const commit = await commitFiles({
       repo,
       branch: input.site.repoBranch,
       message: input.message,
-      expectedFiles: input.expectedSource === undefined ? undefined : [{ path: repoFilePath(input.site, input.page), content: input.expectedSource, allowMissing: input.page.sourceHtml !== null }],
-      files: [{ path: repoFilePath(input.site, input.page), content: input.html }, ...await websiteAssetFiles(input.site, input.html)],
+      expectedFiles: expected.length ? expected : undefined,
+      files,
     });
     // Here rather than at the call site, so that a second publisher — a rollback,
     // a site-wide publish, an agent — cannot forget it. Until this runs, every
     // read is answering from the version before the commit, and the reload meant
     // to confirm the publish shows the page unchanged.
-    invalidateSource(input.site.id, input.page.filePath);
+    for (const entry of input.pages) invalidateSource(input.site.id, entry.page.filePath);
     return commit;
   } catch (err) {
+
     if (err instanceof GitHubNotConfiguredError) {
       throw new WebsiteError(
         503,

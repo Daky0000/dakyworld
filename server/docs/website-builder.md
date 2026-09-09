@@ -549,7 +549,7 @@ Sep 2026) redesigns the left pane. Its five phases, and where they stand:
 |---|---|---|---|
 | 1 | Contextual inspector — one owner per property, capabilities, parent-aware and conditional sections, Basic/Advanced | **Built** | `lib/elementInspector.ts`, `components/ElementInspector.tsx` |
 | 2 | Effective values — source/computed/override/effective, origin, reset, device-aware, readable colours and fonts | **Built** | `inspectorValue`, `Origin` in `ElementInspector.tsx` |
-| 3 | Shared elements across pages — linked/detached instances, edit scope, draft propagation, publish review and conflicts | **Not started** | needs a data model, detection, and publish validation |
+| 3 | Shared elements across pages — linked/detached instances, edit scope, draft propagation, publish review and conflicts | **Built** | `services/website/shared.ts`, `services/websiteShared.ts`, `components/WebsiteShared.tsx` |
 | 4 | Stronger shared detection — `data-dw-shared`, structural fingerprints, JSX/TSX source identity, confidence scoring | **Not started** | after phase 3 |
 | 5 | Global site styles — typography, colour, button and spacing tokens | **Not started** | deliberately separate from shared elements |
 
@@ -558,9 +558,13 @@ same style string and drew every control for every element. Their widgets surviv
 in `components/InspectorControls.tsx`; what changed is who decides which of them
 a selected element gets.
 
-**Phase 3 is all-or-nothing.** A shared edit that propagates without the publish
-validation in §37 of that spec would write six of seven pages and report success,
-which is worse than not having the feature. Do not ship half of it.
+**Phase 3 was built all-or-nothing on purpose.** A shared edit that propagated
+without the publish validation in §37 of that spec would write six of seven pages
+and report success, which is worse than not having the feature. The decisions
+worth not re-litigating are in the header comment of `services/websiteShared.ts`:
+a shared change is stored once against the shared element rather than copied into
+seven page drafts; a page publish never publishes a shared change; and every
+affected page is hashed at review and checked again before anything is written.
 
 ---
 

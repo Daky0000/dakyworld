@@ -3141,6 +3141,50 @@ export type SiteSectionRow = {
 export type ResponsiveStyles = { tablet?: string; mobile?: string };
 export type FieldEdit = { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean };
 
+/** Where a field's edits actually go, and how far they reach. */
+export type SharedFieldScope = {
+  sharedElementId: string;
+  instanceId: string;
+  key: string;
+  name: string;
+  slot: string;
+  state: "LINKED" | "DETACHED";
+  linkedPages: number;
+};
+
+export type SharedElementOnPage = {
+  id: string;
+  instanceId: string;
+  key: string;
+  name: string;
+  rootFieldId: string;
+  state: "LINKED" | "DETACHED";
+  revision: number;
+  linkedPages: number;
+  pendingSlots: number;
+  mismatched: string[];
+};
+
+export type SharedReview = {
+  id: string;
+  name: string;
+  revision: number;
+  publishable: boolean;
+  reason?: string;
+  detached: string[];
+  pages: Array<{
+    pageId: string;
+    title: string;
+    path: string;
+    sourceHash: string;
+    changed: number;
+    summary: Array<{ id: string; label: string; part: string; from: string; to: string }>;
+    problems: Array<{ id: string; label: string; reason: string }>;
+    blocked?: string;
+    writes: boolean;
+  }>;
+};
+
 export type SitePageDetail = {
   structure?: { changed: boolean; canUndo: boolean; canRedo: boolean; changes: string[]; stale: boolean };
   site: { id: string; name: string; publicUrl: string; repo: string | null };
@@ -3158,6 +3202,8 @@ export type SitePageDetail = {
   /** Which of the two sources answered — the repository, or the live site. */
   readFrom: "repository" | "live site" | "imported file";
   sections: SiteSectionRow[];
+  /** Which fields belong to a shared element, and what that element is doing. */
+  shared?: { scope: Record<string, SharedFieldScope>; elements: SharedElementOnPage[] };
   draft: {
     documentHash?: string | null;
     values: Record<string, FieldEdit>;
@@ -3179,6 +3225,8 @@ export type DraftSaveResult = {
   /** The revision after this save. The editor holds it and quotes it on the next one. */
   revision: number;
   changed: number;
+  /** The new revision of every shared element this save touched. */
+  sharedRevisions?: Record<string, number>;
   unknown: string[];
   problems: FieldProblem[];
 };

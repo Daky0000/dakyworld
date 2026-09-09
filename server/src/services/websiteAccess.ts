@@ -73,11 +73,14 @@ export function websiteCapabilities(principal: WebsitePrincipal, role: WebsiteMe
 export type WebsiteAccessReader = {
   memberRole(siteId: string, userId: string): Promise<WebsiteMemberRole | null>;
   pageSite(pageId: string): Promise<string | null>;
+  /** Which site a shared element belongs to. Optional so a test double need not know. */
+  sharedSite?(sharedElementId: string): Promise<string | null>;
   hasMembership(userId: string): Promise<boolean>;
 };
 const accessReader: WebsiteAccessReader = {
   memberRole: async (siteId, userId) => (await prisma.siteMember.findUnique({ where: { siteId_userId: { siteId, userId } }, select: { role: true } }))?.role ?? null,
   pageSite: async pageId => (await prisma.sitePage.findUnique({ where: { id: pageId }, select: { siteId: true } }))?.siteId ?? null,
+  sharedSite: async sharedElementId => (await prisma.sharedElement.findUnique({ where: { id: sharedElementId }, select: { siteId: true } }))?.siteId ?? null,
   hasMembership: async userId => Boolean(await prisma.siteMember.findFirst({ where: { userId }, select: { id: true } })),
 };
 
@@ -110,6 +113,11 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/sites\/[^/]+\/config\/?$/.test(path)) return "manage";
   if (method === "GET" || method === "HEAD") return "view";
   if (/\/publish\/?$/.test(path)) return "publish";
+  // Making an element shared, or stopping it being one, changes how every page
+  // that carries it is edited. Editing the shared element, detaching one page's
+  // copy or putting it back are ordinary editing.
+  if (/^\/sites\/[^/]+\/shared\/?$/.test(path) || /^\/shared\/[^/]+\/?$/.test(path)) return "manage";
+  if (/^\/shared\/[^/]+\/(?:draft|instances)(?:\/|$)/.test(path)) return "edit";
   if (/\/draft\/?$/.test(path) || /\/restore\/?$/.test(path) || /\/structure\/?$/.test(path)) return "edit";
   if (/\/assets(?:\/[^/]+)?\/?$/.test(path)) return "edit";
   if (/\/(?:scan|import)\/?$/.test(path)) return "manage";
@@ -138,8 +146,12 @@ export function createWebsiteAccessGate(reader = accessReader) {
       if (!action) throw new WebsiteError(403, "That website action is not available.");
       const siteMatch = /^\/sites\/([^/]+)(?:\/|$)/.exec(req.path);
       const pageMatch = /^\/pages\/([^/]+)(?:\/|$)/.exec(req.path);
+      const sharedMatch = /^\/shared\/([^/]+)(?:\/|$)/.exec(req.path);
       let siteId = siteMatch ? decodeURIComponent(siteMatch[1]) : null;
       if (pageMatch) siteId = await reader.pageSite(decodeURIComponent(pageMatch[1]));
+      // A shared element is addressed on its own, so the record that says who
+      // may touch it is two levels up rather than one.
+      if (sharedMatch) siteId = (await reader.sharedSite?.(decodeURIComponent(sharedMatch[1]))) ?? null;
       if (!siteId) throw new WebsiteError(404, "That website page is not available.");
       await assertWebsiteSiteAccess(req, siteId, action, reader);
     })().then(() => next(), next);

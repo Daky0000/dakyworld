@@ -82,18 +82,18 @@ model AccessRole {
 }
 
 model User {
-  siteMemberships SiteMember[]
-  id                  String   @id @default(cuid())
-  email               String   @unique
+  siteMemberships     SiteMember[]
+  id                  String       @id @default(cuid())
+  email               String       @unique
   // scrypt hash, see server/src/lib/password.ts. Null for members an Owner
   // pre-provisioned who haven't been given a password yet — they can't log in.
   passwordHash        String?
   name                String
-  role                Role     @default(DEVELOPER)
-  skills              String[] @default([])
-  hourlyRate          Decimal? @db.Decimal(10, 2)
-  weeklyCapacityHours Decimal  @default(0) @db.Decimal(5, 2)
-  active              Boolean  @default(true)
+  role                Role         @default(DEVELOPER)
+  skills              String[]     @default([])
+  hourlyRate          Decimal?     @db.Decimal(10, 2)
+  weeklyCapacityHours Decimal      @default(0) @db.Decimal(5, 2)
+  active              Boolean      @default(true)
 
   // --- Access (see lib/permissions.ts and middleware/auth.ts) ----------------
   // Effective permissions are (role's permissions + extra) - denied, with the
@@ -128,20 +128,21 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  assignedProjects ProjectAssignment[]
-  assignedTasks    Task[]
-  timeEntries      TimeEntry[]
-  communications   Communication[]
-  performanceNotes PerformanceNote[]
-  sessions         Session[]
-  emailsWritten    EmailMessage[]
-  messagesWritten  Message[]
-  uploadedFiles    StoredFile[]
-  agentTasks       AgentTask[]
-  handledMail      MailMessage[]
-  rehearsals       Rehearsal[]
-  sitePageDrafts   SitePage[]          @relation("SitePageDrafts")
-  sitePageVersions SitePageVersion[]   @relation("SitePageVersions")
+  assignedProjects    ProjectAssignment[]
+  assignedTasks       Task[]
+  timeEntries         TimeEntry[]
+  communications      Communication[]
+  performanceNotes    PerformanceNote[]
+  sessions            Session[]
+  emailsWritten       EmailMessage[]
+  messagesWritten     Message[]
+  uploadedFiles       StoredFile[]
+  agentTasks          AgentTask[]
+  handledMail         MailMessage[]
+  rehearsals          Rehearsal[]
+  sitePageDrafts      SitePage[]          @relation("SitePageDrafts")
+  sitePageVersions    SitePageVersion[]   @relation("SitePageVersions")
+  sharedElementDrafts SharedElement[]     @relation("SharedElementDrafts")
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -361,13 +362,13 @@ model Lead {
   verdicts     LeadVerdict[]
 
   /// Evidence bundles related to this lead, stored at `evidence:/${lead_id}/${source}` paths.
-  evidence       Evidence[]
+  evidence      Evidence[]
   /// PDF reports related to this lead, stored at `pdf:/${lead_id}/report.pdf` paths.
-  pdfReport      PdfReport[]
+  pdfReport     PdfReport[]
   /// Email drafts related to this lead, stored at `email:/${lead_id}/draft` paths.
-  emailDraft     EmailDraft[]
+  emailDraft    EmailDraft[]
   /// Routing objects related to this lead, stored at `routing:/${lead_id}/object.json` paths.
-  routingObject  RoutingObject[]
+  routingObject RoutingObject[]
 
   @@index([status])
   @@index([groupId])
@@ -431,50 +432,54 @@ model LeadResearch {
 
   @@index([ranAt])
 }
+
 /// Evidence bundles stored at `evidence:/${lead_id}/${source}` paths.
 /// Sources: visual, seo, performance, perplexity
 model Evidence {
-  id        String   @id @default(cuid())
-  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  leadId    String
-  source    String   // e.g. "visual", "seo", "performance", "perplexity"
-  filepath  String   // e.g. "visual/lead-123-screenshot.jpg"
+  id         String   @id @default(cuid())
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId     String
+  source     String // e.g. "visual", "seo", "performance", "perplexity"
+  filepath   String // e.g. "visual/lead-123-screenshot.jpg"
   capturedAt DateTime @default(now())
-  metadata  Json?    // additional context about the evidence
+  metadata   Json? // additional context about the evidence
 
   @@index([leadId])
   @@index([source])
 }
+
 /// PDF report stored at `pdf:/${lead_id}/report.pdf`
 model PdfReport {
-  id       String   @id @default(cuid())
-  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  leadId   String
-  filename String   // e.g. "report.pdf"
-  filepath String   // e.g. "pdf/lead-123-report.pdf"
+  id        String   @id @default(cuid())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId    String
+  filename  String // e.g. "report.pdf"
+  filepath  String // e.g. "pdf/lead-123-report.pdf"
   createdAt DateTime @default(now())
-  metadata Json?    // additional context about the report
+  metadata  Json? // additional context about the report
 
   @@index([leadId])
 }
+
 /// Email draft stored at `email:/${lead_id}/draft`
 model EmailDraft {
-  id      String   @id @default(cuid())
-  lead    Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  leadId  String
-  subject String
-  body    String
+  id        String   @id @default(cuid())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId    String
+  subject   String
+  body      String
   draftedAt DateTime @default(now())
-  metadata Json?   // additional context about the draft
+  metadata  Json? // additional context about the draft
 
   @@index([leadId])
 }
+
 /// Routing object stored at `routing:/${lead_id}/object.json`
 model RoutingObject {
-  id       String   @id @default(cuid())
-  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  leadId   String
-  object   Json     // the routing object JSON
+  id        String   @id @default(cuid())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId    String
+  object    Json // the routing object JSON
   createdAt DateTime @default(now())
 
   @@index([leadId])
@@ -754,16 +759,16 @@ model LeadImport {
   sheetNames  String[] @default([])
 
   /// The analysed plan, as edited by the Owner. See services/sheetPlan.ts.
-  plan       Json?
+  plan        Json?
   /// "claude-opus-5" when the AI analyst ran, "rules" when the fallback did.
-  analyzedBy String?
+  analyzedBy  String?
   /// The analyst's own summary of what it found and what looked doubtful.
-  notes      String?
-  error      String?
+  notes       String?
+  error       String?
   /// JSON checkpoint for resumable imports. Cleared on completion.
   commitState Json?
   /// Set once the import finishes successfully.
-  importedAt   DateTime?
+  importedAt  DateTime?
 
   tablesFound   Int @default(0)
   groupsCreated Int @default(0)
@@ -939,15 +944,15 @@ model LeadThesis {
   /// Stable slug. The seed addresses it by this and never by name.
   key String @unique
 
-  name String
+  name      String
   /// Who we are looking for, in a sentence a person would say out loud.
-  target String
+  target    String
   /// **Why this target.** The sentence that has to exist before a run spends
   /// money, and the one shown against every lead it brings in.
   rationale String
   /// What Dakyworld would sell them if the thesis holds. A target with no offer
   /// behind it is a list, not a pipeline.
-  offer String
+  offer     String
 
   /// The signals that mean a business fits, one per line, in plain words.
   /// Read by the judge alongside the audit; each one that fires is named in the
@@ -963,7 +968,7 @@ model LeadThesis {
 
   /// How many businesses one hunt keeps. Deliberately small: every one of them
   /// is audited, and an audit costs money and takes a minute.
-  leadsPerRun Int @default(5)
+  leadsPerRun Int      @default(5)
   /// Local times a hunt starts, "HH:mm" in `timezone`. Two a day by default.
   runTimes    String[] @default([])
   timezone    String   @default("Africa/Accra")
@@ -2183,7 +2188,7 @@ model Agent {
   kpis             String[]    @default([])
 
   /// 0 observe · 1 draft · 2 recommend · 3 execute-with-policy · 4 autonomous · 5 delegated.
-  autonomyLevel Int     @default(1)
+  autonomyLevel Int @default(1)
 
   /// How many tasks this agent may start in a day, a week and a month.
   ///
@@ -2204,17 +2209,17 @@ model Agent {
   maxTasksPerWeek  Int?
   maxTasksPerMonth Int?
   /// Sits above the autonomy level: on means nothing it decides takes effect.
-  dryRun        Boolean @default(true)
+  dryRun           Boolean @default(true)
 
   /// Tool keys this agent may use. The grant model arrives with the tool layer.
-  toolkit          String[] @default([])
+  toolkit                 String[] @default([])
   /// What this one is actually good at, in a client's words rather than a
   /// tool key's. Read by the router when it picks who a job belongs to, and
   /// shown on the roster so "who do I ask for a video edit" has an answer.
-  skills           String[] @default([])
+  skills                  String[] @default([])
   /// Tool keys this agent is NOT responsible for, as globs — `design.*`.
   /// A call matching one is refused and counts a boundary crossing.
-  not_responsible  String[] @default([])
+  not_responsible         String[] @default([])
   /// The kinds of record this agent must not work on: lead, client, project,
   /// proposal, invoice.
   ///
@@ -2225,10 +2230,10 @@ model Agent {
   /// front of it. Read from the task the call belongs to, which already
   /// carries every one of these as a relation.
   not_responsible_subject String[] @default([])
-  escalationPolicy String?
+  escalationPolicy        String?
   /// The ten layered prompt sections, keyed by name. One column rather than a
   /// version table until prompts are actually edited in the app.
-  prompt           Json     @default("{}")
+  prompt                  Json     @default("{}")
 
   /// The instruction as one piece of prose, when the Owner has written it that
   /// way. Null means the ten layers above are still the instruction.
@@ -2251,7 +2256,7 @@ model Agent {
 
   /// Bumped in the seed when the built-in wording changes, so a later deploy
   /// can tell an untouched agent from one somebody has edited.
-  seedRevision   Int       @default(1)
+  seedRevision       Int       @default(1)
   /// Set the first time the Owner rewrites a *seeded* agent's wording.
   ///
   /// The wording of a built-in agent used to be read-only here on the grounds
@@ -2260,11 +2265,11 @@ model Agent {
   /// not really theirs. So it is editable, and this is the flag that keeps the
   /// shipped wording recoverable — set means "rewritten here", which is what
   /// the Reset action on the Agents screen offers to undo.
-  promptEditedAt DateTime?
+  promptEditedAt     DateTime?
   /// Number of consecutive boundary violations before suspension.
-  boundaryViolations Int @default(0)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  boundaryViolations Int       @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   tasks     AgentTask[]
   memories  AgentMemory[]
@@ -2680,7 +2685,7 @@ model AgentTask {
   /// failure the retry existed to prevent.
   ///
   /// Reset to zero the moment a run gets a real answer out of a provider.
-  retryCount  Int       @default(0)
+  retryCount  Int     @default(0)
   /// Why it is waiting, in the words a person would want: which vendor, what it
   /// said, and when this comes back. Read with `scheduledFor`, which is the
   /// "when" — a QUEUED task with a future `scheduledFor` and a reason here is
@@ -2753,7 +2758,7 @@ model AgentTask {
   escalationResolvedAt DateTime?
   escalationNote       String?
 
-  error         String?
+  error String?
 
   /// Where this task's escalation card was posted, so answering it anywhere
   /// rewrites the message rather than leaving a live question in the channel.
@@ -2921,8 +2926,8 @@ model AgentAutonomyChange {
   agentKey String
 
   /// Null when only the dry-run flag moved.
-  fromLevel Int?
-  toLevel   Int?
+  fromLevel  Int?
+  toLevel    Int?
   /// Null when only the level moved.
   fromDryRun Boolean?
   toDryRun   Boolean?
@@ -3982,14 +3987,14 @@ model Rehearsal {
 /// page turns out to have. See services/website/regions.ts for why that is the
 /// shape rather than a block tree.
 model Site {
-  members SiteMember[]
-  assets SiteAsset[]
+  members     SiteMember[]
+  assets      SiteAsset[]
   auditEvents SiteAuditEvent[]
-  settings Json @default("{}")
-  id   String @id @default(cuid())
-  name String
+  settings    Json             @default("{}")
+  id          String           @id @default(cuid())
+  name        String
   /// Identifies it in URLs and in the API. `dakyworld` for the company's own.
-  slug String @unique
+  slug        String           @unique
 
   /// Where the published site is served, with no trailing slash.
   publicUrl String
@@ -4008,7 +4013,8 @@ model Site {
   client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
   clientId String?
 
-  pages SitePage[]
+  pages          SitePage[]
+  sharedElements SharedElement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4023,9 +4029,9 @@ enum SitePageStatus {
 /// One page of a site: one file in the repository, one address on the web.
 model SitePage {
   sourceHtml String?
-  id     String @id @default(cuid())
-  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  siteId String
+  id         String  @id @default(cuid())
+  site       Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId     String
 
   /// How it reads in the page list. Taken from the page's own `<title>` when it
   /// is first discovered, and editable afterwards.
@@ -4058,7 +4064,8 @@ model SitePage {
   draftSavedBy   User?     @relation("SitePageDrafts", fields: [draftSavedById], references: [id], onDelete: SetNull)
   draftSavedById String?
 
-  versions SitePageVersion[]
+  versions        SitePageVersion[]
+  sharedInstances SharedElementInstance[]
 
   lastPublishedAt DateTime?
 
@@ -4102,29 +4109,118 @@ model SitePageVersion {
   @@index([pageId, createdAt])
 }
 
-model SiteAsset {
-  id String @id @default(cuid())
-  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+/// One logical component with instances on several pages.
+///
+/// The thing this exists to prevent is eight copies of a call to action that a
+/// client has to edit eight times and can get wrong in seven of them. A shared
+/// element holds the change **once**; each page's own field ids are worked out
+/// when it is resolved, so nothing here depends on two pages having been built
+/// by the same hand.
+///
+/// The spec's `SharedElementField` table is `slots` here instead. A slot has no
+/// identity of its own — it is a position inside this element and a record of
+/// what was in that position when it was shared — and giving positions rows of
+/// their own buys a join and an ordering problem in exchange for nothing.
+model SharedElement {
+  id     String @id @default(cuid())
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
   siteId String
-  filename String
-  repoPath String
-  contentType String
-  content Bytes
-  alt String @default("")
+
+  /// Stable, and the same string a developer would write in `data-dw-shared`.
+  key  String
+  /// How it reads in the editor: "Main CTA", "Site header".
+  name String
+
+  /// The root element's tag, so an instance that has been replaced wholesale
+  /// can be recognised as no longer being this component.
+  tag String @default("div")
+
+  /// How it came to exist: `annotated`, `content`, `structure` or `manual`.
+  /// A person's explicit decision outranks anything detection later thinks.
+  origin String @default("manual")
+
+  /// What was editable inside it when it was shared, in document order:
+  /// `[{ key, kind, tag, label, name? }]`. A slot is only written to a page
+  /// whose element in that position is still the same kind of thing.
+  slots Json @default("[]")
+
+  /// The unpublished change, keyed by slot rather than by any page's field id.
+  /// Null when there is nothing pending.
+  draft          Json?
+  /// Quoted back on every save, exactly as a page draft's is. Two editors on
+  /// two different pages of the same site are editing this one row.
+  draftRevision  Int       @default(0)
+  draftSavedAt   DateTime?
+  draftSavedBy   User?     @relation("SharedElementDrafts", fields: [draftSavedById], references: [id], onDelete: SetNull)
+  draftSavedById String?
+
+  instances SharedElementInstance[]
+
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, key])
+  @@index([siteId])
+}
+
+enum SharedInstanceState {
+  LINKED
+  DETACHED
+}
+
+/// Where one shared element appears, and whether it is still listening.
+///
+/// `nodeId` is the field id of the instance's root on that page — the same
+/// identity the rest of the editor selects, drafts and publishes by.
+model SharedElementInstance {
+  id              String        @id @default(cuid())
+  element         SharedElement @relation(fields: [sharedElementId], references: [id], onDelete: Cascade)
+  sharedElementId String
+  page            SitePage      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId          String
+
+  nodeId String
+
+  /// A detached instance keeps everything it had and stops receiving changes.
+  /// It is never deleted on detaching, so it can be re-linked later.
+  state SharedInstanceState @default(LINKED)
+
+  /// What the shared element was giving this page when it was detached, kept
+  /// so re-linking can say what would change.
+  detachedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sharedElementId, pageId])
+  @@index([pageId])
+}
+
+model SiteAsset {
+  id          String   @id @default(cuid())
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId      String
+  filename    String
+  repoPath    String
+  contentType String
+  content     Bytes
+  alt         String   @default("")
+  createdAt   DateTime @default(now())
+
   @@unique([siteId, repoPath])
 }
 
 model SiteAuditEvent {
-  id String @id @default(cuid())
-  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  siteId String
-  kind String
-  summary String
+  id        String   @id @default(cuid())
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId    String
+  kind      String
+  summary   String
   actorName String
-  actorId String?
-  detail Json?
+  actorId   String?
+  detail    Json?
   createdAt DateTime @default(now())
+
   @@index([siteId, createdAt])
 }
 

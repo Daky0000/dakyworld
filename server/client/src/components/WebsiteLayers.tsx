@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FieldEdit, SiteFieldRow } from "../lib/types";
+import type { FieldEdit, SharedFieldScope, SiteFieldRow } from "../lib/types";
 import { layerAncestors, visibleWebsiteLayers, websiteLayerNavigation, websiteLayerTabStop, websiteLayerTree } from "../lib/websiteLayers";
 
-export function WebsiteLayers({ fields, edits, problems, selectedId, onSelect, onMove }: {
+export function WebsiteLayers({ fields, edits, problems, shared, selectedId, onSelect, onMove }: {
   fields: SiteFieldRow[]; edits: Record<string, FieldEdit>; problems: Map<string, string>; selectedId: string | null; onSelect: (id: string) => void;
+  /** Which fields belong to a shared element, so the tree can say so. */
+  shared?: Record<string, SharedFieldScope>;
   onMove?: (id: string, target: string, position: "before" | "after") => void;
 }) {
   const [dragging, setDragging] = useState<string | null>(null);
@@ -67,6 +69,16 @@ export function WebsiteLayers({ fields, edits, problems, selectedId, onSelect, o
           <span className="w-3 shrink-0 text-center" aria-hidden="true" onClick={event => { if (hasChildren && !filtering) { event.stopPropagation(); toggle(field.id); } }}>{hasChildren ? expanded ? "▾" : "▸" : ""}</span>
           <span className="w-4 shrink-0 text-center font-mono text-[9px]" aria-hidden="true">{field.kind === "container" ? "□" : field.kind === "image" ? "▧" : field.kind === "link" || field.kind === "button" ? "↗" : "T"}</span>
           <span className="min-w-0 flex-1 truncate">{field.kind === "container" ? field.label : field.preview || field.label}</span>
+          {shared?.[field.id] && shared[field.id]!.state === "LINKED" && shared[field.id]!.slot === "self" && (
+            <span aria-label={`Shared across ${shared[field.id]!.linkedPages} pages`} title={`${shared[field.id]!.name} · shared across ${shared[field.id]!.linkedPages} pages`} className="shrink-0 rounded bg-blue/10 px-1 py-px text-[8px] font-semibold uppercase tracking-[.08em] text-blue">
+              Shared
+            </span>
+          )}
+          {shared?.[field.id] && shared[field.id]!.state === "DETACHED" && shared[field.id]!.slot === "self" && (
+            <span aria-label="Detached from a shared element" title={`Detached from ${shared[field.id]!.name}. Future changes to it will not reach this page.`} className="shrink-0 rounded bg-sunken px-1 py-px text-[8px] font-semibold uppercase tracking-[.08em] text-muted">
+              Detached
+            </span>
+          )}
           {problems.has(field.id) && <span aria-label="Needs attention" className="text-danger-text">!</span>}
           {Object.keys(edits[field.id] ?? {}).length > 0 && <span aria-label="Changed" className="text-blue">●</span>}
         </button>;

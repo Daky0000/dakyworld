@@ -6,6 +6,7 @@ import { registerWebsiteAssistant } from "../services/websiteAssistant.js";
 import { registerWebsiteSource } from "../services/websiteSource.js";
 import { embedWebsiteAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
+import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../services/websiteShared.js";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -56,6 +57,7 @@ registerWebsiteMembership(websiteRouter);
 registerWebsiteManagement(websiteRouter, { loadSite, loadPage });
 registerWebsiteAssistant(websiteRouter, { loadPage });
 registerWebsiteSource(websiteRouter, { loadSite });
+registerWebsiteShared(websiteRouter, { loadSite, loadPage });
 
 /**
  * Do two values read the same to a person?
@@ -268,7 +270,13 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
   try {
     const { page, site } = await loadPage(req, req.params.pageId);
     const source = await pageSource(site, page);
-    const values = draftValues(page);
+    const own = draftValues(page);
+    // What the shared elements on this page are giving it, resolved onto this
+    // page's own field ids. Merged before anything is read, so a change made on
+    // another page is already on this one — in the panel and in the preview —
+    // rather than appearing only when somebody publishes.
+    const shared = await sharedOnPage(page, editingSource(source.html, own));
+    const values = { ...own, ...shared.values };
     const content = discoverFields(editingSource(source.html, values));
     const controls = structureControls(editingSource(source.html, values));
 
@@ -360,6 +368,12 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
         savedBy: saver,
         documentHash: draftDocument(values) ? sourceHash(draftDocument(values)!.html) : null,
       },
+      // Which fields belong to a shared element, how many pages a change here
+      // would reach, and whether this page's copy is still listening.
+      shared: {
+        scope: shared.scope,
+        elements: shared.elements,
+      },
       structure: { changed: documentChanged(source.html, values), canUndo: Boolean(draftDocument(values)?.undo.length), canRedo: Boolean(draftDocument(values)?.redo.length), changes: draftDocument(values)?.changes ?? [], stale: Boolean(draftDocument(values) && draftDocument(values)!.baseHash !== sourceHash(source.html)) },
       problems: validateFieldChange(content.fields, values),
     });
@@ -380,6 +394,13 @@ const draftBody = z.object({
    * somebody whose actual remedy is to reload the page.
    */
   ifRevision: z.number().int().nonnegative().optional(),
+  /**
+   * The revision of each shared element this editor was shown, quoted back for
+   * the same reason `ifRevision` is: a header edited from two pages at once is
+   * one row, and a save that does not say which version it saw is a save that
+   * overwrites somebody.
+   */
+  sharedRevisions: z.record(z.number().int().nonnegative()).optional(),
   documentHash: z.string().length(64).nullable().optional(),
   values: z.record(
     z.object({
@@ -424,10 +445,33 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
     const content = discoverFields(editingSource(source.html, existing));
     const byId = new Map(content.fields.map((field) => [field.id, field]));
 
+    // A field belonging to a linked shared element is not this page's to store.
+    // The editor was shown the shared values merged in and sends them back with
+    // everything else; without this split they would be copied into the page's
+    // own draft, and the page and the shared element would immediately start to
+    // disagree about what the header says.
+    const shared = await sharedOnPage(page, editingSource(source.html, existing));
+    const own: typeof body.values = {};
+    const sharedEdits: typeof body.values = {};
+    for (const [id, edit] of Object.entries(body.values)) {
+      const owner = shared.scope[id];
+      if (owner && owner.state === "LINKED") sharedEdits[id] = edit;
+      else own[id] = edit;
+    }
+    const sharedResult = await saveSharedEdits({
+      html: editingSource(source.html, existing),
+      pageId: page.id,
+      scope: shared.scope,
+      values: sharedEdits,
+      revisions: body.sharedRevisions ?? {},
+      userId: req.dbUser?.id,
+      fields: content.fields,
+    });
+
     const values: Record<string, FieldValue> = document ? { [DOCUMENT_KEY]: { document } } : {};
     const unknown: string[] = [];
 
-    for (const [id, edit] of Object.entries(body.values)) {
+    for (const [id, edit] of Object.entries(own)) {
       const field = byId.get(id);
       if (!field) {
         unknown.push(id);
@@ -507,7 +551,9 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
     res.json({
       savedAt: saved?.draftSavedAt ?? null,
       revision: body.ifRevision + 1,
-      changed: Object.keys(values).length,
+      changed: Object.keys(values).length + sharedResult.applied,
+      /** The new revision of each shared element this save touched. */
+      sharedRevisions: sharedResult.revisions,
       unknown,
       problems: validateFieldChange(content.fields, values),
     });
@@ -565,7 +611,11 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
   try {
     const { page, site } = await loadPage(req, req.params.pageId);
     const source = await pageSource(site, page);
-    const values = draftValues(page);
+    const own = draftValues(page);
+    // The preview is where somebody checks a shared change on the pages they did
+    // not type it on, so the shared draft belongs here as much as in the panel.
+    const shared = await sharedOnPage(page, editingSource(source.html, own));
+    const values = { ...own, ...shared.values };
     const applied = applyValues(editingSource(source.html, values), fieldValues(values));
     // `?pick=1` is the visual editor asking for a preview it can click on. The
     // plain preview stays exactly as it was — it is what "Preview" means, and a
@@ -602,7 +652,23 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       const { page, site } = await loadPage(req, req.params.pageId);
       if (req.body?.ifRevision !== undefined && req.body.ifRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed after your review. Review it again before publishing.");
       const values = draftValues(page);
-      if (Object.keys(values).length === 0) throw new WebsiteError(400, "There is nothing to publish — this page has no unsaved changes.");
+      if (Object.keys(values).length === 0) {
+        // A page whose only pending change is a shared one is not a page with
+        // nothing on it. Publishing it here would write this page and leave the
+        // other six saying something else, so it is refused — and the refusal
+        // says where the button is instead of implying the work was lost.
+        const pending = await prisma.sharedElementInstance.findMany({
+          where: { pageId: page.id, state: "LINKED", element: { draft: { not: Prisma.DbNull } } },
+          include: { element: { select: { name: true, id: true } } },
+        });
+        if (pending.length) {
+          throw Object.assign(
+            new WebsiteError(409, `The unpublished changes on this page belong to ${pending.map((instance) => instance.element.name).join(" and ")}, which ${pending.length === 1 ? "is" : "are"} shared with other pages. Publish ${pending.length === 1 ? "it" : "them"} from the shared change so every page gets it at the same time.`),
+            { sharedElements: pending.map((instance) => ({ id: instance.element.id, name: instance.element.name })) },
+          );
+        }
+        throw new WebsiteError(400, "There is nothing to publish — this page has no unsaved changes.");
+      }
 
       // `fresh` is not an optimisation switch here. The whole purpose of the next
       // few lines is to decide whether the page has moved under this draft, and a

@@ -6,6 +6,7 @@ import { useAuth } from "../lib/auth";
 import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { WebsiteAssetLibrary } from "../components/WebsiteAssetLibrary";
+import { MakeSharedPanel, SharedElementPanel, SharedPublishReview } from "../components/WebsiteShared";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
 import { ElementInspector } from "../components/ElementInspector";
 import { INSPECTED_PROPERTIES, type ElementFacts } from "../lib/elementInspector";
@@ -562,6 +563,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
    * save closing over a stale revision would refuse its own previous save.
    */
   const revision = useRef(0);
+  /**
+   * The revision of each shared element on this page, quoted back on every save
+   * for the reason the page's own revision is: a header edited from two pages at
+   * once is one row on the server, and a save that cannot say which version it
+   * saw is a save that silently overwrites somebody.
+   */
+  const sharedRevisions = useRef<Record<string, number>>({});
+  /** Which shared change is open for review, if any. */
+  const [sharedReviewId, setSharedReviewId] = useState<string | null>(null);
   const documentHash = useRef<string | null>(null);
   /** Somebody else saved first. Their version and this one, side by side. */
   const [conflict, setConflict] = useState<DraftConflict | null>(null);
@@ -895,6 +905,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   // making it a dependency would rebuild that callback on every background
   // refetch — including the ones that fire while somebody is typing.
   const wornVariant = useRef<Record<string, string | undefined>>({});
+
+  // Kept current on every read of the page, including the paths that keep a
+  // local draft: a recovered draft can still be carrying a shared edit.
+  useEffect(() => {
+    if (!page.data?.shared) return;
+    sharedRevisions.current = Object.fromEntries(page.data.shared.elements.map((element) => [element.id, element.revision]));
+  }, [page.data]);
+
   useEffect(() => {
     if (!page.data) return;
     wornVariant.current = Object.fromEntries(
@@ -936,7 +954,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   const save = useMutation({
     mutationFn: (values: Record<string, FieldEdit>) =>
-      api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, { ifRevision: revision.current, documentHash: documentHash.current, values }),
+      api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, {
+        ifRevision: revision.current,
+        documentHash: documentHash.current,
+        sharedRevisions: sharedRevisions.current,
+        values,
+      }),
     onError: (err, submitted) => {
       failedSave.current = JSON.stringify(submitted);
       // A 409 is not a failure to report and move past — it is a choice to put
@@ -957,6 +980,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       dirty.current = Boolean(result.unknown?.length) || JSON.stringify(latestEdits.current) !== JSON.stringify(submitted);
       failedSave.current = result.unknown?.length ? JSON.stringify(submitted) : null;
       revision.current = result.revision;
+      // A shared element this save touched has moved on, and the next save has
+      // to quote the number it moved to rather than the one this screen loaded.
+      if (result.sharedRevisions) sharedRevisions.current = { ...sharedRevisions.current, ...result.sharedRevisions };
       try { if (!dirty.current) sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
       // A field the server does not know is a draft written against a page that
       // has since moved. Silence here reads as "saved" and it is not.
@@ -1190,6 +1216,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const changedCount = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length + (page.data.structure?.changed ? 1 : 0);
   const canPublish = access.data?.capabilities.publish === true;
   const readOnly = !canEdit || publish.isPending || reviewOpen || showVersions || structureBusy;
+  const pickedScope = pickedId ? page.data.shared?.scope[pickedId] : undefined;
+  const pickedShared = pickedScope ? page.data.shared?.elements.find((element) => element.instanceId === pickedScope.instanceId) : undefined;
   const pickedResponsive = pickedId ? (edits[pickedId]?.responsive ?? picked?.responsive ?? {}) : {};
   const pickedStyle = device === "desktop"
     ? pickedId ? (edits[pickedId]?.style ?? picked?.style ?? "") : ""
@@ -1258,6 +1286,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             dirty.current = false;
             try { sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
             setPublished(null);
+            void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+            setPreviewToken((token) => token + 1);
+          }}
+        />
+      )}
+      {sharedReviewId && (
+        <SharedPublishReview
+          sharedElementId={sharedReviewId}
+          onClose={() => setSharedReviewId(null)}
+          onPublished={() => {
+            setSharedReviewId(null);
+            dirty.current = false;
             void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
             setPreviewToken((token) => token + 1);
           }}
@@ -1489,7 +1529,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
             <WebsiteBreadcrumbs fields={allFields} selectedId={pickedId} onSelect={pick} />
             {page.data.structure?.stale && <p role="alert" className="bg-warn-surface px-3 py-2 text-xs text-warn-text">The source changed after these layout edits. Your draft is preserved. Discard it to work from the latest source; publishing is blocked.</p>}
-            <WebsiteLayers fields={allFields} edits={edits} problems={problems} selectedId={pickedId} onSelect={pick} onMove={readOnly || save.isPending ? undefined : (id, target, position) => { void runStructure(position, id, target); }} />
+            <WebsiteLayers fields={allFields} edits={edits} problems={problems} shared={page.data.shared?.scope} selectedId={pickedId} onSelect={pick} onMove={readOnly || save.isPending ? undefined : (id, target, position) => { void runStructure(position, id, target); }} />
             {picked && <div className="border-b border-line px-3 py-2">
               <div className="flex flex-wrap gap-2 text-[11px]">
                 <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.previousId} onClick={() => void runStructure("before", picked.id, picked.structure?.previousId)}>Move up</button>
@@ -1513,6 +1553,39 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </div>
               ) : (
                 <>
+                  {/* Before the controls, not beside them: somebody about to
+                      change a heading has to know whether they are changing one
+                      page or eight, and afterwards is too late. */}
+                  {!pickedShared && picked.kind === "container" && (
+                    <MakeSharedPanel
+                      siteId={site.id}
+                      pageId={pageId}
+                      fieldId={picked.id}
+                      fieldLabel={picked.label}
+                      readOnly={readOnly}
+                      onCreated={() => {
+                        dirty.current = false;
+                        void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+                      }}
+                    />
+                  )}
+                  {pickedShared && (
+                    <SharedElementPanel
+                      element={pickedShared}
+                      pageTitle={page.data.page.title}
+                      readOnly={readOnly}
+                      onReview={setSharedReviewId}
+                      onChanged={() => {
+                        // Detaching moves values into this page's own draft, and
+                        // re-linking takes them out again. Either way what this
+                        // screen is holding is now the old story.
+                        dirty.current = false;
+                        void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+                        setPreviewToken((token) => token + 1);
+                      }}
+                    />
+                  )}
+
                   <div className="border-b border-line px-4 py-3">
                     <p className="mb-2 text-xs font-semibold">{device === "desktop" ? "Base styles · all sizes" : device === "tablet" ? "Tablet styles · 1024px and below" : "Phone styles · 640px and below"}</p>
                     <p className="mb-3 text-[10px] leading-relaxed text-muted">{device === "desktop" ? "Tablet and phone overrides take precedence at smaller widths." : "Only the controls you change override the larger layout. Reset a value to inherit it again."}</p>
