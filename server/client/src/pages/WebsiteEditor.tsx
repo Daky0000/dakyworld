@@ -1508,14 +1508,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       <div className="flex min-h-0 flex-1">
         {mode === "visual" && (
           <aside className="flex w-[300px] flex-none flex-col border-r border-line bg-white">
-            <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-4 py-2.5">
-              <div className="min-w-0">
-                <div className="font-mono text-[9px] uppercase tracking-[.14em] text-muted">{picked ? picked.tag : "Nothing selected"}</div>
-                <div className="truncate font-display text-[13px] tracking-[-.02em]">{picked ? picked.label : "Pick something"}</div>
-              </div>
+            {/* What is selected, said once, at the top. The tag is a chip rather
+                than a line of its own: it is the one piece of jargon on this
+                panel and it should look like a label on a thing, not like a
+                heading with the same weight as the thing's name. */}
+            <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2.5">
+              <span className="shrink-0 rounded-md bg-sunken px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
+                {picked ? picked.tag : "—"}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink">{picked ? picked.label : "Nothing selected"}</span>
               {picked && (
-                <button type="button" onClick={() => pick(null)} className="shrink-0 text-[11px] text-muted transition hover:text-ink">
-                  Clear
+                <button
+                  type="button"
+                  onClick={() => pick(null)}
+                  aria-label="Clear the selection"
+                  title="Clear the selection"
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-sunken hover:text-ink"
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                    <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                  </svg>
                 </button>
               )}
             </div>
@@ -1586,16 +1598,36 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     />
                   )}
 
-                  <div className="border-b border-line px-4 py-3">
-                    <p className="mb-2 text-xs font-semibold">{device === "desktop" ? "Base styles · all sizes" : device === "tablet" ? "Tablet styles · 1024px and below" : "Phone styles · 640px and below"}</p>
-                    <p className="mb-3 text-[10px] leading-relaxed text-muted">{device === "desktop" ? "Tablet and phone overrides take precedence at smaller widths." : "Only the controls you change override the larger layout. Reset a value to inherit it again."}</p>
-                    {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && <p className="mb-3 text-[10px] leading-relaxed text-warn-text">This element has a base style marked !important. That property keeps its base value at every size until you change it under Desktop.</p>}
-                    <div className="flex gap-3 text-[11px]">
-                      <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="text-blue">Copy style</button>
-                      <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="text-blue disabled:text-faint">Paste style</button>
-                      {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="text-blue disabled:text-faint">Clear overrides</button>}
+                  {/* Which width is being edited, its measured size, and the
+                      three actions that belong to the whole element rather than
+                      to any one property. One line each: this bar sits above
+                      every panel and is not what somebody came to read. */}
+                  <div className="border-b border-line bg-sunken/60 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
+                        {device === "desktop" ? "All sizes" : device === "tablet" ? "Tablet and below" : "Phone only"}
+                      </span>
+                      <span className="font-mono text-[9px] text-muted">
+                        {computed.width || "—"} × {computed.height || "—"}
+                      </span>
                     </div>
-                    <p className="mt-2 text-[10px] text-muted">{computed.width || "—"} × {computed.height || "—"} · {picked.confidence === "annotated" ? "Stable field" : "Discovered element"}</p>
+                    <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
+                      {device === "desktop"
+                        ? "Tablet and phone overrides win at smaller widths."
+                        : "Only what you change here overrides the larger layout. Reset a value to inherit it again."}
+                    </p>
+                    {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && (
+                      <p className="mt-1.5 text-[10px] leading-relaxed text-warn-text">
+                        This element has a base style marked !important, so that property keeps its base value at every size until you change it
+                        under Desktop.
+                      </p>
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-ink transition hover:text-blue">Copy style</button>
+                      <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-ink transition hover:text-blue disabled:text-faint">Paste</button>
+                      {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-ink transition hover:text-blue disabled:text-faint">Clear overrides</button>}
+                      <span className="ml-auto self-center text-[9px] text-faint">{picked.confidence === "annotated" ? "Stable field" : "Discovered"}</span>
+                    </div>
                   </div>
 
                   {/* One inspector, drawn from what the element is. The frame is

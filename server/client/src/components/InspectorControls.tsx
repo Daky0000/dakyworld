@@ -54,11 +54,11 @@ export const COLOURS = [
 /** The faces the site actually uses, plus the two obvious fallbacks. */
 export const FONTS = [
   { label: "As designed", value: "" },
-  { label: "Space Grotesk (display)", value: '"Space Grotesk", sans-serif' },
-  { label: "DM Sans (body)", value: '"DM Sans", sans-serif' },
+  { label: "Space Grotesk", value: '"Space Grotesk", sans-serif' },
+  { label: "DM Sans", value: '"DM Sans", sans-serif' },
   { label: "Georgia", value: "Georgia, serif" },
   { label: "System sans", value: "system-ui, -apple-system, sans-serif" },
-  { label: "Monospace", value: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  { label: "Mono", value: "ui-monospace, SFMono-Regular, Menlo, monospace" },
 ];
 
 export const WEIGHTS = [
@@ -176,17 +176,90 @@ export function writeColour({ hex, alpha }: Colour): string {
 
 /* ------------------------------------------------------------- primitives */
 
+/**
+ * The look of a control, in one place.
+ *
+ * Inputs sit on the sunken surface rather than on white with a border. A panel
+ * of thirty bordered pills reads as thirty objects; a panel of thirty quiet
+ * wells reads as one instrument, and the border comes back the moment something
+ * is focused. Every control is the same height, because a column of controls
+ * whose heights disagree is the single thing that makes a panel look homemade.
+ */
+export const CONTROL_HEIGHT = "h-7";
 export const FIELD =
-  "flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-xl border border-line bg-white px-2 focus-within:border-blue focus-within:ring-2 focus-within:ring-blue/15";
-const NUM = "w-full min-w-0 bg-transparent text-right font-mono text-[11px] text-ink outline-none";
-const SELECT = "w-full min-w-0 bg-transparent text-right text-[11px] text-ink outline-none cursor-pointer";
+  `flex ${CONTROL_HEIGHT} min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-transparent bg-sunken px-2 transition focus-within:border-blue focus-within:bg-white focus-within:ring-2 focus-within:ring-blue/15 hover:border-line-strong`;
+const NUM = "w-full min-w-0 bg-transparent text-right font-mono text-[11px] text-ink outline-none placeholder:text-faint";
+const SELECT = "w-full min-w-0 cursor-pointer bg-transparent text-right text-[11px] text-ink outline-none";
 export const LABEL = "shrink-0 text-[10px] uppercase tracking-[.08em] text-muted";
 
-export function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * A group of controls, open or shut.
+ *
+ * Collapsible because a contextual inspector still has more in it than anybody
+ * looks at in one go, and the section that matters is different every time. The
+ * dot on the right is what makes a shut section honest: it says this group is
+ * carrying a change even while you cannot see it, which is the one thing a
+ * collapsed section can otherwise hide from somebody.
+ */
+export function Section({
+  title,
+  name,
+  children,
+  open = true,
+  changed,
+  onToggle,
+  action,
+}: {
+  title: string;
+  /** A stable hook for tests, so a restyle cannot silently break one. */
+  name?: string;
+  children: React.ReactNode;
+  open?: boolean;
+  /** Something in here has been overridden. */
+  changed?: boolean;
+  onToggle?: () => void;
+  /** A control that belongs to the group's heading rather than to a property. */
+  action?: React.ReactNode;
+}) {
   return (
-    <div className="border-b border-line px-4 py-3.5 last:border-b-0">
-      <div className="mb-2.5 font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted">{title}</div>
-      <div className="space-y-1.5">{children}</div>
+    <section data-section={name ?? title} className="border-b border-line last:border-b-0">
+      <div className="flex items-center gap-1 px-3 pr-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          disabled={!onToggle}
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-2.5 text-left text-[11px] font-semibold tracking-[.01em] text-ink transition hover:text-blue disabled:cursor-default disabled:hover:text-ink"
+        >
+          {onToggle && (
+            <span aria-hidden className={`text-[8px] text-faint transition-transform ${open ? "rotate-90" : ""}`}>
+              ▶
+            </span>
+          )}
+          <span className="truncate">{title}</span>
+          {changed && <span aria-label="Changed here" title="Something in this group has been changed" className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue" />}
+        </button>
+        {action}
+      </div>
+      {open && <div className="space-y-1 px-3 pb-3">{children}</div>}
+    </section>
+  );
+}
+
+/**
+ * A row: what the property is called, the control, and where its value is from.
+ *
+ * One line rather than a label above a box, because a panel three hundred pixels
+ * wide has no vertical space to spend on saying twice what a control already
+ * shows. The right-hand rail is a fixed width so that every origin in the panel
+ * lines up — a ragged right edge is what makes this kind of panel feel busy.
+ */
+export function Row({ label, control, rail }: { label?: string; control: React.ReactNode; rail?: React.ReactNode }) {
+  return (
+    <div data-row className="flex min-w-0 items-center gap-2">
+      {label !== undefined && <span title={label} className="w-[62px] shrink-0 truncate text-[10px] uppercase tracking-[.04em] text-muted">{label}</span>}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">{control}</div>
+      <div className="flex w-[50px] shrink-0 justify-end">{rail}</div>
     </div>
   );
 }
@@ -207,6 +280,7 @@ export function NumberField({
   max,
   placeholder = "auto",
   disabled,
+  bare,
   onChange,
   onCommit,
 }: {
@@ -218,6 +292,8 @@ export function NumberField({
   max?: number;
   placeholder?: string;
   disabled?: boolean;
+  /** The row already says what this is; the scrub handle moves onto the unit. */
+  bare?: boolean;
   onChange: (next: number | null) => void;
   onCommit?: () => void;
 }) {
@@ -267,9 +343,11 @@ export function NumberField({
 
   return (
     <div className={FIELD}>
-      <span className={`${LABEL} cursor-ew-resize select-none`} title={`${label} — drag to change`} onPointerDown={scrub}>
-        {label}
-      </span>
+      {!bare && (
+        <span className={`${LABEL} cursor-ew-resize select-none`} title={`${label} — drag to change`} onPointerDown={scrub}>
+          {label}
+        </span>
+      )}
       <input
         aria-label={label}
         className={NUM}
@@ -290,7 +368,13 @@ export function NumberField({
           if (Number.isFinite(parsed)) onChange(clamp(parsed));
         }}
       />
-      {unit && <span className="shrink-0 font-mono text-[9px] text-muted">{unit}</span>}
+      <span
+        className={`shrink-0 cursor-ew-resize select-none font-mono text-[9px] ${unit ? "text-muted" : "text-faint"}`}
+        title={`${label} — drag to change`}
+        onPointerDown={scrub}
+      >
+        {unit || "⇔"}
+      </span>
     </div>
   );
 }
@@ -300,18 +384,21 @@ export function SelectField({
   value,
   options,
   disabled,
+  bare,
   onChange,
 }: {
   label: string;
   value: string;
   options: { label: string; value: string }[];
   disabled?: boolean;
+  /** The row already says what this is; do not say it twice. */
+  bare?: boolean;
   onChange: (next: string) => void;
 }) {
   return (
     <div className={FIELD}>
-      <span className={LABEL}>{label}</span>
-      <select aria-label={label} className={SELECT} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+      {!bare && <span className={LABEL}>{label}</span>}
+      <select aria-label={label} className={`${SELECT} ${bare ? "text-left" : "text-right"}`} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -337,6 +424,7 @@ export function ColourField({
   value,
   allowNone,
   disabled,
+  bare,
   onChange,
   onCommit,
 }: {
@@ -344,6 +432,7 @@ export function ColourField({
   value: string;
   allowNone?: boolean;
   disabled?: boolean;
+  bare?: boolean;
   onChange: (next: string) => void;
   onCommit?: () => void;
 }) {
@@ -373,20 +462,20 @@ export function ColourField({
   return (
     <div className="relative" ref={box}>
       <div className={FIELD}>
-        <span className={LABEL}>{label}</span>
+        {!bare && <span className={LABEL}>{label}</span>}
         <button
           type="button"
           aria-label={label}
           aria-expanded={open}
           disabled={disabled}
           onClick={() => setOpen((was) => !was)}
-          className="ml-auto flex items-center gap-1.5"
+          className={`flex items-center gap-1.5 ${bare ? "w-full" : "ml-auto"}`}
           title={value || "As designed"}
         >
-          <span className="h-4 w-4 shrink-0 rounded border border-line-strong" style={{ background: CHECKER }}>
+          <span className="h-3.5 w-3.5 shrink-0 rounded border border-line-strong" style={{ background: CHECKER }}>
             <span className="block h-full w-full rounded" style={{ backgroundColor: value || "transparent" }} />
           </span>
-          <span className="font-mono text-[9px] uppercase text-muted">{value ? colour.hex.replace("#", "") : "auto"}</span>
+          <span className="font-mono text-[10px] uppercase text-ink">{value ? colour.hex.replace("#", "") : "auto"}</span>
         </button>
       </div>
 
@@ -485,8 +574,8 @@ export function IconToggle({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border text-[13px] transition ${
-        on ? "border-blue bg-blue/10 text-blue" : "border-line bg-white text-muted hover:text-ink"
+      className={`flex ${CONTROL_HEIGHT} w-7 shrink-0 items-center justify-center rounded-lg text-[12px] transition ${
+        on ? "bg-blue text-white" : "bg-sunken text-muted hover:text-ink"
       }`}
     >
       {children}
@@ -506,7 +595,7 @@ export function Segmented({
   onChange: (next: string) => void;
 }) {
   return (
-    <div className="flex h-8 flex-1 overflow-hidden rounded-xl border border-line bg-white">
+    <div className={`flex ${CONTROL_HEIGHT} flex-1 overflow-hidden rounded-lg bg-sunken p-0.5`}>
       {options.map((option) => (
         <button
           key={option.value}
@@ -514,8 +603,8 @@ export function Segmented({
           title={option.title}
           disabled={disabled}
           onClick={() => onChange(option.value === value ? "" : option.value)}
-          className={`flex flex-1 items-center justify-center border-r border-line text-[11px] last:border-r-0 transition ${
-            value === option.value ? "bg-blue/10 text-blue" : "text-muted hover:bg-sunken hover:text-ink"
+          className={`flex flex-1 items-center justify-center rounded-[5px] text-[11px] transition ${
+            value === option.value ? "bg-white text-ink shadow-sm shadow-ink/10" : "text-muted hover:text-ink"
           }`}
         >
           {option.label}
@@ -527,9 +616,9 @@ export function Segmented({
 
 export function SubBlock({ title, onRemove, children }: { title: string; onRemove: () => void; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-line bg-cream/60 p-2.5">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-ink">{title}</span>
+    <div className="rounded-lg bg-sunken p-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-[.06em] text-muted">{title}</span>
         <button type="button" onClick={onRemove} className="text-[10px] text-muted transition hover:text-danger-text">
           Remove
         </button>
@@ -591,5 +680,106 @@ export function Lines({ widths, align }: { widths: number[]; align: "start" | "c
         <span key={index} className="h-[1.5px] bg-current" style={{ width }} />
       ))}
     </span>
+  );
+}
+
+/* ------------------------------------------------------------------ icons */
+
+/**
+ * The layout controls, as pictures.
+ *
+ * "space-between" is a phrase somebody has to learn; five boxes pushed to the
+ * edges of a frame is the thing itself. Every icon here draws the arrangement it
+ * sets, at the size it is set at, which is why they are hand-drawn rectangles
+ * rather than a symbol font: an icon of a bar chart standing in for "distribute"
+ * would be exactly the jargon this replaces.
+ */
+function Frame({ children, vertical }: { children: React.ReactNode; vertical?: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden focusable="false" className={vertical ? "" : ""}>
+      <rect x="0.5" y="0.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" strokeOpacity=".25" />
+      {children}
+    </svg>
+  );
+}
+
+const bar = (x: number, y: number, width: number, height: number) => <rect key={`${x}-${y}`} x={x} y={y} width={width} height={height} rx="1" fill="currentColor" />;
+
+/** Where children sit along the main axis. */
+export const JUSTIFY_ICONS: Record<string, React.ReactNode> = {
+  "flex-start": <Frame>{[bar(3, 4, 2.5, 8), bar(6.5, 4, 2.5, 8)]}</Frame>,
+  center: <Frame>{[bar(4.5, 4, 2.5, 8), bar(8, 4, 2.5, 8)]}</Frame>,
+  "flex-end": <Frame>{[bar(6.5, 4, 2.5, 8), bar(10, 4, 2.5, 8)]}</Frame>,
+  "space-between": <Frame>{[bar(3, 4, 2.5, 8), bar(10.5, 4, 2.5, 8)]}</Frame>,
+  "space-around": <Frame>{[bar(3.5, 4, 2.5, 8), bar(9.5, 4, 2.5, 8)]}</Frame>,
+  "space-evenly": <Frame>{[bar(4, 4, 2.5, 8), bar(9, 4, 2.5, 8)]}</Frame>,
+};
+
+/** Where children sit across it. */
+export const ALIGN_ICONS: Record<string, React.ReactNode> = {
+  "flex-start": <Frame>{[bar(3.5, 3, 3, 5), bar(8, 3, 3, 8)]}</Frame>,
+  center: <Frame>{[bar(3.5, 5.5, 3, 5), bar(8, 4, 3, 8)]}</Frame>,
+  "flex-end": <Frame>{[bar(3.5, 8, 3, 5), bar(8, 5, 3, 8)]}</Frame>,
+  stretch: <Frame>{[bar(3.5, 3, 3, 10), bar(8, 3, 3, 10)]}</Frame>,
+  baseline: <Frame>{[bar(3.5, 4, 3, 6), bar(8, 6, 3, 4)]}</Frame>,
+};
+
+export const DIRECTION_ICONS: Record<string, React.ReactNode> = {
+  row: <Frame>{[bar(3, 4.5, 3.5, 7), bar(8, 4.5, 3.5, 7)]}</Frame>,
+  column: <Frame>{[bar(4.5, 3, 7, 3.5), bar(4.5, 8, 7, 3.5)]}</Frame>,
+  "row-reverse": <Frame>{[bar(3, 4.5, 3.5, 7), bar(8, 4.5, 3.5, 7)]}<path d="M11 2.5 L13 2.5" stroke="currentColor" strokeWidth="1.2" /></Frame>,
+  "column-reverse": <Frame>{[bar(4.5, 3, 7, 3.5), bar(4.5, 8, 7, 3.5)]}<path d="M13 11 L13 13" stroke="currentColor" strokeWidth="1.2" /></Frame>,
+};
+
+export const DISPLAY_ICONS: Record<string, React.ReactNode> = {
+  block: <Frame>{[bar(3, 3.5, 10, 3), bar(3, 8, 10, 3)]}</Frame>,
+  flex: DIRECTION_ICONS.row,
+  grid: <Frame>{[bar(3, 3, 4.5, 4.5), bar(8.5, 3, 4.5, 4.5), bar(3, 8.5, 4.5, 4.5), bar(8.5, 8.5, 4.5, 4.5)]}</Frame>,
+  "inline-block": <Frame>{[bar(3, 5.5, 4.5, 5), bar(8.5, 5.5, 4.5, 5)]}</Frame>,
+  none: (
+    <Frame>
+      <path d="M4 12 L12 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </Frame>
+  ),
+};
+
+/**
+ * A segmented control of pictures, with the words kept for the tooltip and for
+ * anybody using a screen reader. Falls back to a select when there are more
+ * choices than fit — five is the most that reads at this width.
+ */
+export function IconChoice({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; title: string; icon: React.ReactNode }>;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div role="radiogroup" aria-label={label} className={`flex ${CONTROL_HEIGHT} flex-1 items-center gap-0.5 rounded-lg bg-sunken p-0.5`}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={value === option.value}
+          aria-label={option.title}
+          title={option.title}
+          disabled={disabled}
+          onClick={() => onChange(option.value)}
+          className={`flex h-6 flex-1 items-center justify-center rounded-[5px] transition ${
+            value === option.value ? "bg-white text-ink shadow-sm shadow-ink/10" : "text-muted hover:text-ink"
+          }`}
+        >
+          {option.icon}
+        </button>
+      ))}
+    </div>
   );
 }

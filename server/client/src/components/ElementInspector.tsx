@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
 import { CssValueField } from "./CssValueField";
 import {
-  BORDER_STYLES, CASES, COLOURS, ColourField, EXTRA_LABEL, EXTRA_SEED, FONTS, IconToggle, Lines, NumberField,
-  PaletteContext, SIDES, Section, Segmented, SelectField, SubBlock, WEIGHTS, expandBox, parseStyle, readShadow,
-  readTransform, toNumber, writeStyle, type Extra,
+  ALIGN_ICONS, BORDER_STYLES, CASES, COLOURS, ColourField, DIRECTION_ICONS, DISPLAY_ICONS, EXTRA_LABEL, EXTRA_SEED,
+  FONTS, IconChoice, IconToggle, JUSTIFY_ICONS, Lines, NumberField, PaletteContext, Row, SIDES, Section, Segmented,
+  SelectField, SubBlock, WEIGHTS, expandBox, parseStyle, readShadow, readTransform, toNumber, writeStyle, type Extra,
 } from "./InspectorControls";
 import {
   ORIGIN_LABEL, ORIGIN_TITLE, PROPERTY_OWNER, SECTION_TITLE, elementCapabilities, inspectorSections, inspectorValue,
   isBrowserDefault, meaningfulValue, positionControls, readableValue,
-  type Device, type ElementFacts, type InspectorValue,
+  type Device, type ElementFacts, type InspectorValue, type SectionKey,
 } from "../lib/elementInspector";
 
 /**
@@ -77,6 +77,16 @@ export function ElementInspector({
 }) {
   const disabled = !!readOnly;
   const [showAdvanced, setShowAdvanced] = useState(false);
+  /**
+   * Which groups are open, and only where somebody has said otherwise.
+   *
+   * The default is worked out rather than fixed: a group is open if it is one of
+   * the few nearly every edit starts from, or if this element already has
+   * something set in it. A collapsed Typography on a heading whose font the site
+   * changed is a panel hiding the answer somebody opened it for.
+   */
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+  const toggleSection = (key: SectionKey) => setOpenSections((current) => ({ ...current, [key]: !isOpen(key) }));
 
   const declarations = useMemo(() => expandBox(expandBox(parseStyle(style), "padding"), "margin"), [style]);
   const sourceDeclarations = useMemo(() => expandBox(expandBox(parseStyle(source.sourceStyle), "padding"), "margin"), [source.sourceStyle]);
@@ -114,27 +124,50 @@ export function ElementInspector({
     onCommit?.();
   };
 
+  /** Every property this section owns, so a group can say whether it carries one. */
+  const sectionProperties = (section: SectionKey) =>
+    Object.keys(PROPERTY_OWNER).filter((property) => {
+      const owner = PROPERTY_OWNER[property]!;
+      return Array.isArray(owner) ? owner.includes(section) : owner === section;
+    });
+
+  const sectionChanged = (section: SectionKey) => sectionProperties(section).some((property) => value(property).overridden);
+  // Anything the panel would put a value in front of somebody for. A browser
+  // default nobody chose is not a reason to open a group; the site's own 780px
+  // max width is.
+  const sectionHasValue = (section: SectionKey) => sectionProperties(section).some((property) => meaningfulValue(value(property)));
+
   /**
-   * A control, with where the value in it came from underneath.
+   * Groups that open on their own.
    *
-   * The controls carry their own labels — that is the existing design language
-   * and it survives a 300px column better than a label above every box — so
-   * this adds only the origin line and the way back from an override.
+   * Every one of these is either what somebody came to change, or a group that
+   * is only drawn at all because it is relevant — a Position section exists here
+   * only for an element that is positioned, so opening it shut would be hiding
+   * the answer to the question that produced it.
    */
-  const Row = ({ property, children }: { property: string; children: React.ReactNode }) => (
-    <div className="min-w-0">
-      {children}
-      <div className="mt-0.5 flex justify-end">
-        <Origin value={value(property)} palette={swatches} disabled={disabled} onReset={() => clear(property)} />
-      </div>
-    </div>
+  const ALWAYS_OPEN: SectionKey[] = ["content", "image", "layout", "flexContainer", "gridContainer", "flexChild", "gridChild", "position", "typography"];
+  const isOpen = (section: SectionKey) => openSections[section] ?? (ALWAYS_OPEN.includes(section) || sectionHasValue(section));
+
+  /** The rail on the right of every row: where the value came from, and back. */
+  const rail = (property: string) => (
+    <Origin value={value(property)} palette={swatches} disabled={disabled} onReset={() => clear(property)} />
   );
 
-  /** A free CSS value — a length, a track list, an expression the site uses. */
-  const Text = ({ property, label }: { property: string; label: string }) => (
-    <Row property={property}>
-      <CssValueField property={property} label={label} value={value(property).effective} disabled={disabled} onChange={(next) => set(property, next)} />
-    </Row>
+  /**
+   * A free CSS value — a length, a track list, an expression the site uses.
+   *
+   * `short` is what the row is called on screen where the full name does not fit
+   * sixty-two pixels; the control keeps the full one as its accessible name, so
+   * a screen reader is never handed the abbreviation.
+   */
+  const Text = ({ property, label, short }: { property: string; label: string; short?: string }) => (
+    <Row
+      label={short ?? label}
+      rail={rail(property)}
+      control={
+        <CssValueField property={property} label={label} bare value={value(property).effective} disabled={disabled} onChange={(next) => set(property, next)} />
+      }
+    />
   );
 
   /** A fixed set of choices, always including whatever the site already uses. */
@@ -149,44 +182,166 @@ export function ElementInspector({
     // the first option, which reads as a choice somebody made.
     if (!effective) list.unshift({ label: "As designed", value: "" });
     return (
-      <Row property={property}>
-        <SelectField label={label} value={effective} disabled={disabled} options={list} onChange={(next) => { set(property, next); onCommit?.(); }} />
-      </Row>
+      <Row
+        label={label}
+        rail={rail(property)}
+        control={<SelectField label={label} bare value={effective} disabled={disabled} options={list} onChange={(next) => { set(property, next); onCommit?.(); }} />}
+      />
+    );
+  };
+
+  /**
+   * The same, drawn.
+   *
+   * Only where the choices are few and each one is a picture of itself — a row
+   * against a column, children pushed apart against children in the middle.
+   * Anything with more options than fit stays a menu rather than becoming a
+   * puzzle, and a value the site set that has no picture falls back to one too,
+   * because a control that cannot show the current value is worse than a menu.
+   */
+  const Pictures = ({ property, label, icons, options }: { property: string; label: string; icons: Record<string, React.ReactNode>; options: string[] }) => {
+    const effective = value(property).effective.trim();
+    const drawable = options.filter((option) => icons[option]);
+    if (effective && !drawable.includes(effective)) return <Choice property={property} label={label} options={options} />;
+    return (
+      <Row
+        label={label}
+        rail={rail(property)}
+        control={
+          <IconChoice
+            label={label}
+            value={effective}
+            disabled={disabled}
+            options={drawable.map((option) => ({ value: option, title: option, icon: icons[option] }))}
+            onChange={(next) => {
+              set(property, next);
+              onCommit?.();
+            }}
+          />
+        }
+      />
+    );
+  };
+
+  /**
+   * Two values that belong together on one line — width and height, the two
+   * gaps, a pair of offsets.
+   *
+   * Each keeps its own well and its own letter, and the rail says where they
+   * came from once. "Mixed" is not a hedge: two halves of a pair really can come
+   * from different places, and saying "Website" over a width the site set and a
+   * height somebody changed would be false about half of it.
+   */
+  const Pair = ({ label, first, second }: { label: string; first: { property: string; label: string; prefix: string }; second: { property: string; label: string; prefix: string } }) => {
+    // An empty label keeps the column, so a second pair under the first lines up
+    // with it rather than shifting left by sixty-two pixels.
+    const left = value(first.property);
+    const right = value(second.property);
+    const same = left.origin === right.origin && left.overridden === right.overridden;
+    return (
+      <Row
+        label={label}
+        rail={
+          same ? (
+            rail(first.property)
+          ) : (
+            <span
+              data-origin={`${first.property}+${second.property}`}
+              title={`${first.label}: ${ORIGIN_TITLE[left.origin]} ${second.label}: ${ORIGIN_TITLE[right.origin]}`}
+              className={`font-mono text-[9px] uppercase tracking-[.08em] ${left.overridden || right.overridden ? "text-blue" : "text-faint"}`}
+            >
+              Mixed
+            </span>
+          )
+        }
+        control={
+          <>
+            {[first, second].map((side) => (
+              <CssValueField
+                key={side.property}
+                property={side.property}
+                label={side.label}
+                prefix={side.prefix}
+                bare
+                value={value(side.property).effective}
+                disabled={disabled}
+                onChange={(next) => set(side.property, next)}
+              />
+            ))}
+          </>
+        }
+      />
     );
   };
 
   const Colour = ({ property, label }: { property: string; label: string }) => (
-    <Row property={property}>
-      <ColourField
-        label={label}
-        value={value(property).effective}
-        allowNone
-        disabled={disabled}
-        onChange={(next) => set(property, next)}
-        onCommit={onCommit}
-      />
-    </Row>
+    <Row
+      label={label}
+      rail={rail(property)}
+      control={
+        <ColourField
+          label={label}
+          bare
+          value={value(property).effective}
+          allowNone
+          disabled={disabled}
+          onChange={(next) => set(property, next)}
+          onCommit={onCommit}
+        />
+      }
+    />
   );
 
   const decoration = value("text-decoration").effective;
   const fontOptions = [...FONTS.filter((font) => font.value), ...(fonts ?? []).filter((face) => !FONTS.some((font) => font.value === face)).map((face) => ({ label: face, value: face }))];
 
+  const SideField = ({ property, side }: { property: "padding" | "margin"; side: (typeof SIDES)[number] }) => {
+    const current = value(`${property}-${side}`);
+    return (
+      <div className="relative min-w-0">
+        <CssValueField
+          property={`${property}-${side}`}
+          label={`${property} ${side}`}
+          bare
+          value={current.effective}
+          disabled={disabled}
+          onChange={(next) => set(`${property}-${side}`, next)}
+        />
+        {current.overridden && !disabled && (
+          <button
+            type="button"
+            aria-label={`Reset ${property}-${side}`}
+            title={`Changed here. Put ${property} ${side} back to the website's own styling.`}
+            onClick={() => clear(`${property}-${side}`)}
+            className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-blue"
+          />
+        )}
+      </div>
+    );
+  };
+
+  /**
+   * Padding and margin, drawn as the box they are.
+   *
+   * Four fields in a row labelled top, right, bottom and left are a list of four
+   * numbers somebody has to read; the same four arranged around a centre are the
+   * thing itself. The dashed square in the middle stands for the element, and a
+   * side that has been changed carries a dot rather than a word — there is no
+   * room for four origin labels, and the tooltip carries what the word would say.
+   */
   const box = (property: "padding" | "margin") => (
-    <div>
-      <div className="mb-1.5 text-[10px] uppercase tracking-[.08em] text-muted">{property}</div>
-      <div className="grid grid-cols-2 gap-1.5">
-        {SIDES.map((side) => (
-          <Row key={side} property={`${property}-${side}`}>
-            <CssValueField
-              property={`${property}-${side}`}
-              label={`${property} ${side}`}
-              name={side}
-              value={value(`${property}-${side}`).effective}
-              disabled={disabled}
-              onChange={(next) => set(`${property}-${side}`, next)}
-            />
-          </Row>
-        ))}
+    <div className="pt-0.5">
+      <div className="mb-1 text-[10px] uppercase tracking-[.06em] text-muted">{property}</div>
+      <div className="grid grid-cols-[1fr_28px_1fr] items-center gap-1">
+        <div />
+        <SideField property={property} side="top" />
+        <div />
+        <SideField property={property} side="left" />
+        <span aria-hidden className="mx-auto h-4 w-5 rounded border border-dashed border-line-strong" />
+        <SideField property={property} side="right" />
+        <div />
+        <SideField property={property} side="bottom" />
+        <div />
       </div>
     </div>
   );
@@ -212,39 +367,36 @@ export function ElementInspector({
   return (
     <PaletteContext.Provider value={swatches}>
       <div className={disabled ? "pointer-events-none opacity-50" : ""}>
-        {shown.has("content") && content && <Section title={SECTION_TITLE.content}>{content}</Section>}
+        {shown.has("content") && content && <Section name="content" title={SECTION_TITLE.content}>{content}</Section>}
 
         {shown.has("image") && (
-          <Section title={SECTION_TITLE.image}>
+          <Section name="image" title={SECTION_TITLE.image} open={isOpen("image")} changed={sectionChanged("image")} onToggle={() => toggleSection("image")}>
             <Choice property="object-fit" label="Fit" options={["cover", "contain", "fill", "none", "scale-down"]} />
             <Text property="object-position" label="Focal point" />
           </Section>
         )}
 
         {shown.has("layout") && (
-          <Section title={SECTION_TITLE.layout}>
-            <Choice property="display" label="Display" options={["block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid", "none"]} />
+          <Section name="layout" title={SECTION_TITLE.layout} open={isOpen("layout")} changed={sectionChanged("layout")} onToggle={() => toggleSection("layout")}>
+            <Pictures property="display" label="Display" icons={DISPLAY_ICONS} options={["block", "flex", "grid", "inline-block", "none"]} />
           </Section>
         )}
 
         {shown.has("flexContainer") && (
-          <Section title={SECTION_TITLE.flexContainer}>
-            <Choice property="flex-direction" label="Direction" options={["row", "column", "row-reverse", "column-reverse"]} />
+          <Section name="flexContainer" title={SECTION_TITLE.flexContainer} open={isOpen("flexContainer")} changed={sectionChanged("flexContainer")} onToggle={() => toggleSection("flexContainer")}>
+            <Pictures property="flex-direction" label="Direction" icons={DIRECTION_ICONS} options={["row", "column", "row-reverse", "column-reverse"]} />
             <Choice property="flex-wrap" label="Wrap" options={["nowrap", "wrap", "wrap-reverse"]} />
-            <Choice property="justify-content" label="Distribute" options={["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"]} />
-            <Choice property="align-items" label="Align" options={["stretch", "flex-start", "center", "flex-end", "baseline"]} />
-            <div className="grid grid-cols-2 gap-1.5">
-              <Text property="row-gap" label="Row gap" />
-              <Text property="column-gap" label="Column gap" />
-            </div>
+            <Pictures property="justify-content" label="Spread" icons={JUSTIFY_ICONS} options={["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"]} />
+            <Pictures property="align-items" label="Align" icons={ALIGN_ICONS} options={["stretch", "flex-start", "center", "flex-end", "baseline"]} />
+            <Pair label="Gap" first={{ property: "row-gap", label: "Row gap", prefix: "R" }} second={{ property: "column-gap", label: "Column gap", prefix: "C" }} />
           </Section>
         )}
 
         {shown.has("gridContainer") && (
-          <Section title={SECTION_TITLE.gridContainer}>
+          <Section name="gridContainer" title={SECTION_TITLE.gridContainer} open={isOpen("gridContainer")} changed={sectionChanged("gridContainer")} onToggle={() => toggleSection("gridContainer")}>
             <Text property="grid-template-columns" label="Columns" />
             <Text property="grid-template-rows" label="Rows" />
-            <Choice property="justify-content" label="Distribute" options={["start", "center", "end", "space-between", "space-around", "space-evenly"]} />
+            <Choice property="justify-content" label="Spread" options={["start", "center", "end", "space-between", "space-around", "space-evenly"]} />
             <Choice property="align-items" label="Align" options={["stretch", "start", "center", "end", "baseline"]} />
             <div className="grid grid-cols-2 gap-1.5">
               <Text property="row-gap" label="Row gap" />
@@ -254,17 +406,14 @@ export function ElementInspector({
         )}
 
         {shown.has("flexChild") && (
-          <Section title={SECTION_TITLE.flexChild}>
+          <Section name="flexChild" title={SECTION_TITLE.flexChild} open={isOpen("flexChild")} changed={sectionChanged("flexChild")} onToggle={() => toggleSection("flexChild")}>
             <Choice property="align-self" label="Align self" options={["auto", "stretch", "flex-start", "center", "flex-end", "baseline"]} />
-            <div className="grid grid-cols-2 gap-1.5">
-              <Text property="flex-grow" label="Grow" />
-              <Text property="flex-shrink" label="Shrink" />
-            </div>
+            <Pair label="Grow" first={{ property: "flex-grow", label: "Grow", prefix: "G" }} second={{ property: "flex-shrink", label: "Shrink", prefix: "S" }} />
           </Section>
         )}
 
         {shown.has("gridChild") && (
-          <Section title={SECTION_TITLE.gridChild}>
+          <Section name="gridChild" title={SECTION_TITLE.gridChild} open={isOpen("gridChild")} changed={sectionChanged("gridChild")} onToggle={() => toggleSection("gridChild")}>
             <Text property="grid-column" label="Column" />
             <Text property="grid-row" label="Row" />
             <Choice property="align-self" label="Align self" options={["auto", "stretch", "start", "center", "end", "baseline"]} />
@@ -272,32 +421,30 @@ export function ElementInspector({
         )}
 
         {shown.has("size") && (
-          <Section title={SECTION_TITLE.size}>
-            <div className="grid grid-cols-2 gap-1.5">
-              <Text property="width" label="Width" />
-              <Text property="height" label="Height" />
-            </div>
+          <Section name="size" title={SECTION_TITLE.size} open={isOpen("size")} changed={sectionChanged("size")} onToggle={() => toggleSection("size")}>
+            <Pair label="Size" first={{ property: "width", label: "Width", prefix: "W" }} second={{ property: "height", label: "Height", prefix: "H" }} />
             <Text property="max-width" label="Max width" />
           </Section>
         )}
 
         {shown.has("spacing") && (
-          <Section title={SECTION_TITLE.spacing}>
+          <Section name="spacing" title={SECTION_TITLE.spacing} open={isOpen("spacing")} changed={sectionChanged("spacing")} onToggle={() => toggleSection("spacing")}>
             {box("padding")}
             {box("margin")}
           </Section>
         )}
 
         {shown.has("typography") && (
-          <Section title={SECTION_TITLE.typography}>
+          <Section name="typography" title={SECTION_TITLE.typography} open={isOpen("typography")} changed={sectionChanged("typography")} onToggle={() => toggleSection("typography")}>
             <Choice property="font-family" label="Font" options={fontOptions} />
-            <div className="grid grid-cols-2 gap-1.5">
-              <Text property="font-size" label="Size" />
-              <Colour property="color" label="Colour" />
-            </div>
+            <Text property="font-size" label="Size" />
+            <Colour property="color" label="Colour" />
             <Choice property="font-weight" label="Weight" options={WEIGHTS.filter((weight) => weight.value)} />
 
-            <div className="flex gap-1.5 pt-0.5">
+            <Row
+              label="Style"
+              control={
+                <div className="flex flex-1 gap-1">
               <IconToggle
                 on={value("font-style").effective === "italic"}
                 title="Italic"
@@ -334,43 +481,46 @@ export function ElementInspector({
               >
                 <span className="font-serif line-through">S</span>
               </IconToggle>
-              <div className="flex-1" />
-            </div>
+                  <div className="flex-1" />
+                </div>
+              }
+            />
 
-            <Row property="text-align">
-              <div className="mb-1 text-[11px] text-muted">Alignment</div>
-              <Segmented
-                value={value("text-align").effective}
-                disabled={disabled}
-                onChange={(next) => {
-                  set("text-align", next);
-                  onCommit?.();
-                }}
-                options={[
-                  { value: "left", title: "Left", label: <Lines widths={[12, 8, 10]} align="start" /> },
-                  { value: "center", title: "Centre", label: <Lines widths={[12, 8, 10]} align="center" /> },
-                  { value: "right", title: "Right", label: <Lines widths={[12, 8, 10]} align="end" /> },
-                  { value: "justify", title: "Justify", label: <Lines widths={[12, 12, 12]} align="start" /> },
-                ]}
-              />
-            </Row>
+            <Row
+              label="Align"
+              rail={rail("text-align")}
+              control={
+                <Segmented
+                  value={value("text-align").effective}
+                  disabled={disabled}
+                  onChange={(next) => {
+                    set("text-align", next);
+                    onCommit?.();
+                  }}
+                  options={[
+                    { value: "left", title: "Left", label: <Lines widths={[10, 6, 8]} align="start" /> },
+                    { value: "center", title: "Centre", label: <Lines widths={[10, 6, 8]} align="center" /> },
+                    { value: "right", title: "Right", label: <Lines widths={[10, 6, 8]} align="end" /> },
+                    { value: "justify", title: "Justify", label: <Lines widths={[10, 10, 10]} align="start" /> },
+                  ]}
+                />
+              }
+            />
 
-            <div className="grid grid-cols-2 gap-1.5">
-              <Text property="line-height" label="Line height" />
-              <Text property="letter-spacing" label="Letter spacing" />
-            </div>
+            <Text property="line-height" label="Leading" />
+            <Text property="letter-spacing" label="Tracking" />
             <Choice property="text-transform" label="Case" options={CASES.filter((option) => option.value)} />
           </Section>
         )}
 
         {shown.has("background") && (
-          <Section title={SECTION_TITLE.background}>
+          <Section name="background" title={SECTION_TITLE.background} open={isOpen("background")} changed={sectionChanged("background")} onToggle={() => toggleSection("background")}>
             <Colour property="background-color" label="Background" />
           </Section>
         )}
 
         {shown.has("border") && (
-          <Section title={SECTION_TITLE.border}>
+          <Section name="border" title={SECTION_TITLE.border} open={isOpen("border")} changed={sectionChanged("border")} onToggle={() => toggleSection("border")}>
             {borderParts ? (
               <SubBlock
                 title="Border"
@@ -426,19 +576,24 @@ export function ElementInspector({
         )}
 
         {shown.has("effects") && (
-          <Section title={SECTION_TITLE.effects}>
-            <Row property="opacity">
-              <NumberField
-                label="Opacity"
-                value={toNumber(value("opacity").effective)}
-                step={0.05}
-                min={0}
-                max={1}
-                placeholder="1"
-                onChange={(next) => set("opacity", next === null ? "" : String(next))}
-                onCommit={onCommit}
-              />
-            </Row>
+          <Section name="effects" title={SECTION_TITLE.effects} open={isOpen("effects")} changed={sectionChanged("effects")} onToggle={() => toggleSection("effects")}>
+            <Row
+              label="Opacity"
+              rail={rail("opacity")}
+              control={
+                <NumberField
+                  label="Opacity"
+                  bare
+                  value={toNumber(value("opacity").effective)}
+                  step={0.05}
+                  min={0}
+                  max={1}
+                  placeholder="1"
+                  onChange={(next) => set("opacity", next === null ? "" : String(next))}
+                  onCommit={onCommit}
+                />
+              }
+            />
             {extras.includes("box-shadow") ? (
               <Shadow property="box-shadow" declarations={declarations} disabled={disabled} onSet={set} onCommit={onCommit} />
             ) : siteShadow ? (
@@ -473,46 +628,42 @@ export function ElementInspector({
         )}
 
         {shown.has("position") && (
-          <Section title={SECTION_TITLE.position}>
+          <Section name="position" title={SECTION_TITLE.position} open={isOpen("position")} changed={sectionChanged("position")} onToggle={() => toggleSection("position")}>
             <Choice property="position" label="Position" options={["static", "relative", "absolute", "fixed", "sticky"]} />
-            {offsets.length > 0 && (
-              <div className="grid grid-cols-2 gap-1.5">
-                {offsets.map((side) => (
-                  <Text key={side} property={side} label={side} />
-                ))}
-              </div>
+            {/* Exactly the offsets this position obeys, and no others: a sticky
+                element ignores left and right, so it is offered neither. */}
+            {offsets.includes("right") && (
+              <>
+                <Pair label="Offset" first={{ property: "top", label: "top", prefix: "T" }} second={{ property: "left", label: "left", prefix: "L" }} />
+                <Pair label="" first={{ property: "bottom", label: "bottom", prefix: "B" }} second={{ property: "right", label: "right", prefix: "R" }} />
+              </>
             )}
-            {zIndex && <Text property="z-index" label="Stack order" />}
+            {!offsets.includes("right") && offsets.includes("top") && (
+              <Pair label="Offset" first={{ property: "top", label: "top", prefix: "T" }} second={{ property: "bottom", label: "bottom", prefix: "B" }} />
+            )}
+            {zIndex && <Text property="z-index" label="Stack order" short="Stack" />}
           </Section>
         )}
 
         {/* -------------------------------------------------------- advanced */}
-        <div className="border-b border-line px-4 py-3 last:border-b-0">
-          <button
-            type="button"
-            onClick={() => setShowAdvanced((was) => !was)}
-            aria-expanded={showAdvanced}
-            className="flex w-full items-center justify-between gap-2 font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted transition hover:text-ink"
-          >
-            <span>{SECTION_TITLE.advanced}</span>
-            <span aria-hidden>{showAdvanced ? "▾" : "▸"}</span>
-          </button>
-
-          {showAdvanced && (
-            <div className="mt-3 space-y-1.5">
+        <Section
+          name="advanced"
+          title={SECTION_TITLE.advanced}
+          open={showAdvanced}
+          changed={sectionChanged("advanced")}
+          onToggle={() => setShowAdvanced((was) => !was)}
+        >
+          <div className="space-y-1">
               {!shown.has("position") && (
                 <Choice property="position" label="Position" options={["static", "relative", "absolute", "fixed", "sticky"]} />
               )}
               <Choice property="overflow" label="Overflow" options={["visible", "hidden", "auto", "scroll"]} />
               <Choice property="box-sizing" label="Sizing model" options={["border-box", "content-box"]} />
-              <div className="grid grid-cols-2 gap-1.5">
-                <Text property="min-width" label="Min width" />
-                <Text property="min-height" label="Min height" />
-              </div>
+              <Pair label="Minimum" first={{ property: "min-width", label: "Min width", prefix: "W" }} second={{ property: "min-height", label: "Min height", prefix: "H" }} />
               <Text property="max-height" label="Max height" />
               {capabilities.flexChild && <Text property="order" label="Order" />}
               {capabilities.gridChild && <Choice property="justify-self" label="Justify self" options={["auto", "stretch", "start", "center", "end"]} />}
-              {!zIndex && <Text property="z-index" label="Stack order" />}
+              {!zIndex && <Text property="z-index" label="Stack order" short="Stack" />}
               <Text property="background-image" label="Gradient" />
               <p className="text-[10px] leading-relaxed text-muted">
                 A linear-gradient or radial-gradient. Photographs are replaced through the picture control.
@@ -602,9 +753,8 @@ export function ElementInspector({
                   Put this element back as the website has it
                 </button>
               )}
-            </div>
-          )}
-        </div>
+          </div>
+        </Section>
       </div>
     </PaletteContext.Provider>
   );
@@ -635,6 +785,7 @@ function Origin({
   return (
     <span className="flex shrink-0 items-center gap-1">
       <span
+        data-origin={value.property}
         title={`${ORIGIN_TITLE[value.origin]}${readable ? ` Now: ${readable}.` : ""}`}
         className={`font-mono text-[9px] uppercase tracking-[.08em] ${value.overridden ? "text-blue" : "text-faint"}`}
       >
