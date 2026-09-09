@@ -1,5 +1,7 @@
 # Website Builder — the whole plan, and where it has got to
 
+> Current implementation and verification status: [Website editor](website-editor.md). The roadmap below records the original product plan; its older status labels are superseded by that implementation record.
+
 The Website Builder is the first thing this company has built to **sell** rather
 than to use. This file is the map: every part of
 `AI_Website_Editor_System_Plan.pdf` (27 Aug 2026), what it means here, whether it

@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { useWebsiteSites, type WebsiteAction } from "./WebsiteGuard";
 
 /**
  * The Website Builder's own navigation, one level below the OS menu.
@@ -25,6 +26,7 @@ type Tab = {
   label: string;
   end?: boolean;
   needs?: string;
+  siteAction?: WebsiteAction;
   /**
    * A screen that is planned and not built.
    *
@@ -50,21 +52,25 @@ type Tab = {
  * they cannot use yet.
  */
 export const WEBSITE_TABS: Tab[] = [
-  { to: "/website", label: "Overview", end: true, needs: "website.view" },
-  { to: "/website/sites", label: "Sites", needs: "website.view" },
-  { to: "/website/assets", label: "Assets", needs: "website.manage", unbuilt: true },
+  { to: "/website", label: "Overview", end: true },
+  { to: "/website/sites", label: "Sites" },
+  { to: "/website/assets", label: "Assets" },
   { to: "/website/ai", label: "AI Assistant", needs: "website.manage", unbuilt: true },
   { to: "/website/updates", label: "Updates", needs: "website.manage", unbuilt: true },
-  { to: "/website/team", label: "Team & Permissions", needs: "website.manage", unbuilt: true },
-  { to: "/website/audit", label: "Audit Log", needs: "website.manage", unbuilt: true },
-  { to: "/website/settings", label: "Settings", needs: "website.manage", unbuilt: true },
+  { to: "/website/team", label: "Team & Permissions" },
+  { to: "/website/audit", label: "Activity" },
+  { to: "/website/settings", label: "Settings", siteAction: "manage" },
+  { to: "/website/source", label: "Source files", siteAction: "source" },
   { to: "/website/billing", label: "License & Billing", needs: "website.manage", unbuilt: true },
 ];
 
 export function WebsiteLayout() {
   const { can } = useAuth();
+  const sites = useWebsiteSites();
   const location = useLocation();
-  const tabs = WEBSITE_TABS.filter((tab) => !tab.needs || can(tab.needs));
+  const tabs = WEBSITE_TABS.filter((tab) => tab.siteAction
+    ? can("website.manage") || sites.data?.some(site => site.capabilities?.[tab.siteAction!])
+    : !tab.needs || can(tab.needs));
 
   // A site's own pages live under /website/sites/:id, so the Sites tab stays lit
   // while somebody is inside one. Without this, opening a site makes the strip

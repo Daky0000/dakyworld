@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, setUnauthorizedHandler } from "./api";
+import { useQueryClient } from "@tanstack/react-query";
 
 export type CurrentUser = {
   id: string;
@@ -9,6 +10,8 @@ export type CurrentUser = {
   role: string;
   roleId: string | null;
   roleName: string | null;
+  /** External accounts are limited to explicitly assigned websites. */
+  external?: boolean;
   /**
    * Everything this person may do, resolved by the server.
    *
@@ -55,6 +58,7 @@ type AuthState = {
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -75,20 +79,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // If a session expires or is revoked while the tab is open, any 401 drops
   // straight back to the login screen instead of leaving a dead-looking UI.
   useEffect(() => {
-    setUnauthorizedHandler(() => setUser(null));
-  }, []);
+    setUnauthorizedHandler(() => { queryClient.clear(); setUser(null); });
+  }, [queryClient]);
 
   const login = useCallback(async (email: string, password: string) => {
     const result = await api.post<LoginResult>("/auth/login", { email, password });
     // Only a real user goes into state. Setting one from a challenge would
     // render the whole app behind a login that has not finished.
-    if (!isMfaChallenge(result)) setUser(result);
+    if (!isMfaChallenge(result)) { queryClient.clear(); setUser(result); }
     return result;
-  }, []);
+  }, [queryClient]);
 
   const completeLogin = useCallback(async (challenge: string, code: string) => {
-    setUser(await api.post<CurrentUser>("/auth/login/2fa", { challenge, code }));
-  }, []);
+    const current = await api.post<CurrentUser>("/auth/login/2fa", { challenge, code });
+    queryClient.clear();
+    setUser(current);
+  }, [queryClient]);
 
   const logout = useCallback(async () => {
     try {
@@ -97,10 +103,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // An already-dead session still means logged out as far as the UI goes.
       if (!(err instanceof ApiError)) throw err;
     }
+    queryClient.clear();
     setUser(null);
-  }, []);
+  }, [queryClient]);
 
-  const can = useCallback((permission: string) => user?.permissions?.includes(permission) ?? false, [user]);
+  const can = useCallback((permission: string) => !user?.external && (user?.permissions?.includes(permission) ?? false), [user]);
 
   return (
     <AuthContext.Provider value={{ user, loading, can, login, completeLogin, logout }}>{children}</AuthContext.Provider>

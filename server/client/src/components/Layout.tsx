@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { useWebsiteSites } from "./WebsiteGuard";
 
 type NavItem = {
   to: string;
@@ -266,9 +267,12 @@ function MobileNav({ items }: { items: NavItem[] }) {
 
 export function Layout() {
   const { user, can, logout } = useAuth();
+  const websites = useWebsiteSites();
   const navigate = useNavigate();
   const location = useLocation();
-  const allowed = (item: NavItem) => !item.needs || can(item.needs);
+  const allowed = (item: NavItem) => item.to === "/website"
+    ? Boolean(user?.external || can("website.view") || websites.data?.length)
+    : !user?.external && (!item.needs || can(item.needs));
   // Children are gated too, so somebody with read-only Leads sees "All leads"
   // and not Capture or Import — the same 403s the API would return.
   //

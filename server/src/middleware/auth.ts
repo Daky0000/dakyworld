@@ -179,19 +179,16 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
  * invoice and every email in the business, because nothing between `requireAuth`
  * and the routers ever looked at it.
  *
- * There is no client portal yet, and no column linking a user to the client
- * they belong to, so there is nothing to scope a client's view *down to*. Until
- * there is, the honest position is a closed door rather than an open one: the
- * role can be assigned and the account can sign in and see itself, and that is
- * all. Widen this deliberately, per route, when the portal exists — never by
- * deleting the check.
+ * External accounts can enter the website area, where every site and page is
+ * protected by SiteMember access and collection queries are membership scoped.
+ * The internal OS stays closed even if an external role has global permissions.
  *
  * Note this sits *on top of* permissions rather than instead of them. An
  * external role with `clients.view` ticked still gets nothing, because the
  * ticks describe internal screens and there is no per-client scoping behind
  * them yet. Two independent reasons to say no is the right number here.
  */
-const EXTERNAL_ALLOWED = [/^\/auth\//, /^\/users\/me$/, /^\/health$/];
+const EXTERNAL_ALLOWED = [/^\/auth\//, /^\/users\/me$/, /^\/health$/, /^\/website(?:\/|$)/];
 
 export function scopeExternal(req: Request, res: Response, next: NextFunction) {
   if (!req.dbUser?.accessRole?.external) return next();

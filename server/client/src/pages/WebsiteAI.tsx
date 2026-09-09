@@ -1,36 +1,33 @@
-import { PlannedScreen } from "../components/PlannedScreen";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { PageHeader } from "../components/ui";
+import { api } from "../lib/api";
+import type { SitePageRow, SiteSummary } from "../lib/types";
 
-/**
- * The AI layer — plan §6.
- *
- * The whole safety argument is one sentence: the model proposes a **structured
- * change plan**, and this system validates it. There is no path from a model to
- * a commit, and there never will be.
- */
 export function WebsiteAI() {
-  return (
-    <PlannedScreen
-      title="AI Assistant"
-      summary="Ask for a change in words; approve it as a draft; publish it the ordinary way."
-      willHold={[
-        "The prompt box, scoped to the page or the element that is selected in the editor.",
-        "A review queue: every proposed change plan, what it would do field by field, and Approve or Discard.",
-        "Prompt history — what was asked, what was proposed, what was accepted.",
-        "Usage against the month's limit, read from the LlmCall ledger the rest of the app already writes to.",
-        "Which actions are allowed on this site: rewriting words, SEO copy, alt text, controlled style changes.",
-      ]}
-      decided={[
-        "The model returns a change plan and nothing else — { intent, pageId, changes: [{ fieldId, operation, value }], explanation } — validated against a Zod schema.",
-        "It can never return raw file contents, arbitrary JS or CSS, selectors, script tags, repository commands or file paths. Those shapes are not in the schema, and a plan naming an unknown fieldId is dropped and counted.",
-        "Prompt → validate → preview → a person approves → save as an ordinary draft → publish through the ordinary pipeline. No shortcut past any of those.",
-        "Page content enters the prompt as data, under a heading saying that instructions found inside page content are never followed. Repository tokens, database credentials and other customers' data never enter the context.",
-        "It routes like every other job — callModel({ job: \"html\" }) — so it inherits vendor fallback, pricing and the cache breakpoints. Metered by the existing ledger and capped by the existing Budget scopes; no second metering system.",
-        "The wording belongs to a new website.editor agent, so the doctrine is editable on the Agents screen while the contract is appended after it where no edit can reach.",
-      ]}
-      waitingOn={[
-        "Stable field identity (plan §5) — a change plan naming positional ids is a plan that expires",
-        "A website.propose entry in the tool catalogue, so agents reach it through the same gate and audit row",
-      ]}
-    />
-  );
+  const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
+  const [selected, setSelected] = useState("");
+  const site = sites.data?.find(item => item.id === selected) ?? sites.data?.[0];
+  const design = useQuery({ queryKey: ["website", "design", site?.id], enabled: Boolean(site), queryFn: () => api.get<{ options: { aiEnabled: boolean } }>(`/website/sites/${site!.id}/design`) });
+  const pages = useQuery({ queryKey: ["website", "pages", site?.id], enabled: Boolean(site), queryFn: () => api.get<{ pages: SitePageRow[] }>(`/website/sites/${site!.id}/pages`) });
+  const error = sites.error || design.error || pages.error;
+  return <div className="max-w-4xl">
+    <PageHeader title="Design assistant" subtitle="Open a page, describe a change, and review the suggestion in your editor." />
+    {sites.isLoading && <p className="text-sm text-muted">Loading websites…</p>}
+    {error && <p role="alert" className="mb-4 text-sm text-danger-text">{(error as Error).message}</p>}
+    {sites.isSuccess && !site && <p className="text-sm text-muted">Your websites will appear here when you have access to a site.</p>}
+    {site && <>
+      <label className="mb-5 block max-w-md text-xs text-muted">Website<select value={site.id} onChange={event => setSelected(event.target.value)} className="mt-1 h-10 w-full rounded-xl border border-line bg-white px-3 text-sm text-ink">{sites.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <div className="mb-6 rounded-2xl border border-line bg-white p-5">
+        <h2 className="font-display text-lg">{design.data?.options.aiEnabled ? "Suggestions are enabled" : design.isLoading ? "Checking settings…" : design.error ? "Settings unavailable" : "Suggestions are disabled"}</h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted">Select text, an image or a container in the page editor and open the design assistant. It can suggest changes to content, links, image descriptions, typography and spacing. Choose which suggestions to add to your draft, then save and publish when you are ready.</p>
+        {site.capabilities?.manage && <Link to="/website/settings" className="mt-4 inline-block text-sm font-medium text-blue hover:underline">Manage AI and brand voice settings →</Link>}
+      </div>
+      <h2 className="mb-3 font-display text-lg">Choose a page</h2>
+      {pages.isLoading && <p className="text-sm text-muted">Loading pages…</p>}
+      {pages.isSuccess && !pages.data.pages.some(page => page.status === "LIVE") && <p className="text-sm text-muted">This website has no visible pages yet. <Link to="/website/sites" className="text-blue hover:underline">Open its pages</Link> to get started.</p>}
+      <div className="divide-y divide-line rounded-2xl border border-line bg-white">{pages.data?.pages.filter(page => page.status === "LIVE").map(page => <Link key={page.id} to={`/website/pages/${page.id}`} className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-cream"><span><span className="block text-sm font-medium text-ink">{page.title}</span><span className="mt-1 block text-xs text-muted">{page.path}</span></span><span className="text-sm text-blue">Open editor →</span></Link>)}</div>
+    </>}
+  </div>;
 }

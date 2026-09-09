@@ -48,6 +48,14 @@ export interface WriterJob {
 
 export const WRITER_JOBS: WriterJob[] = [
   {
+    key: "website.editor",
+    label: "Website editing suggestions",
+    agentKey: "website.editor",
+    where: "services/websiteAssistant.ts",
+    what: "A proposed change to existing website content or visual controls, reviewed by a person before it enters their draft.",
+    outward: true,
+  },
+  {
     key: "email.cold",
     label: "Cold email",
     agentKey: "outreach.writer",

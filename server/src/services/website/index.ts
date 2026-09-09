@@ -35,6 +35,7 @@
  */
 
 import { decodeEntities, parseHtml } from "./parse.js";
+import { DOCUMENT_KEY, draftDocument, editingSource, fieldValues } from "./document.js";
 import {
   applyValues,
   isVariantOfStem,
@@ -51,6 +52,7 @@ import {
 } from "./regions.js";
 import { checkLink, sanitizePlain, sanitizeRich } from "./sanitize.js";
 import { previewDocument, type PreviewDocument } from "./site.js";
+import { normalizeResponsive, responsiveEqual, type ResponsiveStyles } from "./responsive.js";
 
 /**
  * Bumped when the shape of a *stored* draft or version changes.
@@ -59,12 +61,21 @@ import { previewDocument, type PreviewDocument } from "./site.js";
  * stored draft can be compared against when the field model changes underneath
  * it, which is the one migration this module cannot do by re-reading the page.
  */
-export const EDITOR_CORE_VERSION = 1;
+export const EDITOR_CORE_VERSION = 3;
+export { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, versionValues, restoreDocument } from "./document.js";
+export { changeStructure, structureControls, StructureError } from "./structure.js";
+export type { StructureAction, StructureControl } from "./structure.js";
+
+// Literal React source editing stays behind the same core boundary as HTML.
+export { JSX_ADAPTER_VERSION, discoverJsxFields, applyJsxValues, mapJsxFieldsToHtml } from "./jsx.js";
+export type { JsxField, JsxFieldKind, JsxChange, JsxDiscovery, JsxSourceReference, JsxIssue, JsxApplyResult, JsxHtmlMapping, JsxHtmlMappingReport } from "./jsx.js";
 
 // --- The parts that were already here -------------------------------------
 
 export { applyValues, readPage, safeStyle, checkLink, sanitizePlain, sanitizeRich, isVariantOfStem, resolveVariantChange, variantLabel };
 export type { ApplyResult, FieldKind, FieldValue, PageContent, PreviewDocument, SiteField, SiteSection };
+export { normalizeResponsive, responsiveEqual, safeResponsiveStyle, renderResponsiveCss, responsiveStyleCss, regenerateResponsiveStyles, RESPONSIVE_BREAKPOINTS, RESPONSIVE_TOKEN } from "./responsive.js";
+export type { ResponsiveStyles, ResponsiveStyleEntry } from "./responsive.js";
 
 /** The document's structure. Rarely wanted directly — `discoverFields` is the usual way in. */
 export const parse = parseHtml;
@@ -91,18 +102,21 @@ export const buildPreview = previewDocument;
  */
 export function sanitizeValue(
   field: SiteField,
-  raw: { value?: string; href?: string; alt?: string; style?: string; variant?: string | null; newTab?: boolean },
+  raw: { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean },
 ): FieldValue {
   const next: FieldValue = {};
 
-  if (raw.value !== undefined) {
+  if (raw.value !== undefined && field.kind !== "container") {
     const cleaned =
       field.kind === "richtext" ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
     if (cleaned !== field.value) next.value = cleaned;
   }
   if (raw.href !== undefined && raw.href.trim() !== (field.href ?? "")) next.href = raw.href.trim();
   if (raw.alt !== undefined && raw.alt !== (field.alt ?? "")) next.alt = raw.alt;
-  if (raw.style !== undefined && safeStyle(raw.style) !== (field.style ?? "")) next.style = safeStyle(raw.style);
+  if (raw.style !== undefined && safeStyle(raw.style, field.style) !== (field.style ?? "")) next.style = safeStyle(raw.style, field.style);
+  if (raw.responsive !== undefined && field.attrInsert !== undefined && !responsiveEqual(raw.responsive, field.responsive)) {
+    next.responsive = normalizeResponsive(raw.responsive);
+  }
 
   // A button's style, cleaned to the one shape it may take: another token under
   // this button's own stem. Anything else is dropped here rather than refused,
@@ -127,7 +141,9 @@ export function sanitizeValue(
   // can be trusted an hour later: ids are positional, so without it a month-old
   // edit would write itself into whatever now sits at that position.
   next.original = field.value;
-  if (field.style !== undefined) next.originalStyle = field.style;
+  if (field.structure) next.originalStructure = field.structure;
+  if (raw.style !== undefined) next.originalStyle = field.style ?? "";
+  if (raw.responsive !== undefined) next.originalResponsive = normalizeResponsive(field.responsive);
   if (field.href !== undefined) next.originalHref = field.href;
   if (field.alt !== undefined) next.originalAlt = field.alt;
   if (field.variant !== undefined) next.originalVariant = field.variant;
@@ -149,6 +165,7 @@ export function validateFieldChange(fields: SiteField[], values: Record<string, 
   const problems: FieldProblem[] = [];
 
   for (const [id, edit] of Object.entries(values)) {
+    if (id === DOCUMENT_KEY) continue;
     const field = byId.get(id);
     if (!field) {
       problems.push({
@@ -227,7 +244,7 @@ export type PublishPlan = {
  * layer from ever needing its own copy of the rules.
  */
 export function buildPublishPlan(input: { source: string; values: Record<string, FieldValue> }): PublishPlan {
-  const content = readPage(input.source);
+  const content = readPage(editingSource(input.source, input.values));
   const problems = validateFieldChange(content.fields, input.values);
 
   // A value that cannot be published is not spliced in even provisionally: the
@@ -252,7 +269,7 @@ export function buildPublishPlan(input: { source: string; values: Record<string,
 // --- New: saying what changed, in words --------------------------------------
 
 /** Which part of a field moved. A picture and its description are two changes. */
-export type ChangedPart = "words" | "destination" | "picture" | "description" | "styling" | "button style" | "opens in";
+export type ChangedPart = "words" | "destination" | "picture" | "description" | "styling" | "button style" | "opens in" | "structure";
 
 export type FieldChangeSummary = {
   id: string;
@@ -315,6 +332,12 @@ export function describeChanges(fields: SiteField[], values: Record<string, Fiel
   const out: FieldChangeSummary[] = [];
 
   for (const [id, edit] of Object.entries(values)) {
+    if (id === DOCUMENT_KEY) {
+      const document = draftDocument(values);
+      if (document?.summary) out.push(...document.summary);
+      if (document?.changes.length) out.push({ id, label: "Page layout", kind: "container", part: "structure", from: "Original page layout", to: document.changes.join("; ") });
+      continue;
+    }
     const field = byId.get(id);
     // A field the page no longer has still gets a line. This runs over versions
     // as well as over live drafts, and "we cannot show you what that publish did
@@ -340,6 +363,14 @@ export function describeChanges(fields: SiteField[], values: Record<string, Fiel
     }
     if (edit.style !== undefined) {
       out.push({ id, label, kind, part: "styling", from: shown(edit.originalStyle), to: shown(edit.style) });
+    }
+    if (edit.responsive !== undefined) {
+      const before = normalizeResponsive(edit.originalResponsive);
+      const after = normalizeResponsive(edit.responsive);
+      for (const device of ["tablet", "mobile"] as const) {
+        if (before[device] === after[device]) continue;
+        out.push({ id, label: `${label} (${device === "tablet" ? "tablet" : "phone"})`, kind, part: "styling", from: before[device] ? shown(before[device]) : "inherited styling", to: after[device] ? shown(after[device]) : "inherited styling" });
+      }
     }
     if (edit.variant !== undefined) {
       // Shown as the word somebody picked — "Primary" — rather than the class,
@@ -376,7 +407,7 @@ export function categoriseChanges(summaries: FieldChangeSummary[]): ChangeCatego
     text: summaries.some((entry) => entry.part === "words"),
     links: summaries.some((entry) => entry.part === "destination" || entry.part === "opens in"),
     images: summaries.some((entry) => entry.part === "picture" || entry.part === "description"),
-    styles: summaries.some((entry) => entry.part === "styling" || entry.part === "button style"),
+    styles: summaries.some((entry) => entry.part === "styling" || entry.part === "button style" || entry.part === "structure"),
     seo: summaries.some((entry) => entry.id.startsWith("meta.")),
   };
 }

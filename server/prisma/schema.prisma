@@ -82,6 +82,7 @@ model AccessRole {
 }
 
 model User {
+  siteMemberships SiteMember[]
   id                  String   @id @default(cuid())
   email               String   @unique
   // scrypt hash, see server/src/lib/password.ts. Null for members an Owner
@@ -3981,6 +3982,10 @@ model Rehearsal {
 /// page turns out to have. See services/website/regions.ts for why that is the
 /// shape rather than a block tree.
 model Site {
+  members SiteMember[]
+  assets SiteAsset[]
+  auditEvents SiteAuditEvent[]
+  settings Json @default("{}")
   id   String @id @default(cuid())
   name String
   /// Identifies it in URLs and in the API. `dakyworld` for the company's own.
@@ -4017,6 +4022,7 @@ enum SitePageStatus {
 
 /// One page of a site: one file in the repository, one address on the web.
 model SitePage {
+  sourceHtml String?
   id     String @id @default(cuid())
   site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
   siteId String
@@ -4094,4 +4100,56 @@ model SitePageVersion {
 
   @@unique([pageId, number])
   @@index([pageId, createdAt])
+}
+
+model SiteAsset {
+  id String @id @default(cuid())
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String
+  filename String
+  repoPath String
+  contentType String
+  content Bytes
+  alt String @default("")
+  createdAt DateTime @default(now())
+  @@unique([siteId, repoPath])
+}
+
+model SiteAuditEvent {
+  id String @id @default(cuid())
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String
+  kind String
+  summary String
+  actorName String
+  actorId String?
+  detail Json?
+  createdAt DateTime @default(now())
+  @@index([siteId, createdAt])
+}
+
+// Add `siteMemberships SiteMember[]` to model User.
+// Add `members SiteMember[]` to model Site.
+
+enum SiteMemberRole {
+  VIEWER
+  EDITOR
+  REVIEWER
+  PUBLISHER
+  MANAGER
+  DEVELOPER
+}
+
+model SiteMember {
+  id        String         @id @default(cuid())
+  siteId    String
+  site      Site           @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      SiteMemberRole @default(VIEWER)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([siteId, userId])
+  @@index([userId])
 }

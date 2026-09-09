@@ -80,7 +80,7 @@ console.log("\nWhat the preview's own policy allows");
     !nonced || /'unsafe-inline'/.test(styleAttr),
     `style-src carries a nonce, which makes 'unsafe-inline' in it inert, and style-src-attr does not put attributes back: ${styleAttr || "(absent)"}`,
   );
-  check("the picker's own stylesheet still runs on its nonce", /'nonce-/.test(styleSrc));
+  check("the picker and imported inline styles are allowed", /'unsafe-inline'/.test(styleSrc));
   check("the plain preview is not given a nonce at all", !/'nonce-/.test(plain), plain);
   check("nothing is framed but the editor", /frame-ancestors 'self'/.test(picking));
   check("and a preview of the contact page cannot send anything", /form-action 'none'/.test(picking));

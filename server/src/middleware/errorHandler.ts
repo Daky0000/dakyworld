@@ -74,7 +74,11 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   // composed for the person reading it, and rendered as "Something went wrong."
   // it would send them looking for a bug in an editor that is working.
   if (err instanceof WebsiteError) {
-    return res.status(err.status).json({ error: err.message, reference });
+    return res.status(err.status).json({ error: err.message, reference,
+      ...("problems" in err ? { problems: err.problems } : {}),
+      ...("conflicts" in err ? { conflicts: err.conflicts } : {}),
+      ...("missing" in err ? { missing: err.missing } : {}),
+    });
   }
 
   if (err instanceof BudgetExceeded) {

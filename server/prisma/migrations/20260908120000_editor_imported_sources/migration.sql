@@ -1,0 +1,2 @@
+ALTER TABLE "Site" ADD COLUMN "settings" JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE "SitePage" ADD COLUMN "sourceHtml" TEXT;

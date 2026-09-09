@@ -288,6 +288,7 @@ export function agentBranchName(slug: string): string {
 export interface RepoFile {
   path: string;
   content: string;
+  encoding?: "utf8" | "base64";
 }
 
 /** The default branch's name and the commit it points at. */
@@ -305,7 +306,7 @@ export async function readFile(repo: string, path: string, ref?: string): Promis
     const file = await request<{ content?: string; encoding?: string }>(
       `/repos/${full}/contents/${path.split("/").map(encodeURIComponent).join("/")}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`,
     );
-    if (!file.content) return null;
+    if (typeof file.content !== "string") return null;
     return Buffer.from(file.content, (file.encoding as BufferEncoding) ?? "base64").toString("utf8");
   } catch (err) {
     if (err instanceof GitHubError && err.status === 404) return null;
@@ -347,19 +348,23 @@ export async function createBranch(repo: string, branch: string, fromSha?: strin
  * a reviewer reading the pull request sees work in progress rather than a
  * change.
  */
-export async function commitFiles(input: { repo: string; branch: string; message: string; files: RepoFile[] }): Promise<{ sha: string; url: string }> {
+export async function commitFiles(input: { repo: string; branch: string; message: string; files: RepoFile[]; expectedFiles?: Array<{ path: string; content: string; allowMissing?: boolean }> }): Promise<{ sha: string; url: string }> {
   const full = await assertWritable(input.repo);
   if (input.files.length === 0) throw new GitHubError(400, "There are no files in that change.");
 
   const head = await request<{ object: { sha: string } }>(`/repos/${full}/git/ref/heads/${input.branch}`);
   const parent = head.object.sha;
+  for (const expected of input.expectedFiles ?? []) {
+    const actual = await readFile(input.repo, expected.path, parent);
+    if (actual !== expected.content && !(actual === null && expected.allowMissing)) throw new GitHubError(409, `${expected.path} changed in the repository after it was reviewed. Reload it before publishing.`);
+  }
   const commit = await request<{ tree: { sha: string } }>(`/repos/${full}/git/commits/${parent}`);
 
   const blobs = await Promise.all(
     input.files.map(async (file) => {
       const blob = await request<{ sha: string }>(`/repos/${full}/git/blobs`, {
         method: "POST",
-        body: { content: Buffer.from(file.content, "utf8").toString("base64"), encoding: "base64" },
+        body: { content: file.encoding === "base64" ? file.content : Buffer.from(file.content, "utf8").toString("base64"), encoding: "base64" },
       });
       return { path: file.path.replace(/^\/+/, ""), mode: "100644" as const, type: "blob" as const, sha: blob.sha };
     }),

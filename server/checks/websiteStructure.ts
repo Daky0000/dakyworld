@@ -1,0 +1,56 @@
+import assert from "node:assert/strict";
+import { changeStructure, structureControls, discoverFields, editingSource, applyValues, sanitizeValue, buildPublishPlan, describeChanges, draftDocument, sourceHash, DOCUMENT_KEY, type FieldValue } from "../src/services/website/index.js";
+
+const source = '<html><head><style>.card{color:navy}</style></head><body><main><section class="card"><h1>Heading</h1><p>First paragraph</p><p>Second paragraph</p><img src="photo.jpg" alt="Photo"></section><section id="fixed"><h2>Fixed section</h2></section><section><form><input name="email"></form><p>Interactive block</p></section></main><script>window.keep=true</script></body></html>';
+const fields = discoverFields(source).fields;
+const first = fields.find(field => field.value === "First paragraph")!;
+const second = fields.find(field => field.value === "Second paragraph")!;
+const heading = fields.find(field => field.tag === "h1")!;
+const card = fields.find(field => field.id === first.parentId)!;
+const controls = structureControls(source);
+assert.equal(controls[first.id]?.duplicate, true);
+assert.equal(controls[first.id]?.nextId, second.id);
+assert.equal(controls[fields.find(field => field.label === "fixed")!.id]?.duplicate, false, "fixed HTML IDs are not duplicated");
+assert.equal(controls[fields.find(field => field.kind === "container" && field.tag === "section" && field.id !== card.id && field.label !== "fixed")!.id]?.remove, false, "interactive subtrees stay source-controlled");
+
+const values = { [heading.id]: sanitizeValue(heading, { value: "Updated before moving", responsive: { mobile: "font-size: 2rem" } }) };
+const moved = changeStructure(source, values, { kind: "before", fieldId: second.id, targetId: first.id });
+const afterMove = applyValues(source, moved.values);
+assert.equal(afterMove.conflicts.length, 0);
+assert.ok(afterMove.html.indexOf("Second paragraph") < afterMove.html.indexOf("First paragraph"));
+assert.equal(discoverFields(afterMove.html).fields.find(field => field.id === heading.id)?.value, "Updated before moving");
+assert.deepEqual(discoverFields(afterMove.html).fields.find(field => field.id === heading.id)?.responsive, { mobile: "font-size: 2rem" });
+assert.ok(afterMove.html.includes('<script>window.keep=true</script>'));
+assert.ok(describeChanges(discoverFields(editingSource(source, moved.values)).fields, moved.values).some(change => change.to === "Updated before moving"), "review keeps text edits consumed by a layout action");
+assert.equal(draftDocument(moved.values)?.baseHash, sourceHash(source));
+
+const duplicate = changeStructure(source, moved.values, { kind: "duplicate", fieldId: card.id });
+const duplicatedFields = discoverFields(editingSource(source, duplicate.values)).fields;
+assert.equal(new Set(duplicatedFields.map(field => field.id)).size, duplicatedFields.length, "cloned subtree fields have unique stable identities");
+assert.ok(duplicatedFields.find(field => field.id === duplicate.selectedId));
+const clonedHeading = duplicatedFields.find(field => field.tag === "h1" && field.id !== heading.id)!;
+const edited: Record<string, FieldValue> = { ...duplicate.values, [clonedHeading.id]: sanitizeValue(clonedHeading, { value: "Only the cloned heading" }) };
+const clonedResult = applyValues(source, edited);
+assert.equal(discoverFields(clonedResult.html).fields.find(field => field.id === heading.id)?.value, "Updated before moving");
+assert.equal(discoverFields(clonedResult.html).fields.find(field => field.id === clonedHeading.id)?.value, "Only the cloned heading");
+assert.equal(buildPublishPlan({ source, values: edited }).publishable, true);
+assert.equal(buildPublishPlan({ source: source.replace("navy", "blue"), values: edited }).publishable, false, "source edits prevent stale structural publishing");
+assert.throws(() => changeStructure(source.replace("navy", "blue"), edited, { kind: "remove", fieldId: first.id }), /original page changed/);
+
+const removed = changeStructure(source, edited, { kind: "remove", fieldId: duplicate.selectedId! });
+assert.ok(!applyValues(source, removed.values).html.includes("Only the cloned heading"));
+const undo = changeStructure(source, removed.values, { kind: "undo" });
+assert.ok(applyValues(source, undo.values).html.includes("Only the cloned heading"), "undo restores content edited after duplication");
+const redo = changeStructure(source, undo.values, { kind: "redo" });
+assert.equal(applyValues(source, redo.values).html, applyValues(source, removed.values).html, "redo restores exactly the same layout");
+const originalAgain = changeStructure(source, moved.values, { kind: "undo" });
+assert.equal(editingSource(source, originalAgain.values), source, "undo recovers original source bytes");
+assert.deepEqual(originalAgain.values[heading.id], values[heading.id], "undo restores pending field edits rather than losing them");
+const simpleMove = changeStructure(source, {}, { kind: "before", fieldId: second.id, targetId: first.id });
+const simpleUndo = changeStructure(source, simpleMove.values, { kind: "undo" });
+assert.equal(buildPublishPlan({ source, values: simpleUndo.values }).publishable, false, "undoing all changes leaves nothing to publish");
+assert.throws(() => changeStructure(source, {}, { kind: "before", fieldId: first.id, targetId: fields.find(field => field.tag === "h2")!.id }), /same parent/);
+assert.throws(() => changeStructure(source, {}, { kind: "before", fieldId: first.id, targetId: first.id }), /same parent/);
+assert.throws(() => changeStructure(source, {}, { kind: "remove", fieldId: "missing" }), /no longer/);
+assert.ok(simpleUndo.values[DOCUMENT_KEY], "undo history stays server-owned even at the original layout");
+console.log("websiteStructure: stable moves/clones, independent editing, removal, undo/redo, reviews and stale-source protection passed");

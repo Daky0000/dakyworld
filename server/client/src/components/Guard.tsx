@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { Card } from "./ui";
 
@@ -53,7 +53,8 @@ export function Guard({ needs, children }: { needs: string; children: ReactNode 
  * says no when the honest answer is that there is nothing.
  */
 export function Landing({ children }: { children: ReactNode }) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  if (user?.external) return <Navigate to="/website/sites" replace />;
   if (can("dashboard.view")) return <>{children}</>;
 
   const first = [
@@ -67,6 +68,7 @@ export function Landing({ children }: { children: ReactNode }) {
     ["retainers.view", "/care-plans"],
     ["demos.view", "/demos"],
     ["agents.view", "/agents"],
+    ["website.view", "/website"],
     ["team.view", "/team"],
     ["settings.view", "/settings"],
   ].find(([permission]) => can(permission));

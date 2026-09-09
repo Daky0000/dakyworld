@@ -22,6 +22,7 @@
  * you.
  */
 const LOADERS: Record<string, () => Promise<string>> = {
+  "website.editor": async () => (await import("../websiteAssistant.js")).SHIPPED_DOCTRINE,
   "email.cold": async () => (await import("../../lib/emailDrafter.js")).shippedDoctrineFor("email.cold"),
   "email.followup": async () => (await import("../../lib/emailDrafter.js")).shippedDoctrineFor("email.followup"),
   "email.billing": async () => (await import("../../lib/emailDrafter.js")).shippedDoctrineFor("email.billing"),

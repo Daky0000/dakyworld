@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { CssValueField } from "./CssValueField";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * The style half of the visual editor.
@@ -33,6 +34,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
  */
 
 /** Ink, blue, lime and the neutrals — the design system, as swatches. */
+const PaletteContext = createContext<{ label: string; value: string }[] | null>(null);
 const COLOURS = [
   { label: "Ink", value: "#08101F" },
   { label: "Muted", value: "#69758A" },
@@ -342,6 +344,7 @@ function ColourField({
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const colour = readColour(value);
+  const palette = useContext(PaletteContext) ?? COLOURS;
 
   useEffect(() => {
     if (!open) return;
@@ -382,7 +385,7 @@ function ColourField({
       {open && !disabled && (
         <div className="absolute right-0 z-30 mt-1.5 w-[228px] rounded-xl border border-line bg-white p-3 shadow-lg shadow-ink/10">
           <div className="grid grid-cols-8 gap-1">
-            {COLOURS.map((option) => (
+            {palette.map((option) => (
               <button
                 key={option.value}
                 type="button"
@@ -573,12 +576,14 @@ function readTransform(value: string | undefined) {
 }
 
 export function StylePanel({
+  palette, fonts,
   style,
   onChange,
   onReset,
   onCommit,
   readOnly,
 }: {
+  palette?: string[]; fonts?: string[];
   style: string | undefined;
   onChange: (next: string) => void;
   onReset: () => void;
@@ -643,7 +648,7 @@ export function StylePanel({
   const borderParts = border ? /^(-?[\d.]+)px\s+(\w+)\s+(.+)$/.exec(border.trim()) : null;
 
   return (
-    <div className={disabled ? "pointer-events-none opacity-50" : ""}>
+    <PaletteContext.Provider value={palette?.length ? palette.map(value => ({ label: value, value })) : null}><div className={disabled ? "pointer-events-none opacity-50" : ""}>
       <Section title="Appearance">
         <ColourField
           label="Background"
@@ -655,8 +660,8 @@ export function StylePanel({
         />
 
         <div className="flex gap-1.5">
-          <NumberField label="W" unit="px" value={toNumber(declarations.width)} min={0} onChange={(next) => px("width", next)} onCommit={onCommit} />
-          <NumberField label="H" unit="px" value={toNumber(declarations.height)} min={0} onChange={(next) => px("height", next)} onCommit={onCommit} />
+          <CssValueField property="width" label="W" value={declarations["width"] ?? ""} disabled={disabled} onChange={next => set("width", next)} />
+          <CssValueField property="height" label="H" value={declarations["height"] ?? ""} disabled={disabled} onChange={next => set("height", next)} />
         </div>
 
         <div className="flex gap-1.5">
@@ -669,14 +674,7 @@ export function StylePanel({
             onChange={(next) => set("opacity", next === null ? "" : String(next))}
             onCommit={onCommit}
           />
-          <NumberField
-            label="Radius"
-            unit="px"
-            value={toNumber(declarations["border-radius"])}
-            min={0}
-            onChange={(next) => px("border-radius", next)}
-            onCommit={onCommit}
-          />
+          <CssValueField property="border-radius" label="Radius" value={declarations["border-radius"] ?? ""} disabled={disabled} onChange={next => set("border-radius", next)} />
         </div>
 
         <SelectField
@@ -686,21 +684,6 @@ export function StylePanel({
           onChange={(next) => set("overflow", next)}
           options={OVERFLOWS.map((value) => ({ value, label: value || "As designed" }))}
         />
-
-        <div className="pt-1 text-[10px] uppercase tracking-[.08em] text-muted">Padding</div>
-        <div className="grid grid-cols-2 gap-1.5">
-          {SIDES.map((side) => (
-            <NumberField
-              key={side}
-              label={side}
-              unit="px"
-              value={toNumber(declarations[`padding-${side}`])}
-              min={0}
-              onChange={(next) => px(`padding-${side}`, next)}
-              onCommit={onCommit}
-            />
-          ))}
-        </div>
 
         {extras.map((key) => {
           if (key === "filter") {
@@ -789,10 +772,10 @@ export function StylePanel({
       </Section>
 
       <Section title="Typography">
-        <SelectField label="Font" value={declarations["font-family"] ?? ""} disabled={disabled} onChange={(next) => set("font-family", next)} options={FONTS} />
+        <SelectField label="Font" value={declarations["font-family"] ?? ""} disabled={disabled} onChange={(next) => set("font-family", next)} options={[...FONTS, ...(fonts ?? []).filter(value => !FONTS.some(font => font.value === value)).map(value => ({ label: value, value }))]} />
 
         <div className="flex gap-1.5">
-          <NumberField label="Size" unit="px" value={toNumber(declarations["font-size"])} min={1} onChange={(next) => px("font-size", next)} onCommit={onCommit} />
+          <CssValueField property="font-size" label="Size" value={declarations["font-size"] ?? ""} disabled={disabled} onChange={next => set("font-size", next)} />
           <ColourField label="Colour" value={declarations.color ?? ""} allowNone disabled={disabled} onChange={(next) => set("color", next)} onCommit={onCommit} />
         </div>
 
@@ -854,22 +837,8 @@ export function StylePanel({
         />
 
         <div className="flex gap-1.5">
-          <NumberField
-            label="Leading"
-            value={toNumber(declarations["line-height"])}
-            step={0.05}
-            min={0}
-            onChange={(next) => set("line-height", next === null ? "" : String(next))}
-            onCommit={onCommit}
-          />
-          <NumberField
-            label="Tracking"
-            unit="em"
-            value={toNumber(declarations["letter-spacing"])}
-            step={0.01}
-            onChange={(next) => set("letter-spacing", next === null ? "" : `${next}em`)}
-            onCommit={onCommit}
-          />
+          <CssValueField property="line-height" label="Leading" value={declarations["line-height"] ?? ""} disabled={disabled} onChange={next => set("line-height", next)} />
+          <CssValueField property="letter-spacing" label="Tracking" value={declarations["letter-spacing"] ?? ""} disabled={disabled} onChange={next => set("letter-spacing", next)} />
         </div>
 
         <SelectField label="Case" value={declarations["text-transform"] ?? ""} disabled={disabled} onChange={(next) => set("text-transform", next)} options={CASES} />
@@ -949,7 +918,7 @@ export function StylePanel({
           )}
         </div>
       )}
-    </div>
+    </div></PaletteContext.Provider>
   );
 }
 

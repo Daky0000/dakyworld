@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
+import { DOCUMENT_KEY, draftDocument, fieldValues, sourceHash, type DraftDocument } from "./document.js";
 import { attrNode, decodeEntities, findTag, parseHtml, textOf, walk, type ElementNode } from "./parse.js";
+import { normalizeResponsive, regenerateResponsiveStyles, responsiveEqual, responsiveOf, RESPONSIVE_TOKEN, type ResponsiveStyles } from "./responsive.js";
 
 /**
  * Turning a hand-built page into a list of things somebody can change.
@@ -41,12 +44,20 @@ export type FieldKind =
    */
   | "button"
   /** An image: which file, and the description read out to somebody who cannot see it. */
-  | "image";
+  | "image"
+  | "container";
 
 type Span = { start: number; end: number };
 
 export type SiteField = {
   id: string;
+  confidence?: "annotated" | "discovered";
+  parentId?: string;
+  /** Document order, without exposing source byte offsets. */
+  order?: number;
+  srcsetSpan?: Span;
+  markerSpan?: Span;
+  structure?: string;
   kind: FieldKind;
   /** How it reads in the inspector: "Main heading", "Paragraph", "Button". */
   label: string;
@@ -66,6 +77,8 @@ export type SiteField = {
   decorative?: boolean;
   /** The element's own inline style, when it has one. */
   style?: string;
+  /** Element overrides at tablet and phone widths, separate from base styles. */
+  responsive?: ResponsiveStyles;
   content?: Span;
   hrefSpan?: Span;
   srcSpan?: Span;
@@ -138,6 +151,9 @@ export type PageContent = {
 
 /** A value somebody has changed, as the draft stores it. */
 export type FieldValue = {
+  /** Server-owned document checkpoint; never accepted from draft request JSON. */
+  document?: DraftDocument;
+  originalStructure?: string;
   value?: string;
   href?: string;
   alt?: string;
@@ -152,6 +168,8 @@ export type FieldValue = {
    * a developer reading the diff can see precisely what happened.
    */
   style?: string;
+  /** Complete override map when supplied; an empty map clears every override. */
+  responsive?: ResponsiveStyles;
   /**
    * What the page said when this edit was made.
    *
@@ -168,6 +186,7 @@ export type FieldValue = {
   originalHref?: string;
   originalAlt?: string;
   originalStyle?: string;
+  originalResponsive?: ResponsiveStyles;
 
   /**
    * A button's style class. `null` takes the variant off without adding one,
@@ -513,6 +532,7 @@ function imageField(element: ElementNode, id: string): SiteField | null {
   const src = attrNode(element, "src");
   if (!src) return null;
   const alt = attrNode(element, "alt");
+  const srcset = attrNode(element, "srcset");
   return {
     id,
     kind: "image",
@@ -523,6 +543,7 @@ function imageField(element: ElementNode, id: string): SiteField | null {
     alt: alt?.value,
     decorative: alt !== undefined && alt.value.trim() === "",
     srcSpan: { start: src.valueStart, end: src.valueEnd },
+    ...(srcset ? { srcsetSpan: { start: srcset.valueStart, end: srcset.valueEnd }, structure: createHash("sha256").update(srcset.value).digest("hex"), note: "Replacing this image also replaces its responsive image candidates." } : {}),
     altSpan: alt ? { start: alt.valueStart, end: alt.valueEnd } : undefined,
     altInsertAt: alt ? undefined : element.attrInsert,
     ...styleOf(element),
@@ -757,12 +778,76 @@ export function readPage(source: string): PageContent {
   // of the document alone: the same page always yields the same id for the same
   // field, whether or not a generated block sits above it.
   const generated = generatedRanges(source);
+  const nodes = [...walk(body)];
+  const byOffset = new Map(nodes.map((node) => [node.attrInsert, node]));
+  const hiddenNode = (node: ElementNode | undefined): boolean => {
+    for (let at = node; at; at = at.parent ?? undefined) {
+      if (SKIP.has(at.tag) || at.attrs.some(a => a.name === "hidden" || (a.name === "aria-hidden" && a.value.trim().toLowerCase() === "true"))) return true;
+    }
+    return false;
+  };
   const kept = sections
-    .map((section) => ({ ...section, fields: section.fields.filter((field) => !withinGenerated(field, generated)) }))
+    .map((section) => ({ ...section, fields: section.fields.filter((field) => !withinGenerated(field, generated) && !hiddenNode(field.attrInsert === undefined ? undefined : byOffset.get(field.attrInsert))) }))
     .filter((section) => section.fields.length > 0);
 
   const all = kept.flatMap((section) => section.fields);
+  // Keep the old content numbering intact: layout fields use a separate
+  // namespace, so opening an older saved draft cannot retarget its edits.
+  const represented = new Set(all.map((field) => field.attrInsert));
+  const layout: SiteField[] = [];
+  const layoutTags = new Set(["main", "header", "footer", "section", "article", "div", "nav", "aside", "ul", "ol", "figure"]);
+  for (const node of nodes) {
+    if (!layoutTags.has(node.tag)) continue;
+    if (represented.has(node.attrInsert)) continue;
+    if (hiddenNode(node) || generated.some((range) => node.start >= range.start && node.end <= range.end)) continue;
+    const label = attrNode(node, "aria-label")?.value || attrNode(node, "id")?.value || `${node.tag === "div" ? "Container" : node.tag} ${layout.length + 1}`;
+    layout.push({ id: `layout.${layout.length}`, kind: "container", tag: node.tag, label, value: "", structure: createHash("sha256").update(source.slice(node.start, node.end)).digest("hex"), preview: label, ...styleOf(node) });
+  }
+  if (layout.length) {
+    kept.push({ id: "layout", label: "Layout and containers", kind: "section", fields: layout });
+    all.push(...layout);
+  }
+  const markers = new Map<string, number>();
+  const nodeMarkers = new Map<string, number>();
+  for (const node of nodes) {
+    const key = attrNode(node, "data-dw-field")?.value;
+    if (key) markers.set(key, (markers.get(key) ?? 0) + 1);
+    const nodeKey = attrNode(node, "data-dw-node")?.value;
+    if (nodeKey) nodeMarkers.set(nodeKey, (nodeMarkers.get(nodeKey) ?? 0) + 1);
+  }
+  const positional = new Set(all.map((field) => field.id));
+  const fieldAt = new Map<number, SiteField>();
+  for (const field of all) {
+    const node = field.attrInsert === undefined ? undefined : byOffset.get(field.attrInsert);
+    const marker = node && attrNode(node, "data-dw-field");
+    if (node && attrNode(node, "data-dw-responsive")) field.responsive = responsiveOf(node);
+    field.confidence = "discovered";
+    if (marker) {
+      field.markerSpan = { start: marker.start, end: marker.end };
+      if (/^[a-zA-Z][a-zA-Z0-9_.:-]{0,119}$/.test(marker.value) && markers.get(marker.value) === 1 && !positional.has(marker.value)) {
+        field.id = marker.value;
+        field.confidence = "annotated";
+      } else {
+        field.note = "This element's marker is duplicated or reserved. Its position will be checked before publishing.";
+      }
+    }
+    const nodeKey = node && attrNode(node, "data-dw-node")?.value;
+    if (nodeKey && /^[a-zA-Z][a-zA-Z0-9_.:-]{0,119}$/.test(nodeKey) && nodeMarkers.get(nodeKey) === 1) {
+      field.id = nodeKey;
+      field.confidence = "annotated";
+    }
+    if (node) fieldAt.set(node.attrInsert, field);
+  }
+  for (const field of all) {
+    let parent = field.attrInsert === undefined ? undefined : byOffset.get(field.attrInsert)?.parent;
+    while (parent) {
+      const parentField = fieldAt.get(parent.attrInsert);
+      if (parentField) { field.parentId = parentField.id; break; }
+      parent = parent.parent;
+    }
+  }
   offerVariants(all);
+  [...all].sort((a, b) => (a.attrInsert ?? a.content?.start ?? 0) - (b.attrInsert ?? b.content?.start ?? 0)).forEach((field, order) => { field.order = order; });
   return { sections: kept, fields: all };
 }
 
@@ -833,7 +918,8 @@ function attrEscape(value: string): string {
 const STYLE_PROPERTY = /^[a-z-]{2,40}$/;
 const STYLE_FORBIDDEN = /url\s*\(|expression\s*\(|javascript:|[<>"'`\\]/i;
 
-export function safeStyle(style: string): string {
+export function safeStyle(style: string, originalStyle = ""): string {
+  const original = new Set(originalStyle.split(";").map(part => part.trim()).filter(Boolean));
   return style
     .split(";")
     .map((declaration) => declaration.trim())
@@ -843,7 +929,9 @@ export function safeStyle(style: string): string {
       if (colon < 1) return false;
       const property = declaration.slice(0, colon).trim().toLowerCase();
       const value = declaration.slice(colon + 1).trim();
-      return STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= 120 && !STYLE_FORBIDDEN.test(declaration);
+      // Preserve a developer's existing background URL or quoted CSS exactly
+      // while editing other controls. Newly supplied fetching CSS stays forbidden.
+      return original.has(declaration) || (STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= 120 && (!STYLE_FORBIDDEN.test(declaration) || (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value))));
     })
     .join("; ");
 }
@@ -870,12 +958,28 @@ export type ApplyResult = {
  * reformatting of somebody's whole page.
  */
 export function applyValues(source: string, values: Record<string, FieldValue>): ApplyResult {
+  const document = draftDocument(values);
+  if (document) {
+    if (document.baseHash !== sourceHash(source)) return { html: source, changed: [], missing: [], conflicts: [{ id: DOCUMENT_KEY, expected: "The original page used for these layout changes", found: "The source changed. Discard the layout draft or restore it against the latest page before publishing." }] };
+    const applied = applyValues(document.html, fieldValues(values));
+    return { ...applied, changed: document.html !== source ? [DOCUMENT_KEY, ...applied.changed] : applied.changed };
+  }
   const page = readPage(source);
   const byId = new Map(page.fields.map((field) => [field.id, field]));
   const edits: Array<{ span: Span; text: string } | { insertAt: number; text: string }> = [];
   const changed: string[] = [];
   const conflicts: ApplyResult["conflicts"] = [];
   const missing: string[] = [];
+  const responsiveNodes = Object.values(values).some((edit) => edit.responsive !== undefined)
+    ? [...walk(parseHtml(source))] : [];
+  const responsiveNodeAt = new Map(responsiveNodes.map((node) => [node.attrInsert, node]));
+  const tokenCounts = new Map<string, number>();
+  for (const node of responsiveNodes) {
+    for (const attr of node.attrs.filter((candidate) => candidate.name === "data-dw-style")) {
+      tokenCounts.set(attr.value, (tokenCounts.get(attr.value) ?? 0) + 1);
+    }
+  }
+  let responsiveChanged = false;
 
   for (const [id, edit] of Object.entries(values)) {
     const field = byId.get(id);
@@ -884,10 +988,13 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
       continue;
     }
     const moved =
+      (edit.originalStructure !== undefined && edit.originalStructure !== field.structure) ||
       (edit.original !== undefined && edit.original !== field.value) ||
       (edit.originalHref !== undefined && edit.originalHref !== (field.href ?? "")) ||
       (edit.originalAlt !== undefined && edit.originalAlt !== (field.alt ?? "")) ||
       (edit.originalStyle !== undefined && edit.originalStyle !== (field.style ?? "")) ||
+      (edit.originalResponsive !== undefined && !responsiveEqual(edit.originalResponsive, field.responsive)) ||
+      (edit.originalNewTab !== undefined && edit.originalNewTab !== Boolean(field.newTab)) ||
       // A button restyled by a developer since the draft was written is the
       // same class of surprise as a heading they rewrote: the draft still
       // remembers a variant that is no longer there, and writing over it would
@@ -903,6 +1010,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
       if (field.kind === "image") {
         if (field.srcSpan) {
           edits.push({ span: field.srcSpan, text: attrEscape(edit.value) });
+          if (field.srcsetSpan) edits.push({ span: field.srcsetSpan, text: "" });
           touched = true;
         }
       } else if (field.content) {
@@ -922,7 +1030,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
       touched = true;
     }
     if (edit.style !== undefined && edit.style !== (field.style ?? "")) {
-      const declarations = safeStyle(edit.style);
+      const declarations = safeStyle(edit.style, field.style);
       if (field.styleSpan) {
         // An emptied style still leaves `style=""` behind rather than removing
         // the attribute: the span is what the next edit is written against, and
@@ -931,6 +1039,28 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
         touched = true;
       } else if (declarations && field.attrInsert !== undefined) {
         edits.push({ insertAt: field.attrInsert, text: ` style="${attrEscape(declarations)}"` });
+        touched = true;
+      }
+    }
+    if (edit.responsive !== undefined && field.attrInsert !== undefined && !responsiveEqual(edit.responsive, field.responsive)) {
+      const node = responsiveNodeAt.get(field.attrInsert);
+      if (node) {
+        const responsive = normalizeResponsive(edit.responsive);
+        let token = attrNode(node, "data-dw-style")?.value;
+        if (!token || !RESPONSIVE_TOKEN.test(token) || tokenCounts.get(token) !== 1) {
+          let attempt = 0;
+          do {
+            token = `dw-${createHash("sha256").update(`${id}:${node.start}:${attempt++}:${source}`).digest("hex").slice(0, 24)}`;
+          } while (tokenCounts.has(token));
+          tokenCounts.set(token, 1);
+        }
+        // Whole attributes also handle malformed duplicate markers safely.
+        for (const attr of node.attrs.filter((candidate) => candidate.name === "data-dw-responsive" || candidate.name === "data-dw-style")) {
+          edits.push({ span: withLeadingSpace(source, attr), text: "" });
+        }
+        const data = Object.keys(responsive).length ? ` data-dw-responsive="${attrEscape(JSON.stringify(responsive))}"` : "";
+        edits.push({ insertAt: field.attrInsert, text: ` data-dw-style="${token}"${data}` });
+        responsiveChanged = true;
         touched = true;
       }
     }
@@ -993,5 +1123,6 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
     previousStart = edit.start;
   }
 
+  if (responsiveChanged) html = regenerateResponsiveStyles(html);
   return { html, changed, conflicts, missing };
 }

@@ -1,7 +1,10 @@
+import { websiteAssetFiles } from "../websiteAssets.js";
 import { randomBytes } from "node:crypto";
 import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError } from "../../lib/github.js";
 import type { Site, SitePage } from "@prisma/client";
 import type { SiteField } from "./regions.js";
+import { attr, decodeEntities, parseHtml, walk } from "./parse.js";
+import { fetchWebsiteText } from "../../lib/websiteFetch.js";
 import { invalidateSource, readCache, sourceKey, writeCache } from "./sourceCache.js";
 
 /**
@@ -35,8 +38,6 @@ export class WebsiteError extends Error {
   }
 }
 
-const FETCH_TIMEOUT_MS = 20_000;
-
 /** `owner/name`, or null when the site has no repository configured. */
 export function siteRepo(site: Pick<Site, "repoOwner" | "repoName">): string | null {
   return site.repoOwner && site.repoName ? `${site.repoOwner}/${site.repoName}` : null;
@@ -56,21 +57,15 @@ export function pageUrl(site: Pick<Site, "publicUrl">, page: Pick<SitePage, "pat
 export type PageSource = {
   html: string;
   /** Which of the two routes answered, so the editor can say where it is looking. */
-  from: "repository" | "live site";
+  from: "repository" | "live site" | "imported file";
 };
 
 async function fetchLive(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "Dakyworld-OS-Editor" } });
-    if (!response.ok) throw new WebsiteError(502, `${url} answered ${response.status}. The page may have been renamed or removed.`);
-    return await response.text();
+    return await fetchWebsiteText(url);
   } catch (err) {
     if (err instanceof WebsiteError) throw err;
-    throw new WebsiteError(502, `Could not read ${url}. The site may be down, or this machine may have no way to reach it.`);
-  } finally {
-    clearTimeout(timer);
+    throw new WebsiteError(502, `Could not read the website. ${err instanceof Error ? err.message : "Check its public address and try again."}`);
   }
 }
 
@@ -85,6 +80,7 @@ async function fetchLive(url: string): Promise<string> {
  * is a conflict that the publish path then catches properly.
  */
 export async function pageSource(site: Site, page: SitePage, options: { fresh?: boolean } = {}): Promise<PageSource> {
+  if (page.sourceHtml !== null && page.sourceHtml !== undefined) return { html: page.sourceHtml, from: "imported file" };
   const repo = siteRepo(site);
   const key = sourceKey({ siteId: site.id, repo, branch: site.repoBranch, filePath: page.filePath });
   if (!options.fresh) {
@@ -288,6 +284,7 @@ export async function publishPage(input: {
   page: SitePage;
   html: string;
   message: string;
+  expectedSource?: string;
 }): Promise<{ sha: string; url: string }> {
   const repo = siteRepo(input.site);
   if (!repo) {
@@ -312,7 +309,8 @@ export async function publishPage(input: {
       repo,
       branch: input.site.repoBranch,
       message: input.message,
-      files: [{ path: repoFilePath(input.site, input.page), content: input.html }],
+      expectedFiles: input.expectedSource === undefined ? undefined : [{ path: repoFilePath(input.site, input.page), content: input.expectedSource, allowMissing: input.page.sourceHtml !== null }],
+      files: [{ path: repoFilePath(input.site, input.page), content: input.html }, ...await websiteAssetFiles(input.site, input.html)],
     });
     // Here rather than at the call site, so that a second publisher — a rollback,
     // a site-wide publish, an agent — cannot forget it. Until this runs, every
@@ -368,116 +366,27 @@ export async function publishPage(input: {
   }
 }
 
-/**
- * Hosts a preview must never reach, whatever the page itself allows.
- *
- * Analytics, above all. A preview that loads the site's tag manager reports
- * itself as a visit, so an afternoon of editing quietly becomes traffic in the
- * owner's own reporting — and the pages being "visited" are drafts nobody has
- * seen. The editor must be invisible to the instruments.
- */
-const NEVER_IN_PREVIEW = [/https:\/\/[\w.-]*googletagmanager\.com/g, /https:\/\/[\w.-]*google-analytics\.com/g, /https:\/\/[\w.-]*doubleclick\.net/g];
+export type PreviewDocument = { html: string; csp: string };
 
-/** What a page with no policy of its own gets. Deliberately close to this site's. */
-const FALLBACK_POLICY =
-  "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'";
-
-export type PreviewDocument = {
-  html: string;
-  /**
-   * The policy to send as a header. It has to be a header rather than the tag
-   * in the page: a `<meta>` policy can only ever *narrow* what a header already
-   * allows, so the app's own header — written for the app, where `'self'` is
-   * os.dakyworld.com — would go on forbidding the website's stylesheet however
-   * the page's own tag were rewritten. That is what a first version of this did,
-   * and the preview rendered as unstyled black text on white.
-   */
-  csp: string;
-};
-
-/**
- * Prepares a page for display inside the editor's preview frame.
- *
- * Three changes, and the preview is wrong without any one of them.
- *
- * **A `<base>`**, because the HTML is served from the OS's own domain, where
- * `assets/site.css` and every logo the page asks for do not exist. With one,
- * every relative address resolves against the real site.
- *
- * **The page's own policy, widened to include that site.** The site's CSP is
- * written entirely in terms of `'self'`, and served from anywhere else `'self'`
- * is the wrong origin — so the page forbids its own stylesheet, its own fonts
- * and its own images, and `base-uri 'self'` forbids the tag just added. Taking
- * the author's policy and only widening `'self'` keeps every restriction they
- * wrote: `object-src 'none'` stays `'none'`.
- *
- * **Two directives overridden rather than widened.** `frame-ancestors` has to
- * allow the editor to frame it at all, and `form-action` is forced to `'none'`
- * because a preview of the contact page must not be able to send a real enquiry.
- */
-export function previewDocument(html: string, baseUrl: string, editable?: SiteField[]): PreviewDocument {
-  const origin = baseUrl.replace(/\/+$/, "");
-  const declared = /<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*content="([^"]*)"/i.exec(html)?.[1];
-
-  let policy = (declared ?? FALLBACK_POLICY).replace(/'self'/g, `'self' ${origin}`);
-  for (const host of NEVER_IN_PREVIEW) policy = policy.replace(host, "");
-  policy = policy
-    .split(";")
-    .map((directive) => directive.trim().replace(/\s+/g, " "))
-    .filter((directive) => directive && !/^(frame-ancestors|form-action)\b/i.test(directive))
-    .concat(["frame-ancestors 'self'", "form-action 'none'"])
-    .join("; ");
-
-  // Marking the elements happens on the original offsets, before anything else
-  // is spliced in — every one of those inserts would move them.
-  const marked = editable?.length ? markEditable(html, editable) : html;
-
-  const base = `<base href="${origin}/">`;
-  const headOpen = /<head[^>]*>/i.exec(marked);
-  const withBase = headOpen
-    ? marked.slice(0, headOpen.index + headOpen[0].length) + base + marked.slice(headOpen.index + headOpen[0].length)
-    : base + marked;
-
-  // The tag in the page is rewritten too. It cannot loosen the header, but a
-  // stale `'self'` left in it would narrow the result back down to the app's
-  // own origin — the two policies are intersected, not chosen between.
-  const out = withBase.replace(
-    /(<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*content=")([^"]*)(")/i,
-    (_whole, before: string, _old: string, after: string) => `${before}${policy}${after}`,
-  );
-
+/** Isolated rendering of the original HTML, with only the editor's picker allowed to run. */
+export function previewDocument(html: string, baseUrl: string, editable?: SiteField[], allowEditing = true): PreviewDocument {
+  const policy = ["default-src 'none'", "sandbox allow-scripts allow-same-origin", "base-uri http: https:", "img-src 'self' data: blob: http: https:", "style-src 'self' 'unsafe-inline' http: https:", "font-src 'self' data: http: https:", "media-src http: https: data:", "script-src 'none'", "connect-src 'none'", "object-src 'none'", "frame-src 'none'", "frame-ancestors 'self'", "form-action 'none'"].join("; ");
+  // Apply the original offsets first, then parse again before removing tags.
+  let out = editable?.length ? markEditable(html, editable) : html;
+  const removed = [...walk(parseHtml(out))].filter(node => node.tag === "base" || (node.tag === "meta" && ["refresh", "content-security-policy"].includes(decodeEntities(attr(node, "http-equiv") ?? "").trim().toLowerCase())));
+  for (const node of removed.sort((a, b) => b.start - a.start)) out = out.slice(0, node.start) + out.slice(node.end);
+  // A document URL preserves relative asset paths on nested pages. A bare
+  // origin still resolves to /, preserving the old caller contract.
+  const base = '<base href="' + new URL(baseUrl).href.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;") + '">';
+  const head = [...walk(parseHtml(out))].find(node => node.tag === "head");
+  out = head ? out.slice(0, head.innerStart) + base + out.slice(head.innerStart) : base + out;
   if (!editable?.length) return { html: out, csp: policy };
-
-  // The picker is a script and a stylesheet the page did not ask for, so the
-  // policy has to name them. A nonce rather than 'unsafe-inline': the page's
-  // own inline scripts stay forbidden, and only this one runs.
   const nonce = randomBytes(16).toString("base64");
-  const withPicker = out.replace(/<\/body>/i, `${pickerAssets(nonce)}</body>`);
-  const picking =
-    policy
-      .split(";")
-      .map((directive) => directive.trim())
-      .map((directive) =>
-        /^script-src\b/i.test(directive)
-          ? `${directive} 'nonce-${nonce}'`
-          : /^style-src\b/i.test(directive)
-            ? `${directive} 'nonce-${nonce}'`
-            : directive,
-      )
-      .join("; ") +
-    // A nonce anywhere in `style-src` makes the browser ignore 'unsafe-inline'
-    // in it — and 'unsafe-inline' is what permits a `style=""` attribute. So
-    // nonce-ing the picker's own stylesheet quietly switched off every inline
-    // style in the page, which is the one thing this editor writes. The element
-    // kept the attribute and the browser threw the declarations away: a heading
-    // set to align left simply did not move, with nothing on screen to say why.
-    //
-    // `style-src-attr` is the directive that governs attributes on their own.
-    // Naming it puts them back without loosening `<style>` elements, which stay
-    // nonce-only.
-    "; style-src-attr 'unsafe-inline'";
-
-  return { html: withPicker === out ? out + pickerAssets(nonce) : withPicker, csp: picking };
+  // Parsed closing offsets avoid matching a fake </body> inside a script/string.
+  const body = [...walk(parseHtml(out))].find(node => node.tag === "body");
+  const at = body?.innerEnd ?? out.length;
+  out = out.slice(0, at) + pickerAssets(nonce, allowEditing) + out.slice(at);
+  return { html: out, csp: policy.replace("script-src 'none'", "script-src 'nonce-" + nonce + "'") + "; style-src-attr 'unsafe-inline'" };
 }
 
 /**
@@ -492,13 +401,13 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
 function markEditable(html: string, fields: SiteField[]): string {
   const marks = fields
     .filter((field) => field.attrInsert !== undefined)
-    .map((field) => ({ at: field.attrInsert as number, id: field.id, kind: field.kind }))
+    .map((field) => ({ at: field.markerSpan?.start ?? field.attrInsert as number, end: field.markerSpan?.end ?? field.attrInsert as number, id: field.id, kind: field.kind }))
     // Backwards, so each insert leaves the earlier offsets valid.
     .sort((a, b) => b.at - a.at);
 
   let out = html;
   for (const mark of marks) {
-    out = `${out.slice(0, mark.at)} data-dw-field="${mark.id.replace(/"/g, "&quot;")}" data-dw-kind="${mark.kind}"${out.slice(mark.at)}`;
+    out = `${out.slice(0, mark.at)} data-dw-field="${mark.id.replace(/"/g, "&quot;")}" data-dw-kind="${mark.kind}"${out.slice(mark.end)}`;
   }
   return out;
 }
@@ -528,7 +437,7 @@ function markEditable(html: string, fields: SiteField[]): string {
  * Navigation is stopped for the same reason `form-action` is `'none'`: a click
  * on a link in a preview should select the link, not leave the page.
  */
-function pickerAssets(nonce: string): string {
+function pickerAssets(nonce: string, allowEditing: boolean): string {
   return `
 <style nonce="${nonce}">
   [data-dw-field] { cursor: pointer; }
@@ -581,6 +490,7 @@ function pickerAssets(nonce: string): string {
     post({ type: "text", id: editing.getAttribute("data-dw-field"), html: words(editing), final: !!final });
   }
   function startEdit(el) {
+    if (!${allowEditing}) return;
     if (!el || !typeable(el) || editing === el) return;
     stopEdit();
     editing = el;
@@ -696,7 +606,7 @@ function pickerAssets(nonce: string): string {
 
   window.addEventListener("message", function (event) {
     var data = event.data || {};
-    if (data.source !== "dakyworld-editor") return;
+    if (event.source !== parent || event.origin !== location.origin || data.source !== "dakyworld-editor") return;
     if (data.type === "reveal") { sweep(); return; }
     if (data.type === "select") {
       stopEdit();
@@ -718,6 +628,25 @@ function pickerAssets(nonce: string): string {
       if (data.style) styled.setAttribute("style", String(data.style));
       else styled.removeAttribute("style");
       post({ type: "applied", id: data.id, want: "style" });
+    } else if (data.type === "responsive") {
+      var responsiveElement = find(data.id);
+      if (!responsiveElement) { post({ type: "absent", id: data.id, want: "responsive" }); return; }
+      responsiveElement.removeAttribute("data-dw-style");
+      var sheets = document.querySelectorAll("style[data-dw-responsive-preview]");
+      var sheet = null;
+      for (var s = 0; s < sheets.length; s++) if (sheets[s].getAttribute("data-dw-responsive-preview") === data.id) sheet = sheets[s];
+      if (!data.css) { if (sheet) sheet.remove(); }
+      else {
+        if (!sheet) { sheet = document.createElement("style"); sheet.setAttribute("data-dw-responsive-preview", data.id); (document.head || document.body).appendChild(sheet); }
+        sheet.textContent = String(data.css);
+      }
+      post({ type: "applied", id: data.id, want: "responsive" });
+    } else if (data.type === "image") {
+      var picture = find(data.id);
+      if (!picture) { post({ type: "absent", id: data.id, want: "image" }); return; }
+      picture.setAttribute("src", String(data.src || ""));
+      picture.removeAttribute("srcset");
+      post({ type: "applied", id: data.id, want: "image" });
     } else if (data.type === "text") {
       var written = find(data.id);
       if (!written) { post({ type: "absent", id: data.id, want: "text" }); return; }

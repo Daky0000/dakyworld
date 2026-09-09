@@ -27,6 +27,8 @@ import { ClientDetail } from "./pages/ClientDetail";
 import { Website } from "./pages/Website";
 import { WebsiteEditor } from "./pages/WebsiteEditor";
 import { WebsiteLayout } from "./components/WebsiteLayout";
+import { WebsiteGuard } from "./components/WebsiteGuard";
+import { WebsiteSource } from "./components/WebsiteSourceEditor";
 import { WebsiteOverview } from "./pages/WebsiteOverview";
 // The plan's remaining screens. Each says what it will hold and is gated on
 // website.manage — see components/PlannedScreen.tsx and docs/website-builder.md.
@@ -75,18 +77,19 @@ export default function App() {
         <Route path="/clients/:id" element={<Guard needs="clients.view"><ClientDetail /></Guard>} />
         {/* The builder's management screens share a sub-navigation strip; the
             editor deliberately does not, because it takes the whole window. */}
-        <Route path="/website" element={<Guard needs="website.view"><WebsiteLayout /></Guard>}>
+        <Route path="/website" element={<WebsiteGuard><WebsiteLayout /></WebsiteGuard>}>
           <Route index element={<WebsiteOverview />} />
           <Route path="sites" element={<Website />} />
-          <Route path="assets" element={<Guard needs="website.manage"><WebsiteAssets /></Guard>} />
+          <Route path="assets" element={<WebsiteAssets />} />
           <Route path="ai" element={<Guard needs="website.manage"><WebsiteAI /></Guard>} />
           <Route path="updates" element={<Guard needs="website.manage"><WebsiteUpdates /></Guard>} />
-          <Route path="team" element={<Guard needs="website.manage"><WebsiteTeam /></Guard>} />
-          <Route path="audit" element={<Guard needs="website.manage"><WebsiteAudit /></Guard>} />
-          <Route path="settings" element={<Guard needs="website.manage"><WebsiteSettings /></Guard>} />
+          <Route path="team" element={<WebsiteTeam />} />
+          <Route path="audit" element={<WebsiteAudit />} />
+          <Route path="settings" element={<WebsiteGuard needs="manage"><WebsiteSettings /></WebsiteGuard>} />
+          <Route path="source" element={<WebsiteGuard needs="source"><WebsiteSource /></WebsiteGuard>} />
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
         </Route>
-        <Route path="/website/pages/:pageId" element={<Guard needs="website.view"><WebsiteEditor /></Guard>} />
+        <Route path="/website/pages/:pageId" element={<WebsiteGuard><WebsiteEditor /></WebsiteGuard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />
         <Route path="/settings" element={<Guard needs="settings.view"><Settings /></Guard>} />
         <Route path="/agents" element={<Guard needs="agents.view"><Agents /></Guard>} />

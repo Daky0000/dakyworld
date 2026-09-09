@@ -180,7 +180,7 @@ if (hasBuiltClient) {
 // requireAuth and a role check, so an anonymous request can't push 28 MB at
 // us — which means the global parser has to leave those paths alone rather
 // than rejecting them at 100 kB first.
-const UPLOAD_PATHS = ["/api/imports", "/api/settings/system/brand", "/api/emails/attachments"];
+const UPLOAD_PATHS = ["/api/website/sites", "/api/imports", "/api/settings/system/brand", "/api/emails/attachments"];
 const jsonParser = express.json();
 app.use((req, res, next) =>
   UPLOAD_PATHS.some((prefix) => req.path.startsWith(prefix)) ? next() : jsonParser(req, res, next),

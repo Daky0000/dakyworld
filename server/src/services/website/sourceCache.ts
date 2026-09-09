@@ -36,7 +36,7 @@
  * dangerous, does not read it at all.
  */
 
-export type CachedSource = { html: string; from: "repository" | "live site" };
+export type CachedSource = { html: string; from: "repository" | "live site" | "imported file" };
 
 type Entry = CachedSource & { until: number };
 

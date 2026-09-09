@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useWebsiteAccess } from "./WebsiteMembers";
 import type { FieldChangeSummary, RollbackDiff, SitePageVersionRow } from "../lib/types";
 import { Badge, Button, EmptyState, RelativeTime } from "./ui";
 
@@ -31,7 +31,7 @@ import { Badge, Button, EmptyState, RelativeTime } from "./ui";
 
 function summaryLine(entry: FieldChangeSummary): string {
   const what =
-    entry.part === "words"
+    entry.part === "structure" ? " (layout)" : entry.part === "words"
       ? ""
       : entry.part === "destination"
         ? " (link)"
@@ -63,9 +63,9 @@ function TouchedBadges({ touched }: { touched: SitePageVersionRow["touched"] }) 
   );
 }
 
-export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: string; onClose: () => void; onRestored: () => void }) {
+export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRestored }: { pageId: string; siteId: string; draftRevision: number; onClose: () => void; onRestored: () => void }) {
   const qc = useQueryClient();
-  const { can } = useAuth();
+  const access = useWebsiteAccess(siteId);
   const [failure, setFailure] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   /** The version somebody has asked to put back on the site, and what that would do. */
@@ -78,7 +78,7 @@ export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: strin
 
   const restore = useMutation({
     mutationFn: (versionId: string) =>
-      api.post<{ restored: number; dropped: string[]; empty: boolean }>(`/website/pages/${pageId}/versions/${versionId}/restore`),
+      api.post<{ restored: number; dropped: string[]; empty: boolean }>(`/website/pages/${pageId}/versions/${versionId}/restore`, { ifRevision: draftRevision }),
     onError: (err) => setFailure(err instanceof ApiError ? err.message : "That version could not be restored."),
     onSuccess: (result) => {
       setFailure(null);
@@ -107,7 +107,7 @@ export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: strin
 
   const rollback = useMutation({
     mutationFn: (versionId: string) =>
-      api.post<{ version: number; restoredFrom: number; note: string }>(`/website/pages/${pageId}/versions/${versionId}/publish`),
+      api.post<{ version: number; restoredFrom: number; note: string }>(`/website/pages/${pageId}/versions/${versionId}/publish`, { sourceHash: confirming?.diff.sourceHash }),
     onError: (err) => setFailure(err instanceof ApiError ? err.message : "That version could not be published."),
     onSuccess: (result) => {
       setFailure(null);
@@ -182,10 +182,10 @@ export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: strin
                   )}
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button variant="secondary" size="sm" disabled={restore.isPending} onClick={() => restore.mutate(version.id)}>
+                    {access.data?.capabilities.edit && <Button variant="secondary" size="sm" disabled={restore.isPending} onClick={() => { if (window.confirm("Replace the saved draft with the edits from this version?")) restore.mutate(version.id); }}>
                       Restore as draft
-                    </Button>
-                    {can("website.publish") && (
+                    </Button>}
+                    {access.data?.capabilities.publish && (
                       <Button variant="ghost" size="sm" disabled={askRollback.isPending} onClick={() => askRollback.mutate(version)}>
                         Publish this version
                       </Button>
@@ -231,8 +231,8 @@ export function WebsiteVersions({ pageId, onClose, onRestored }: { pageId: strin
                     </p>
                   )}
                   <ul className="space-y-2">
-                    {confirming.diff.differences.map((entry) => (
-                      <li key={entry.id} className="rounded-xl border border-line p-2.5 text-xs">
+                    {confirming.diff.differences.map((entry, index) => (
+                      <li key={`${entry.id}:${index}`} className="rounded-xl border border-line p-2.5 text-xs">
                         <div className="mb-1 font-bold uppercase tracking-[.08em] text-muted">{entry.label}</div>
                         <div className="break-words text-muted">
                           <span className="line-through">{entry.now}</span>

@@ -3080,6 +3080,7 @@ export type SiteSummary = {
   client: { id: string; name: string } | null;
   pageCount: number;
   draftCount: number;
+  capabilities?: Record<"view" | "edit" | "review" | "publish" | "manage" | "members" | "source", boolean>;
 };
 
 export type SitePageStatus = "LIVE" | "HIDDEN";
@@ -3097,11 +3098,15 @@ export type SitePageRow = {
   lastPublishedAt: string | null;
 };
 
-export type FieldKind = "text" | "richtext" | "link" | "button" | "image";
+export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "container";
 
 /** One thing on a page somebody can change. Offsets stay on the server. */
 export type SiteFieldRow = {
+  structure?: { remove: boolean; duplicate: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string };
   id: string;
+  parentId?: string;
+  order?: number;
+  confidence?: "annotated" | "discovered";
   kind: FieldKind;
   label: string;
   tag: string;
@@ -3113,6 +3118,7 @@ export type SiteFieldRow = {
   decorative?: boolean;
   /** The element's own inline style, when it has one. */
   style?: string;
+  responsive?: ResponsiveStyles;
   // Buttons only.
   /** The style class it wears — `btn-primary`. */
   variant?: string;
@@ -3132,9 +3138,11 @@ export type SiteSectionRow = {
 };
 
 /** What the editor sends back: only the parts of a field that changed. */
-export type FieldEdit = { value?: string; href?: string; alt?: string; style?: string; variant?: string | null; newTab?: boolean };
+export type ResponsiveStyles = { tablet?: string; mobile?: string };
+export type FieldEdit = { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean };
 
 export type SitePageDetail = {
+  structure?: { changed: boolean; canUndo: boolean; canRedo: boolean; changes: string[]; stale: boolean };
   site: { id: string; name: string; publicUrl: string; repo: string | null };
   /** Where a link on this page can go without leaving the site. */
   links: Array<{ path: string; title: string }>;
@@ -3148,9 +3156,10 @@ export type SitePageDetail = {
     lastPublishedAt: string | null;
   };
   /** Which of the two sources answered — the repository, or the live site. */
-  readFrom: "repository" | "live site";
+  readFrom: "repository" | "live site" | "imported file";
   sections: SiteSectionRow[];
   draft: {
+    documentHash?: string | null;
     values: Record<string, FieldEdit>;
     /**
      * The number every save has to quote back. See the server's draft route:
@@ -3201,7 +3210,7 @@ export type FieldChangeSummary = {
   id: string;
   label: string;
   kind: FieldKind;
-  part: "words" | "destination" | "picture" | "description" | "styling";
+  part: "words" | "destination" | "picture" | "description" | "styling" | "button style" | "opens in" | "structure";
   from: string;
   to: string;
 };
@@ -3209,6 +3218,7 @@ export type FieldChangeSummary = {
 export type ChangeCategories = { text: boolean; links: boolean; images: boolean; styles: boolean; seo: boolean };
 
 export type PublishResult = {
+  draftRetained?: boolean;
   version: number;
   changed: number;
   summary: FieldChangeSummary[];
@@ -3232,6 +3242,7 @@ export type SitePageVersionRow = {
 
 /** What rolling back to a version would actually do, asked before the button is offered. */
 export type RollbackDiff = {
+  sourceHash: string;
   version: { id: string; number: number; createdAt: string; publishedBy: { id: string; name: string } | null; commitUrl: string | null };
   /** The page is already exactly this version. Nothing to do. */
   identical: boolean;
@@ -3240,7 +3251,7 @@ export type RollbackDiff = {
   /** Differs in markup, reads exactly the same. Counted, never listed. */
   invisibleCount: number;
   summary: FieldChangeSummary[];
-  readFrom: "repository" | "live site";
+  readFrom: "repository" | "live site" | "imported file";
   warning: string;
 };
 

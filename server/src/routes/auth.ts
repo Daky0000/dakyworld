@@ -43,7 +43,7 @@ function publicUser(user: {
   totpConfirmedAt: Date | null;
   extraPermissions: string[];
   deniedPermissions: string[];
-  accessRole: { id: string; name: string; superAdmin: boolean; permissions: string[] } | null;
+  accessRole: { id: string; name: string; external: boolean; superAdmin: boolean; permissions: string[] } | null;
 }) {
   return {
     id: user.id,
@@ -53,6 +53,7 @@ function publicUser(user: {
     twoFactorEnabled: Boolean(user.totpConfirmedAt),
     roleId: user.accessRole?.id ?? null,
     roleName: user.accessRole?.name ?? null,
+    external: Boolean(user.accessRole?.external),
     permissions: [...effectivePermissions(user)].sort(),
   };
 }

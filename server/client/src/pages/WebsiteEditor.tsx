@@ -5,19 +5,22 @@ import { api, ApiError, apiUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
+import { WebsiteAssetLibrary } from "../components/WebsiteAssetLibrary";
+import { PublishReview, type WebsiteReview } from "../components/PublishReview";
+import { LayoutInspector, INSPECTED_PROPERTIES } from "../components/LayoutInspector";
 import { StylePanel } from "../components/StylePanel";
+import { WebsiteLayers, WebsiteBreadcrumbs } from "../components/WebsiteLayers";
 import { WebsiteVersions } from "../components/WebsiteVersions";
-import { WebsiteAIPanel } from "../components/WebsiteAIPanel";
+import { WebsiteAssistant } from "../components/WebsiteAssistant";
+import { useWebsiteAccess } from "../components/WebsiteMembers";
+import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
 
 /**
  * One page of the website, open at full size, with everything about the thing
  * you clicked on the left.
  *
- * The design of the page is not editable here and that is the point. What a
- * client gets is every heading, paragraph, button, link and picture with a plain
- * label on it — "Main heading", not "h1" — grouped under the section it appears
- * in, with the section named after its own heading. Nobody has to know what a
- * `<div>` is, and nobody can break the layout by editing one.
+ * Content and design share a draft. The inspector exposes the selected
+ * element and its parent containers while preserving the surrounding source.
  *
  * Three things make it feel like editing the page rather than filling in a form
  * about the page, and all three are worth keeping:
@@ -38,7 +41,7 @@ import { WebsiteAIPanel } from "../components/WebsiteAIPanel";
  */
 
 const DEVICES = [
-  { key: "desktop", label: "Desktop", width: "100%" },
+  { key: "desktop", label: "Desktop", width: "1280px" },
   { key: "tablet", label: "Tablet", width: "820px" },
   { key: "mobile", label: "Phone", width: "390px" },
 ] as const;
@@ -73,7 +76,7 @@ const INPUT =
  * away somebody's scroll position and their caret in exchange for no visible
  * difference at all.
  */
-const LIVE_KEYS = new Set(["value", "style", "variant", "newTab"]);
+const LIVE_KEYS = new Set(["value", "style", "responsive", "variant", "newTab"]);
 
 /**
  * A field with formatting inside it.
@@ -247,6 +250,8 @@ function FieldRow({
     }
   }, [field.kind, value, publicUrl]);
 
+  if (field.kind === "container") return <p className="text-xs leading-relaxed text-muted">Select a child to edit its content, or use the controls below to style this container.</p>;
+
   return (
     <div
       className={
@@ -365,67 +370,6 @@ function FieldRow({
   );
 }
 
-/**
- * Everything on the page, in the order it appears on it.
- *
- * The visual editor can only reach what is visible; this is how you get to the
- * page title, a picture's description, or a heading that is three screens down.
- * It is also the only place that can answer "have I missed anything", which is
- * why the edited marks are on it.
- */
-function LayerList({
-  sections,
-  edits,
-  problems,
-  pickedId,
-  onPick,
-}: {
-  sections: SiteSectionRow[];
-  edits: Record<string, FieldEdit>;
-  problems: Map<string, string>;
-  pickedId: string | null;
-  onPick: (id: string) => void;
-}) {
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-      {sections.map((section) => (
-        <div key={section.id} className="mb-2">
-          <div className="px-2 pb-1 pt-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-muted">{section.label}</div>
-          <ul>
-            {section.fields.map((field) => {
-              const picked = field.id === pickedId;
-              const changed = edits[field.id] !== undefined && Object.keys(edits[field.id]!).length > 0;
-              return (
-                <li key={field.id}>
-                  <button
-                    type="button"
-                    onClick={() => onPick(field.id)}
-                    title={field.label}
-                    className={`flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[12px] transition ${
-                      picked ? "bg-blue/10 text-ink" : "text-ink hover:bg-sunken hover:text-ink"
-                    }`}
-                  >
-                    <span
-                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded font-mono text-[8px] uppercase ${
-                        picked ? "bg-blue text-white" : "bg-sunken text-muted"
-                      }`}
-                    >
-                      {field.kind === "image" ? "▣" : field.kind === "link" ? "↗" : "T"}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{field.preview || field.label}</span>
-                    {problems.has(field.id) && <span className="shrink-0 text-[9px] text-warn-text">!</span>}
-                    {changed && <span className="shrink-0 text-[9px] text-blue">●</span>}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /** One side of a contested field, as words rather than as markup. */
 function sideText(edit: FieldEdit | null): string {
   if (!edit) return "left as it was";
@@ -433,7 +377,12 @@ function sideText(edit: FieldEdit | null): string {
   if (edit.value !== undefined) parts.push(edit.value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "(nothing)");
   if (edit.href !== undefined) parts.push(`links to ${edit.href || "(nowhere)"}`);
   if (edit.alt !== undefined) parts.push(`described as "${edit.alt}"`);
-  if (edit.style !== undefined) parts.push("styled differently");
+  if (edit.style !== undefined) parts.push(edit.style || "original stylesheet");
+  if (edit.responsive !== undefined) {
+    parts.push(`Tablet: ${edit.responsive.tablet || "inherit"}`, `Phone: ${edit.responsive.mobile || "inherit"}`);
+  }
+  if (edit.variant !== undefined) parts.push(`button style: ${edit.variant || "none"}`);
+  if (edit.newTab !== undefined) parts.push(edit.newTab ? "opens in new tab" : "opens in same tab");
   return parts.join(" · ") || "left as it was";
 }
 
@@ -549,10 +498,25 @@ function ConflictDialog({
 
 export function WebsiteEditor() {
   const { pageId = "" } = useParams();
+  return <WebsitePageEditor key={pageId} pageId={pageId} />;
+}
+
+function WebsitePageEditor({ pageId }: { pageId: string }) {
   const qc = useQueryClient();
-  const { can } = useAuth();
+  const { user } = useAuth();
+  const localDraftKey = `website-draft:${user?.id}:${pageId}`;
+  const recovered = useRef(false);
 
   const [edits, setEdits] = useState<Record<string, FieldEdit>>({});
+  const [structureBusy, setStructureBusy] = useState(false);
+  const structurePending = useRef(false);
+  const structuralHistory = useRef<(step: number) => void>(() => {});
+  const latestEdits = useRef(edits);
+  latestEdits.current = edits;
+  const [computed, setComputed] = useState<Record<string, string>>({});
+  const [inspectorTab, setInspectorTab] = useState<"content" | "design">("design");
+  const [styleClipboard, setStyleClipboard] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("visual");
   /** The field the person clicked in the preview. */
@@ -586,6 +550,7 @@ export function WebsiteEditor() {
   /** Bumped when the page finishes handing typing back, so the panel's box catches up. */
   const [frameEdit, setFrameEdit] = useState(0);
   const dirty = useRef(false);
+  const failedSave = useRef<string | null>(null);
   /** An edit the frame cannot be told about — a link's destination, a picture. */
   const needsReload = useRef(false);
   /**
@@ -596,12 +561,33 @@ export function WebsiteEditor() {
    * save closing over a stale revision would refuse its own previous save.
    */
   const revision = useRef(0);
+  const documentHash = useRef<string | null>(null);
   /** Somebody else saved first. Their version and this one, side by side. */
   const [conflict, setConflict] = useState<DraftConflict | null>(null);
   /** The publishing history, and the two ways back out of a bad publish. */
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const publishPending = useRef(false);
   const [showVersions, setShowVersions] = useState(false);
-  /** The assistant, scoped to whatever is selected. Planned — see WebsiteAIPanel. */
+  /** Optional assistant proposals join the same local draft and undo history. */
   const [showAI, setShowAI] = useState(false);
+
+  useEffect(() => {
+    const inspect = () => {
+      try {
+        const doc = frame.current?.contentDocument;
+        const element = pickedId ? doc?.querySelector('[data-dw-field="' + CSS.escape(pickedId) + '"]') : null;
+        if (!element || !doc?.defaultView) { setComputed({}); return; }
+        const style = doc.defaultView.getComputedStyle(element);
+        setComputed(Object.fromEntries(INSPECTED_PROPERTIES.map(key => [key, style.getPropertyValue(key)])));
+      } catch { setComputed({}); }
+    };
+    inspect();
+    const iframe = frame.current;
+    iframe?.addEventListener("load", inspect);
+    const resize = new ResizeObserver(inspect);
+    if (iframe) resize.observe(iframe);
+    return () => { iframe?.removeEventListener("load", inspect); resize.disconnect(); };
+  }, [pickedId, edits, previewToken, device, mode]);
 
   // Refetching on focus is what used to hand the effect below a fresh copy of
   // the draft in the middle of somebody typing. The guard on that effect is the
@@ -612,6 +598,10 @@ export function WebsiteEditor() {
     queryKey: ["website", "page", pageId],
     queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`),
   });
+
+  const access = useWebsiteAccess(page.data?.site.id);
+  const canEdit = access.data?.capabilities.edit === true;
+  const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: () => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean } }>(`/website/sites/${page.data!.site.id}/design`) });
 
   /* ------------------------------------------------------------- history */
 
@@ -676,7 +666,7 @@ export function WebsiteEditor() {
    * written, no element to write on, or no reachable document.
    */
   const writeInFrame = useCallback(
-    (kind: "style" | "text" | "select" | "variant", id: string | null, value?: string, from?: string): "written" | "absent" | "unreachable" => {
+    (kind: "style" | "responsive" | "image" | "text" | "select" | "variant", id: string | null, value?: string, from?: string): "written" | "absent" | "unreachable" => {
     let doc: Document | null = null;
     try {
       doc = frame.current?.contentDocument ?? null;
@@ -700,6 +690,15 @@ export function WebsiteEditor() {
     const el = doc.querySelector(`[data-dw-field="${id.replace(/"/g, "")}"]`);
     if (!el) return "absent";
 
+    if (kind === "responsive") {
+      writeResponsivePreview(doc, el, id, JSON.parse(value ?? "{}"));
+      return "written";
+    }
+    if (kind === "image") {
+      el.setAttribute("src", value ?? "");
+      el.removeAttribute("srcset");
+      return "written";
+    }
     if (kind === "style") {
       if (value) el.setAttribute("style", value);
       else el.removeAttribute("style");
@@ -729,7 +728,7 @@ export function WebsiteEditor() {
    * says so and starts leaning on the reload instead.
    */
   const push = useCallback(
-    (kind: "style" | "text" | "variant", id: string, value: string, from?: string) => {
+    (kind: "style" | "responsive" | "image" | "text" | "variant", id: string, value: string, from?: string) => {
       const result = writeInFrame(kind, id, value, from);
       if (result === "written") {
         awaiting.current = 0;
@@ -744,6 +743,10 @@ export function WebsiteEditor() {
       tell(
         kind === "style"
           ? { type: "style", id, style: value }
+          : kind === "responsive"
+            ? { type: "responsive", id, css: responsivePreviewCss(id, JSON.parse(value)) }
+          : kind === "image"
+            ? { type: "image", id, src: value }
           : kind === "variant"
             ? { type: "variant", id, from, to: value }
             : { type: "text", id, html: value },
@@ -769,6 +772,7 @@ export function WebsiteEditor() {
 
   const change = useCallback(
     (fieldId: string, next: FieldEdit, options?: { fromFrame?: boolean; commit?: boolean }) => {
+      if (!canEdit || reviewOpen || showVersions || publishPending.current || structurePending.current) return;
       dirty.current = true;
       setPublished(null);
       if (Object.keys(next).some((key) => !LIVE_KEYS.has(key))) needsReload.current = true;
@@ -776,7 +780,8 @@ export function WebsiteEditor() {
       // while the slider is still moving rather than after the next save.
       if (!options?.fromFrame) {
         if (next.style !== undefined) push("style", fieldId, next.style);
-        if (next.value !== undefined) push("text", fieldId, next.value);
+        if (next.responsive !== undefined) push("responsive", fieldId, JSON.stringify(next.responsive));
+        if (next.value !== undefined) push(page.data?.sections.some(section => section.fields.some(field => field.id === fieldId && field.kind === "image")) ? "image" : "text", fieldId, next.value);
         if (next.variant !== undefined) {
           push("variant", fieldId, next.variant ?? "", wornVariant.current[fieldId]);
           // The frame now wears the new one, so the *next* swap has to take
@@ -791,7 +796,7 @@ export function WebsiteEditor() {
         return updated;
       });
     },
-    [commitHistory, push],
+    [commitHistory, push, canEdit, reviewOpen, showVersions, page.data],
   );
 
   // The frame talks back: which element was clicked, which one is being typed
@@ -801,7 +806,7 @@ export function WebsiteEditor() {
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const data = event.data as { source?: string; type?: string; id?: string | null; html?: string; final?: boolean };
-      if (data?.source !== "dakyworld-preview") return;
+      if (event.source !== frame.current?.contentWindow || event.origin !== window.location.origin || data?.source !== "dakyworld-preview") return;
       if (data.type === "select") {
         setPickedId(data.id ?? null);
       } else if (data.type === "applied") {
@@ -813,7 +818,18 @@ export function WebsiteEditor() {
         // outline is how somebody knows which thing the panel is talking about.
         awaiting.current = 0;
         setLiveBlind(false);
-        window.setTimeout(() => writeInFrame("select", pickedRef.current), 0);
+        // A mode switch or delayed save can reload an older server draft.
+        // Reapply the current tab's edits before restoring its selection.
+        window.setTimeout(() => {
+          const fields = page.data?.sections.flatMap(section => section.fields) ?? [];
+          for (const [id, edit] of Object.entries(latestEdits.current)) {
+            if (edit.style !== undefined) writeInFrame("style", id, edit.style);
+            if (edit.responsive !== undefined) writeInFrame("responsive", id, JSON.stringify(edit.responsive));
+            if (edit.value !== undefined) writeInFrame(fields.find(field => field.id === id)?.kind === "image" ? "image" : "text", id, edit.value);
+            if (edit.variant !== undefined) writeInFrame("variant", id, edit.variant ?? "", wornVariant.current[id]);
+          }
+          writeInFrame("select", pickedRef.current);
+        }, 0);
       } else if (data.type === "editing") {
         setTypingId(data.id ?? null);
         if (!data.id) setFrameEdit((token) => token + 1);
@@ -829,7 +845,7 @@ export function WebsiteEditor() {
           if (!id.startsWith("meta.")) needsReload.current = true;
           setAbsentIds((current) => (current.has(id) ? current : new Set(current).add(id)));
         }
-      } else if (data.type === "text" && data.id) {
+      } else if (data.type === "text" && data.id && canEdit && !reviewOpen && !showVersions && !publishPending.current && !structurePending.current) {
         const id = data.id;
         setEdits((current) => {
           const updated = { ...current, [id]: { ...current[id], value: data.html ?? "" } };
@@ -842,7 +858,7 @@ export function WebsiteEditor() {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [commitHistory, writeInFrame]);
+  }, [commitHistory, writeInFrame, canEdit, reviewOpen, showVersions, page.data]);
 
   /* --------------------------------------------------------- server state */
 
@@ -865,8 +881,26 @@ export function WebsiteEditor() {
     // Never over the top of unsaved work. Publish, discard and undo all clear
     // this flag before they reload, so the resets that should happen still do.
     if (dirty.current) return;
+    if (!recovered.current) {
+      recovered.current = true;
+      try {
+        const local = JSON.parse(sessionStorage.getItem(localDraftKey) ?? "null");
+        if (local && Number.isInteger(local.revision) && local.values && typeof local.values === "object" && !Array.isArray(local.values)) {
+          setEdits(local.values);
+          revision.current = local.revision;
+          documentHash.current = local.documentHash ?? null;
+          dirty.current = true;
+          needsReload.current = true;
+          history.current = { list: [JSON.stringify(page.data.draft.values), JSON.stringify(local.values)], index: 1 };
+          syncHistoryButtons();
+          setFailure("Recovered unsaved changes from this tab. They will be saved when your editing access is confirmed.");
+          return;
+        }
+      } catch { /* Storage may be disabled or full. Server drafts still work. */ }
+    }
     setEdits(page.data.draft.values);
     revision.current = page.data.draft.revision;
+    documentHash.current = page.data.draft.documentHash ?? null;
     setLoadToken((token) => token + 1);
     dirty.current = false;
     history.current = { list: [JSON.stringify(page.data.draft.values)], index: 0 };
@@ -876,8 +910,9 @@ export function WebsiteEditor() {
 
   const save = useMutation({
     mutationFn: (values: Record<string, FieldEdit>) =>
-      api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, { ifRevision: revision.current, values }),
-    onError: (err) => {
+      api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, { ifRevision: revision.current, documentHash: documentHash.current, values }),
+    onError: (err, submitted) => {
+      failedSave.current = JSON.stringify(submitted);
       // A 409 is not a failure to report and move past — it is a choice to put
       // in front of somebody, with both versions in the body. Everything else is
       // the red bar as before.
@@ -891,10 +926,12 @@ export function WebsiteEditor() {
       }
       setFailure(err instanceof ApiError ? err.message : "Those changes could not be saved.");
     },
-    onSuccess: (result) => {
+    onSuccess: (result, submitted) => {
       setFailure(null);
-      dirty.current = false;
+      dirty.current = Boolean(result.unknown?.length) || JSON.stringify(latestEdits.current) !== JSON.stringify(submitted);
+      failedSave.current = result.unknown?.length ? JSON.stringify(submitted) : null;
       revision.current = result.revision;
+      try { if (!dirty.current) sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
       // A field the server does not know is a draft written against a page that
       // has since moved. Silence here reads as "saved" and it is not.
       if (result.unknown?.length) {
@@ -914,7 +951,7 @@ export function WebsiteEditor() {
 
   const saveNow = useCallback(
     (values: Record<string, FieldEdit>) => {
-      save.mutate(values);
+      if (!save.isPending) save.mutate(values);
     },
     [save],
   );
@@ -955,7 +992,7 @@ export function WebsiteEditor() {
   // leaving the screen almost never loses anything — and the guard below covers
   // the case where it does.
   useEffect(() => {
-    if (!dirty.current) return;
+    if (!dirty.current || !canEdit || reviewOpen || showVersions || publishPending.current || structurePending.current || failedSave.current === JSON.stringify(edits)) return;
     // Not while somebody is deciding whose version to keep. `saveNow` changes
     // identity every time the mutation changes state, so this effect re-runs on
     // its own after each refusal — without this guard an open dialog would sit
@@ -966,7 +1003,12 @@ export function WebsiteEditor() {
     // convenience and becomes the thing they are waiting for.
     const timer = setTimeout(() => saveNow(edits), liveBlind || needsReload.current ? 500 : 1200);
     return () => clearTimeout(timer);
-  }, [edits, saveNow, liveBlind, conflict]);
+  }, [edits, saveNow, liveBlind, conflict, canEdit, reviewOpen, showVersions]);
+
+  useEffect(() => {
+    if (!dirty.current) return;
+    try { sessionStorage.setItem(localDraftKey, JSON.stringify({ revision: revision.current, documentHash: documentHash.current, values: edits })); } catch { /* Server saving remains authoritative. */ }
+  }, [edits, localDraftKey]);
 
   useEffect(() => {
     const onLeave = (event: BeforeUnloadEvent) => {
@@ -984,9 +1026,10 @@ export function WebsiteEditor() {
 
   const restore = useCallback(
     (step: number) => {
+      if (!canEdit || reviewOpen || showVersions || publishPending.current || structurePending.current) return;
       const state = history.current;
       const index = state.index + step;
-      if (index < 0 || index >= state.list.length) return;
+      if (index < 0 || index >= state.list.length) { structuralHistory.current(step); return; }
       restoring.current = true;
       state.index = index;
       const values = JSON.parse(state.list[index]!) as Record<string, FieldEdit>;
@@ -1001,7 +1044,7 @@ export function WebsiteEditor() {
         restoring.current = false;
       }, 0);
     },
-    [],
+    [canEdit, reviewOpen, showVersions],
   );
 
   useEffect(() => {
@@ -1028,10 +1071,12 @@ export function WebsiteEditor() {
   }, [restore, pick, tell]);
 
   const discard = useMutation({
-    mutationFn: () => api.delete(`/website/pages/${pageId}/draft`),
+    mutationFn: () => api.delete(`/website/pages/${pageId}/draft?ifRevision=${revision.current}`),
+    onError: err => setFailure(err instanceof Error ? err.message : "The draft could not be discarded."),
     onSuccess: () => {
       setEdits({});
       dirty.current = false;
+      try { sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
       history.current = { list: ["{}"], index: 0 };
       syncHistoryButtons();
       setPreviewToken((token) => token + 1);
@@ -1040,12 +1085,17 @@ export function WebsiteEditor() {
   });
 
   const publish = useMutation({
-    mutationFn: () => api.post<PublishResult>(`/website/pages/${pageId}/publish`),
+    mutationFn: (review: WebsiteReview) => api.post<PublishResult>(`/website/pages/${pageId}/publish`, { ifRevision: review.revision, sourceHash: review.sourceHash }),
+    onMutate: () => { publishPending.current = true; },
+    onSettled: () => { publishPending.current = false; },
     onSuccess: (result) => {
       setFailure(null);
       setPublished(result);
+      setReviewOpen(false);
       setEdits({});
       dirty.current = false;
+      try { sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
+      if (result.draftRetained) setFailure("Published the reviewed version. A newer saved draft was preserved and is being reloaded.");
       history.current = { list: ["{}"], index: 0 };
       syncHistoryButtons();
       setPreviewToken((token) => token + 1);
@@ -1076,6 +1126,27 @@ export function WebsiteEditor() {
     return map;
   }, [save.data, page.data]);
 
+  async function runStructure(kind: "remove" | "duplicate" | "before" | "after" | "undo" | "redo", fieldId?: string, targetId?: string) {
+    if (!canEdit || save.isPending || publishPending.current || structurePending.current || reviewOpen || showVersions) return;
+    if (typingId) { setFailure("Press Escape to finish typing on the page, then change its layout."); return; }
+    structurePending.current = true; setStructureBusy(true); setFailure(null);
+    try {
+      if (dirty.current) await save.mutateAsync(latestEdits.current);
+      if (dirty.current) throw new Error("Some edits have not saved. Resolve them before changing the layout.");
+      const result = await api.post<{ revision: number; selectedId: string | null }>(`/website/pages/${pageId}/structure`, { kind, fieldId, targetId, ifRevision: revision.current });
+      dirty.current = false;
+      try { sessionStorage.removeItem(localDraftKey); } catch { /* Server checkpoint is saved. */ }
+      const refreshed = await qc.fetchQuery({ queryKey: ["website", "page", pageId], queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`), staleTime: 0 });
+      revision.current = refreshed.draft.revision; documentHash.current = refreshed.draft.documentHash ?? null;
+      latestEdits.current = refreshed.draft.values; setEdits(refreshed.draft.values);
+      history.current = { list: [JSON.stringify(refreshed.draft.values)], index: 0 }; syncHistoryButtons();
+      setPublished(null); setPickedId(result.selectedId); setLoadToken(token => token + 1); setPreviewToken(token => token + 1);
+      void qc.invalidateQueries({ queryKey: ["website", "sites"] });
+    } catch (error) { setFailure(error instanceof Error ? error.message : "The layout action could not be completed."); }
+    finally { structurePending.current = false; setStructureBusy(false); }
+  }
+  structuralHistory.current = step => { if (step < 0 ? page.data?.structure?.canUndo : page.data?.structure?.canRedo) void runStructure(step < 0 ? "undo" : "redo"); };
+
   if (page.isLoading) return <div className="p-10 text-sm text-muted">Opening the page…</div>;
   if (page.isError) {
     return (
@@ -1090,12 +1161,29 @@ export function WebsiteEditor() {
   const section = sections.find((candidate) => candidate.id === sectionId) ?? sections[0] ?? null;
   const allFields = sections.flatMap((candidate) => candidate.fields);
   const picked = pickedId ? (allFields.find((field) => field.id === pickedId) ?? null) : null;
-  const changedCount = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length;
-  const canPublish = can("website.publish");
-  const readOnly = !can("website.edit");
-  const pickedStyle = pickedId ? (edits[pickedId]?.style ?? picked?.style ?? "") : "";
+  const changedCount = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length + (page.data.structure?.changed ? 1 : 0);
+  const canPublish = access.data?.capabilities.publish === true;
+  const readOnly = !canEdit || publish.isPending || reviewOpen || showVersions || structureBusy;
+  const pickedResponsive = pickedId ? (edits[pickedId]?.responsive ?? picked?.responsive ?? {}) : {};
+  const pickedStyle = device === "desktop"
+    ? pickedId ? (edits[pickedId]?.style ?? picked?.style ?? "") : ""
+    : pickedResponsive[device] ?? "";
+  const changePickedStyle = (style: string, commit = false) => {
+    if (!picked) return;
+    if (device === "desktop") change(picked.id, { ...edits[picked.id], style }, { commit });
+    else {
+      if (style.split(";").some(declaration => declaration.trim() && !safeResponsiveStyle(declaration))) {
+        setFailure("That screen-size style contains a value the editor cannot save. Use layout, colour, typography or gradient values; image URLs belong in the image control.");
+        return;
+      }
+      const responsive = { ...pickedResponsive };
+      if (style.trim()) responsive[device] = safeResponsiveStyle(style);
+      else delete responsive[device];
+      change(picked.id, { ...edits[picked.id], responsive }, { commit });
+    }
+  };
 
-  const status = save.isPending
+  const status = structureBusy ? "Updating layout…" : save.isPending
     ? "Saving…"
     : dirty.current
       ? "Unsaved changes"
@@ -1107,10 +1195,10 @@ export function WebsiteEditor() {
 
   const canvas = (
     <div className="min-h-0 flex-1 overflow-auto bg-cream p-4">
-      <div className="mx-auto h-full" style={{ width: frameWidth, maxWidth: "100%" }}>
+      <div className="mx-auto h-full" style={{ width: frameWidth, minWidth: frameWidth, zoom }}>
         <iframe
           ref={mode === "visual" ? frame : undefined}
-          key={`${mode}-${previewToken}-${device}`}
+          key={`${mode}-${previewToken}`}
           title="Page"
           src={apiUrl(`/website/pages/${pageId}/preview?${mode === "visual" ? "pick=1&" : ""}v=${previewToken}`)}
           className="h-full min-h-[400px] w-full rounded-xl border border-line bg-white shadow-sm shadow-ink/5"
@@ -1121,10 +1209,19 @@ export function WebsiteEditor() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {showAI && <WebsiteAIPanel fieldLabel={picked?.label ?? null} onClose={() => setShowAI(false)} />}
+      {reviewOpen && <PublishReview pageId={pageId} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
+      {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={values => {
+        const merged = { ...latestEdits.current };
+        for (const [id, value] of Object.entries(values)) { merged[id] = { ...merged[id], ...value }; change(id, merged[id]); }
+        commitHistory(merged);
+        setLoadToken(token => token + 1);
+        setShowAI(false);
+      }} />}
       {showVersions && (
         <WebsiteVersions
           pageId={pageId}
+          siteId={site.id}
+          draftRevision={revision.current}
           onClose={() => setShowVersions(false)}
           onRestored={() => {
             // A restore writes a draft on the server, and this editor is holding
@@ -1133,6 +1230,7 @@ export function WebsiteEditor() {
             // it the refetch is ignored and the restore appears to have done
             // nothing at all.
             dirty.current = false;
+            try { sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
             setPublished(null);
             void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
             setPreviewToken((token) => token + 1);
@@ -1175,7 +1273,7 @@ export function WebsiteEditor() {
             <button
               type="button"
               title="Undo (Ctrl+Z)"
-              disabled={!historyState.canUndo}
+              disabled={readOnly || save.isPending || (!historyState.canUndo && !page.data.structure?.canUndo)}
               onClick={() => restore(-1)}
               className="flex h-7 w-7 items-center justify-center rounded-xl text-muted transition enabled:hover:bg-sunken enabled:hover:text-ink disabled:opacity-30"
             >
@@ -1189,7 +1287,7 @@ export function WebsiteEditor() {
             <button
               type="button"
               title="Redo (Ctrl+Shift+Z)"
-              disabled={!historyState.canRedo}
+              disabled={readOnly || save.isPending || (!historyState.canRedo && !page.data.structure?.canRedo)}
               onClick={() => restore(1)}
               className="flex h-7 w-7 items-center justify-center rounded-xl text-muted transition enabled:hover:bg-sunken enabled:hover:text-ink disabled:opacity-30"
             >
@@ -1220,6 +1318,7 @@ export function WebsiteEditor() {
             </svg>
           </button>
 
+          {mode !== "edit" && <select aria-label="Canvas zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))} className="rounded-xl border border-line px-2 py-1 text-xs">{[0.5, 0.75, 1, 1.25, 1.5].map(value => <option key={value} value={value}>{value * 100}%</option>)}</select>}
           {mode !== "edit" && (
             <div className="flex overflow-hidden rounded-xl border border-line">
               {DEVICES.map((option) => (
@@ -1256,18 +1355,21 @@ export function WebsiteEditor() {
             ))}
           </div>
 
-          <Button variant="ghost" size="sm" onClick={() => setShowVersions(true)}>
+          <a className="text-xs text-blue" href={apiUrl(`/website/pages/${pageId}/export`)} download onClick={event => { if (dirty.current || save.isPending) { event.preventDefault(); setFailure("Wait for the current changes to save before downloading."); } }}>Download HTML</a>
+          <Button variant="ghost" size="sm" disabled={save.isPending || publish.isPending || structureBusy} onClick={async () => {
+            try { if (dirty.current) await save.mutateAsync(latestEdits.current); if (!dirty.current) setShowVersions(true); }
+            catch { /* Saving reports the failure and preserves local edits. */ }
+          }}>
             Versions
           </Button>
-          {/* Only for whoever manages the site. It describes an unbuilt feature,
-              and a client should not be shown the shape of one. */}
-          {can("website.manage") && (
+          {/* Site settings enable optional, reviewed AI suggestions. */}
+          {canEdit && design.data?.options.aiEnabled && (
             <Button variant="ghost" size="sm" onClick={() => setShowAI(true)}>
               AI
             </Button>
           )}
           {changedCount > 0 && !readOnly && (
-            <Button variant="ghost" size="sm" onClick={() => discard.mutate()} disabled={discard.isPending}>
+            <Button variant="ghost" size="sm" onClick={() => discard.mutate()} disabled={discard.isPending || save.isPending || publish.isPending}>
               Discard
             </Button>
           )}
@@ -1275,11 +1377,15 @@ export function WebsiteEditor() {
             <Button
               variant="accent"
               size="sm"
-              onClick={() => {
-                if (dirty.current) saveNow(edits);
-                if (window.confirm(`Publish ${page.data!.page.title} to ${site.publicUrl}? This changes the live page.`)) publish.mutate();
+              onClick={async () => {
+                try {
+                  if (dirty.current) await save.mutateAsync(latestEdits.current);
+                  if (dirty.current) { setFailure("Your latest edit is still saving. Review once it has saved."); return; }
+                  setReviewOpen(true);
+                }
+                catch { /* The save error is displayed by its mutation. */ }
               }}
-              disabled={publish.isPending || changedCount === 0}
+              disabled={publish.isPending || save.isPending || changedCount === 0 || !site.repo}
             >
               {publish.isPending ? "Publishing…" : "Publish"}
             </Button>
@@ -1355,9 +1461,21 @@ export function WebsiteEditor() {
               </p>
             )}
 
-            <LayerList sections={sections} edits={edits} problems={problems} pickedId={pickedId} onPick={pick} />
+            <WebsiteBreadcrumbs fields={allFields} selectedId={pickedId} onSelect={pick} />
+            {page.data.structure?.stale && <p role="alert" className="bg-warn-surface px-3 py-2 text-xs text-warn-text">The source changed after these layout edits. Your draft is preserved. Discard it to work from the latest source; publishing is blocked.</p>}
+            <WebsiteLayers fields={allFields} edits={edits} problems={problems} selectedId={pickedId} onSelect={pick} onMove={readOnly || save.isPending ? undefined : (id, target, position) => { void runStructure(position, id, target); }} />
+            {picked && <div className="border-b border-line px-3 py-2">
+              <div className="flex flex-wrap gap-2 text-[11px]">
+                <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.previousId} onClick={() => void runStructure("before", picked.id, picked.structure?.previousId)}>Move up</button>
+                <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.nextId} onClick={() => void runStructure("after", picked.id, picked.structure?.nextId)}>Move down</button>
+                <button type="button" className="text-blue disabled:text-faint" title={picked.structure?.duplicateReason} disabled={readOnly || save.isPending || !picked.structure?.duplicate} onClick={() => void runStructure("duplicate", picked.id)}>Duplicate</button>
+                <button type="button" className="text-danger-text disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.remove} onClick={() => void runStructure("remove", picked.id)}>Remove</button>
+              </div>
+              <p className="mt-2 text-[10px] text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
+            </div>}
 
-            <div className="max-h-[58%] min-h-0 flex-none overflow-y-auto border-t border-line">
+            <div className="flex border-y border-line">{(["content", "design"] as const).map(tab => <button key={tab} type="button" onClick={() => setInspectorTab(tab)} aria-pressed={inspectorTab === tab} className={`flex-1 py-2 text-xs capitalize ${inspectorTab === tab ? "bg-blue/10 text-ink font-semibold" : "text-muted"}`}>{tab}</button>)}</div>
+            <div className="max-h-[70%] min-h-0 flex-none overflow-y-auto">
               {!picked ? (
                 <div className="px-4 py-6 text-center">
                   <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
@@ -1370,10 +1488,10 @@ export function WebsiteEditor() {
                 </div>
               ) : (
                 <>
-                  <div className="border-b border-line px-4 py-3.5">
+                  {inspectorTab === "content" && <div className="border-b border-line px-4 py-3.5">
                     <div className="mb-2.5 flex items-center justify-between">
                       <span className="font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted">Content</span>
-                      {picked.kind !== "image" && (
+                      {picked.kind !== "image" && picked.kind !== "container" && (
                         <button
                           type="button"
                           onClick={() => tell({ type: "edit", id: picked.id })}
@@ -1390,6 +1508,7 @@ export function WebsiteEditor() {
                           : "This one cannot be shown while you type. It appears in the page once the draft saves."}
                       </p>
                     )}
+                    {picked.kind === "image" && !readOnly && <div className="mb-4"><WebsiteAssetLibrary siteId={site.id} onSelect={asset => change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt })} /></div>}
                     <FieldRow
                       key={`${loadToken}:${frameEdit}:${picked.id}`}
                       field={picked}
@@ -1401,15 +1520,31 @@ export function WebsiteEditor() {
                       onChange={(next) => change(picked.id, next)}
                       bare
                     />
-                  </div>
-
+                  </div>}
+                  {inspectorTab === "design" && <>
+                    <div className="border-b border-line px-4 py-3">
+                      <p className="mb-2 text-xs font-semibold">{device === "desktop" ? "Base styles · all sizes" : device === "tablet" ? "Tablet styles · 1024px and below" : "Phone styles · 640px and below"}</p>
+                      <p className="mb-3 text-[10px] leading-relaxed text-muted">{device === "desktop" ? "Tablet and phone overrides take precedence at smaller widths." : "Only the controls you change override the larger layout. Clear a value to inherit it."}</p>
+                      {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && <p className="mb-3 text-[10px] leading-relaxed text-warn-text">This element has a base style marked !important. That property keeps its base value at every size until you change it under Desktop.</p>}
+                      <div className="flex gap-3 text-[11px]">
+                        <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="text-blue">Copy style</button>
+                        <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="text-blue disabled:text-faint">Paste style</button>
+                        {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="text-blue disabled:text-faint">Clear overrides</button>}
+                      </div>
+                      <p className="mt-2 text-[10px] text-muted">{computed.width || "—"} × {computed.height || "—"} · {picked.confidence === "annotated" ? "Stable field" : "Discovered element"}</p>
+                    </div>
+                    <LayoutInspector key={`${picked.id}:${device}`} style={pickedStyle} computed={computed} readOnly={readOnly} onChange={next => changePickedStyle(next, true)} />
                   <StylePanel
+                    key={`${picked.id}:${device}`}
+                    palette={design.data?.options.colours}
+                    fonts={design.data?.options.fonts}
                     style={pickedStyle}
                     readOnly={readOnly}
-                    onChange={(next) => change(picked.id, { ...edits[picked.id], style: next })}
+                    onChange={(next) => changePickedStyle(next)}
                     onCommit={() => commitHistory(edits)}
-                    onReset={() => change(picked.id, { ...edits[picked.id], style: "" }, { commit: true })}
+                    onReset={() => changePickedStyle(device === "desktop" ? picked.style ?? "" : picked.responsive?.[device] ?? "", true)}
                   />
+                  </>}
                 </>
               )}
             </div>

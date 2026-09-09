@@ -1,3 +1,5 @@
+import { ConnectWebsite } from "../components/ConnectWebsite";
+import { ImportWebsitePage } from "../components/ImportWebsitePage";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -20,7 +22,7 @@ import { Badge, Button, EmptyState, PageHeader, RelativeTime, Table } from "../c
  */
 export function Website() {
   const qc = useQueryClient();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [siteId, setSiteId] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   const [scanResult, setScanResult] = useState<string | null>(null);
@@ -29,6 +31,8 @@ export function Website() {
   const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
 
   const current = sites.data?.find((site) => site.id === siteId) ?? sites.data?.[0] ?? null;
+  const canConnect = !user?.external && can("website.manage");
+  const canManage = current?.capabilities?.manage === true;
 
   const pages = useQuery({
     queryKey: ["website", "pages", current?.id],
@@ -59,7 +63,7 @@ export function Website() {
     return (
       <div>
         <PageHeader title="Sites" subtitle="The websites this builder can publish to." />
-        <EmptyState message="No website has been added yet." />
+        <EmptyState message={user?.external ? "Your websites will appear here once a manager assigns access." : "No website has been added yet."} action={canConnect ? <ConnectWebsite /> : undefined} />
       </div>
     );
   }
@@ -78,14 +82,15 @@ export function Website() {
           current.repo ? "Publishing commits the page and the live site rebuilds." : "No repository is connected, so pages can be edited but not published."
         }`}
         action={
-          can("website.manage") ? (
-            <Button variant="secondary" onClick={() => scan.mutate()} disabled={scan.isPending}>
+          canManage ? (
+            <div className="flex gap-2"><ImportWebsitePage key={current.id} siteId={current.id} /><Button variant="secondary" onClick={() => scan.mutate()} disabled={scan.isPending}>
               {scan.isPending ? "Looking…" : "Look for new pages"}
-            </Button>
+            </Button></div>
           ) : undefined
         }
       />
 
+      {canConnect && <div className="mb-5"><ConnectWebsite /></div>}
       {(sites.data?.length ?? 0) > 1 && (
         <div className="mb-6 flex flex-wrap items-center gap-2">
           {sites.data!.map((site) => (
@@ -122,7 +127,7 @@ export function Website() {
         <EmptyState
           message="No pages here yet. Looking for pages reads the site's repository — or its sitemap — and lists what it finds."
           action={
-            can("website.manage") ? (
+            canManage ? (
               <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
                 {scan.isPending ? "Looking…" : "Look for pages"}
               </Button>
