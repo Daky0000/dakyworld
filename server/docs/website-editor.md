@@ -1,5 +1,16 @@
 # Website editor implementation
 
+**The client-facing half of this document is public**, at
+[dakyworld.com/website-builder](https://dakyworld.com/website-builder) and
+[/website-builder-setup](https://dakyworld.com/website-builder-setup), with
+[/products](https://dakyworld.com/products) as the shelf they sit on. Those pages
+are a translation of this file and of `website-compatibility.md` into a client's
+words. **A change here that affects how somebody uses the Builder is not finished
+until those pages say the same thing** — particularly the four compatibility
+grades and the publish-then-verify story, which clients quote back. The pages
+live in the repository root: `products.html`, `website-builder.html`,
+`website-builder-setup.html`.
+
 The editor supports imported or repository-backed HTML pages and a separate static JSX/TSX source workflow. It does not yet provide a running React project canvas or arbitrary framework editing.
 
 ## Available workflows

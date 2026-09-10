@@ -14,6 +14,11 @@ Anything outside that is not a gap to apologise for. It is out of scope until
 the flow above works for five to ten genuinely different websites and the people
 who own them.
 
+The four grades below are also published, in a client's words, at
+[dakyworld.com/website-builder](https://dakyworld.com/website-builder). Change
+one here and change it there in the same piece of work: this file is what sales
+promises are made from, and that page is where a client reads them.
+
 ## Best supported
 
 - Static HTML and CSS, multi-page.
