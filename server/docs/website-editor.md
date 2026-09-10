@@ -23,6 +23,10 @@ The visual sidebar includes a searchable Layers tree in document order, expand/c
 - **AI:** an optional proposal panel scoped to one selected field or the page. Suggestions include the unsaved draft, pass the editor validator and existing budget checks, and require explicit application into the draft. The assistant never publishes. No paid model calls were made during implementation checks.
 - **Source files:** browse JSX/TSX inside the site's configured repository folder, edit literal native-element text and existing `href`/`src`/`alt` strings, review a byte-preserving change, download source, or publish with both source and publish permission. Full-file hashes reject stale edits. Dynamic values, custom component props, class names and component structure remain code-controlled. Unsupported or ambiguous fields are explained. Source code is parsed, never executed.
 
+## Publishing, and knowing it worked
+
+A commit is not a deployment. `PublishJob` records every publish from before it starts until the change has been seen on the live page: the row is written **before** GitHub is touched, so a process that dies mid-publish leaves a `COMMITTING` row the next boot asks GitHub about rather than a mystery — either the commit landed and the state is `RECONCILIATION_REQUIRED` with the sha on it, or nothing happened and it says so. After the commit the job carries the public address, a distinctive string the change put on the page and the file's hash; the scheduler looks at the live page on a backoff from twenty seconds out to five minutes, and settles on `COMPLETED` with how long the host took or `VERIFY_FAILED` with the page still showing the old version. The editor shows that line under the publish notice, so "published" stops meaning "committed". `services/websitePublishJobs.ts`; `checks/websitePublishVerify.ts` covers the deciding with no database, `checks/websitePublishJobs.ts` the rows and the clock with an isolated one.
+
 ## Compatibility
 
 `docs/website-compatibility.md` is the contract — exactly what is supported, what is supported with limits, what stays with a developer and what is not supported at all. `services/website/compatibility.ts` is the same judgement as code, applied to one website by `Website → Compatibility`: every page is read and graded, findings are merged and counted across the site, and the site gets a rating and a readiness state. Readiness is a separate question from grading, so a perfectly editable site with no repository connected reads as `PUBLISH_BLOCKED` rather than as a problem with its pages. Run the report before a client is given access to a website; every finding in it is written as a sentence somebody can act on.
@@ -73,6 +77,7 @@ npx tsx checks/websiteInspector.ts
 npx tsx checks/websiteShared.ts
 npx tsx checks/websiteSharedApi.ts
 npx tsx checks/websiteCompatibility.ts
+npx tsx checks/websitePublishVerify.ts
 npx tsx checks/websiteResponsive.ts
 npx tsx checks/websitePreviewRuntime.ts
 npx tsx checks/websiteStructure.ts

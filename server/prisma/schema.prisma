@@ -143,6 +143,7 @@ model User {
   sitePageDrafts      SitePage[]          @relation("SitePageDrafts")
   sitePageVersions    SitePageVersion[]   @relation("SitePageVersions")
   sharedElementDrafts SharedElement[]     @relation("SharedElementDrafts")
+  publishJobs         PublishJob[]        @relation("PublishJobs")
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -4015,6 +4016,7 @@ model Site {
 
   pages          SitePage[]
   sharedElements SharedElement[]
+  publishJobs PublishJob[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4066,6 +4068,7 @@ model SitePage {
 
   versions        SitePageVersion[]
   sharedInstances SharedElementInstance[]
+  publishJobs PublishJob[]
 
   lastPublishedAt DateTime?
 
@@ -4121,6 +4124,82 @@ model SitePageVersion {
 /// identity of its own — it is a position inside this element and a record of
 /// what was in that position when it was shared — and giving positions rows of
 /// their own buys a join and an ordering problem in exchange for nothing.
+/// A publish, from before it starts to after it is seen on the live site.
+///
+/// Written **before** anything touches GitHub, and that ordering is the whole
+/// point. A commit that lands while the database write after it fails leaves the
+/// repository ahead of the OS with nothing recording that it happened; a row
+/// created first turns that from a mystery into a state — `RECONCILIATION_REQUIRED`
+/// — with the commit it is waiting on written on it.
+///
+/// It also carries the half nobody could see before. A commit is not a live
+/// page: GitHub Pages rebuilds on its own schedule, and until this row says
+/// `COMPLETED` the only honest thing to tell somebody is that the change is in
+/// the repository. `verifyText` and `expectedHash` are what a later look at the
+/// public page is compared against.
+model PublishJob {
+  id     String @id @default(cuid())
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String
+
+  /// The page being published, when it is one page.
+  page   SitePage? @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  pageId String?
+
+  /// The shared element being published, when it is a change across pages.
+  sharedElementId String?
+
+  /// `PAGE`, `SHARED` or `ROLLBACK`.
+  kind  String
+  state PublishJobState @default(QUEUED)
+
+  /// Everything a reconciliation would need: paths, page ids, expected hashes.
+  detail Json @default("{}")
+
+  commitSha String?
+  commitUrl String?
+
+  /// The public address to look at, and what should be on it.
+  verifyUrl    String?
+  /// A distinctive string the change put on the page. Null when the change was
+  /// only styling, in which case the whole file's hash is all there is.
+  verifyText   String?
+  expectedHash String?
+
+  /// How many times the live page has been looked at, and when to look again.
+  attempts   Int       @default(0)
+  nextCheckAt DateTime?
+  verifiedAt DateTime?
+
+  /// The last thing that went wrong, in the words the person would be shown.
+  lastError String?
+
+  startedBy   User?   @relation("PublishJobs", fields: [startedById], references: [id], onDelete: SetNull)
+  startedById String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  finishedAt  DateTime?
+
+  @@index([siteId, createdAt])
+  @@index([state, nextCheckAt])
+}
+
+enum PublishJobState {
+  QUEUED
+  VALIDATING
+  COMMITTING
+  COMMITTED
+  DEPLOYING
+  VERIFYING
+  COMPLETED
+  CONFLICT
+  COMMIT_FAILED
+  DEPLOY_FAILED
+  VERIFY_FAILED
+  RECONCILIATION_REQUIRED
+}
+
 model SharedElement {
   id     String @id @default(cuid())
   site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)

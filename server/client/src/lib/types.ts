@@ -3266,6 +3266,8 @@ export type FieldChangeSummary = {
 export type ChangeCategories = { text: boolean; links: boolean; images: boolean; styles: boolean; seo: boolean };
 
 export type PublishResult = {
+  /** The record of this publish, which the editor then watches go live. */
+  job?: { id: string; state: string };
   draftRetained?: boolean;
   version: number;
   changed: number;

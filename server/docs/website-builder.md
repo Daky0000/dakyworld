@@ -578,8 +578,8 @@ The order the founder set, after the inspector and shared elements landed:
 | 2 | Computed/effective property values | **Built** |
 | 3 | Shared elements, detach and re-link | **Built** |
 | 4 | Compatibility checker | **Built** — `services/website/compatibility.ts`, `docs/website-compatibility.md` |
-| 5 | Durable `PublishJob` | Not started |
-| 6 | Live deployment verification | Not started |
+| 5 | Durable `PublishJob` | **Built** — `services/websitePublishJobs.ts` |
+| 6 | Live deployment verification | **Built** — same module, on the scheduler's minute tick |
 | 7 | External/customer-focused workspace | Not started |
 | 8 | Managed onboarding flow | Not started |
 | 9 | Real customer usability tests | Not started — needs real people |

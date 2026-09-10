@@ -10,6 +10,8 @@ import {
 } from "./website/index.js";
 import { pageSource, publishPages, WebsiteError } from "./website/site.js";
 import { withWebsitePublishLocks } from "./websitePublishing.js";
+import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, startPublishJob } from "./websitePublishJobs.js";
+import { createHash } from "node:crypto";
 
 /**
  * Shared elements, from the database side.
@@ -694,22 +696,52 @@ export function registerWebsiteShared(router: Router, access: Access) {
     // Locked before it is read: an ordinary publish of one of these pages must
     // not be deciding what that file says at the same time as this one.
     const result = await withWebsitePublishLocks(element.instances.filter((instance) => instance.state === "LINKED").map((instance) => instance.pageId), async (tx) => {
+    // Recorded before GitHub is touched, exactly as a page publish is. A shared
+    // publish writes several files, so an interruption here leaves more than one
+    // page ahead of this system and is worth more, not less, than a page's.
+    const job = await startPublishJob({
+      site,
+      kind: "SHARED",
+      sharedElementId: element.id,
+      startedById: req.dbUser?.id,
+      detail: { name: element.name, revision: element.draftRevision },
+    });
+
     const review = await buildSharedReview(site, element);
     if (!review.publishable) {
+      await failPublishJob(job.id, "CONFLICT", review.reason ?? "This shared change could not be published.");
       throw Object.assign(new WebsiteError(409, review.reason ?? `${element.name} cannot be published yet.`), { pages: publicReview(review).pages });
     }
     for (const page of review.pages) {
       if (body.pages[page.pageId] !== page.sourceHash) {
+        await failPublishJob(job.id, "CONFLICT", `${page.title} changed after the review, so nothing was published.`);
         throw Object.assign(new WebsiteError(409, `${page.title} changed after your review, so nothing has been published. Review this change again.`), { pages: publicReview(review).pages });
       }
     }
 
     const author = req.dbUser?.name ?? "the website editor";
-    const commit = await publishPages({
-      site,
-      message: `Website: ${element.name} on ${review.pages.length} page${review.pages.length === 1 ? "" : "s"} (${author})`,
-      pages: review.pages.map((page) => ({ page: page.record, html: page.html!, expectedSource: page.source })),
+    await advancePublishJob(job.id, "COMMITTING", {
+      detail: {
+        name: element.name,
+        revision: element.draftRevision,
+        pages: review.pages.map((page) => ({ pageId: page.pageId, path: page.path, hash: createHash("sha256").update(page.html!).digest("hex") })),
+      },
     });
+    let commit: { sha: string; url: string };
+    try {
+      commit = await publishPages({
+        site,
+        message: `Website: ${element.name} on ${review.pages.length} page${review.pages.length === 1 ? "" : "s"} (${author})`,
+        pages: review.pages.map((page) => ({ page: page.record, html: page.html!, expectedSource: page.source })),
+      });
+    } catch (error) {
+      await failPublishJob(job.id, "COMMIT_FAILED", error instanceof Error ? error.message : "The commit did not happen.");
+      throw error;
+    }
+    // One page of the several is enough to watch: they went out in one commit,
+    // so the host has either rebuilt or it has not.
+    const watched = review.pages[0]!;
+    await publishJobCommitted({ id: job.id, commit, site, page: watched.record, html: watched.html!, summary: watched.summary });
 
     // The commit has landed. Everything below is bookkeeping, and a failure here
     // leaves the repository ahead of the database rather than the other way
@@ -755,6 +787,7 @@ export function registerWebsiteShared(router: Router, access: Access) {
     }
 
     return {
+      job: publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })),
       commit: { sha: commit.sha, url: commit.url },
       pages: review.pages.map((page) => ({ pageId: page.pageId, title: page.title, path: page.path, changed: page.changed.length })),
       note: "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two.",

@@ -8,6 +8,7 @@ import { embedWebsiteAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
 import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../services/websiteShared.js";
 import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
+import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, registerWebsitePublishJobs, startPublishJob } from "../services/websitePublishJobs.js";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -60,6 +61,7 @@ registerWebsiteAssistant(websiteRouter, { loadPage });
 registerWebsiteSource(websiteRouter, { loadSite });
 registerWebsiteShared(websiteRouter, { loadSite, loadPage });
 registerWebsiteReadiness(websiteRouter, { loadSite });
+registerWebsitePublishJobs(websiteRouter, { loadSite });
 
 /**
  * Do two values read the same to a person?
@@ -675,6 +677,18 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       // `fresh` is not an optimisation switch here. The whole purpose of the next
       // few lines is to decide whether the page has moved under this draft, and a
       // copy taken ninety seconds ago cannot answer that. See sourceCache.ts.
+      // Written before anything touches GitHub. A commit that lands while the
+      // write after it fails leaves the repository ahead of this system with
+      // nothing recording that it happened; this row is what turns that from a
+      // mystery into a state somebody can act on.
+      const job = await startPublishJob({
+        site,
+        kind: "PAGE",
+        pageId: page.id,
+        startedById: req.dbUser?.id,
+        detail: { path: page.path, filePath: page.filePath, draftRevision: page.draftRevision },
+      });
+
       const source = await pageSource(site, page, { fresh: true });
       // Every refusal is decided before anything acts, and each one is reported as
       // itself — "some fields need attention" and "the page moved under you" send
@@ -683,12 +697,17 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       const plan = buildPublishPlan({ source: source.html, values });
 
       if (plan.problems.length) {
+        await failPublishJob(job.id, "CONFLICT", "Some fields need attention before this page can be published.");
         throw Object.assign(new WebsiteError(400, "This page cannot be published yet — some fields need attention."), { problems: plan.problems });
       }
       if (plan.conflicts.length || plan.missing.length) {
+        await failPublishJob(job.id, "CONFLICT", "The page moved under these edits, so nothing was published.");
         throw Object.assign(new WebsiteError(409, "The page has changed since these edits were made, so they have not been published. Reopen the page to see it as it is now."), { conflicts: plan.conflicts, missing: plan.missing });
       }
-      if (!plan.html) throw new WebsiteError(400, "The page already says all of this. Nothing to publish.");
+      if (!plan.html) {
+        await failPublishJob(job.id, "CONFLICT", "The page already said all of this.");
+        throw new WebsiteError(400, "The page already says all of this. Nothing to publish.");
+      }
 
       // Read once for the labels the summary is written in. The plan has already
       // parsed the page; this is the same parse and is kept separate rather than
@@ -696,13 +715,28 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       // on the plan's internals is how the two come to disagree.
       const content = discoverFields(editingSource(source.html, values));
       const author = req.dbUser?.name ?? "the website editor";
-      const commit = await publishPage({
-        site,
-        page,
-        html: plan.html,
-        expectedSource: source.html,
-        message: `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`,
+      const summary = describeChanges(content.fields, values);
+
+      await advancePublishJob(job.id, "COMMITTING", {
+        detail: { path: page.path, filePath: page.filePath, draftRevision: page.draftRevision, expectedHtmlHash: createHash("sha256").update(plan.html).digest("hex") },
       });
+      let commit: { sha: string; url: string };
+      try {
+        commit = await publishPage({
+          site,
+          page,
+          html: plan.html,
+          expectedSource: source.html,
+          message: `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`,
+        });
+      } catch (error) {
+        await failPublishJob(job.id, "COMMIT_FAILED", error instanceof Error ? error.message : "The commit did not happen.");
+        throw error;
+      }
+      // From here the change is in the repository whatever else happens. The
+      // job carries what to look for on the live page, because by the time
+      // anybody looks the draft this came from will have been cleared.
+      await publishJobCommitted({ id: job.id, commit, site, page, html: plan.html, summary });
 
       // The website is where the workforce reads what this company sells, so a
       // published change to a page that describes the offer is a change to every
@@ -740,10 +774,10 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
         // Someone saved during the network commit. Their draft must survive.
         await tx.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date(), sourceHtml: page.sourceHtml === null ? undefined : plan.html } });
       }
-      const summary = describeChanges(content.fields, values);
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH", summary: `Published ${page.title} · version ${version.number}`, actorName: author, actorId: req.dbUser?.id, detail: summary } });
 
       return {
+        job: publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })),
         draftRetained: cleared.count === 0,
         version: version.number,
         changed: plan.changed.length,
@@ -752,8 +786,9 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
         commit: { sha: commit.sha, url: commit.url },
         url: pageUrl(site, page),
         // Said plainly because the alternative is somebody refreshing the live page
-        // for a minute and concluding the publish failed.
-        note: "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two.",
+        // for a minute and concluding the publish failed. The job above then
+        // settles it either way rather than leaving them to guess.
+        note: "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two, and this screen will say when it is.",
       };
     });
     res.json(result);

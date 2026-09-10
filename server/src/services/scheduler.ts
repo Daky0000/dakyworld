@@ -25,6 +25,7 @@ import { removeEmptyLists } from "./leadLists.js";
 import { restoreOrphanedWakes } from "./rehearsals/wake.js";
 import { settleIdleRehearsals } from "./rehearsals/run.js";
 import { purgeExpiredSessions } from "../lib/session.js";
+import { reconcileInterruptedPublishJobs, verifyDuePublishJobs } from "./websitePublishJobs.js";
 
 /**
  * The app's clock. Three things run on it:
@@ -103,6 +104,10 @@ export async function syncSchedule(sourceId: string): Promise<Date | null> {
 // --- The tick --------------------------------------------------------------
 
 export async function tick(now = new Date()) {
+  // A commit is not a deployment. Every publish waiting to be seen on its own
+  // live page gets one look here, on a backoff — see websitePublishJobs.ts.
+  await verifyDuePublishJobs(now).catch((err) => console.error("[scheduler] publish verification failed:", err));
+
   // Independent jobs on one interval. Lead capture failing must not stop an
   // invoice going out, and neither must stop a follow-up, so they're settled
   // separately rather than awaited in sequence.
@@ -417,6 +422,10 @@ export function startScheduler() {
   // real work — a test changing how the business runs, days later, with
   // nothing on screen connecting the two.
   void restoreOrphanedWakes().catch((err) => console.error("[scheduler] rehearsal wake restore failed:", err));
+  // Publishes the last process died in the middle of. A row still saying
+  // COMMITTING may or may not have reached GitHub, and guessing either way is
+  // worse than asking — see reconcileInterruptedPublishJobs.
+  void reconcileInterruptedPublishJobs().catch((err) => console.error("[scheduler] publish reconcile failed:", err));
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
   console.log("  → Scheduler running (lead capture, lead hunts, care plan billing, email, WhatsApp/SMS, agent tasks — checks every minute)");
 }

@@ -7,6 +7,7 @@ import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFiel
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { WebsiteAssetLibrary } from "../components/WebsiteAssetLibrary";
 import { MakeSharedPanel, SharedElementPanel, SharedPublishReview } from "../components/WebsiteShared";
+import { PublishStatus } from "../components/PublishStatus";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
 import { ElementInspector } from "../components/ElementInspector";
 import { INSPECTED_PROPERTIES, type ElementFacts } from "../lib/elementInspector";
@@ -1486,6 +1487,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </p>
               )}
               <p className="mt-1 text-xs text-muted">{published.note}</p>
+              {/* A commit is not a deployment, and until this says so the only
+                  honest claim is that the change is in the repository. */}
+              {published.job && <PublishStatus siteId={site.id} jobId={published.job.id} />}
               <p className="mt-1 text-xs text-muted">
                 This screen reads the page back from the published site, so it goes on showing the old words until that rebuild
                 finishes. It will catch up on its own; the circular arrow in the bar looks again now.
