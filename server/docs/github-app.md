@@ -128,30 +128,33 @@ that turns it into a token never leaves the server.
 4. Roll it back, to prove that path too.
 5. Only then take that repository out of `GITHUB_ALLOWED_REPOS`.
 
-## Dakyworld's own website is the exception
+Publishing needs *a* credential. As of 10 Sep 2026 production has no
+`GITHUB_TOKEN` variable at all, so unless one was pasted into Settings →
+Developer, an installation is the only way any site can publish.
+
+## Dakyworld's own website
 
 `dakyworld.com` and Dakyworld OS are the **same repository** — `Daky0000/dakyworld`
-holds `index.html`, `about.html` and the rest at its root and the whole OS under
-`server/`. So installing the customer-facing app on it to edit the marketing site
-would also hand that app write access to the source of the system doing the
-editing.
+holds `index.html`, `about.html` and the rest at its root, and the whole OS under
+`server/`.
 
-Keep Dakyworld's own site on the shared token, with `GITHUB_ALLOWED_REPOS` naming
-exactly that repository. The allowlist is the boundary there, and it is the right
-one for a repository we own.
+An earlier draft of this file said to keep that site on the shared token for that
+reason. **That was wrong, and the comparison is the other way round.** A personal
+access token reaches *every* repository the account can see, with our own
+allowlist as the only thing narrowing it; an installation scoped to this one
+repository reaches nothing else, and GitHub enforces that rather than us. The app
+is strictly the narrower credential for the same job.
 
-Two things make that safe rather than merely traditional. The editor only ever
-writes the file a scanned page came from — top-level `.html` under the site's
-configured folder — plus the assets a page references, so `server/` is not
-reachable from it by any path. And the allowlist is deliberately *not* applied to
-installation credentials, so this exception cannot silently widen when a customer
-is connected later.
+What is true about the shared repository is that either credential can write
+anywhere inside it, `server/` included. Neither actually does: the editor writes
+only the file a scanned page came from — a top-level `.html` under the site's
+configured folder — plus the assets that page references. So the repository being
+shared is a reason to split it eventually, not a reason to prefer the broader
+token in the meantime.
 
-If Dakyworld's website is ever split into its own repository, install the app on
-that one and take the shared token out of the picture entirely.
-
-Do **not** install the customer-facing app on `Daky0000/dakyworld` until that
-split happens.
+So: install the app on `Daky0000/dakyworld` with **Only select repositories**, and
+select only that one. Splitting the marketing site into its own repository later
+makes the boundary tidy as well as correct.
 
 ## Checked by
 
