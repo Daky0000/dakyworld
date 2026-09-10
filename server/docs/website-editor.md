@@ -23,6 +23,10 @@ The visual sidebar includes a searchable Layers tree in document order, expand/c
 - **AI:** an optional proposal panel scoped to one selected field or the page. Suggestions include the unsaved draft, pass the editor validator and existing budget checks, and require explicit application into the draft. The assistant never publishes. No paid model calls were made during implementation checks.
 - **Source files:** browse JSX/TSX inside the site's configured repository folder, edit literal native-element text and existing `href`/`src`/`alt` strings, review a byte-preserving change, download source, or publish with both source and publish permission. Full-file hashes reject stale edits. Dynamic values, custom component props, class names and component structure remain code-controlled. Unsupported or ambiguous fields are explained. Source code is parsed, never executed.
 
+## Which GitHub credential a site publishes with
+
+Both work, per site. A site with a customer's own GitHub App installation borrows an hour-long token scoped to the repositories they chose; every other site uses the shared token exactly as before. The credential is ambient for the duration of one piece of work (`withGithubCredential`), so a nested read during a commit inherits it without every function growing a token parameter. `docs/github-app.md` is what to create on GitHub and what to put in Railway — until that exists nothing changes. `checks/githubApp.ts` covers it.
+
 ## Onboarding a website, and what a client sees
 
 `Website → Onboarding` is the list somebody works down before a client is given a website: address, repository, a branch proved readable by actually reading a file from it, pages scanned, the compatibility report gone through, this site's own colours and fonts set so the editor stops offering Dakyworld's, shared elements linked, publishing confirmed, and the client's own access. Every line is **derived from the site rather than ticked**, so nothing can claim to be done after it has stopped being true — a branch that becomes unreadable goes back to blocked on its own. The last line is the handover conversation, which is the only thing on the page nothing can work out for itself, and it is recorded on the site's activity.
@@ -85,6 +89,7 @@ npx tsx checks/websiteSharedApi.ts
 npx tsx checks/websiteCompatibility.ts
 npx tsx checks/websitePublishVerify.ts
 npx tsx checks/websiteClientWorkspace.ts
+npx tsx checks/githubApp.ts
 npx tsx checks/websiteResponsive.ts
 npx tsx checks/websitePreviewRuntime.ts
 npx tsx checks/websiteStructure.ts

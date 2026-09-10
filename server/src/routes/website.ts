@@ -9,6 +9,7 @@ import { registerWebsiteManagement, siteInput } from "../services/websiteManagem
 import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../services/websiteShared.js";
 import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
+import { registerGithubAppRoutes } from "../services/githubAppRoutes.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, registerWebsitePublishJobs, startPublishJob } from "../services/websitePublishJobs.js";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
@@ -64,6 +65,7 @@ registerWebsiteShared(websiteRouter, { loadSite, loadPage });
 registerWebsiteReadiness(websiteRouter, { loadSite });
 registerWebsitePublishJobs(websiteRouter, { loadSite });
 registerWebsiteOnboarding(websiteRouter, { loadSite });
+registerGithubAppRoutes(websiteRouter, { loadSite });
 
 /**
  * Do two values read the same to a person?

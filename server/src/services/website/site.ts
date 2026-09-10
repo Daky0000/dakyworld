@@ -1,6 +1,7 @@
 import { websiteAssetFiles } from "../websiteAssets.js";
 import { randomBytes } from "node:crypto";
-import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError } from "../../lib/github.js";
+import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError, withGithubCredential } from "../../lib/github.js";
+import { siteGithubCredential } from "../githubApp.js";
 import type { Site, SitePage } from "@prisma/client";
 import type { SiteField } from "./regions.js";
 import { attr, decodeEntities, parseHtml, walk } from "./parse.js";
@@ -79,8 +80,26 @@ async function fetchLive(url: string): Promise<string> {
  * autosave — is welcome to a slightly old page, because the worst it can produce
  * is a conflict that the publish path then catches properly.
  */
+/**
+ * Runs one piece of work under whichever GitHub credential this site should use.
+ *
+ * A site with a customer's own installation borrows an hour-long token scoped to
+ * the repositories they chose; every other site carries on with the shared one.
+ * Applied at the four doors that talk to GitHub rather than at each call inside
+ * them, so a nested read during a commit inherits it without knowing — see
+ * `withGithubCredential`.
+ */
+async function underSiteCredential<T>(site: Site, work: () => Promise<T>): Promise<T> {
+  const credential = await siteGithubCredential(site);
+  return credential ? withGithubCredential(credential, work) : work();
+}
+
 export async function pageSource(site: Site, page: SitePage, options: { fresh?: boolean } = {}): Promise<PageSource> {
   if (page.sourceHtml !== null && page.sourceHtml !== undefined) return { html: page.sourceHtml, from: "imported file" };
+  return underSiteCredential(site, () => readPageSource(site, page, options));
+}
+
+async function readPageSource(site: Site, page: SitePage, options: { fresh?: boolean }): Promise<PageSource> {
   const repo = siteRepo(site);
   const key = sourceKey({ siteId: site.id, repo, branch: site.repoBranch, filePath: page.filePath });
   if (!options.fresh) {
@@ -166,8 +185,8 @@ async function readStylesheet(site: Site, page: SitePage, href: string): Promise
   const cached = readCache(key);
   if (cached) return cached.html;
 
-  if (repo && (await githubConfigured())) {
-    const css = await readFile(repo, repoFilePath(site, { filePath }), site.repoBranch).catch(() => null);
+  if (repo && (await underSiteCredential(site, githubConfigured))) {
+    const css = await underSiteCredential(site, () => readFile(repo, repoFilePath(site, { filePath }), site.repoBranch).catch(() => null));
     if (css !== null) {
       writeCache(key, { html: css, from: "repository" });
       return css;
@@ -233,6 +252,10 @@ async function sitemapPaths(site: Site): Promise<Set<string>> {
  * says which files are pages, and this listens to it.
  */
 export async function discoverPages(site: Site): Promise<DiscoveredPage[]> {
+  return underSiteCredential(site, () => findPages(site));
+}
+
+async function findPages(site: Site): Promise<DiscoveredPage[]> {
   const listed = await sitemapPaths(site);
   const repo = siteRepo(site);
 
@@ -327,6 +350,7 @@ export async function publishPages(input: {
   }
   if (!input.pages.length) throw new WebsiteError(400, "There are no pages to publish.");
 
+  return underSiteCredential(input.site, async () => {
   try {
     const assets = await Promise.all(input.pages.map((entry) => websiteAssetFiles(input.site, entry.html)));
     const files = [
@@ -398,6 +422,7 @@ export async function publishPages(input: {
     }
     throw err;
   }
+  });
 }
 
 export type PreviewDocument = { html: string; csp: string };

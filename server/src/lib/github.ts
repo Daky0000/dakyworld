@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { SETTING, getSetting } from "./settings.js";
 
 /**
@@ -14,6 +15,42 @@ import { SETTING, getSetting } from "./settings.js";
  * the whole configuration. Classic tokens work too; `repo` is broader than
  * needed but is what most people already have.
  */
+
+/**
+ * Which credential the calls inside this scope should use.
+ *
+ * A single shared personal access token was fine while every repository this
+ * system wrote to was Dakyworld's own. It stops being fine the moment a client's
+ * website is one of them: one token reaching a hundred customers' repositories
+ * is the wrong shape of secret, and the customer has no way to take it back
+ * without asking us to.
+ *
+ * A GitHub App installation is the right shape — the customer grants it to the
+ * repositories they choose, its token expires in an hour, and they can withdraw
+ * it themselves. Threading that through every call site would mean a token
+ * parameter on `readFile`, `commitFiles` and everything that calls them, so it
+ * is ambient instead: `withGithubCredential` sets it for the duration of one
+ * piece of work, and nested calls inherit it without knowing.
+ *
+ * With nothing set, everything behaves exactly as it did — the stored token.
+ */
+const credential = new AsyncLocalStorage<GithubCredential>();
+
+export type GithubCredential = {
+  token: string;
+  /** `installation` skips the local allowlist. See `assertWritable`. */
+  kind: "installation" | "token";
+  /** For an error message: which installation, or which setting. */
+  label: string;
+};
+
+export function withGithubCredential<T>(value: GithubCredential, fn: () => Promise<T>): Promise<T> {
+  return credential.run(value, fn);
+}
+
+export function currentGithubCredential(): GithubCredential | undefined {
+  return credential.getStore();
+}
 
 const API_BASE = "https://api.github.com";
 const TIMEOUT_MS = 15_000;
@@ -36,7 +73,7 @@ export class GitHubNotConfiguredError extends GitHubError {
 }
 
 export async function githubConfigured(): Promise<boolean> {
-  return Boolean(await getSetting(SETTING.GITHUB_TOKEN));
+  return Boolean(credential.getStore()?.token ?? (await getSetting(SETTING.GITHUB_TOKEN)));
 }
 
 /** The account or organisation reads default to, so a repo can be named `os` rather than `owner/os`. */
@@ -45,7 +82,7 @@ export async function defaultOwner(): Promise<string | null> {
 }
 
 async function request<T>(path: string, options: { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown; token?: string } = {}): Promise<T> {
-  const token = options.token ?? (await getSetting(SETTING.GITHUB_TOKEN));
+  const token = options.token ?? credential.getStore()?.token ?? (await getSetting(SETTING.GITHUB_TOKEN));
   if (!token) throw new GitHubNotConfiguredError();
 
   const controller = new AbortController();
@@ -268,7 +305,25 @@ export class RepoNotAllowedError extends GitHubError {
   }
 }
 
+/**
+ * May this system write to that repository?
+ *
+ * Two different answers, because there are two different boundaries.
+ *
+ * With the shared token, the boundary is ours: a list of repositories kept in
+ * settings, because that token can reach everything the account can and the only
+ * thing standing between a bug and somebody else's code is this list.
+ *
+ * With a GitHub App installation, the boundary is the customer's and it is
+ * enforced by GitHub rather than by us — an installation token cannot reach a
+ * repository outside its own installation, whatever this process asks for. Also
+ * requiring our list there would mean adding every client's repository to a
+ * setting in order to use the mechanism whose entire point is that they choose,
+ * and it would fail closed on the customer rather than on us.
+ */
 async function assertWritable(repo: string): Promise<string> {
+  const held = credential.getStore();
+  if (held?.kind === "installation") return fullName(repo);
   if (!(await repoAllowed(repo))) throw new RepoNotAllowedError(repo);
   return fullName(repo);
 }

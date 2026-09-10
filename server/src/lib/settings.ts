@@ -433,6 +433,22 @@ export const SETTING = {
   GITHUB_ALLOWED_REPOS: "github.allowedRepos",
 
   /**
+   * The Dakyworld GitHub App — the per-customer alternative to the shared token
+   * above. See services/githubApp.ts for why it is the better shape.
+   *
+   * The private key is the one secret here that must never move: it
+   * authenticates the app across *every* installation, so it is stored
+   * encrypted, is never returned by a route, and belongs in a deployment secret
+   * rather than in the settings screen wherever that is possible.
+   */
+  GITHUB_APP_ID: "github.app.id",
+  /** The `dakyworld-website-editor` in github.com/apps/<slug>, for the install link. */
+  GITHUB_APP_SLUG: "github.app.slug",
+  GITHUB_APP_PRIVATE_KEY: "github.app.privateKey",
+  /** Signs every webhook delivery. Without it, deliveries are dropped unread. */
+  GITHUB_APP_WEBHOOK_SECRET: "github.app.webhookSecret",
+
+  /**
    * Which calendar bookings land in. Blank means the connected account's own.
    * Calendar rides on the Google connection above rather than its own OAuth —
    * see lib/calendar.ts.
@@ -764,6 +780,12 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.GITHUB_TOKEN]: "GITHUB_TOKEN",
   [SETTING.GITHUB_OWNER]: "GITHUB_OWNER",
   [SETTING.GITHUB_ALLOWED_REPOS]: "GITHUB_ALLOWED_REPOS",
+  [SETTING.GITHUB_APP_ID]: "GITHUB_APP_ID",
+  [SETTING.GITHUB_APP_SLUG]: "GITHUB_APP_SLUG",
+  // Pinned from the deploy for preference. A key that authenticates the app
+  // across every customer installation should not be pasteable into a screen.
+  [SETTING.GITHUB_APP_PRIVATE_KEY]: "GITHUB_APP_PRIVATE_KEY",
+  [SETTING.GITHUB_APP_WEBHOOK_SECRET]: "GITHUB_APP_WEBHOOK_SECRET",
   [SETTING.GOOGLE_CALENDAR_ID]: "GOOGLE_CALENDAR_ID",
   // Pinning this one from the deploy is the difference between rotating the
   // secret in the UI and having every sender break on the next restart.

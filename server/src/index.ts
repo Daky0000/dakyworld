@@ -52,6 +52,7 @@ import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
 import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { startScheduler } from "./services/scheduler.js";
+import { githubWebhookHandler } from "./services/githubAppRoutes.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureTheses } from "./services/hunt/theses.js";
 import { COMMISSIONED_AUTONOMY, activateWorkforce, applyColdEmailPlaybook, applyOutreachDoctrine, commissionWorkforce, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
@@ -127,6 +128,11 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
 // secret key, and Hubtel signs nothing at all — and neither fits the shared
 // secret the generic route uses. Registered as exact paths so they win over
 // `/api/webhooks/:source`, which would otherwise swallow both.
+// GitHub signs every delivery over the raw bytes, so this is mounted with the
+// raw parser for the same reason Stripe's is. The signature is the whole of the
+// authentication — GitHub is not a logged-in user — so it sits outside the
+// session middleware and an unsigned delivery is dropped without being read.
+app.post("/api/github/webhook", webhookRateLimit, express.raw({ type: "*/*", limit: "1mb" }), githubWebhookHandler());
 app.post("/api/webhooks/paystack", webhookRateLimit, express.raw({ type: "*/*", limit: "256kb" }), paystackWebhook);
 app.post("/api/webhooks/hubtel", webhookRateLimit, express.raw({ type: "*/*", limit: "256kb" }), hubtelWebhook);
 

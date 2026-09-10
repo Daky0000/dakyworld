@@ -106,7 +106,17 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 
   router.get("/sites/:siteId/config", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    res.json({ id: site.id, name: site.name, publicUrl: site.publicUrl, repoOwner: site.repoOwner, repoName: site.repoName, repoBranch: site.repoBranch, repoPath: site.repoPath, connectionEditable: canManageWebsiteConnection(req), options: websiteDesignOptions.parse(site.settings ?? {}) });
+    res.json({
+      id: site.id, name: site.name, publicUrl: site.publicUrl,
+      repoOwner: site.repoOwner, repoName: site.repoName, repoBranch: site.repoBranch, repoPath: site.repoPath,
+      connectionEditable: canManageWebsiteConnection(req),
+      // Which credential this site publishes with, and whether the customer has
+      // taken it back. The installation id is not a secret — it is a number
+      // GitHub puts in a redirect URL — and the key that uses it never leaves
+      // the server.
+      github: { installationId: site.githubInstallationId, repositoryId: site.githubRepositoryId, accessLostAt: site.githubAccessLostAt },
+      options: websiteDesignOptions.parse(site.settings ?? {}),
+    });
   }));
 
   router.get("/sites/:siteId/design", handler(async (req, res) => {

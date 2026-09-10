@@ -4006,9 +4006,22 @@ model Site {
   repoOwner  String?
   repoName   String?
   repoBranch String  @default("main")
+
+  /// The customer's own GitHub App installation, when they have one.
+  ///
+  /// Its presence is what decides which credential a publish runs under: with
+  /// one, an hour-long installation token the customer granted and can withdraw;
+  /// without one, the shared token, exactly as before. See services/githubApp.ts.
+  githubInstallationId String?
+  /// GitHub's own id for the repository, which survives it being renamed. The
+  /// owner/name above is what people read; this is what identity should rest on.
+  githubRepositoryId   String?
+  /// Set when GitHub tells us the installation lost this repository, so a
+  /// publish can refuse with the reason instead of a 404 nobody can act on.
+  githubAccessLostAt   DateTime?
   /// Folder inside the repository the pages sit in. Empty means the root, which
   /// is where GitHub Pages serves this one from.
-  repoPath   String  @default("")
+  repoPath             String    @default("")
 
   /// A client's site rather than Dakyworld's own, when set.
   client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
@@ -4016,7 +4029,7 @@ model Site {
 
   pages          SitePage[]
   sharedElements SharedElement[]
-  publishJobs PublishJob[]
+  publishJobs    PublishJob[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4068,7 +4081,7 @@ model SitePage {
 
   versions        SitePageVersion[]
   sharedInstances SharedElementInstance[]
-  publishJobs PublishJob[]
+  publishJobs     PublishJob[]
 
   lastPublishedAt DateTime?
 
@@ -4167,9 +4180,9 @@ model PublishJob {
   expectedHash String?
 
   /// How many times the live page has been looked at, and when to look again.
-  attempts   Int       @default(0)
+  attempts    Int       @default(0)
   nextCheckAt DateTime?
-  verifiedAt DateTime?
+  verifiedAt  DateTime?
 
   /// The last thing that went wrong, in the words the person would be shown.
   lastError String?
@@ -4177,9 +4190,9 @@ model PublishJob {
   startedBy   User?   @relation("PublishJobs", fields: [startedById], references: [id], onDelete: SetNull)
   startedById String?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  finishedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  finishedAt DateTime?
 
   @@index([siteId, createdAt])
   @@index([state, nextCheckAt])

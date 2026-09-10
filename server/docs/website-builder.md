@@ -583,7 +583,7 @@ The order the founder set, after the inspector and shared elements landed:
 | 7 | External/customer-focused workspace | **Built** — `client/src/lib/clientWorkspace.ts` |
 | 8 | Managed onboarding flow | **Built** — `services/websiteOnboarding.ts`, `Website → Onboarding` |
 | 9 | Real customer usability tests | Not started — needs real people |
-| 10 | GitHub App instead of one shared token | Not started |
+| 10 | GitHub App instead of one shared token | **Built, app not created** — `services/githubApp.ts`, `docs/github-app.md` |
 
 Deliberately **not** being built yet, and the list is as much a part of the plan
 as the one above: a React visual canvas, a Next.js builder, WordPress or Shopify

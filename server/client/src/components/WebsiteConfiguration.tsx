@@ -5,8 +5,9 @@ import { useAuth } from "../lib/auth";
 import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
 import { ConnectWebsite } from "./ConnectWebsite";
+import { ConnectGithubApp } from "./ConnectGithubApp";
 
-type Config = { connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
+type Config = { id?: string; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
 type ManagedSite = SiteSummary & { capabilities?: { manage: boolean } };
 const INPUT = "mt-1 w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue focus:ring-2 focus:ring-blue/20 disabled:bg-cream";
 
@@ -95,5 +96,14 @@ export function WebsiteSettings() {
         <div className="flex items-center gap-4"><Button type="submit" disabled={!dirty || save.isPending || Boolean(paletteError || fontsError)}>{save.isPending ? "Saving…" : "Save settings"}</Button>{save.isSuccess && !dirty && <span role="status" className="text-sm text-muted">Settings saved.</span>}{save.error && <span role="alert" className="text-sm text-danger-text">{(save.error as Error).message}</span>}</div>
       </fieldset>
     </form>}
+    {/* Beside the repository fields rather than inside the form: this is not a
+        value somebody types and saves, it is a connection the customer makes. */}
+    {config.data && id && <ConnectGithubApp
+      siteId={id}
+      installationId={config.data.github?.installationId ?? null}
+      repoFullName={config.data.repoOwner && config.data.repoName ? `${config.data.repoOwner}/${config.data.repoName}` : null}
+      accessLostAt={config.data.github?.accessLostAt ?? null}
+      disabled={config.data.connectionEditable === false}
+    />}
   </div>;
 }

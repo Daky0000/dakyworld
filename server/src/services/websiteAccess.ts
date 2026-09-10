@@ -118,6 +118,9 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   // copy or putting it back are ordinary editing.
   if (/^\/sites\/[^/]+\/shared\/?$/.test(path) || /^\/shared\/[^/]+\/?$/.test(path)) return "manage";
   if (/^\/sites\/[^/]+\/onboarding\/handover\/?$/.test(path)) return "manage";
+  // Pointing a site at a customer's GitHub installation is changing where it
+  // publishes to, which is the same decision as changing its repository.
+  if (/^\/sites\/[^/]+\/github-app\/?$/.test(path)) return "manage";
   if (/^\/shared\/[^/]+\/(?:draft|instances)(?:\/|$)/.test(path)) return "edit";
   if (/\/draft\/?$/.test(path) || /\/restore\/?$/.test(path) || /\/structure\/?$/.test(path)) return "edit";
   if (/\/assets(?:\/[^/]+)?\/?$/.test(path)) return "edit";
@@ -136,6 +139,16 @@ export function createWebsiteAccessGate(reader = accessReader) {
         if (!websiteCapabilities(principal, null).view && !(await reader.hasMembership(principal.id))) {
           // Empty collections are useful for unassigned customers and reveal no site data.
           if (!principal.external) throw new WebsiteError(403, "This account has not been given access to a website.");
+        }
+        return;
+      }
+      // The GitHub App itself belongs to no one website: whether it exists, and
+      // what one installation reaches. Staff who may connect a repository at
+      // all, and nobody external — a customer must never be shown the list of
+      // repositories another customer's installation reaches.
+      if (/^\/github-app(?:\/|$)/.test(req.path)) {
+        if (principal.external || !websiteCapabilities(principal, null).manage) {
+          throw new WebsiteError(403, "Only staff with Manage sites access can set up a repository connection.");
         }
         return;
       }
