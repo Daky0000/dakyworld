@@ -31,6 +31,9 @@ const END = "<!-- END BREADCRUMB -->";
 const TRAILS = {
   "about.html": [["About", "/about"]],
   "services.html": [["Services", "/services"]],
+  "products.html": [["Products", "/products"]],
+  "website-builder.html": [["Products", "/products"], ["Website Builder", "/website-builder"]],
+  "website-builder-setup.html": [["Products", "/products"], ["Website Builder", "/website-builder"], ["Setup guide", "/website-builder-setup"]],
   "work.html": [["Work", "/work"]],
   "how-we-work.html": [["How We Work", "/how-we-work"]],
   "pricing.html": [["Pricing", "/pricing"]],
