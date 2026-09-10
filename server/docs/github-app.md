@@ -1,9 +1,16 @@
 # The Dakyworld GitHub App
 
-The per-customer replacement for the one shared personal access token. **Built
-and deployed; the app itself does not exist yet** — creating it on GitHub is a
-manual step, and until it is done every website carries on publishing with the
-shared token exactly as before.
+The per-customer replacement for the one shared personal access token.
+
+**Created and configured on 10 Sep 2026**: *Dakyworld Website Editor*, app id
+`4895561`, slug `dakyworld-website-editor`, owned by the **Dakyworld**
+organisation — <https://github.com/apps/dakyworld-website-editor>. Its id, slug,
+private key and webhook secret are Railway variables on the `dakyworld` service;
+the key is in no repository and no screen.
+
+Nothing changes for a website until somebody installs the app on its repository
+and connects it. Every site without an installation still publishes with the
+shared token, exactly as before.
 
 ## Why
 
@@ -26,17 +33,31 @@ source code.
 
 ## What to create, once
 
-GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**. Create
-it under a Dakyworld organisation rather than a personal account if there is one,
-so ownership belongs to the business.
+Run **`node scripts/createGithubApp.mjs --org dakyworld`** from `server/`. It
+serves a local page that posts a filled-in App Manifest to GitHub; one click on
+GitHub's own confirmation screen creates the app, and the id, slug, private key
+and webhook secret come straight back to a file the script names. A GitHub App
+cannot be created from an access token, so that click is the whole of the manual
+part.
+
+Then **`node scripts/configureGithubApp.mjs`** proves the key against GitHub and
+sets the four Railway variables.
+
+By hand instead: GitHub → the organisation → Settings → Developer settings →
+GitHub Apps → **New GitHub App**, with exactly what follows.
 
 | Field | Value |
 |---|---|
 | Name | Dakyworld Website Editor |
 | Homepage URL | https://dakyworld.com |
 | Webhook URL | https://os.dakyworld.com/api/github/webhook |
-| Webhook secret | a long random string — keep it |
+| Webhook secret | GitHub generates one through the manifest flow |
 | Where can it be installed | Any account |
+
+`GET /app` does **not** report the webhook, so a manifest that quietly dropped it
+would look identical to one that kept it. `configureGithubApp.mjs` asks
+`/app/hook/config`, which does know, and repairs it with the same JWT if it is
+wrong.
 
 Permissions — the minimum, and no more:
 
@@ -47,8 +68,12 @@ Permissions — the minimum, and no more:
 | Pull requests | Read & write | Only if publish-by-pull-request is used |
 | Everything else | **None** | Administration, Issues and Actions are not needed |
 
-Subscribe to these events: **Installation**, **Installation repositories**. Push
-is not needed — the editor reads the file when it needs it.
+**Subscribe to no events.** The two this system listens for — `installation` and
+`installation_repositories` — are lifecycle events GitHub delivers to every app's
+webhook on its own. They are not in the subscribable list, and asking for them is
+rejected: *"Default events unsupported: installation and installation_repositories"*.
+Push is not wanted either — the editor reads a file when it needs one, so a
+webhook for every commit anybody makes would be noise.
 
 Then generate a private key (`.pem`) and note the App ID and the app's slug (the
 `dakyworld-website-editor` in `github.com/apps/…`).
@@ -103,8 +128,30 @@ that turns it into a token never leaves the server.
 4. Roll it back, to prove that path too.
 5. Only then take that repository out of `GITHUB_ALLOWED_REPOS`.
 
-Keep the shared token for Dakyworld's own repositories. Do **not** install the
-customer-facing app on the OS repository.
+## Dakyworld's own website is the exception
+
+`dakyworld.com` and Dakyworld OS are the **same repository** — `Daky0000/dakyworld`
+holds `index.html`, `about.html` and the rest at its root and the whole OS under
+`server/`. So installing the customer-facing app on it to edit the marketing site
+would also hand that app write access to the source of the system doing the
+editing.
+
+Keep Dakyworld's own site on the shared token, with `GITHUB_ALLOWED_REPOS` naming
+exactly that repository. The allowlist is the boundary there, and it is the right
+one for a repository we own.
+
+Two things make that safe rather than merely traditional. The editor only ever
+writes the file a scanned page came from — top-level `.html` under the site's
+configured folder — plus the assets a page references, so `server/` is not
+reachable from it by any path. And the allowlist is deliberately *not* applied to
+installation credentials, so this exception cannot silently widen when a customer
+is connected later.
+
+If Dakyworld's website is ever split into its own repository, install the app on
+that one and take the shared token out of the picture entirely.
+
+Do **not** install the customer-facing app on `Daky0000/dakyworld` until that
+split happens.
 
 ## Checked by
 

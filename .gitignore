@@ -26,3 +26,9 @@ server/__pycache__/
 server/tmp/
 # The volume's own cover and index — an intermediate the binder reprints.
 server/docs/agent-system-front.pdf
+
+# The GitHub App's private key and webhook secret, written by
+# server/scripts/createGithubApp.mjs. It authenticates the app across every
+# customer installation and belongs in the deployment's secrets, never here.
+.github-app.json
+*.pem
