@@ -21,6 +21,14 @@ export const siteInput = z.object({
   repoOwner: repoPart.nullable().optional(), repoName: repoPart.nullable().optional(),
   repoBranch: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_./-]+$/).default("main"),
   repoPath: folder.default(""),
+  /**
+   * Whose website this is. Null for Dakyworld's own.
+   *
+   * It is what makes "does a retainer cover this" answerable at all — without
+   * it the onboarding list can only say that nothing decides, which is true and
+   * useless. See services/products.ts.
+   */
+  clientId: z.string().min(1).max(60).nullable().optional(),
 });
 export const websiteDesignOptions = z.object({
   colours: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).max(16).default([]),
@@ -115,6 +123,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       // GitHub puts in a redirect URL — and the key that uses it never leaves
       // the server.
       github: { installationId: site.githubInstallationId, repositoryId: site.githubRepositoryId, accessLostAt: site.githubAccessLostAt },
+      clientId: site.clientId,
       options: websiteDesignOptions.parse(site.settings ?? {}),
     });
   }));
@@ -130,6 +139,11 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const { options, ...data } = siteInput.extend({ options: websiteDesignOptions }).parse(req.body);
     assertWebsiteConnectionChange(req, site, data);
     if (!!data.repoOwner !== !!data.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
+    // Checked rather than left to the foreign key: a client id that does not
+    // exist should read as "that client is not here", not as a 500.
+    if (data.clientId && !(await prisma.client.findUnique({ where: { id: data.clientId }, select: { id: true } }))) {
+      throw new WebsiteError(400, "That client is not in the system.");
+    }
     const previousOptions = websiteDesignOptions.parse(site.settings ?? {});
     const changed = [
       ...Object.keys(data).filter(key => data[key as keyof typeof data] !== site[key as keyof Site]),

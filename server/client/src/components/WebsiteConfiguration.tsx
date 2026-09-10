@@ -7,7 +7,7 @@ import { Button, PageHeader } from "./ui";
 import { ConnectWebsite } from "./ConnectWebsite";
 import { ConnectGithubApp } from "./ConnectGithubApp";
 
-type Config = { id?: string; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
+type Config = { id?: string; clientId?: string | null; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
 type ManagedSite = SiteSummary & { capabilities?: { manage: boolean } };
 const INPUT = "mt-1 w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue focus:ring-2 focus:ring-blue/20 disabled:bg-cream";
 
@@ -18,6 +18,10 @@ export function WebsiteSettings() {
   const [selected, setSelected] = useState("");
   const id = manageable.some(site => site.id === selected) ? selected : manageable[0]?.id;
   const config = useQuery({ queryKey: ["website", "config", id], enabled: !!id, queryFn: () => api.get<Config>(`/website/sites/${id}/config`) });
+  // Whose website this is. It is what decides whether a retainer covers the
+  // Website Builder for them, so a site with no client can only be told that
+  // nothing decides — see the "Who pays for this" line on Onboarding.
+  const clients = useQuery({ queryKey: ["clients", "for-sites"], queryFn: () => api.get<Array<{ id: string; name: string }>>("/clients") });
   const [draft, setDraft] = useState<Config | null>(null);
   const [dirty, setDirty] = useState(false);
   const [colourText, setColourText] = useState("");
@@ -75,6 +79,7 @@ export function WebsiteSettings() {
       <fieldset disabled={save.isPending} className="space-y-6">
         <section className="rounded-2xl border border-line bg-white p-5">
           <h2 className="mb-4 font-display text-lg">Source & publishing</h2>
+          <label className="mb-4 block text-xs text-muted">Client<select className={INPUT} value={draft.clientId ?? ""} onChange={event => change("clientId" as keyof Config, (event.target.value || null) as never)}><option value="">Dakyworld&#39;s own website</option>{(Array.isArray(clients.data) ? clients.data : []).map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select><span className="mt-1 block text-[11px] text-faint">Whose website this is. A client on an active retainer gets the Website Builder at no charge; without a client here, nothing can work that out.</span></label>
           <div className="grid gap-4 sm:grid-cols-2">{([["name", "Name"], ["publicUrl", "Public address"], ["repoOwner", "Repository owner"], ["repoName", "Repository name"], ["repoBranch", "Branch"], ["repoPath", "HTML folder"]] as const).map(([key, label]) => <label key={key} className="text-xs text-muted">{label}<input className={INPUT} value={draft[key] ?? ""} disabled={key.startsWith("repo") && draft.connectionEditable === false} required={key === "name" || key === "publicUrl" || key === "repoBranch"} maxLength={key === "publicUrl" ? 2000 : key === "repoPath" ? 200 : key === "name" ? 120 : 100} type={key === "publicUrl" ? "url" : "text"} onChange={event => change(key, (key === "repoOwner" || key === "repoName") && !event.target.value ? null : event.target.value)} /></label>)}</div>
           <p className="mt-3 text-xs text-muted">Publishing writes to this branch. Your administrator connects the repository credentials. An imported page can also be downloaded as HTML.</p>
         </section>

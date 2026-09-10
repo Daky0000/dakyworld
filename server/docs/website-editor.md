@@ -38,6 +38,16 @@ The visual sidebar includes a searchable Layers tree in document order, expand/c
 
 Both work, per site. A site with a customer's own GitHub App installation borrows an hour-long token scoped to the repositories they chose; every other site uses the shared token exactly as before. The credential is ambient for the duration of one piece of work (`withGithubCredential`), so a nested read during a commit inherits it without every function growing a token parameter. `docs/github-app.md` is what to create on GitHub and what to put in Railway — until that exists nothing changes. `checks/githubApp.ts` covers it.
 
+## What it costs, and who pays
+
+A client on an **active** retainer gets every product at no charge; everyone else pays the product's own price. The rule is decided in one function — `decideAccess()` in `services/products.ts` — so the public page, the onboarding list and whoever is quoting cannot reach different conclusions. A paused retainer covers nothing.
+
+Prices live in the `Product` table and are edited at `Products → Product pricing` (needs `website.manage`). dakyworld.com reads them from `GET /api/public/products`, which is unauthenticated and mounted above the session middleware, so **moving a price in the OS moves it on the website without a deploy**. The number in the site's markup is still real: it is what a crawler sees, what renders with JavaScript off, and what stands when the request fails — `assets/pricing.js` only replaces a number that has since moved, and fails silently.
+
+That is the opposite direction from care plans, deliberately. A retainer's price is a published offer with a page of conditions around it, so the site owns it and the OS syncs (`carePlanCatalogue.ts`). A product's price is a single number on a card.
+
+`Site.clientId` is what makes the question answerable at all; it is set on the site's settings screen, and the onboarding list says so when it is missing. `checks/products.ts` covers the rule with no database.
+
 ## Onboarding a website, and what a client sees
 
 `Website → Onboarding` is the list somebody works down before a client is given a website: address, repository, a branch proved readable by actually reading a file from it, pages scanned, the compatibility report gone through, this site's own colours and fonts set so the editor stops offering Dakyworld's, shared elements linked, publishing confirmed, and the client's own access. Every line is **derived from the site rather than ticked**, so nothing can claim to be done after it has stopped being true — a branch that becomes unreadable goes back to blocked on its own. The last line is the handover conversation, which is the only thing on the page nothing can work out for itself, and it is recorded on the site's activity.
@@ -101,6 +111,7 @@ npx tsx checks/websiteCompatibility.ts
 npx tsx checks/websitePublishVerify.ts
 npx tsx checks/websiteClientWorkspace.ts
 npx tsx checks/githubApp.ts
+npx tsx checks/products.ts
 npx tsx checks/websiteResponsive.ts
 npx tsx checks/websitePreviewRuntime.ts
 npx tsx checks/websiteStructure.ts
