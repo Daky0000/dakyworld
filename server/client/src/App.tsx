@@ -35,6 +35,7 @@ import { WebsiteOverview } from "./pages/WebsiteOverview";
 import { WebsiteAssets } from "./pages/WebsiteAssets";
 import { WebsiteCompatibility } from "./pages/WebsiteCompatibility";
 import { WebsiteOnboarding } from "./pages/WebsiteOnboarding";
+import { ProductPricing } from "./pages/ProductPricing";
 import { WebsiteAI } from "./pages/WebsiteAI";
 import { WebsiteUpdates } from "./pages/WebsiteUpdates";
 import { WebsiteTeam } from "./pages/WebsiteTeam";
@@ -93,6 +94,7 @@ export default function App() {
           <Route path="source" element={<WebsiteGuard needs="source"><WebsiteSource /></WebsiteGuard>} />
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
         </Route>
+        <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
         <Route path="/website/pages/:pageId" element={<WebsiteGuard><WebsiteEditor /></WebsiteGuard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />
         <Route path="/settings" element={<Guard needs="settings.view"><Settings /></Guard>} />

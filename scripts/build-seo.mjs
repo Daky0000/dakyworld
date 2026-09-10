@@ -427,7 +427,11 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
   "img-src 'self' data: https://www.googletagmanager.com https://www.google-analytics.com",
-  "connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com",
+  // os.dakyworld.com serves the product prices this site prints. The number is
+  // already in the markup and correct; the request only replaces it when the
+  // office has moved it since the last publish. No credentials are sent, and
+  // the endpoint is above the OS's session middleware, so none could be read.
+  "connect-src 'self' https://os.dakyworld.com https://www.google-analytics.com https://www.googletagmanager.com",
   "frame-src 'none'",
   "upgrade-insecure-requests",
 ].join("; ");

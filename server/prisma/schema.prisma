@@ -144,6 +144,7 @@ model User {
   sitePageVersions    SitePageVersion[]   @relation("SitePageVersions")
   sharedElementDrafts SharedElement[]     @relation("SharedElementDrafts")
   publishJobs         PublishJob[]        @relation("PublishJobs")
+  productPrices       Product[]           @relation("ProductPrices")
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -1412,6 +1413,54 @@ enum CarePlanStatus {
   ACTIVE
   PAUSED
   CHURNED
+}
+
+/// Something Dakyworld built once and sells to more than one customer.
+///
+/// The company's ordinary work is a retainer: capacity sold by the month. A
+/// product is the other shape — the Website Builder is the first — and it needs
+/// its own price, because the people who want it are not all on a retainer.
+///
+/// **The rule this table exists to hold: a client on an active retainer gets
+/// every product at no charge.** That is not a discount applied at invoice
+/// time, it is what the retainer includes; `productAccess()` in
+/// services/products.ts is the one place that decides it, so the OS screens and
+/// the public website cannot come to different conclusions.
+///
+/// The prices here are the ones dakyworld.com shows. The website reads them
+/// live from `/api/public/products`, so changing one here changes the public
+/// page without a deploy — see `assets/pricing.js` on the site.
+model Product {
+  id  String @id @default(cuid())
+  /// Stable, and the same string the website's markup asks for: `website-builder`.
+  key String @unique
+
+  name    String
+  /// One line, under the name, on the website's pricing block.
+  tagline String @default("")
+
+  /// What a customer with no retainer pays each month. Zero means free to all.
+  monthlyPrice Decimal @db.Decimal(12, 2)
+  /// Charged once, at setup. Null where there is nothing to set up.
+  setupPrice   Decimal? @db.Decimal(12, 2)
+  currency     String  @default("GHS")
+
+  /// Where the product is described on the public site, for the price block's link.
+  publicPath String @default("")
+
+  /// False hides it from the public catalogue without deleting its history.
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  /// Who last moved the price, and when. A price is a commercial decision and
+  /// the question "who changed this" is asked eventually.
+  updatedById String?
+  updatedBy   User?   @relation("ProductPrices", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder])
 }
 
 model CarePlan {

@@ -7,6 +7,8 @@ import cors from "cors";
 import { attachUser, bootstrapOwner, requireAuth, scopeExternal, DEV_NO_AUTH, DEV_NO_AUTH_REFUSED } from "./middleware/auth.js";
 import { DEV_MODE, DEV_MODE_REFUSED } from "./services/tools/devMode.js";
 import { ensureStarterRoles, ensureSystemRoles } from "./lib/accessRoles.js";
+import { productsRouter, publicProductsRouter } from "./routes/products.js";
+import { ensureProducts } from "./services/products.js";
 import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
 import { leadsRouter } from "./routes/leads.js";
@@ -199,6 +201,13 @@ app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toIS
 // not an unsubscribe link. Every cold email this app sends carries one.
 app.use("/api/emails", unsubscribeRouter);
 
+// Public, and it has to be: dakyworld.com reads its own prices from here on
+// every page load of a pricing block, and a price behind a login is a price
+// somebody has to retype into the website by hand. Nothing here is secret —
+// it is the number printed on a public page. Above `attachUser`, so it cannot
+// see a session even if a browser sent one.
+app.use("/api/public", publicProductsRouter);
+
 // A ceiling on everything under /api. Above attachUser on purpose: a request
 // that is going to be refused should be refused before it costs a database
 // round trip.
@@ -212,6 +221,7 @@ app.use("/api", requireAuth);
 // Signed in is not the same as "belongs in here" — see scopeExternal.
 app.use("/api", scopeExternal);
 
+app.use("/api/products", productsRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/leads", leadsRouter);
 app.use("/api/imports", importsRouter);
@@ -287,6 +297,10 @@ ensureSystemRoles()
       // The letters that ship with the app, copied in once so they can be
       // edited. Failing here must not take the API down.
       void ensureBuiltinTemplates().catch((err) => console.error("Template seed failed:", err));
+      // The product catalogue. Creates what is missing and never overwrites a
+      // price — a seeder that reinstated the shipped number on every deploy
+      // would quietly undo a commercial decision. See services/products.ts.
+      void ensureProducts().catch((err) => console.error("Product seed failed:", err));
       // The company's own website, so the editor opens onto something. Pages are
       // discovered rather than seeded — see services/website/ensureSite.ts.
       void ensureDakyworldSite()

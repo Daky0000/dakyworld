@@ -85,7 +85,13 @@ const navItems: NavItem[] = [
     to: "/website",
     label: "Products",
     needs: "website.view",
-    children: [{ to: "/website", label: "Website Builder", needs: "website.view" }],
+    children: [
+      { to: "/website", label: "Website Builder", needs: "website.view" },
+      // What a product costs somebody who is not on a retainer. Under Products
+      // rather than under Settings: a price is what the company sells at, not
+      // how the system is wired.
+      { to: "/products/pricing", label: "Product pricing", needs: "website.view" },
+    ],
   },
   {
     to: "/agents",

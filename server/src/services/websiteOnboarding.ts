@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import { siteCompatibility } from "./websiteReadiness.js";
 import { READINESS_LABEL, sharedCandidates } from "./website/index.js";
 import { pageSource, WebsiteError } from "./website/site.js";
+import { money, productAccess } from "./products.js";
 
 /**
  * Getting a customer's website ready, as a list rather than as folklore.
@@ -167,6 +168,30 @@ export async function onboardingSteps(site: Site): Promise<{ steps: OnboardingSt
     clients.length
       ? step("access", "Customer access", "done", `${clients.length} client account${clients.length === 1 ? "" : "s"} on this site.`, { href: "/website/team", action: "Manage" })
       : step("access", "Customer access", "todo", "Nobody outside Dakyworld can open this site yet.", { href: "/website/team", action: "Invite the client" }),
+  );
+
+  // Whether anybody owes anything for this. A retainer includes every product,
+  // so most client sites answer "included" — and the ones that do not are
+  // exactly the ones somebody has to remember to invoice, which is why this is
+  // a derived line on the list rather than a note in a proposal.
+  const access = await productAccess(site.clientId, "website-builder");
+  steps.push(
+    !site.clientId
+      ? step("billing", "Who pays for this", "attention", "This website is not linked to a client, so nothing can work out whether a retainer covers it.", {
+          href: "/website/settings",
+          action: "Link the client",
+        })
+      : access.included
+        ? step("billing", "Who pays for this", "done", access.reason)
+        : step(
+            "billing",
+            "Who pays for this",
+            "attention",
+            access.price
+              ? `No active retainer. The Website Builder is chargeable for this client at ${access.price.currency} ${money(access.price.monthly)} per month${access.price.setup ? `, plus ${access.price.currency} ${money(access.price.setup)} to set up` : ""}. Raise it before they are given access.`
+              : access.reason,
+            { href: "/care-plans", action: "Open retainers" },
+          ),
   );
 
   const complete = steps.every((entry) => entry.state === "done");
