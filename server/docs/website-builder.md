@@ -580,8 +580,8 @@ The order the founder set, after the inspector and shared elements landed:
 | 4 | Compatibility checker | **Built** — `services/website/compatibility.ts`, `docs/website-compatibility.md` |
 | 5 | Durable `PublishJob` | **Built** — `services/websitePublishJobs.ts` |
 | 6 | Live deployment verification | **Built** — same module, on the scheduler's minute tick |
-| 7 | External/customer-focused workspace | Not started |
-| 8 | Managed onboarding flow | Not started |
+| 7 | External/customer-focused workspace | **Built** — `client/src/lib/clientWorkspace.ts` |
+| 8 | Managed onboarding flow | **Built** — `services/websiteOnboarding.ts`, `Website → Onboarding` |
 | 9 | Real customer usability tests | Not started — needs real people |
 | 10 | GitHub App instead of one shared token | Not started |
 

@@ -23,6 +23,12 @@ The visual sidebar includes a searchable Layers tree in document order, expand/c
 - **AI:** an optional proposal panel scoped to one selected field or the page. Suggestions include the unsaved draft, pass the editor validator and existing budget checks, and require explicit application into the draft. The assistant never publishes. No paid model calls were made during implementation checks.
 - **Source files:** browse JSX/TSX inside the site's configured repository folder, edit literal native-element text and existing `href`/`src`/`alt` strings, review a byte-preserving change, download source, or publish with both source and publish permission. Full-file hashes reject stale edits. Dynamic values, custom component props, class names and component structure remain code-controlled. Unsupported or ambiguous fields are explained. Source code is parsed, never executed.
 
+## Onboarding a website, and what a client sees
+
+`Website → Onboarding` is the list somebody works down before a client is given a website: address, repository, a branch proved readable by actually reading a file from it, pages scanned, the compatibility report gone through, this site's own colours and fonts set so the editor stops offering Dakyworld's, shared elements linked, publishing confirmed, and the client's own access. Every line is **derived from the site rather than ticked**, so nothing can claim to be done after it has stopped being true — a branch that becomes unreadable goes back to blocked on its own. The last line is the handover conversation, which is the only thing on the page nothing can work out for itself, and it is recorded on the site's activity.
+
+A customer does not get the operations menu with most of it missing. `client/src/lib/clientWorkspace.ts` holds what they are offered — Pages, Assets, Team, Activity — the header says "Dakyworld · Website" rather than "Dakyworld OS · Internal Operations", the builder's own second navigation strip is dropped because those four are already in the header, and they land on their pages. The permission boundary was already right; this is the surface catching up with it, and `checks/websiteClientWorkspace.ts` asserts that nothing a client is offered leaves the website product.
+
 ## Publishing, and knowing it worked
 
 A commit is not a deployment. `PublishJob` records every publish from before it starts until the change has been seen on the live page: the row is written **before** GitHub is touched, so a process that dies mid-publish leaves a `COMMITTING` row the next boot asks GitHub about rather than a mystery — either the commit landed and the state is `RECONCILIATION_REQUIRED` with the sha on it, or nothing happened and it says so. After the commit the job carries the public address, a distinctive string the change put on the page and the file's hash; the scheduler looks at the live page on a backoff from twenty seconds out to five minutes, and settles on `COMPLETED` with how long the host took or `VERIFY_FAILED` with the page still showing the old version. The editor shows that line under the publish notice, so "published" stops meaning "committed". `services/websitePublishJobs.ts`; `checks/websitePublishVerify.ts` covers the deciding with no database, `checks/websitePublishJobs.ts` the rows and the clock with an isolated one.
@@ -78,6 +84,7 @@ npx tsx checks/websiteShared.ts
 npx tsx checks/websiteSharedApi.ts
 npx tsx checks/websiteCompatibility.ts
 npx tsx checks/websitePublishVerify.ts
+npx tsx checks/websiteClientWorkspace.ts
 npx tsx checks/websiteResponsive.ts
 npx tsx checks/websitePreviewRuntime.ts
 npx tsx checks/websiteStructure.ts

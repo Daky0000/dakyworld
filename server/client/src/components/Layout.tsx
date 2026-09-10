@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { useWebsiteSites } from "./WebsiteGuard";
+import { CLIENT_NAV } from "../lib/clientWorkspace";
 
 type NavItem = {
   to: string;
@@ -22,6 +23,21 @@ type NavItem = {
   children?: NavItem[];
 };
 
+/**
+ * What a client sees instead of the operations menu.
+ *
+ * A customer of the Website Builder is not a member of staff who happens to have
+ * fewer permissions. Filtering the internal menu down to one tab leaves them
+ * standing inside somebody else's company — Leads and Costs greyed out, a
+ * dashboard they cannot open, a product called "Internal Operations" — and every
+ * one of those says the same wrong thing: that they are a guest in a system that
+ * is not for them.
+ *
+ * So the whole shell changes. Their site's own screens are the navigation, the
+ * header carries the product they bought rather than the OS, and the way in is
+ * their pages rather than a dashboard. The permission boundary was already
+ * right; this is the surface catching up with it.
+ */
 const navItems: NavItem[] = [
   { to: "/", label: "Dashboard", end: true, needs: "dashboard.view" },
   // Getting leads in is three screens — the list, the scrapers, the importer —
@@ -278,10 +294,13 @@ export function Layout() {
   //
   // A group whose children are all hidden is dropped rather than left as a
   // menu that opens onto nothing.
-  const visibleNav = navItems
-    .filter(allowed)
-    .map((item) => (item.children ? { ...item, children: item.children.filter(allowed) } : item))
-    .filter((item) => !item.children || item.children.length > 0);
+  const client = user?.external === true;
+  const visibleNav: NavItem[] = client
+    ? CLIENT_NAV
+    : navItems
+        .filter(allowed)
+        .map((item) => (item.children ? { ...item, children: item.children.filter(allowed) } : item))
+        .filter((item) => !item.children || item.children.length > 0);
   // Every page except the dashboard is somewhere you arrived from somewhere
   // else, so every one of them gets a way back that doesn't mean hunting for
   // the browser chrome or guessing which nav tab you came in through.
@@ -315,10 +334,10 @@ export function Layout() {
             <img src="/brand/mark-on-dark-96.png" alt="" width={32} height={32} className="h-8 w-8 shrink-0" />
             <div className="min-w-0 leading-none">
               <div className="truncate font-display text-[15px] font-bold tracking-[-.03em] text-white">
-                Dakyworld OS
+                {client ? "Dakyworld" : "Dakyworld OS"}
               </div>
               <div className="mt-1 hidden font-mono text-[10px] uppercase tracking-[.14em] text-white/55 sm:block">
-                Internal Operations
+                {client ? "Website" : "Internal Operations"}
               </div>
             </div>
           </div>

@@ -56,6 +56,7 @@ export const WEBSITE_TABS: Tab[] = [
   { to: "/website/sites", label: "Sites" },
   { to: "/website/assets", label: "Assets" },
   { to: "/website/compatibility", label: "Compatibility" },
+  { to: "/website/onboarding", label: "Onboarding", needs: "website.manage" },
   { to: "/website/ai", label: "AI Assistant", needs: "website.manage", unbuilt: true },
   { to: "/website/updates", label: "Updates", needs: "website.manage", unbuilt: true },
   { to: "/website/team", label: "Team & Permissions" },
@@ -66,12 +67,17 @@ export const WEBSITE_TABS: Tab[] = [
 ];
 
 export function WebsiteLayout() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const sites = useWebsiteSites();
   const location = useLocation();
   const tabs = WEBSITE_TABS.filter((tab) => tab.siteAction
     ? can("website.manage") || sites.data?.some(site => site.capabilities?.[tab.siteAction!])
     : !tab.needs || can(tab.needs));
+
+  // A client already has these four in the header above. Repeating them as a
+  // second strip is two navigations for one product, which reads as a system
+  // somebody has been let into rather than a thing they own.
+  if (user?.external) return <Outlet />;
 
   // A site's own pages live under /website/sites/:id, so the Sites tab stays lit
   // while somebody is inside one. Without this, opening a site makes the strip

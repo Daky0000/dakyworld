@@ -8,6 +8,7 @@ import { embedWebsiteAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
 import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../services/websiteShared.js";
 import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
+import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, registerWebsitePublishJobs, startPublishJob } from "../services/websitePublishJobs.js";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
@@ -62,6 +63,7 @@ registerWebsiteSource(websiteRouter, { loadSite });
 registerWebsiteShared(websiteRouter, { loadSite, loadPage });
 registerWebsiteReadiness(websiteRouter, { loadSite });
 registerWebsitePublishJobs(websiteRouter, { loadSite });
+registerWebsiteOnboarding(websiteRouter, { loadSite });
 
 /**
  * Do two values read the same to a person?

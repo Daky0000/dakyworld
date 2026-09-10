@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { CLIENT_HOME } from "../lib/clientWorkspace";
 import { Card } from "./ui";
 
 /**
@@ -54,7 +55,7 @@ export function Guard({ needs, children }: { needs: string; children: ReactNode 
  */
 export function Landing({ children }: { children: ReactNode }) {
   const { can, user } = useAuth();
-  if (user?.external) return <Navigate to="/website/sites" replace />;
+  if (user?.external) return <Navigate to={CLIENT_HOME} replace />;
   if (can("dashboard.view")) return <>{children}</>;
 
   const first = [

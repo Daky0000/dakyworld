@@ -117,6 +117,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   // that carries it is edited. Editing the shared element, detaching one page's
   // copy or putting it back are ordinary editing.
   if (/^\/sites\/[^/]+\/shared\/?$/.test(path) || /^\/shared\/[^/]+\/?$/.test(path)) return "manage";
+  if (/^\/sites\/[^/]+\/onboarding\/handover\/?$/.test(path)) return "manage";
   if (/^\/shared\/[^/]+\/(?:draft|instances)(?:\/|$)/.test(path)) return "edit";
   if (/\/draft\/?$/.test(path) || /\/restore\/?$/.test(path) || /\/structure\/?$/.test(path)) return "edit";
   if (/\/assets(?:\/[^/]+)?\/?$/.test(path)) return "edit";
