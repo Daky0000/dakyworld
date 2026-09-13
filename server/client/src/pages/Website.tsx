@@ -9,6 +9,13 @@ import type { SitePageRow, SiteSummary } from "../lib/types";
 import { Badge, Button, EmptyState, PageHeader, RelativeTime, Table } from "../components/ui";
 
 /**
+ * A page whose file the visual editor cannot open, and which therefore edits as
+ * source. Everything else — `.html`, and an imported page with no file at all —
+ * opens in the editor this screen exists to lead people to.
+ */
+const SOURCE_ONLY_FILE = /\.(jsx|tsx|astro|vue|svelte)$/i;
+
+/**
  * Choose a page to edit.
  *
  * The whole screen is one decision, so it is one list. No site switcher appears
@@ -184,13 +191,16 @@ export function Website() {
                           View
                         </Button>
                       </a>
-                      {/* A framework route is source, not a rendered page: it
-                          opens in the source editor, because the visual editor
-                          can only read HTML and would refuse the file it was
-                          given. */}
+                      {/* Decided by the file, never by the site. A framework
+                          repository still has real HTML pages in it — a landing
+                          page in `public/`, an imported file — and sending those
+                          to the source editor would take somebody away from the
+                          visual editor that can open them perfectly well. Only a
+                          file the visual editor genuinely cannot read goes the
+                          other way. */}
                       <Link
                         to={
-                          current?.sourceKind
+                          SOURCE_ONLY_FILE.test(page.filePath) && current
                             ? `/website/source?site=${encodeURIComponent(current.id)}&file=${encodeURIComponent(page.filePath)}`
                             : `/website/pages/${page.id}`
                         }

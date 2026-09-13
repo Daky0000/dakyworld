@@ -13,6 +13,7 @@ type Directory = { repo: string; branch: string; root: string; path: string; fil
 type Change = { fieldId: string; value: string };
 type Review = { reviewHash: string; sourceHash: string; filePath: string; repo: string; branch: string; changes: { fieldId: string; label: string; before: string; after: string }[] };
 type StoredDraft = { sourceHash: string; values: Record<string, string> };
+type UploadedImage = { id: string; url: string; filename: string; preview: string };
 const fieldClass = "w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink focus:border-blue focus:outline-none focus:ring-1 focus:ring-blue";
 
 function readDraft(key: string): StoredDraft | null {
@@ -36,6 +37,11 @@ function SourceFileEditor({ siteId, filePath, canPublish }: { siteId: string; fi
   const [storageUnavailable, setStorageUnavailable] = useState(false);
   const endpoint = `/website/sites/${encodeURIComponent(siteId)}/source`;
   const document = useQuery({ queryKey: ["website", "source", siteId, filePath], queryFn: () => api.get<SourceDocument>(`${endpoint}?filePath=${encodeURIComponent(filePath)}`), refetchOnWindowFocus: false });
+  // The pictures already uploaded to this site. A framework page cannot be shown
+  // a drag-and-drop canvas, but somebody changing an image still needs a way to
+  // name one that exists — typing a path from memory is how a broken picture
+  // gets published.
+  const images = useQuery({ queryKey: ["website", "assets", siteId], queryFn: () => api.get<UploadedImage[]>(`/website/sites/${encodeURIComponent(siteId)}/assets`), refetchOnWindowFocus: false });
   const values = draft?.values ?? {};
   const changes: Change[] = Object.entries(values).map(([fieldId, value]) => ({ fieldId, value }));
   const input = { filePath, sourceHash: draft?.sourceHash ?? document.data?.sourceHash ?? "", changes };
@@ -113,7 +119,7 @@ function SourceFileEditor({ siteId, filePath, canPublish }: { siteId: string; fi
       {document.data.issues.length > 0 && <details className="rounded-2xl border border-line bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">{document.data.issues.length} source compatibility {document.data.issues.length === 1 ? "note" : "notes"}</summary><ul className="mt-3 space-y-2 text-sm text-muted">{document.data.issues.map((issue, index) => <li key={index}>{issue.line ? `Line ${issue.line}: ` : ""}{issue.message}</li>)}</ul></details>}
       {!document.data.fields.length ? <p className="rounded-2xl border border-line bg-white p-5 text-sm text-muted">This file has no supported static fields. Dynamic values, custom component props, styles and layout need a source adapter for that component or a code change.</p> : <>
         <label className="block text-xs text-muted">Find content<input className={`${fieldClass} mt-1`} placeholder="Search text, element or marker" value={search} onChange={event => setSearch(event.target.value)} /></label>
-        <div className="grid gap-4 xl:grid-cols-2">{visible.map(field => <label key={field.id} className="block rounded-2xl border border-line bg-white p-4"><span className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-muted">{field.label}</span>{field.marker && <span className="max-w-[60%] truncate text-xs text-muted" title={field.marker}>{field.marker}</span>}</span>{field.kind === "text" ? <textarea aria-label={field.label} className={`${fieldClass} mt-2 min-h-24 resize-y`} rows={3} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} /> : <input aria-label={field.label} type="text" className={`${fieldClass} mt-2`} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} />}{field.id in values && <span className="mt-2 block text-xs text-blue">Changed</span>}</label>)}</div>
+        <div className="grid gap-4 xl:grid-cols-2">{visible.map(field => <label key={field.id} className="block rounded-2xl border border-line bg-white p-4"><span className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-muted">{field.label}</span>{field.marker && <span className="max-w-[60%] truncate text-xs text-muted" title={field.marker}>{field.marker}</span>}</span>{field.kind === "src" && (images.data?.length ?? 0) > 0 && <select aria-label={`Choose an uploaded image for ${field.label}`} className={`${fieldClass} mt-2`} disabled={busy || stale} value="" onChange={event => { if (event.target.value) update(field, event.target.value); }}><option value="">Choose an uploaded image…</option>{images.data!.map(image => <option key={image.id} value={image.url}>{image.filename}</option>)}</select>}{field.kind === "text" ? <textarea aria-label={field.label} className={`${fieldClass} mt-2 min-h-24 resize-y`} rows={3} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} /> : <input aria-label={field.label} type="text" className={`${fieldClass} mt-2`} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} />}{field.id in values && <span className="mt-2 block text-xs text-blue">Changed</span>}</label>)}</div>
         {!visible.length && <p className="text-sm text-muted">No fields match your search.</p>}
       </>}
     </>}

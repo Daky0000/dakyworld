@@ -20,7 +20,7 @@
  * Pure string work: no network, no database, no GitHub.
  */
 import assert from "node:assert/strict";
-import { astroRoutes, detectFramework, nextRoutes, svelteRoutes, viteReactRoutes, vueRoutes } from "../src/services/website/frameworks.js";
+import { astroRoutes, detectFramework, docusaurusRoutes, gatsbyRoutes, hugoRoutes, jekyllRoutes, nextRoutes, remixRoutes, svelteRoutes, viteReactRoutes, vueRoutes } from "../src/services/website/frameworks.js";
 
 let passed = 0;
 const paths = (routes: { path: string }[]) => routes.map((route) => route.path);
@@ -96,6 +96,41 @@ assert.deepEqual(paths(viteReactRoutes(["vite.config.ts", "src/App.tsx", "src/pa
 // page — the detector still has to claim this as React rather than leave it to
 // the HTML editor, which would offer somebody a file with one empty `<div>`.
 assert.equal(detectFramework(spa)?.sourceKind, "vite-react"); passed++;
+
+// ── Remix / React Router 7 ──────────────────────────────────────────────────
+const remix = ["vite.config.ts", "app/root.tsx", "app/routes/_index.tsx", "app/routes/about.tsx", "app/routes/blog.$slug.tsx", "app/routes/_auth.login.tsx", "app/routes/api.health.ts", "app/routes/dashboard/route.tsx"];
+const remixList = remixRoutes(remix);
+// A dot is a slash, `_index` is the folder's own address, and a leading
+// underscore is a pathless layout rather than a segment anybody visits.
+assert.deepEqual(paths(remixList), ["/", "/about", "/api/health", "/blog/$slug", "/dashboard", "/login"]); passed++;
+assert.equal(fileFor(remixList, "/"), "app/routes/_index.tsx"); passed++;
+assert.equal(detectFramework(remix)?.sourceKind, "remix"); passed++;
+
+// ── Gatsby ──────────────────────────────────────────────────────────────────
+const gatsby = ["gatsby-config.js", "src/pages/index.js", "src/pages/about.js", "src/pages/404.js", "src/templates/post.js"];
+assert.deepEqual(paths(gatsbyRoutes(gatsby)), ["/", "/about"]); passed++;
+// A template is rendered for many addresses and is not an address itself.
+assert.ok(!gatsbyRoutes(gatsby).some((route) => route.filePath.includes("templates/"))); passed++;
+assert.equal(detectFramework(gatsby)?.sourceKind, "gatsby"); passed++;
+
+// ── The Markdown generators ─────────────────────────────────────────────────
+const hugo = ["hugo.toml", "content/_index.md", "content/about.md", "content/posts/first.md", "layouts/single.html", "themes/x/layouts/index.html"];
+assert.deepEqual(paths(hugoRoutes(hugo)), ["/", "/about", "/posts/first"]); passed++;
+// A layout is a theme file, not a page — it has no address of its own.
+assert.ok(!hugoRoutes(hugo).some((route) => route.filePath.includes("layouts/"))); passed++;
+assert.equal(detectFramework(hugo)?.sourceKind, "hugo"); passed++;
+const jekyll = ["_config.yml", "index.md", "about.md", "_posts/2026-09-01-hello.md", "_layouts/default.html"];
+assert.equal(detectFramework(jekyll)?.sourceKind, "jekyll"); passed++;
+assert.ok(paths(jekyllRoutes(jekyll)).includes("/about")); passed++;
+const docusaurus = ["docusaurus.config.js", "docs/intro.md", "docs/guide/setup.mdx", "blog/2026-09-01-post.md", "src/pages/index.js"];
+assert.equal(detectFramework(docusaurus)?.sourceKind, "docusaurus"); passed++;
+assert.ok(paths(docusaurusRoutes(docusaurus)).includes("/docs/guide/setup")); passed++;
+const eleventy = [".eleventy.js", "src/index.md", "src/about.md", "src/_includes/layout.njk"];
+assert.equal(detectFramework(eleventy)?.sourceKind, "eleventy"); passed++;
+
+// A Markdown generator must not claim a JavaScript framework's repository: an
+// Astro project has Markdown under `src/pages` too, and it is Astro.
+assert.equal(detectFramework(["astro.config.mjs", "src/pages/index.astro", "src/pages/post.md"])?.sourceKind, "astro"); passed++;
 
 // ── A plain static site is nobody's framework ───────────────────────────────
 assert.equal(detectFramework(["index.html", "about.html", "css/site.css"]), null); passed++;

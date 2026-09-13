@@ -8,7 +8,8 @@ import type { SiteField } from "./regions.js";
 import { attr, decodeEntities, parseHtml, walk } from "./parse.js";
 import { fetchWebsiteText } from "../../lib/websiteFetch.js";
 import { invalidateSource, readCache, sourceKey, writeCache } from "./sourceCache.js";
-import { detectFramework, type SourceKind } from "./frameworks.js";
+import { detectFramework, type DiscoveredRoute, type SourceKind } from "./frameworks.js";
+import { discoverRouterRoutes, routerCandidates } from "./router.js";
 
 /**
  * Where a page's HTML comes from, and where an edited one goes.
@@ -390,7 +391,9 @@ async function findPages(site: Site): Promise<Discovery> {
     // this is and let it map them — see `frameworks.ts`.
     const framework = truncated ? null : detectFramework(files);
     if (framework) {
-      const pages = framework.routes(files, listed);
+      const pages = framework.readsRouteTable
+        ? await routeTablePages(repo, site.repoBranch, files, listed, framework.routes(files, listed))
+        : framework.routes(files, listed);
       // Route files are addressed from the repository root, not from a page
       // folder: `app/blog/page.tsx` means that path and no other. Anything else
       // would have a publish write the file into the folder the HTML editor
@@ -428,6 +431,38 @@ async function findPages(site: Site): Promise<Discovery> {
       })
       .sort((a, b) => a.path.localeCompare(b.path)),
   };
+}
+
+/**
+ * The pages a single-page app declares in code, merged with what its folders say.
+ *
+ * This is the shape every AI builder ships: one `App.tsx` holding a route table,
+ * and a file tree that mentions one page. Reading the table is the difference
+ * between a customer seeing their nine pages and seeing one — so it is worth the
+ * two or three extra reads, and it is capped at that.
+ *
+ * The file list still wins where the two disagree about a file, because a route
+ * whose element is written inline genuinely lives in the router file, and a
+ * `src/pages/About.tsx` that the table also names is the same page either way.
+ */
+async function routeTablePages(repo: string, branch: string, files: string[], listed: Set<string>, fromFiles: DiscoveredRoute[]): Promise<DiscoveredRoute[]> {
+  const byPath = new Map(fromFiles.map((page) => [page.path, page]));
+  for (const candidate of routerCandidates(files)) {
+    const source = await readFile(repo, candidate, branch).catch(() => null);
+    if (source === null) continue;
+    const routes = discoverRouterRoutes(source, candidate, files, listed);
+    for (const route of routes) {
+      const already = byPath.get(route.path);
+      // A route the file tree already found keeps its file; the table may still
+      // be the only thing that knows the page is called "Pricing".
+      if (already) byPath.set(route.path, { ...already, title: already.title === "Home" ? already.title : route.title });
+      else byPath.set(route.path, route);
+    }
+    // One file answered with a real table. Reading the next two would only add
+    // the same routes again, or a second app's.
+    if (routes.length > 1) break;
+  }
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
 /** The `.html` files directly inside one folder of the repository. */

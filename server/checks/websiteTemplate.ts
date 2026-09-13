@@ -41,9 +41,22 @@ import Layout from "../layouts/Layout.astro";
 `;
 const astroFound = discoverTemplateFields(astro, "src/pages/index.astro");
 assert.equal(astroFound.adapter, "template-literal-v1"); passed++;
-assert.deepEqual(values(astroFound.fields), ["/contact", "/hero.png", "Talk to us", "The team", "We build websites.", "Welcome to Dakyworld"]); passed++;
-// The frontmatter is never scanned, so its string never appears as a field.
-assert.ok(!astroFound.fields.some((entry) => entry.value === "Home")); passed++;
+assert.deepEqual(values(astroFound.fields), ["/contact", "/hero.png", "Home", "Talk to us", "The team", "We build websites.", "Welcome to Dakyworld"]); passed++;
+// "Home" is the frontmatter `const title`, and it is offered on purpose: it is
+// the page's browser tab and its search result, which are the two things a
+// customer most wants to change and could not.
+const pageTitle = astroFound.fields.find((entry) => entry.value === "Home")!;
+assert.equal(pageTitle.tag, "frontmatter"); passed++;
+assert.equal(pageTitle.label, "title"); passed++;
+// The import beside it is code and stays code — only content-named values are
+// read out of the frontmatter, never every string in it.
+assert.ok(!astroFound.fields.some((entry) => entry.value.includes("../layouts/"))); passed++;
+// It is written back as a JavaScript string, not as HTML: an entity there would
+// be shown to the visitor rather than rendered.
+const retitled = applyTemplateValues(astro, { filePath: "src/pages/index.astro", sourceHash: astroFound.sourceHash, changes: [{ fieldId: pageTitle.id, value: 'Home & "Pricing"' }] });
+assert.deepEqual(retitled.problems, []); passed++;
+assert.ok(retitled.source.includes('const title = "Home & ' + String.fromCharCode(92) + '"Pricing' + String.fromCharCode(92) + '"";')); passed++;
+assert.equal(discoverTemplateFields(retitled.source, "src/pages/index.astro").fields.find((entry) => entry.id === pageTitle.id)?.value, 'Home & "Pricing"'); passed++;
 assert.ok(astroFound.issues.some((issue) => issue.code === "unsupported" && /frontmatter/i.test(issue.message))); passed++;
 // `{user.name}` is code and says so rather than being silently dropped.
 assert.ok(astroFound.issues.some((issue) => issue.code === "dynamic")); passed++;
@@ -65,6 +78,14 @@ const braced = applyTemplateValues(astro, { filePath: "src/pages/index.astro", s
 assert.deepEqual(braced.problems, []); passed++;
 assert.ok(braced.source.includes("Save &#123;50%&#125; today")); passed++;
 assert.equal(discoverTemplateFields(braced.source, "src/pages/index.astro").fields.find((entry) => entry.id === heading.id)?.value, "Save {50%} today"); passed++;
+
+// A layout's content-named prop is offered too, for the same reason: on an
+// Astro page `<Layout title="…">` is very often where the page title lives.
+const layout = discoverTemplateFields('<Layout title="Pricing" class="wide" client:load><h1>Plans</h1></Layout>', "src/pages/pricing.astro");
+assert.deepEqual(values(layout.fields), ["Plans", "Pricing"]); passed++;
+// `class` and a `client:` directive are structure and stay with the code.
+assert.ok(!layout.fields.some((entry) => entry.value === "wide")); passed++;
+assert.equal(layout.fields.find((entry) => entry.value === "Pricing")?.label, "Layout title"); passed++;
 
 // ── Vue ─────────────────────────────────────────────────────────────────────
 const vue = `<template>

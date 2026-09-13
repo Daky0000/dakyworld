@@ -42,6 +42,15 @@ rollback.
   live page afterwards.
 - **Pictures with more than one size.** Replacing an image drops its `srcset`
   candidates, so the new picture is used at every size.
+- **Sites built by an AI** (Lovable, Bolt, v0, Replit) — their pages are read
+  out of the route table in `App.tsx`, and their words out of component props
+  (`<Hero title="…" />`), data arrays and content files. A prop or key is
+  offered only when its name reads as content: `className`, `variant`, `icon`
+  and `id` stay with the code, because editing one changes the design rather
+  than the words.
+- **Markdown pages** — front matter values whose key is content (`title`,
+  `description`, `author`), and the body as one field. Tags, dates, layouts and
+  block values stay with the code.
 - **Framework source files** — literal text and existing `href`/`src`/`alt`
   strings in `.jsx`, `.tsx`, `.astro`, `.vue` and `.svelte` files, through the
   source editor. Next.js, Astro, SvelteKit, Nuxt, Vue and Vite projects list

@@ -26,13 +26,14 @@
  * line of it testable with an array of strings — see `checks/websiteFrameworks.ts`.
  */
 import { isTemplatePath, TEMPLATE_EXTENSIONS } from "./template.js";
+import { isMarkdownPath, MARKDOWN_EXTENSIONS } from "./markdown.js";
 
 /** What a scan found: one repository file that is a page, and its address. */
 export type DiscoveredRoute = { filePath: string; path: string; title: string; listed: boolean };
 
 /** Stored on the site, so every later screen knows what it is looking at without
  * listing the repository again. `null` means the HTML editor, as before. */
-export type SourceKind = "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react";
+export type SourceKind = "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react" | "remix" | "gatsby" | "docusaurus" | "eleventy" | "hugo" | "jekyll";
 
 export type FrameworkAdapter = {
   sourceKind: SourceKind;
@@ -42,6 +43,13 @@ export type FrameworkAdapter = {
   extensions: readonly string[];
   isProject(files: readonly string[]): boolean;
   routes(files: readonly string[], listed: Set<string>): DiscoveredRoute[];
+  /**
+   * Whether this framework's pages can be declared in code rather than in
+   * folders, so the scan should also read the route table. True for the
+   * single-page apps every AI builder emits, where `App.tsx` holds the whole
+   * list and the file tree holds one shell. See `router.ts`.
+   */
+  readsRouteTable?: boolean;
 };
 
 const IGNORED = /(^|\/)(node_modules|\.git|\.github|\.next|\.nuxt|\.svelte-kit|\.astro|\.cache|dist|build|out|coverage|storybook-static)(\/|$)/i;
@@ -188,6 +196,72 @@ export function viteReactRoutes(files: readonly string[], listed: Set<string> = 
   return shell ? routeList([{ filePath: shell, path: "/" }], listed) : [];
 }
 
+/** Remix and React Router 7 — `app/routes`, where a route is the file and a dot
+ * is a slash: `routes/blog.$slug.tsx` is `/blog/$slug`. `_index` is the folder's
+ * own address and a leading `_` elsewhere is a pathless layout. */
+export function remixRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const entries: Array<{ filePath: string; path: string }> = [];
+  for (const file of files) {
+    if (IGNORED.test(file)) continue;
+    const match = /(^|\/)app\/routes\/(.*)\.(jsx|tsx|js|ts|mdx)$/i.exec(file);
+    if (!match) continue;
+    let inside = match[2]!;
+    // `blog/route.tsx` is the folder-route spelling of `blog.tsx`.
+    inside = inside.replace(/\/route$/i, "");
+    if (/(^|\.)_index$/i.test(inside)) inside = inside.replace(/(^|\.)_index$/i, "");
+    const segments = inside.split(".").filter((segment) => segment && !segment.startsWith("_"));
+    entries.push({ filePath: file, path: tidy(segments.join("/")) });
+  }
+  return routeList(entries, listed);
+}
+
+/** Gatsby — `src/pages`, the same shape as Next's pages router. */
+export function gatsbyRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const entries: Array<{ filePath: string; path: string }> = [];
+  for (const file of files) {
+    if (IGNORED.test(file)) continue;
+    const match = /(^|\/)src\/pages\/(.*)\.(jsx|tsx|js|ts|md|mdx)$/i.exec(file);
+    if (!match || /(^|\/)404/.test(match[2]!)) continue;
+    const segments = match[2]!.split("/");
+    if (segments.at(-1)!.toLowerCase() === "index") segments.pop();
+    entries.push({ filePath: file, path: tidy(segments.join("/")) });
+  }
+  return routeList(entries, listed);
+}
+
+/**
+ * The Markdown site generators: Docusaurus, Eleventy, Hugo and Jekyll.
+ *
+ * All four put their pages in a content folder as Markdown, and all four are
+ * edited the same way — the words are the file. The folder is what tells them
+ * apart, so one function takes it as an argument rather than four near-copies.
+ */
+function markdownRoutes(address: RegExp, files: readonly string[], listed: Set<string>): DiscoveredRoute[] {
+  const entries: Array<{ filePath: string; path: string }> = [];
+  for (const file of files) {
+    // A theme file, a partial and a repository's own paperwork are not pages.
+    if (IGNORED.test(file) || /(^|\/)(README|LICENSE|CHANGELOG|CONTRIBUTING)\./i.test(file)) continue;
+    if (/(^|\/)(_layouts|_includes|_site|_data|layouts|themes|partials|node_modules)(\/|$)/i.test(file)) continue;
+    const match = address.exec(file);
+    if (!match) continue;
+    const inside = match[1]!.replace(/\.(md|mdx|markdown|html)$/i, "");
+    const segments = inside.split("/").filter(Boolean);
+    // `index` and Hugo's `_index` are the folder's own address, not a page
+    // called "index" sitting inside it.
+    if (/^_?index$/i.test(segments.at(-1) ?? "")) segments.pop();
+    entries.push({ filePath: file, path: tidy(segments.join("/")) });
+  }
+  return routeList(entries, listed);
+}
+
+// Each of these captures exactly one group: the part of the path that is the
+// address. Docusaurus keeps its folder — its docs really are served under
+// `/docs` — and the others do not.
+export const docusaurusRoutes = (files: readonly string[], listed: Set<string> = new Set()) => markdownRoutes(/(?:^|\/)((?:docs|blog)\/.*\.(?:md|mdx|markdown))$/i, files, listed);
+export const eleventyRoutes = (files: readonly string[], listed: Set<string> = new Set()) => markdownRoutes(/(?:^|\/)(?:src|content|pages)\/(.*\.(?:md|markdown|html))$/i, files, listed);
+export const hugoRoutes = (files: readonly string[], listed: Set<string> = new Set()) => markdownRoutes(/(?:^|\/)content\/(.*\.(?:md|markdown|html))$/i, files, listed);
+export const jekyllRoutes = (files: readonly string[], listed: Set<string> = new Set()) => markdownRoutes(/^(?:_posts\/|_pages\/|pages\/)?(.*\.(?:md|markdown|html))$/i, files, listed);
+
 export const frameworkAdapters: readonly FrameworkAdapter[] = [
   {
     sourceKind: "next",
@@ -225,8 +299,51 @@ export const frameworkAdapters: readonly FrameworkAdapter[] = [
     routes: vueRoutes,
   },
   {
+    sourceKind: "remix",
+    label: "a Remix or React Router project",
+    extensions: [".tsx", ".jsx"],
+    isProject: (files) => remixRoutes(files).length > 0 && (config(files, "remix.config") || config(files, "react-router.config") || config(files, "vite.config")),
+    routes: remixRoutes,
+  },
+  {
+    sourceKind: "gatsby",
+    label: "a Gatsby project",
+    extensions: [".tsx", ".jsx"],
+    isProject: (files) => config(files, "gatsby-config") && gatsbyRoutes(files).length > 0,
+    routes: gatsbyRoutes,
+  },
+  {
+    sourceKind: "docusaurus",
+    label: "a Docusaurus site",
+    extensions: [".md", ".mdx"],
+    isProject: (files) => config(files, "docusaurus.config"),
+    routes: docusaurusRoutes,
+  },
+  {
+    sourceKind: "eleventy",
+    label: "an Eleventy site",
+    extensions: [".md"],
+    isProject: (files) => config(files, "eleventy.config") || files.some((file) => /(^|\/)\.eleventy\.(js|cjs|mjs)$/i.test(file)),
+    routes: eleventyRoutes,
+  },
+  {
+    sourceKind: "hugo",
+    label: "a Hugo site",
+    extensions: [".md"],
+    isProject: (files) => files.some((file) => /(^|\/)(hugo|config)\.(toml|yaml|yml)$/i.test(file)) && under(files, "content").length > 0,
+    routes: hugoRoutes,
+  },
+  {
+    sourceKind: "jekyll",
+    label: "a Jekyll site",
+    extensions: [".md"],
+    isProject: (files) => files.some((file) => /(^|\/)_config\.(yml|yaml)$/i.test(file)),
+    routes: jekyllRoutes,
+  },
+  {
     sourceKind: "vite-react",
     label: "a Vite React project",
+    readsRouteTable: true,
     // Last, and only when nothing above claimed the repository: its detection is
     // the weakest of the six, so it must never take a project off one of them.
     extensions: [".tsx", ".jsx"],
@@ -234,6 +351,33 @@ export const frameworkAdapters: readonly FrameworkAdapter[] = [
     routes: viteReactRoutes,
   },
 ];
+
+/**
+ * The folder a framework serves static files from.
+ *
+ * An uploaded image has to land where the build will find it, and every
+ * framework has its own answer: `public/` for most, `static/` for SvelteKit and
+ * Hugo, the repository root for Jekyll and Eleventy, which copy what they are
+ * given. Putting a photograph in the wrong one produces a page with a broken
+ * image and a commit that looks perfectly fine, so this is one table rather
+ * than a guess at each call site.
+ */
+export function publicFolder(sourceKind: string | null | undefined): string {
+  switch (sourceKind) {
+    case "sveltekit":
+    case "hugo":
+    case "docusaurus":
+      return "static";
+    case "jekyll":
+    case "eleventy":
+      return "";
+    case null:
+    case undefined:
+      return "";
+    default:
+      return "public";
+  }
+}
 
 /** The framework whose project this is, in registry order, or null. */
 export function detectFramework(files: readonly string[]): FrameworkAdapter | null {
@@ -246,9 +390,13 @@ export function frameworkFor(sourceKind: string | null | undefined): FrameworkAd
 
 /** Every extension any registered framework can edit, for the file browser and
  * for the one sentence that has to list them to a person. */
-export const EDITABLE_SOURCE_EXTENSIONS: readonly string[] = [...new Set([".jsx", ".tsx", ...TEMPLATE_EXTENSIONS])];
+export const EDITABLE_SOURCE_EXTENSIONS: readonly string[] = [...new Set([".jsx", ".tsx", ".ts", ".js", ...TEMPLATE_EXTENSIONS, ...MARKDOWN_EXTENSIONS])];
 
 export function isEditableSourcePath(filePath: string): boolean {
   const lower = filePath.replace(/\\/g, "/").toLowerCase();
-  return /\.(jsx|tsx)$/.test(lower) || isTemplatePath(lower);
+  // `.ts` and `.js` are here for content files — a `src/data/site.ts` holding a
+  // nav and a tagline, which is where half of these projects keep their words.
+  // Opening one that turns out to be ordinary code is not a hazard: it has no
+  // content-named strings in it, and the editor says so rather than guessing.
+  return /\.(jsx|tsx|ts|js|mjs|cjs)$/.test(lower) || isTemplatePath(lower) || isMarkdownPath(lower);
 }

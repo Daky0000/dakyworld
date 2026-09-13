@@ -18,6 +18,35 @@ const MAX_VALUE_LENGTH = 100_000;
 const OPAQUE_TAGS = new Set(["script", "style", "svg", "math", "iframe", "object", "embed", "template", "textarea"]);
 const ATTRIBUTES: Record<string, readonly string[]> = { href: ["a", "area"], src: ["img", "source", "video", "audio"], alt: ["img", "area"] };
 
+/**
+ * Names that mean "words a visitor reads", on a component prop or in a data
+ * object.
+ *
+ * An allowlist rather than "every string literal", and the difference matters:
+ * `className`, `variant`, `id`, `icon` and `type` are all strings too, and all
+ * of them are structure. Editing one because it happened to be a string is how
+ * an editor silently breaks a design that nobody asked it to touch.
+ *
+ * So a name has to be recognisably content before its value is offered. A
+ * component whose copy is behind a prop this does not know keeps that copy in
+ * the code, which is the safe way round: the field is missing, not wrong.
+ */
+const CONTENT_NAMES = /^(title|titles|subtitle|subTitle|heading|subheading|subHeading|eyebrow|kicker|label|labelText|text|copy|description|desc|body|caption|quote|testimonial|author|role|company|name|cta|ctaText|ctaLabel|buttonText|buttonLabel|linkText|price|priceLabel|period|tagline|summary|message|placeholder|content|question|answer|badge|highlight|footnote|disclaimer|blurb|headline|subheadline|prefix|suffix|unit)$/;
+const CONTENT_LINKS = /^(href|url|link|to|ctaHref|ctaLink|buttonHref|linkHref|action)$/;
+const CONTENT_IMAGES = /^(src|image|imageUrl|imageSrc|img|logo|avatar|icon?Url|photo|picture|thumbnail|poster)$/;
+const CONTENT_ALTS = /^(alt|altText|imageAlt|ariaLabel|aria-label)$/;
+
+/** Which kind of field a content-ish name is, or null when the name is structure.
+ * Exported so the template adapter judges an `.astro` or `.vue` component prop
+ * by the same list — one answer to "is this content?", not two. */
+export function contentKind(name: string): JsxFieldKind | null {
+  if (CONTENT_ALTS.test(name)) return "alt";
+  if (CONTENT_LINKS.test(name)) return "href";
+  if (CONTENT_IMAGES.test(name)) return "src";
+  if (CONTENT_NAMES.test(name)) return "text";
+  return null;
+}
+
 export type JsxFieldKind = "text" | "href" | "src" | "alt";
 type Encoding = "jsx-text" | "jsx-attribute" | "javascript-string";
 export type JsxSourceReference = {
@@ -66,7 +95,11 @@ function checkedPath(filePath: string): string {
   if (!normalized || normalized.startsWith("/") || /[:\x00-\x1f\x7f]/.test(normalized) || normalized.split("/").some((part) => !part || part === "." || part === "..")) {
     throw new Error("Choose a file path relative to the connected repository.");
   }
-  if (!/\.(jsx|tsx)$/i.test(normalized)) throw new Error("This adapter accepts .jsx and .tsx source files.");
+  // `.ts` and `.js` are here for the content files half of these projects keep
+  // their words in — `src/data/site.ts` has no markup in it and used to be a
+  // file with nothing to edit. Nothing is executed either way; the compiler only
+  // ever parses.
+  if (!/\.(jsx|tsx|ts|js|mjs|cjs)$/i.test(normalized)) throw new Error("This adapter accepts .jsx, .tsx, .ts and .js source files.");
   return normalized;
 }
 
@@ -123,7 +156,7 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
       });
       return result;
     }
-    const file = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, /\.tsx$/i.test(filePath) ? ts.ScriptKind.TSX : ts.ScriptKind.JSX);
+    const file = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, /\.tsx$/i.test(filePath) ? ts.ScriptKind.TSX : /\.ts$/i.test(filePath) ? ts.ScriptKind.TS : ts.ScriptKind.JSX);
     const markerCounts = new Map<string, number>();
     const fieldMarkers = new Map<JsxField, string>();
     const issue = (node: ts.Node, code: JsxIssue["code"], message: string) => {
@@ -132,13 +165,13 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
       result.issues.push({ code, message, line: point.line + 1, column: point.character + 1 });
     };
 
-    function add(node: ts.Node, kind: JsxFieldKind, tag: string, location: string, marker: string | undefined, encoding: Encoding, value = "") {
+    function add(node: ts.Node, kind: JsxFieldKind, tag: string, location: string, marker: string | undefined, encoding: Encoding, value = "", label?: string) {
       if (result.fields.length >= MAX_FIELDS) throw new Error("This file has too many literal fields to edit safely.");
       const start = ts.isJsxText(node) ? node.pos : node.getStart(file);
       const locator = `${marker ? `marker:${marker}` : `ast:${location}`}/${kind}`;
       const field: JsxField = {
         id: `jsx_${hash(`${filePath}\0${locator}`).slice(0, 32)}`,
-        kind, tag, label: `${tag} ${kind}`, value, ...(marker && { marker: marker.split("/text:")[0] }), confidence: marker ? "explicit" : "structural",
+        kind, tag, label: label ?? `${tag} ${kind}`, value, ...(marker && { marker: marker.split("/text:")[0] }), confidence: marker ? "explicit" : "structural",
         reference: { adapter: JSX_ADAPTER_VERSION, filePath, sourceHash, locator, start, end: node.end, original: source.slice(start, node.end), encoding },
       };
       result.fields.push(field);
@@ -151,7 +184,29 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
       if (OPAQUE_TAGS.has(tag)) { issue(node, "unsupported", `Content inside <${tag}> is not editable with this adapter.`); return false; }
       // Custom components can interpret props/children arbitrarily. Their native
       // descendants may still be independently editable source elements.
-      if (!/^[a-z][a-z0-9]*$/.test(tag)) { issue(opening, "unsupported", `Props and direct text of <${tag}> need a component-specific adapter.`); return true; }
+      if (!/^[a-z][a-z0-9]*$/.test(tag)) {
+        // A component decides what its props mean, so most of them stay code.
+        // The exception earns itself: a prop whose NAME says it is words a
+        // visitor reads, holding a plain string literal. That is where an
+        // AI-built site keeps most of its copy — `<Hero title="…" />` — and
+        // refusing all of it leaves a customer looking at an empty field list
+        // beside a page full of their own writing.
+        const properties = opening.attributes.properties;
+        if (properties.some(ts.isJsxSpreadAttribute)) { issue(opening, "ambiguous", `Spread props on <${tag}> require code review.`); return true; }
+        let offered = 0;
+        for (const attribute of properties) {
+          if (!ts.isJsxAttribute(attribute)) continue;
+          const name = attribute.name.getText(file);
+          const kind = contentKind(name);
+          if (!kind) continue;
+          const initializer = attribute.initializer;
+          if (initializer && ts.isStringLiteral(initializer)) { add(initializer, kind, tag, `${location}/prop:${name}`, undefined, "jsx-attribute", "", `${tag} ${name}`); offered += 1; }
+          else if (initializer && ts.isJsxExpression(initializer) && initializer.expression && ts.isStringLiteral(initializer.expression)) { add(initializer.expression, kind, tag, `${location}/prop:${name}`, undefined, "javascript-string", initializer.expression.text, `${tag} ${name}`); offered += 1; }
+          else issue(attribute, "dynamic", `${tag}.${name} comes from code; this editor can change only an existing static string.`);
+        }
+        if (!offered) issue(opening, "unsupported", `Props and direct text of <${tag}> need a component-specific adapter.`);
+        return true;
+      }
       const attributes = opening.attributes.properties;
       const hasSpread = attributes.some(ts.isJsxSpreadAttribute);
       const unsafeProps = attributes.some((attribute) => ts.isJsxAttribute(attribute) && ["dangerouslySetInnerHTML", "is"].includes(attribute.name.getText(file)));
@@ -205,15 +260,49 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
       if ((ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isMethodDeclaration(node)) && node.name) return `${ts.SyntaxKind[node.kind]}(${node.name.getText(file)})`;
       return ts.SyntaxKind[node.kind];
     }
-    function walk(node: ts.Node, location: string, depth: number): void {
+    /**
+     * Content held in a data object rather than in markup.
+     *
+     * The other place an AI-built site keeps its words: a list hoisted out of
+     * the markup and mapped over.
+     *
+     *     const features = [{ title: "Fast", description: "Very fast" }];
+     *
+     * None of that is a JSX literal, so none of it was editable, and on a
+     * Lovable or Bolt export that can be most of the page. The same allowlist
+     * decides — a key has to read as content — and the same round-trip check
+     * afterwards refuses anything that did not go back cleanly.
+     *
+     * The key is in the locator, so reordering an object's keys does not
+     * renumber anybody's fields; the entry's position in its array is not, so
+     * reordering the array does. That is the honest trade: a moved entry
+     * becomes a different field rather than silently inheriting another's edit.
+     */
+    function inspectData(node: ts.PropertyAssignment, location: string, scope: string): void {
+      const rawName = node.name.getText(file).replace(/^['"`]|['"`]$/g, "");
+      const kind = contentKind(rawName);
+      if (!kind) return;
+      const initializer = node.initializer;
+      if (!ts.isStringLiteral(initializer) && !ts.isNoSubstitutionTemplateLiteral(initializer)) return;
+      // A template literal would come back as a quoted string and change how the
+      // file reads, so it is left alone rather than rewritten into one.
+      if (ts.isNoSubstitutionTemplateLiteral(initializer)) { issue(node, "unsupported", `${rawName} is a template literal; this editor writes plain strings only.`); return; }
+      add(initializer, kind, scope || "data", `${location}/key:${rawName}`, undefined, "javascript-string", initializer.text, scope ? `${scope} ${rawName}` : rawName);
+    }
+
+    function walk(node: ts.Node, location: string, depth: number, scope = ""): void {
       if (depth > 250) throw new Error("The source nesting is too deep for visual editing.");
       if ((ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) && !inspect(node, location)) return;
+      if (ts.isPropertyAssignment(node)) inspectData(node, location, scope);
       const counts = new Map<string, number>();
       ts.forEachChild(node, (child) => {
         const key = segment(child);
         const ordinal = counts.get(key) ?? 0;
         counts.set(key, ordinal + 1);
-        walk(child, `${location}/${key}[${ordinal}]`, depth + 1);
+        // The name of the nearest declaration a data object sits in, which is
+        // what a person reads on the field: "features title", not "title".
+        const inner = (ts.isVariableDeclaration(child) || ts.isFunctionDeclaration(child)) && child.name && ts.isIdentifier(child.name) ? child.name.text : scope;
+        walk(child, `${location}/${key}[${ordinal}]`, depth + 1, inner);
       });
     }
     walk(file, "file", 0);

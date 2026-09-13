@@ -76,7 +76,10 @@ export type { JsxField, JsxFieldKind, JsxChange, JsxDiscovery, JsxSourceReferenc
 // everything else does.
 export { TEMPLATE_ADAPTER_VERSION, TEMPLATE_EXTENSIONS, discoverTemplateFields, applyTemplateValues, isTemplatePath, templateRegions } from "./template.js";
 export type { TemplateField, TemplateFieldKind, TemplateDiscovery, TemplateIssue, TemplateApplyResult } from "./template.js";
-export { frameworkAdapters, detectFramework, frameworkFor, nextRoutes, astroRoutes, svelteRoutes, vueRoutes, viteReactRoutes, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath } from "./frameworks.js";
+export { MARKDOWN_ADAPTER_VERSION, MARKDOWN_EXTENSIONS, discoverMarkdownFields, applyMarkdownValues, isMarkdownPath } from "./markdown.js";
+export type { MarkdownField, MarkdownDiscovery, MarkdownIssue, MarkdownApplyResult } from "./markdown.js";
+export { discoverRouterRoutes, routerCandidates } from "./router.js";
+export { publicFolder, frameworkAdapters, detectFramework, frameworkFor, nextRoutes, astroRoutes, svelteRoutes, vueRoutes, viteReactRoutes, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath } from "./frameworks.js";
 export type { FrameworkAdapter, DiscoveredRoute, SourceKind } from "./frameworks.js";
 
 // --- The parts that were already here -------------------------------------

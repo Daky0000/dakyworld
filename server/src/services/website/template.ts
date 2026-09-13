@@ -26,7 +26,8 @@
  *    prop means and this adapter cannot know.
  */
 import { createHash } from "node:crypto";
-import { validateFieldValue } from "./jsx.js";
+import ts from "typescript";
+import { contentKind, validateFieldValue } from "./jsx.js";
 
 export const TEMPLATE_ADAPTER_VERSION = "template-literal-v1" as const;
 const MAX_SOURCE_BYTES = 2_000_000;
@@ -55,7 +56,7 @@ export type TemplateField = {
     start: number;
     end: number;
     original: string;
-    encoding: "template-text" | "template-attribute";
+    encoding: "template-text" | "template-attribute" | "javascript-string";
   };
 };
 export type TemplateIssue = { code: "syntax" | "unsupported" | "dynamic" | "ambiguous" | "limit"; message: string; line?: number; column?: number };
@@ -91,12 +92,16 @@ export function templateRegions(source: string, filePath: string): { regions: Ar
   const lower = filePath.toLowerCase();
   const issues: TemplateIssue[] = [];
   if (lower.endsWith(".astro")) {
-    const fence = /^---\r?\n/.exec(source);
-    if (!fence) return { regions: [{ start: 0, end: source.length }], issues };
-    const close = source.indexOf("\n---", fence[0].length);
-    if (close === -1) return { regions: [], issues: [{ code: "syntax", message: "This .astro file opens a frontmatter fence that is never closed." }] };
-    const lineEnd = source.indexOf("\n", close + 1);
-    issues.push({ code: "unsupported", message: "Astro frontmatter is code and stays with the developer; only the markup below it is editable here." });
+    const fence = astroFrontmatter(source, filePath);
+    if (!fence) {
+      // No frontmatter, or a fence that never closes. An unclosed one is a
+      // broken file rather than a file with no code in it, and saying so beats
+      // scanning the whole thing as markup.
+      if (/^---\r?\n/.test(source)) return { regions: [], issues: [{ code: "syntax", message: "This .astro file opens a frontmatter fence that is never closed." }] };
+      return { regions: [{ start: 0, end: source.length }], issues };
+    }
+    const lineEnd = source.indexOf("\n", fence.end);
+    issues.push({ code: "unsupported", message: "Astro frontmatter is code: its imports and logic stay with the developer, and only its plain content values — a title, a description — are offered." });
     return { regions: [{ start: lineEnd === -1 ? source.length : lineEnd + 1, end: source.length }], issues };
   }
   if (lower.endsWith(".vue")) {
@@ -116,10 +121,27 @@ export function templateRegions(source: string, filePath: string): { regions: Ar
   return { regions: [{ start: 0, end: source.length }], issues };
 }
 
+/**
+ * Where an `.astro` file's frontmatter begins and ends, or null when it has none.
+ *
+ * Shared by `templateRegions`, which needs to keep the markup below it, and the
+ * frontmatter pass, which reads the code above it — one answer about where the
+ * fence sits rather than two that can drift apart.
+ */
+export function astroFrontmatter(source: string, filePath: string): { start: number; end: number } | null {
+  if (!filePath.toLowerCase().endsWith(".astro")) return null;
+  const fence = /^---\r?\n/.exec(source);
+  if (!fence) return null;
+  const close = source.indexOf("\n---", fence[0].length);
+  return close === -1 ? null : { start: fence[0].length, end: close + 1 };
+}
+
 /** Anything a template language treats as an expression is not a literal. */
 function dynamic(value: string): boolean { return value.includes("{") || value.includes("}"); }
 /** Excludes `:href`, `v-bind:src`, `bind:value`, `@click`, `client:load`. */
 function plainAttribute(name: string): boolean { return /^[a-z][a-z0-9-]*$/.test(name); }
+/** The same, for a component, whose props are camelCase as often as not. */
+function plainProp(name: string): boolean { return /^[A-Za-z][A-Za-z0-9_-]*$/.test(name) && !/^(v-|client:|set:|is:|slot|key|ref)/.test(name); }
 /** A native HTML element, not a component and not a custom element. */
 function nativeTag(tag: string): boolean { return /^[a-z][a-z0-9]*$/.test(tag); }
 
@@ -311,7 +333,20 @@ export function discoverTemplateFields(source: string, rawFilePath: string): Tem
         continue;
       }
       if (!nativeTag(lower) || lower !== tag) {
-        issue(next, "unsupported", `Props and direct text of <${tag}> need a component-specific adapter.`);
+        // A component decides what its props mean, so most stay code. The
+        // exception is a prop whose NAME says it holds words a visitor reads,
+        // carrying a quoted static value — `<Layout title="Pricing">` is where
+        // an Astro page keeps the thing that shows in the browser tab.
+        let offered = 0;
+        for (const attribute of parsed.attributes) {
+          if (!plainProp(attribute.name)) continue;
+          const kind = contentKind(attribute.name);
+          if (!kind || attribute.value === null || !attribute.quoted || dynamic(attribute.value)) continue;
+          add({ start: attribute.valueStart, end: attribute.valueEnd, kind, tag, location, marker, encoding: "template-attribute", value: decodeText(attribute.value) });
+          result.fields.at(-1)!.label = `${tag} ${attribute.name}`;
+          offered += 1;
+        }
+        if (!offered) issue(next, "unsupported", `Props and direct text of <${tag}> need a component-specific adapter.`);
       } else {
         const names = parsed.attributes.map((attribute) => attribute.name);
         if (new Set(names).size !== names.length) issue(next, "ambiguous", `Duplicate attributes on <${tag}> must be fixed before editing.`);
@@ -329,9 +364,49 @@ export function discoverTemplateFields(source: string, rawFilePath: string): Tem
     }
   }
 
+  /**
+   * An Astro page's frontmatter, which is TypeScript and therefore not markup.
+   *
+   * It is read rather than scanned: the compiler parses that slice and only
+   * declarations and object keys whose NAME reads as content, holding a plain
+   * string, are offered. `const title = "Pricing"` is the page's browser tab
+   * and its search result, so leaving it uneditable left a customer unable to
+   * change the two things that matter most about a page.
+   *
+   * Parsed, never executed, and the imports and logic around it are untouched.
+   */
+  function scanFrontmatter(from: number, to: number) {
+    const slice = source.slice(from, to);
+    let parsed: ts.SourceFile;
+    try { parsed = ts.createSourceFile("frontmatter.ts", slice, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS); }
+    catch { return; }
+    const offer = (name: string, literal: ts.StringLiteral, label: string, key: string) => {
+      const kind = contentKind(name);
+      if (!kind) return;
+      add({
+        start: from + literal.getStart(parsed), end: from + literal.getEnd(),
+        kind, tag: "frontmatter", location: `frontmatter/${key}`, encoding: "javascript-string", value: literal.text,
+      });
+      result.fields.at(-1)!.label = label;
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isVariableDeclaration(node) && node.name && ts.isIdentifier(node.name) && node.initializer && ts.isStringLiteral(node.initializer)) {
+        offer(node.name.text, node.initializer, node.name.text, `const:${node.name.text}`);
+      }
+      if (ts.isPropertyAssignment(node) && node.name && ts.isStringLiteral(node.initializer)) {
+        const key = node.name.getText(parsed).replace(/^['"`]|['"`]$/g, "");
+        offer(key, node.initializer, key, `key:${key}`);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parsed);
+  }
+
   try {
     const { regions, issues } = templateRegions(source, filePath);
     result.issues.push(...issues);
+    const frontmatter = astroFrontmatter(source, filePath);
+    if (frontmatter) scanFrontmatter(frontmatter.start, frontmatter.end);
     for (const region of regions) scan(region.start, region.end);
     const duplicates = new Set([...markerCounts].filter(([, count]) => count > 1).map(([marker]) => marker));
     if (duplicates.size) {
@@ -359,6 +434,9 @@ function decodeText(value: string): string {
 }
 
 function encode(field: TemplateField, value: string): string {
+  // A frontmatter value is a JavaScript string, so it is written as one — HTML
+  // escaping there would show the entity to the visitor.
+  if (field.reference.encoding === "javascript-string") return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   // `{` and `}` are escaped everywhere: in all three languages an unescaped
   // brace opens an expression, and somebody typing "{free}" into a text box
   // means the word, not a template hole.

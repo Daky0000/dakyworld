@@ -33,6 +33,7 @@ let writeAttempts = 0;
 let auditAttempts = 0;
 let simulatedRace = false;
 let auditFailure = false;
+const jobs: string[] = [];
 const authorizations: string[] = [];
 const reads: { repo: string; path: string; ref?: string }[] = [];
 const app = express();
@@ -60,6 +61,17 @@ registerWebsiteSource(router, { loadSite: async (_req, id) => {
     current = request.files[0]!.content;
     return { sha: "abc123def456", url: "https://github.com/fixture/website/commit/abc123def456" };
   },
+  track: async ({ site, filePath }) => { assert.equal(site.id, "site-a"); assert.equal(filePath, "src/Page.tsx"); jobs.push("opened"); return { id: "job-1" }; },
+  tracked: async ({ id, commit, changes }) => {
+    assert.equal(id, "job-1");
+    assert.equal(commit.sha, "abc123def456");
+    // What the verification will look for on the live page is the words that
+    // were published, not the file that was committed — a framework host builds
+    // the file into something else entirely.
+    assert.equal(changes[0]?.after, "Design your website");
+    jobs.push("committed");
+  },
+  trackFailed: async ({ id }) => { assert.equal(id, "job-1"); jobs.push("failed"); },
   audit: async audit => { auditAttempts++; assert.equal(audit.filePath, filePath); assert.equal(audit.fields, 1); if (auditFailure) throw new Error("Fixture audit unavailable"); },
 });
 app.use("/website", router);
@@ -72,7 +84,10 @@ const origin = `http://127.0.0.1:${(listener.address() as AddressInfo).port}/web
 const post = (path: string, body: unknown) => fetch(`${origin}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 try {
   const files = await (await fetch(`${origin}/files`)).json() as { files: { path: string; editable: boolean }[] };
-  assert.deepEqual(files.files.map(file => file.path), ["src", "Huge.tsx", "Page.tsx"]);
+  // `README.md` is in the list because Markdown pages are editable now — a
+  // Docusaurus or Hugo site keeps its writing in exactly such files. A file with
+  // nothing in it worth editing is not a hazard; it simply offers no fields.
+  assert.deepEqual(files.files.map(file => file.path), ["src", "Huge.tsx", "Page.tsx", "README.md"]);
   assert.equal(files.files.find(file => file.path === "Huge.tsx")?.editable, false); passed++;
   const get = await fetch(`${origin}?filePath=${encodeURIComponent(filePath)}`);
   assert.equal(get.status, 200);
@@ -127,5 +142,13 @@ try {
     const auditRefused = await post("publish", { ...input, reviewHash: reviewed.reviewHash });
     assert.equal(auditRefused.status, 200); assert.equal((await auditRefused.json() as { auditRecorded: boolean }).auditRecorded, false); passed++;
   } finally { console.error = oldError; }
+  // Every publish opens a job before GitHub is touched and closes it after, so a
+  // build that is still running is a row somebody can look at rather than a
+  // sentence telling them to refresh and hope.
+  assert.ok(jobs.includes("opened") && jobs.includes("committed")); passed++;
+  assert.ok(jobs.filter(entry => entry === "opened").length >= jobs.filter(entry => entry === "committed").length); passed++;
+  // A commit that never landed closes its job as failed rather than leaving it
+  // waiting for a deployment that is never coming.
+  assert.ok(jobs.includes("failed")); passed++;
   console.log(`websiteSource: ${passed} path, review, guarded source publishing and HTTP checks passed`);
 } finally { await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve())); }

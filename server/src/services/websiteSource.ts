@@ -4,8 +4,11 @@ import type { Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { commitFiles, listTree, readFile } from "../lib/github.js";
-import { applyJsxValues, applyTemplateValues, discoverJsxFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isTemplatePath } from "./website/index.js";
+import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath } from "./website/index.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
+import { publicFolder } from "./website/index.js";
+import { assetUrl } from "./websiteAssets.js";
+import { failPublishJob, sourcePublishCommitted, startPublishJob } from "./websitePublishJobs.js";
 import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js";
 
 const MAX_SOURCE_BYTES = 2_000_000;
@@ -38,9 +41,9 @@ function digest(value: string) { return createHash("sha256").update(value, "utf8
  * only the parser behind it differs. See `website/frameworks.ts`.
  */
 export function sourceAdapterFor(filePath: string) {
-  return isTemplatePath(filePath)
-    ? { discover: discoverTemplateFields, apply: applyTemplateValues }
-    : { discover: discoverJsxFields, apply: applyJsxValues };
+  if (isMarkdownPath(filePath)) return { discover: discoverMarkdownFields, apply: applyMarkdownValues };
+  if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues };
+  return { discover: discoverJsxFields, apply: applyJsxValues };
 }
 
 export function reviewWebsiteSource(source: string, input: z.infer<typeof changeInput>) {
@@ -63,10 +66,48 @@ type Dependencies = {
   list: typeof listTree;
   commit: typeof commitFiles;
   authorize(req: Request, siteId: string, action: WebsiteAction): Promise<unknown>;
+  /**
+   * Records the publish, and then whether the world can see it.
+   *
+   * A framework host builds the project before anybody sees the change, so
+   * "committed" and "live" are minutes apart and a build can fail in between.
+   * Returning success and leaving the customer to refresh is the silence the
+   * publish jobs exist to end — see `websitePublishJobs.ts`.
+   */
+  /**
+   * The images this file now points at, as files to commit beside it.
+   *
+   * An image uploaded in the editor lives in the database until something
+   * publishes it. On an HTML page that happens when the page is published; a
+   * source file needs the same, or somebody pastes an uploaded image into a
+   * `src` field, publishes, and gets a broken picture with no clue why.
+   */
+  assets(input: { site: Site; source: string }): Promise<Array<{ path: string; content: string; encoding: "base64" }>>;
+  track(input: { site: Site; filePath: string; startedById?: string }): Promise<{ id: string } | null>;
+  tracked(input: { id: string; site: Site; filePath: string; commit: { sha: string; url: string }; changes: Array<{ before: string; after: string }> }): Promise<void>;
+  trackFailed(input: { id: string; message: string }): Promise<void>;
   audit(input: { siteId: string; actorId?: string; actorName: string; filePath: string; sourceHash: string; resultHash: string; fields: number; commitSha: string; commitUrl: string }): Promise<void>;
 };
 const dependencies: Dependencies = {
   read: readFile, list: listTree, commit: commitFiles, authorize: assertWebsiteSiteAccess,
+  assets: async ({ site, source }) => {
+    const uploaded = await prisma.siteAsset.findMany({ where: { siteId: site.id } });
+    // The framework's own static folder, not the site's page folder: a build
+    // copies `public/` to the root, and an image committed anywhere else is a
+    // file in the repository that the built site cannot see.
+    const folder = publicFolder(site.sourceKind);
+    return uploaded
+      .filter((asset) => source.includes(assetUrl(site, asset.repoPath)))
+      .map((asset) => ({ path: [folder, asset.repoPath].filter(Boolean).join("/"), content: Buffer.from(asset.content).toString("base64"), encoding: "base64" as const }));
+  },
+  track: async ({ site, filePath, startedById }) => startPublishJob({ site, kind: "PAGE", startedById, detail: { filePath, source: true } }),
+  tracked: async ({ id, site, filePath, commit, changes }) => {
+    // The route file the scan listed, where it listed one: its address is what a
+    // verification has to look at, and a source file has no address of its own.
+    const page = await prisma.sitePage.findFirst({ where: { siteId: site.id, filePath } });
+    await sourcePublishCommitted({ id, commit, site, page, changes });
+  },
+  trackFailed: async ({ id, message }) => failPublishJob(id, "COMMIT_FAILED", message),
   audit: async ({ siteId, actorId, actorName, filePath, ...detail }) => {
     await prisma.siteAuditEvent.create({ data: { siteId, actorId, actorName, kind: "SOURCE_PUBLISH", summary: `Published ${filePath}`, detail: { filePath, ...detail } } });
   },
@@ -142,12 +183,34 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     await deps.authorize(req, current.site.id, "publish");
     const review = reviewWebsiteSource(current.content, { ...input, filePath: current.path.relative });
     if (review.reviewHash !== input.reviewHash) throw new WebsiteError(409, "These edits differ from the reviewed changes. Review them again before publishing.");
-    const result = await deps.commit({ repo: current.repo, branch: current.site.repoBranch, message: `Website editor: update ${current.path.relative}`, files: [{ path: current.path.repository, content: review.source }], expectedFiles: [{ path: current.path.repository, content: current.content }] });
+    // Opened before GitHub is touched, for the same reason the page publish does
+    // it: a process that dies mid-commit has to leave a row somebody can ask
+    // about, not a repository that is ahead of everything that knows about it.
+    const job = await deps.track({ site: current.site, filePath: current.path.relative, startedById: req.dbUser?.id }).catch(() => null);
+    let result: { sha: string; url: string };
+    try {
+      const images = await deps.assets({ site: current.site, source: review.source }).catch(() => []);
+      result = await deps.commit({
+        repo: current.repo,
+        branch: current.site.repoBranch,
+        message: `Website editor: update ${current.path.relative}`,
+        // One commit, the file and the pictures it needs together. Two commits
+        // would leave a minute in which the page is live and its images are not.
+        files: [{ path: current.path.repository, content: review.source }, ...images],
+        // Only the source file is guarded: an image is new bytes at a new path,
+        // and demanding it be absent would fail a re-publish of the same picture.
+        expectedFiles: [{ path: current.path.repository, content: current.content }],
+      });
+    } catch (error) {
+      if (job) await deps.trackFailed({ id: job.id, message: error instanceof Error ? error.message : "The commit did not land." }).catch(() => undefined);
+      throw error;
+    }
+    if (job) await deps.tracked({ id: job.id, site: current.site, filePath: current.path.relative, commit: result, changes: review.changes }).catch((error: unknown) => console.error("Source published but the publish job could not be updated", { jobId: job.id, error }));
     // A committed change must never be described as failed just because the
     // secondary audit write failed. GitHub's commit remains the durable record.
     let auditRecorded = true;
     try { await deps.audit({ siteId: current.site.id, actorId: req.dbUser?.id, actorName: req.dbUser?.name ?? "Website editor", filePath: current.path.relative, sourceHash: review.sourceHash, resultHash: digest(review.source), fields: review.changes.length, commitSha: result.sha, commitUrl: result.url }); }
     catch (error) { auditRecorded = false; console.error("Website source published but local audit write failed", { siteId: current.site.id, sha: result.sha, error }); }
-    res.json({ ...result, auditRecorded, message: "Source committed. Your connected host still needs to build and deploy this branch." });
+    res.json({ ...result, auditRecorded, jobId: job?.id ?? null, message: "Source committed. Your host is building this branch now — the change is live once that build finishes, and Updates will say when it is." });
   }));
 }

@@ -37,10 +37,11 @@ const expected = source.replace("<h1>Welcome</h1>", "<h1>Welcome to Dakyworld</h
 
 // Every framework extension is accepted by the path guard, and everything else
 // is refused exactly as before.
-for (const good of ["pages/index.vue", "src/pages/index.astro", "src/routes/+page.svelte", "src/Page.tsx", "src/Page.jsx"]) {
+for (const good of ["pages/index.vue", "src/pages/index.astro", "src/routes/+page.svelte", "src/Page.tsx", "src/Page.jsx", "content/pricing.md", "docs/guide.mdx", "src/data/site.ts"]) {
   assert.equal(websiteSourcePath("", good, true).relative, good); passed++;
 }
-for (const bad of ["pages/index.html", "pages/index.md", "pages/index.css", "pages/index.vue.bak"]) {
+// `.html` belongs to the visual editor, and the rest belong to nobody here.
+for (const bad of ["pages/index.html", "pages/index.css", "pages/index.vue.bak", "pages/logo.png"]) {
   assert.throws(() => websiteSourcePath("", bad, true)); passed++;
 }
 
@@ -81,10 +82,12 @@ const origin = `http://127.0.0.1:${(listener.address() as AddressInfo).port}/web
 const post = (path: string, body: unknown) => fetch(`${origin}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 try {
-  // The browser lists a Vue file as editable and a config file as editable too
-  // only if an adapter owns it — `nuxt.config.ts` is not offered.
+  // Every file an adapter owns is browsable, and since content files live in
+  // `.ts` now, `nuxt.config.ts` is in the list too. That is not a hazard: a file
+  // with no content-named strings in it simply offers no fields, which is a
+  // sentence the editor says rather than a door that is locked.
   const files = await (await fetch(`${origin}/files`)).json() as { files: { path: string; editable: boolean }[] };
-  assert.deepEqual(files.files.map((file) => file.path), ["pages", "pages/index.vue"]); passed++;
+  assert.deepEqual(files.files.map((file) => file.path), ["pages", "pages/index.vue", "nuxt.config.ts"]); passed++;
 
   const document = await (await fetch(`${origin}?filePath=${encodeURIComponent(filePath)}`)).json() as { adapter: string; fields: { value: string }[]; sourceHash: string };
   assert.equal(document.adapter, "template-literal-v1");

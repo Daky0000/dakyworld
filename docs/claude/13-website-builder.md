@@ -387,3 +387,55 @@ function, and a syntax adapter only if its files are a new language.
 - The HTTP contract did not change: `checks/websiteTemplateRoute.ts` puts a
   `.vue` file through the same browse, review, review-hash guard,
   expected-file commit guard and audit row a `.tsx` goes through.
+
+## Sites an AI built (Lovable, Bolt, v0, Replit)
+
+These are the sites customers actually arrive with, and the framework work above
+was not enough for them on its own. A Lovable export is a Vite + React project
+whose file tree has one page in it and whose real pages are a `<Route>` table
+inside `App.tsx`, with most of the writing in component props and data arrays.
+Listing one row beside a page full of somebody's own words is the failure this
+closes.
+
+- **`router.ts` reads the route table.** `<Routes>`/`<Route>` JSX and
+  `createBrowserRouter([...])` objects, nested paths joined to their parents,
+  `index` meaning the parent's own address, lazy imports resolved, `@/` resolved
+  to `src/`. A path built from a variable is **not** listed: a page list is a
+  promise that the address is real. An import that resolves to nothing keeps the
+  router file rather than pointing at a path that does not exist.
+- **Only `readsRouteTable` adapters pay for it.** The scan reads at most three
+  candidate files, best-named first, and stops at the first real table.
+- **`CONTENT_NAMES` in `jsx.ts` decides what is content.** A component prop or a
+  data key is offered only when its NAME reads as words a visitor sees.
+  `className`, `variant`, `id`, `icon` and `type` are strings too, and every one
+  of them is structure — offering them because they were strings is how an
+  editor silently breaks a design nobody asked it to touch. A missing field is
+  the safe failure; a wrong one is not.
+- **`.ts` and `.js` are editable now**, for `src/data/site.ts` and friends. A
+  file with no content-named strings simply has no fields, which the editor says
+  out loud.
+- **A template literal is refused**, because writing it back as a quoted string
+  would change how the file reads for its developer.
+- **`markdown.ts`** covers Docusaurus, Eleventy, Hugo, Jekyll and Astro content:
+  front matter scalars whose key reads as content, plus the body as **one**
+  field. Not split into paragraphs — Markdown's meaning is in its layout, and
+  handing somebody half of it invites them to destroy the other half. A newline
+  in a front matter value and a body beginning with a fence are both refused.
+- **A source publish now opens a publish job** (`sourcePublishCommitted`). A
+  framework host builds before anybody sees the change, so "committed" and
+  "live" are minutes apart and the build can fail in between. There is no
+  expected hash for these: the committed file is not the file the visitor
+  receives, so the only honest signal is the words appearing at the address.
+- **Uploaded images are committed with the file that references them**, into the
+  framework's own static folder (`publicFolder`) — `public/` for most, `static/`
+  for SvelteKit, Hugo and Docusaurus, the root for Jekyll and Eleventy. One
+  commit, so there is never a minute where the page is live and its pictures are
+  not.
+- **The Edit button is decided by the file, not by the site.** A framework
+  repository still has real `.html` pages in it, and sending those to the source
+  editor took people away from the visual editor that opens them perfectly well.
+
+Still open: a visual preview for framework pages. It needs the project built,
+which this deliberately never does. `mapJsxFieldsToHtml` already matches source
+fields to a rendered page, so the honest version is a *live* page with the
+matched fields highlighted, not a fake canvas.

@@ -116,6 +116,48 @@ export async function publishJobCommitted(input: {
   });
 }
 
+/**
+ * The same record, for a source file rather than a rendered page.
+ *
+ * A framework publish is a commit like any other, but what happens next is not
+ * a static host copying a file: Vercel, Netlify or Cloudflare has to build the
+ * project first, which takes minutes and can fail on its own terms. Committing
+ * and saying "your host will build this" left somebody with no way to tell a
+ * build that is slow from one that failed, which is the exact silence the
+ * publish jobs were built to end — so a source publish gets a job too.
+ *
+ * The one difference that matters: there is no expected hash. The file that was
+ * committed is not the file the visitor receives — it is compiled first — so the
+ * only honest signal is the words themselves appearing on the address the route
+ * is served at. Where a change has no words long enough to look for, the job
+ * completes rather than claiming an answer it cannot have.
+ */
+export async function sourcePublishCommitted(input: {
+  id: string;
+  commit: { sha: string; url: string };
+  site: Site;
+  page: SitePage | null;
+  changes: Array<{ before: string; after: string }>;
+}): Promise<void> {
+  const verifyText = verificationText(input.changes.map((change) => ({ id: "", label: "", kind: "text", part: "words", from: change.before, to: change.after } as FieldChangeSummary)));
+  await prisma.publishJob.update({
+    where: { id: input.id },
+    data: {
+      state: "DEPLOYING",
+      commitSha: input.commit.sha,
+      commitUrl: input.commit.url,
+      // The page's own address when the scan knows it, and the site's front
+      // door when it does not — looking at the wrong page would report a
+      // perfectly good publish as unverified for ever.
+      verifyUrl: input.page ? pageUrl(input.site, input.page) : input.site.publicUrl,
+      verifyText,
+      expectedHash: null,
+      nextCheckAt: new Date(Date.now() + VERIFY_BACKOFF_MS[0]!),
+      attempts: 0,
+    },
+  });
+}
+
 export async function failPublishJob(id: string, state: PublishJobState, message: string): Promise<void> {
   await prisma.publishJob
     .update({ where: { id }, data: { state, lastError: message.slice(0, 500), finishedAt: new Date() } })
