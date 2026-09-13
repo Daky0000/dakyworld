@@ -24,6 +24,9 @@ type Access = { loadSite: (req: Request, id: string) => Promise<Site> };
 /** Read for a report, not for editing: a slow site must not hang the request. */
 const PAGE_LIMIT = 60;
 
+/** Enough to reach a site's own stylesheet past its cookie banner and its fonts. */
+const STYLESHEETS_PER_PAGE = 10;
+
 export type SiteSurveyReport = SiteSurvey & {
   unreadable: Array<{ pageId: string; title: string; path: string; reason: string }>;
   truncated: number;
@@ -42,7 +45,11 @@ export async function siteSurvey(site: Site, pages: SitePage[]): Promise<SiteSur
         // live site otherwise, cached alongside the pages, and skipped quietly
         // when unreachable — a palette missing one file is still a palette,
         // and a survey that fails because a CSS file moved is not.
-        const stylesheets = await siteStylesheets(site, page, source.html).catch(() => []);
+        // Ten, not the button menu's three: a site's own stylesheet is
+        // routinely linked after its cookie banner and its fonts, and reading
+        // three files then calling the result the site's palette describes
+        // whatever happened to be linked first.
+        const stylesheets = await siteStylesheets(site, page, source.html, STYLESHEETS_PER_PAGE).catch(() => []);
         return { pageId: page.id, title: page.title, path: page.path, html: source.html, stylesheets };
       } catch (error) {
         unreadable.push({

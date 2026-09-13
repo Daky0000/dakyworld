@@ -54,10 +54,15 @@ if (already) {
   console.log(`Using the harness already serving on ${BASE}.`);
 } else {
   console.log(`Starting the harness on ${BASE}…`);
-  vite = spawn("npm", ["--prefix", "client", "exec", "--", "vite", "--port", String(PORT), "--strictPort", "--host", HOST], {
-    cwd: join(here, "..", ".."),
+  const command = windows ? (process.env.ComSpec || "cmd.exe") : "npm";
+  const args = windows
+    ? ["/d", "/s", "/c", `npm exec -- vite --port ${PORT} --strictPort --host ${HOST}`]
+    : ["exec", "--", "vite", "--port", String(PORT), "--strictPort", "--host", HOST];
+  vite = spawn(command, args, {
+    // Vite serves its current directory. `npm --prefix client` still leaves the
+    // process in `server/`, which makes builder-harness.html return 404.
+    cwd: client,
     stdio: "ignore",
-    shell: windows,
   });
   const deadline = Date.now() + 60_000;
   let up = false;
@@ -90,7 +95,8 @@ try {
   }
 } finally {
   // Leave a harness somebody else started running; only stop the one we made.
-  if (vite) vite.kill();
+  if (vite?.pid && windows) spawnSync("taskkill", ["/pid", String(vite.pid), "/t", "/f"], { stdio: "ignore" });
+  else if (vite) vite.kill();
 }
 
 console.log(`\n${files.length - failed} of ${files.length} browser check(s) passed`);

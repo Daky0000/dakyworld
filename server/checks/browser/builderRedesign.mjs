@@ -75,10 +75,14 @@ try {
   await page.getByText('More',{exact:true}).click();await page.getByRole('button',{name:'Use light editor'}).click();await page.keyboard.press('Escape');
   await page.screenshot({path:'checks/artifacts/editor-redesign-light.png',fullPage:true});
   await page.setViewportSize({width:390,height:844});
+  await page.reload();
+  await page.getByRole('button',{name:'Phone',exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  await page.getByRole('button',{name:'Inspector',exact:true}).click();
-  assert.equal(await page.getByRole('complementary',{name:'Element inspector'}).count(),0);
+  assert.equal(await page.getByRole('complementary',{name:'Element inspector'}).count(),0, 'Phone view hides inspector and uses the canvas');
+  assert.equal(await page.getByRole('button',{name:'Phone',exact:true}).getAttribute('class').then(value => value?.includes('bg-ink')), true);
   await page.screenshot({path:'checks/artifacts/editor-redesign-phone.png',fullPage:true});
+  await page.getByRole('button',{name:'Inspector',exact:true}).click();
+  assert.equal(await page.getByRole('complementary',{name:'Element inspector'}).count(),1, 'Inspector stays available as a phone overlay');
   assert.deepEqual(errors,[]);
   console.log('Redesign: tabs, themes, mobile, save/undo/redo, publish review shortcut, discard cancellation, AI proposal/preview/approval passed.');
 } finally {await browser.close();}

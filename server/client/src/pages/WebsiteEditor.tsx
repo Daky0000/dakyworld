@@ -474,7 +474,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [designerMode, setDesignerMode] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<"content" | "style" | "interactions">("content");
   const [showLayers, setShowLayers] = useState(false);
-  const [showPanel, setShowPanel] = useState(true);
+  const [showPanel, setShowPanel] = useState(() => typeof window === "undefined" || window.innerWidth > 600);
   const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
   const [showGuide, setShowGuide] = useState(false);
   useEffect(() => {
@@ -520,7 +520,17 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [liveBlind, setLiveBlind] = useState(false);
   const awaiting = useRef(0);
   const frame = useRef<HTMLIFrameElement | null>(null);
-  const [device, setDevice] = useState<Device>("desktop");
+  const [device, setDevice] = useState<Device>(() => typeof window !== "undefined" && window.innerWidth <= 600 ? "mobile" : "desktop");
+  useEffect(() => {
+    const adapt = () => {
+      if (window.innerWidth > 600) return;
+      setShowPanel(false);
+      setDevice("mobile");
+    };
+    window.addEventListener("resize", adapt);
+    adapt();
+    return () => window.removeEventListener("resize", adapt);
+  }, []);
   const [previewToken, setPreviewToken] = useState(0);
   const [published, setPublished] = useState<PublishResult | null>(null);
   const [failure, setFailure] = useState<string | null>(null);

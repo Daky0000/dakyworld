@@ -13,6 +13,7 @@
  * name is asserting the implementation rather than the answer.
  */
 import assert from "node:assert/strict";
+import { linkedStylesheetHrefs } from "../src/services/website/site.js";
 import { kindLabel, roleLabel, surveySite, type SurveyPage } from "../src/services/website/survey.js";
 
 let checks = 0;
@@ -183,6 +184,33 @@ check("the fallback stack is not mistaken for a second typeface", !survey.palett
 check("type sizes were collected", survey.palette.sizes.some((entry) => entry.value === "48px"));
 check("and weights", survey.palette.weights.some((entry) => entry.value === "700"));
 check("colours are ordered by how much the site leans on them", survey.palette.colours.every((entry, index, all) => index === 0 || all[index - 1]!.uses >= entry.uses));
+
+/* ------------------------------------------- which stylesheets get read at all */
+
+/**
+ * A site's own stylesheet is rarely the first one it links.
+ *
+ * Dakyworld's own pages link a cookie banner's stylesheet, then fonts, then a
+ * 4 KB base, and only then the 80 KB file the design actually lives in. Read
+ * three and call the result the site's palette and you have described a cookie
+ * banner. The limit belongs to the caller for exactly this reason: the button
+ * style menu wants class names and three files will do, a survey does not.
+ */
+const linked = `<!doctype html><html><head>
+  <link rel="stylesheet" href="/assets/consent.css">
+  <link rel="stylesheet" href="assets/fonts.css">
+  <link rel="stylesheet" href="assets/base.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/pages.css">
+  <link rel="stylesheet" href="https://fonts.example.com/x.css">
+  <link rel="icon" href="/favicon.ico">
+</head><body></body></html>`;
+
+equal("three is what the style menu asks for, and stops short of the design", linkedStylesheetHrefs(linked, 3).length, 3);
+check("which is the problem: it never reaches the site's own stylesheet", !linkedStylesheetHrefs(linked, 3).includes("assets/site.css"));
+check("a larger limit does reach it", linkedStylesheetHrefs(linked, 10).includes("assets/site.css"));
+equal("and still refuses another host", linkedStylesheetHrefs(linked, 10).length, 5);
+check("a link that is not a stylesheet is not fetched", !linkedStylesheetHrefs(linked, 10).some((href) => href.includes("favicon")));
 
 /* ------------------------------------------------ the header and its pieces */
 

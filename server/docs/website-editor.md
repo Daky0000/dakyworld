@@ -300,3 +300,11 @@ Selected-word formatting, image framing, site-stored presets, draft history and 
 The active assistant already supported validated proposals. Its obsolete skeleton was removed, and proposals now have a sandboxed static preview before approval. Activity already worked; it now has a dedicated component with loading and empty states. The API already had global rate limiting; expensive website mutations now also have a per-user limit.
 
 Audit corrections: setup HTML was a complete six-step guide, not a stub; brand presets persist in site settings; rich-text labels and history already existed; browser harnesses are used by checks and excluded from production. See CONTRIBUTING.md, website-api.md and adr/0001-preserve-website-source.md for engineering guidance.
+
+## Survey stylesheet coverage
+
+The site survey reads up to ten same-site stylesheets per page. This reaches the
+main design system when consent, font, and base stylesheets appear first. The
+button variant menu keeps its smaller three-file budget. Cross-origin stylesheets
+remain blocked. The browser check runner now starts Vite from the client folder
+and terminates the Windows process tree it created.

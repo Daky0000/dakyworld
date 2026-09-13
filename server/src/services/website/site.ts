@@ -169,9 +169,20 @@ export function linkedStylesheetHrefs(html: string, limit = 3): string[] {
     .slice(0, limit);
 }
 
-export async function siteStylesheets(site: Site, page: SitePage, html: string): Promise<Array<{ href: string; css: string }>> {
+/**
+ * The limit is a caller's decision, because the two callers want different things.
+ *
+ * Three is right for the button style menu: it wants class names, and the first
+ * few files have them. It is wrong for reading a site's design. Sites link their
+ * cookie banner and their fonts before their own stylesheet — on Dakyworld's own
+ * site the first three are consent.css, fonts.css and a 4 KB base, while the
+ * design system is the 80 KB site.css that comes fourth. Asking for three files
+ * and reporting the result as the site's palette is reporting a cookie banner's
+ * palette.
+ */
+export async function siteStylesheets(site: Site, page: SitePage, html: string, limit = 3): Promise<Array<{ href: string; css: string }>> {
   const sheets: Array<{ href: string; css: string }> = [];
-  for (const href of linkedStylesheetHrefs(html)) {
+  for (const href of linkedStylesheetHrefs(html, limit)) {
     const css = await readStylesheet(site, page, href).catch(() => null);
     if (css) sheets.push({ href, css });
   }
