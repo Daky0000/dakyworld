@@ -172,6 +172,7 @@ websiteRouter.get("/sites", async (req, res, next) => {
         slug: site.slug,
         publicUrl: site.publicUrl,
         repo: siteRepo(site),
+        sourceKind: site.sourceKind,
         branch: site.repoBranch,
         client: site.client,
         pageCount: site._count.pages,
@@ -194,7 +195,7 @@ websiteRouter.get("/sites/:siteId/pages", async (req, res, next) => {
     });
 
     res.json({
-      site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), branch: site.repoBranch },
+      site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), branch: site.repoBranch, sourceKind: site.sourceKind },
       pages: pages.map((page) => ({
         id: page.id,
         title: page.title,
@@ -233,7 +234,13 @@ websiteRouter.post("/sites/:siteId/scan", async (req, res, next) => {
     // unsaved, every page read from the found folder would be written back to
     // the configured one.
     const movedTo = discovery.repoPath !== site.repoPath ? discovery.repoPath : null;
-    if (movedTo !== null) await prisma.site.update({ where: { id: site.id }, data: { repoPath: movedTo } });
+    // The framework is saved for the same reason the folder is: the page list,
+    // the Edit button and the source editor all have to agree about what kind of
+    // file a page is, and only the scan has looked.
+    const sourceKind = discovery.sourceKind ?? null;
+    if (movedTo !== null || sourceKind !== site.sourceKind) {
+      await prisma.site.update({ where: { id: site.id }, data: { ...(movedTo !== null && { repoPath: movedTo }), sourceKind } });
+    }
 
     const existing = await prisma.sitePage.findMany({ where: { siteId: site.id } });
     const byFile = new Map(existing.map((page) => [page.filePath, page]));
@@ -262,7 +269,7 @@ websiteRouter.post("/sites/:siteId/scan", async (req, res, next) => {
     }
 
     const missing = existing.filter((page) => !found.some((candidate) => candidate.filePath === page.filePath)).map((page) => page.filePath);
-    res.json({ found: found.length, added, missing, folder: discovery.repoPath, movedTo });
+    res.json({ found: found.length, added, missing, folder: discovery.repoPath, movedTo, sourceKind });
   } catch (err) {
     next(err);
   }

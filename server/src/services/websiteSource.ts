@@ -4,7 +4,7 @@ import type { Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { commitFiles, listTree, readFile } from "../lib/github.js";
-import { applyJsxValues, discoverJsxFields, JSX_ADAPTER_VERSION } from "./website/index.js";
+import { applyJsxValues, applyTemplateValues, discoverJsxFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isTemplatePath } from "./website/index.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js";
 
@@ -23,21 +23,37 @@ export function websiteSourcePath(folder: string, path: string, file = false): {
   const valid = (value: string) => !value.startsWith("/") && !/[:\x00-\x1f\x7f?#]/.test(value) && value.split("/").every(part => part && part !== "." && part !== ".." && !EXCLUDED_FOLDERS.has(part));
   const prefix = normalize(folder).replace(/\/+$/, "");
   const relative = normalize(path);
-  if ((prefix && !valid(prefix)) || (relative && !valid(relative)) || (file && !/\.(jsx|tsx)$/i.test(relative))) throw new WebsiteError(400, "Choose a JSX or TSX file inside this website's repository folder.");
+  if ((prefix && !valid(prefix)) || (relative && !valid(relative)) || (file && !isEditableSourcePath(relative))) throw new WebsiteError(400, `Choose a ${EDITABLE_SOURCE_EXTENSIONS.join(", ")} file inside this website's repository folder.`);
   return { relative, repository: [prefix, relative].filter(Boolean).join("/") };
 }
 
 function digest(value: string) { return createHash("sha256").update(value, "utf8").digest("hex"); }
+
+/**
+ * The adapter that reads and writes this file's fields.
+ *
+ * One lookup, by extension, and every caller below goes through it. The HTTP
+ * contract does not change with the answer: a `.vue` file is reviewed,
+ * exported, committed and audited down exactly the same path a `.tsx` is, and
+ * only the parser behind it differs. See `website/frameworks.ts`.
+ */
+export function sourceAdapterFor(filePath: string) {
+  return isTemplatePath(filePath)
+    ? { discover: discoverTemplateFields, apply: applyTemplateValues }
+    : { discover: discoverJsxFields, apply: applyJsxValues };
+}
+
 export function reviewWebsiteSource(source: string, input: z.infer<typeof changeInput>) {
-  const discovery = discoverJsxFields(source, input.filePath);
-  const applied = applyJsxValues(source, input);
+  const adapter = sourceAdapterFor(input.filePath);
+  const discovery = adapter.discover(source, input.filePath);
+  const applied = adapter.apply(source, input);
   if (applied.problems.length) throw new WebsiteError(applied.problems.some(problem => problem.code === "stale") ? 409 : 400, applied.problems.map(problem => problem.message).join(" "));
   if (!applied.changed.length) throw new WebsiteError(400, "There are no changed values to review.");
   const wanted = new Map(input.changes.map(change => [change.fieldId, change.value]));
   const changes = discovery.fields.filter(field => applied.changed.includes(field.id)).map(field => ({ fieldId: field.id, label: field.label, kind: field.kind, before: field.value, after: wanted.get(field.id)! }));
   // Binds the reviewed output to the exact input file and source bytes. No source
   // offsets or replacement snippets supplied by a browser are ever trusted.
-  const reviewHash = digest(JSON.stringify([JSX_ADAPTER_VERSION, input.filePath, discovery.sourceHash, applied.source]));
+  const reviewHash = digest(JSON.stringify([discovery.adapter, input.filePath, discovery.sourceHash, applied.source]));
   return { source: applied.source, sourceHash: discovery.sourceHash, reviewHash, changes };
 }
 
@@ -56,7 +72,13 @@ const dependencies: Dependencies = {
   },
 };
 
-/** Site-scoped native JSX content workflow. Never builds or executes a project. */
+/**
+ * Site-scoped source content workflow. Never builds or executes a project.
+ *
+ * Which syntax a file is written in is decided per file, not per site, so a
+ * repository holding both `.tsx` components and `.astro` pages edits either
+ * without a setting being changed anywhere.
+ */
 export function registerWebsiteSource(router: Router, access: Access, overrides: Partial<Dependencies> = {}) {
   const deps = { ...dependencies, ...overrides };
   const handler = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: (error?: unknown) => void) => { void fn(req, res).catch(next); };
@@ -64,7 +86,7 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     const site = await access.loadSite(req, req.params.siteId);
     await deps.authorize(req, site.id, "source");
     const repo = siteRepo(site);
-    if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository in Website settings to edit React source files.");
+    if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository in Website settings to edit source files.");
     return { site, repo };
   };
   const source = async (req: Request, filePath: string) => {
@@ -94,7 +116,7 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
   router.get("/sites/:siteId/source", handler(async (req, res) => {
     const filePath = z.string().min(1).max(500).parse(req.query.filePath);
     const current = await source(req, filePath);
-    const discovery = discoverJsxFields(current.content, current.path.relative);
+    const discovery = sourceAdapterFor(current.path.relative).discover(current.content, current.path.relative);
     res.setHeader("Cache-Control", "no-store");
     res.json({ adapter: discovery.adapter, filePath: discovery.filePath, sourceHash: discovery.sourceHash, issues: discovery.issues, fields: discovery.fields.map(({ reference: _reference, ...field }) => field), repo: current.repo, branch: current.site.repoBranch });
   }));

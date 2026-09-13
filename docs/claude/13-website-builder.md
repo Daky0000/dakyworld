@@ -336,3 +336,54 @@ Built from `reusable_website_editor_system_plan.pdf` (23 Aug 2026), whose block
 model was deliberately not followed for this site; the plan lists converting an
 existing hard-coded website as a non-goal for version one, and this is why.
 
+## Framework sites (Next, Astro, SvelteKit, Nuxt, Vue, Vite)
+
+The page list used to ask one question — "which folder holds the `.html`?" —
+and a framework project has no answer until it is built, so every one of them
+got an empty table and a 422 telling the customer to build their site first.
+Their pages were `app/page.tsx` and `src/pages/index.astro` the whole time.
+
+Framework knowledge lives in `services/website/frameworks.ts` as a registry,
+split in two on purpose:
+
+- a **route adapter** maps a repository's file list to routes — pure string
+  work, no file ever read, which is what makes `checks/websiteFrameworks.ts`
+  an array of paths and no fixtures;
+- a **syntax adapter** reads and writes a file's fields: `jsx.ts` for the JSX
+  family, `template.ts` for the HTML-shaped ones (`.astro`, `.vue`, `.svelte`).
+
+They are separate because they do not line up: Next and Vite share the JSX
+adapter and nothing else; Nuxt and a plain Vue SPA share the template adapter
+and disagree about routing. Adding a framework is one detector, one route
+function, and a syntax adapter only if its files are a new language.
+
+- **`template.ts` scans; it does not compile.** There is no parser here for any
+  of the three languages, so the rule is that anything it is not certain about
+  is the code's: a `{` or `}` anywhere in a text node or attribute value, a
+  bound or directive attribute (`:href`, `bind:`, `@click`, `client:load`),
+  `<script>`/`<style>`, Astro frontmatter, and a component's own props. Each
+  refusal is an issue with a line number rather than a silent omission, because
+  a field that is quietly missing reads as a bug in the editor.
+- **A brace typed into a text box is escaped** (`&#123;`). Somebody writing
+  "{free}" means the word; writing it back raw would turn their heading into a
+  template hole that fails the build.
+- **One validator, two adapters.** `validateFieldValue` is exported from
+  `jsx.ts` and used by both, so the two cannot come to disagree about what an
+  `href` may contain — which is exactly how two editors end up agreeing until
+  the day they do not.
+- **Every accepted edit round-trips before it is returned**: discover, splice,
+  discover again, and refuse unless the same field IDs come back with only the
+  edited values changed. That is what stands in for a compiler.
+- **`Site.sourceKind` is written by the scan**, because the scan is the only
+  thing that has looked. It decides which editor the Edit button opens: a
+  framework route is source, and handing it to the visual editor would offer
+  somebody a file it cannot read.
+- **A framework route's `filePath` is addressed from the repository root**, and
+  the scan returns `repoPath: ""` with it. A route file stored relative to some
+  chosen page folder would be committed to a path that does not exist.
+- **Registry order is load-bearing.** Every SvelteKit project has a
+  `vite.config.ts`, so `vite-react` is last and claims a repository only when
+  nothing else has.
+- The HTTP contract did not change: `checks/websiteTemplateRoute.ts` puts a
+  `.vue` file through the same browse, review, review-hash guard,
+  expected-file commit guard and audit row a `.tsx` goes through.

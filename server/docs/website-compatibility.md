@@ -42,9 +42,17 @@ rollback.
   live page afterwards.
 - **Pictures with more than one size.** Replacing an image drops its `srcset`
   candidates, so the new picture is used at every size.
-- **Static JSX/TSX literals** — literal text and existing `href`/`src`/`alt`
-  strings inside a repository folder, through the source editor. Not a visual
-  canvas.
+- **Framework source files** — literal text and existing `href`/`src`/`alt`
+  strings in `.jsx`, `.tsx`, `.astro`, `.vue` and `.svelte` files, through the
+  source editor. Next.js, Astro, SvelteKit, Nuxt, Vue and Vite projects list
+  their route files as pages and open them here. Not a visual canvas, and
+  nothing is built or run: what is committed is the file with the edited
+  strings in it, for your own host to build as usual.
+- **Expressions inside those files stay with the code.** A Svelte `{#if}`, a Vue
+  `{{ mustache }}`, an Astro expression, a bound attribute (`:href`, `bind:`,
+  `@click`, `client:load`), Astro frontmatter and `<script setup>` are reported
+  as notes rather than edited. A brace typed into a text box is escaped, so it
+  stays a word instead of becoming a template hole.
 - **Links whose destination is decided by script.** Their words are editable;
   where they go is not.
 
@@ -63,7 +71,9 @@ them, reports them, and never changes them:
 
 ## Not supported
 
-- General React/Next visual editing — a running application canvas.
+- General React/Next visual editing — a running application canvas. Framework
+  files edit as source, with a review before each commit, and never as a live
+  preview of the running app.
 - WordPress, Shopify or any other CMS's own editing model.
 - Publishing anywhere but GitHub: no SFTP, no direct hosting APIs.
 - Arbitrary component creation, template marketplaces, AI site generation.

@@ -8,6 +8,7 @@ import type { SiteField } from "./regions.js";
 import { attr, decodeEntities, parseHtml, walk } from "./parse.js";
 import { fetchWebsiteText } from "../../lib/websiteFetch.js";
 import { invalidateSource, readCache, sourceKey, writeCache } from "./sourceCache.js";
+import { detectFramework, type SourceKind } from "./frameworks.js";
 
 /**
  * Where a page's HTML comes from, and where an edited one goes.
@@ -291,6 +292,15 @@ export type Discovery = {
    * publish that writes to another would commit a page into the wrong place.
    */
   repoPath: string;
+  /**
+   * The framework whose pages these are, or null for plain HTML.
+   *
+   * Saved on the site by the scan, because every screen after it has to know:
+   * a Next route is opened in the source editor, an `.html` page in the visual
+   * one, and a page list that cannot tell them apart sends people to an editor
+   * that cannot read the file it was given.
+   */
+  sourceKind: SourceKind | null;
 };
 
 /**
@@ -369,11 +379,25 @@ async function findPages(site: Site): Promise<Discovery> {
   if (repo && (await githubConfigured())) {
     const configured = site.repoPath.replace(/^\/+|\/+$/g, "");
     const fromConfigured = await htmlIn(repo, configured, site.repoBranch);
-    if (fromConfigured.length > 0) return { pages: buildPages(fromConfigured, listed), repoPath: configured };
+    if (fromConfigured.length > 0) return { pages: buildPages(fromConfigured, listed), repoPath: configured, sourceKind: null };
 
     // Nothing where the site says its pages are. Before reporting an empty
     // site, look for them: see `chooseSiteFolder`.
     const { files, truncated } = await listRepoFiles(repo, site.repoBranch);
+
+    // A framework project has no `.html` to find and never will until it is
+    // built. Its pages are its route files, so ask the registry which framework
+    // this is and let it map them — see `frameworks.ts`.
+    const framework = truncated ? null : detectFramework(files);
+    if (framework) {
+      const pages = framework.routes(files, listed);
+      // Route files are addressed from the repository root, not from a page
+      // folder: `app/blog/page.tsx` means that path and no other. Anything else
+      // would have a publish write the file into the folder the HTML editor
+      // happened to settle on.
+      if (pages.length) return { pages, repoPath: "", sourceKind: framework.sourceKind };
+    }
+
     const found = chooseSiteFolder(files);
     if (found === null) {
       throw new WebsiteError(
@@ -384,7 +408,7 @@ async function findPages(site: Site): Promise<Discovery> {
       );
     }
     const names = await htmlIn(repo, found, site.repoBranch);
-    return { pages: buildPages(names, listed), repoPath: found };
+    return { pages: buildPages(names, listed), repoPath: found, sourceKind: null };
   }
 
   if (listed.size === 0) {
@@ -396,6 +420,7 @@ async function findPages(site: Site): Promise<Discovery> {
 
   return {
     repoPath: site.repoPath,
+    sourceKind: null,
     pages: [...listed]
       .map((path) => {
         const filePath = path === "/" ? "index.html" : `${path.replace(/^\//, "")}.html`;

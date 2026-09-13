@@ -86,9 +86,36 @@ found = await discoverPages(site({ repoPath: "docs" }));
 assert.equal(found.repoPath, "docs");
 assert.equal(asked.some((path) => path.includes("git/trees")), false, "a folder that answered should not trigger a repository-wide search");
 
-// 4. A framework repository has no HTML to open, and says that rather than
-//    reporting an empty site.
-tree = ["src/pages/index.astro", "package.json"];
+// 4. A framework repository has no HTML in it and never will until it is built.
+//    Its pages are its route files, so they are what gets listed — and which
+//    framework it is gets returned, because the scan is the only thing that has
+//    looked and every screen after it has to know.
+tree = ["astro.config.mjs", "package.json", "src/pages/index.astro", "src/pages/pricing.astro", "src/components/Card.astro"];
+found = await discoverPages(site());
+assert.deepEqual(found.pages.map((page) => page.path), ["/", "/pricing"]);
+assert.deepEqual(found.pages.map((page) => page.filePath), ["src/pages/index.astro", "src/pages/pricing.astro"]);
+assert.equal(found.sourceKind, "astro");
+// Addressed from the repository root, not from a page folder: a publish writes
+// to `filePath`, and a route file relative to some chosen folder lands nowhere.
+assert.equal(found.repoPath, "");
+
+// 5. A Next project, with the HTML-folder search never getting a look in — its
+//    `app/` has no `.html` for that search to have found anyway.
+tree = ["next.config.mjs", "app/page.tsx", "app/(marketing)/pricing/page.tsx", "app/layout.tsx", "app/api/lead/route.ts"];
+found = await discoverPages(site());
+assert.deepEqual(found.pages.map((page) => page.path), ["/", "/pricing"]);
+assert.equal(found.sourceKind, "next");
+
+// 6. A plain static site is still plain: nothing claims it, and the framework
+//    branch leaves its folder search exactly as it was.
+tree = ["public/index.html", "public/about.html"];
+found = await discoverPages(site());
+assert.equal(found.sourceKind, null);
+assert.equal(found.repoPath, "public");
+
+// 7. A repository that is neither — no HTML, no framework — still fails with
+//    the reason rather than succeeding with an empty page list.
+tree = ["README.md", "src/lib/util.ts"];
 await assert.rejects(
   discoverPages(site()),
   (error: unknown) => error instanceof WebsiteError && error.status === 422 && /no HTML pages/.test(error.message),

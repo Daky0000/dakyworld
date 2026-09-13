@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, postForBlob } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -119,39 +120,46 @@ function SourceFileEditor({ siteId, filePath, canPublish }: { siteId: string; fi
   </section>;
 }
 
-export function WebsiteSourceEditor({ siteId }: { siteId: string }) {
+export function WebsiteSourceEditor({ siteId, initialFilePath = "" }: { siteId: string; initialFilePath?: string }) {
   const access = useWebsiteAccess(siteId);
-  const [folder, setFolder] = useState("");
-  const [filePath, setFilePath] = useState("");
+  // A file arriving from the page list opens straight away, and its folder is
+  // opened alongside it so the tree shows where it sits rather than the root.
+  const [folder, setFolder] = useState(() => initialFilePath.split("/").slice(0, -1).join("/"));
+  const [filePath, setFilePath] = useState(initialFilePath);
   const directory = useQuery({ queryKey: ["website", "source-files", siteId, folder], enabled: access.data?.capabilities.source === true, queryFn: () => api.get<Directory>(`/website/sites/${encodeURIComponent(siteId)}/source/files?path=${encodeURIComponent(folder)}`) });
   if (access.isLoading) return <p role="status" className="text-sm text-muted">Loading source access…</p>;
   if (access.error) return <p role="alert" className="text-sm text-danger-text">{(access.error as Error).message}</p>;
   if (!access.data?.capabilities.source) return <p className="rounded-2xl border border-line bg-white p-5 text-sm text-muted">Source editing needs a website manager or developer role.</p>;
   return <div className="grid items-start gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
     <aside className="rounded-2xl border border-line bg-white p-4" aria-label="Repository source files">
-      <h2 className="font-display text-lg">React files</h2>
+      <h2 className="font-display text-lg">Source files</h2>
       <p className="mt-1 break-all text-xs text-muted">{directory.data ? `${directory.data.repo} · ${directory.data.branch}` : "Connected repository"}</p>
       <p className="mt-3 break-all text-xs text-muted">/{directory.data?.root ? `${directory.data.root}/` : ""}{folder}</p>
       {folder && <button className="mt-3 text-sm text-blue hover:underline" onClick={() => setFolder(folder.split("/").slice(0, -1).join("/"))}>← Parent folder</button>}
       {directory.isLoading && <p className="mt-3 text-sm text-muted" role="status">Reading files…</p>}
       {directory.error && <p className="mt-3 text-sm text-danger-text" role="alert">{(directory.error as Error).message}</p>}
       <ul className="mt-3 space-y-1">{directory.data?.files.map(file => <li key={file.path}><button className={`w-full rounded-lg px-2 py-2 text-left text-sm disabled:opacity-50 ${file.path === filePath ? "bg-sunken text-blue" : "text-ink hover:bg-sunken"}`} disabled={file.type === "file" && !file.editable} onClick={() => file.type === "dir" ? setFolder(file.path) : setFilePath(file.path)}><span className="break-all">{file.type === "dir" ? "▸ " : ""}{file.name}</span>{file.type === "file" && !file.editable && <span className="block text-xs text-muted">Exceeds 2 MB</span>}</button></li>)}</ul>
-      {directory.data?.files.length === 0 && <p className="mt-3 text-sm text-muted">No JSX or TSX files in this folder. Open another folder, or check the repository folder in Website settings.</p>}
+      {directory.data?.files.length === 0 && <p className="mt-3 text-sm text-muted">No editable source files in this folder. This editor opens .jsx, .tsx, .astro, .vue and .svelte files. Open another folder, or check the repository folder in Website settings.</p>}
     </aside>
-    {filePath ? <SourceFileEditor key={`${siteId}:${filePath}`} siteId={siteId} filePath={filePath} canPublish={access.data.capabilities.publish} /> : <div className="rounded-2xl border border-line bg-white p-6"><h2 className="font-display text-xl">Edit content in a React site</h2><p className="mt-3 text-sm text-muted">Choose a JSX or TSX file to edit its static text, links and image details. Existing JavaScript, component structure and formatting are preserved.</p><p className="mt-3 text-sm text-muted">The visual HTML editor handles rendered HTML pages. This source editor does not run the project or show a live React canvas. Dynamic content, custom component props, class names and layout remain controlled by the code.</p></div>}
+    {filePath ? <SourceFileEditor key={`${siteId}:${filePath}`} siteId={siteId} filePath={filePath} canPublish={access.data.capabilities.publish} /> : <div className="rounded-2xl border border-line bg-white p-6"><h2 className="font-display text-xl">Edit content in a framework site</h2><p className="mt-3 text-sm text-muted">Choose a .jsx, .tsx, .astro, .vue or .svelte file to edit its static text, links and image details — React, Next.js, Astro, Nuxt, Vue and SvelteKit projects all edit here. Existing JavaScript, component structure and formatting are preserved.</p><p className="mt-3 text-sm text-muted">The visual HTML editor handles rendered HTML pages. This source editor does not run the project or show a live React canvas. Dynamic content, custom component props, class names and layout remain controlled by the code.</p></div>}
   </div>;
 }
 
 export function WebsiteSource() {
   const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
   const available = sites.data?.filter(site => site.capabilities?.source) ?? [];
-  const [selected, setSelected] = useState("");
-  const siteId = available.some(site => site.id === selected) ? selected : available[0]?.id;
+  // `?site=&file=` is how the page list hands a framework route over. Both are
+  // hints: a site that is not editable here falls back to the first that is.
+  const [params] = useSearchParams();
+  const requestedSite = params.get("site") ?? "";
+  const requestedFile = params.get("file") ?? "";
+  const [selected, setSelected] = useState(requestedSite);
+  const siteId = available.some(site => site.id === selected) ? selected : available.some(site => site.id === requestedSite) ? requestedSite : available[0]?.id;
   return <>
-    <PageHeader title="Source content" subtitle="Edit static content in connected React projects, with a review before each commit." />
+    <PageHeader title="Source content" subtitle="Edit static content in connected React, Next.js, Astro, Nuxt, Vue and SvelteKit projects, with a review before each commit." />
     {sites.isLoading && <p role="status" className="text-sm text-muted">Loading websites…</p>}
     {sites.error && <p role="alert" className="text-sm text-danger-text">{(sites.error as Error).message}</p>}
     {sites.data?.length === 0 && <p className="text-sm text-muted">Connect a website and its GitHub repository from Sites to get started.</p>}
-    {siteId && <><label className="mb-6 block max-w-sm text-xs text-muted">Website<select className={`${fieldClass} mt-1`} value={siteId} onChange={event => setSelected(event.target.value)}>{available.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label><WebsiteSourceEditor key={siteId} siteId={siteId} /></>}
+    {siteId && <><label className="mb-6 block max-w-sm text-xs text-muted">Website<select className={`${fieldClass} mt-1`} value={siteId} onChange={event => setSelected(event.target.value)}>{available.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label><WebsiteSourceEditor key={siteId} siteId={siteId} initialFilePath={siteId === requestedSite ? requestedFile : ""} /></>}
   </>;
 }

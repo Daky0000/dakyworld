@@ -3077,6 +3077,12 @@ export type SiteSummary = {
   /** `owner/name`, or null when nothing has been connected to publish to. */
   repo: string | null;
   branch: string;
+  /**
+   * The framework the scan found this site's pages in, or null for plain HTML.
+   * It decides which editor the Edit button opens: a framework route is source,
+   * not rendered HTML, and the visual editor cannot read it.
+   */
+  sourceKind?: "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react" | null;
   client: { id: string; name: string } | null;
   pageCount: number;
   draftCount: number;

@@ -70,6 +70,15 @@ export type { StructureAction, StructureControl } from "./structure.js";
 export { JSX_ADAPTER_VERSION, discoverJsxFields, applyJsxValues, mapJsxFieldsToHtml } from "./jsx.js";
 export type { JsxField, JsxFieldKind, JsxChange, JsxDiscovery, JsxSourceReference, JsxIssue, JsxApplyResult, JsxHtmlMapping, JsxHtmlMappingReport } from "./jsx.js";
 
+// The other two halves of framework support: which files of a repository are
+// pages (`frameworks.ts`), and how the HTML-shaped ones are read and written
+// (`template.ts`). Both go out through this door for the same reason
+// everything else does.
+export { TEMPLATE_ADAPTER_VERSION, TEMPLATE_EXTENSIONS, discoverTemplateFields, applyTemplateValues, isTemplatePath, templateRegions } from "./template.js";
+export type { TemplateField, TemplateFieldKind, TemplateDiscovery, TemplateIssue, TemplateApplyResult } from "./template.js";
+export { frameworkAdapters, detectFramework, frameworkFor, nextRoutes, astroRoutes, svelteRoutes, vueRoutes, viteReactRoutes, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath } from "./frameworks.js";
+export type { FrameworkAdapter, DiscoveredRoute, SourceKind } from "./frameworks.js";
+
 // --- The parts that were already here -------------------------------------
 
 export { applyValues, readPage, safeStyle, checkLink, sanitizePlain, sanitizeRich, isVariantOfStem, resolveVariantChange, variantLabel };

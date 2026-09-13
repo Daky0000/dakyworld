@@ -232,15 +232,23 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
   }
 }
 
-function validValue(field: JsxField, value: string): string | undefined {
+/**
+ * The one place a field value is judged publishable.
+ *
+ * Exported by kind rather than by field so that the template adapter next door
+ * (`.astro`, `.vue`, `.svelte`) judges a link by exactly the same rules. Two
+ * adapters with two opinions about what an `href` may contain would be two
+ * editors that agree until the day they do not.
+ */
+export function validateFieldValue(kind: JsxFieldKind, value: string): string | undefined {
   if (value.length > MAX_VALUE_LENGTH) return "This value exceeds the 100,000 character limit.";
   if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) return "Remove control characters from this value.";
-  if (field.kind === "text" || field.kind === "alt") return undefined;
+  if (kind === "text" || kind === "alt") return undefined;
   if (!value || value.trim() !== value || /[\s\\]/.test(value)) return "Use a destination without spaces, control characters or backslashes.";
   if (value.startsWith("//")) return "Use a full https:// URL instead of a protocol-relative destination.";
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(value)?.[1]?.toLowerCase();
   if (!scheme) return undefined;
-  if (field.kind === "href" && ["mailto", "tel"].includes(scheme)) return value.length > scheme.length + 1 ? undefined : "Add an address or phone number.";
+  if (kind === "href" && ["mailto", "tel"].includes(scheme)) return value.length > scheme.length + 1 ? undefined : "Add an address or phone number.";
   if (scheme !== "http" && scheme !== "https") return "Only website URLs and relative paths are allowed here.";
   try {
     if (!/^https?:\/\//i.test(value) || !new URL(value).hostname) return "Use a complete website URL.";
@@ -279,7 +287,7 @@ export function applyJsxValues(source: string, request: { filePath: string; sour
     seen.add(change.fieldId);
     const field = byId.get(change.fieldId);
     if (!field) { problems.push({ code: "unknown", fieldId: change.fieldId, message: "This field is absent, dynamic or ambiguous in the current source file." }); continue; }
-    const invalid = validValue(field, change.value);
+    const invalid = validateFieldValue(field.kind, change.value);
     if (invalid) { problems.push({ code: "invalid", fieldId: change.fieldId, message: invalid }); continue; }
     if (change.value !== field.value) edits.push({ field, value: change.value, replacement: encode(field, change.value) });
   }

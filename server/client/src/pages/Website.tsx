@@ -184,7 +184,17 @@ export function Website() {
                           View
                         </Button>
                       </a>
-                      <Link to={`/website/pages/${page.id}`}>
+                      {/* A framework route is source, not a rendered page: it
+                          opens in the source editor, because the visual editor
+                          can only read HTML and would refuse the file it was
+                          given. */}
+                      <Link
+                        to={
+                          current?.sourceKind
+                            ? `/website/source?site=${encodeURIComponent(current.id)}&file=${encodeURIComponent(page.filePath)}`
+                            : `/website/pages/${page.id}`
+                        }
+                      >
                         <Button size="sm">Edit</Button>
                       </Link>
                     </div>

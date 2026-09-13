@@ -4072,6 +4072,12 @@ model Site {
   /// is where GitHub Pages serves this one from.
   repoPath             String    @default("")
 
+  /// Which framework the scan found this site's pages in — "next", "astro",
+  /// "sveltekit", "nuxt", "vue", "vite-react — or null for a plain HTML site.
+  /// It decides which editor a page opens in, so an unbuilt framework route is
+  /// never handed to the editor that can only read rendered HTML.
+  sourceKind           String?
+
   /// A client's site rather than Dakyworld's own, when set.
   client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
   clientId String?
