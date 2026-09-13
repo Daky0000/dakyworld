@@ -190,6 +190,13 @@ npx tsx checks/websitePublishing.ts
 npx tsx checks/websiteAccess.ts --database
 ```
 
+Browser checks are separate, and are run by one command that starts and stops
+the harness itself:
+
+```powershell
+npm run checks:browser
+```
+
 `websiteBuilder.ts` exercises the existing live-source fallback against a local fixture; run it with `NODE_ENV=development` and `DEV_NO_AUTH=true`. Permission checks authenticate real sessions independently of that bypass. GitHub/source/AI checks use local responders or validated fixture plans and make no external writes or model calls.
 
 The responsive suite covers 73 core cases, and the real API suite covers device and structural drafts, concurrent edits, review/export, restoration and removal. `websiteStructure.ts` checks stable identities, independent copy editing, undo/redo and stale-source protection. `websitePreviewRuntime.ts` executes the actual nonce picker script against a controlled DOM double to check message origins, live media rules, image replacement and viewer controls. It does not render CSS or replace browser verification.

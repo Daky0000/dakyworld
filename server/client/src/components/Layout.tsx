@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Suspense } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { useWebsiteSites } from "./WebsiteGuard";
@@ -396,7 +397,11 @@ export function Layout() {
             <span aria-hidden>←</span> Back
           </button>
         )}
-        <Outlet />
+        {/* Around the outlet, so the navigation stays put while the next
+            screen's chunk arrives rather than the window going blank. */}
+        <Suspense fallback={<p className="p-6 text-sm text-muted">Loading…</p>}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

@@ -1,49 +1,62 @@
+import { lazy } from "react";
 import { Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Guard, Landing } from "./components/Guard";
-import { Dashboard } from "./pages/Dashboard";
-import { Leads } from "./pages/Leads";
-import { LeadImport } from "./pages/LeadImport";
-import { LeadSources } from "./pages/LeadSources";
-import { Hunts } from "./pages/Hunts";
-import { Proposals } from "./pages/Proposals";
-import { Demos } from "./pages/Demos";
-import { Projects } from "./pages/Projects";
-import { ProjectDetail } from "./pages/ProjectDetail";
-import { Invoices } from "./pages/Invoices";
-import { CarePlans } from "./pages/CarePlans";
-import { Emails } from "./pages/Emails";
-import { Inbox } from "./pages/Inbox";
-import { Messages } from "./pages/Messages";
-import { Clients } from "./pages/Clients";
-import { Settings } from "./pages/Settings";
-import { Team } from "./pages/Team";
-import { Agents } from "./pages/Agents";
-import { Tools } from "./pages/Tools";
-import { Costs } from "./pages/Costs";
-import { Approvals } from "./pages/Approvals";
-import { Rehearsals } from "./pages/Rehearsals";
-import { ClientDetail } from "./pages/ClientDetail";
-import { Website } from "./pages/Website";
-import { WebsiteEditor } from "./pages/WebsiteEditor";
+const Dashboard = lazy(() => import("./pages/Dashboard").then((module) => ({ default: module.Dashboard })));
+const Leads = lazy(() => import("./pages/Leads").then((module) => ({ default: module.Leads })));
+const LeadImport = lazy(() => import("./pages/LeadImport").then((module) => ({ default: module.LeadImport })));
+const LeadSources = lazy(() => import("./pages/LeadSources").then((module) => ({ default: module.LeadSources })));
+const Hunts = lazy(() => import("./pages/Hunts").then((module) => ({ default: module.Hunts })));
+const Proposals = lazy(() => import("./pages/Proposals").then((module) => ({ default: module.Proposals })));
+const Demos = lazy(() => import("./pages/Demos").then((module) => ({ default: module.Demos })));
+const Projects = lazy(() => import("./pages/Projects").then((module) => ({ default: module.Projects })));
+const ProjectDetail = lazy(() => import("./pages/ProjectDetail").then((module) => ({ default: module.ProjectDetail })));
+const Invoices = lazy(() => import("./pages/Invoices").then((module) => ({ default: module.Invoices })));
+const CarePlans = lazy(() => import("./pages/CarePlans").then((module) => ({ default: module.CarePlans })));
+const Emails = lazy(() => import("./pages/Emails").then((module) => ({ default: module.Emails })));
+const Inbox = lazy(() => import("./pages/Inbox").then((module) => ({ default: module.Inbox })));
+const Messages = lazy(() => import("./pages/Messages").then((module) => ({ default: module.Messages })));
+const Clients = lazy(() => import("./pages/Clients").then((module) => ({ default: module.Clients })));
+const Settings = lazy(() => import("./pages/Settings").then((module) => ({ default: module.Settings })));
+const Team = lazy(() => import("./pages/Team").then((module) => ({ default: module.Team })));
+const Agents = lazy(() => import("./pages/Agents").then((module) => ({ default: module.Agents })));
+const Tools = lazy(() => import("./pages/Tools").then((module) => ({ default: module.Tools })));
+const Costs = lazy(() => import("./pages/Costs").then((module) => ({ default: module.Costs })));
+const Approvals = lazy(() => import("./pages/Approvals").then((module) => ({ default: module.Approvals })));
+const Rehearsals = lazy(() => import("./pages/Rehearsals").then((module) => ({ default: module.Rehearsals })));
+const ClientDetail = lazy(() => import("./pages/ClientDetail").then((module) => ({ default: module.ClientDetail })));
+const Website = lazy(() => import("./pages/Website").then((module) => ({ default: module.Website })));
+const WebsiteEditor = lazy(() => import("./pages/WebsiteEditor").then((module) => ({ default: module.WebsiteEditor })));
 import { WebsiteLayout } from "./components/WebsiteLayout";
 import { WebsiteGuard } from "./components/WebsiteGuard";
-import { WebsiteSource } from "./components/WebsiteSourceEditor";
-import { WebsiteOverview } from "./pages/WebsiteOverview";
+const WebsiteSource = lazy(() => import("./components/WebsiteSourceEditor").then((module) => ({ default: module.WebsiteSource })));
+const WebsiteOverview = lazy(() => import("./pages/WebsiteOverview").then((module) => ({ default: module.WebsiteOverview })));
 // The plan's remaining screens. Each says what it will hold and is gated on
 // website.manage — see components/PlannedScreen.tsx and docs/website-builder.md.
-import { WebsiteAssets } from "./pages/WebsiteAssets";
-import { WebsiteCompatibility } from "./pages/WebsiteCompatibility";
-import { WebsiteSurvey } from "./pages/WebsiteSurvey";
-import { WebsiteOnboarding } from "./pages/WebsiteOnboarding";
-import { ProductPricing } from "./pages/ProductPricing";
-import { WebsiteAI } from "./pages/WebsiteAI";
-import { WebsiteUpdates } from "./pages/WebsiteUpdates";
-import { WebsiteTeam } from "./pages/WebsiteTeam";
-import { WebsiteAudit } from "./pages/WebsiteAudit";
-import { WebsiteSettings } from "./pages/WebsiteSettings";
-import { WebsiteBilling } from "./pages/WebsiteBilling";
+const WebsiteAssets = lazy(() => import("./pages/WebsiteAssets").then((module) => ({ default: module.WebsiteAssets })));
+const WebsiteCompatibility = lazy(() => import("./pages/WebsiteCompatibility").then((module) => ({ default: module.WebsiteCompatibility })));
+const WebsiteSurvey = lazy(() => import("./pages/WebsiteSurvey").then((module) => ({ default: module.WebsiteSurvey })));
+const WebsiteOnboarding = lazy(() => import("./pages/WebsiteOnboarding").then((module) => ({ default: module.WebsiteOnboarding })));
+const ProductPricing = lazy(() => import("./pages/ProductPricing").then((module) => ({ default: module.ProductPricing })));
+const WebsiteAI = lazy(() => import("./pages/WebsiteAI").then((module) => ({ default: module.WebsiteAI })));
+const WebsiteUpdates = lazy(() => import("./pages/WebsiteUpdates").then((module) => ({ default: module.WebsiteUpdates })));
+const WebsiteTeam = lazy(() => import("./pages/WebsiteTeam").then((module) => ({ default: module.WebsiteTeam })));
+const WebsiteAudit = lazy(() => import("./pages/WebsiteAudit").then((module) => ({ default: module.WebsiteAudit })));
+const WebsiteSettings = lazy(() => import("./pages/WebsiteSettings").then((module) => ({ default: module.WebsiteSettings })));
+const WebsiteBilling = lazy(() => import("./pages/WebsiteBilling").then((module) => ({ default: module.WebsiteBilling })));
 
+/**
+ * Screens are loaded when somebody goes to them, not all at once.
+ *
+ * The whole operations suite was one download. A client on the Website product
+ * is offered four screens and was being sent the other thirty-three — every
+ * lead, invoice, agent and rehearsal screen — before they could see anything.
+ * On the networks this is actually used on, that is the difference between the
+ * editor opening and the editor eventually opening.
+ *
+ * The shell stays eager: layouts and guards render on every route, so splitting
+ * them would buy nothing and cost a round trip.
+ */
 /**
  * Every screen carries the permission its own API routes ask for.
  *
