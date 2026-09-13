@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc --noEmit)",
+      "Bash(npx tsc -b)",
+      "Bash(npm run checks)",
+      "Bash(npm run checks:types)",
+      "Bash(npm run build)",
+      "Bash(npm run build:server)",
+      "Bash(npx prisma generate)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(docker ps:*)",
+      "Bash(railway deployment list:*)",
+      "WebFetch(domain:os.dakyworld.com)",
+      "WebFetch(domain:dakyworld.com)"
+    ]
+  }
+}
