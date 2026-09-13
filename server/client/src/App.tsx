@@ -34,6 +34,7 @@ import { WebsiteOverview } from "./pages/WebsiteOverview";
 // website.manage — see components/PlannedScreen.tsx and docs/website-builder.md.
 import { WebsiteAssets } from "./pages/WebsiteAssets";
 import { WebsiteCompatibility } from "./pages/WebsiteCompatibility";
+import { WebsiteSurvey } from "./pages/WebsiteSurvey";
 import { WebsiteOnboarding } from "./pages/WebsiteOnboarding";
 import { ProductPricing } from "./pages/ProductPricing";
 import { WebsiteAI } from "./pages/WebsiteAI";
@@ -85,6 +86,7 @@ export default function App() {
           <Route path="sites" element={<Website />} />
           <Route path="assets" element={<WebsiteAssets />} />
           <Route path="compatibility" element={<WebsiteCompatibility />} />
+          <Route path="survey" element={<WebsiteSurvey />} />
           <Route path="onboarding" element={<Guard needs="website.manage"><WebsiteOnboarding /></Guard>} />
           <Route path="ai" element={<Guard needs="website.manage"><WebsiteAI /></Guard>} />
           <Route path="updates" element={<Guard needs="website.manage"><WebsiteUpdates /></Guard>} />

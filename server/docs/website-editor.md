@@ -58,6 +58,48 @@ A customer does not get the operations menu with most of it missing. `client/src
 
 A commit is not a deployment. `PublishJob` records every publish from before it starts until the change has been seen on the live page: the row is written **before** GitHub is touched, so a process that dies mid-publish leaves a `COMMITTING` row the next boot asks GitHub about rather than a mystery — either the commit landed and the state is `RECONCILIATION_REQUIRED` with the sha on it, or nothing happened and it says so. After the commit the job carries the public address, a distinctive string the change put on the page and the file's hash; the scheduler looks at the live page on a backoff from twenty seconds out to five minutes, and settles on `COMPLETED` with how long the host took or `VERIFY_FAILED` with the page still showing the old version. The editor shows that line under the publish notice, so "published" stops meaning "committed". `services/websitePublishJobs.ts`; `checks/websitePublishVerify.ts` covers the deciding with no database, `checks/websitePublishJobs.ts` the rows and the clock with an isolated one.
 
+## The site survey
+
+`Website → Site survey` reads every page at once and says what the website is
+made of, because that is the first question anybody asks about a site they did
+not build. Four answers, each carrying its evidence:
+
+- **Global elements.** The repeated regions from `sharedCandidates`, now *named*:
+  header, footer, primary navigation, breadcrumbs, sidebar, call-to-action band,
+  newsletter signup, cookie notice. The naming reads the page's own words for the
+  block — landmark tags first, then `role`, `aria-label`, id and class, then
+  position as a last resort — and a block it cannot name is still reported as a
+  repeated block rather than dropped. A region on *every* page is told apart from
+  one on merely more than one, because that is the difference between the site's
+  furniture and a pattern.
+- **What the site asks for.** Every link and button whose words and destination
+  repeat across pages, counted by pages reached and by total appearances, with
+  buttons told apart from links. This is how "the same CTA throughout" becomes a
+  number rather than an impression.
+- **Kinds of page.** Home, catalogue or listing, product, event, article, contact.
+  Judged from what is on the page, not from its address — a catalogue is a page
+  that repeats one *card* (something clickable carrying a picture or a heading)
+  three or more times outside the site's own furniture, which is the rule that
+  stops a footer with three link columns from being called a shop.
+- **Colours and typography.** Every declared colour, normalised so `#FFF` and
+  `#ffffff` are one colour, ordered by how much the site leans on it and tagged
+  with what it is doing (text, background, border, shadow, graphics); and the
+  first family of each font stack, with sizes and weights.
+
+**Nothing in it calls a model.** Every answer is derived from the markup, so a
+survey costs nothing, cannot invent a page, and reads the same twice.
+
+The deciding is `services/website/survey.ts` and has no database or network in
+it; `services/websiteSiteSurvey.ts` is the half that reads the pages, applies the
+sixty-page limit and reports a page it could not read rather than failing the
+whole survey. `checks/websiteSurvey.ts` covers the deciding against a four-page
+fixture with no database.
+
+Its limit is what it can see: only colours and type declared in `<style>` blocks
+and `style` attributes are read, so a site whose design lives entirely in an
+external stylesheet will show a thin palette. The screen says so rather than
+implying the site has no colours.
+
 ## Compatibility
 
 `docs/website-compatibility.md` is the contract — exactly what is supported, what is supported with limits, what stays with a developer and what is not supported at all. `services/website/compatibility.ts` is the same judgement as code, applied to one website by `Website → Compatibility`: every page is read and graded, findings are merged and counted across the site, and the site gets a rating and a readiness state. Readiness is a separate question from grading, so a perfectly editable site with no repository connected reads as `PUBLISH_BLOCKED` rather than as a problem with its pages. Run the report before a client is given access to a website; every finding in it is written as a sentence somebody can act on.
@@ -108,6 +150,7 @@ npx tsx checks/websiteInspector.ts
 npx tsx checks/websiteShared.ts
 npx tsx checks/websiteSharedApi.ts
 npx tsx checks/websiteCompatibility.ts
+npx tsx checks/websiteSurvey.ts
 npx tsx checks/websitePublishVerify.ts
 npx tsx checks/websiteClientWorkspace.ts
 npx tsx checks/githubApp.ts
