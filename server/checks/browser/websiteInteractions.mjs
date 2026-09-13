@@ -14,7 +14,11 @@ try {
  await page.getByRole('button',{name:'Bold',exact:true}).click();
  assert.equal(await editor.locator('span span').count(),0);
  assert.equal(await page.locator('[aria-readonly=true]').getAttribute('contenteditable'),'false');
- await page.getByText('Hover & keyboard focus',{exact:true}).click();
+ // The group opens on its own when it carries a value, so clicking the summary
+ // closes it and hides every control below. Open it only if it is shut.
+ const interactions=page.locator('details',{has:page.locator('summary',{hasText:'Hover, focus & active'})});
+ if(!await interactions.evaluate(d=>d.open)) await interactions.locator('summary').click();
+ await interactions.evaluate(d=>{if(!d.open)throw new Error('the interaction group did not open');});
  await page.getByLabel('hover color',{exact:true}).fill('#ff0000');await page.getByLabel('hover color',{exact:true}).press('Tab');
  const button=page.getByTestId('interaction-button'); await button.hover();
  assert.equal(await button.evaluate(el=>getComputedStyle(el).color),'rgb(255, 0, 0)');

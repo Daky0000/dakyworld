@@ -22,6 +22,8 @@ const url = new URL(process.env.DATABASE_URL ?? "postgresql://invalid/invalid");
 if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || !/(test|check|editor)/i.test(url.pathname)) {
   throw new Error("These checks require an isolated local test/editor database. Set DATABASE_URL to one.");
 }
+process.env.NODE_ENV = "development";
+process.env.DEV_NO_AUTH = "true";
 process.env.GITHUB_TOKEN = "publish-job-check-stub";
 process.env.GITHUB_ALLOWED_REPOS = "fixture/site";
 
@@ -35,6 +37,22 @@ function equal(name: string, actual: unknown, expected: unknown) { assert.deepEq
 let livePage = "<!doctype html><html><body><h1>The old heading nobody changed</h1></body></html>";
 let liveFails: string | null = null;
 let repositoryFile: string | null = null;
+const { createServer } = await import("node:http");
+/**
+ * A real server on loopback, not a `globalThis.fetch` stub: `fetchWebsiteText`
+ * reaches the live page through `node:http` with its own pinned DNS lookup, so
+ * a stubbed `fetch` is never consulted and every verification silently fails to
+ * resolve instead of reading the page.
+ */
+const liveServer = createServer((_request, response) => {
+  if (liveFails) { response.destroy(new Error(liveFails)); return; }
+  response.writeHead(200, { "Content-Type": "text/html" });
+  response.end(livePage);
+});
+await new Promise<void>(resolve => liveServer.listen(0, "127.0.0.1", resolve));
+const livePort = (liveServer.address() as { port: number }).port;
+const liveOrigin = `http://127.0.0.1:${livePort}`;
+
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const target = new URL(String(input));
@@ -45,10 +63,6 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       return repositoryFile === null ? json({ message: "Not found" }, 404) : json({ content: Buffer.from(repositoryFile).toString("base64"), encoding: "base64" });
     }
     throw new Error(`Unexpected GitHub request ${target.pathname}`);
-  }
-  if (target.hostname === "example.test") {
-    if (liveFails) throw new Error(liveFails);
-    return new Response(livePage, { status: 200, headers: { "Content-Type": "text/html" } });
   }
   return originalFetch(input as never, init);
 }) as typeof fetch;
@@ -62,7 +76,7 @@ const siteIds: string[] = [];
 
 try {
   const site = await prisma.site.create({
-    data: { slug: mark, name: "Fixture", publicUrl: "https://example.test", repoOwner: "fixture", repoName: "site", repoBranch: "main" },
+    data: { slug: mark, name: "Fixture", publicUrl: liveOrigin, repoOwner: "fixture", repoName: "site", repoBranch: "main" },
   });
   siteIds.push(site.id);
   const page = await prisma.sitePage.create({ data: { siteId: site.id, title: "Home", path: "/", filePath: "index.html" } });
@@ -101,7 +115,7 @@ try {
   });
   let row = await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } });
   equal("after the commit it is waiting on the host, not finished", row.state, "DEPLOYING");
-  equal("and knows what to look at", row.verifyUrl, "https://example.test/");
+  equal("and knows what to look at", row.verifyUrl, `${liveOrigin}/`);
   equal("and what to look for", row.verifyText, "Ready to improve your systems?");
 
   /* ------------------------------------------- the host has not rebuilt */
@@ -159,7 +173,7 @@ try {
 
   /* ------------------------------------- a live site that cannot be read */
 
-  liveFails = "getaddrinfo ENOTFOUND example.test";
+  liveFails = "the live site refused the connection";
   const unreachable = await startPublishJob({ site, kind: "PAGE", pageId: page.id, detail: {} });
   await publishJobCommitted({
     id: unreachable.id,
@@ -215,6 +229,7 @@ try {
   console.log(`websitePublishJobs: ${checks} checks — recorded before GitHub, watched until live, honest about a host that never rebuilds, and reconciled after an interruption`);
 } finally {
   globalThis.fetch = originalFetch;
+  await new Promise<void>(resolve => liveServer.close(() => resolve()));
   await prisma.site.deleteMany({ where: { id: { in: siteIds } } });
   await prisma.$disconnect();
 }

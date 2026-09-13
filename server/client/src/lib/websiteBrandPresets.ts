@@ -1,4 +1,4 @@
-import type { SiteFieldRow, SitePageDetail } from "./types";
+import type { SiteFieldRow, SitePageDetail } from "./types.js";
 
 export type BrandPreset = { id: string; name: string; target: "heading" | "button" | "spacing"; styles: Record<string, string> };
 export const PRESET_PROPERTIES = ["font-family", "font-size", "font-weight", "line-height", "color", "background-color", "border-radius", "padding", "margin", "gap"] as const;

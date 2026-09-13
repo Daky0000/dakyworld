@@ -7,6 +7,11 @@ import { ensureSystemRoles } from "../src/lib/accessRoles.js";
 import { createSession } from "../src/lib/session.js";
 import { discoverFields, applyValues, sanitizeValue, buildPreview, safeStyle, versionValues, type FieldValue } from "../src/services/website/index.js";
 
+const databaseUrl = new URL(process.env.DATABASE_URL ?? "postgresql://invalid/invalid");
+if (!["localhost", "127.0.0.1", "[::1]"].includes(databaseUrl.hostname) || !/(test|check|editor)/i.test(databaseUrl.pathname)) {
+  throw new Error("These checks require an isolated local test/editor database. Set DATABASE_URL to one.");
+}
+
 // Auth must be real for these refusals. Set before importing the middleware.
 process.env.DEV_NO_AUTH = "false";
 process.env.NODE_ENV = "development";

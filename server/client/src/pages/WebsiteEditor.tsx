@@ -1102,6 +1102,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         return;
       }
       if (event.key === "Escape" && !inField) {
+        // Escape closes the thing on top, not everything underneath it. An open
+        // menu is the top layer, so closing one must not also throw away the
+        // element somebody had selected — they pressed Escape to dismiss the
+        // menu, and losing their place is not what they asked for.
+        const menu = document.querySelector<HTMLDetailsElement>("details[data-editor-menu][open]");
+        if (menu) {
+          menu.open = false;
+          return;
+        }
         tell({ type: "stopEdit" });
         pick(null);
       }
@@ -1416,7 +1425,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           <button className="editor-tool" type="button" aria-pressed={showLayers} onClick={() => { setShowLayers(value => !value); setShowPanel(true); setMode("visual"); }}>Layers</button>
           {canEdit && <button className="editor-tool" type="button" disabled={save.isPending || readOnly} onClick={() => saveNow(latestEdits.current)} title="Save draft (Ctrl/Cmd+S)">Save</button>}
           {canEdit && design.data?.options.aiEnabled && <button className="editor-tool" type="button" onClick={() => setShowAI(true)}>Assistant</button>}
-          <details className="relative" onKeyDown={event => { if (event.key === "Escape") event.currentTarget.open = false; }}>
+          <details className="relative" data-editor-menu onKeyDown={event => { if (event.key === "Escape") { event.currentTarget.open = false; event.stopPropagation(); } }}>
             <summary className="cursor-pointer rounded-xl border border-line px-3 py-2 text-sm">More</summary>
             <div className="absolute right-0 top-full z-50 mt-2 flex w-64 flex-col items-start gap-3 rounded-xl border border-line bg-white p-4 shadow-xl">
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={designerMode} onChange={event => { setDesignerMode(event.target.checked); try { localStorage.setItem(`website-designer:${user?.id}`, event.target.checked ? "yes" : "no"); } catch { /* Optional preference. */ } }} />Designer controls</label>

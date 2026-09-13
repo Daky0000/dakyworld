@@ -37,11 +37,18 @@
         if (!product) return;
 
         var part = slot.getAttribute('data-dw-part') || 'monthly';
+        // A setup fee of nothing is a sentence, not a number: "plus GHS 0 once
+        // to set it up" reads like an oversight where "no setup fee" reads like
+        // the offer it is. The markup says the same, so both agree with no
+        // JavaScript.
+        var free = Number(product.setup) === 0;
         var next =
           part === 'setup'
             ? product.setupDisplay === null
               ? null
-              : product.currency + ' ' + product.setupDisplay
+              : free
+                ? 'no setup fee'
+                : product.currency + ' ' + product.setupDisplay
             : part === 'currency'
               ? product.currency
               : part === 'amount'

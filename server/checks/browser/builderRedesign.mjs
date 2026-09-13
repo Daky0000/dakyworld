@@ -30,7 +30,7 @@ try {
   await page.goto("http://127.0.0.1:5199/builder-harness.html?editor");
   await page.getByRole('button',{name:'Close guide'}).click();
   await page.getByRole('button',{name:'Layers',exact:true}).click();
-  await page.getByRole('row',{name:'Welcome home',exact:true}).click();
+  await page.getByRole('treeitem',{name:'Welcome home'}).click();
   const heading=page.getByRole('textbox',{name:'Main heading',exact:true});await heading.waitFor();
   console.log(`Editor ready in ${Date.now()-started}ms (local mocked API; not a production benchmark).`);
   assert.equal(await page.locator('.editor-sidebar').evaluate(e=>getComputedStyle(e).width),'340px');
@@ -44,7 +44,7 @@ try {
   assert.equal(writes.length,0,'Viewing tabs must not save anything');
   await page.getByRole('tab',{name:'Content',exact:true}).click();
   await heading.fill('Changed heading');await page.keyboard.press('Control+s');
-  await page.getByText('Draft saved ? 1 unpublished change',{exact:true}).waitFor();
+  await page.getByText('Draft saved · 1 unpublished change',{exact:true}).waitFor();
   assert.equal(document.draft.values['hero.title'].value,'Changed heading');
   await page.keyboard.press('Control+z');
   await page.waitForFunction(()=>document.querySelector('[aria-label="Main heading"]').textContent==='Welcome home');
@@ -66,9 +66,9 @@ try {
   await page.getByTitle('Proposed page preview').waitFor();
   assert.equal(await page.getByTitle('Proposed page preview').getAttribute('sandbox'),'');
   await page.getByRole('button',{name:'Apply 1 change',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('[aria-label="Main heading"]').textContent==='Better together');
+  await page.waitForFunction(()=>{const field=document.querySelector('[aria-label="Main heading"]');return !!field&&field.textContent==='Better together';});
   await page.getByRole('button',{name:'Save',exact:true}).click();
-  await page.getByText('Draft saved ? 1 unpublished change',{exact:true}).waitFor();
+  await page.getByText('Draft saved · 1 unpublished change',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Layers',exact:true}).click();
   await page.getByRole('tab',{name:'Style',exact:true}).click();
   await page.screenshot({path:'checks/artifacts/editor-redesign-dark.png',fullPage:true});

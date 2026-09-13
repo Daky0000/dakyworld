@@ -60,6 +60,20 @@ import {
   REPO_TTL_MS,
 } from "../src/services/website/sourceCache.js";
 
+const databaseUrl = new URL(process.env.DATABASE_URL ?? "postgresql://invalid/invalid");
+if (!["localhost", "127.0.0.1", "[::1]"].includes(databaseUrl.hostname) || !/(test|check|editor)/i.test(databaseUrl.pathname)) {
+  throw new Error("These checks require an isolated local test/editor database. Set DATABASE_URL to one.");
+}
+
+/**
+ * The loopback fixture below is only reachable in this mode: `fetchWebsiteText`
+ * refuses a private address unless both of these are set, so without them every
+ * page read fails with "must resolve to a public server". Stated here rather
+ * than inherited from a developer's `.env`, which checks do not share.
+ */
+process.env.NODE_ENV = "development";
+process.env.DEV_NO_AUTH = "true";
+
 const failures: string[] = [];
 let passed = 0;
 

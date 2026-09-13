@@ -174,7 +174,7 @@ Text, heading, link and button editors preserve highlighted ranges when using fo
 
 Hover and keyboard-focus styles support colour, background, border colour, shadow, opacity, transform and underline. The state preview does not publish editor markers. These styles apply across screen sizes and travel through existing drafts, revisions, shared edits and publishing. Transition presets respect reduced-motion preferences. Reset removes the selected state's overrides.
 
-Validation: production build and server TypeScript pass. Browser checks cover nested text selections, retained selections, read-only fields, real hover/focus computed styles, state preview and reduced motion. Publication tests cover rich text sanitization, stable field identity and generated interaction styles. Database integration checks requiring local PostgreSQL could not finish because localhost:5433 was unavailable. Three-client observed usability sessions still require participants.
+Validation: production build and server TypeScript pass. Browser checks cover nested text selections, retained selections, read-only fields, real hover/focus computed styles, state preview and reduced motion. Publication tests cover rich text sanitization, stable field identity and generated interaction styles. Database integration checks now run and pass against an isolated local database (`websiteBuilder`, `websiteSharedApi`, `websitePublishJobs`, `websiteEditorComplete`, `websiteAccess --database`); all five carry a guard refusing any database that is not local and named for testing. Three-client observed usability sessions still require participants.
 
 
 ## September 2026 editor redesign
