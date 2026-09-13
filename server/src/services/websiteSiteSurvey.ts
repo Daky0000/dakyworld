@@ -2,7 +2,7 @@ import type { Request, Response, Router } from "express";
 import type { Site, SitePage } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { surveySite, type SiteSurvey } from "./website/survey.js";
-import { pageSource, siteRepo, WebsiteError } from "./website/site.js";
+import { pageSource, siteRepo, siteStylesheets, WebsiteError } from "./website/site.js";
 
 /**
  * The half of the survey that has to go and read the website.
@@ -37,7 +37,13 @@ export async function siteSurvey(site: Site, pages: SitePage[]): Promise<SiteSur
     considered.map(async (page) => {
       try {
         const source = await pageSource(site, page);
-        return { pageId: page.id, title: page.title, path: page.path, html: source.html };
+        // Most websites keep their design in a stylesheet rather than in the
+        // page. Read from the repository where one is connected and from the
+        // live site otherwise, cached alongside the pages, and skipped quietly
+        // when unreachable — a palette missing one file is still a palette,
+        // and a survey that fails because a CSS file moved is not.
+        const stylesheets = await siteStylesheets(site, page, source.html).catch(() => []);
+        return { pageId: page.id, title: page.title, path: page.path, html: source.html, stylesheets };
       } catch (error) {
         unreadable.push({
           pageId: page.id,

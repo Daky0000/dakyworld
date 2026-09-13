@@ -79,12 +79,22 @@ not build. Four answers, each carrying its evidence:
 - **Kinds of page.** Home, catalogue or listing, product, event, article, contact.
   Judged from what is on the page, not from its address — a catalogue is a page
   that repeats one *card* (something clickable carrying a picture or a heading)
-  three or more times outside the site's own furniture, which is the rule that
-  stops a footer with three link columns from being called a shop.
+  three or more times outside the site's own furniture. Three further rules keep
+  that honest, each about a different way a run of similar blocks can fail to be
+  a listing, and none of them about any particular website: the run must go to at
+  least three *distinct* destinations (five prose sections all carrying the same
+  "email us" link are a document); its typical item must be a teaser rather than
+  an essay (or every long document with headings is a catalogue); and its
+  destinations must not be mostly the site's own navigation, which the survey
+  knows because it has already counted which links repeat across the whole site
+  (a "where next" block of site links is navigation wherever it appears).
 - **Colours and typography.** Every declared colour, normalised so `#FFF` and
   `#ffffff` are one colour, ordered by how much the site leans on it and tagged
   with what it is doing (text, background, border, shadow, graphics); and the
   first family of each font stack, with sizes and weights.
+- **Design tokens.** The custom properties a stylesheet declares once and reuses
+  (`--brand: #3157ff`). Where a site has these they *are* its design system, so
+  they are reported with the value they hold and how often it is leaned on.
 
 **Nothing in it calls a model.** Every answer is derived from the markup, so a
 survey costs nothing, cannot invent a page, and reads the same twice.
@@ -95,10 +105,27 @@ sixty-page limit and reports a page it could not read rather than failing the
 whole survey. `checks/websiteSurvey.ts` covers the deciding against a four-page
 fixture with no database.
 
-Its limit is what it can see: only colours and type declared in `<style>` blocks
-and `style` attributes are read, so a site whose design lives entirely in an
-external stylesheet will show a thin palette. The screen says so rather than
-implying the site has no colours.
+**It reads the site's stylesheets, not just its pages.** Almost every website
+keeps its design in a CSS file, and a palette read from the markup alone is a
+palette of whatever somebody happened to inline — usually nothing. The same
+rules that already governed `siteStyleClasses` govern this, in one shared place
+(`linkedStylesheetHrefs`, `siteStylesheets`): same host only, because a font CDN
+is not this site's design system and following arbitrary URLs out of somebody's
+HTML is a door with no reason to open; the first few per page; from the
+repository where one is connected and from the live site otherwise; cached
+alongside the pages; and skipped quietly when unreachable, because a palette
+missing one file is still a palette.
+
+`var(--brand)` is resolved to the colour the token holds before counting. Without
+that, a site that declares its palette once and refers to it by name everywhere —
+which is how modern CSS is written — reports each colour exactly once, at its
+declaration, and reads as almost colourless. On this repository's own seventeen
+pages the difference was nine uses of the ink colour across three pages versus a
+hundred and fifty-four across all seventeen.
+
+What it still cannot see: a stylesheet on another host, and anything a script
+computes at runtime. The screen says which of the two it managed — stylesheets
+or only the pages — so a thin palette can be told from a plain one.
 
 ## Compatibility
 

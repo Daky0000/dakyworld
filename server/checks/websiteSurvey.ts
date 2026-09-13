@@ -31,13 +31,26 @@ const header = `<header class="site-header"><nav aria-label="Main"><a href="/">H
 const footer = `<footer class="site-footer"><p>&copy; 2026 Kwame Textiles</p><a class="btn" href="/quote">Get a quote</a></footer>`;
 const crumbs = (here: string) => `<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span>${here}</span></nav>`;
 
+/**
+ * The design lives in a stylesheet, as it does on almost every real website,
+ * and is written with custom properties, as it is on most modern ones. A survey
+ * that only read the page would find one inline colour and call this site
+ * almost colourless.
+ */
+const SITE_CSS = `
+  :root{--ink:#1a1a2e;--brand:#3157ff;--line:#E5E5E5;--display:"Space Grotesk",Arial,sans-serif}
+  body{font-family:var(--display);color:var(--ink);background:#FFFFFF}
+  .btn{background-color:var(--brand);color:#fff;font-weight:600;font-size:16px}
+  h1{font-family:var(--display);font-size:48px;font-weight:700;color:var(--ink)}
+  .card{border-color:var(--line)}
+  .price{color:var(--ink)}
+  a{color:var(--brand)}
+`;
+
 const page = (body: string) =>
-  `<!doctype html><html><head><style>
-     body{font-family:"Space Grotesk",Arial,sans-serif;color:#1a1a2e;background:#FFFFFF}
-     .btn{background-color:#3157ff;color:#fff;font-weight:600;font-size:16px}
-     h1{font-family:"Space Grotesk",sans-serif;font-size:48px;font-weight:700;color:#1a1a2e}
-     .card{border-color:#e5e5e5}
-   </style></head><body>${body}</body></html>`;
+  `<!doctype html><html><head><link rel="stylesheet" href="/site.css"><style>.local{color:#1a1a2e}</style></head><body>${body}</body></html>`;
+
+const withCss = (entry: SurveyPage): SurveyPage => ({ ...entry, stylesheets: [{ href: "/site.css", css: SITE_CSS }] });
 
 const pages: SurveyPage[] = [
   {
@@ -76,7 +89,7 @@ const pages: SurveyPage[] = [
   },
 ];
 
-const survey = surveySite(pages);
+const survey = surveySite(pages.map(withCss));
 
 /* ------------------------------------------------------------ what repeats */
 
@@ -140,6 +153,8 @@ check("every page landed in exactly one template", survey.templates.flatMap((tem
 
 const colour = (value: string) => survey.palette.colours.find((entry) => entry.value === value);
 
+equal("the stylesheet was read once for each page that links it", survey.palette.readFrom.stylesheets, 4);
+check("and the page's own <style> was seen too", survey.palette.readFrom.inline);
 check("the brand blue was found", colour("#3157ff"));
 check("and it is known to be a background", colour("#3157ff")?.roles.includes("background"));
 check("the ink colour was found", colour("#1a1a2e"));
@@ -147,6 +162,20 @@ check("and it is known to be text", colour("#1a1a2e")?.roles.includes("text"));
 check("#FFFFFF and #ffffff are one colour, not two", survey.palette.colours.filter((entry) => entry.value === "#ffffff").length === 1);
 check("a three-digit hex is expanded rather than listed separately", colour("#ffffff"));
 check("the border colour is known to be a border", colour("#e5e5e5")?.roles.includes("border"));
+
+// The whole point of reading the stylesheet: these colours are only ever
+// written as var(--brand) outside their own declaration, so a survey that did
+// not resolve tokens would find each of them exactly once.
+check("a colour used only through a token is counted every time it is used", (colour("#3157ff")?.uses ?? 0) > 1);
+check("and is known to be doing more than one job", (colour("#3157ff")?.roles.length ?? 0) > 1);
+
+const token = (name: string) => survey.palette.tokens.find((entry) => entry.name === name);
+check("the site's tokens were collected", token("--brand"));
+equal("with the value they hold", token("--brand")?.value, "#3157ff");
+check("and are known to be colours", token("--brand")?.isColour === true);
+check("a token counts how often the site leans on it", (token("--brand")?.uses ?? 0) >= 2);
+check("a token that is not a colour is not called one", token("--display")?.isColour === false);
+check("a token defined in terms of another resolves", !/var\(/.test(token("--display")?.value ?? "var("));
 
 const face = survey.palette.typefaces[0];
 equal("the site's typeface is the one it uses most", face?.family, "space grotesk");
@@ -157,7 +186,7 @@ check("colours are ordered by how much the site leans on them", survey.palette.c
 
 /* ------------------------------------------------------- a site of one page */
 
-const alone = surveySite([pages[0]!]);
+const alone = surveySite([withCss(pages[0]!)]);
 equal("one page has nothing to compare against", alone.elements.length, 0);
 equal("and nothing repeats across it", alone.callsToAction.length, 0);
 check("but its colours are still readable", alone.palette.colours.length > 0);

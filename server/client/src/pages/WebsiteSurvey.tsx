@@ -45,6 +45,8 @@ type Survey = {
     typefaces: Array<{ family: string; uses: number; pageIds: string[] }>;
     sizes: Array<{ value: string; uses: number }>;
     weights: Array<{ value: string; uses: number }>;
+    tokens: Array<{ name: string; value: string; uses: number; isColour: boolean }>;
+    readFrom: { stylesheets: number; inline: boolean };
   };
   unreadable: Array<{ pageId: string; title: string; path: string; reason: string }>;
   truncated: number;
@@ -148,6 +150,11 @@ export function WebsiteSurvey() {
               {data.elements.length} repeated region{data.elements.length === 1 ? "" : "s"}, {data.callsToAction.length} repeated action
               {data.callsToAction.length === 1 ? "" : "s"}, {data.templates.length} kind{data.templates.length === 1 ? "" : "s"} of page.
             </span>
+            <p className="mt-2 text-muted">
+              {data.palette.readFrom.stylesheets > 0
+                ? `Colours and type were read from the site's own stylesheets${data.palette.readFrom.inline ? ", and from the pages themselves" : ""}.`
+                : "No stylesheet could be read, so the palette below is only what the pages carry themselves."}
+            </p>
             {data.truncated > 0 && <p className="mt-2 text-muted">{data.truncated} further pages were not read, to keep this a report rather than a crawl.</p>}
             {data.unreadable.length > 0 && (
               <ul className="mt-3 space-y-1 text-warn-text">
@@ -255,9 +262,36 @@ export function WebsiteSurvey() {
             </ul>
           </Section>
 
-          <Section title="Colours" note="Every colour the pages declare, ordered by how much the site leans on it, with what it is doing.">
+          {data.palette.tokens.length > 0 && (
+            <Section
+              title="Design tokens"
+              note="Colours and sizes the stylesheet names once and reuses. Where a site has these, they are its design system — changing one changes everywhere it is used."
+            >
+              <ul className="flex flex-wrap gap-2">
+                {data.palette.tokens.slice(0, 40).map((token) => (
+                  <li key={token.name} className="flex items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm">
+                    {token.isColour && <span aria-hidden className="h-5 w-5 shrink-0 rounded border border-line" style={{ background: token.value }} />}
+                    <span>
+                      <span className="block font-mono text-ink">{token.name}</span>
+                      <span className="block font-mono text-xs text-muted">{token.value}</span>
+                    </span>
+                    <span className="ml-1 text-xs text-muted">{token.uses}&times;</span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          <Section
+            title="Colours"
+            note="Every colour the pages declare, ordered by how much the site leans on it, with what it is doing. A colour used through a token is counted every time it is used, not once where it is defined."
+          >
             {data.palette.colours.length === 0 ? (
-              <p className="text-sm text-muted">These pages declare no colours of their own — they are likely styled by a stylesheet the editor has not read.</p>
+              <p className="text-sm text-muted">
+                {data.palette.readFrom.stylesheets === 0
+                  ? "No stylesheet could be read for these pages, and the pages declare no colours of their own. The design is likely in a stylesheet on another host, which is not fetched."
+                  : "The stylesheets were read, and they declare no colours."}
+              </p>
             ) : (
               <ul className="flex flex-wrap gap-3">
                 {data.palette.colours.slice(0, 24).map((colour) => (

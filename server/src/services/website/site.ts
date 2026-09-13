@@ -148,6 +148,36 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
  * system, and fetching arbitrary URLs named in somebody's HTML is a door this
  * module has no reason to open.
  */
+/**
+ * The same-site stylesheets a page links to, as text.
+ *
+ * `siteStyleClasses` wanted the class names out of these; the site survey wants
+ * the declarations, so the fetching is shared and the reading is not. The rules
+ * about *which* files are fetched live here, once: same host only, because a
+ * font CDN is not this site's design system and following arbitrary URLs out of
+ * somebody's HTML is a door with no reason to open; and only the first few,
+ * because a page linking eleven stylesheets is not a reason to make eleven
+ * requests. A stylesheet that cannot be read is skipped, not raised — a palette
+ * missing one file is still a palette.
+ */
+export function linkedStylesheetHrefs(html: string, limit = 3): string[] {
+  return [...html.matchAll(/<link\b[^>]*>/gi)]
+    .filter((tag) => /rel\s*=\s*["']?stylesheet/i.test(tag[0]))
+    .map((tag) => /href\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1])
+    .filter((href): href is string => Boolean(href))
+    .filter((href) => !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("//"))
+    .slice(0, limit);
+}
+
+export async function siteStylesheets(site: Site, page: SitePage, html: string): Promise<Array<{ href: string; css: string }>> {
+  const sheets: Array<{ href: string; css: string }> = [];
+  for (const href of linkedStylesheetHrefs(html)) {
+    const css = await readStylesheet(site, page, href).catch(() => null);
+    if (css) sheets.push({ href, css });
+  }
+  return sheets;
+}
+
 export async function siteStyleClasses(site: Site, page: SitePage, html: string): Promise<Set<string>> {
   const classes = new Set<string>();
   const hrefs = [...html.matchAll(/<link\b[^>]*>/gi)]

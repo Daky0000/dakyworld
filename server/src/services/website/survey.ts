@@ -20,7 +20,24 @@ import { attr, parseHtml, textOf, walk, type ElementNode } from "./parse.js";
 import { readPage } from "./regions.js";
 import { sharedCandidates, type SharedConfidence } from "./shared.js";
 
-export type SurveyPage = { pageId: string; title: string; path: string; html: string };
+export type SurveyStylesheet = { href: string; css: string };
+
+export type SurveyPage = {
+  pageId: string;
+  title: string;
+  path: string;
+  html: string;
+  /**
+   * The stylesheets this page links to, already fetched.
+   *
+   * Most websites keep their design in a file rather than in the page, so a
+   * palette read from `<style>` blocks and `style` attributes alone is a palette
+   * of whatever happened to be inlined — usually nothing. Passed in rather than
+   * fetched here so this module stays free of the network and a check can hand
+   * it CSS without one.
+   */
+  stylesheets?: SurveyStylesheet[];
+};
 
 /* ------------------------------------------------------------------ regions */
 
@@ -167,7 +184,7 @@ function inChrome(element: ElementNode): boolean {
   let walker: ElementNode | null = element;
   while (walker) {
     if (CHROME.has(walker.tag)) return true;
-    if (/(nav|menu|header|footer|breadcrumb)/.test(lower(attr(walker, "class") ?? ""))) return true;
+    if (/\b(nav|menu|header|footer|breadcrumb)\b/.test(lower(attr(walker, "class") ?? ""))) return true;
     walker = walker.parent;
   }
   return false;
@@ -181,34 +198,68 @@ function cardLike(element: ElementNode): boolean {
   return links && substance;
 }
 
+/** Where each item in a run of siblings sends you, with duplicates kept. */
+function destinationsOf(html: string, element: ElementNode): string[] {
+  const out: string[] = [];
+  for (const node of walk(element)) {
+    const href = node.tag === "a" ? attr(node, "href") : undefined;
+    if (href) out.push(lower(href));
+  }
+  return out;
+}
+
 /**
- * Three or more card-like siblings built the same way, in the page's own content.
+ * A run of repeated siblings that is actually a listing.
  *
- * This is what makes a listing a listing: a catalogue is not "a page with
- * products on it", it is a page with one card repeated. Two earlier versions of
- * this were too generous and called almost every page a catalogue — a footer
- * with three link columns repeats, and so does a navigation bar. So the run has
- * to be outside the site's furniture, and each item in it has to be something
- * you can click that also carries a picture or a heading. A row of plain links
- * is a menu; a row of pictures with titles and links is a listing.
+ * Three sibling blocks that look alike is not enough, and tightening the
+ * threshold would not help — the things that trip it are structural, not a
+ * matter of degree. Three rules, each about a different way a run can look like
+ * a listing without being one, and none of them about any particular website:
+ *
+ *   - **It must go somewhere, in more than one direction.** A listing offers a
+ *     choice; five prose sections that all carry the same "email us" link are a
+ *     document. So the run needs at least three *distinct* destinations.
+ *   - **Its items must be teasers, not essays.** A card summarises something
+ *     found elsewhere. A run whose typical item runs to paragraphs is a page
+ *     with headings, which is most long documents ever written.
+ *   - **It must not be the site's own menu.** A row of links to the pages in the
+ *     header is navigation wherever it appears — in a footer, on a 404 page, in
+ *     a "where next" block. The survey already knows which destinations repeat
+ *     across the whole site, so it can tell the two apart instead of guessing.
  */
-function repeatedSiblings(root: ElementNode): number {
+function listingRuns(html: string, root: ElementNode, siteWideLinks: Set<string>): number {
   let most = 0;
   for (const element of walk(root)) {
     if (inChrome(element)) continue;
-    const counts = new Map<string, number>();
+    const runs = new Map<string, ElementNode[]>();
     for (const child of element.children) {
       if (!cardLike(child)) continue;
       const classes = lower(attr(child, "class") ?? "").split(/\s+/).filter(Boolean).slice(0, 3).join(".");
       const key = `${child.tag}.${classes}|${child.children.map((grandchild) => grandchild.tag).join(",")}`;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      runs.set(key, [...(runs.get(key) ?? []), child]);
     }
-    for (const count of counts.values()) most = Math.max(most, count);
+
+    for (const items of runs.values()) {
+      if (items.length < 3) continue;
+
+      const destinations = items.map((item) => destinationsOf(html, item));
+      const distinct = new Set(destinations.flat().filter((href) => href && !href.startsWith("#")));
+      if (distinct.size < 3) continue;
+
+      const lengths = items.map((item) => normalise(textOf(html, item)).length).sort((left, right) => left - right);
+      const typical = lengths[Math.floor(lengths.length / 2)] ?? 0;
+      if (typical > 300) continue;
+
+      const navigational = [...distinct].filter((href) => siteWideLinks.has(href)).length;
+      if (navigational > distinct.size / 2) continue;
+
+      most = Math.max(most, items.length);
+    }
   }
   return most;
 }
 
-function classifyPage(page: SurveyPage): { kind: SurveyPageKind; signals: string[] } {
+function classifyPage(page: SurveyPage, siteWideLinks: Set<string>): { kind: SurveyPageKind; signals: string[] } {
   const root = parseHtml(page.html);
   const text = normalise(textOf(page.html, root));
   const path = lower(page.path);
@@ -226,7 +277,7 @@ function classifyPage(page: SurveyPage): { kind: SurveyPageKind; signals: string
     .filter((element) => /^h[1-2]$/.test(element.tag))
     .map((element) => lower(textOf(page.html, element)))
     .join(" ");
-  const saysContact = /contact|get in touch/.test(headings);
+  const saysContact = /\bcontact\b|\bget in touch\b/.test(headings);
   if (/(^|\/)contact(\/|$|\.)/.test(path) || (hasForm && hasEmailField && saysContact)) {
     if (/(^|\/)contact(\/|$|\.)/.test(path)) signals.push("Its address says contact.");
     if (hasForm && hasEmailField) signals.push("It has a form asking for an email address.");
@@ -246,9 +297,9 @@ function classifyPage(page: SurveyPage): { kind: SurveyPageKind; signals: string
     return { kind: "event", signals };
   }
 
-  const repeats = repeatedSiblings(root);
+  const repeats = listingRuns(page.html, root, siteWideLinks);
   if (repeats >= 3) {
-    signals.push(`It repeats one card ${repeats} times.`);
+    signals.push(`It repeats one card ${repeats} times, each going somewhere different.`);
     if (money) signals.push("The cards carry prices.");
     return { kind: "catalogue", signals };
   }
@@ -276,14 +327,22 @@ export type SurveyColour = {
 export type SurveyTypeface = { family: string; uses: number; pageIds: string[] };
 export type SurveySizing = { value: string; uses: number };
 
+/** A design token: `--brand-ink: #08101f`, declared once and used by name. */
+export type SurveyToken = { name: string; value: string; uses: number; isColour: boolean };
+
 export type SurveyPalette = {
   colours: SurveyColour[];
   typefaces: SurveyTypeface[];
   sizes: SurveySizing[];
   weights: SurveySizing[];
+  tokens: SurveyToken[];
+  /** How the palette was read, so a thin one can be told from a plain one. */
+  readFrom: { stylesheets: number; inline: boolean };
 };
 
 const COLOUR_VALUE = /#[0-9a-f]{3,8}\b|\brgba?\([^)]*\)|\bhsla?\([^)]*\)/gi;
+/** The same question without `/g`, whose `lastIndex` makes repeated `test` calls alternate. */
+const LOOKS_LIKE_COLOUR = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i;
 const DECLARATION = /([-a-z]+)\s*:\s*([^;{}]+)/gi;
 
 /** `#abc` and `#AABBCC` are one colour, and a survey that lists both is noise. */
@@ -311,6 +370,10 @@ function declarationsOf(page: SurveyPage): Array<{ property: string; value: stri
     let match: RegExpExecArray | null;
     while ((match = DECLARATION.exec(css))) out.push({ property: match[1]!.toLowerCase(), value: match[2]!.trim() });
   };
+  // The site's own stylesheets first: on most websites this is the whole
+  // design, and the page carries only what somebody typed into a style
+  // attribute afterwards.
+  for (const sheet of page.stylesheets ?? []) collect(sheet.css);
   for (const element of walk(parseHtml(page.html))) {
     if (element.tag === "style") collect(page.html.slice(element.innerStart, element.innerEnd));
     const inline = attr(element, "style");
@@ -319,18 +382,58 @@ function declarationsOf(page: SurveyPage): Array<{ property: string; value: stri
   return out;
 }
 
+/**
+ * What a `var(--name)` resolves to, so a token is not a dead end.
+ *
+ * A site that declares `--brand: #b8ff3d` and then writes
+ * `background: var(--brand)` everywhere has one colour and a hundred uses of
+ * it. Reading only the literal values would find the colour once, in the
+ * declaration, and report the site as almost colourless. One pass of
+ * substitution is enough for the way stylesheets are actually written; tokens
+ * defined in terms of other tokens resolve on the second pass, and anything
+ * deeper stays a token rather than becoming a wrong colour.
+ */
+function resolveTokens(declarations: Array<{ property: string; value: string }>): Map<string, string> {
+  const tokens = new Map<string, string>();
+  for (const { property, value } of declarations) if (property.startsWith("--")) tokens.set(property, value);
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const [name, value] of tokens) {
+      const resolved = value.replace(/var\(\s*(--[-\w]+)\s*(?:,[^)]*)?\)/g, (whole, reference: string) => tokens.get(reference) ?? whole);
+      if (resolved !== value) tokens.set(name, resolved);
+    }
+  }
+  return tokens;
+}
+
 function buildPalette(pages: SurveyPage[]): SurveyPalette {
   const colours = new Map<string, { uses: number; pageIds: Set<string>; roles: Set<string> }>();
   const typefaces = new Map<string, { uses: number; pageIds: Set<string> }>();
   const sizes = new Map<string, number>();
   const weights = new Map<string, number>();
 
+  const tokenUses = new Map<string, number>();
+  let sheetsRead = 0;
+  let inlineSeen = false;
+
   for (const page of pages) {
-    for (const { property, value } of declarationsOf(page)) {
+    sheetsRead += page.stylesheets?.length ?? 0;
+    if (/<style[\s>]/i.test(page.html) || /\sstyle\s*=/i.test(page.html)) inlineSeen = true;
+    const declarations = declarationsOf(page);
+    const tokens = resolveTokens(declarations);
+    for (const { property, value } of declarations) {
+      if (property.startsWith("--")) continue;
+      if (/^\s*var\(/.test(value)) {
+        const reference = /var\(\s*(--[-\w]+)/.exec(value)?.[1];
+        if (reference) tokenUses.set(reference, (tokenUses.get(reference) ?? 0) + 1);
+      }
+      // A value written as var(--brand) is the colour the token holds. Without
+      // this the palette finds each colour once, in its own declaration, and
+      // calls a site that uses tokens everywhere almost colourless.
+      const resolved = value.replace(/var\(\s*(--[-\w]+)\s*(?:,[^)]*)?\)/g, (whole, reference: string) => tokens.get(reference) ?? whole);
       const role = colourRole(property);
       if (role) {
         COLOUR_VALUE.lastIndex = 0;
-        for (const raw of value.match(COLOUR_VALUE) ?? []) {
+        for (const raw of resolved.match(COLOUR_VALUE) ?? []) {
           const key = normaliseColour(raw);
           const entry = colours.get(key) ?? { uses: 0, pageIds: new Set<string>(), roles: new Set<string>() };
           entry.uses += 1;
@@ -342,7 +445,7 @@ function buildPalette(pages: SurveyPage[]): SurveyPalette {
       if (property === "font-family") {
         // The first family is the one the site means; the rest are what it
         // falls back to when that one is missing.
-        const family = value.split(",")[0]!.replace(/["']/g, "").trim().toLowerCase();
+        const family = resolved.split(",")[0]!.replace(/["']/g, "").trim().toLowerCase();
         if (family && !/^(inherit|initial|unset|var\()/.test(family)) {
           const entry = typefaces.get(family) ?? { uses: 0, pageIds: new Set<string>() };
           entry.uses += 1;
@@ -350,10 +453,15 @@ function buildPalette(pages: SurveyPage[]): SurveyPalette {
           typefaces.set(family, entry);
         }
       }
-      if (property === "font-size") sizes.set(value.toLowerCase(), (sizes.get(value.toLowerCase()) ?? 0) + 1);
-      if (property === "font-weight") weights.set(value.toLowerCase(), (weights.get(value.toLowerCase()) ?? 0) + 1);
+      if (property === "font-size") sizes.set(resolved.toLowerCase(), (sizes.get(resolved.toLowerCase()) ?? 0) + 1);
+      if (property === "font-weight") weights.set(resolved.toLowerCase(), (weights.get(resolved.toLowerCase()) ?? 0) + 1);
     }
   }
+
+  // One list of tokens for the whole site: a token is declared once and meant
+  // to be the same everywhere, so reporting it per page would be reporting the
+  // stylesheet's line count.
+  const allTokens = [...new Map(pages.flatMap((page) => [...resolveTokens(declarationsOf(page))])).entries()];
 
   const byUse = <T extends { uses: number }>(left: T, right: T) => right.uses - left.uses;
   return {
@@ -365,6 +473,10 @@ function buildPalette(pages: SurveyPage[]): SurveyPalette {
       .sort((left, right) => byUse(left, right) || left.family.localeCompare(right.family)),
     sizes: [...sizes.entries()].map(([value, uses]) => ({ value, uses })).sort((left, right) => byUse(left, right) || left.value.localeCompare(right.value)),
     weights: [...weights.entries()].map(([value, uses]) => ({ value, uses })).sort((left, right) => byUse(left, right) || left.value.localeCompare(right.value)),
+    tokens: allTokens
+      .map(([name, value]) => ({ name, value, uses: tokenUses.get(name) ?? 0, isColour: LOOKS_LIKE_COLOUR.test(value) }))
+      .sort((left, right) => byUse(left, right) || left.name.localeCompare(right.name)),
+    readFrom: { stylesheets: sheetsRead, inline: inlineSeen },
   };
 }
 
@@ -493,9 +605,18 @@ export function surveySite(pages: SurveyPage[]): SiteSurvey {
     .map((entry) => ({ words: entry.words, href: entry.href, kind: entry.kind, pageIds: [...entry.pageIds], occurrences: entry.occurrences }))
     .sort((left, right) => right.pageIds.length - left.pageIds.length || right.occurrences - left.occurrences || left.words.localeCompare(right.words));
 
+  // Where the site's own navigation goes. A destination reached from most of the
+  // pages is part of the furniture wherever it turns up, which is what lets a
+  // "where next" block of site links be told from a listing of things.
+  const siteWideLinks = new Set(
+    [...actions.values()]
+      .filter((entry) => entry.href && entry.kind === "link" && entry.pageIds.size > pages.length / 2)
+      .map((entry) => entry.href!.toLowerCase()),
+  );
+
   const byKind = new Map<SurveyPageKind, SurveyTemplate>();
   for (const page of pages) {
-    const { kind, signals } = classifyPage(page);
+    const { kind, signals } = classifyPage(page, siteWideLinks);
     const template = byKind.get(kind) ?? { kind, pages: [], signals: [] };
     template.pages.push({ pageId: page.pageId, title: page.title, path: page.path });
     for (const signal of signals) if (!template.signals.includes(signal)) template.signals.push(signal);
