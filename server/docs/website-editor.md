@@ -96,6 +96,25 @@ not build. Four answers, each carrying its evidence:
   (`--brand: #3157ff`). Where a site has these they *are* its design system, so
   they are reported with the value they hold and how often it is leaned on.
 
+**It has to survive a real page.** The fixtures were a few hundred bytes and hid
+two collapses, both found by running the survey over real public websites rather
+than over its own test data. `sharedCandidates` asked its "is this block on
+another page" question by scanning every block against every other block, each
+comparison against a fingerprint of a whole subtree; and the survey re-read the
+entire page for every question it asked about it. Two copies of one real news
+page took over eight minutes, which in a request is not slow but broken. Both are
+now worked out once — a map of fingerprints to pages, and one parse per page —
+and the same two pages take about two seconds. `checks/websiteSurvey.ts` carries
+a deliberately loose bound on three pages of four hundred cards, as a guard
+against a regression of that shape rather than as a benchmark.
+
+Sharing one parse per page also fixed a rule that had never fired: an unlabelled
+first or last block is named header or footer by its position, and the check for
+that compared the element against the page's outermost blocks by identity — with
+the element from one parse and the blocks from another, always false. It failed
+as a cautious-looking wrong answer ("nothing in it says what it is") rather than
+as an error, which is why nothing noticed.
+
 **Nothing in it calls a model.** Every answer is derived from the markup, so a
 survey costs nothing, cannot invent a page, and reads the same twice.
 

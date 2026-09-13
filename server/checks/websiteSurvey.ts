@@ -184,6 +184,63 @@ check("type sizes were collected", survey.palette.sizes.some((entry) => entry.va
 check("and weights", survey.palette.weights.some((entry) => entry.value === "700"));
 check("colours are ordered by how much the site leans on them", survey.palette.colours.every((entry, index, all) => index === 0 || all[index - 1]!.uses >= entry.uses));
 
+/* ------------------------------------------ a site that names nothing itself */
+
+/**
+ * No <header>, no <footer>, no telling class — only position can answer.
+ *
+ * This is the rule that had never once fired: the element came from one parse of
+ * the page and the list of outermost blocks from another, so asking whether the
+ * element *was* one of those blocks compared nodes from two different trees and
+ * was always false. It failed silently, as a wrong answer that looks like a
+ * cautious one: every such block came back as "repeats across pages, but nothing
+ * in it says what it is".
+ */
+const bare = surveySite([
+  { pageId: "a", title: "A", path: "/", html: `<!doctype html><html><body><div class="strip"><a href="/">Kwame</a><a href="/shop">Shop</a></div><main><h1>One</h1><p>First.</p></main><div class="end"><p>&copy; 2026</p></div></body></html>` },
+  { pageId: "b", title: "B", path: "/b", html: `<!doctype html><html><body><div class="strip"><a href="/">Kwame</a><a href="/shop">Shop</a></div><main><h1>Two</h1><p>Second.</p></main><div class="end"><p>&copy; 2026</p></div></body></html>` },
+]);
+
+const bareRole = (role: string) => bare.elements.find((element) => element.role === role);
+check("a repeated first block with nothing naming it is the header", bareRole("header"));
+check("and says position is why", /first block/i.test(bareRole("header")?.roleReason ?? ""));
+check("a repeated last block with nothing naming it is the footer", bareRole("footer"));
+check("and says position is why", /last block/i.test(bareRole("footer")?.roleReason ?? ""));
+
+/* ------------------------------------------------- a page the size of a real one */
+
+/**
+ * Not a benchmark — a catastrophe guard.
+ *
+ * The fixtures above are a few hundred bytes and hid two separate collapses:
+ * detection compared every block against every other block, and the survey
+ * re-read the whole page for every question it asked about it. Two copies of one
+ * real news page took over eight minutes between them, which in a request is not
+ * slow but broken. The bound is loose on purpose: real time here is well under a
+ * second, so this fires on a regression of that shape and not on a busy machine.
+ */
+// Each page lists different things, as real listing pages do. Three pages
+// carrying the identical 400 links would be site furniture by the survey's own
+// rule, and rightly not a catalogue.
+const heavyPage = (page: number) => {
+  const cards = Array.from(
+    { length: 400 },
+    (_, index) =>
+      `<article class="card"><a href="/thing/${page}-${index}"><img src="/i${index}.png" alt="Thing ${index}"><h3>Thing ${page}-${index}</h3><p>A short line about it.</p></a></article>`,
+  ).join("");
+  return `<!doctype html><html><head><link rel="stylesheet" href="/s.css"></head><body>${header}<main><div class="grid">${cards}</div></main>${footer}</body></html>`;
+};
+const heavyPages: SurveyPage[] = [1, 2, 3].map((n) => ({ pageId: `heavy-${n}`, title: `Heavy ${n}`, path: `/heavy-${n}`, html: heavyPage(n), stylesheets: [{ href: "/s.css", css: SITE_CSS }] }));
+
+const startedAt = Date.now();
+const heavy = surveySite(heavyPages);
+const tookMs = Date.now() - startedAt;
+
+check(`three pages of 400 cards are surveyed promptly (took ${tookMs}ms)`, tookMs < 15_000);
+equal("and all three were read", heavy.pagesRead, 3);
+check("the header is still found in the noise", heavy.elements.some((element) => element.role === "header"));
+equal("and a page of 400 linked cards is a catalogue", heavy.templates[0]?.kind === "home" ? heavy.templates[1]?.kind : heavy.templates[0]?.kind, "catalogue");
+
 /* ------------------------------------------------------- a site of one page */
 
 const alone = surveySite([withCss(pages[0]!)]);

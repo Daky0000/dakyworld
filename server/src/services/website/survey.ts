@@ -497,8 +497,7 @@ function positionOf(pages: SurveyPage[], instances: Array<{ pageId: string; fiel
   for (const instance of instances) {
     const page = pages.find((candidate) => candidate.pageId === instance.pageId);
     if (!page) continue;
-    const body = findBody(parseHtml(page.html));
-    const blocks = body ? body.children.filter((child) => !["script", "style", "template"].includes(child.tag)) : [];
+    const blocks = indexOf(page).blocks;
     if (!blocks.length) continue;
     const element = elementForInstance(page, instance.fieldId);
     if (!element) continue;
@@ -533,13 +532,58 @@ function topBlockOf(element: ElementNode, blocks: ElementNode[]): ElementNode | 
  * step the shared module takes, so this stays a lookup rather than a second
  * opinion about what a field is.
  */
-function elementForInstance(page: SurveyPage, fieldId: string): ElementNode | null {
-  const field = readPage(page.html).fields.find((candidate) => candidate.id === fieldId);
-  if (!field || field.attrInsert === undefined) return null;
-  for (const element of walk(parseHtml(page.html))) {
-    if (element.start + 1 + element.tag.length === field.attrInsert) return element;
+/**
+ * Each page parsed once, however many times it is asked about.
+ *
+ * Every instance of every candidate region asks which element it is, and the
+ * first version answered by re-reading the whole page each time. On a large
+ * real page — 3,837 elements — that was thirty-four seconds for two pages,
+ * against one second for the detection feeding it. Keyed on the page object
+ * rather than its id, so nothing leaks between surveys and nothing has to be
+ * threaded through every function that wants it.
+ */
+type PageIndex = { root: ElementNode; byField: Map<string, ElementNode>; blocks: ElementNode[] };
+
+const pageIndexes = new WeakMap<SurveyPage, PageIndex>();
+
+/**
+ * One parse per page, and everything about it derived from that same tree.
+ *
+ * Sharing the tree is not only about speed. `topBlockOf` asks whether an
+ * element *is* one of the page's outermost blocks, which is an identity
+ * comparison — so an element from one parse and a block list from another can
+ * never match, and the position rules that name an unlabelled first block a
+ * header silently never fired. They were two parses before this.
+ */
+function indexOf(page: SurveyPage): PageIndex {
+  const held = pageIndexes.get(page);
+  if (held) return held;
+
+  const root = parseHtml(page.html);
+  const byOffset = new Map<number, ElementNode>();
+  for (const element of walk(root)) byOffset.set(element.start + 1 + element.tag.length, element);
+
+  const byField = new Map<string, ElementNode>();
+  for (const field of readPage(page.html).fields) {
+    if (field.attrInsert === undefined) continue;
+    const element = byOffset.get(field.attrInsert);
+    if (element) byField.set(field.id, element);
   }
-  return null;
+
+  const body = findBody(root);
+  const blocks = body ? body.children.filter((child) => !["script", "style", "template"].includes(child.tag)) : [];
+
+  const index = { root, byField, blocks };
+  pageIndexes.set(page, index);
+  return index;
+}
+
+function elementsByField(page: SurveyPage): Map<string, ElementNode> {
+  return indexOf(page).byField;
+}
+
+function elementForInstance(page: SurveyPage, fieldId: string): ElementNode | null {
+  return elementsByField(page).get(fieldId) ?? null;
 }
 
 /**

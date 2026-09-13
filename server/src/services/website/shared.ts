@@ -365,9 +365,28 @@ export function sharedCandidates(pages: Array<{ pageId: string; title: string; h
     groups.set(key, group);
   };
 
+  // Which pages each fingerprint appears on, worked out once.
+  //
+  // This was a `seen.some(...)` inside the loop below, which is every block on
+  // the site compared against every other block on the site — and the thing
+  // being compared is a fingerprint string of a whole subtree, so each
+  // comparison is long as well as numerous. On the fixtures it was instant. On
+  // two copies of one real news page, 1068 elements, it took over eight
+  // minutes, which is not a slow feature but a broken one: the request would
+  // never come back. Grouping first makes the same decision in one pass.
+  const pagesByContent = new Map<string, Set<string>>();
+  for (const member of seen) {
+    if (member.annotation) continue;
+    const pages = pagesByContent.get(member.content) ?? new Set<string>();
+    pages.add(member.pageId);
+    pagesByContent.set(member.content, pages);
+  }
+
   for (const member of seen) {
     if (member.annotation) add(`annotation:${member.annotation}`, member, "high", true);
-    else if (seen.some((other) => other !== member && other.pageId !== member.pageId && other.content === member.content)) add(`content:${member.content}`, member, "high", false);
+    // The same words on a *different* page. Two copies on one page are a
+    // repetition within it, not a component shared between pages.
+    else if ((pagesByContent.get(member.content)?.size ?? 0) > 1) add(`content:${member.content}`, member, "high", false);
     else add(`structure:${member.structure}`, member, "medium", false);
   }
 
@@ -400,25 +419,38 @@ export function sharedCandidates(pages: Array<{ pageId: string; title: string; h
 
   // Drop a candidate whose instances all sit inside another candidate's, so the
   // outermost repeated region is the one offered.
+  //
+  // Each page's parents are worked out once. This used to re-read the
+  // whole page on every question, and it is asked one per candidate pair per
+  // instance — on a real page that is tens of thousands of full parses, which
+  // is where eight of the nine minutes this used to take actually went.
+  const parentsByPage = new Map<string, Map<string, string | undefined>>();
+  const parentsOf = (pageId: string) => {
+    const held = parentsByPage.get(pageId);
+    if (held) return held;
+    const page = pages.find((candidate) => candidate.pageId === pageId);
+    const map = new Map<string, string | undefined>();
+    if (page) for (const field of fieldsOf(page.html)) map.set(field.id, field.parentId);
+    parentsByPage.set(pageId, map);
+    return map;
+  };
+  const descends = (pageId: string, fieldId: string, ancestorId: string) => {
+    const parents = parentsOf(pageId);
+    let walker = parents.get(fieldId);
+    while (walker) {
+      if (walker === ancestorId) return true;
+      walker = parents.get(walker);
+    }
+    return false;
+  };
+
   const inside = (child: SharedCandidate, parent: SharedCandidate) =>
     child !== parent &&
     child.instances.every((instance) =>
-      parent.instances.some((other) => other.pageId === instance.pageId && other.fieldId !== instance.fieldId && isDescendant(pages, instance.pageId, instance.fieldId, other.fieldId)),
+      parent.instances.some((other) => other.pageId === instance.pageId && other.fieldId !== instance.fieldId && descends(instance.pageId, instance.fieldId, other.fieldId)),
     );
 
   return candidates
     .filter((candidate) => !candidates.some((other) => inside(candidate, other)))
     .sort((left, right) => right.instances.length - left.instances.length || left.name.localeCompare(right.name));
-}
-
-function isDescendant(pages: Array<{ pageId: string; html: string }>, pageId: string, fieldId: string, ancestorId: string): boolean {
-  const page = pages.find((candidate) => candidate.pageId === pageId);
-  if (!page) return false;
-  const byId = new Map(fieldsOf(page.html).map((field) => [field.id, field]));
-  let walker = byId.get(fieldId)?.parentId;
-  while (walker) {
-    if (walker === ancestorId) return true;
-    walker = byId.get(walker)?.parentId;
-  }
-  return false;
 }
