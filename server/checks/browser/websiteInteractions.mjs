@@ -1,0 +1,34 @@
+﻿import assert from 'node:assert/strict';
+const { chromium } = await import(process.env.PLAYWRIGHT_URL ?? 'playwright');
+const browser = await chromium.launch();
+const page = await browser.newPage();
+const errors=[]; page.on('pageerror', e=>errors.push(e.message));
+try {
+ await page.goto('http://127.0.0.1:5199/builder-harness.html?interaction');
+ const editor=page.locator('[contenteditable=true]'); await editor.waitFor();
+ await editor.evaluate(el=>{const r=document.createRange();r.setStart(el.firstChild,5);r.setEnd(el.querySelector('strong').firstChild,4);const s=getSelection();s.removeAllRanges();s.addRange(r);document.dispatchEvent(new Event('selectionchange'));});
+ await page.getByRole('button',{name:'Inspector colour shortcut'}).click();
+ let html=await page.getByTestId('rich-html').innerText();
+ assert.match(html,/Make <span style="color: rgb\(0, 128, 0\);">your <\/span>/);
+ assert.match(html,/<strong><span style="color: rgb\(0, 128, 0\);">next<\/span> idea<\/strong> real\./);
+ await page.getByRole('button',{name:'Bold',exact:true}).click();
+ assert.equal(await editor.locator('span span').count(),0);
+ assert.equal(await page.locator('[aria-readonly=true]').getAttribute('contenteditable'),'false');
+ await page.getByText('Hover & keyboard focus',{exact:true}).click();
+ await page.getByLabel('hover color',{exact:true}).fill('#ff0000');await page.getByLabel('hover color',{exact:true}).press('Tab');
+ const button=page.getByTestId('interaction-button'); await button.hover();
+ assert.equal(await button.evaluate(el=>getComputedStyle(el).color),'rgb(255, 0, 0)');
+ await page.getByLabel('Preview this state').check();
+ assert.equal(await button.evaluate(el=>getComputedStyle(el).color),'rgb(255, 0, 0)');
+ await page.getByLabel('Preview this state').uncheck();
+ assert.equal(await button.evaluate(el=>getComputedStyle(el).color),'rgb(0, 0, 0)');
+ await page.getByRole('button',{name:'Keyboard focus',exact:true}).click();
+ await page.getByLabel('focus background-color',{exact:true}).fill('#ffff00');await page.getByLabel('focus background-color',{exact:true}).press('Tab');
+ await button.focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');
+ assert.equal(await button.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 0)');
+ await page.getByLabel('Interaction transition').selectOption({label:'150 ms'});
+ await page.emulateMedia({reducedMotion:'reduce'});
+ assert.equal(await button.evaluate(el=>getComputedStyle(el).transitionDuration),'0s');
+ assert.deepEqual(errors,[]);
+ console.log('websiteInteractions browser: exact nested selection, retained selection, no span nesting, read-only, hover, focus, state preview, reduced motion passed.');
+} finally { await browser.close(); }

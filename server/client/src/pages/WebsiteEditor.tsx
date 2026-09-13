@@ -1,3 +1,7 @@
+import { formatActiveText } from "../lib/websiteTextSelection";
+import { WebsiteRichText } from "../components/WebsiteRichText";
+import { WebsiteTextFormatting } from "../components/WebsiteTextFormatting";
+import { WebsiteInteractionStyles } from "../components/WebsiteInteractionStyles";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
@@ -5,6 +9,10 @@ import { api, ApiError, apiUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
+import { WebsiteQuickStart } from "../components/WebsiteQuickStart";
+import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
+import { WebsitePresetPicker } from "../components/WebsiteBrandPresets";
+import type { BrandPreset } from "../lib/websiteBrandPresets";
 import { WebsiteAssetLibrary } from "../components/WebsiteAssetLibrary";
 import { MakeSharedPanel, SharedElementPanel, SharedPublishReview } from "../components/WebsiteShared";
 import { PublishStatus } from "../components/PublishStatus";
@@ -88,43 +96,6 @@ const LIVE_KEYS = new Set(["value", "style", "responsive", "variant", "newTab"])
  * the middle. The DOM owns the content while it is being typed in, and the
  * component is remounted by its key when the page reloads underneath it.
  */
-function RichText({ html, onChange }: { html: string; onChange: (next: string) => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (ref.current && ref.current.innerHTML !== html) ref.current.innerHTML = html;
-    // Once, on mount. See the note above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div
-      ref={ref}
-      contentEditable
-      suppressContentEditableWarning
-      role="textbox"
-      aria-multiline="true"
-      className={`${INPUT} min-h-[44px] whitespace-pre-wrap`}
-      onInput={() => onChange(ref.current?.innerHTML ?? "")}
-      onPaste={(event) => {
-        // Pasting out of a word processor brings its markup with it. The words
-        // are what somebody meant to paste.
-        event.preventDefault();
-        const text = event.clipboardData.getData("text/plain");
-        document.execCommand("insertText", false, text);
-      }}
-      onKeyDown={(event) => {
-        // These are lines within an element, not new paragraphs — the browser's
-        // default here is a `<div>`, which would put a block inside a heading.
-        if (event.key === "Enter") {
-          event.preventDefault();
-          document.execCommand("insertLineBreak");
-        }
-      }}
-    />
-  );
-}
-
 /** `btn-primary` under stem `btn` reads as "Primary". */
 function variantLabel(stem: string | undefined, variant: string): string {
   if (!stem || !variant.startsWith(`${stem}-`)) return variant;
@@ -264,7 +235,7 @@ function FieldRow({
     >
       {!bare && (
         <div className="mb-2 flex items-center justify-between gap-3">
-          <span className="text-[11px] font-bold uppercase tracking-[.1em] text-muted">{field.label}</span>
+          <span className="text-xs font-bold uppercase tracking-[.1em] text-muted">{field.label}</span>
           {changed && <Badge tone="warn">Changed</Badge>}
         </div>
       )}
@@ -274,9 +245,9 @@ function FieldRow({
         </div>
       )}
 
-      {field.kind === "richtext" && <RichText html={value} onChange={(next) => onChange({ ...edit, value: next })} />}
+      {(field.kind === "richtext" || (field.kind === "text" && field.tag !== "title" && field.tag !== "meta")) && <WebsiteRichText html={value} readOnly={readOnly} onChange={(next) => onChange({ ...edit, value: next })} />}
 
-      {field.kind === "text" && (
+      {field.kind === "text" && (field.tag === "title" || field.tag === "meta") && (
         <textarea
           className={`${INPUT} resize-y`}
           rows={value.length > 90 ? 3 : 1}
@@ -293,13 +264,7 @@ function FieldRow({
               <span className="mb-1 block text-xs text-muted">
                 {field.kind === "button" ? "Words on the button" : "Words on the link"}
               </span>
-              <input
-                className={INPUT}
-                value={value}
-                readOnly={readOnly || !field.value}
-                placeholder={field.value ? "" : "This link has no words of its own"}
-                onChange={(event) => onChange({ ...edit, value: event.target.value })}
-              />
+              <WebsiteRichText html={value} readOnly={readOnly || !field.value} onChange={next => onChange({ ...edit, value: next })} />
             </label>
             {/* A `<button>` has no destination — where it leads is decided by
                 script — so the box is not drawn rather than drawn and inert. */}
@@ -431,20 +396,20 @@ function ConflictDialog({
           ) : (
             <>
               <div className="mb-3 flex items-center gap-2">
-                <span className="text-[11px] uppercase tracking-[.1em] text-muted">
+                <span className="text-xs uppercase tracking-[.1em] text-muted">
                   {contested.length} field{contested.length === 1 ? "" : "s"} you both changed
                 </span>
                 <button
                   type="button"
                   onClick={() => setChoices(Object.fromEntries(contested.map((field) => [field.id, "yours" as const])))}
-                  className="ml-auto text-[11px] text-muted underline-offset-2 hover:text-ink hover:underline"
+                  className="ml-auto text-xs text-muted underline-offset-2 hover:text-ink hover:underline"
                 >
                   Keep all mine
                 </button>
                 <button
                   type="button"
                   onClick={() => setChoices(Object.fromEntries(contested.map((field) => [field.id, "theirs" as const])))}
-                  className="text-[11px] text-muted underline-offset-2 hover:text-ink hover:underline"
+                  className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline"
                 >
                   Keep all theirs
                 </button>
@@ -453,7 +418,7 @@ function ConflictDialog({
               <div className="space-y-3">
                 {contested.map((field) => (
                   <div key={field.id} className="rounded-xl border border-line p-3">
-                    <div className="mb-2 text-[11px] font-bold uppercase tracking-[.08em] text-muted">{field.label}</div>
+                    <div className="mb-2 text-xs font-bold uppercase tracking-[.08em] text-muted">{field.label}</div>
                     <div className="grid gap-2 sm:grid-cols-2">
                       {(["yours", "theirs"] as const).map((side) => (
                         <button
@@ -464,7 +429,7 @@ function ConflictDialog({
                             choices[field.id] === side ? "border-blue bg-blue/[.06] text-ink" : "border-line text-muted hover:border-ink/30"
                           }`}
                         >
-                          <div className="mb-1 text-[10px] uppercase tracking-[.1em]">
+                          <div className="mb-1 text-xs uppercase tracking-[.1em]">
                             {side === "yours" ? "Yours" : conflict.savedBy?.name ?? "Theirs"}
                           </div>
                           <div className="break-words">{sideText(side === "yours" ? field.yours : field.theirs)}</div>
@@ -506,6 +471,13 @@ export function WebsiteEditor() {
 function WebsitePageEditor({ pageId }: { pageId: string }) {
   const qc = useQueryClient();
   const { user } = useAuth();
+  const [designerMode, setDesignerMode] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  useEffect(() => {
+    if (!user?.id) return;
+    try { setDesignerMode(localStorage.getItem(`website-designer:${user.id}`) === "yes"); setShowGuide(localStorage.getItem(`website-guide:${user.id}`) !== "done"); } catch { setShowGuide(true); }
+  }, [user?.id]);
+  const closeGuide = () => { setShowGuide(false); try { localStorage.setItem(`website-guide:${user?.id}`, "done"); } catch { /* Preferences are optional. */ } };
   const localDraftKey = `website-draft:${user?.id}:${pageId}`;
   const recovered = useRef(false);
 
@@ -638,7 +610,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   const access = useWebsiteAccess(page.data?.site.id);
   const canEdit = access.data?.capabilities.edit === true;
-  const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: () => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean } }>(`/website/sites/${page.data!.site.id}/design`) });
+  const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: () => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`) });
 
   /* ------------------------------------------------------------- history */
 
@@ -1080,6 +1052,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const restore = useCallback(
     (step: number) => {
       if (!canEdit || reviewOpen || showVersions || publishPending.current || structurePending.current) return;
+      if (step < 0) commitHistory(latestEdits.current);
       const state = history.current;
       const index = state.index + step;
       if (index < 0 || index >= state.list.length) { structuralHistory.current(step); return; }
@@ -1097,7 +1070,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         restoring.current = false;
       }, 0);
     },
-    [canEdit, reviewOpen, showVersions],
+    [canEdit, reviewOpen, showVersions, commitHistory],
   );
 
   useEffect(() => {
@@ -1219,6 +1192,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const readOnly = !canEdit || publish.isPending || reviewOpen || showVersions || structureBusy;
   const pickedScope = pickedId ? page.data.shared?.scope[pickedId] : undefined;
   const pickedShared = pickedScope ? page.data.shared?.elements.find((element) => element.instanceId === pickedScope.instanceId) : undefined;
+  let pickedElement: HTMLElement | null = null;
+  try { pickedElement = pickedId ? frame.current?.contentDocument?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(pickedId)}"]`) ?? null : null; } catch { /* Preview reconnects after load. */ }
   const pickedResponsive = pickedId ? (edits[pickedId]?.responsive ?? picked?.responsive ?? {}) : {};
   const pickedStyle = device === "desktop"
     ? pickedId ? (edits[pickedId]?.style ?? picked?.style ?? "") : ""
@@ -1243,8 +1218,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     : dirty.current
       ? "Unsaved changes"
       : changedCount > 0
-        ? `${changedCount} unpublished change${changedCount === 1 ? "" : "s"}`
-        : "Everything published";
+        ? `Draft saved · ${changedCount} unpublished change${changedCount === 1 ? "" : "s"}`
+        : "No unpublished changes";
 
   const frameWidth = DEVICES.find((option) => option.key === device)!.width;
 
@@ -1315,6 +1290,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           onCancel={() => setConflict(null)}
         />
       )}
+      {showGuide && <WebsiteQuickStart onClose={closeGuide} />}
       {/* ------------------------------------------------------------ bar */}
       <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-white px-4 py-2.5">
         <Link to="/website/sites" className="shrink-0 text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
@@ -1322,7 +1298,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         </Link>
         <div className="min-w-0">
           <div className="truncate font-display text-sm tracking-[-.02em]">{page.data.page.title}</div>
-          <div className="truncate text-[10px] text-muted">
+          <div className="truncate text-xs text-muted">
             <span className="font-mono">{page.data.page.path}</span>
             {page.data.draft.savedAt && (
               <>
@@ -1334,7 +1310,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <span className={`text-[11px] ${dirty.current || changedCount > 0 ? "text-ink" : "text-muted"}`}>{status}</span>
+          <span className={`text-xs ${dirty.current || changedCount > 0 ? "text-ink" : "text-muted"}`}>{status}</span>
 
           <div className="flex items-center gap-0.5">
             <button
@@ -1393,7 +1369,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   key={option.key}
                   type="button"
                   onClick={() => setDevice(option.key)}
-                  className={`px-2.5 py-1 font-mono text-[9px] uppercase tracking-[.12em] ${
+                  className={`px-2.5 py-1 font-mono text-xs uppercase tracking-[.12em] ${
                     device === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"
                   }`}
                 >
@@ -1415,13 +1391,19 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   setPreviewToken((token) => token + 1);
                   setMode(option.key);
                 }}
-                className={`px-3 py-1.5 text-[11px] font-semibold ${mode === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"}`}
+                className={`px-3 py-1.5 text-xs font-semibold ${mode === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"}`}
               >
                 {option.label}
               </button>
             ))}
           </div>
 
+          <span className="text-xs text-muted">{designerMode ? "Designer" : "Client editing"}</span>
+          <details className="relative" onKeyDown={event => { if (event.key === "Escape") event.currentTarget.open = false; }}>
+            <summary className="cursor-pointer rounded-xl border border-line px-3 py-2 text-sm">More</summary>
+            <div className="absolute right-0 top-full z-50 mt-2 flex w-64 flex-col items-start gap-3 rounded-xl border border-line bg-white p-4 shadow-xl">
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={designerMode} onChange={event => { setDesignerMode(event.target.checked); try { localStorage.setItem(`website-designer:${user?.id}`, event.target.checked ? "yes" : "no"); } catch { /* Optional preference. */ } }} />Designer controls</label>
+              <button type="button" className="text-sm text-blue" onClick={() => setShowGuide(true)}>First edit walkthrough</button>
           <a className="text-xs text-blue" href={apiUrl(`/website/pages/${pageId}/export`)} download onClick={event => { if (dirty.current || save.isPending) { event.preventDefault(); setFailure("Wait for the current changes to save before downloading."); } }}>Download HTML</a>
           <Button variant="ghost" size="sm" disabled={save.isPending || publish.isPending || structureBusy} onClick={async () => {
             try { if (dirty.current) await save.mutateAsync(latestEdits.current); if (!dirty.current) setShowVersions(true); }
@@ -1440,6 +1422,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               Discard
             </Button>
           )}
+            </div>
+          </details>
           {canPublish && (
             <Button
               variant="accent"
@@ -1465,7 +1449,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           {published && (
             <div className="rounded-xl border border-line bg-white p-3 text-sm">
               <p className="font-semibold text-ink">
-                Published — version {published.version}, {published.changed} change{published.changed === 1 ? "" : "s"}.
+                Changes sent — version {published.version}, {published.changed} change{published.changed === 1 ? "" : "s"}.
               </p>
               {/* What went out, in words. A count on its own is not something
                   anybody can check, and this is the last moment before it is
@@ -1517,7 +1501,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 panel and it should look like a label on a thing, not like a
                 heading with the same weight as the thing's name. */}
             <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2.5">
-              <span className="shrink-0 rounded-md bg-sunken px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
+              <span className="shrink-0 rounded-md bg-sunken px-1.5 py-0.5 font-mono text-xs uppercase tracking-[.1em] text-muted">
                 {picked ? picked.tag : "—"}
               </span>
               <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink">{picked ? picked.label : "Nothing selected"}</span>
@@ -1537,7 +1521,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             </div>
 
             {liveBlind && (
-              <p className="flex-none border-b border-line bg-warn-surface px-4 py-2 text-[11px] leading-relaxed text-warn-text">
+              <p className="flex-none border-b border-line bg-warn-surface px-4 py-2 text-xs leading-relaxed text-warn-text">
                 The page beside this is not keeping up as you type. Your changes are being saved — it will catch up a moment
                 after each one.
               </p>
@@ -1545,25 +1529,25 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
             <WebsiteBreadcrumbs fields={allFields} selectedId={pickedId} onSelect={pick} />
             {page.data.structure?.stale && <p role="alert" className="bg-warn-surface px-3 py-2 text-xs text-warn-text">The source changed after these layout edits. Your draft is preserved. Discard it to work from the latest source; publishing is blocked.</p>}
-            <WebsiteLayers fields={allFields} edits={edits} problems={problems} shared={page.data.shared?.scope} selectedId={pickedId} onSelect={pick} onMove={readOnly || save.isPending ? undefined : (id, target, position) => { void runStructure(position, id, target); }} />
-            {picked && <div className="border-b border-line px-3 py-2">
-              <div className="flex flex-wrap gap-2 text-[11px]">
+            <WebsiteLayers fields={allFields} edits={edits} problems={problems} shared={page.data.shared?.scope} selectedId={pickedId} onSelect={pick} onMove={!designerMode || readOnly || save.isPending ? undefined : (id, target, position) => { void runStructure(position, id, target); }} />
+            {designerMode && picked && <div className="border-b border-line px-3 py-2">
+              <div className="flex flex-wrap gap-2 text-xs">
                 <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.previousId} onClick={() => void runStructure("before", picked.id, picked.structure?.previousId)}>Move up</button>
                 <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.nextId} onClick={() => void runStructure("after", picked.id, picked.structure?.nextId)}>Move down</button>
                 <button type="button" className="text-blue disabled:text-faint" title={picked.structure?.duplicateReason} disabled={readOnly || save.isPending || !picked.structure?.duplicate} onClick={() => void runStructure("duplicate", picked.id)}>Duplicate</button>
                 <button type="button" className="text-danger-text disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.remove} onClick={() => void runStructure("remove", picked.id)}>Remove</button>
               </div>
-              <p className="mt-2 text-[10px] text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
+              <p className="mt-2 text-xs text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
 
             <div className="max-h-[70%] min-h-0 flex-none overflow-y-auto">
               {!picked ? (
                 <div className="px-4 py-6 text-center">
                   <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                  <p className="mt-1 text-xs leading-relaxed text-muted">
                     Its words and its look appear here. Double click to type straight into the page.
                   </p>
-                  <p className="mt-3 text-[10px] text-muted">
+                  <p className="mt-3 text-xs text-muted">
                     {allFields.length} editable {allFields.length === 1 ? "thing" : "things"} on this page.
                   </p>
                 </div>
@@ -1572,7 +1556,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   {/* Before the controls, not beside them: somebody about to
                       change a heading has to know whether they are changing one
                       page or eight, and afterwards is too late. */}
-                  {!pickedShared && picked.kind === "container" && (
+                  {designerMode && !pickedShared && picked.kind === "container" && (
                     <MakeSharedPanel
                       siteId={site.id}
                       pageId={pageId}
@@ -1608,37 +1592,42 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       every panel and is not what somebody came to read. */}
                   <div className="border-b border-line bg-sunken/60 px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
-                      <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
+                      <span className={`rounded-md px-1.5 py-0.5 text-xs font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
                         {device === "desktop" ? "All sizes" : device === "tablet" ? "Tablet and below" : "Phone only"}
                       </span>
-                      <span className="font-mono text-[9px] text-muted">
+                      <span className="font-mono text-xs text-muted">
                         {computed.width || "—"} × {computed.height || "—"}
                       </span>
                     </div>
-                    <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted">
                       {device === "desktop"
                         ? "Tablet and phone overrides win at smaller widths."
                         : "Only what you change here overrides the larger layout. Reset a value to inherit it again."}
                     </p>
                     {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && (
-                      <p className="mt-1.5 text-[10px] leading-relaxed text-warn-text">
+                      <p className="mt-1.5 text-xs leading-relaxed text-warn-text">
                         This element has a base style marked !important, so that property keeps its base value at every size until you change it
                         under Desktop.
                       </p>
                     )}
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-ink transition hover:text-blue">Copy style</button>
-                      <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-ink transition hover:text-blue disabled:text-faint">Paste</button>
-                      {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-ink transition hover:text-blue disabled:text-faint">Clear overrides</button>}
-                      <span className="ml-auto self-center text-[9px] text-faint">{picked.confidence === "annotated" ? "Stable field" : "Discovered"}</span>
-                    </div>
+                    {designerMode && <div className="mt-2 flex flex-wrap gap-1">
+                      <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue">Copy style</button>
+                      <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue disabled:text-faint">Paste</button>
+                      {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue disabled:text-faint">Clear overrides</button>}
+                      <span className="ml-auto self-center text-xs text-faint">{picked.confidence === "annotated" ? "Stable field" : "Discovered"}</span>
+                    </div>}
                   </div>
 
                   {/* One inspector, drawn from what the element is. The frame is
                       what knows that — its display, its parent's, whether it has
                       words of its own — and when the frame cannot be reached the
                       field row is the only thing left to go on. */}
+                  {!readOnly && <div className="px-3 pt-3"><WebsitePresetPicker presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
+                  {picked.kind !== "container" && picked.kind !== "image" && !readOnly && <div className="px-3 pt-2"><WebsiteTextFormatting element={pickedElement} onChange={html => { change(picked.id, { ...edits[picked.id], value: html }, { fromFrame: true, commit: true }); setFrameEdit(token => token + 1); }} /></div>}
+                  <WebsiteInteractionStyles element={pickedElement} style={edits[picked.id]?.style ?? picked.style ?? ""} readOnly={readOnly} onChange={style => change(picked.id, { ...edits[picked.id], style }, { commit: true })} />
                   <ElementInspector
+                    simple={!designerMode}
+                    onTextColour={colour => !readOnly && formatActiveText({ color: colour })}
                     key={`${picked.id}:${device}`}
                     facts={{
                       kind: picked.kind,
@@ -1668,19 +1657,21 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     onReset={() => changePickedStyle(device === "desktop" ? picked.style ?? "" : picked.responsive?.[device] ?? "", true)}
                     content={
                       <>
+                        {picked.kind === "image" && !readOnly && <WebsiteImageFraming siteId={site.id} key={`${picked.id}:${device}:${edits[picked.id]?.value ?? picked.value}`} src={(() => { try { return new URL(edits[picked.id]?.value ?? picked.value, `${site.publicUrl.replace(/\/+$/, "")}/`).toString(); } catch { return ""; } })()} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} />}
+
                         {picked.kind !== "image" && picked.kind !== "container" && (
                           <div className="mb-2 flex justify-end">
                             <button
                               type="button"
                               onClick={() => tell({ type: "edit", id: picked.id })}
-                              className="text-[10px] text-muted underline-offset-2 transition hover:text-blue hover:underline"
+                              className="text-xs text-muted underline-offset-2 transition hover:text-blue hover:underline"
                             >
                               {typingId === picked.id ? "Typing on the page" : "Type on the page"}
                             </button>
                           </div>
                         )}
                         {absentIds.has(picked.id) && (
-                          <p className="mb-2 rounded-xl bg-cream/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+                          <p className="mb-2 rounded-xl bg-cream/70 px-2.5 py-2 text-xs leading-relaxed text-muted">
                             {picked.id.startsWith("meta.")
                               ? "This one is not on the page itself — it is what browsers and search results show. Nothing here will change in the preview."
                               : "This one cannot be shown while you type. It appears in the page once the draft saves."}
@@ -1710,7 +1701,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         {mode === "edit" ? (
           <>
             <aside className="w-[240px] flex-none overflow-y-auto border-r border-line bg-white p-3">
-              <div className="mb-2 px-1 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-muted">Sections</div>
+              <div className="mb-2 px-1 font-mono text-xs font-bold uppercase tracking-[.14em] text-muted">Sections</div>
               <ul className="space-y-0.5">
                 {sections.map((candidate) => {
                   const edited = candidate.fields.some((field) => edits[field.id]);
@@ -1725,7 +1716,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                         }`}
                       >
                         <span className="truncate">{candidate.label}</span>
-                        <span className={`shrink-0 text-[9px] ${candidate.id === section?.id ? "text-cream/60" : "text-muted"}`}>
+                        <span className={`shrink-0 text-xs ${candidate.id === section?.id ? "text-cream/60" : "text-muted"}`}>
                           {edited ? "●" : candidate.fields.length}
                         </span>
                       </button>

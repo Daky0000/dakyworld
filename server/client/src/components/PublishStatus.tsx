@@ -35,36 +35,29 @@ export function PublishStatus({ siteId, jobId }: { siteId: string; jobId: string
     refetchInterval: (query) => (query.state.data && WAITING.has(query.state.data.state) ? 15_000 : false),
   });
 
-  if (!job.data) return null;
-  const status = job.data;
+  if (job.isError) return <p role="alert" className="mt-2 text-sm text-warn-text">Unable to check publishing status. <button type="button" className="underline" onClick={() => void job.refetch()}>Retry status check</button>. Avoid publishing again until you have checked the live site.</p>;
+  if (!job.data) return <p role="status" className="mt-2 text-sm text-muted">Loading publishing status…</p>;
+  return <PublishProgress status={job.data} />;
+}
 
-  if (status.state === "COMPLETED") {
-    return (
-      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-positive-text">
-        <span aria-hidden>✓</span>
-        <span>
-          Live site updated
-          {status.deployedInSeconds !== null && ` — ${status.deployedInSeconds < 90 ? `${status.deployedInSeconds} seconds` : `${Math.round(status.deployedInSeconds / 60)} minutes`} after publishing`}
-        </span>
-      </p>
-    );
-  }
-
-  if (WAITING.has(status.state)) {
-    return (
-      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
-        <span aria-hidden className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue" />
-        <span>Published to the repository. Waiting for the live site to update{status.attempts > 2 ? " — this one is taking longer than usual" : ""}…</span>
-      </p>
-    );
-  }
-
-  return (
-    <p className="mt-1.5 text-xs text-warn-text">
-      <span aria-hidden>⚠ </span>
-      {status.state === "VERIFY_FAILED"
-        ? "Published to the repository, but the live website has not updated. The host may not have rebuilt, or it may be serving a cached copy."
-        : status.lastError ?? status.label}
-    </p>
-  );
+export function PublishProgress({ status }: { status: PublishJobStatus }) {
+  const waiting = WAITING.has(status.state);
+  const complete = status.state === "COMPLETED";
+  const checking = ["COMMITTED", "DEPLOYING", "VERIFYING", "VERIFY_FAILED", "DEPLOY_FAILED"].includes(status.state);
+  const active = complete ? 3 : checking ? 2 : 1;
+  const guidance: Partial<Record<PublishJobStatus["state"], string>> = {
+    CONFLICT: "The source changed. Reopen the page, resolve the conflict and review again.",
+    COMMIT_FAILED: "The changes could not be sent. Ask your website manager to check the repository connection, then review again.",
+    DEPLOY_FAILED: "The host could not deploy the change. Ask your website manager to inspect the build log.",
+    VERIFY_FAILED: "The live update could not be confirmed. Open the website and check your change; your manager can check the host build and cache.",
+    RECONCILIATION_REQUIRED: "The result needs checking. Ask your website manager to inspect the recorded commit before retrying, to avoid sending the change twice.",
+  };
+  let liveUrl: string | null = null;
+  try { const url = new URL(status.verifyUrl ?? ""); if (["https:", "http:"].includes(url.protocol)) liveUrl = url.href; } catch { /* No public address. */ }
+  return <section aria-label="Publishing progress" className="mt-3 rounded-xl border border-line bg-white p-3">
+    <ol className="flex flex-wrap gap-3 text-sm">{["Draft saved", "Publishing", "Checking live site", "Live"].map((label, index) => <li key={label} aria-current={index === active ? "step" : undefined} className={index <= active ? "font-semibold text-ink" : "text-muted"}><span aria-hidden>{index < active || complete ? "✓ " : `${index + 1}. `}</span>{label}</li>)}</ol>
+    <p role="status" aria-live="polite" className="mt-2 text-sm">{complete ? "Your changes are live." : waiting ? checking ? "Changes sent. Waiting for the live website to update…" : "Sending the reviewed changes…" : guidance[status.state] ?? status.label}</p>
+    {!waiting && !complete && status.lastError && <details className="mt-2 text-xs text-muted"><summary>Details for your website manager</summary><p>{status.lastError}</p></details>}
+    {liveUrl && <a href={liveUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-sm text-blue underline">Open live website</a>}
+  </section>;
 }

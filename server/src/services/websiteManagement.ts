@@ -30,7 +30,11 @@ export const siteInput = z.object({
    */
   clientId: z.string().min(1).max(60).nullable().optional(),
 });
+const presetProperty = z.enum(["font-family", "font-size", "font-weight", "line-height", "color", "background-color", "border-radius", "padding", "margin", "gap"]);
+const presetValue = z.string().trim().min(1).max(100).regex(/^[a-zA-Z0-9 #.,%()\/-]+$/).refine(value => !/url\s*\(|expression|javascript|important|var\s*\(/i.test(value), "Use a plain colour, font or size.");
+export const websiteBrandPreset = z.object({ id: z.string().min(1).max(60).regex(/^[a-zA-Z0-9_-]+$/), name: z.string().trim().min(1).max(60), target: z.enum(["heading", "button", "spacing"]), styles: z.record(presetProperty, presetValue) }).strict();
 export const websiteDesignOptions = z.object({
+  presets: z.array(websiteBrandPreset).max(20).default([]).refine(items => new Set(items.map(item => item.id)).size === items.length, "Brand style IDs must be unique."),
   colours: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).max(16).default([]),
   fonts: z.array(z.string().trim().min(1).max(80).regex(/^[a-zA-Z0-9 ,.-]+$/)).max(12).default([]),
   brandVoice: z.string().max(4000).default(""),
@@ -130,8 +134,8 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 
   router.get("/sites/:siteId/design", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const { colours, fonts, aiEnabled } = websiteDesignOptions.parse(site.settings ?? {});
-    res.json({ options: { colours, fonts, aiEnabled } });
+    const { colours, fonts, aiEnabled, presets } = websiteDesignOptions.parse(site.settings ?? {});
+    res.json({ options: { colours, fonts, aiEnabled, presets } });
   }));
 
   router.put("/sites/:siteId/config", handler(async (req, res) => {

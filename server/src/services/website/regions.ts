@@ -1,3 +1,4 @@
+import { regenerateInteractionStyles } from "./interaction.js";
 import { createHash } from "node:crypto";
 import { DOCUMENT_KEY, draftDocument, fieldValues, sourceHash, type DraftDocument } from "./document.js";
 import { attrNode, decodeEntities, findTag, parseHtml, textOf, walk, type ElementNode } from "./parse.js";
@@ -1124,5 +1125,6 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
   }
 
   if (responsiveChanged) html = regenerateResponsiveStyles(html);
+  if (/--dw-(?:hover|focus)-|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
   return { html, changed, conflicts, missing };
 }

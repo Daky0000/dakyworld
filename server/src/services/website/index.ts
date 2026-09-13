@@ -115,7 +115,7 @@ export function sanitizeValue(
 
   if (raw.value !== undefined && field.kind !== "container") {
     const cleaned =
-      field.kind === "richtext" ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
+      (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta")) ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
     if (cleaned !== field.value) next.value = cleaned;
   }
   if (raw.href !== undefined && raw.href.trim() !== (field.href ?? "")) next.href = raw.href.trim();
@@ -179,7 +179,7 @@ export function sanitizeSharedValue(
   const next: FieldValue = {};
 
   if (raw.value !== undefined && field.kind !== "container") {
-    next.value = field.kind === "richtext" ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
+    next.value = (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta")) ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
   }
   if (raw.href !== undefined) next.href = raw.href.trim();
   if (raw.alt !== undefined) next.alt = raw.alt;

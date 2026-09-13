@@ -8,6 +8,9 @@ import { useWebsiteAccess } from "./WebsiteMembers";
 type Asset = { id: string; filename: string; alt: string; url: string; preview: string };
 export function WebsiteAssetLibrary({ siteId, onSelect }: { siteId: string; onSelect?: (asset: { url: string; alt: string }) => void }) {
   const access = useWebsiteAccess(siteId);
+  const [candidate, setCandidate] = useState<{ url: string; alt: string; preview: string } | null>(null);
+  const [uploadKey, setUploadKey] = useState(0);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [alt, setAlt] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const qc = useQueryClient();
@@ -20,19 +23,20 @@ export function WebsiteAssetLibrary({ siteId, onSelect }: { siteId: string; onSe
     if (bitmap.width * bitmap.height > 40_000_000) { bitmap.close(); throw new Error("Use an image smaller than 40 megapixels."); }
     bitmap.close();
     const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(new Error("The image could not be read.")); reader.readAsDataURL(file); });
-    return api.post<{ url: string; alt: string }>(`/website/sites/${siteId}/assets`, { filename: file.name, alt, data });
-  }, onSuccess: async asset => { await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] }); setFile(null); onSelect?.(asset); } });
+    return api.post<{ id: string; url: string; alt: string }>(`/website/sites/${siteId}/assets`, { filename: file.name, alt, data });
+  }, onSuccess: async asset => { await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] }); setFile(null); setUploadKey(key => key + 1); setPreviewFailed(false); if (onSelect) setCandidate({ ...asset, preview: `/api/website/sites/${siteId}/assets/${asset.id}/content` }); } });
   return <div className="space-y-4">
     {access.data?.capabilities.edit && <div className="space-y-3 rounded-xl border border-line bg-sunken p-3">
-      <label className="block text-xs text-muted">PNG, JPEG, WebP or GIF · up to 5 MB<input className="mt-2 block w-full text-xs" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={e => { setFile(e.target.files?.[0] ?? null); upload.reset(); }} /></label>
+      <label className="block text-xs text-muted">PNG, JPEG, WebP or GIF · up to 5 MB<input className="mt-2 block w-full text-xs" key={uploadKey} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={e => { setFile(e.target.files?.[0] ?? null); upload.reset(); }} /></label>
       <label className="block text-xs text-muted">Image description<input className="mt-1 h-9 w-full rounded-xl border border-line bg-white px-2 text-xs text-ink" value={alt} onChange={e => setAlt(e.target.value)} placeholder="Describe what the image shows" /></label>
-      <Button size="sm" disabled={!file || upload.isPending} onClick={() => upload.mutate()}>{upload.isPending ? "Uploading…" : onSelect ? "Upload & use" : "Upload image"}</Button>
+      <Button size="sm" disabled={!file || upload.isPending} onClick={() => upload.mutate()}>{upload.isPending ? "Uploading…" : onSelect ? "Upload & preview" : "Upload image"}</Button>
       {upload.error && <p role="alert" className="text-xs text-danger-text">{(upload.error as Error).message}</p>}
       <p className="text-[10px] leading-relaxed text-muted">Images go live with the page when you publish. HTML downloads include uploaded images.</p>
     </div>}
+    {candidate && onSelect && <section className="rounded-xl border border-line p-3" aria-label="Review replacement image"><h3 className="text-sm font-semibold">Preview replacement</h3><div className="my-3 grid grid-cols-2 gap-2">{["Desktop", "Phone"].map(device => <figure key={device}><figcaption className="text-xs text-muted">{device}</figcaption><img src={candidate.preview} alt={candidate.alt} onError={() => setPreviewFailed(true)} className={`mx-auto mt-1 h-28 object-contain ${device === "Phone" ? "w-3/4" : "w-full"}`} /></figure>)}</div><label className="block text-xs">Image description<input maxLength={500} className="my-2 w-full rounded-lg border border-line p-2 text-sm" value={candidate.alt} onChange={e => setCandidate({ ...candidate, alt: e.target.value })} /></label><p className="mb-2 text-xs text-muted">After choosing this image, use Crop & focal point to adjust its framing.</p>{previewFailed && <p role="alert" className="text-xs text-danger-text">Image preview failed. Choose another image or retry after checking your connection.</p>}<div className="flex gap-2"><Button size="sm" disabled={previewFailed} onClick={() => { onSelect(candidate); setCandidate(null); }}>Use this image</Button><button type="button" className="px-2 text-sm" onClick={() => setCandidate(null)}>Cancel</button></div></section>}
     {assets.isLoading && <p className="text-xs text-muted">Loading images…</p>}
     {assets.error && <p role="alert" className="text-xs text-danger-text">{(assets.error as Error).message}</p>}
-    <div className="grid grid-cols-2 gap-2">{assets.data?.map(asset => <button type="button" key={asset.id} disabled={!onSelect} onClick={() => onSelect?.(asset)} className="overflow-hidden rounded-xl border border-line bg-white text-left enabled:hover:border-blue" title={`Use ${asset.filename}`}><img src={asset.preview} alt={asset.alt} className="h-24 w-full object-contain" /><span className="block truncate px-2 py-2 text-[11px] text-muted">{asset.filename}</span></button>)}</div>
+    <div className="grid grid-cols-2 gap-2">{assets.data?.map(asset => <button type="button" key={asset.id} disabled={!onSelect} onClick={() => { setCandidate(asset); setPreviewFailed(false); }} className="overflow-hidden rounded-xl border border-line bg-white text-left enabled:hover:border-blue" title={`Use ${asset.filename}`}><img src={asset.preview} alt={asset.alt} className="h-24 w-full object-contain" /><span className="block truncate px-2 py-2 text-[11px] text-muted">{asset.filename}</span></button>)}</div>
     {assets.data?.length === 0 && <p className="text-xs text-muted">Upload your first image to this website.</p>}
   </div>;
 }

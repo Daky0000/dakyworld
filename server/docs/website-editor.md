@@ -141,3 +141,37 @@ node checks/browser/inspector.mjs
 It renders `client/inspector-harness.html` — a mount for the inspector alone, not part of the app and not bundled by `vite build`, which takes only `index.html` as an entry — and asks the browser which sections and controls each kind of element got, what value each control shows, and that opening an element wrote nothing into the draft. 52 checks. Stored draft additions are backward compatible; editor core version is now 3.
 
 The assembled client builds successfully. Interactive browser and visual verification remain outstanding: the computer-use inventory had no available browser and automatic approval review blocked a headless Chrome launch. A build alone does not establish visual correctness.
+
+
+## Client usability improvements (12 September 2026)
+
+The editor opens in Client editing mode. Text, links, images and approved brand styles remain available. The More menu holds Designer controls, Download HTML, Versions, AI and Discard. Designer controls restore the full contextual inspector, style clipboard and structure actions. This mode is a presentation preference, not a permission boundary; existing server permissions still apply. The preference is saved per user in this browser. Toolbar labels use a 12px minimum.
+
+A four-step first-edit guide covers selecting a heading, changing it, checking the phone preview and reviewing publication. Dismissal is remembered per user; More can reopen the guide. Steps advance manually, so finishing the guide does not assert that an edit or publish occurred.
+
+Image uploads and library selections now open a replacement preview with editable description before the user chooses Use this image. Crop & focal point offers shape presets, click selection, horizontal/vertical sliders and two framing previews. Applying a crop writes object-fit, object-position, aspect-ratio, width and height through the normal draft styling path for the active device. Original image bytes remain unchanged. The preview shows the crop, not a complete simulation of the surrounding page; check the actual phone/page preview before publishing. Uploaded images use their authenticated library preview before they are published.
+
+Settings stores up to 20 named heading, button and container-spacing presets in the existing site settings JSON. Properties are restricted and values are validated. Editors apply an approved preset to a selected element. Managers can review matching elements across the site's pages and apply the reviewed styles to drafts. This is an explicit application of styles, not a live token binding: changing a saved preset does not silently restyle published pages. Existing content and device overrides remain intact. Each page uses its reviewed revision and document hash; results identify saved pages and conflicts individually. Linked shared elements are reported and edited through the existing shared workflow. Publication remains a separate page or shared review.
+
+Publishing shows Draft saved, Publishing, Checking live site and Live, with an HTTP(S) live-site link and state-specific failure guidance. Queued work is no longer described as already committed. A failed status lookup offers Retry status check.
+
+### Verification
+
+The client production build and server TypeScript check pass. Prisma Client was regenerated from the existing schema; no database migration or production write was performed for this change.
+
+- `checks/websiteBrandPresets.ts`: preset validation, matching, preserved draft content/device overrides, shared exclusions and responsive crop declarations.
+- Existing `websiteInspector.ts` (82 checks), `websitePublishVerify.ts` (23 checks), and `checks/browser/inspector.mjs` (58 checks) pass.
+- `checks/browser/builderUsability.mjs`: real Chromium interactions for simple/designer controls, guide, preset selection, crop geometry, publish states, and two-page draft application with one simulated conflict. Desktop and phone screenshots were inspected.
+- `checks/browser/builderEditor.mjs`: assembled editor toolbar, persisted mode, guide dismissal, preview switching, and no incidental writes from those actions.
+
+Browser checks use intercepted API fixtures, not a production account or deployment. The separate `client/builder-harness.html` entry is not included in the production build. Run the browser checks against Vite on port 5199 with `PLAYWRIGHT_URL` pointing to an installed Playwright module. Screenshots are written to `checks/artifacts/`.
+
+The client session protocol and unfilled observation sheet are in [website-usability-test.md](website-usability-test.md). Three actual participants and their availability are still required. No customer usability results are claimed.
+
+## Selected text and interaction styles
+
+Text, heading, link and button editors preserve highlighted ranges when using formatting controls. Text colour, highlight, bold, italic and underline apply only to the selected words, including selections crossing existing emphasis. Metadata remains plain text. Read-only editors cannot modify content. Whole-element colour controls route to an active text selection when one exists.
+
+Hover and keyboard-focus styles support colour, background, border colour, shadow, opacity, transform and underline. The state preview does not publish editor markers. These styles apply across screen sizes and travel through existing drafts, revisions, shared edits and publishing. Transition presets respect reduced-motion preferences. Reset removes the selected state's overrides.
+
+Validation: production build and server TypeScript pass. Browser checks cover nested text selections, retained selections, read-only fields, real hover/focus computed styles, state preview and reduced motion. Publication tests cover rich text sanitization, stable field identity and generated interaction styles. Database integration checks requiring local PostgreSQL could not finish because localhost:5433 was unavailable. Three-client observed usability sessions still require participants.

@@ -47,6 +47,7 @@ export type InspectorSource = {
 };
 
 export function ElementInspector({
+  simple = false,
   facts,
   device,
   style,
@@ -57,8 +58,10 @@ export function ElementInspector({
   onChange,
   onCommit,
   onReset,
+  onTextColour,
   content,
 }: {
+  simple?: boolean;
   facts: ElementFacts;
   device: Device;
   /** The draft's declarations for the active viewport. */
@@ -72,6 +75,8 @@ export function ElementInspector({
   onCommit?: () => void;
   /** Put the whole element back as the website has it. */
   onReset: () => void;
+  /** A selected text range owns its colour before the element does. */
+  onTextColour?: (colour: string) => boolean;
   /** The content editor, which the page owns; drawn as the first section. */
   content?: React.ReactNode;
 }) {
@@ -102,7 +107,7 @@ export function ElementInspector({
     display: declarations.display ?? facts.display,
     position: declarations.position ?? facts.position,
   });
-  const shown = new Set(inspectorSections(capabilities));
+  const shown = new Set(inspectorSections(capabilities).filter(section => !simple || section === "content"));
 
   const value = (property: string): InspectorValue =>
     inspectorValue(property, {
@@ -114,6 +119,7 @@ export function ElementInspector({
     });
 
   const set = (property: string, next: string) => {
+    if (property === "color" && next && onTextColour?.(next)) return;
     const updated = { ...declarations };
     if (next) updated[property] = next;
     else delete updated[property];
@@ -646,7 +652,7 @@ export function ElementInspector({
         )}
 
         {/* -------------------------------------------------------- advanced */}
-        <Section
+        {!simple && <Section
           name="advanced"
           title={SECTION_TITLE.advanced}
           open={showAdvanced}
@@ -754,7 +760,8 @@ export function ElementInspector({
                 </button>
               )}
           </div>
-        </Section>
+        </Section>}
+        {simple && <p className="px-3 py-3 text-xs text-muted">For layout, spacing and detailed styling, enable Designer controls in More.</p>}
       </div>
     </PaletteContext.Provider>
   );

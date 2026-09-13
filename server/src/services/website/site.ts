@@ -1,3 +1,4 @@
+import { interactionCss } from "../../shared/websiteInteraction.js";
 import { websiteAssetFiles } from "../websiteAssets.js";
 import { randomBytes } from "node:crypto";
 import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError, withGithubCredential } from "../../lib/github.js";
@@ -439,6 +440,9 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   const base = '<base href="' + new URL(baseUrl).href.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;") + '">';
   const head = [...walk(parseHtml(out))].find(node => node.tag === "head");
   out = head ? out.slice(0, head.innerStart) + base + out.slice(head.innerStart) : base + out;
+  const interactionHead = [...walk(parseHtml(out))].find(node => node.tag === "head");
+  const interactionAt = interactionHead?.innerEnd ?? out.length;
+  out = out.slice(0, interactionAt) + `<style data-dw-interaction-preview>${interactionCss(true)}</style>` + out.slice(interactionAt);
   if (!editable?.length) return { html: out, csp: policy };
   const nonce = randomBytes(16).toString("base64");
   // Parsed closing offsets avoid matching a fake </body> inside a script/string.
@@ -535,7 +539,7 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   // put on its children, and a data-* attribute survives sanitising on purpose
   // (the homepage figures are data-target). Handing them back would commit the
   // editor's scaffolding into the published page.
-  var OURS = ["data-dw-field", "data-dw-kind", "data-dw-shown", "data-dw-selected", "data-dw-editing"];
+  var OURS = ["data-dw-field", "data-dw-kind", "data-dw-shown", "data-dw-selected", "data-dw-editing", "data-dw-state-preview"];
   function words(el) {
     var copy = el.cloneNode(true);
     var marked = copy.querySelectorAll("[" + OURS.join("],[") + "]");

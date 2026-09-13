@@ -4,10 +4,12 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
+import { WebsitePresetSettings, WebsitePresetRollout } from "./WebsiteBrandPresets";
+import type { BrandPreset } from "../lib/websiteBrandPresets";
 import { ConnectWebsite } from "./ConnectWebsite";
 import { ConnectGithubApp } from "./ConnectGithubApp";
 
-type Config = { id?: string; clientId?: string | null; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
+type Config = { id?: string; clientId?: string | null; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { presets: BrandPreset[]; colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
 type ManagedSite = SiteSummary & { capabilities?: { manage: boolean } };
 const INPUT = "mt-1 w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue focus:ring-2 focus:ring-blue/20 disabled:bg-cream";
 
@@ -58,6 +60,7 @@ export function WebsiteSettings() {
   const colours = colourText.split(/[,\s]+/).filter(Boolean);
   const fonts = fontText.split("\n").map(font => font.trim()).filter(Boolean);
   const paletteError = colours.length > 16 ? "Use up to 16 colours." : colours.some(colour => !/^#[\da-f]{6}$/i.test(colour)) ? "Enter each colour as a six-digit hex code, such as #3157FF." : null;
+  const presetError = draft?.options.presets?.some(preset => Object.entries(preset.styles).some(([property, value]) => !CSS.supports(property, value))) ? "One of the brand styles has an invalid colour, font or size. Correct it before saving." : null;
   const fontsError = fonts.length > 12 ? "Use up to 12 font families." : fonts.some(font => font.length > 80 || !/^[a-zA-Z0-9 ,.-]+$/.test(font)) ? "Use font family names containing letters, numbers, spaces, commas, periods or hyphens." : null;
 
   return <div>
@@ -73,7 +76,7 @@ export function WebsiteSettings() {
     {config.error && <p role="alert" className="text-danger-text">{(config.error as Error).message}</p>}
     {id && draft && !config.error && <form className="max-w-3xl" onSubmit={event => {
       event.preventDefault();
-      if (!dirty || save.isPending || paletteError || fontsError) return;
+      if (!dirty || save.isPending || paletteError || fontsError || presetError) return;
       save.mutate({ ...draft, options: { ...draft.options, colours, fonts } });
     }}>
       <fieldset disabled={save.isPending} className="space-y-6">
@@ -92,15 +95,18 @@ export function WebsiteSettings() {
           {fontsError && <p className="mt-2 text-xs text-danger-text">{fontsError}</p>}
           <p className="mt-2 text-xs text-muted">Font files must already be loaded by the website.</p>
         </section>
+        {presetError && <p role="alert" className="text-sm text-danger-text">{presetError}</p>}
+        <WebsitePresetSettings presets={draft.options.presets ?? []} onChange={presets => changeOption("presets", presets)} />
         <section className="rounded-2xl border border-line bg-white p-5">
           <h2 className="mb-3 font-display text-lg">AI suggestions</h2>
           <label className="flex items-start gap-3 text-sm text-ink"><input type="checkbox" className="mt-1 accent-blue" checked={draft.options.aiEnabled} onChange={event => changeOption("aiEnabled", event.target.checked)} /><span><span className="font-medium">Enable the design assistant</span><span className="mt-1 block text-xs leading-relaxed text-muted">Editors can request suggestions for selected content or the page. Every suggestion is reviewed before it is added to the draft, and publishing remains a separate action.</span></span></label>
           <label className="mt-5 block text-xs text-muted">Brand voice<textarea className={`${INPUT} min-h-28`} maxLength={4000} value={draft.options.brandVoice} onChange={event => changeOption("brandVoice", event.target.value)} placeholder="For example: direct, welcoming and specific. Use British spelling. Keep our product names as written." /></label>
           <p className="mt-2 text-xs text-muted">These notes guide suggestions for this website. AI requests use the configured model and the existing spending limits. Visual editing works with AI disabled.</p>
         </section>
-        <div className="flex items-center gap-4"><Button type="submit" disabled={!dirty || save.isPending || Boolean(paletteError || fontsError)}>{save.isPending ? "Saving…" : "Save settings"}</Button>{save.isSuccess && !dirty && <span role="status" className="text-sm text-muted">Settings saved.</span>}{save.error && <span role="alert" className="text-sm text-danger-text">{(save.error as Error).message}</span>}</div>
+        <div className="flex items-center gap-4"><Button type="submit" disabled={!dirty || save.isPending || Boolean(paletteError || fontsError || presetError)}>{save.isPending ? "Saving…" : "Save settings"}</Button>{save.isSuccess && !dirty && <span role="status" className="text-sm text-muted">Settings saved.</span>}{save.error && <span role="alert" className="text-sm text-danger-text">{(save.error as Error).message}</span>}</div>
       </fieldset>
     </form>}
+    {id && config.data && <WebsitePresetRollout key={`${id}:${config.data.options.presets?.map(p => JSON.stringify(p)).join("")}`} siteId={id} presets={config.data.options.presets ?? []} disabled={dirty || save.isPending} />}
     {/* Beside the repository fields rather than inside the form: this is not a
         value somebody types and saves, it is a connection the customer makes. */}
     {config.data && id && <ConnectGithubApp
