@@ -501,9 +501,8 @@ function positionOf(pages: SurveyPage[], instances: Array<{ pageId: string; fiel
     if (!blocks.length) continue;
     const element = elementForInstance(page, instance.fieldId);
     if (!element) continue;
-    const top = topBlockOf(element, blocks);
-    if (top !== blocks[0]) first = false;
-    if (top !== blocks[blocks.length - 1]) last = false;
+    if (!isBlockAt(element, blocks, 0)) first = false;
+    if (!isBlockAt(element, blocks, -1)) last = false;
   }
   return { first, last };
 }
@@ -513,13 +512,18 @@ function findBody(root: ElementNode): ElementNode | null {
   return root.children.length ? root : null;
 }
 
-function topBlockOf(element: ElementNode, blocks: ElementNode[]): ElementNode | null {
-  let walker: ElementNode | null = element;
-  while (walker) {
-    if (blocks.includes(walker)) return walker;
-    walker = walker.parent;
-  }
-  return null;
+/**
+ * Position names a block, not everything inside one.
+ *
+ * This used to walk up to the enclosing outermost block, so every descendant of
+ * the first block answered "first" — and once the rule started working, a site
+ * whose header contains a dozen repeated pieces got a dozen regions all called
+ * the header. Position is weak evidence and is only reached when nothing in the
+ * markup says what a block is, so it is worth being strict with: the element
+ * has to *be* the first or last block itself.
+ */
+function isBlockAt(element: ElementNode, blocks: ElementNode[], index: number): boolean {
+  return blocks.length > 0 && element === blocks.at(index);
 }
 
 /**
@@ -542,7 +546,7 @@ function topBlockOf(element: ElementNode, blocks: ElementNode[]): ElementNode | 
  * rather than its id, so nothing leaks between surveys and nothing has to be
  * threaded through every function that wants it.
  */
-type PageIndex = { root: ElementNode; byField: Map<string, ElementNode>; blocks: ElementNode[] };
+type PageIndex = { root: ElementNode; byField: Map<string, ElementNode>; blocks: ElementNode[]; parents: Map<string, string | undefined> };
 
 const pageIndexes = new WeakMap<SurveyPage, PageIndex>();
 
@@ -564,7 +568,9 @@ function indexOf(page: SurveyPage): PageIndex {
   for (const element of walk(root)) byOffset.set(element.start + 1 + element.tag.length, element);
 
   const byField = new Map<string, ElementNode>();
+  const parents = new Map<string, string | undefined>();
   for (const field of readPage(page.html).fields) {
+    parents.set(field.id, field.parentId);
     if (field.attrInsert === undefined) continue;
     const element = byOffset.get(field.attrInsert);
     if (element) byField.set(field.id, element);
@@ -573,7 +579,7 @@ function indexOf(page: SurveyPage): PageIndex {
   const body = findBody(root);
   const blocks = body ? body.children.filter((child) => !["script", "style", "template"].includes(child.tag)) : [];
 
-  const index = { root, byField, blocks };
+  const index = { root, byField, blocks, parents };
   pageIndexes.set(page, index);
   return index;
 }
@@ -629,6 +635,56 @@ export function surveySite(pages: SurveyPage[]): SiteSurvey {
       right.pageIds.length - left.pageIds.length ||
       left.name.localeCompare(right.name),
   );
+
+  /**
+   * A piece of the header is not a second global element.
+   *
+   * Real sites repeat a great deal inside their own furniture — a logo, a
+   * search box, a row of section links, each of which repeats on every page
+   * because the header does. Reported separately they crowd out the answer:
+   * three pages of one news site produced forty regions, of which two were
+   * named and the rest were parts of those two. Detection already drops a
+   * candidate whose instances *all* sit inside another's, but that is stricter
+   * than it sounds — a header found on two pages does not swallow a piece of it
+   * found on three, so the piece survives and the whole does not explain it.
+   *
+   * This is done here rather than in `sharedCandidates` because the shared
+   * elements feature has its own reasons for offering a nested block: somebody
+   * may well want to link just the call to action inside the footer. A survey
+   * is a summary, and a summary that lists the header and its eight parts as
+   * nine findings has not summarised anything.
+   */
+  const contains = (pageId: string, ancestorFieldId: string, fieldId: string): boolean => {
+    const page = pages.find((candidate) => candidate.pageId === pageId);
+    if (!page) return false;
+    const parents = indexOf(page).parents;
+    let walker = parents.get(fieldId);
+    while (walker) {
+      if (walker === ancestorFieldId) return true;
+      walker = parents.get(walker);
+    }
+    return false;
+  };
+
+  const kept: SurveyElement[] = [];
+  for (const element of elements) {
+    // Only the unnamed are folded away. A navigation bar sits inside the header
+    // on most websites ever built, and answering "there is a header" while
+    // dropping "and this is its navigation" is losing the more useful of the
+    // two — the whole point was to tell them apart.
+    const swallowed = element.role === "unclassified" && kept.some((keeper) => {
+      const inside = element.instances.filter((instance) =>
+        keeper.instances.some((other) => other.pageId === instance.pageId && other.fieldId !== instance.fieldId && contains(instance.pageId, other.fieldId, instance.fieldId)),
+      ).length;
+      // Most of it, not all of it: the outer region is often found on fewer
+      // pages than the pieces inside it, which is exactly the case the stricter
+      // rule lets through.
+      return inside * 2 >= element.instances.length && inside > 0;
+    });
+    if (!swallowed) kept.push(element);
+  }
+  elements.length = 0;
+  elements.push(...kept);
 
   const actions = new Map<string, { words: string; href: string | null; kind: "button" | "link"; pageIds: Set<string>; occurrences: number }>();
   for (const page of pages) {

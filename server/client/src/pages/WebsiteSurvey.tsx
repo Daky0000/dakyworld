@@ -103,7 +103,14 @@ export function WebsiteSurvey() {
   // somebody opened this to find out, so they are a click away rather than
   // thirty rows of "repeats across pages, but nothing in it says what it is".
   const elements = data?.elements ?? [];
-  const worthLeading = elements.filter((element) => element.role !== "unclassified" || element.everywhere);
+  const named = elements.filter((element) => element.role !== "unclassified");
+  // A few of the unnamed ones that are on every page, not all of them. Some
+  // sites repeat a dozen blocks site-wide that nothing identifies; listing them
+  // all pushes the header and the navigation off the top of the screen, which
+  // is the opposite of a summary. The rest stay one click away, counted
+  // honestly.
+  const unnamedEverywhere = elements.filter((element) => element.role === "unclassified" && element.everywhere);
+  const worthLeading = [...named, ...unnamedEverywhere.slice(0, 3)];
   const rest = elements.length - worthLeading.length;
   const shown = showAllRegions ? elements : worthLeading;
 

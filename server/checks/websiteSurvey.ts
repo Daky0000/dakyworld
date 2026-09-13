@@ -184,6 +184,68 @@ check("type sizes were collected", survey.palette.sizes.some((entry) => entry.va
 check("and weights", survey.palette.weights.some((entry) => entry.value === "700"));
 check("colours are ordered by how much the site leans on them", survey.palette.colours.every((entry, index, all) => index === 0 || all[index - 1]!.uses >= entry.uses));
 
+/* ------------------------------------------------ the header and its pieces */
+
+/**
+ * A header full of repeated pieces is one finding, not nine.
+ *
+ * Everything inside a site's furniture repeats as often as the furniture does —
+ * a logo, a search box, a row of section links. Three pages of one real news
+ * site produced forty regions this way, of which two were the answer. What must
+ * survive the tidying is anything the survey could actually name: the
+ * navigation lives inside the header on most websites ever built, and reporting
+ * the header while dropping its navigation loses the more useful of the two.
+ */
+const furniture = `<header class="masthead"><div class="logo"><a href="/"><img src="/logo.png" alt="Kwame"></a></div><div class="search"><a href="/search"><h4>Search</h4></a></div><nav aria-label="Main"><a href="/">Home</a><a href="/shop">Shop</a></nav></header>`;
+const nested = surveySite([
+  { pageId: "n1", title: "One", path: "/", html: `<!doctype html><html><body>${furniture}<main><h1>One</h1><p>First.</p></main></body></html>` },
+  { pageId: "n2", title: "Two", path: "/two", html: `<!doctype html><html><body>${furniture}<main><h1>Two</h1><p>Second.</p></main></body></html>` },
+  { pageId: "n3", title: "Three", path: "/three", html: `<!doctype html><html><body>${furniture}<main><h1>Three</h1><p>Third.</p></main></body></html>` },
+]);
+
+check("the header is reported", nested.elements.some((element) => element.role === "header"));
+check(
+  "its unnamed pieces are not reported beside it",
+  nested.elements.filter((element) => element.role === "unclassified").length === 0,
+);
+check("so the header is one finding, not a list of its parts", nested.elements.length <= 3);
+
+/*
+ * The case above is folded away by detection, not by the survey: a block wholly
+ * inside another on every page never reaches here. The survey's own rule is for
+ * the case detection lets through — an inner piece found on *more* pages than
+ * the region around it, because the region itself differs somewhere. That is
+ * not a corner: it is what a real news site does, and it produced forty regions
+ * where two were the answer. Here the logo is identical on three pages while
+ * the header around it changes on the third.
+ */
+const logo = `<div class="logo"><a href="/"><img src="/l.png" alt="Kwame"></a><h4>Kwame</h4></div>`;
+const masthead = (extra: string) => `<header class="masthead">${logo}<div class="x">${extra}</div></header>`;
+const shifting = (head: string, body: string) => `<!doctype html><html><body>${head}<main>${body}</main></body></html>`;
+const uneven = surveySite([
+  { pageId: "u1", title: "A", path: "/", html: shifting(masthead(`<a href="/one"><h5>One</h5></a>`), "<h1>A</h1><p>x</p>") },
+  { pageId: "u2", title: "B", path: "/b", html: shifting(masthead(`<a href="/one"><h5>One</h5></a>`), "<h1>B</h1><p>y</p>") },
+  { pageId: "u3", title: "C", path: "/c", html: shifting(masthead(`<a href="/two"><h5>Two</h5></a>`), "<h1>C</h1><p>z</p>") },
+]);
+check("the header is still the finding", uneven.elements.some((element) => element.role === "header"));
+check(
+  "and a piece of it on more pages than the header itself is folded in, not listed beside it",
+  uneven.elements.every((element) => element.role !== "unclassified"),
+);
+
+// A navigation wholly inside a header on every page is folded into it by
+// detection, before the survey sees either — which is why nothing here asserts
+// that both come back. It survives only where the two are found on different
+// numbers of pages, and the rule below is what stops *this* stage from folding
+// it away in the cases where it does survive.
+const namedInsideNamed = surveySite([
+  { pageId: "p1", title: "One", path: "/", html: `<!doctype html><html><body><header class="masthead"><div class="logo"><a href="/"><img src="/l.png" alt="K"></a></div></header><main><h1>One</h1></main></body></html>` },
+  { pageId: "p2", title: "Two", path: "/two", html: `<!doctype html><html><body><header class="masthead"><div class="logo"><a href="/"><img src="/l.png" alt="K"></a></div></header><nav aria-label="Main"><a href="/">Home</a><a href="/shop">Shop</a></nav><main><h1>Two</h1></main></body></html>` },
+  { pageId: "p3", title: "Three", path: "/three", html: `<!doctype html><html><body><header class="masthead"><div class="logo"><a href="/"><img src="/l.png" alt="K"></a></div></header><nav aria-label="Main"><a href="/">Home</a><a href="/shop">Shop</a></nav><main><h1>Three</h1></main></body></html>` },
+]);
+check("a header is reported", namedInsideNamed.elements.some((element) => element.role === "header"));
+check("and a navigation that is not inside it is reported too", namedInsideNamed.elements.some((element) => element.role === "primary-navigation"));
+
 /* ------------------------------------------ a site that names nothing itself */
 
 /**

@@ -115,6 +115,24 @@ the element from one parse and the blocks from another, always false. It failed
 as a cautious-looking wrong answer ("nothing in it says what it is") rather than
 as an error, which is why nothing noticed.
 
+**A summary, not an inventory.** Real sites repeat a great deal inside their own
+furniture — a logo, a search box, a row of section links, each repeating on every
+page because the header does. Detection drops a block that sits inside another on
+*every* page, but that is stricter than it sounds: a header found on two pages
+does not swallow a piece of it found on three, and three pages of one news site
+came back with forty regions of which two were the answer. The survey folds an
+unnamed block into a region it is mostly inside. Only unnamed ones — a navigation
+lives inside the header on most websites ever built, and reporting the header
+while dropping its navigation loses the more useful of the two. Nothing is folded
+in `sharedCandidates` itself, because the shared elements feature has its own
+reason to offer a nested block: somebody may want to link just the call to action
+inside the footer.
+
+Position is treated as the weak evidence it is: an unlabelled block is named
+header or footer only when it *is* the first or last block, not when it sits
+inside one. Before that, one site's header produced sixteen regions all called
+the header.
+
 **Nothing in it calls a model.** Every answer is derived from the markup, so a
 survey costs nothing, cannot invent a page, and reads the same twice.
 
