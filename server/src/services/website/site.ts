@@ -1,7 +1,7 @@
 import { interactionCss } from "../../shared/websiteInteraction.js";
 import { websiteAssetFiles } from "../websiteAssets.js";
 import { randomBytes } from "node:crypto";
-import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listTree, readFile, RepoNotAllowedError, withGithubCredential } from "../../lib/github.js";
+import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listRepoFiles, listTree, readFile, RepoNotAllowedError, withGithubCredential } from "../../lib/github.js";
 import { siteGithubCredential } from "../githubApp.js";
 import type { Site, SitePage } from "@prisma/client";
 import type { SiteField } from "./regions.js";
@@ -281,6 +281,18 @@ async function sitemapPaths(site: Site): Promise<Set<string>> {
   return paths;
 }
 
+export type Discovery = {
+  pages: DiscoveredPage[];
+  /**
+   * The folder the pages were actually read from, relative to the repository
+   * root. Usually the site's configured `repoPath`; different when the search
+   * below found them somewhere else, in which case the caller should save it —
+   * a publish writes to `repoPath`, so a scan that read one folder and a
+   * publish that writes to another would commit a page into the wrong place.
+   */
+  repoPath: string;
+};
+
 /**
  * Finds the pages a site has.
  *
@@ -293,30 +305,86 @@ async function sitemapPaths(site: Site): Promise<Set<string>> {
  * page list without anybody having to name them here: the site itself already
  * says which files are pages, and this listens to it.
  */
-export async function discoverPages(site: Site): Promise<DiscoveredPage[]> {
+export async function discoverPages(site: Site): Promise<Discovery> {
   return underSiteCredential(site, () => findPages(site));
 }
 
-async function findPages(site: Site): Promise<DiscoveredPage[]> {
+/** Folders whose HTML is never the site: dependencies, tooling, build scratch. */
+const IGNORED_FOLDERS = /(^|\/)(node_modules|\.git|\.github|\.next|\.cache|vendor|coverage|__tests__|tests?|examples?|storybook-static)(\/|$)/i;
+
+/** Folder names that hold copies of pages rather than the pages themselves. */
+const ARCHIVE_FOLDERS = /(^|\/)(drafts?|website-drafts|archive[ds]?|backups?|old|deprecated|templates?|partials?|includes?|components?|fragments?|emails?)(\/|$)/i;
+
+/**
+ * Works out which folder of a repository holds the site.
+ *
+ * Somebody connecting a repository knows the repository; they do not
+ * necessarily know that this one keeps its pages in `public/` and the last one
+ * kept them at the root. Rather than making that a setting they have to get
+ * right before anything works, the scan looks.
+ *
+ * Every folder holding top-level `.html` files is a candidate, scored on what
+ * actually distinguishes a site's page folder from a folder that happens to
+ * contain HTML: it has an `index.html`, it has several pages, it is near the
+ * root, and it is not called `drafts`. The best-scoring folder wins; a tie goes
+ * to the shallower one.
+ *
+ * Returns null when the repository holds no HTML at all — a Next or Astro
+ * project, say — because there is nothing here this editor can open.
+ */
+function chooseSiteFolder(files: string[]): string | null {
+  const byFolder = new Map<string, string[]>();
+  for (const file of files) {
+    if (!/\.html$/i.test(file) || IGNORED_FOLDERS.test(file)) continue;
+    const cut = file.lastIndexOf("/");
+    const folder = cut === -1 ? "" : file.slice(0, cut);
+    const name = cut === -1 ? file : file.slice(cut + 1);
+    if (name.startsWith(".")) continue;
+    byFolder.set(folder, [...(byFolder.get(folder) ?? []), name]);
+  }
+  if (byFolder.size === 0) return null;
+
+  let best: { folder: string; score: number } | null = null;
+  for (const [folder, names] of byFolder) {
+    const depth = folder === "" ? 0 : folder.split("/").length;
+    let score = Math.min(names.length, 12);
+    if (names.some((name) => /^index\.html$/i.test(name))) score += 10;
+    // A folder named after where a static site is built or served from is a
+    // stronger signal than its file count: `public/` with one page beats a
+    // `docs/` folder with four notes in it.
+    if (/(^|\/)(public|site|www|dist|build|docs|_site|out)$/i.test(folder)) score += 4;
+    if (ARCHIVE_FOLDERS.test(folder)) score -= 12;
+    score -= depth * 2;
+    if (!best || score > best.score || (score === best.score && depth < (best.folder === "" ? 0 : best.folder.split("/").length))) {
+      best = { folder, score };
+    }
+  }
+  return best ? best.folder : null;
+}
+
+async function findPages(site: Site): Promise<Discovery> {
   const listed = await sitemapPaths(site);
   const repo = siteRepo(site);
 
   if (repo && (await githubConfigured())) {
-    const folder = site.repoPath.replace(/^\/+|\/+$/g, "");
-    const tree = await listTree(repo, folder, site.repoBranch);
-    return tree
-      .filter((entry) => entry.type === "blob" || entry.type === "file")
-      .map((entry) => (folder ? entry.path.slice(folder.length + 1) : entry.path))
-      // Top level only. A file in a subfolder is an asset or an archive of old
-      // work — `website-drafts/` on this site is exactly that.
-      .filter((relative) => relative.endsWith(".html") && !relative.includes("/"))
-      .map((relative) => ({
-        filePath: relative,
-        path: pathFromFile(relative),
-        title: titleFromFile(relative),
-        listed: listed.has(pathFromFile(relative)),
-      }))
-      .sort((a, b) => a.path.localeCompare(b.path));
+    const configured = site.repoPath.replace(/^\/+|\/+$/g, "");
+    const fromConfigured = await htmlIn(repo, configured, site.repoBranch);
+    if (fromConfigured.length > 0) return { pages: buildPages(fromConfigured, listed), repoPath: configured };
+
+    // Nothing where the site says its pages are. Before reporting an empty
+    // site, look for them: see `chooseSiteFolder`.
+    const { files, truncated } = await listRepoFiles(repo, site.repoBranch);
+    const found = chooseSiteFolder(files);
+    if (found === null) {
+      throw new WebsiteError(
+        422,
+        truncated
+          ? `${repo} is too large to search from here. Set the folder its pages are in under the site's settings.`
+          : `${repo} has no HTML pages on branch ${site.repoBranch}${configured ? ` — and nothing in ${configured}` : ""}. The editor works on .html files, so a site built by a framework has to be built before it can be edited here.`,
+      );
+    }
+    const names = await htmlIn(repo, found, site.repoBranch);
+    return { pages: buildPages(names, listed), repoPath: found };
   }
 
   if (listed.size === 0) {
@@ -326,11 +394,36 @@ async function findPages(site: Site): Promise<DiscoveredPage[]> {
     );
   }
 
-  return [...listed]
-    .map((path) => {
-      const filePath = path === "/" ? "index.html" : `${path.replace(/^\//, "")}.html`;
-      return { filePath, path, title: titleFromFile(filePath), listed: true };
-    })
+  return {
+    repoPath: site.repoPath,
+    pages: [...listed]
+      .map((path) => {
+        const filePath = path === "/" ? "index.html" : `${path.replace(/^\//, "")}.html`;
+        return { filePath, path, title: titleFromFile(filePath), listed: true };
+      })
+      .sort((a, b) => a.path.localeCompare(b.path)),
+  };
+}
+
+/** The `.html` files directly inside one folder of the repository. */
+async function htmlIn(repo: string, folder: string, branch: string): Promise<string[]> {
+  const tree = await listTree(repo, folder, branch);
+  return tree
+    .filter((entry) => entry.type === "blob" || entry.type === "file")
+    .map((entry) => (folder ? entry.path.slice(folder.length + 1) : entry.path))
+    // Top level only. A file in a subfolder is an asset or an archive of old
+    // work — `website-drafts/` on this site is exactly that.
+    .filter((relative) => /\.html$/i.test(relative) && !relative.includes("/"));
+}
+
+function buildPages(names: string[], listed: Set<string>): DiscoveredPage[] {
+  return names
+    .map((relative) => ({
+      filePath: relative,
+      path: pathFromFile(relative),
+      title: titleFromFile(relative),
+      listed: listed.has(pathFromFile(relative)),
+    }))
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 

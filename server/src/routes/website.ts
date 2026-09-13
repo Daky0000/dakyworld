@@ -225,7 +225,16 @@ websiteRouter.post("/sites/:siteId/scan", async (req, res, next) => {
   try {
     const site = await loadSite(req, req.params.siteId);
 
-    const found = await discoverPages(site);
+    const discovery = await discoverPages(site);
+    const found = discovery.pages;
+
+    // The scan may have found the pages somewhere other than where the site
+    // said they were. Save that, because a publish commits to `repoPath`: left
+    // unsaved, every page read from the found folder would be written back to
+    // the configured one.
+    const movedTo = discovery.repoPath !== site.repoPath ? discovery.repoPath : null;
+    if (movedTo !== null) await prisma.site.update({ where: { id: site.id }, data: { repoPath: movedTo } });
+
     const existing = await prisma.sitePage.findMany({ where: { siteId: site.id } });
     const byFile = new Map(existing.map((page) => [page.filePath, page]));
 
@@ -253,7 +262,7 @@ websiteRouter.post("/sites/:siteId/scan", async (req, res, next) => {
     }
 
     const missing = existing.filter((page) => !found.some((candidate) => candidate.filePath === page.filePath)).map((page) => page.filePath);
-    res.json({ found: found.length, added, missing });
+    res.json({ found: found.length, added, missing, folder: discovery.repoPath, movedTo });
   } catch (err) {
     next(err);
   }

@@ -41,14 +41,17 @@ export function Website() {
   });
 
   const scan = useMutation({
-    mutationFn: () => api.post<{ found: number; added: number; missing: string[] }>(`/website/sites/${current!.id}/scan`),
+    mutationFn: () => api.post<{ found: number; added: number; missing: string[]; folder: string; movedTo: string | null }>(`/website/sites/${current!.id}/scan`),
     onSuccess: (result) => {
       setScanError(null);
-      setScanResult(
+      const count =
         result.added > 0
           ? `Found ${result.found} page${result.found === 1 ? "" : "s"}, ${result.added} of them new.`
-          : `Found ${result.found} page${result.found === 1 ? "" : "s"}. Nothing new.`,
-      );
+          : `Found ${result.found} page${result.found === 1 ? "" : "s"}. Nothing new.`;
+      // Where it looked, but only when that is news: the scan can find the
+      // pages in a folder nobody configured, and saying so is what stops the
+      // next person wondering why the site's folder setting changed.
+      setScanResult(result.movedTo === null ? count : `${count} They were in ${result.movedTo || "the repository root"}, so that is where this site now reads and publishes from.`);
       void qc.invalidateQueries({ queryKey: ["website"] });
     },
     onError: (err) => {

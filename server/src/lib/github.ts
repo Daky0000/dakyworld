@@ -422,6 +422,30 @@ export async function listTree(repo: string, path = "", ref?: string): Promise<A
   return (Array.isArray(entries) ? entries : []).map((entry) => ({ path: entry.path, type: entry.type, size: entry.size ?? 0 }));
 }
 
+/**
+ * Every file in the repository, in one call.
+ *
+ * `listTree` answers about a single directory, which is the right shape when
+ * something already knows where it is looking. This is for when it does not —
+ * finding which folder a static site's pages actually live in. Git's tree API
+ * walks the whole commit in one request rather than one request per directory.
+ *
+ * `truncated` is GitHub's word for a tree too large to return whole (around
+ * 100k entries). A caller deciding something from this must treat a truncated
+ * answer as incomplete rather than as absence.
+ */
+export async function listRepoFiles(repo: string, ref?: string): Promise<{ files: string[]; truncated: boolean }> {
+  const full = await fullName(repo);
+  const target = ref ?? (await defaultBranch(repo)).name;
+  const tree = await request<{ tree?: Array<{ path: string; type: string }>; truncated?: boolean }>(
+    `/repos/${full}/git/trees/${encodeURIComponent(target)}?recursive=1`,
+  );
+  return {
+    files: (tree.tree ?? []).filter((entry) => entry.type === "blob").map((entry) => entry.path),
+    truncated: tree.truncated === true,
+  };
+}
+
 /** Opens a branch off the default one. Refuses to move an existing ref. */
 export async function createBranch(repo: string, branch: string, fromSha?: string): Promise<{ branch: string; sha: string }> {
   const full = await assertWritable(repo);
