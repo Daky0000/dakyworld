@@ -604,6 +604,11 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   }, true);
 
   document.addEventListener("keydown", function (event) {
+    if ((event.ctrlKey || event.metaKey) && ["s", "z", "Z", "y", "Y", "Enter"].indexOf(event.key) !== -1) {
+      event.preventDefault(); stopEdit();
+      parent.postMessage({ source: "dakyworld-preview", type: "shortcut", key: event.key, shiftKey: event.shiftKey }, location.origin);
+      return;
+    }
     if (!editing) return;
     if (event.key === "Escape") { event.preventDefault(); stopEdit(); return; }
     // Lines within an element, not new paragraphs — the browser's default here

@@ -32,3 +32,7 @@ server/docs/agent-system-front.pdf
 # customer installation and belongs in the deployment's secrets, never here.
 .github-app.json
 *.pem
+
+# Screenshots and pages written by the browser checks — regenerate by running them.
+checks/artifacts/
+server/checks/artifacts/

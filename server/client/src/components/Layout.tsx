@@ -328,7 +328,7 @@ export function Layout() {
           Full-bleed rather than the website's floating rounded bar: the editor
           runs the window to its edges, and a pill hovering over a page of
           somebody's live site would be a landing-page device in a workshop. */}
-      <header
+      {!fullBleed && <header
         className={
           fullBleed
             ? "relative z-40 flex-none border-b border-white/10 bg-ink"
@@ -384,7 +384,7 @@ export function Layout() {
             <MobileNav items={visibleNav} />
           </div>
         </div>
-      </header>
+      </header>}
 
       <main className={fullBleed ? "min-h-0 flex-1" : "mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10"}>
         {canGoBack && !fullBleed && (

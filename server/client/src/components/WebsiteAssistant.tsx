@@ -23,6 +23,8 @@ export function WebsiteAssistant({ pageId, selectedFieldId, fieldLabel, values, 
   onApply: (changes: Record<string, FieldEdit>) => void;
   onClose: () => void;
 }) {
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [previewPending, setPreviewPending] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [selectionOnly, setSelectionOnly] = useState(Boolean(selectedFieldId));
   const [pending, setPending] = useState(false);
@@ -95,6 +97,19 @@ export function WebsiteAssistant({ pageId, selectedFieldId, fieldLabel, values, 
     }
   }
 
+  useEffect(() => setPreviewHtml(null), [proposal, included, fingerprint]);
+  async function previewProposal() {
+    if (!proposal || stale || !included.size) return;
+    setPreviewPending(true); setError(null);
+    const merged = { ...values };
+    for (const [id, patch] of Object.entries(proposal.values)) if (included.has(id)) merged[id] = { ...merged[id], ...patch };
+    try {
+      const result = await api.post<{ html: string }>(`/website/pages/${encodeURIComponent(pageId)}/assistant/preview`, { values: merged, selectedFieldId: selectionOnly ? selectedFieldId : null });
+      if (mounted.current) setPreviewHtml(result.html);
+    } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : "Preview failed."); }
+    finally { if (mounted.current) setPreviewPending(false); }
+  }
+
   function apply() {
     if (!proposal || stale || !included.size) return;
     onApply(Object.fromEntries(Object.entries(proposal.values).filter(([id]) => included.has(id))));
@@ -151,6 +166,7 @@ export function WebsiteAssistant({ pageId, selectedFieldId, fieldLabel, values, 
               </div>)}
             </section>)}
           </div>}
+          {proposal && groups.length > 0 && <section className="mt-4"><Button disabled={stale || previewPending || !included.size} onClick={() => void previewProposal()}>{previewPending ? "Loading preview?" : "Preview selected changes"}</Button>{previewHtml && <><p className="my-2 text-xs text-muted">Static preview. Interactive scripts are paused. Nothing has been saved.</p><iframe title="Proposed page preview" sandbox="" srcDoc={previewHtml} className="mt-3 h-96 w-full border border-line bg-white" /></>}</section>}
           {proposal && !groups.length && <p className="mt-3 text-sm text-muted">No changes were proposed. Refine your request or adjust the page with the visual controls.</p>}
           {proposal?.note && <p className="mt-4 text-xs text-muted">{proposal.note}</p>}
           {proposal && <p className="mt-4 text-[11px] text-muted">Suggestion cost: {proposal.costUsd > 0 ? `$${proposal.costUsd.toFixed(4)}` : "$0.00"}</p>}

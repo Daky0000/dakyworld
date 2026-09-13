@@ -48,6 +48,7 @@ export type InspectorSource = {
 
 export function ElementInspector({
   simple = false,
+  tab,
   facts,
   device,
   style,
@@ -62,6 +63,7 @@ export function ElementInspector({
   content,
 }: {
   simple?: boolean;
+  tab?: "content" | "style";
   facts: ElementFacts;
   device: Device;
   /** The draft's declarations for the active viewport. */
@@ -107,7 +109,7 @@ export function ElementInspector({
     display: declarations.display ?? facts.display,
     position: declarations.position ?? facts.position,
   });
-  const shown = new Set(inspectorSections(capabilities).filter(section => !simple || section === "content"));
+  const shown = new Set(inspectorSections(capabilities).filter(section => tab ? (tab === "content" ? section === "content" : section !== "content") : (!simple || section === "content")));
 
   const value = (property: string): InspectorValue =>
     inspectorValue(property, {
@@ -152,7 +154,7 @@ export function ElementInspector({
    * the answer to the question that produced it.
    */
   const ALWAYS_OPEN: SectionKey[] = ["content", "image", "layout", "flexContainer", "gridContainer", "flexChild", "gridChild", "position", "typography"];
-  const isOpen = (section: SectionKey) => openSections[section] ?? (ALWAYS_OPEN.includes(section) || sectionHasValue(section));
+  const isOpen = (section: SectionKey) => openSections[section] ?? (tab ? section === "typography" : (ALWAYS_OPEN.includes(section) || sectionHasValue(section)));
 
   /** The rail on the right of every row: where the value came from, and back. */
   const rail = (property: string) => (
@@ -652,7 +654,7 @@ export function ElementInspector({
         )}
 
         {/* -------------------------------------------------------- advanced */}
-        {!simple && <Section
+        {!simple && tab !== "content" && <Section
           name="advanced"
           title={SECTION_TITLE.advanced}
           open={showAdvanced}
@@ -761,7 +763,7 @@ export function ElementInspector({
               )}
           </div>
         </Section>}
-        {simple && <p className="px-3 py-3 text-xs text-muted">For layout, spacing and detailed styling, enable Designer controls in More.</p>}
+        {simple && !tab && <p className="px-3 py-3 text-xs text-muted">For layout, spacing and detailed styling, enable Designer controls in More.</p>}
       </div>
     </PaletteContext.Provider>
   );

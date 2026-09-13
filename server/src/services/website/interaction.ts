@@ -4,7 +4,7 @@ import { interactionCss } from "../../shared/websiteInteraction.js";
 export function regenerateInteractionStyles(source: string): string {
   const root = parseHtml(source);
   const nodes = [...walk(root)];
-  const used = nodes.some(node => /--dw-(?:hover|focus)-/.test(attrNode(node, "style")?.value ?? ""));
+  const used = nodes.some(node => /--dw-(?:hover|focus|active)-/.test(attrNode(node, "style")?.value ?? ""));
   const previous = nodes.filter(node => node.tag === "style" && attrNode(node, "data-dw-interaction-styles"));
   const block = used ? `<style data-dw-interaction-styles>\n${interactionCss()}\n</style>` : "";
   const edits = previous.map((node, index) => ({ start: node.start, end: node.end, text: index ? "" : block }));

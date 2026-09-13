@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { clearTextFormatter, rememberTextFormatter, editableInnerHtml, formatTextRange, type InlineFormat } from "../lib/websiteTextSelection";
 
-export function WebsiteTextFormatting({ element, readOnly, onChange }: { element: HTMLElement | null; readOnly?: boolean; onChange: (html: string) => void }) {
+export function WebsiteTextFormatting({ element, readOnly, onChange, hideWhenEmpty = false }: { hideWhenEmpty?: boolean; element: HTMLElement | null; readOnly?: boolean; onChange: (html: string) => void }) {
   const range = useRef<Range | null>(null);
   const [selected, setSelected] = useState("");
   const [colour, setColour] = useState("#3157ff");
@@ -37,7 +37,7 @@ export function WebsiteTextFormatting({ element, readOnly, onChange }: { element
     onChange(editableInnerHtml(element));
   };
   applyRef.current = apply;
-  return <fieldset disabled={readOnly || !selected} className="mb-2 rounded-xl border border-line bg-sunken p-2" aria-label="Selected text formatting">
+  return <fieldset hidden={hideWhenEmpty && !selected} disabled={readOnly || !selected} className="mb-2 rounded-xl border border-line bg-sunken p-2" aria-label="Selected text formatting">
     <p aria-live="polite" className="mb-2 text-xs text-muted">{selected ? `Selected text: “${selected.slice(0, 70)}${selected.length > 70 ? "…" : ""}”` : "Highlight words to format only those words."}</p>
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <label className="flex items-center gap-1">Text colour<input aria-label="Selected text colour" type="color" value={colour} onChange={event => { setColour(event.target.value); apply({ color: event.target.value }); }} className="h-8 w-9" /></label>

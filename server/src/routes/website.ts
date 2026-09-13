@@ -1,3 +1,4 @@
+import { rateLimit } from "../middleware/security.js";
 import type { Request } from "express";
 import { Router, json } from "express";
 import { createHash } from "node:crypto";
@@ -55,6 +56,13 @@ import { offerPagePublished } from "../services/context/business.js";
 export const websiteRouter = Router();
 
 websiteRouter.use(websiteAccessGate);
+// The API already has a global ceiling. Expensive mutations get a separate,
+// per-user budget so preview reads and ordinary typing never consume it.
+const expensiveWebsiteWrite = rateLimit({ windowMs: 60_000, max: 20, message: "Too many publishing or assistant requests. Try again in {minutes}.", key: req => req.dbUser?.id ?? req.ip ?? "local" });
+websiteRouter.use((req, res, next) => {
+  if (req.method === "POST" && /\/(publish|structure|assistant|rollback)$/.test(req.path)) return expensiveWebsiteWrite(req, res, next);
+  next();
+});
 
 websiteRouter.use(json({ limit: "8mb" }));
 registerWebsiteMembership(websiteRouter);

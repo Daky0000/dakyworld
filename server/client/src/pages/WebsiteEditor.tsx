@@ -245,7 +245,7 @@ function FieldRow({
         </div>
       )}
 
-      {(field.kind === "richtext" || (field.kind === "text" && field.tag !== "title" && field.tag !== "meta")) && <WebsiteRichText html={value} readOnly={readOnly} onChange={(next) => onChange({ ...edit, value: next })} />}
+      {(field.kind === "richtext" || (field.kind === "text" && field.tag !== "title" && field.tag !== "meta")) && <WebsiteRichText label={field.label} html={value} readOnly={readOnly} onChange={(next) => onChange({ ...edit, value: next })} />}
 
       {field.kind === "text" && (field.tag === "title" || field.tag === "meta") && (
         <textarea
@@ -264,7 +264,7 @@ function FieldRow({
               <span className="mb-1 block text-xs text-muted">
                 {field.kind === "button" ? "Words on the button" : "Words on the link"}
               </span>
-              <WebsiteRichText html={value} readOnly={readOnly || !field.value} onChange={next => onChange({ ...edit, value: next })} />
+              <WebsiteRichText label={field.label} html={value} readOnly={readOnly || !field.value} onChange={next => onChange({ ...edit, value: next })} />
             </label>
             {/* A `<button>` has no destination — where it leads is decided by
                 script — so the box is not drawn rather than drawn and inert. */}
@@ -472,6 +472,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const qc = useQueryClient();
   const { user } = useAuth();
   const [designerMode, setDesignerMode] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<"content" | "style" | "interactions">("content");
+  const [showLayers, setShowLayers] = useState(false);
+  const [showPanel, setShowPanel] = useState(true);
+  const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
   const [showGuide, setShowGuide] = useState(false);
   useEffect(() => {
     if (!user?.id) return;
@@ -814,9 +818,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   // served from the site's own origin, which is where this is heading.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      const data = event.data as { source?: string; type?: string; id?: string | null; html?: string; final?: boolean };
+      const data = event.data as { source?: string; type?: string; id?: string | null; html?: string; final?: boolean; key?: string; shiftKey?: boolean };
       if (event.source !== frame.current?.contentWindow || event.origin !== window.location.origin || data?.source !== "dakyworld-preview") return;
-      if (data.type === "select") {
+      if (data.type === "shortcut" && data.key && ["s", "z", "Z", "y", "Y", "Enter"].includes(data.key)) {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: data.key, ctrlKey: true, shiftKey: !!data.shiftKey, cancelable: true }));
+      } else if (data.type === "select") {
         setPickedId(data.id ?? null);
       } else if (data.type === "applied") {
         // The channel is alive after all.
@@ -1076,7 +1082,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      const inField = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      const inField = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+      if (event.defaultPrevented || showAI || reviewOpen || showVersions) return;
+      if ((event.ctrlKey || event.metaKey) && ["s", "Enter"].includes(event.key)) {
+        event.preventDefault();
+        if (!canEdit || publishPending.current || structurePending.current) return;
+        if (event.key === "Enter" && !access.data?.capabilities.publish) return;
+        void (async () => { try { if (dirty.current) await save.mutateAsync(latestEdits.current); if (event.key === "Enter" && !dirty.current) setReviewOpen(true); } catch {} })();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && (event.key === "z" || event.key === "Z") && !inField) {
         event.preventDefault();
         restore(event.shiftKey ? 1 : -1);
@@ -1094,7 +1108,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [restore, pick, tell]);
+  }, [restore, pick, tell, showAI, reviewOpen, showVersions, canEdit, access.data, save]);
 
   const discard = useMutation({
     mutationFn: () => api.delete(`/website/pages/${pageId}/draft?ifRevision=${revision.current}`),
@@ -1224,21 +1238,21 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const frameWidth = DEVICES.find((option) => option.key === device)!.width;
 
   const canvas = (
-    <div className="min-h-0 flex-1 overflow-auto bg-cream p-4">
+    <div className="editor-canvas min-h-0 flex-1 overflow-auto bg-cream p-4">
       <div className="mx-auto h-full" style={{ width: frameWidth, minWidth: frameWidth, zoom }}>
         <iframe
           ref={mode === "visual" ? frame : undefined}
           key={`${mode}-${previewToken}`}
           title="Page"
           src={apiUrl(`/website/pages/${pageId}/preview?${mode === "visual" ? "pick=1&" : ""}v=${previewToken}`)}
-          className="h-full min-h-[400px] w-full rounded-xl border border-line bg-white shadow-sm shadow-ink/5"
+          className="h-full min-h-[400px] w-full border border-line bg-white shadow-sm shadow-ink/5"
         />
       </div>
     </div>
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={`website-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
       {reviewOpen && <PublishReview pageId={pageId} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
       {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={values => {
         const merged = { ...latestEdits.current };
@@ -1292,7 +1306,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       )}
       {showGuide && <WebsiteQuickStart onClose={closeGuide} />}
       {/* ------------------------------------------------------------ bar */}
-      <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-white px-4 py-2.5">
+      <div className="editor-toolbar flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-white px-4 py-2.5">
         <Link to="/website/sites" className="shrink-0 text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
           ← All pages
         </Link>
@@ -1398,11 +1412,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             ))}
           </div>
 
-          <span className="text-xs text-muted">{designerMode ? "Designer" : "Client editing"}</span>
+          <button className="editor-tool" type="button" aria-pressed={showPanel} onClick={() => setShowPanel(value => !value)}>Inspector</button>
+          <button className="editor-tool" type="button" aria-pressed={showLayers} onClick={() => { setShowLayers(value => !value); setShowPanel(true); setMode("visual"); }}>Layers</button>
+          {canEdit && <button className="editor-tool" type="button" disabled={save.isPending || readOnly} onClick={() => saveNow(latestEdits.current)} title="Save draft (Ctrl/Cmd+S)">Save</button>}
+          {canEdit && design.data?.options.aiEnabled && <button className="editor-tool" type="button" onClick={() => setShowAI(true)}>Assistant</button>}
           <details className="relative" onKeyDown={event => { if (event.key === "Escape") event.currentTarget.open = false; }}>
             <summary className="cursor-pointer rounded-xl border border-line px-3 py-2 text-sm">More</summary>
             <div className="absolute right-0 top-full z-50 mt-2 flex w-64 flex-col items-start gap-3 rounded-xl border border-line bg-white p-4 shadow-xl">
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={designerMode} onChange={event => { setDesignerMode(event.target.checked); try { localStorage.setItem(`website-designer:${user?.id}`, event.target.checked ? "yes" : "no"); } catch { /* Optional preference. */ } }} />Designer controls</label>
+              <button type="button" className="text-sm text-blue" onClick={() => { const next = editorTheme === "dark" ? "light" : "dark"; setEditorTheme(next); try { localStorage.setItem("website-editor-theme", next); } catch {} }}>Use {editorTheme === "dark" ? "light" : "dark"} editor</button>
+              <p className="text-xs text-muted">Shortcuts: Ctrl/Cmd+S save, Z undo, Shift+Z redo, Enter review publish.</p>
               <button type="button" className="text-sm text-blue" onClick={() => setShowGuide(true)}>First edit walkthrough</button>
           <a className="text-xs text-blue" href={apiUrl(`/website/pages/${pageId}/export`)} download onClick={event => { if (dirty.current || save.isPending) { event.preventDefault(); setFailure("Wait for the current changes to save before downloading."); } }}>Download HTML</a>
           <Button variant="ghost" size="sm" disabled={save.isPending || publish.isPending || structureBusy} onClick={async () => {
@@ -1418,7 +1437,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             </Button>
           )}
           {changedCount > 0 && !readOnly && (
-            <Button variant="ghost" size="sm" onClick={() => discard.mutate()} disabled={discard.isPending || save.isPending || publish.isPending}>
+            <Button variant="ghost" size="sm" onClick={() => { if (window.confirm("Discard all unpublished changes on this page? The live website stays unchanged.")) discard.mutate(); }} disabled={discard.isPending || save.isPending || publish.isPending}>
               Discard
             </Button>
           )}
@@ -1494,8 +1513,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
       {/* ---------------------------------------------------------- body */}
       <div className="flex min-h-0 flex-1">
-        {mode === "visual" && (
-          <aside className="flex w-[300px] flex-none flex-col border-r border-line bg-white">
+        {mode === "visual" && showPanel && (
+          <aside aria-label="Element inspector" className="editor-sidebar flex flex-none flex-col border-r border-line bg-white">
             {/* What is selected, said once, at the top. The tag is a chip rather
                 than a line of its own: it is the one piece of jargon on this
                 panel and it should look like a label on a thing, not like a
@@ -1529,7 +1548,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
             <WebsiteBreadcrumbs fields={allFields} selectedId={pickedId} onSelect={pick} />
             {page.data.structure?.stale && <p role="alert" className="bg-warn-surface px-3 py-2 text-xs text-warn-text">The source changed after these layout edits. Your draft is preserved. Discard it to work from the latest source; publishing is blocked.</p>}
-            <WebsiteLayers fields={allFields} edits={edits} problems={problems} shared={page.data.shared?.scope} selectedId={pickedId} onSelect={pick} onMove={!designerMode || readOnly || save.isPending ? undefined : (id, target, position) => { void runStructure(position, id, target); }} />
+            {showLayers && <div className="editor-layers"><WebsiteLayers fields={allFields} edits={edits} problems={problems} shared={page.data.shared?.scope} selectedId={pickedId} onSelect={pick} onMove={!designerMode || readOnly || save.isPending ? undefined : (id, target, position) => { void runStructure(position, id, target); }} /></div>}
             {designerMode && picked && <div className="border-b border-line px-3 py-2">
               <div className="flex flex-wrap gap-2 text-xs">
                 <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.previousId} onClick={() => void runStructure("before", picked.id, picked.structure?.previousId)}>Move up</button>
@@ -1540,7 +1559,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               <p className="mt-2 text-xs text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
 
-            <div className="max-h-[70%] min-h-0 flex-none overflow-y-auto">
+            <div role="tablist" aria-label="Element settings" className="editor-tabs">{(["content", "style", "interactions"] as const).map(tab => <button type="button" role="tab" aria-selected={inspectorTab === tab} key={tab} onClick={() => setInspectorTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>)}</div>
+            <div className="editor-controls min-h-0 flex-1 overflow-y-auto">
               {!picked ? (
                 <div className="px-4 py-6 text-center">
                   <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
@@ -1590,7 +1610,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       three actions that belong to the whole element rather than
                       to any one property. One line each: this bar sits above
                       every panel and is not what somebody came to read. */}
-                  <div className="border-b border-line bg-sunken/60 px-3 py-2">
+                  <div hidden={inspectorTab !== "style"} className="border-b border-line bg-sunken/60 px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className={`rounded-md px-1.5 py-0.5 text-xs font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
                         {device === "desktop" ? "All sizes" : device === "tablet" ? "Tablet and below" : "Phone only"}
@@ -1622,10 +1642,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       what knows that — its display, its parent's, whether it has
                       words of its own — and when the frame cannot be reached the
                       field row is the only thing left to go on. */}
-                  {!readOnly && <div className="px-3 pt-3"><WebsitePresetPicker presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
-                  {picked.kind !== "container" && picked.kind !== "image" && !readOnly && <div className="px-3 pt-2"><WebsiteTextFormatting element={pickedElement} onChange={html => { change(picked.id, { ...edits[picked.id], value: html }, { fromFrame: true, commit: true }); setFrameEdit(token => token + 1); }} /></div>}
-                  <WebsiteInteractionStyles element={pickedElement} style={edits[picked.id]?.style ?? picked.style ?? ""} readOnly={readOnly} onChange={style => change(picked.id, { ...edits[picked.id], style }, { commit: true })} />
-                  <ElementInspector
+                  {!readOnly && inspectorTab === "style" && <div className="px-3 pt-3"><WebsitePresetPicker presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
+                  {picked.kind !== "container" && picked.kind !== "image" && !readOnly && <div className="px-3 pt-2"><WebsiteTextFormatting hideWhenEmpty element={pickedElement} onChange={html => { change(picked.id, { ...edits[picked.id], value: html }, { fromFrame: true, commit: true }); setFrameEdit(token => token + 1); }} /></div>}
+                  <div hidden={inspectorTab !== "interactions"}><WebsiteInteractionStyles element={pickedElement} style={edits[picked.id]?.style ?? picked.style ?? ""} readOnly={readOnly} onChange={style => change(picked.id, { ...edits[picked.id], style }, { commit: true })} /></div>
+                  <div hidden={inspectorTab === "interactions"}><ElementInspector
+                    tab={inspectorTab === "style" ? "style" : "content"}
                     simple={!designerMode}
                     onTextColour={colour => !readOnly && formatActiveText({ color: colour })}
                     key={`${picked.id}:${device}`}
@@ -1691,7 +1712,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                         />
                       </>
                     }
-                  />
+                  /></div>
                 </>
               )}
             </div>

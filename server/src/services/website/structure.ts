@@ -107,7 +107,7 @@ export function changeStructure(source: string, values: Record<string, FieldValu
     html = splice(rendered, [{ start: node.start, end: node.end, text: "" }, { start: position, end: position, text: block }]);
   }
   html = regenerateResponsiveStyles(html);
-  if (/--dw-(?:hover|focus)-|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
+  if (/--dw-(?:hover|focus|active)-|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
   if (Buffer.byteLength(html) > 3 * 1024 * 1024) throw new StructureError("This page is too large to duplicate more content. Remove unused blocks first.");
   const verb = action.kind === "remove" ? "Removed" : action.kind === "duplicate" ? "Duplicated" : "Moved";
   const document: DraftDocument = { baseHash: previous?.baseHash ?? sourceHash(source), html, changes: [...current.changes, `${verb} ${field.label}`].slice(-100), summary: [...(current.summary ?? []), ...describeChanges(readPage(current.html).fields, current.values)], undo: boundedHistory([...(previous?.undo ?? []), current]), redo: [] };

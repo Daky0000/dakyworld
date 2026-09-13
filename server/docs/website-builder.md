@@ -604,3 +604,14 @@ generation, an animation builder, white-labelling and self-hosted installs.
 6. **Publish jobs, PR mode, scheduled publish (§7B, §11)**.
 7. **Expansion** — GitLab, Netlify, SFTP, WordPress, React/Next, white-label.
    Behind a provider interface the GitHub path is already shaped like.
+
+
+## September 2026 editor redesign
+
+The editor now uses the full window with a focused top bar, a collapsible inspector, optional Layers, and Content / Style / Interactions tabs. Dark and light editor themes do not affect the public website. Desktop, tablet, phone and preview remain available. Designer controls expose structural operations and advanced settings; normal style controls are directly available under Style.
+
+Selected-word formatting, image framing, site-stored presets, draft history and forward publish diffs remain intact. Hover, keyboard focus and active styles publish through generated CSS. Image framing validates numeric coordinates and ratios and reports cropped resolution. Discard requires confirmation. Ctrl/Cmd+S saves, Ctrl/Cmd+Z undoes, Shift+Z redoes and Ctrl/Cmd+Enter opens review; shortcuts also work inside the canvas.
+
+The active assistant already supported validated proposals. Its obsolete skeleton was removed, and proposals now have a sandboxed static preview before approval. Activity already worked; it now has a dedicated component with loading and empty states. The API already had global rate limiting; expensive website mutations now also have a per-user limit.
+
+Audit corrections: setup HTML was a complete six-step guide, not a stub; brand presets persist in site settings; rich-text labels and history already existed; browser harnesses are used by checks and excluded from production. See CONTRIBUTING.md, website-api.md and adr/0001-preserve-website-source.md for engineering guidance.

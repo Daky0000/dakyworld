@@ -1,3 +1,4 @@
+import { validFramingDeclaration } from "./websiteImageFraming.js";
 /** A complete set of element overrides. Missing properties inherit the base. */
 export type ResponsiveStyles = { tablet?: string; mobile?: string };
 
@@ -23,6 +24,7 @@ export function safeResponsiveStyle(style: string): string {
     if (colon < 1) return [];
     const property = raw.slice(0, colon).trim().toLowerCase();
     const value = raw.slice(colon + 1).trim().replace(/\s*!\s*important\s*$/i, "").trim();
+    if (!validFramingDeclaration(property, value)) return [];
     if (!/^[a-z][a-z-]{1,39}$/.test(property) || !value || value.length > 240) return [];
     if (/[<>{}@`\\\u0000-\u001f]/.test(value) || /\/\*|\*\/|javascript\s*:|expression\s*\(|!/.test(value.toLowerCase())) return [];
     if (/["']/.test(value) && !(property === "font-family" && /^[a-zA-Z0-9 ,"'-]+$/.test(value))) return [];

@@ -19,13 +19,13 @@ await page.route("**/api/**", route => {
 });
 try {
   await page.goto("http://127.0.0.1:5199/builder-harness.html?editor");
-  await page.getByText("Client editing", { exact: true }).waitFor();
+  await page.getByRole("tab", { name: "Content", exact: true }).waitFor();
   await page.getByRole("button", { name: "Close guide" }).click();
   assert.equal(await page.getByRole("button", { name: "Versions", exact: true }).isVisible(), false);
   await page.getByText("More", { exact: true }).click();
   await page.getByRole("button", { name: "Versions", exact: true }).waitFor();
   await page.getByLabel("Designer controls", { exact: true }).check();
-  await page.getByText("Designer", { exact: true }).waitFor();
+  assert.equal(await page.getByLabel("Designer controls", { exact: true }).isChecked(), true);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Phone", exact: true }).click();
   await page.getByRole("button", { name: "Preview", exact: true }).click();
@@ -35,7 +35,8 @@ try {
   await mkdir("checks/artifacts", { recursive: true });
   await page.screenshot({ path: "checks/artifacts/builder-editor.png", fullPage: true });
   await page.reload();
-  await page.getByText("Designer", { exact: true }).waitFor();
+  await page.getByText("More", { exact: true }).click();
+  assert.equal(await page.getByLabel("Designer controls", { exact: true }).isChecked(), true);
   assert.equal(await page.getByRole("region", { name: "First edit walkthrough" }).count(), 0, "Dismissed walkthrough stays dismissed for this user");
   assert.deepEqual(errors, []);
   console.log("builderEditor: assembled editor toolbar, mode persistence, guide dismissal, preview switching and zero incidental writes passed.");

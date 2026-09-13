@@ -1,1 +1,1 @@
-export { WebsiteAudit } from "../components/WebsiteAssetLibrary";
+export { WebsiteAuditTrail as WebsiteAudit } from "../components/WebsiteAuditTrail";

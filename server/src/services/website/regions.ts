@@ -1,3 +1,4 @@
+import { validFramingDeclaration } from "../../shared/websiteImageFraming.js";
 import { regenerateInteractionStyles } from "./interaction.js";
 import { createHash } from "node:crypto";
 import { DOCUMENT_KEY, draftDocument, fieldValues, sourceHash, type DraftDocument } from "./document.js";
@@ -932,7 +933,7 @@ export function safeStyle(style: string, originalStyle = ""): string {
       const value = declaration.slice(colon + 1).trim();
       // Preserve a developer's existing background URL or quoted CSS exactly
       // while editing other controls. Newly supplied fetching CSS stays forbidden.
-      return original.has(declaration) || (STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= 120 && (!STYLE_FORBIDDEN.test(declaration) || (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value))));
+      return original.has(declaration) || (validFramingDeclaration(property, value) && STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= 120 && (!STYLE_FORBIDDEN.test(declaration) || (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value))));
     })
     .join("; ");
 }
@@ -1125,6 +1126,6 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
   }
 
   if (responsiveChanged) html = regenerateResponsiveStyles(html);
-  if (/--dw-(?:hover|focus)-|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
+  if (/--dw-(?:hover|focus|active)-|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
   return { html, changed, conflicts, missing };
 }

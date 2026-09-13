@@ -175,3 +175,14 @@ Text, heading, link and button editors preserve highlighted ranges when using fo
 Hover and keyboard-focus styles support colour, background, border colour, shadow, opacity, transform and underline. The state preview does not publish editor markers. These styles apply across screen sizes and travel through existing drafts, revisions, shared edits and publishing. Transition presets respect reduced-motion preferences. Reset removes the selected state's overrides.
 
 Validation: production build and server TypeScript pass. Browser checks cover nested text selections, retained selections, read-only fields, real hover/focus computed styles, state preview and reduced motion. Publication tests cover rich text sanitization, stable field identity and generated interaction styles. Database integration checks requiring local PostgreSQL could not finish because localhost:5433 was unavailable. Three-client observed usability sessions still require participants.
+
+
+## September 2026 editor redesign
+
+The editor now uses the full window with a focused top bar, a collapsible inspector, optional Layers, and Content / Style / Interactions tabs. Dark and light editor themes do not affect the public website. Desktop, tablet, phone and preview remain available. Designer controls expose structural operations and advanced settings; normal style controls are directly available under Style.
+
+Selected-word formatting, image framing, site-stored presets, draft history and forward publish diffs remain intact. Hover, keyboard focus and active styles publish through generated CSS. Image framing validates numeric coordinates and ratios and reports cropped resolution. Discard requires confirmation. Ctrl/Cmd+S saves, Ctrl/Cmd+Z undoes, Shift+Z redoes and Ctrl/Cmd+Enter opens review; shortcuts also work inside the canvas.
+
+The active assistant already supported validated proposals. Its obsolete skeleton was removed, and proposals now have a sandboxed static preview before approval. Activity already worked; it now has a dedicated component with loading and empty states. The API already had global rate limiting; expensive website mutations now also have a per-user limit.
+
+Audit corrections: setup HTML was a complete six-step guide, not a stub; brand presets persist in site settings; rich-text labels and history already existed; browser harnesses are used by checks and excluded from production. See CONTRIBUTING.md, website-api.md and adr/0001-preserve-website-source.md for engineering guidance.
