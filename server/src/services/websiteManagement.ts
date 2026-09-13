@@ -181,7 +181,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const source = await pageSource(site, page, { fresh: true });
     const values = (page.draft ?? {}) as Record<string, import("./website/index.js").FieldValue>;
     const plan = buildPublishPlan({ source: source.html, values });
-    res.json({ revision: page.draftRevision, sourceHash: createHash("sha256").update(source.html).digest("hex"), publishable: plan.publishable, summary: describeChanges(discoverFields(editingSource(source.html, values)).fields, values), problems: plan.problems, conflicts: plan.conflicts, missing: plan.missing });
+    res.json({ revision: page.draftRevision, sourceHash: createHash("sha256").update(source.html).digest("hex"), publishable: plan.publishable, reason: plan.reason, summary: describeChanges(discoverFields(editingSource(source.html, values)).fields, values), problems: plan.problems, conflicts: plan.conflicts, missing: plan.missing });
   }));
 
   router.get("/pages/:pageId/export", handler(async (req, res) => {

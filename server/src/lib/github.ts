@@ -81,7 +81,42 @@ export async function defaultOwner(): Promise<string | null> {
   return getSetting(SETTING.GITHUB_OWNER);
 }
 
+/**
+ * How many times a read is worth trying again, and how long to wait.
+ *
+ * Only two failures are worth repeating: GitHub's own 5xx, and the *secondary*
+ * rate limit, which is a short burst ceiling and comes with a `Retry-After`.
+ * The primary hourly limit is not one of them — it resets on the hour, so
+ * retrying it three seconds later only turns one useless call into four.
+ * Writes are never retried: a commit that timed out may already have landed.
+ */
+const RETRY_BACKOFF_MS = [1_000, 3_000, 7_000];
+
+export function retryableStatus(status: number, detail: string | null, retryAfter: string | null): boolean {
+  if (status >= 500) return true;
+  if (status !== 403 && status !== 429) return false;
+  // A secondary limit says so, or hands back a wait. A primary one says "API
+  // rate limit exceeded" and hands back nothing worth waiting for.
+  if (retryAfter) return true;
+  return /secondary rate limit|abuse detection/i.test(detail ?? "");
+}
+
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 async function request<T>(path: string, options: { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown; token?: string } = {}): Promise<T> {
+  const idempotent = (options.method ?? "GET") === "GET";
+  for (let attempt = 0; ; attempt += 1) {
+    const wait = await attemptRequest<T>(path, options);
+    if (!("retryIn" in wait)) return wait.value;
+    if (!idempotent || attempt >= RETRY_BACKOFF_MS.length) throw wait.error;
+    // GitHub's own advice when it gave any, and the table when it did not.
+    await pause(wait.retryIn || RETRY_BACKOFF_MS[attempt]!);
+  }
+}
+
+type Attempt<T> = { value: T } | { retryIn: number; error: GitHubError };
+
+async function attemptRequest<T>(path: string, options: { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown; token?: string }): Promise<Attempt<T>> {
   const token = options.token ?? credential.getStore()?.token ?? (await getSetting(SETTING.GITHUB_TOKEN));
   if (!token) throw new GitHubNotConfiguredError();
 
@@ -115,16 +150,25 @@ async function request<T>(path: string, options: { method?: "GET" | "POST" | "PA
       .then((body: any) => body?.message)
       .catch(() => null);
     if (response.status === 401) throw new GitHubError(401, "GitHub rejected the token. Check it under Settings → Developer.");
-    if (response.status === 403 && detail?.includes("rate limit")) {
-      throw new GitHubError(429, "GitHub's rate limit has been hit. Try again shortly.");
-    }
     if (response.status === 404) {
       throw new GitHubError(404, "GitHub returned 404 — the repository doesn't exist, or the token can't see it.");
     }
-    throw new GitHubError(response.status, detail ?? `GitHub returned ${response.status}`);
+
+    const retryAfter = response.headers.get("retry-after");
+    const rateLimited = (response.status === 403 || response.status === 429) && (retryAfter !== null || !!detail?.includes("rate limit"));
+    const error = rateLimited
+      ? new GitHubError(429, "GitHub's rate limit has been hit. Try again shortly.")
+      : new GitHubError(response.status, detail ?? `GitHub returned ${response.status}`);
+
+    if (retryableStatus(response.status, detail, retryAfter)) {
+      const advised = Number(retryAfter);
+      const retryIn = Number.isFinite(advised) && advised > 0 ? Math.min(advised * 1000, 30_000) : 0;
+      return { retryIn, error };
+    }
+    throw error;
   }
 
-  return (await response.json()) as T;
+  return { value: (await response.json()) as T };
 }
 
 /** `os` becomes `dakyworld/os` when a default owner is set. */

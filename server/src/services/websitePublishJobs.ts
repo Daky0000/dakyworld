@@ -35,7 +35,12 @@ export type PublishJobKind = "PAGE" | "SHARED" | "ROLLBACK";
 
 /** How long to keep asking the live site, and how often. */
 const VERIFY_ATTEMPTS = 8;
-const VERIFY_BACKOFF_MS = [20_000, 30_000, 45_000, 60_000, 90_000, 120_000, 180_000, 300_000];
+// The first look is early on purpose: a static host can rebuild in well under a
+// minute, and starting at twenty seconds left those jobs sitting in VERIFYING
+// for minutes after the page was already live. The number of looks and the
+// twelve minutes they span are unchanged — only their spacing is, so a slow
+// host is given exactly as long as it was before.
+const VERIFY_BACKOFF_MS = [10_000, 20_000, 30_000, 45_000, 60_000, 90_000, 180_000, 300_000];
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 

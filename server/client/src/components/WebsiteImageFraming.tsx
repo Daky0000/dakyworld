@@ -7,7 +7,12 @@ import { parseStyle, writeStyle } from "./InspectorControls";
 export function WebsiteImageFraming({ src, siteId, style, onApply }: { src: string; siteId?: string; style: string; onApply: (style: string) => void }) {
   const existing = parseStyle(style);
   const assets = useQuery({ queryKey: ["website", "assets", siteId], enabled: !!siteId, queryFn: () => api.get<Array<{ url: string; preview: string }>>(`/website/sites/${siteId}/assets`) });
-  const previewSrc = assets.data?.find(asset => { try { return new URL(asset.url, src).href === src; } catch { return false; } })?.preview ?? src;
+  // Both sides can be relative (`/assets/hero.png` is the common case), so both
+  // are resolved against the page before they are compared. Resolving one
+  // against the other discards it whenever it is already absolute, which made
+  // this match nothing at all for every relative `src`.
+  const absolute = (value: string) => { try { return new URL(value, window.location.href).href; } catch { return value; } };
+  const previewSrc = assets.data?.find(asset => absolute(asset.url) === absolute(src))?.preview ?? src;
   const [x, setX] = useState(() => Number(/^(\d+)%/.exec(existing["object-position"] ?? "")?.[1] ?? 50));
   const [y, setY] = useState(() => Number(/ (\d+)%$/.exec(existing["object-position"] ?? "")?.[1] ?? 50));
   const [ratio, setRatio] = useState(() => existing["aspect-ratio"] || "16 / 9");

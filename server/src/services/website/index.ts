@@ -275,6 +275,15 @@ export type PublishPlan = {
    * a plan is that all of the reasons are known before any of them is acted on.
    */
   publishable: boolean;
+  /**
+   * Why it cannot be committed, in the words the person sees.
+   *
+   * `conflicts` and `missing` explain themselves — a list of ids the caller
+   * reports one by one. "Nothing changed" does not: the plan comes back
+   * unpublishable with three empty lists and no problems, which reads as a bug
+   * rather than as the answer. Null whenever the plan is publishable.
+   */
+  reason: string | null;
 };
 
 /**
@@ -292,11 +301,12 @@ export function buildPublishPlan(input: { source: string; values: Record<string,
   // A value that cannot be published is not spliced in even provisionally: the
   // preview a person approves has to be the page that would be committed.
   if (problems.length) {
-    return { html: null, changed: [], conflicts: [], missing: [], problems, publishable: false };
+    return { html: null, changed: [], conflicts: [], missing: [], problems, publishable: false, reason: null };
   }
 
   const applied = applyValues(input.source, input.values);
-  const blocked = applied.conflicts.length > 0 || applied.missing.length > 0 || applied.changed.length === 0;
+  const nothingToDo = applied.conflicts.length === 0 && applied.missing.length === 0 && applied.changed.length === 0;
+  const blocked = applied.conflicts.length > 0 || applied.missing.length > 0 || nothingToDo;
 
   return {
     html: blocked ? null : applied.html,
@@ -305,6 +315,7 @@ export function buildPublishPlan(input: { source: string; values: Record<string,
     missing: applied.missing,
     problems,
     publishable: !blocked,
+    reason: nothingToDo ? "There is nothing to publish: the draft matches the page that is already live." : null,
   };
 }
 

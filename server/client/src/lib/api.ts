@@ -69,6 +69,26 @@ function statusMessage(status: number, statusText: string): string {
   }
 }
 
+/**
+ * The failure's body, whatever shape it arrived in.
+ *
+ * Not everything that answers this app is the API. A dev-server error page, a
+ * proxy, or a platform's own 502 answers in HTML, and reading that as JSON threw
+ * the whole thing away and left the user with "the server answered 500 and gave
+ * no reason" — the one case where there was a reason and we discarded it. So a
+ * non-JSON body is kept as text and used as the sentence instead.
+ */
+async function failureBody(res: Response): Promise<{ error?: unknown; reference?: unknown }> {
+  const type = res.headers.get("content-type") ?? "";
+  if (type.includes("json")) return await res.json().catch(() => ({}));
+  const text = await res.text().catch(() => "");
+  const words = text
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return words ? { error: words.slice(0, 300) } : {};
+}
+
 /** The server's sentence when there is one, and something honest when there isn't. */
 function failureMessage(body: { error?: unknown; reference?: unknown }, res: Response): string {
   const said = typeof body.error === "string" ? body.error.trim() : "";
@@ -90,7 +110,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: "include" });
 
   if (!res.ok) {
-    const body: { error?: unknown; reference?: unknown } = await res.json().catch(() => ({}));
+    const body = await failureBody(res);
     // A 401 on /auth/me is just "not logged in yet" — the provider handles it.
     if (res.status === 401 && path !== "/auth/me") onUnauthorized?.();
     throw new ApiError(res.status, failureMessage(body, res), body);

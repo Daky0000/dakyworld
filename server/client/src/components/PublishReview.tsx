@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import { Button } from "./ui";
 
-export type WebsiteReview = { revision: number; sourceHash: string; publishable: boolean; summary: { id: string; label: string; part: string; from: string; to: string }[]; problems: { reason: string }[]; conflicts: unknown[]; missing: string[] };
+export type WebsiteReview = { revision: number; sourceHash: string; publishable: boolean; reason?: string | null; summary: { id: string; label: string; part: string; from: string; to: string }[]; problems: { reason: string }[]; conflicts: unknown[]; missing: string[] };
 export function PublishReview({ pageId, pending, onClose, onConfirm }: { pageId: string; pending: boolean; onClose: () => void; onConfirm: (review: WebsiteReview) => void }) {
   const panel = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
@@ -35,6 +35,9 @@ export function PublishReview({ pageId, pending, onClose, onConfirm }: { pageId:
         {review.error && <p role="alert" className="text-sm text-danger-text">{(review.error as Error).message}</p>}
         {data?.problems.map((problem, i) => <p key={i} role="alert" className="mb-2 text-sm text-danger-text">{problem.reason}</p>)}
         {!!(data?.conflicts.length || data?.missing.length) && <p role="alert" className="mb-3 text-sm text-danger-text">The original page changed. Reopen it and resolve the conflicts before publishing.</p>}
+        {/* Without this the dialog is an empty box with a dead Publish button,
+            which reads as a fault rather than as the answer. */}
+        {!review.isFetching && !data?.publishable && !data?.problems.length && !data?.conflicts.length && !data?.missing.length && data?.reason && <p role="status" className="mb-3 text-sm text-muted">{data.reason}</p>}
         <div className="space-y-3">{data?.summary.map((change, i) => <div key={`${change.id}-${i}`} className="rounded-xl border border-line p-3"><p className="mb-2 text-xs font-semibold">{change.label} · {change.part}</p><div className="grid gap-3 text-xs sm:grid-cols-2"><div className="min-w-0 break-words rounded-xl bg-sunken p-2"><span className="mb-1 block text-[10px] uppercase text-muted">Before</span>{change.from}</div><div className="min-w-0 break-words rounded-xl bg-blue/5 p-2"><span className="mb-1 block text-[10px] uppercase text-muted">After</span>{change.to}</div></div></div>)}</div>
       </div>
       <div className="flex justify-end gap-2 border-t border-line p-4"><Button variant="ghost" onClick={onClose} disabled={pending}>Keep editing</Button><Button variant="accent" disabled={pending || review.isFetching || !data?.publishable} onClick={() => data && onConfirm(data)}>{pending ? "Publishing…" : "Publish these changes"}</Button></div>
