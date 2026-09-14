@@ -240,5 +240,21 @@ try {
   const refusedStyle = await post("review", { filePath, sourceHash: jsxSourceHash(current), styles: [{ nodeId: computedSection.id, style: "color: red" }] });
   assert.equal(refusedStyle.status, 409);
   assert.match((await refusedStyle.json() as { error: string }).error, /comes from code/); passed++;
+  // A duplicate must publish. Its clone's style key is derived from the block it
+  // came from rather than drawn at random, because the same action is replayed
+  // to review it and again to publish it and the two are compared byte for byte.
+  current = 'const Page = () => (<main><section data-dw-style="dw-000000000000000000000000"><h2>A</h2></section><p>B</p></main>);'; editing = filePath;
+  const cloneSource = current;
+  const cloneBlocks = jsxStructureNodes(cloneSource, filePath);
+  const cloneEdit = { filePath, sourceHash: jsxSourceHash(cloneSource), structure: [{ kind: "duplicate" as const, nodeId: cloneBlocks.find(item => item.tag === "section")!.id }] };
+  const cloneReview = await post("review", cloneEdit);
+  assert.equal(cloneReview.status, 200);
+  const cloneBody = await cloneReview.json() as { reviewHash: string; layout: string[] };
+  assert.deepEqual(cloneBody.layout, ["Duplicated <section>"]);
+  const clonePublished = await post("publish", { ...cloneEdit, reviewHash: cloneBody.reviewHash });
+  assert.equal(clonePublished.status, 200);
+  const keys = [...current.matchAll(/data-dw-style="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(keys.length, 2);
+  assert.notEqual(keys[0], keys[1]); passed++;
   console.log(`websiteSourceStructure: ${passed} layout, style, review, binding and publish checks passed`);
 } finally { await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve())); }

@@ -4,7 +4,7 @@ import type { Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { commitFiles, listTree, readFile } from "../lib/github.js";
-import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, markdownStructureNodes, replayMarkdownStructure, MARKDOWN_STRUCTURE_VERSION, templateStructureNodes, replayTemplateStructure, TEMPLATE_STRUCTURE_VERSION, jsxStructureNodes, replayJsxStructure, JsxStructureError, applySourceStyles, sourceStyleState, SOURCE_STYLE_VERSION, type SourceStyleEdit, type SourceStyleState, applySourceLinks, sourceLinkState, SOURCE_LINK_VERSION, type SourceLinkEdit, type SourceLinkState, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
+import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, markdownStructureNodes, replayMarkdownStructure, MARKDOWN_STRUCTURE_VERSION, templateStructureNodes, replayTemplateStructure, TEMPLATE_STRUCTURE_VERSION, jsxStructureNodes, replayJsxStructure, JsxStructureError, applySourceStyles, sourceStyleState, SOURCE_STYLE_VERSION, type SourceStyleEdit, type SourceStyleState, applySourceLinks, sourceLinkState, SOURCE_LINK_VERSION, type SourceLinkEdit, type SourceLinkState, applySourceResponsive, sourceResponsiveState, SOURCE_RESPONSIVE_VERSION, type SourceResponsiveEdit, type SourceResponsiveState, pageEditorCss, writeEditorRegion, needsStylesheet, STYLESHEET_CANDIDATES, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
 import { invalidateRender, publicFolder } from "./website/index.js";
 import { invalidateSource } from "./website/sourceCache.js";
@@ -27,13 +27,17 @@ const changeObject = z.object({
   structure: z.array(structureAction).max(100).default([]),
   styles: z.array(z.object({ nodeId: z.string().min(1).max(120), style: z.string().max(4_000) }).strict()).max(200).default([]),
   links: z.array(z.object({ nodeId: z.string().min(1).max(120), newTab: z.boolean() }).strict()).max(200).default([]),
+  devices: z.array(z.object({
+    nodeId: z.string().min(1).max(120),
+    responsive: z.object({ tablet: z.string().max(4_000).optional(), mobile: z.string().max(4_000).optional() }).strict(),
+  }).strict()).max(200).default([]),
   changes: z.array(z.object({ fieldId: z.string().min(1).max(120), value: z.string().max(100_000) }).strict()).max(500).default([]),
 }).strict();
-const atLeastOne = (input: { structure: unknown[]; changes: unknown[]; styles: unknown[]; links: unknown[] }) => input.structure.length + input.changes.length + input.styles.length + input.links.length > 0;
-const ONE_EDIT = { message: "Submit at least one layout action, style, link or field change." };
+const atLeastOne = (input: { structure: unknown[]; changes: unknown[]; styles: unknown[]; links: unknown[]; devices: unknown[] }) => input.structure.length + input.changes.length + input.styles.length + input.links.length + input.devices.length > 0;
+const ONE_EDIT = { message: "Submit at least one layout action, style, link, screen-size or field change." };
 const changeInput = changeObject.refine(atLeastOne, ONE_EDIT);
 const publishInput = changeObject.extend({ reviewHash: z.string().regex(/^[a-f0-9]{64}$/) }).refine(atLeastOne, ONE_EDIT);
-export type WebsiteSourceEdit = { filePath: string; sourceHash: string; structure?: readonly JsxStructureAction[]; styles?: readonly SourceStyleEdit[]; links?: readonly SourceLinkEdit[]; changes?: readonly { fieldId: string; value: string }[] };
+export type WebsiteSourceEdit = { stylesheet?: { path: string; content: string }; filePath: string; sourceHash: string; structure?: readonly JsxStructureAction[]; styles?: readonly SourceStyleEdit[]; links?: readonly SourceLinkEdit[]; devices?: readonly SourceResponsiveEdit[]; changes?: readonly { fieldId: string; value: string }[] };
 
 /** Relative to the site's configured repository folder, including browse calls. */
 export function websiteSourcePath(folder: string, path: string, file = false): { relative: string; repository: string } {
@@ -72,11 +76,14 @@ export type SourceAdapter = {
   /** Where each native link opens, for languages whose links are elements. */
   links?(source: string, filePath: string): SourceLinkState[];
   relink?(source: string, filePath: string, edits: readonly SourceLinkEdit[]): { source: string; changed: string[]; summary: string[] };
+  /** Tablet and phone overrides, for languages whose pages are elements. */
+  devices?(source: string, filePath: string): SourceResponsiveState[];
+  redevice?(source: string, filePath: string, edits: readonly SourceResponsiveEdit[]): { source: string; changed: string[]; summary: string[] };
 };
 export function sourceAdapterFor(filePath: string): SourceAdapter {
   if (isMarkdownPath(filePath)) return { discover: discoverMarkdownFields, apply: applyMarkdownValues, blocks: markdownStructureNodes, replay: replayMarkdownStructure, structureAdapter: MARKDOWN_STRUCTURE_VERSION };
-  if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues, blocks: templateStructureNodes, replay: replayTemplateStructure, structureAdapter: TEMPLATE_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION, links: sourceLinkState, relink: applySourceLinks };
-  return { discover: discoverJsxFields, apply: applyJsxValues, blocks: jsxStructureNodes, replay: replayJsxStructure, structureAdapter: JSX_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION, links: sourceLinkState, relink: applySourceLinks };
+  if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues, blocks: templateStructureNodes, replay: replayTemplateStructure, structureAdapter: TEMPLATE_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION, links: sourceLinkState, relink: applySourceLinks, devices: sourceResponsiveState, redevice: applySourceResponsive };
+  return { discover: discoverJsxFields, apply: applyJsxValues, blocks: jsxStructureNodes, replay: replayJsxStructure, structureAdapter: JSX_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION, links: sourceLinkState, relink: applySourceLinks, devices: sourceResponsiveState, redevice: applySourceResponsive };
 }
 /**
  * Blocks for the browser: identities, reasons and current styling, never source
@@ -94,6 +101,8 @@ function blocksOf(adapter: SourceAdapter, source: string, filePath: string) {
     if (adapter.styles) { try { for (const entry of adapter.styles(source, filePath)) styles.set(entry.nodeId, entry); } catch { /* a style read failing must not hide the layout */ } }
     const links = new Map<string, SourceLinkState>();
     if (adapter.links) { try { for (const entry of adapter.links(source, filePath)) links.set(entry.nodeId, entry); } catch { /* nor must a link read */ } }
+    const devices = new Map<string, SourceResponsiveState>();
+    if (adapter.devices) { try { for (const entry of adapter.devices(source, filePath)) devices.set(entry.nodeId, entry); } catch { /* nor a device read */ } }
     return adapter.blocks(source, filePath).map(({ start: _start, end: _end, ...node }) => {
       const style = styles.get(node.id);
       const link = links.get(node.id);
@@ -101,13 +110,14 @@ function blocksOf(adapter: SourceAdapter, source: string, filePath: string) {
         ...node,
         style: style?.style ?? "", styleable: Boolean(style && !style.reason), ...(style?.reason && { styleReason: style.reason }),
         ...(link && { link: { newTab: link.newTab, editable: !link.reason, ...(link.reason && { reason: link.reason }) } }),
+        ...(devices.get(node.id) && { devices: { responsive: devices.get(node.id)!.responsive, editable: !devices.get(node.id)!.reason, ...(devices.get(node.id)!.reason && { reason: devices.get(node.id)!.reason }) } }),
       };
     });
   } catch { return []; }
 }
 
 export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) {
-  const input = { ...request, structure: request.structure ?? [], styles: request.styles ?? [], links: request.links ?? [], changes: request.changes ?? [] };
+  const input = { ...request, structure: request.structure ?? [], styles: request.styles ?? [], links: request.links ?? [], devices: request.devices ?? [], changes: request.changes ?? [] };
   const adapter = sourceAdapterFor(input.filePath);
   const base = adapter.discover(source, input.filePath);
   // Checked here rather than left to the adapter, because a layout action moves
@@ -140,6 +150,11 @@ export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) 
     try { const restyled = adapter.restyle(output, input.filePath, input.styles); output = restyled.source; layout = restyled.summary; }
     catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
   }
+  if (input.devices.length) {
+    if (!adapter.redevice) throw new WebsiteError(409, "Screen-size styling is not available for this kind of file.");
+    try { const redeviced = adapter.redevice(output, input.filePath, input.devices); output = redeviced.source; layout = [...layout, ...redeviced.summary]; }
+    catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
+  }
   if (input.links.length) {
     if (!adapter.relink) throw new WebsiteError(409, "Links in this kind of file cannot be retargeted from the editor.");
     try { const relinked = adapter.relink(output, input.filePath, input.links); output = relinked.source; layout = [...layout, ...relinked.summary]; }
@@ -155,8 +170,18 @@ export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) 
   const changes = base.fields.filter(field => applied.changed.includes(field.id)).map(field => ({ fieldId: field.id, label: field.label, kind: field.kind, before: field.value, after: wanted.get(field.id)! }));
   // Binds the reviewed output to the exact input file and source bytes, layout
   // actions included. No offsets or markup supplied by a browser are trusted.
-  const reviewHash = digest(JSON.stringify([base.adapter, adapter.structureAdapter ?? null, adapter.styleAdapter ?? null, SOURCE_LINK_VERSION, input.filePath, base.sourceHash, output]));
-  return { source: output, sourceHash: base.sourceHash, reviewHash, changes, layout };
+  // The media rules a page needs are derived from the page, so the stylesheet
+  // is decided here rather than sent by the browser — which never sees either.
+  const css = pageEditorCss(output, input.filePath);
+  const stylesheet = request.stylesheet && (css || request.stylesheet.content.includes("dakyworld-editor:start"))
+    ? { path: request.stylesheet.path, content: writeEditorRegion(request.stylesheet.content, input.filePath, css) }
+    : undefined;
+  const reviewHash = digest(JSON.stringify([base.adapter, adapter.structureAdapter ?? null, adapter.styleAdapter ?? null, SOURCE_LINK_VERSION, SOURCE_RESPONSIVE_VERSION, input.filePath, base.sourceHash, output, stylesheet?.content ?? null]));
+  return {
+    source: output, sourceHash: base.sourceHash, reviewHash, changes, layout,
+    ...(stylesheet && stylesheet.content !== request.stylesheet!.content && { stylesheet }),
+    needsStylesheet: needsStylesheet(output, input.filePath),
+  };
 }
 
 type Access = { loadSite(req: Request, id: string): Promise<Site> };
@@ -229,6 +254,22 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository in Website settings to edit source files.");
     return { site, repo };
   };
+  /**
+   * The stylesheet this site's pages already load, or null.
+   *
+   * Probed by exact path rather than found by walking the tree, and never
+   * created: a CSS file we add is a file nothing imports, and a control that
+   * writes rules nobody loads is worse than a control that says it cannot.
+   */
+  const stylesheetOf = async (site: Site, repo: string) => {
+    for (const candidate of STYLESHEET_CANDIDATES) {
+      const path = websiteSourcePath(site.repoPath, candidate);
+      const content = await deps.read(repo, path.repository, site.repoBranch).catch(() => null);
+      if (content !== null && content.length <= MAX_SOURCE_BYTES) return { path: path.repository, relative: candidate, content };
+    }
+    return null;
+  };
+
   const source = async (req: Request, filePath: string) => {
     const { site, repo } = await load(req);
     const path = websiteSourcePath(site.repoPath, filePath, true);
@@ -293,6 +334,11 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
       try { const restyled = adapter.restyle(content, current.path.relative, input.styles); content = restyled.source; layout = restyled.summary; }
       catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
     }
+    if (input.devices.length) {
+      if (!adapter.redevice) throw new WebsiteError(409, "Screen-size styling is not available for this kind of file.");
+      try { const redeviced = adapter.redevice(content, current.path.relative, input.devices); content = redeviced.source; layout = [...layout, ...redeviced.summary]; }
+      catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
+    }
     if (input.links.length) {
       if (!adapter.relink) throw new WebsiteError(409, "Links in this kind of file cannot be retargeted from the editor.");
       try { const relinked = adapter.relink(content, current.path.relative, input.links); content = relinked.source; layout = [...layout, ...relinked.summary]; }
@@ -311,20 +357,44 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
       fields: base.fields.map(({ reference: _reference, ...field }) => field),
       blocks: blocksOf(adapter, content, current.path.relative),
       droppedChanges: input.changes.filter(change => !present.has(change.fieldId)).map(change => change.fieldId),
+      stylesheet: needsStylesheet(content, current.path.relative) ? (await stylesheetOf(current.site, current.repo))?.relative ?? null : null,
       repo: current.repo, branch: current.site.repoBranch,
     });
   }));
+  /**
+   * The page's own bytes, plus the stylesheet its media rules would live in.
+   *
+   * Read together because a review has to be the whole change: publishing the
+   * page without its rules would ship an override that does nothing, and the
+   * review hash covers both files so neither can be swapped for another.
+   */
+  const reviewed = async (req: Request, input: z.infer<typeof changeInput>) => {
+    const current = await source(req, input.filePath);
+    // Asked of the edit as well as the file: a hover colour being added right
+    // now needs the stylesheet that the file, as it stands, does not yet want.
+    const addingHover = input.styles.some(style => /--dw-(?:hover|focus|active)-/.test(style.style));
+    const wanted = input.devices.length > 0 || addingHover || needsStylesheet(current.content, current.path.relative);
+    const sheet = wanted ? await stylesheetOf(current.site, current.repo) : null;
+    if (wanted && !sheet) {
+      throw new WebsiteError(409, `Screen-size and hover styling need a stylesheet this site loads on every page. None of the usual ones (${STYLESHEET_CANDIDATES.slice(0, 3).join(", ")}, …) is in this repository — add one and import it, then try again.`);
+    }
+    const review = reviewWebsiteSource(current.content, {
+      ...input, filePath: current.path.relative,
+      ...(sheet && { stylesheet: { path: sheet.relative, content: sheet.content } }),
+    });
+    return { current, sheet, review };
+  };
+
   router.post("/sites/:siteId/source/review", handler(async (req, res) => {
     const input = changeInput.parse(req.body);
-    const current = await source(req, input.filePath);
-    const { source: _source, ...review } = reviewWebsiteSource(current.content, { ...input, filePath: current.path.relative });
+    const { current, review } = await reviewed(req, input);
+    const { source: _source, stylesheet, ...rest } = review;
     res.setHeader("Cache-Control", "no-store");
-    res.json({ ...review, filePath: current.path.relative, repo: current.repo, branch: current.site.repoBranch });
+    res.json({ ...rest, stylesheet: stylesheet ? stylesheet.path : null, filePath: current.path.relative, repo: current.repo, branch: current.site.repoBranch });
   }));
   router.post("/sites/:siteId/source/export", handler(async (req, res) => {
     const input = changeInput.parse(req.body);
-    const current = await source(req, input.filePath);
-    const review = reviewWebsiteSource(current.content, { ...input, filePath: current.path.relative });
+    const { current, review } = await reviewed(req, input);
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Disposition", `attachment; filename="${current.path.relative.split("/").at(-1)!.replace(/[^a-zA-Z0-9_.-]/g, "_")}"`);
@@ -332,9 +402,9 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
   }));
   router.post("/sites/:siteId/source/publish", handler(async (req, res) => {
     const input = publishInput.parse(req.body);
+    await deps.authorize(req, (await access.loadSite(req, req.params.siteId)).id, "publish");
     const current = await source(req, input.filePath);
-    await deps.authorize(req, current.site.id, "publish");
-    const review = reviewWebsiteSource(current.content, { ...input, filePath: current.path.relative });
+    const { sheet, review } = await reviewed(req, input);
     if (review.reviewHash !== input.reviewHash) throw new WebsiteError(409, "These edits differ from the reviewed changes. Review them again before publishing.");
     // Opened before GitHub is touched, for the same reason the page publish does
     // it: a process that dies mid-commit has to leave a row somebody can ask
@@ -349,10 +419,21 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
         message: `Website editor: update ${current.path.relative}`,
         // One commit, the file and the pictures it needs together. Two commits
         // would leave a minute in which the page is live and its images are not.
-        files: [{ path: current.path.repository, content: review.source }, ...images],
-        // Only the source file is guarded: an image is new bytes at a new path,
-        // and demanding it be absent would fail a re-publish of the same picture.
-        expectedFiles: [{ path: current.path.repository, content: current.content }],
+        files: [
+          { path: current.path.repository, content: review.source },
+          // The stylesheet travels in the same commit for the reason the images
+          // do: a page live for a minute without the rules it was styled with is
+          // a page that looks broken to whoever asked for the change.
+          ...(review.stylesheet && sheet ? [{ path: sheet.path, content: review.stylesheet.content }] : []),
+          ...images,
+        ],
+        // The source file and the stylesheet are guarded; an image is new bytes
+        // at a new path, and demanding it be absent would fail a re-publish of
+        // the same picture.
+        expectedFiles: [
+          { path: current.path.repository, content: current.content },
+          ...(review.stylesheet && sheet ? [{ path: sheet.path, content: sheet.content }] : []),
+        ],
       });
     } catch (error) {
       if (job) await deps.trackFailed({ id: job.id, message: error instanceof Error ? error.message : "The commit did not land." }).catch(() => undefined);

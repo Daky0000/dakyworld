@@ -71,6 +71,11 @@ export { JSX_ADAPTER_VERSION, discoverJsxFields, applyJsxValues, applyHtmlEditsA
 export type { HtmlFieldEdit, UnmappableEdit } from "./jsx.js";
 export { renderRoute, invalidateRender, prerenderCandidates } from "./renderSource.js";
 export type { RenderedPage } from "./renderSource.js";
+export { SOURCE_RESPONSIVE_VERSION, sourceResponsiveState, applySourceResponsive } from "./sourceResponsive.js";
+export type { SourceResponsiveEdit, SourceResponsiveState, SourceResponsiveResult } from "./sourceResponsive.js";
+export { SOURCE_STYLESHEET_VERSION, STYLESHEET_CANDIDATES, pageEditorCss, writeEditorRegion, readEditorRegion, needsStylesheet } from "./sourceStylesheet.js";
+export { readBlocks, writeAttributes } from "./sourceAttributes.js";
+export type { BlockTarget, BlockAttribute, AttributeEdit } from "./sourceAttributes.js";
 export { SOURCE_LINK_VERSION, sourceLinkState, applySourceLinks } from "./sourceLinks.js";
 export type { SourceLinkEdit, SourceLinkState, SourceLinkResult } from "./sourceLinks.js";
 export { SOURCE_STYLE_VERSION, sourceStyleState, applySourceStyles } from "./sourceStyle.js";

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ColourField, NumberField, Row, SelectField, parseStyle, toNumber, writeStyle } from "./InspectorControls";
 
 /**
@@ -28,23 +29,74 @@ const ALIGN = [
   { label: "Right", value: "right" },
 ];
 
-export function SourceBlockStyle({ style, disabled, onChange }: { style: string; disabled?: boolean; onChange: (next: string) => void }) {
-  const declarations = parseStyle(style);
+const DEVICES = [
+  { key: "base" as const, label: "Desktop" },
+  { key: "tablet" as const, label: "Tablet" },
+  { key: "mobile" as const, label: "Phone" },
+];
+
+export function SourceBlockStyle({ style, responsive, hoverable, devicesEditable, deviceReason, disabled, onChange, onResponsive }: {
+  style: string;
+  responsive?: { tablet?: string; mobile?: string };
+  hoverable?: boolean;
+  devicesEditable?: boolean;
+  deviceReason?: string;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+  onResponsive?: (next: { tablet?: string; mobile?: string }) => void;
+}) {
+  /**
+   * Which width is being edited, and whether the hover values are showing.
+   *
+   * Desktop writes the element's own style; Tablet and Phone write overrides
+   * that become media rules. Hover is a third pass over the same controls,
+   * writing `--dw-hover-*` custom properties into the desktop style — which is
+   * how the HTML editor does it, so one fixed stylesheet block serves both.
+   */
+  const [device, setDevice] = useState<"base" | "tablet" | "mobile">("base");
+  const [hover, setHover] = useState(false);
+  const editing = device === "base" ? style : (responsive?.[device] ?? "");
+  const declarations = parseStyle(editing);
+  const prefix = hover && device === "base" ? "--dw-hover-" : "";
+  const read = (property: string) => declarations[`${prefix}${property}`] ?? "";
   const set = (property: string, value: string) => {
     const next = { ...declarations };
-    if (value) next[property] = value; else delete next[property];
-    onChange(writeStyle(next));
+    const key = `${prefix}${property}`;
+    if (value) next[key] = value; else delete next[key];
+    const written = writeStyle(next);
+    if (device === "base") onChange(written);
+    else onResponsive?.({ ...responsive, [device]: written });
   };
   const pixels = (property: string) => (next: number | null) => set(property, next === null ? "" : `${next}px`);
+  const clear = () => {
+    if (device === "base") onChange("");
+    else onResponsive?.({ ...responsive, [device]: "" });
+  };
   return <div className="mt-3 space-y-2 rounded-xl border border-line bg-sunken p-3">
-    <Row label="Text" control={<ColourField label="Text colour" bare allowNone value={declarations.color ?? ""} disabled={disabled} onChange={value => set("color", value)} />} />
-    <Row label="Background" control={<ColourField label="Background colour" bare allowNone value={declarations["background-color"] ?? ""} disabled={disabled} onChange={value => set("background-color", value)} />} />
-    <Row label="Text size" control={<NumberField label="Font size" bare unit="px" min={8} max={200} value={toNumber(declarations["font-size"])} disabled={disabled} onChange={pixels("font-size")} />} />
-    <Row label="Align" control={<SelectField label="Text align" bare value={declarations["text-align"] ?? ""} options={ALIGN} disabled={disabled} onChange={value => set("text-align", value)} />} />
-    <Row label="Padding" control={<NumberField label="Padding" bare unit="px" min={0} max={400} value={toNumber(declarations.padding)} disabled={disabled} onChange={pixels("padding")} />} />
-    <Row label="Space above" control={<NumberField label="Margin top" bare unit="px" min={-200} max={400} value={toNumber(declarations["margin-top"])} disabled={disabled} onChange={pixels("margin-top")} />} />
-    <Row label="Corners" control={<NumberField label="Border radius" bare unit="px" min={0} max={200} value={toNumber(declarations["border-radius"])} disabled={disabled} onChange={pixels("border-radius")} />} />
-    <p className="text-xs text-muted">These are written onto the element in the source file. Anything your site's own stylesheet sets is not shown here, and a rule with higher specificity there can still win.</p>
-    {style && <button type="button" className="text-xs text-blue hover:underline disabled:opacity-50" disabled={disabled} onClick={() => onChange("")}>Clear styling on this block</button>}
+    <div className="flex flex-wrap items-center gap-1">
+      {DEVICES.map(entry => {
+        const unavailable = entry.key !== "base" && !devicesEditable;
+        return <button key={entry.key} type="button" disabled={disabled || unavailable} title={unavailable ? deviceReason ?? "Screen-size styling is not available for this block" : `Edit this block at ${entry.label.toLowerCase()} width`}
+          className={`rounded px-2 py-1 text-xs disabled:opacity-40 ${device === entry.key ? "bg-white text-blue" : "text-muted hover:text-ink"}`}
+          onClick={() => { setDevice(entry.key); if (entry.key !== "base") setHover(false); }}>{entry.label}{entry.key !== "base" && responsive?.[entry.key] ? " ·" : ""}</button>;
+      })}
+      {device === "base" && hoverable !== false && <button type="button" disabled={disabled}
+        className={`ml-auto rounded px-2 py-1 text-xs disabled:opacity-40 ${hover ? "bg-white text-blue" : "text-muted hover:text-ink"}`}
+        title="Edit what this block looks like while the pointer is over it"
+        onClick={() => setHover(!hover)}>Hover{Object.keys(declarations).some(key => key.startsWith("--dw-hover-")) ? " ·" : ""}</button>}
+    </div>
+    <Row label="Text" control={<ColourField label="Text colour" bare allowNone value={read("color")} disabled={disabled} onChange={value => set("color", value)} />} />
+    <Row label="Background" control={<ColourField label="Background colour" bare allowNone value={read("background-color")} disabled={disabled} onChange={value => set("background-color", value)} />} />
+    {!(hover && device === "base") && <Row label="Text size" control={<NumberField label="Font size" bare unit="px" min={8} max={200} value={toNumber(read("font-size"))} disabled={disabled} onChange={pixels("font-size")} />} />}
+    {!(hover && device === "base") && <Row label="Align" control={<SelectField label="Text align" bare value={read("text-align")} options={ALIGN} disabled={disabled} onChange={value => set("text-align", value)} />} />}
+    {!(hover && device === "base") && <Row label="Padding" control={<NumberField label="Padding" bare unit="px" min={0} max={400} value={toNumber(read("padding"))} disabled={disabled} onChange={pixels("padding")} />} />}
+    {!(hover && device === "base") && <Row label="Space above" control={<NumberField label="Margin top" bare unit="px" min={-200} max={400} value={toNumber(read("margin-top"))} disabled={disabled} onChange={pixels("margin-top")} />} />}
+    {!(hover && device === "base") && <Row label="Corners" control={<NumberField label="Border radius" bare unit="px" min={0} max={200} value={toNumber(read("border-radius"))} disabled={disabled} onChange={pixels("border-radius")} />} />}
+    <p className="text-xs text-muted">{device === "base"
+      ? (hover ? "Shown while the pointer is over this block. Colour, background, shadow, opacity and transform can differ on hover; sizes and spacing cannot." : "Written onto the element in the source file. Anything your site's own stylesheet sets is not shown here, and a rule with higher specificity there can still win.")
+      : `Applied at ${device === "tablet" ? "1024px" : "640px"} wide and below, as a rule in your site's stylesheet. Phones inherit tablet values until you change them here.`}</p>
+    {editing && <button type="button" className="text-xs text-blue hover:underline disabled:opacity-50" disabled={disabled} onClick={clear}>
+      {device === "base" ? "Clear styling on this block" : `Clear ${device === "tablet" ? "tablet" : "phone"} styling on this block`}
+    </button>}
   </div>;
 }
