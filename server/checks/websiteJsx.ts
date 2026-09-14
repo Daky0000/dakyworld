@@ -239,4 +239,23 @@ check("mapping never conflates partial rich text, normalized URLs or missing mar
   for (const literal of ["Hello ", "/about", "Title"]) assert.ok(!report.mappings.some((mapping) => mapping.sourceFieldId === field(discovered, literal).id));
 });
 
+check("literal-only joined strings can be edited without replacing runtime expressions", () => {
+  const source = 'const Page = () => <main><h1>{"Hello " + "world"}</h1><p>{`Good ${"morning"}`}</p><span>{getTitle()}</span></main>;';
+  const discovery = discoverJsxFields(source, "Page.tsx");
+  assert.ok(discovery.fields.some(item => item.value === "Good morning"));
+  const heading = field(discovery, "Hello world");
+  const result = applyJsxValues(source, { filePath: "Page.tsx", sourceHash: discovery.sourceHash, changes: [{ fieldId: heading.id, value: "Welcome" }] });
+  assert.deepEqual(result.problems, []);
+  assert.ok(result.source.includes('{"Welcome"}'));
+  assert.ok(result.source.includes('{getTitle()}'));
+});
+check("named fields outrank equal text in another source file", () => {
+  const named = discoverJsxFields('const Page = () => <h1 data-dw-field="hero.title">Welcome</h1>;', "Page.tsx");
+  const data = discoverJsxFields('export const title = "Welcome";', "data.ts");
+  const report = mapJsxFieldsToHtml([...named.fields, ...data.fields], readPage('<h1 data-dw-field="hero.title">Welcome</h1>').fields);
+  assert.equal(report.mappings.length, 1);
+  assert.equal(report.mappings[0]?.sourceFieldId, named.fields[0]?.id);
+  assert.equal(report.mappings[0]?.confidence, "marker");
+});
+
 console.log(`websiteJsx: ${passed} focused checks passed`);

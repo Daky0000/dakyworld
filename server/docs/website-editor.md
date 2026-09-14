@@ -1,5 +1,7 @@
 # Website editor implementation
 
+Named source fields take precedence over identical unmarked text in other files. The JSX editor also accepts joined strings and template expressions made entirely from string literals. Editing those expressions replaces the expression with the new string; calls, references and runtime calculations remain code-controlled.
+
 **The client-facing half of this document is public**, at
 [dakyworld.com/website-builder](https://dakyworld.com/website-builder) and
 [/website-builder-setup](https://dakyworld.com/website-builder-setup), with

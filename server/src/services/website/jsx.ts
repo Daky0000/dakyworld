@@ -295,7 +295,34 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
      */
     function addValue(expression: ts.Expression, kind: JsxFieldKind, tag: string, location: string, marker: string | undefined, label?: string): boolean {
       const resolved = resolveLiteral(expression);
-      if (!resolved) return false;
+      if (!resolved) {
+        // Fold only self-contained string expressions. References, calls and
+        // runtime values must retain their behavior and are never replaced.
+        const staticText = (node: ts.Expression, depth = 0): string | null => {
+          if (depth > 32) return null;
+          const value = unwrap(node);
+          if (isStatic(value)) return value.text;
+          if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+            const left = staticText(value.left, depth + 1);
+            const right = staticText(value.right, depth + 1);
+            return left === null || right === null ? null : left + right;
+          }
+          if (ts.isTemplateExpression(value)) {
+            let text = value.head.text;
+            for (const span of value.templateSpans) {
+              const part = staticText(span.expression, depth + 1);
+              if (part === null) return null;
+              text += part + span.literal.text;
+            }
+            return text;
+          }
+          return null;
+        };
+        const value = staticText(expression);
+        if (value === null) return false;
+        add(expression, kind, tag, location, marker, "javascript-string", value, label);
+        return true;
+      }
       const { literal, path } = resolved;
       const encoding: Encoding = ts.isNoSubstitutionTemplateLiteral(literal) ? "javascript-template" : "javascript-string";
       if (path) {
@@ -682,6 +709,9 @@ export type JsxHtmlMappingReport = {
  */
 export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields: readonly SiteField[], options: { requireMarker?: boolean } = {}): JsxHtmlMappingReport {
   const report: JsxHtmlMappingReport = { mappings: [], diagnostics: [] };
+  const namedTargets = new Set(sourceFields.filter(field => field.marker).map(field => JSON.stringify([
+    field.marker, field.kind === "href" ? "href" : field.kind === "alt" ? "alt" : "value",
+  ])));
   const proposed: JsxHtmlMapping[] = [];
   /** Source fields whose value matches none or several elements, kept for the
    * counting pass rather than refused where they were found. */
@@ -698,6 +728,9 @@ export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields
     }
     const property = sourceField.kind === "href" ? "href" : sourceField.kind === "alt" ? "alt" : "value";
     const candidates = htmlFields.filter((field) => {
+      // An explicit identity outranks another file's coincidentally equal
+      // words, including strings discovered in imported content objects.
+      if (!sourceField.marker && field.confidence === "annotated" && namedTargets.has(JSON.stringify([field.id, property]))) return false;
       // A marker is the faithful identity. A component marked `<Hero data-dw-field="x">`
       // renders a native element carrying the same marker, so the tags differ and
       // only the marker is trusted — without it, an identical string in a different
