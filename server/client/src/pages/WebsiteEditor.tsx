@@ -1360,6 +1360,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </span>
               </>
             )}
+            {page.data.builtFrom?.problem && (
+              <>
+                {" · "}
+                <span className="text-warn-text">{page.data.builtFrom.writableFields === 0 ? "nothing on this page is editable here" : "some of this page is not editable here"}</span>
+              </>
+            )}
             {page.data.draft.savedAt && (
               <>
                 {" · saved "}
@@ -1584,6 +1590,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </button>
               )}
             </div>
+
+            {/* One fact, said once, before the clicking starts. A page whose every
+                field is locked used to explain itself three hundred times over,
+                a field at a time, and only to somebody who had already selected
+                one and found it would not take a word. */}
+            {page.data.builtFrom?.problem && (
+              <p role="alert" className="flex-none border-b border-line bg-warn-surface px-4 py-2 text-xs leading-relaxed text-warn-text">
+                {page.data.builtFrom.problem}
+              </p>
+            )}
 
             {liveBlind && (
               <p className="flex-none border-b border-line bg-warn-surface px-4 py-2 text-xs leading-relaxed text-warn-text">

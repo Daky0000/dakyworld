@@ -133,15 +133,19 @@ export function matchSourceToLive(input: { source: string; filePath: string; liv
  * Saying which on the field itself is the difference between a person being
  * told now and being told at the publish, when they have already done the work.
  */
-export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string>; notes: Map<string, string> } | null> {
+export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string>; notes: Map<string, string>; failure?: string } | null> {
   // The editor and the publish have to agree about what is writable, and they
   // agree by asking the same question of the same files. When this read one file
   // and the publish read the whole manifest, every heading in a component was
   // shown locked to the person editing it and would have been written happily
   // by the publish they were not allowed to reach.
   if (hasSourceManifest(page.filePath)) {
-    const context = await pageManifest(site, page).catch(() => null);
-    if (!context) return { writable: new Set(), notes: new Map() };
+    // Never swallowed. When the crawl cannot be built — no repository, a tree
+    // too large for one call, a branch that moved — every field on the page
+    // becomes unwritable, and saying "this came from the code" about all of
+    // them is a lie told three hundred times. The reason travels instead.
+    const context = await pageManifest(site, page).catch((error: unknown) => (error instanceof WebsiteError ? error.message : "The files this page is built from could not be read from the connected repository."));
+    if (typeof context === "string") return { writable: new Set(), notes: new Map(), failure: context };
     const wide = matchManifestToLive({ discovery: context.discovery, liveHtml: html });
     // The mapper already knows why each of these is locked — which is a far more
     // useful sentence than "it came from the code". A person told "these exact
@@ -178,7 +182,7 @@ export async function sourceManagedFields(site: Site, page: SitePage, html: stri
     return { writable: new Set(wide.mapping.map((entry) => entry.htmlFieldId)), notes };
   }
   const source = await pageFile(site, page).catch(() => null);
-  if (source === null) return { writable: new Set(), notes: new Map() };
+  if (source === null) return { writable: new Set(), notes: new Map(), failure: `${page.filePath} could not be read from branch ${site.repoBranch}, so nothing on this page could be traced back to it.` };
   const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: html });
   return { writable: new Set(view.mapping.map((entry) => entry.htmlFieldId)), notes: new Map() };
 }

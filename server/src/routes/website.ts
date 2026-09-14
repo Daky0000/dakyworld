@@ -397,7 +397,17 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
       // file named here, and how fresh that build is. A person editing needs
       // both — "this is last night's deploy" and "your words go into page.tsx"
       // are the two facts that make the screen make sense.
-      builtFrom: source.sourceFile ? { filePath: source.sourceFile, detail: source.detail ?? null, writableFields: managed ? managed.writable.size : 0 } : null,
+      builtFrom: source.sourceFile
+        ? {
+            filePath: source.sourceFile,
+            detail: source.detail ?? null,
+            writableFields: managed ? managed.writable.size : 0,
+            // Said once, at the top, when the answer is "none of it". A page
+            // where every field is locked is not three hundred separate facts;
+            // it is one fact, and the person needs it before they click.
+            problem: managed?.failure ?? (managed && managed.writable.size === 0 ? "Nothing on this page could be traced back to a piece of text in its source files, so none of it can be changed here. Open it under Source files to edit the code itself." : null),
+          }
+        : null,
       sections: content.sections.map((section) => ({
         id: section.id,
         label: section.label,

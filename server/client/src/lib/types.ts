@@ -3215,7 +3215,7 @@ export type SitePageDetail = {
   /** Which of the two sources answered — the repository, or the live site. */
   readFrom: "repository" | "live site" | "imported file" | "prerendered output" | "render service";
   /** Set when this page is built from a source file rather than being one. */
-  builtFrom?: { filePath: string; detail: string | null; writableFields: number } | null;
+  builtFrom?: { filePath: string; detail: string | null; writableFields: number; problem?: string | null } | null;
   sections: SiteSectionRow[];
   /** Which fields belong to a shared element, and what that element is doing. */
   shared?: { scope: Record<string, SharedFieldScope>; elements: SharedElementOnPage[] };
