@@ -166,14 +166,17 @@ check("duplicate explicit markers disable every affected field", () => {
   assert.equal(discovery.fields.length, 0);
   assert.ok(discovery.issues.some((issue) => issue.code === "ambiguous"));
 });
-check("dynamic attrs, spreads, raw HTML, SVG and templates are not offered", () => {
+check("dynamic attrs, spreads, raw HTML and SVG are not offered, and backtick strings are", () => {
   const source = 'const Page = () => <main><Link href="/private">Custom</Link><a href={path}>Label</a><p {...props}>Spread</p><p dangerouslySetInnerHTML={{__html: html}}>Raw</p><svg><text>SVG</text></svg><p>{`Template`}</p><img src={image} alt="Static alt"/></main>;';
   const discovery = discoverJsxFields(source, "Page.tsx");
   // `<Link href>` is offered on purpose: a prop whose name says it is a
   // destination, holding a plain string, is content wherever it sits. The
   // component's own children ("Custom") are still its business, and so is every
   // prop whose name is structure.
-  assert.deepEqual(discovery.fields.map((literal) => literal.value), ["/private", "Label", "Static alt"]);
+  // A backtick literal with nothing substituted into it is a static string like
+  // any other, and it is written back as a backtick literal rather than requoted.
+  assert.deepEqual(discovery.fields.map((literal) => literal.value), ["/private", "Label", "Template", "Static alt"]);
+  assert.equal(discovery.fields.find((literal) => literal.value === "Template")!.reference.encoding, "javascript-template");
   assert.ok(discovery.issues.some((issue) => issue.code === "dynamic"));
   assert.ok(discovery.issues.some((issue) => issue.code === "unsupported"));
 });

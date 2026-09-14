@@ -60,9 +60,10 @@ const field = (value: string) => matched.fields.find((entry) => entry.value === 
 assert.equal(field("Plans that fit")?.shownOnPage, true); passed++;
 assert.equal(field("Every plan includes hosting and a person who answers.")?.shownOnPage, true); passed++;
 assert.equal(field("/contact")?.shownOnPage, true); passed++;
-// Two identical paragraphs: an edit to one could land on the other, so neither
-// is offered on the picture. Both are still editable in the panel.
-assert.equal(matched.fields.filter((entry) => entry.value === "Repeated").every((entry) => entry.shownOnPage === false), true); passed++;
+// Two identical paragraphs, both from this one file, and the page shows exactly
+// two: they are counted off one for one rather than refused, so both are
+// offered on the picture as well as in the panel.
+assert.equal(matched.fields.filter((entry) => entry.value === "Repeated").every((entry) => entry.shownOnPage === true), true); passed++;
 assert.ok(matched.fields.some((entry) => entry.value === "Repeated")); passed++;
 // Each source field matches at most one element. An element can legitimately
 // appear twice — a link's words and its destination are two fields on the one

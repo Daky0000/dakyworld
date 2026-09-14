@@ -90,10 +90,20 @@ const dupFields = discoverJsxFields(dupPage, filePath).fields;
 const dupHtmlFields = discoverFields(dupHtml).fields;
 assert.ok(dupFields.some((field) => field.marker), "the disambiguating case has markers"); passed++;
 assert.equal(mapJsxFieldsToHtml(dupFields, dupHtmlFields).mappings.length, 2, "markers separate identical text onto its own literal"); passed++;
-// The same words with no markers cannot be resolved and stay read-only rather
-// than guessing.
+// The same words with no markers are counted off instead of guessed at: one
+// file holds two of them, the page shows two of them, so the first is the first
+// and the second is the second. Recorded as `positional` so a caller that wants
+// only named identities can still refuse it.
 const unmarkedDup = dupPage.replace(/ data-dw-field="[ab]"/g, "");
 const unmarkedDupHtml = dupHtml.replace(/ data-dw-field="[ab]"/g, "");
-assert.equal(mapJsxFieldsToHtml(discoverJsxFields(unmarkedDup, filePath).fields, discoverFields(unmarkedDupHtml).fields).mappings.length, 0, "unmarked identical text is ambiguous and stays read-only"); passed++;
+const counted = mapJsxFieldsToHtml(discoverJsxFields(unmarkedDup, filePath).fields, discoverFields(unmarkedDupHtml).fields);
+assert.equal(counted.mappings.length, 2, "identical text in one file is counted off one for one"); passed++;
+assert.ok(counted.mappings.every((mapping) => mapping.confidence === "positional"), "and is marked as resolved by position, not by name"); passed++;
+// The counting only holds while the counts agree. A page showing three of the
+// words from a file holding two is a page with a third source this does not
+// know about, and pairing from the top would be wrong from that one down.
+const thirdCopy = discoverFields(unmarkedDupHtml.replace("</main>", "<h1>Same offer</h1></main>")).fields;
+const uncounted = mapJsxFieldsToHtml(discoverJsxFields(unmarkedDup, filePath).fields, thirdCopy);
+assert.equal(uncounted.mappings.length, 0, "a count that does not agree refuses rather than pairing off the top"); passed++;
 
 console.log(`websiteComponentProps: ${passed} component-prop marker round-trip checks passed`);

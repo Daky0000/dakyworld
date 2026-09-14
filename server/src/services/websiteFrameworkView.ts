@@ -133,7 +133,7 @@ export function matchSourceToLive(input: { source: string; filePath: string; liv
  * Saying which on the field itself is the difference between a person being
  * told now and being told at the publish, when they have already done the work.
  */
-export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string>; notes: Map<string, string>; failure?: string } | null> {
+export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string>; notes: Map<string, string>; nameable?: Set<string>; failure?: string } | null> {
   // The editor and the publish have to agree about what is writable, and they
   // agree by asking the same question of the same files. When this read one file
   // and the publish read the whole manifest, every heading in a component was
@@ -179,7 +179,14 @@ export async function sourceManagedFields(site: Site, page: SitePage, html: stri
           : capability.reason,
       );
     }
-    return { writable: new Set(wide.mapping.map((entry) => entry.htmlFieldId)), notes };
+    // Which of the locked elements the editor could unlock by itself: the ones
+    // locked because their words are shared, rather than because the code works
+    // them out. The distinction decides whether a button is worth offering, and
+    // offering it where it cannot help is how a person learns to ignore it.
+    const nameable = new Set(
+      wide.view?.diagnostics.filter((diagnostic) => diagnostic.code === "ambiguous").flatMap((diagnostic) => diagnostic.candidateHtmlFieldIds) ?? [],
+    );
+    return { writable: new Set(wide.mapping.map((entry) => entry.htmlFieldId)), notes, nameable };
   }
   const source = await pageFile(site, page).catch(() => null);
   if (source === null) return { writable: new Set(), notes: new Map(), failure: `${page.filePath} could not be read from branch ${site.repoBranch}, so nothing on this page could be traced back to it.` };

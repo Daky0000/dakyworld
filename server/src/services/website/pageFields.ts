@@ -174,7 +174,7 @@ export type PageMapping = {
   htmlFieldId: string;
   property: "value" | "href" | "alt";
   filePath: string;
-  confidence: "marker" | "exact-value";
+  confidence: "marker" | "exact-value" | "positional";
   scope: "instance" | "shared";
 };
 
@@ -264,10 +264,10 @@ export function matchPageToHtml(input: { discovery: PageDiscovery; html: string;
  * just clicked it. Specific where the mapper knows, honest where it does not. */
 function reasonFor(field: SiteField, diagnostics: ReadonlyArray<{ code: string; candidateHtmlFieldIds: string[] }>, discovery: PageDiscovery): string {
   if (diagnostics.some((diagnostic) => diagnostic.code === "ambiguous" && diagnostic.candidateHtmlFieldIds.includes(field.id))) {
-    return "These exact words appear more than once on this page, so an edit here could not be traced to the right piece of code. A developer can name this one with a data-dw-field marker.";
+    return "These exact words appear in more than one place in the code, and the copies on the page could not be counted off one for one against them. Choose “Name these fields” and the editor will label this element in the code so it can be edited on its own.";
   }
   if (discovery.truncated) return "This page reaches more source files than the editor reads, so this part was not traced back to its code.";
-  return "This part of the page is built by its code rather than stored as text, so there is nothing here to type into.";
+  return "This part of the page is worked out by its code when the page is built — joined together, counted or chosen — rather than written down as words anywhere, so there is nothing here to type into.";
 }
 
 export type PageWrite = { filePath: string; source: string; sourceHash: string; changed: string[] };

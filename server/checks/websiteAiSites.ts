@@ -118,10 +118,12 @@ assert.deepEqual(dataValues, ["/pricing", "/work", "Dakyworld", "Pricing", "Work
 // A key that is not content stays where it is, whatever its value looks like.
 assert.ok(!dataValues.includes("sk-not-content") && !dataValues.includes("#0A2540") && !dataValues.includes("12px")); passed++;
 
-// A template literal is left alone rather than being rewritten as a quoted
-// string, because that would change how the file reads for its developer.
+// A backtick literal with nothing substituted into it is a static string, and
+// it is offered and written back as a backtick literal — the file keeps the
+// shape its developer gave it. One with a substitution in it is genuinely
+// assembled at build time and is still left alone.
 const template = discoverJsxFields("export const copy = { title: `Hello ${name}`, description: `Plain` };", "src/data/copy.ts");
-assert.equal(template.fields.length, 0); passed++;
-assert.ok(template.issues.some((issue) => issue.code === "unsupported")); passed++;
+assert.deepEqual(template.fields.map((field) => field.value), ["Plain"]); passed++;
+assert.equal(template.fields[0]!.reference.encoding, "javascript-template"); passed++;
 
 console.log(`websiteAiSites: ${passed} component-prop and data-content checks passed`);

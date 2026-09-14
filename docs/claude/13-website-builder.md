@@ -479,11 +479,46 @@ the builder that edit markup have nothing to write into:
   JSX the "section" may be a `<Features items={…} />` or a `.map()`, and moving
   the rendered node means editing code;
 - **shared elements and layers**, for the same reason;
-- **anything not traceable to a unique literal** — text from a CMS, a computed
-  string, a value that appears twice.
+- **anything not traceable to a literal** — text from a CMS, or a string the
+  code assembles (`` `Item ${count}` ``, a ternary). A value that *appears*
+  twice is no longer on this list; see below.
 
 That list is the honest boundary rather than a backlog. Text, links, image
 sources and alt text are what a literal can be, and those are what is offered.
+
+### Following, counting, naming (14 Sep 2026)
+
+Two sentences used to lock fields whose words were sitting in a string literal:
+"these exact words appear more than once — a developer can name this one with a
+`data-dw-field` marker", and "this part of the page is built by its code". Both
+were true and neither was any use to the customer reading it. Three answers, in
+`jsx.ts` and `sourceMarkers.ts`:
+
+1. **Follow the value.** `<Hero title={hero.title} />`, `{TAGLINE}` and a
+   backtick literal with nothing substituted into it are all static strings. The
+   value is followed back to the `const` — a plain one, or a fixed key path into
+   a `const` object *in the same file* — and that literal is the field. A
+   backtick literal is written back between backticks. One literal named in two
+   places is **one** field, so an edit reaches both. A name declared twice in the
+   file is never followed: choosing a scope is a guess.
+2. **Count the copies.** Identical words on the page are paired with identical
+   literals in document order — but only when the counts agree **exactly** and
+   only **one file** is in the running, and never over an element already matched
+   by marker or by a value unique both ways. Recorded as `confidence:
+   "positional"`. Counts that disagree still refuse: a fourth copy on the page
+   means a source this does not know about, and pairing from the top would be
+   wrong from there down.
+3. **Name it.** `POST /website/pages/:pageId/name-fields` (the "Name these
+   fields" button on a locked field) writes the `data-dw-field` itself, one
+   attribute per element, one commit, `expectedFiles`-guarded like a publish. The
+   same commit removes any marker *this editor* wrote (`dw.` + 12 hex) that is
+   absent from the built HTML — a marker on a component that drops unknown props
+   bought nothing, and litter in a customer's repo is worse than the ambiguity.
+   An author's own marker is never removed. A string in a data file is refused
+   rather than named: there is no element of its own to attach a name to.
+
+Markers only take effect once the site rebuilds, and the response says so.
+`checks/websiteFieldNaming.ts` holds the claims, negatives included.
 - One element can carry two fields (a link's words and its destination); the
   click prefers the words.
 

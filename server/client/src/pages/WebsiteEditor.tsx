@@ -128,6 +128,10 @@ function ButtonControls({
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
   onChange: (next: FieldEdit) => void;
+  /** Offered only on a field the editor could unlock by naming it in the code.
+   * Absent everywhere else, so the button never appears where it cannot help. */
+  onNameFields?: () => void;
+  naming?: boolean;
   readOnly: boolean;
 }) {
   const variant = edit?.variant !== undefined ? edit.variant : (field.variant ?? null);
@@ -195,6 +199,8 @@ function FieldRow({
   publicUrl,
   links,
   onChange,
+  onNameFields,
+  naming,
   readOnly,
   bare,
 }: {
@@ -205,6 +211,10 @@ function FieldRow({
   /** The site's own pages, so a destination is picked rather than spelled. */
   links: Array<{ path: string; title: string }>;
   onChange: (next: FieldEdit) => void;
+  /** Offered only on a field the editor could unlock by naming it in the code.
+   * Absent everywhere else, so the button never appears where it cannot help. */
+  onNameFields?: () => void;
+  naming?: boolean;
   readOnly: boolean;
   /** Inside the visual panel, where the card's own border and title are noise. */
   bare?: boolean;
@@ -335,7 +345,16 @@ function FieldRow({
         </div>
       )}
 
-      {field.sourceManaged && <p className="mt-2 rounded-lg bg-sunken px-2 py-1 text-xs text-muted">{field.sourceNote ?? "This is written by the code that builds this page, so it cannot be changed here."}</p>}
+      {field.sourceManaged && (
+        <div className="mt-2 rounded-lg bg-sunken px-2 py-1 text-xs text-muted">
+          <p>{field.sourceNote ?? "This is written by the code that builds this page, so it cannot be changed here."}</p>
+          {field.sourceNameable && onNameFields && (
+            <button type="button" className="mt-1.5 rounded-lg bg-ink px-2 py-1 text-[11px] font-semibold text-cream disabled:opacity-60" disabled={naming} onClick={onNameFields}>
+              {naming ? "Naming…" : "Name these fields"}
+            </button>
+          )}
+        </div>
+      )}
       {field.note && <p className="mt-2 text-xs text-muted">{field.note}</p>}
       {problem && <p className="mt-2 text-xs font-semibold text-warn-text">{problem}</p>}
     </div>
@@ -1209,6 +1228,27 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     } catch (error) { setFailure(error instanceof Error ? error.message : "The layout action could not be completed."); }
     finally { structurePending.current = false; setStructureBusy(false); }
   }
+  /**
+   * Ask the editor to label the shared-words elements in the code.
+   *
+   * One commit to the site's repository, so it is deliberate rather than
+   * automatic — and the fields it names only become editable once the site
+   * rebuilds, which the message says rather than leaving somebody clicking the
+   * same locked element wondering.
+   */
+  const [naming, setNaming] = useState(false);
+  async function nameFields() {
+    if (naming) return;
+    setNaming(true); setFailure(null);
+    try {
+      const result = await api.post<{ named: number; removed: number; files: string[]; message: string }>(`/website/pages/${pageId}/name-fields`, {});
+      setFailure(result.message);
+      await qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+      setLoadToken(token => token + 1); setPreviewToken(token => token + 1);
+    } catch (error) { setFailure(error instanceof Error ? error.message : "The fields on this page could not be named."); }
+    finally { setNaming(false); }
+  }
+
   structuralHistory.current = step => { if (step < 0 ? page.data?.structure?.canUndo : page.data?.structure?.canRedo) void runStructure(step < 0 ? "undo" : "redo"); };
 
   if (page.isLoading) return <div className="p-10 text-sm text-muted">Opening the page…</div>;
@@ -1770,6 +1810,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           links={links ?? []}
                           readOnly={readOnly}
                           onChange={(next) => change(picked.id, next)}
+                          onNameFields={() => void nameFields()}
+                          naming={naming}
                           bare
                         />
                       </>
@@ -1823,6 +1865,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                         links={links ?? []}
                         readOnly={readOnly}
                         onChange={(next) => change(field.id, next)}
+                        onNameFields={() => void nameFields()}
+                        naming={naming}
                       />
                     ))}
                   </>

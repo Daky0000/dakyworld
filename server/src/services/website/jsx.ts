@@ -49,7 +49,13 @@ export function contentKind(name: string): JsxFieldKind | null {
 }
 
 export type JsxFieldKind = "text" | "href" | "src" | "alt";
-type Encoding = "jsx-text" | "jsx-attribute" | "javascript-string";
+/**
+ * `javascript-template` is a backtick literal with no `${}` in it. It is a
+ * static string like any other, and it used to be refused only because writing
+ * it back as `"…"` would have changed how the file reads. It is written back
+ * between backticks instead, so the file keeps the shape its author gave it.
+ */
+type Encoding = "jsx-text" | "jsx-attribute" | "javascript-string" | "javascript-template";
 export type JsxSourceReference = {
   adapter: typeof JSX_ADAPTER_VERSION;
   filePath: string;
@@ -131,7 +137,7 @@ function compilerOptions(): ts.CompilerOptions {
 /** Decode with the same JSX rules as the compiler, including named entities and
  * multiline whitespace. The generated JavaScript is parsed, NEVER executed. */
 function decodeLiterals(fields: JsxField[]): void {
-  const literals = fields.filter((field) => field.reference.encoding !== "javascript-string");
+  const literals = fields.filter((field) => field.reference.encoding !== "javascript-string" && field.reference.encoding !== "javascript-template");
   if (!literals.length) return;
   const snippets = literals.map((field) => field.reference.encoding === "jsx-text"
     ? `<span>${field.reference.original}</span>`
@@ -180,6 +186,80 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
     const file = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, /\.tsx$/i.test(filePath) ? ts.ScriptKind.TSX : /\.ts$/i.test(filePath) ? ts.ScriptKind.TS : ts.ScriptKind.JSX);
     const markerCounts = new Map<string, number>();
     const fieldMarkers = new Map<JsxField, string>();
+    /**
+     * Static strings declared once and used in the markup by name.
+     *
+     * `<Hero title={hero.title} />` and `<h1>{TAGLINE}</h1>` are the same words
+     * a visitor reads as `<h1>Welcome</h1>` is, written the way a generator
+     * writes them. Refusing them left a customer looking at "this is built by
+     * its code" over their own sentence, so the value is followed back to the
+     * literal it was declared as and that literal is the field.
+     *
+     * Only what can be followed with certainty: a `const` in this file holding
+     * a plain string, or a plain string at a fixed key path inside a `const`
+     * object. Nothing is executed, nothing is imported, and a name declared
+     * twice in the file is dropped rather than guessed at — a shadowed name is
+     * exactly the case where following it would edit the wrong sentence.
+     */
+    type StaticLiteral = ts.StringLiteral | ts.NoSubstitutionTemplateLiteral;
+    const constants = new Map<string, StaticLiteral>();
+    const shadowed = new Set<string>();
+    const unwrap = (node: ts.Expression): ts.Expression => {
+      let current = node;
+      while (ts.isAsExpression(current) || ts.isParenthesizedExpression(current) || ts.isSatisfiesExpression(current)) current = current.expression;
+      return current;
+    };
+    const isStatic = (node: ts.Node): node is StaticLiteral => ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+    const remember = (path: string, literal: StaticLiteral) => {
+      if (constants.has(path) || shadowed.has(path)) { shadowed.add(path); constants.delete(path); return; }
+      constants.set(path, literal);
+    };
+    const collectObject = (object: ts.ObjectLiteralExpression, path: string, depth: number): void => {
+      if (depth > 8) return;
+      for (const property of object.properties) {
+        if (!ts.isPropertyAssignment(property)) continue;
+        const key = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : null;
+        if (key === null) continue;
+        const value = unwrap(property.initializer);
+        if (isStatic(value)) remember(`${path}.${key}`, value);
+        else if (ts.isObjectLiteralExpression(value)) collectObject(value, `${path}.${key}`, depth + 1);
+      }
+    };
+    const collectConstants = (node: ts.Node): void => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        const value = unwrap(node.initializer);
+        if (isStatic(value)) remember(node.name.text, value);
+        else if (ts.isObjectLiteralExpression(value)) collectObject(value, node.name.text, 0);
+      }
+      ts.forEachChild(node, collectConstants);
+    };
+    collectConstants(file);
+
+    /** The dotted path an expression names, or null when it names nothing fixed. */
+    const pathOf = (node: ts.Expression): string | null => {
+      const expression = unwrap(node);
+      if (ts.isIdentifier(expression)) return expression.text;
+      if (ts.isPropertyAccessExpression(expression)) {
+        const base = pathOf(expression.expression);
+        return base === null ? null : `${base}.${expression.name.text}`;
+      }
+      if (ts.isElementAccessExpression(expression) && ts.isStringLiteral(expression.argumentExpression)) {
+        const base = pathOf(expression.expression);
+        return base === null ? null : `${base}.${expression.argumentExpression.text}`;
+      }
+      return null;
+    };
+    /** The literal an expression stands for: itself, or the constant it names. */
+    const resolveLiteral = (node: ts.Expression): { literal: StaticLiteral; path?: string } | null => {
+      const expression = unwrap(node);
+      if (isStatic(expression)) return { literal: expression };
+      const path = pathOf(expression);
+      const literal = path === null ? undefined : constants.get(path);
+      return literal ? { literal, path: path! } : null;
+    };
+    /** One literal is one field however many places name it, so two references
+     * to the same `const` are one thing to type into rather than two that fight. */
+    const fieldsByLiteral = new Map<number, JsxField>();
     const issue = (node: ts.Node, code: JsxIssue["code"], message: string) => {
       if (result.issues.length >= 100) return;
       const point = file.getLineAndCharacterOfPosition(node.getStart(file));
@@ -189,6 +269,10 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
     function add(node: ts.Node, kind: JsxFieldKind, tag: string, location: string, marker: string | undefined, encoding: Encoding, value = "", label?: string, origin: JsxField["origin"] = "markup") {
       if (result.fields.length >= MAX_FIELDS) throw new Error("This file has too many literal fields to edit safely.");
       const start = ts.isJsxText(node) ? node.pos : node.getStart(file);
+      // A literal already offered under another name is that same literal, and
+      // offering it twice would put two fields over one span — which the write
+      // path refuses as overlapping ranges.
+      if (fieldsByLiteral.has(start)) return;
       const locator = `${marker ? `marker:${marker}` : `ast:${location}`}/${kind}`;
       const field: JsxField = {
         id: `jsx_${hash(`${filePath}\0${locator}`).slice(0, 32)}`,
@@ -196,7 +280,32 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
         reference: { adapter: JSX_ADAPTER_VERSION, filePath, sourceHash, locator, start, end: node.end, original: source.slice(start, node.end), encoding },
       };
       result.fields.push(field);
+      fieldsByLiteral.set(start, field);
       if (marker) fieldMarkers.set(field, marker.split("/text:")[0]!.split("/prop:")[0]!);
+    }
+
+    /**
+     * Offer a value wherever it was written: as a literal in place, or as the
+     * constant it names. Returns false when nothing static could be followed,
+     * which is the only case that is still reported as coming from the code.
+     *
+     * A followed literal is identified by where it is *declared*, not by where
+     * it is used — two usages of one `const` must be one field, and a locator
+     * naming the usage would have made two.
+     */
+    function addValue(expression: ts.Expression, kind: JsxFieldKind, tag: string, location: string, marker: string | undefined, label?: string): boolean {
+      const resolved = resolveLiteral(expression);
+      if (!resolved) return false;
+      const { literal, path } = resolved;
+      const encoding: Encoding = ts.isNoSubstitutionTemplateLiteral(literal) ? "javascript-template" : "javascript-string";
+      if (path) {
+        const existing = fieldsByLiteral.get(literal.getStart(file));
+        if (existing) return true;
+        add(literal, kind, tag, `const:${path}`, undefined, encoding, literal.text, label ?? path, "data");
+        return true;
+      }
+      add(literal, kind, tag, location, marker, encoding, literal.text, label);
+      return true;
     }
 
     /** The element's own data-dw-field, counted like any other marker so a
@@ -237,7 +346,7 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
           const marked = componentMarker ? `${componentMarker}/prop:${name}` : undefined;
           const initializer = attribute.initializer;
           if (initializer && ts.isStringLiteral(initializer)) { add(initializer, kind, tag, `${location}/prop:${name}`, marked, "jsx-attribute", "", `${tag} ${name}`); offered += 1; }
-          else if (initializer && ts.isJsxExpression(initializer) && initializer.expression && ts.isStringLiteral(initializer.expression)) { add(initializer.expression, kind, tag, `${location}/prop:${name}`, marked, "javascript-string", initializer.expression.text, `${tag} ${name}`); offered += 1; }
+          else if (initializer && ts.isJsxExpression(initializer) && initializer.expression && addValue(initializer.expression, kind, tag, `${location}/prop:${name}`, marked, `${tag} ${name}`)) offered += 1;
           else issue(attribute, "dynamic", `${tag}.${name} comes from code; this editor can change only an existing static string.`);
         }
         if (!offered) issue(opening, "unsupported", `Props and direct text of <${tag}> need a component-specific adapter.`);
@@ -268,7 +377,7 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
         if (!ATTRIBUTES[name]?.includes(tag)) continue;
         const initializer = attribute.initializer;
         if (initializer && ts.isStringLiteral(initializer)) add(initializer, name as JsxFieldKind, tag, location, marker, "jsx-attribute");
-        else if (initializer && ts.isJsxExpression(initializer) && initializer.expression && ts.isStringLiteral(initializer.expression)) add(initializer.expression, name as JsxFieldKind, tag, location, marker, "javascript-string", initializer.expression.text);
+        else if (initializer && ts.isJsxExpression(initializer) && initializer.expression && addValue(initializer.expression, name as JsxFieldKind, tag, location, marker)) continue;
         else issue(attribute, "dynamic", `${tag}.${name} comes from code; this editor can change only an existing static string.`);
       }
       if (ts.isJsxElement(node)) {
@@ -279,10 +388,9 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
             const suffix = `/text:${textOrdinal++}`;
             add(child, "text", tag, `${location}${suffix}`, marker ? `${marker}${suffix}` : undefined, "jsx-text");
           } else if (ts.isJsxExpression(child) && child.expression) {
-            if (ts.isStringLiteral(child.expression)) {
-              const suffix = `/text:${textOrdinal++}`;
-              add(child.expression, "text", tag, `${location}${suffix}`, marker ? `${marker}${suffix}` : undefined, "javascript-string", child.expression.text);
-            } else issue(child, "dynamic", `An expression inside <${tag}> stays controlled by its source code.`);
+            const suffix = `/text:${textOrdinal}`;
+            if (addValue(child.expression, "text", tag, `${location}${suffix}`, marker ? `${marker}${suffix}` : undefined)) textOrdinal += 1;
+            else issue(child, "dynamic", `An expression inside <${tag}> stays controlled by its source code.`);
           }
         }
       }
@@ -320,16 +428,26 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
       if (!kind) return;
       const initializer = node.initializer;
       if (!ts.isStringLiteral(initializer) && !ts.isNoSubstitutionTemplateLiteral(initializer)) return;
-      // A template literal would come back as a quoted string and change how the
-      // file reads, so it is left alone rather than rewritten into one.
-      if (ts.isNoSubstitutionTemplateLiteral(initializer)) { issue(node, "unsupported", `${rawName} is a template literal; this editor writes plain strings only.`); return; }
-      add(initializer, kind, scope || "data", `${location}/key:${rawName}`, undefined, "javascript-string", initializer.text, scope ? `${scope} ${rawName}` : rawName, "data");
+      // A backtick literal is written back as one, so the file keeps the shape
+      // its author gave it rather than being quietly requoted.
+      const encoding: Encoding = ts.isNoSubstitutionTemplateLiteral(initializer) ? "javascript-template" : "javascript-string";
+      add(initializer, kind, scope || "data", `${location}/key:${rawName}`, undefined, encoding, initializer.text, scope ? `${scope} ${rawName}` : rawName, "data");
     }
 
     function walk(node: ts.Node, location: string, depth: number, scope = ""): void {
       if (depth > 250) throw new Error("The source nesting is too deep for visual editing.");
       if ((ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) && !inspect(node, location)) return;
       if (ts.isPropertyAssignment(node)) inspectData(node, location, scope);
+      // `const tagline = "…"` — content held in a plain variable rather than in
+      // an object. Same allowlist decides, so `const className = "…"` is still
+      // structure and stays out.
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        const kind = contentKind(node.name.text);
+        const value = unwrap(node.initializer);
+        if (kind && isStatic(value)) {
+          add(value, kind, node.name.text, `const:${node.name.text}`, undefined, ts.isNoSubstitutionTemplateLiteral(value) ? "javascript-template" : "javascript-string", value.text, node.name.text, "data");
+        }
+      }
       const counts = new Map<string, number>();
       ts.forEachChild(node, (child) => {
         const key = segment(child);
@@ -383,6 +501,9 @@ export function validateFieldValue(kind: JsxFieldKind, value: string): string | 
 
 function encode(field: JsxField, value: string): string {
   if (field.reference.encoding === "javascript-string") return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  // A backtick literal stays one. Backslash first, then the two sequences that
+  // would otherwise end the literal or open a substitution in it.
+  if (field.reference.encoding === "javascript-template") return `\`${value.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${")}\``;
   const escaped = value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/\{/g, "&#123;").replace(/\}/g, "&#125;")
     .replace(/\r/g, "&#13;").replace(/\n/g, "&#10;").replace(/\t/g, "&#9;");
@@ -523,7 +644,18 @@ export type JsxHtmlMapping = {
   sourceFieldId: string;
   htmlFieldId: string;
   property: "value" | "href" | "alt";
-  confidence: "marker" | "exact-value";
+  /**
+   * How the rendered element was identified.
+   *
+   *  - `marker` — the author's (or the editor's) `data-dw-field`, carried into
+   *    the HTML. The only identity that survives the words themselves changing.
+   *  - `exact-value` — one literal, one element, same tag and same full value,
+   *    unique in both directions.
+   *  - `positional` — several elements share the words exactly, and exactly as
+   *    many literals in one file produce them, so the nth is the nth. Used only
+   *    when the counts agree exactly and only one file is in the running.
+   */
+  confidence: "marker" | "exact-value" | "positional";
   /**
    * The bytes in the source file this rendered value came from.
    *
@@ -551,6 +683,9 @@ export type JsxHtmlMappingReport = {
 export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields: readonly SiteField[], options: { requireMarker?: boolean } = {}): JsxHtmlMappingReport {
   const report: JsxHtmlMappingReport = { mappings: [], diagnostics: [] };
   const proposed: JsxHtmlMapping[] = [];
+  /** Source fields whose value matches none or several elements, kept for the
+   * counting pass rather than refused where they were found. */
+  const deferred: { sourceField: JsxField; property: JsxHtmlMapping["property"]; candidates: SiteField[] }[] = [];
   for (const sourceField of sourceFields) {
     // Marker discipline, when the caller asks for it: only a literal the author
     // has named with `data-dw-field` may be written through a rendered page.
@@ -579,7 +714,9 @@ export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields
       try { return decodeEntities(field.value) === sourceField.value; } catch { return false; }
     });
     if (candidates.length !== 1) {
-      report.diagnostics.push({ sourceFieldId: sourceField.id, code: candidates.length ? "ambiguous" : "unmatched", candidateHtmlFieldIds: candidates.map((field) => field.id), message: candidates.length ? "More than one preview element has this exact value." : "No preview field has the same tag, full value and required marker." });
+      // Held back rather than refused outright: several elements saying exactly
+      // the same words may still be resolved by counting, below.
+      deferred.push({ sourceField, property, candidates });
       continue;
     }
     proposed.push({ sourceFieldId: sourceField.id, htmlFieldId: candidates[0]!.id, property, confidence: sourceField.marker ? "marker" : "exact-value", span: { start: sourceField.reference.start, end: sourceField.reference.end } });
@@ -589,9 +726,96 @@ export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields
     const key = JSON.stringify([mapping.htmlFieldId, mapping.property]);
     claims.set(key, (claims.get(key) ?? 0) + 1);
   }
+  const byId = new Map(sourceFields.map((field) => [field.id, field]));
   for (const mapping of proposed) {
-    if (claims.get(JSON.stringify([mapping.htmlFieldId, mapping.property])) !== 1) report.diagnostics.push({ sourceFieldId: mapping.sourceFieldId, code: "ambiguous", candidateHtmlFieldIds: [mapping.htmlFieldId], message: "More than one source field could have produced this preview value." });
-    else report.mappings.push(mapping);
+    if (claims.get(JSON.stringify([mapping.htmlFieldId, mapping.property])) !== 1) {
+      // Two literals, one element, same words. Also a counting problem, so it
+      // joins the same pass rather than ending here.
+      const sourceField = byId.get(mapping.sourceFieldId)!;
+      const candidate = htmlFields.find((field) => field.id === mapping.htmlFieldId);
+      deferred.push({ sourceField, property: mapping.property, candidates: candidate ? [candidate] : [] });
+    } else report.mappings.push(mapping);
   }
+  resolveByCounting(deferred, report, htmlFields);
   return report;
+}
+
+/** The file a field came from, when the page-shaped layer added one. One file
+ * at a time is the whole safety of the counting rule, so a field with no file
+ * recorded is treated as its own file and never grouped with another. */
+function fileOf(field: JsxField): string {
+  const named = (field as JsxField & { filePath?: unknown }).filePath;
+  return typeof named === "string" ? named : field.reference.filePath;
+}
+
+/**
+ * The nth of several identical strings.
+ *
+ * Three "Get started" buttons rendered from three literals in one file is not
+ * genuinely ambiguous — it only looks that way to a matcher comparing values.
+ * The page has three, the file has three, and they were written in the order
+ * they render in, so the nth is the nth.
+ *
+ * What makes that safe rather than a guess is the three conditions it refuses
+ * on, every one of which is a case where the count is not the answer:
+ *
+ *  - **the counts must agree exactly.** Four elements from three literals means
+ *    one of them came from somewhere this does not know about — a loop, a
+ *    component used twice — and the pairing would be off by one from that point
+ *    down the page.
+ *  - **one file only.** Two files each holding "Get started" cannot be told
+ *    apart by position on a page that interleaves them.
+ *  - **no element already claimed.** An element matched by marker or by a value
+ *    unique in both directions keeps that match; counting never overrides an
+ *    identity that was actually established.
+ *
+ * A pairing made this way is recorded as `positional`, so a caller that wants
+ * only named identities can still tell the difference.
+ */
+function resolveByCounting(
+  deferred: readonly { sourceField: JsxField; property: JsxHtmlMapping["property"]; candidates: SiteField[] }[],
+  report: JsxHtmlMappingReport,
+  htmlFields: readonly SiteField[],
+): void {
+  const claimed = new Set(report.mappings.map((mapping) => JSON.stringify([mapping.htmlFieldId, mapping.property])));
+  const groups = new Map<string, typeof deferred[number][]>();
+  for (const entry of deferred) {
+    const key = JSON.stringify([entry.property, entry.sourceField.kind, entry.sourceField.value]);
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+  const order = new Map(htmlFields.map((field, index) => [field.id, index]));
+  for (const entries of groups.values()) {
+    const files = new Set(entries.map((entry) => fileOf(entry.sourceField)));
+    // Every element any member of the group could have produced, in the order
+    // they appear on the page, minus any already spoken for.
+    const targets = [...new Map(entries.flatMap((entry) => entry.candidates).map((field) => [field.id, field])).values()]
+      .filter((field) => !claimed.has(JSON.stringify([field.id, entries[0]!.property])))
+      .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    if (files.size !== 1 || targets.length !== entries.length || !entries.length) {
+      for (const entry of entries) {
+        report.diagnostics.push({
+          sourceFieldId: entry.sourceField.id,
+          code: entry.candidates.length ? "ambiguous" : "unmatched",
+          candidateHtmlFieldIds: entry.candidates.map((field) => field.id),
+          message: entry.candidates.length
+            ? "These words appear more than once on this page and the copies could not be counted off one for one against the code, so this one cannot be traced."
+            : "No preview field has the same tag, full value and required marker.",
+        });
+      }
+      continue;
+    }
+    // Source order is the file's own order; `sourceFields` arrives in it.
+    const inOrder = [...entries].sort((a, b) => a.sourceField.reference.start - b.sourceField.reference.start);
+    inOrder.forEach((entry, index) => {
+      const target = targets[index]!;
+      claimed.add(JSON.stringify([target.id, entry.property]));
+      report.mappings.push({
+        sourceFieldId: entry.sourceField.id,
+        htmlFieldId: target.id,
+        property: entry.property,
+        confidence: "positional",
+        span: { start: entry.sourceField.reference.start, end: entry.sourceField.reference.end },
+      });
+    });
+  }
 }

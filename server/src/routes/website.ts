@@ -7,7 +7,7 @@ import { withWebsitePublishLock } from "../services/websitePublishing.js";
 import { registerWebsiteAssistant } from "../services/websiteAssistant.js";
 import { registerWebsiteSource } from "../services/websiteSource.js";
 import { registerWebsiteFrameworkView, sourceManagedFields } from "../services/websiteFrameworkView.js";
-import { publishFrameworkPage } from "../services/websiteFrameworkPublish.js";
+import { nameFieldsOnPage, publishFrameworkPage } from "../services/websiteFrameworkPublish.js";
 import { hasSourceManifest } from "../services/websitePageManifest.js";
 import { embedWebsiteAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
@@ -416,7 +416,12 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
           ...publicField(widen(field)),
           structure: managed ? undefined : controls[field.id],
           ...(managed && !managed.writable.has(field.id)
-            ? { sourceManaged: true as const, sourceNote: managed.notes.get(field.id) ?? `This came from the code in ${page.filePath} rather than from a piece of text in it. Change it there, or ask a developer.` }
+            ? {
+                sourceManaged: true as const,
+                sourceNote: managed.notes.get(field.id) ?? `This came from the code in ${page.filePath} rather than from a piece of text in it. Change it there, or ask a developer.`,
+                // Only where naming it would actually unlock it.
+                ...(managed.nameable?.has(field.id) ? { sourceNameable: true as const } : {}),
+              }
             : {}),
         })),
       })),
@@ -664,6 +669,43 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "LAYOUT_EDIT", summary: `${body.kind} · ${page.title}`, actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id, detail: { pageId: page.id, fieldId: body.fieldId, targetId: body.targetId, revision: body.ifRevision + 1 } } });
     });
     res.json({ revision: body.ifRevision + 1, selectedId: result.selectedId });
+  } catch (error) { next(error); }
+});
+
+/**
+ * Name the fields on this page whose words are shared.
+ *
+ * The button behind the sentence an element shows when it is locked for that
+ * reason. It writes one attribute per element into the page's source files, in
+ * one commit, and takes back out any attribute an earlier run of this left
+ * behind that the build ignored. Nothing else in the files is touched, and a
+ * file that would not come back saying the same words is left alone.
+ *
+ * It is a commit to the customer's repository, so it is behind the same
+ * `source` permission a publish is, and it is recorded in the audit log under
+ * the person who pressed it.
+ */
+websiteRouter.post("/pages/:pageId/name-fields", async (req, res, next) => {
+  try {
+    const { page, site } = await loadPage(req, req.params.pageId);
+    await assertWebsiteSiteAccess(req, site.id, "source");
+    if (!hasSourceManifest(page.filePath)) throw new WebsiteError(400, "This page is not built from source files the editor can name fields in.");
+    const source = await pageSource(site, page, { fresh: true });
+    if (!source.sourceFile) throw new WebsiteError(400, "This page is an HTML file, so every part of it is already editable.");
+    const author = req.dbUser?.name ?? "the website editor";
+    const result = await nameFieldsOnPage({ site, page, html: source.html, author });
+    if (!result.files.length) {
+      res.json({ named: 0, removed: 0, files: [], refused: result.refused, message: result.refused.length ? "Nothing on this page could be named. " + result.refused.join(" ") : "Nothing on this page needed naming." });
+      return;
+    }
+    await prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "SOURCE_EDIT", summary: `Named ${result.named} field${result.named === 1 ? "" : "s"} · ${page.title}`, actorName: author, actorId: req.dbUser?.id, detail: { pageId: page.id, files: result.files, named: result.named, removed: result.removed, sha: result.sha } } });
+    res.json({
+      ...result,
+      // The build has to run before these names are on the page, and until it
+      // does the fields are exactly as locked as they were. Said here rather
+      // than discovered by somebody clicking the element again.
+      message: `Named ${result.named} field${result.named === 1 ? "" : "s"} in ${result.files.join(", ")}. They become editable once the site rebuilds.`,
+    });
   } catch (error) { next(error); }
 });
 

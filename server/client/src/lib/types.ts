@@ -3128,6 +3128,9 @@ export type SiteFieldRow = {
    */
   sourceManaged?: true;
   sourceNote?: string;
+  /** True when this element is locked only because its words appear elsewhere,
+   * so the editor can name it in the code and unlock it without a developer. */
+  sourceNameable?: true;
   decorative?: boolean;
   /** The element's own inline style, when it has one. */
   style?: string;

@@ -28,7 +28,8 @@ import { commitFiles } from "../lib/github.js";
 import { invalidateSource } from "./website/sourceCache.js";
 import { invalidateRender } from "./website/renderSource.js";
 import { githubFailure, siteRepo, WebsiteError } from "./website/site.js";
-import { applyPageEdits, type PageWrite } from "./website/pageFields.js";
+import { applyPageEdits, matchPageToHtml, type PageWrite } from "./website/pageFields.js";
+import { proposeMarkers, staleMarkers } from "./website/sourceMarkers.js";
 import { pageManifest, type PageManifest } from "./websitePageManifest.js";
 import type { HtmlFieldEdit } from "./website/jsx.js";
 
@@ -160,6 +161,83 @@ export async function publishFrameworkPage(
     for (const write of writes) invalidateSource(input.site.id, write.filePath);
     invalidateRender(input.site, input.page);
     return { ...commit, files: names };
+  } catch (err) {
+    throw githubFailure(err, repo, input.site.repoBranch);
+  }
+}
+
+
+/**
+ * Name the fields on this page that cannot be told apart by their words.
+ *
+ * The other half of the promise the editor makes when it says a locked element
+ * can be unlocked: it labels the element in the code itself — one attribute,
+ * committed once — and from then on the mapper matches it by that name instead
+ * of by the words in it.
+ *
+ * The same commit takes out any label this editor added before that never
+ * reached the page. A label on a component that ignores unknown props does
+ * nothing, and leaving it behind would slowly fill a customer's repository with
+ * attributes nobody can account for. Both halves belong in one commit because
+ * they are one answer to one question: which elements on this page have names
+ * that work?
+ *
+ * `html` must be the build the editor is showing, for the same reason the
+ * publish needs it: it is the only evidence of which labels survived.
+ */
+export async function nameFieldsOnPage(
+  input: { site: Site; page: SitePage; html: string; author: string },
+  overrides: Partial<Dependencies> = {},
+): Promise<{ named: number; removed: number; files: string[]; sha?: string; url?: string; refused: string[] }> {
+  const deps = { ...dependencies, ...overrides };
+  const repo = siteRepo(input.site);
+  if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository in Website settings before naming fields.");
+  const context = await deps.manifest(input.site, input.page);
+  const view = matchPageToHtml({ discovery: context.discovery, html: input.html });
+
+  // Only the fields that are locked *because* their words are shared. A field
+  // the mapper already resolves needs no name, and one the code works out at
+  // build time cannot be given one.
+  const ambiguous = new Set(view.diagnostics.filter((diagnostic) => diagnostic.code === "ambiguous").map((diagnostic) => diagnostic.sourceFieldId));
+  const byFile = new Map<string, string[]>();
+  for (const field of context.discovery.fields) {
+    if (!ambiguous.has(field.id)) continue;
+    byFile.set(field.filePath, [...(byFile.get(field.filePath) ?? []), field.id]);
+  }
+  for (const source of context.discovery.sources) if (!byFile.has(source.filePath)) byFile.set(source.filePath, []);
+
+  const writes: Array<{ filePath: string; source: string; before: string }> = [];
+  const refused: string[] = [];
+  let named = 0;
+  let removed = 0;
+  for (const [filePath, fieldIds] of byFile) {
+    const before = await context.read(filePath);
+    if (before === null) continue;
+    const proposal = proposeMarkers(before, filePath, fieldIds);
+    for (const entry of proposal.refused) refused.push(entry.message);
+    const swept = staleMarkers(proposal.source, filePath, input.html);
+    if (swept.source === before) continue;
+    named += proposal.added.length;
+    removed += swept.removed.length;
+    writes.push({ filePath, source: swept.source, before });
+  }
+  if (!writes.length) return { named: 0, removed: 0, files: [], refused };
+
+  const names = writes.map((write) => write.filePath);
+  const summary = [named ? `name ${named} field${named === 1 ? "" : "s"}` : null, removed ? `remove ${removed} unused label${removed === 1 ? "" : "s"}` : null].filter(Boolean).join(" and ");
+  try {
+    const commit = await deps.commit({
+      repo,
+      branch: input.site.repoBranch,
+      message: `Website: ${summary} on ${input.page.path} (${input.author})
+
+Files: ${names.join(", ")}`,
+      expectedFiles: writes.map((write) => ({ path: context.repoPathFor(write.filePath), content: write.before })),
+      files: writes.map((write) => ({ path: context.repoPathFor(write.filePath), content: write.source })),
+    });
+    for (const write of writes) invalidateSource(input.site.id, write.filePath);
+    invalidateRender(input.site, input.page);
+    return { named, removed, files: names, sha: commit.sha, url: commit.url, refused };
   } catch (err) {
     throw githubFailure(err, repo, input.site.repoBranch);
   }

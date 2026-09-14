@@ -141,8 +141,8 @@ assert.ok(twinView.diagnostics.some((diagnostic) => diagnostic.code === "ambiguo
 const collided = new Set(twinView.diagnostics.flatMap(() => twinView.htmlFields.filter((field) => field.value === "Get started").map((field) => field.id)));
 assert.equal(collided.size, 2, "both rendered headings are the collision"); passed++;
 assert.ok(
-  [...collided].every((id) => twinView.capabilities.find((capability) => capability.htmlFieldId === id)?.reason?.includes("more than once")),
-  "the reason on each colliding element says the words appear more than once",
+  [...collided].every((id) => twinView.capabilities.find((capability) => capability.htmlFieldId === id)?.reason?.includes("more than one place in the code")),
+  "the reason on each colliding element says the words are in more than one place in the code",
 ); passed++;
 const twinFiles = new Set(twinView.diagnostics.map((diagnostic) => diagnostic.filePath));
 assert.equal(twinFiles.size, 2, "the diagnostics name both files rather than blaming the route"); passed++;
