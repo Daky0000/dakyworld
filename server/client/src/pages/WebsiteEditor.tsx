@@ -209,6 +209,10 @@ function FieldRow({
   /** Inside the visual panel, where the card's own border and title are noise. */
   bare?: boolean;
 }) {
+  // A field on a built page that no literal in the source produced. It is real
+  // and it is on the page; it is simply not ours to change, and saying so here
+  // is the difference between knowing now and being refused at the publish.
+  readOnly = readOnly || field.sourceManaged === true;
   const value = edit?.value ?? field.value;
   const href = edit?.href ?? field.href ?? "";
   const alt = edit?.alt ?? field.alt ?? "";
@@ -331,6 +335,7 @@ function FieldRow({
         </div>
       )}
 
+      {field.sourceManaged && <p className="mt-2 rounded-lg bg-sunken px-2 py-1 text-xs text-muted">{field.sourceNote ?? "This is written by the code that builds this page, so it cannot be changed here."}</p>}
       {field.note && <p className="mt-2 text-xs text-muted">{field.note}</p>}
       {problem && <p className="mt-2 text-xs font-semibold text-warn-text">{problem}</p>}
     </div>
@@ -1208,9 +1213,19 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   if (page.isLoading) return <div className="p-10 text-sm text-muted">Opening the page…</div>;
   if (page.isError) {
+    // 409 here has one cause: a page whose file is source, with no built copy of
+    // it anywhere — no export in the repository, no render service, nothing
+    // published yet. Its words are still editable, so the way there is offered
+    // rather than left for somebody to find.
+    const noBuild = page.error instanceof ApiError && page.error.status === 409;
     return (
       <div className="m-10 rounded-2xl border border-warn-line bg-warn-surface p-6 text-sm text-warn-text">
         {page.error instanceof ApiError ? page.error.message : "That page could not be opened."}
+        {noBuild && (
+          <Link className="mt-4 block font-semibold text-blue hover:underline" to={`/website/pages/${pageId}/source`}>
+            Edit this page&rsquo;s text in its source file →
+          </Link>
+        )}
       </div>
     );
   }
@@ -1333,6 +1348,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           <div className="truncate font-display text-sm tracking-[-.02em]">{page.data.page.title}</div>
           <div className="truncate text-xs text-muted">
             <span className="font-mono">{page.data.page.path}</span>
+            {/* A built page is not its own file, and a person editing has to know
+                both halves: their words go into the source file, and what they
+                are looking at is a build of it that may be a deploy behind. */}
+            {page.data.builtFrom && (
+              <>
+                {" · "}
+                <span title={`Built from ${page.data.builtFrom.filePath}${page.data.builtFrom.detail ? ` — showing ${page.data.builtFrom.detail}` : ""}`}>
+                  built from <span className="font-mono">{page.data.builtFrom.filePath}</span>
+                  {page.data.readFrom === "live site" ? " · showing the published page" : ""}
+                </span>
+              </>
+            )}
             {page.data.draft.savedAt && (
               <>
                 {" · saved "}

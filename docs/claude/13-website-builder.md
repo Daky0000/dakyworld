@@ -486,3 +486,43 @@ That list is the honest boundary rather than a backlog. Text, links, image
 sources and alt text are what a literal can be, and those are what is offered.
 - One element can carry two fields (a link's words and its destination); the
   click prefers the words.
+
+## The visual editor on a framework page (14 Sep 2026)
+
+The whole builder — layers, drag, responsive styling, shared elements, the
+picker — now opens a framework page, because the editor is handed the **built**
+HTML rather than the `.tsx`. Nothing in `regions.ts` or the editor changed; what
+changed is where `pageSource` gets its bytes and what a publish writes.
+
+- **`renderSource.ts` gets the HTML, and never runs the project.** `npm install
+  && next build` on a connected repository is remote code execution with our
+  database credentials in the environment — an npm lifecycle script in any
+  transitive dependency runs as us before a line of their app compiles. So the
+  order is: a prerendered export committed in the repo (`out/`, `dist/`,
+  `build/`, `.output/public/`, `_site/`), then a **render service** if the
+  operator has stood one up (`WEBSITE_RENDER_URL` — the seam where a sandboxed
+  builder plugs in, off by default), then the published page. The answer says
+  which, because only the first two are this commit.
+- **`publishSourcePage` writes the file, not the page.** Committing rendered
+  HTML would put a file in the repository that the next build overwrites, beside
+  a source file still saying the old thing.
+- **`applyHtmlEditsAsJsx` is the bridge**, and it refuses rather than
+  approximates: an edit with nowhere to go — a style, a moved section, a heading
+  built by code — fails the whole publish naming the part. A publish that wrote
+  the three changes it understood and dropped the fourth would be a page that is
+  half of what somebody approved, reported as success. Markup cannot cross
+  either: a literal is plain text, so bolding half a heading is a code change.
+- **Unwritable fields are read-only in the editor, not at the publish.**
+  `sourceManagedFields` marks them, the preview leaves them unmarked so they
+  cannot be clicked, and each carries a sentence saying where it does come from.
+- **`mapJsxFieldsToHtml` carries the source span** with every mapping and takes
+  `requireMarker`, so a generator that names its literals makes the mapping exact
+  instead of best-effort. `demoBuilder.ts` now emits markers; `docs/website-ai-markers.md`
+  is the instruction a customer pastes into Lovable or Bolt.
+- **Both caches are dropped on a source publish** — the file and the render.
+- **A source publish shows its own state.** "Waiting for the host to rebuild" is
+  true of a static host and useless for a build that takes minutes and can fail
+  on its own terms, so those jobs say "Committed — waiting for the build and
+  deploy" and their failure names the build.
+- **A page with no built copy anywhere** answers 409 and the editor offers the
+  source screen, which needs no HTML at all.

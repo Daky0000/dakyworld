@@ -6,9 +6,11 @@ import { siteGithubCredential } from "../githubApp.js";
 import type { Site, SitePage } from "@prisma/client";
 import type { SiteField } from "./regions.js";
 import { attr, decodeEntities, parseHtml, walk } from "./parse.js";
+import { applyHtmlEditsAsJsx, type HtmlFieldEdit } from "./jsx.js";
 import { fetchWebsiteText } from "../../lib/websiteFetch.js";
 import { invalidateSource, readCache, sourceKey, writeCache } from "./sourceCache.js";
-import { detectFramework, type DiscoveredRoute, type SourceKind } from "./frameworks.js";
+import { detectFramework, isEditableSourcePath, type DiscoveredRoute, type SourceKind } from "./frameworks.js";
+import { invalidateRender, renderRoute } from "./renderSource.js";
 import { discoverRouterRoutes, routerCandidates } from "./router.js";
 
 /**
@@ -60,8 +62,22 @@ export function pageUrl(site: Pick<Site, "publicUrl">, page: Pick<SitePage, "pat
 
 export type PageSource = {
   html: string;
-  /** Which of the two routes answered, so the editor can say where it is looking. */
-  from: "repository" | "live site" | "imported file";
+  /**
+   * Which route answered, so the editor can say where it is looking.
+   *
+   * The last three are a framework page: its file is not HTML, so what the
+   * editor opens is what a build made of it — the export committed alongside
+   * the source, a render service, or the published page. The difference matters
+   * on screen, because only the first two are this commit.
+   */
+  from: "repository" | "live site" | "imported file" | "prerendered output" | "render service";
+  /**
+   * The source file the HTML was built from, for a framework page. Set means
+   * "an edit here has to be written back as a change to this file", and the
+   * publish path branches on it.
+   */
+  sourceFile?: string;
+  detail?: string;
 };
 
 async function fetchLive(url: string): Promise<string> {
@@ -119,6 +135,20 @@ export async function pageSource(site: Site, page: SitePage, options: { fresh?: 
 
 async function readPageSource(site: Site, page: SitePage, options: { fresh?: boolean }): Promise<PageSource> {
   const repo = siteRepo(site);
+  // A framework page's own file is source, not a page. What the editor opens is
+  // the HTML a build made of it — see `renderSource.ts` — and everything the
+  // editor does afterwards works on that unchanged. The one thing that changes
+  // is what a publish writes, which is why the answer carries the file.
+  if (isEditableSourcePath(page.filePath)) {
+    const rendered = await renderRoute(site, page, { fresh: options.fresh });
+    if (!rendered) {
+      throw new WebsiteError(
+        409,
+        `${page.filePath} is built into a page rather than being one, and no built copy of ${page.path} could be found — no export committed to the repository, no render service configured, and the published page could not be read. Edit its text in the source editor, or publish the site once so this page has something to show.`,
+      );
+    }
+    return { html: rendered.html, from: rendered.from, sourceFile: page.filePath, detail: rendered.detail };
+  }
   const key = sourceKey({ siteId: site.id, repo, branch: site.repoBranch, filePath: page.filePath });
   if (!options.fresh) {
     const cached = readCache(key);
@@ -129,7 +159,7 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
     const html = await readFile(repo, repoFilePath(site, page), site.repoBranch).catch(() => null);
     if (html !== null) {
       const source: PageSource = { html, from: "repository" };
-      writeCache(key, source);
+      writeCache(key, { html, from: "repository" });
       return source;
     }
     // A configured repository that does not have the file is worth saying out
@@ -141,7 +171,7 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
     );
   }
   const live: PageSource = { html: await fetchLive(pageUrl(site, page)), from: "live site" };
-  writeCache(key, live);
+  writeCache(key, { html: live.html, from: "live site" });
   return live;
 }
 
@@ -536,6 +566,94 @@ export async function publishPage(input: {
  * content goes with it, so GitHub refuses the whole commit if any one of them
  * moved underneath the review.
  */
+/**
+ * What GitHub refused, said to the person who can fix it.
+ *
+ * One function rather than a block inside each publish path: every one of these
+ * is a setting on a token or a repository, and left as a raw `GitHubError` they
+ * all arrive as "Something went wrong", which sends somebody hunting for a bug
+ * that is not there. A second publish path with its own half of this list would
+ * be the same defect again, one branch along.
+ */
+function githubFailure(err: unknown, repo: string, branch: string): unknown {
+  if (err instanceof GitHubNotConfiguredError) {
+    return new WebsiteError(503, "Publishing needs a GitHub token with permission to write to the website's repository. Add one under Settings → Developer.");
+  }
+  if (err instanceof RepoNotAllowedError) {
+    return new WebsiteError(403, `${repo} is not on the list of repositories this system may write to. Add it under Settings → Developer, then publish again.`);
+  }
+  if (err instanceof GitHubError) {
+    if (err.status === 401) return new WebsiteError(403, "GitHub rejected the access token — it has expired or been revoked. Create a new one and paste it under Settings → Developer.");
+    if (err.status === 403) return new WebsiteError(403, `The GitHub token cannot write to ${repo}. Give it Contents: write on that repository — a fine-grained token must also list ${repo} among the repositories it can reach — then publish again.`);
+    if (err.status === 404) return new WebsiteError(404, `GitHub cannot find ${repo} on branch ${branch}, or the token cannot see it. Check the repository and branch on the site's settings, and that the token has access to it.`);
+    if (err.status === 409 || err.status === 422) return new WebsiteError(409, `GitHub would not accept the commit to ${branch}: ${err.message}. A branch protection rule is the usual cause.`);
+    return new WebsiteError(502, `GitHub would not accept the publish: ${err.message}`);
+  }
+  return err;
+}
+
+/**
+ * A framework page: the edits made against the rendered page, written into the
+ * file that page was built from.
+ *
+ * The rendered HTML is output. Committing it would put a file in the repository
+ * that the next build overwrites, beside a source file that still says the old
+ * thing — so what is committed is the source, with the edited literals in it,
+ * and the rendered page catches up when the host rebuilds.
+ *
+ * The refusal is the important part. An edit that cannot be traced back to a
+ * literal — a style, a moved section, a heading built by code — fails the whole
+ * publish and names what it was. A publish that wrote the parts it understood
+ * and dropped the rest would be a page that is half of what somebody approved,
+ * reported as a success.
+ */
+export async function publishSourcePage(input: {
+  site: Site;
+  page: SitePage;
+  /** The draft as the editor keeps it: values keyed by the rendered page's fields. */
+  values: Record<string, HtmlFieldEdit>;
+  /** The rendered HTML those edits were made against. */
+  html: string;
+  author: string;
+  changed: number;
+}): Promise<{ sha: string; url: string }> {
+  const repo = siteRepo(input.site);
+  if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository in Website settings before publishing.");
+  return underSiteCredential(input.site, async () => {
+    const current = await readFile(repo, repoFilePath(input.site, input.page), input.site.repoBranch).catch(() => null);
+    if (current === null) {
+      throw new WebsiteError(404, `${repoFilePath(input.site, input.page)} is not in ${repo} on branch ${input.site.repoBranch}. Rescan the site so its page list matches the repository.`);
+    }
+    const written = applyHtmlEditsAsJsx({ source: current, filePath: input.page.filePath, html: input.html, edits: input.values });
+    if (written.unmappable.length) {
+      throw Object.assign(
+        new WebsiteError(400, `Some of these changes are written by this page's code rather than by its text, so nothing was published: ${written.unmappable.map((entry) => entry.message).join(" ")}`),
+        { unmappable: written.unmappable },
+      );
+    }
+    if (written.problems.length) {
+      const stale = written.problems.some((problem) => problem.code === "stale");
+      throw new WebsiteError(stale ? 409 : 400, written.problems.map((problem) => problem.message).join(" "));
+    }
+    try {
+      const commit = await commitFiles({
+        repo,
+        branch: input.site.repoBranch,
+        message: `Website: ${input.changed} change${input.changed === 1 ? "" : "s"} on ${input.page.path} (${input.author})`,
+        // Guarded against the file as it is this second, so a developer editing
+        // the same component while somebody edits its words loses nothing.
+        expectedFiles: [{ path: repoFilePath(input.site, input.page), content: current }],
+        files: [{ path: repoFilePath(input.site, input.page), content: written.source }],
+      });
+      invalidateSource(input.site.id, input.page.filePath);
+      invalidateRender(input.site, input.page);
+      return commit;
+    } catch (err) {
+      throw githubFailure(err, repo, input.site.repoBranch);
+    }
+  });
+}
+
 export async function publishPages(input: {
   site: Site;
   message: string;
@@ -586,51 +704,7 @@ export async function publishPages(input: {
     for (const entry of input.pages) invalidateSource(input.site.id, entry.page.filePath);
     return commit;
   } catch (err) {
-
-    if (err instanceof GitHubNotConfiguredError) {
-      throw new WebsiteError(
-        503,
-        "Publishing needs a GitHub token with permission to write to the website's repository. Add one under Settings → Developer.",
-      );
-    }
-    if (err instanceof RepoNotAllowedError) {
-      throw new WebsiteError(
-        403,
-        `${repo} is not on the list of repositories this system may write to. Add it under Settings → Developer, then publish again.`,
-      );
-    }
-    // Everything else GitHub refuses is a setting on the token or the
-    // repository, and every one of them is fixable by the person reading it.
-    // Left as a raw GitHubError they arrive as "Something went wrong", which
-    // sends somebody hunting for a bug that is not there.
-    if (err instanceof GitHubError) {
-      if (err.status === 401) {
-        throw new WebsiteError(
-          403,
-          "GitHub rejected the access token — it has expired or been revoked. Create a new one and paste it under Settings → Developer.",
-        );
-      }
-      if (err.status === 403) {
-        throw new WebsiteError(
-          403,
-          `The GitHub token cannot write to ${repo}. Give it Contents: write on that repository — a fine-grained token must also list ${repo} among the repositories it can reach — then publish again.`,
-        );
-      }
-      if (err.status === 404) {
-        throw new WebsiteError(
-          404,
-          `GitHub cannot find ${repo} on branch ${input.site.repoBranch}, or the token cannot see it. Check the repository and branch on the site's settings, and that the token has access to it.`,
-        );
-      }
-      if (err.status === 409 || err.status === 422) {
-        throw new WebsiteError(
-          409,
-          `GitHub would not accept the commit to ${input.site.repoBranch}: ${err.message}. A branch protection rule is the usual cause.`,
-        );
-      }
-      throw new WebsiteError(502, `GitHub would not accept the publish: ${err.message}`);
-    }
-    throw err;
+    throw githubFailure(err, repo, input.site.repoBranch);
   }
   });
 }

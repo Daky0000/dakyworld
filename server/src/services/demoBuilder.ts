@@ -138,6 +138,7 @@ const CONTRACT = `**What you may never put on the page:**
 - Real contact routes, using the details supplied: a \`tel:\` link on the phone number, \`mailto:\` on the address, a WhatsApp link where there is a number. A demo whose buttons do nothing is a demo of nothing.
 - Accessible basics: one \`<h1>\`, real heading order, alt text on any SVG that carries meaning, colour contrast that passes on the body text.
 - No cookie banner, no newsletter pop-up, no chat widget.
+- Put a \`data-dw-field\` marker on every element whose words the business will want to change: \`data-dw-field="hero.title"\`, \`"hero.cta"\`, \`"services.1.title"\`. One marker per element, unique on the page, named for what it is rather than where it sits. This is what lets the page be edited later without a developer — an unmarked heading can still be found by its words, and a marked one survives being moved.
 
 Write British English.`;
 

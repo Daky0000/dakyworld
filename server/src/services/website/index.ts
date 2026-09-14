@@ -67,7 +67,10 @@ export { changeStructure, structureControls, StructureError } from "./structure.
 export type { StructureAction, StructureControl } from "./structure.js";
 
 // Literal React source editing stays behind the same core boundary as HTML.
-export { JSX_ADAPTER_VERSION, discoverJsxFields, applyJsxValues, mapJsxFieldsToHtml } from "./jsx.js";
+export { JSX_ADAPTER_VERSION, discoverJsxFields, applyJsxValues, applyHtmlEditsAsJsx, mapJsxFieldsToHtml, contentKind } from "./jsx.js";
+export type { HtmlFieldEdit, UnmappableEdit } from "./jsx.js";
+export { renderRoute, invalidateRender, prerenderCandidates } from "./renderSource.js";
+export type { RenderedPage } from "./renderSource.js";
 export type { JsxField, JsxFieldKind, JsxChange, JsxDiscovery, JsxSourceReference, JsxIssue, JsxApplyResult, JsxHtmlMapping, JsxHtmlMappingReport } from "./jsx.js";
 
 // The other two halves of framework support: which files of a repository are

@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import ts from "typescript";
 import { decodeEntities } from "./parse.js";
+import { readPage } from "./regions.js";
 import type { SiteField } from "./regions.js";
 
 export const JSX_ADAPTER_VERSION = "jsx-literal-v1" as const;
@@ -400,11 +401,102 @@ export function applyJsxValues(source: string, request: { filePath: string; sour
   return { source: output, changed: edits.map((edit) => edit.field.id).reverse(), problems: [] };
 }
 
+/**
+ * An edit made against a rendered page, written into the source it came from.
+ *
+ * This is the bridge the visual editor crosses on a framework site. It is given
+ * the file, the HTML that was built from it, and the draft as the editor keeps
+ * it — values keyed by the *rendered* page's field ids — and it turns those into
+ * changes to literals in the file.
+ *
+ * It refuses rather than approximates. An edit with nowhere to go — a style, a
+ * reordered section, a heading the mapper could not trace — fails the whole
+ * publish with a sentence naming the part, because the alternative is a publish
+ * that silently drops half of what somebody did and reports success.
+ *
+ * Markup cannot cross either. A literal in a source file is plain text, so a
+ * heading somebody made half-bold in the editor is a change to the code, not to
+ * a string, and it is refused as one.
+ */
+export type HtmlFieldEdit = { value?: string; href?: string; alt?: string; style?: string; variant?: string | null; newTab?: boolean; responsive?: unknown; structure?: unknown };
+export type UnmappableEdit = { htmlFieldId: string; part: string; message: string };
+
+/** The parts of an edit that are markup rather than content, and why each one
+ * cannot be written into a `.tsx`. Listed by name so the message can say which. */
+const CODE_MANAGED: Record<string, string> = {
+  style: "Styling on this page is written by its code — a class, a stylesheet or a design token — so there is no value here to change.",
+  variant: "This button’s style comes from its component, not from this page.",
+  newTab: "Whether a link opens in a new tab is set in the code for this page.",
+  responsive: "Responsive styling is written by the project’s own stylesheets.",
+  structure: "Adding, moving or removing a section changes the code that builds this page.",
+};
+
+export function applyHtmlEditsAsJsx(input: {
+  source: string;
+  filePath: string;
+  /** The rendered page the edits were made against. */
+  html: string;
+  edits: Record<string, HtmlFieldEdit>;
+  requireMarker?: boolean;
+}): JsxApplyResult & { unmappable: UnmappableEdit[]; changes: JsxChange[] } {
+  const refuse = (problems: JsxEditProblem[], unmappable: UnmappableEdit[] = []): JsxApplyResult & { unmappable: UnmappableEdit[]; changes: JsxChange[] } =>
+    ({ source: input.source, changed: [], problems, unmappable, changes: [] });
+
+  let discovery: JsxDiscovery;
+  try { discovery = discoverJsxFields(input.source, input.filePath); }
+  catch (error) { return refuse([{ code: "source", message: error instanceof Error ? error.message : "Invalid source file." }]); }
+  if (discovery.issues.some((issue) => issue.code === "syntax" || issue.code === "limit")) {
+    return refuse([{ code: "source", message: discovery.issues.filter((issue) => issue.code === "syntax" || issue.code === "limit").map((issue) => issue.message).join(" ") }]);
+  }
+
+  const htmlFields = readPage(input.html).fields;
+  const report = mapJsxFieldsToHtml(discovery.fields, htmlFields, { requireMarker: input.requireMarker });
+  const byTarget = new Map(report.mappings.map((mapping) => [`${mapping.htmlFieldId} ${mapping.property}`, mapping]));
+  const labels = new Map(htmlFields.map((field) => [field.id, field.label]));
+
+  const changes: JsxChange[] = [];
+  const unmappable: UnmappableEdit[] = [];
+  for (const [htmlFieldId, edit] of Object.entries(input.edits)) {
+    const where = labels.get(htmlFieldId) ?? "a field on this page";
+    for (const [part, raw] of Object.entries(edit)) {
+      if (raw === undefined) continue;
+      if (CODE_MANAGED[part]) { unmappable.push({ htmlFieldId, part, message: `${where}: ${CODE_MANAGED[part]}` }); continue; }
+      if (part !== "value" && part !== "href" && part !== "alt") { unmappable.push({ htmlFieldId, part, message: `${where}: this kind of change is written by the code for this page.` }); continue; }
+      const mapping = byTarget.get(`${htmlFieldId} ${part}`);
+      if (!mapping) {
+        unmappable.push({ htmlFieldId, part, message: `${where}: this came from the code rather than from a piece of text in ${input.filePath}, so it cannot be changed here.` });
+        continue;
+      }
+      const value = String(raw);
+      if (part === "value" && /<[a-z!/][^>]*>/i.test(value)) {
+        unmappable.push({ htmlFieldId, part, message: `${where}: formatting inside these words would change the page’s code. Keep it as plain text, or ask a developer.` });
+        continue;
+      }
+      changes.push({ fieldId: mapping.sourceFieldId, value: part === "value" ? decodeEntities(value) : value });
+    }
+  }
+
+  // All or nothing. A publish that wrote the three changes it understood and
+  // dropped the fourth would be a page that is half of what somebody approved.
+  if (unmappable.length) return refuse([], unmappable);
+  if (!changes.length) return refuse([{ code: "invalid", message: "None of these edits change anything in the source file." }]);
+  const applied = applyJsxValues(input.source, { filePath: discovery.filePath, sourceHash: discovery.sourceHash, changes });
+  return { ...applied, unmappable: [], changes };
+}
+
 export type JsxHtmlMapping = {
   sourceFieldId: string;
   htmlFieldId: string;
   property: "value" | "href" | "alt";
   confidence: "marker" | "exact-value";
+  /**
+   * The bytes in the source file this rendered value came from.
+   *
+   * Carried so that an edit made against the HTML knows what it is about to
+   * replace without re-deriving it — the mapping and the write then cannot come
+   * to disagree about which literal a change belongs to.
+   */
+  span: { start: number; end: number };
 };
 export type JsxHtmlMappingReport = {
   mappings: JsxHtmlMapping[];
@@ -418,10 +510,19 @@ export type JsxHtmlMappingReport = {
  * A source marker must also survive as the same unique annotated HTML marker.
  * Pass fields from every participating source file together to catch collisions.
  */
-export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields: readonly SiteField[]): JsxHtmlMappingReport {
+export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields: readonly SiteField[], options: { requireMarker?: boolean } = {}): JsxHtmlMappingReport {
   const report: JsxHtmlMappingReport = { mappings: [], diagnostics: [] };
   const proposed: JsxHtmlMapping[] = [];
   for (const sourceField of sourceFields) {
+    // Marker discipline, when the caller asks for it: only a literal the author
+    // has named with `data-dw-field` may be written through a rendered page.
+    // Value matching is good enough to *show* somebody where their words came
+    // from; it is not good enough to commit a change on, once a generator can be
+    // told to name them instead.
+    if (options.requireMarker && !sourceField.marker) {
+      report.diagnostics.push({ sourceFieldId: sourceField.id, code: "unmatched", candidateHtmlFieldIds: [], message: "This literal has no data-dw-field marker, so a change made on the rendered page cannot be traced back to it." });
+      continue;
+    }
     const property = sourceField.kind === "href" ? "href" : sourceField.kind === "alt" ? "alt" : "value";
     const candidates = htmlFields.filter((field) => {
       if (field.tag !== sourceField.tag || (sourceField.marker && (field.confidence !== "annotated" || field.id !== sourceField.marker))) return false;
@@ -434,7 +535,7 @@ export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields
       report.diagnostics.push({ sourceFieldId: sourceField.id, code: candidates.length ? "ambiguous" : "unmatched", candidateHtmlFieldIds: candidates.map((field) => field.id), message: candidates.length ? "More than one preview element has this exact value." : "No preview field has the same tag, full value and required marker." });
       continue;
     }
-    proposed.push({ sourceFieldId: sourceField.id, htmlFieldId: candidates[0]!.id, property, confidence: sourceField.marker ? "marker" : "exact-value" });
+    proposed.push({ sourceFieldId: sourceField.id, htmlFieldId: candidates[0]!.id, property, confidence: sourceField.marker ? "marker" : "exact-value", span: { start: sourceField.reference.start, end: sourceField.reference.end } });
   }
   const claims = new Map<string, number>();
   for (const mapping of proposed) {

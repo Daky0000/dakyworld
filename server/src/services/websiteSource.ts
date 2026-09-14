@@ -6,7 +6,8 @@ import { prisma } from "../lib/prisma.js";
 import { commitFiles, listTree, readFile } from "../lib/github.js";
 import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath } from "./website/index.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
-import { publicFolder } from "./website/index.js";
+import { invalidateRender, publicFolder } from "./website/index.js";
+import { invalidateSource } from "./website/sourceCache.js";
 import { assetUrl } from "./websiteAssets.js";
 import { failPublishJob, sourcePublishCommitted, startPublishJob } from "./websitePublishJobs.js";
 import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js";
@@ -205,6 +206,11 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
       if (job) await deps.trackFailed({ id: job.id, message: error instanceof Error ? error.message : "The commit did not land." }).catch(() => undefined);
       throw error;
     }
+    // Both caches for this file: the bytes themselves, and the built page they
+    // produce. Left behind, the next open shows the version from before the
+    // commit and the reload meant to confirm the publish confirms the opposite.
+    invalidateSource(current.site.id, current.path.relative);
+    invalidateRender(current.site, { filePath: current.path.relative });
     if (job) await deps.tracked({ id: job.id, site: current.site, filePath: current.path.relative, commit: result, changes: review.changes }).catch((error: unknown) => console.error("Source published but the publish job could not be updated", { jobId: job.id, error }));
     // A committed change must never be described as failed just because the
     // secondary audit write failed. GitHub's commit remains the durable record.

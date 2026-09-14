@@ -191,26 +191,23 @@ export function Website() {
                           View
                         </Button>
                       </a>
-                      {/* Decided by the file, never by the site. A framework
-                          page opens beside the live page rather than in a file
-                          browser: same Edit button, same place in the list, and
-                          the difference is what can be shown, not where the
-                          person has to go. A framework
-                          repository still has real HTML pages in it — a landing
-                          page in `public/`, an imported file — and sending those
-                          to the source editor would take somebody away from the
-                          visual editor that can open them perfectly well. Only a
-                          file the visual editor genuinely cannot read goes the
-                          other way. */}
-                      <Link
-                        to={
-                          SOURCE_ONLY_FILE.test(page.filePath)
-                            ? `/website/pages/${page.id}/source`
-                            : `/website/pages/${page.id}`
-                        }
-                      >
+                      {/* Every page opens in the same editor. A framework page
+                          is built into HTML first — see `renderSource.ts` — and
+                          the editor works on that, so layers, the picker and
+                          responsive styling all behave as they always have. The
+                          editor itself falls back to the source screen when a
+                          page has no built copy anywhere to show. */}
+                      <Link to={`/website/pages/${page.id}`}>
                         <Button size="sm">Edit</Button>
                       </Link>
+                      {/* The file itself, for a developer or for the day the
+                          built page cannot be found. Quiet, and only where there
+                          is a source file to open. */}
+                      {SOURCE_ONLY_FILE.test(page.filePath) && (
+                        <Link to={`/website/pages/${page.id}/source`} title={`Edit ${page.filePath} directly`}>
+                          <Button variant="ghost" size="sm">Source</Button>
+                        </Link>
+                      )}
                     </div>
                   </td>
                 </tr>

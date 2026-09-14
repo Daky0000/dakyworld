@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { withWebsitePublishLock } from "../services/websitePublishing.js";
 import { registerWebsiteAssistant } from "../services/websiteAssistant.js";
 import { registerWebsiteSource } from "../services/websiteSource.js";
-import { registerWebsiteFrameworkView } from "../services/websiteFrameworkView.js";
+import { registerWebsiteFrameworkView, sourceManagedFields } from "../services/websiteFrameworkView.js";
 import { embedWebsiteAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
 import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../services/websiteShared.js";
@@ -36,7 +36,7 @@ import {
   type FieldValue,
   type SiteField,
 } from "../services/website/index.js";
-import { discoverPages, pageSource, pageUrl, publishPage, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
+import { discoverPages, pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
 import { offerPagePublished } from "../services/context/business.js";
 
 /**
@@ -354,6 +354,13 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
       };
     };
 
+    // On a framework page, which of these fields a publish could actually write.
+    // The editor works on the built HTML, so it can show everything; only the
+    // parts that trace back to a literal in the source can be changed, and the
+    // rest have to say so on the field rather than at the publish, which is far
+    // too late to be told.
+    const managed = source.sourceFile ? await sourceManagedFields(site, page, source.html) : null;
+
     const [saver, siblings] = await Promise.all([
       page.draftSavedById
         ? prisma.user.findUnique({ where: { id: page.draftSavedById }, select: { id: true, name: true } })
@@ -383,11 +390,22 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
         lastPublishedAt: page.lastPublishedAt,
       },
       readFrom: source.from,
+      // Set only for a framework page: what is being shown is a build of the
+      // file named here, and how fresh that build is. A person editing needs
+      // both — "this is last night's deploy" and "your words go into page.tsx"
+      // are the two facts that make the screen make sense.
+      builtFrom: source.sourceFile ? { filePath: source.sourceFile, detail: source.detail ?? null, writableFields: managed ? managed.writable.size : 0 } : null,
       sections: content.sections.map((section) => ({
         id: section.id,
         label: section.label,
         kind: section.kind,
-        fields: section.fields.map((field) => ({ ...publicField(widen(field)), structure: controls[field.id] })),
+        fields: section.fields.map((field) => ({
+          ...publicField(widen(field)),
+          structure: managed ? undefined : controls[field.id],
+          ...(managed && !managed.writable.has(field.id)
+            ? { sourceManaged: true as const, sourceNote: `This came from the code in ${page.filePath} rather than from a piece of text in it. Change it there, or ask a developer.` }
+            : {}),
+        })),
       })),
       draft: {
         values: Object.fromEntries(
@@ -658,7 +676,12 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
     // page covered in selection outlines is not a preview of anything.
     const picking = req.query.pick === "1";
     const capabilities = await getWebsiteCapabilities(req, site.id);
-    const document = buildPreview(applied.html, pageUrl(site, page), picking ? discoverFields(applied.html).fields : undefined, capabilities.capabilities.edit);
+    // On a framework page only the elements that trace back to a literal are
+    // marked, so nothing is clickable that nothing could write. On an HTML page
+    // every field is, exactly as before.
+    const pickable = picking ? discoverFields(applied.html).fields : undefined;
+    const writable = picking && source.sourceFile ? await sourceManagedFields(site, page, source.html) : null;
+    const document = buildPreview(applied.html, pageUrl(site, page), writable ? pickable!.filter((field) => writable.writable.has(field.id)) : pickable, capabilities.capabilities.edit);
     res
       .type("html")
       .set("Cache-Control", "no-store")
@@ -754,13 +777,21 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       });
       let commit: { sha: string; url: string };
       try {
-        commit = await publishPage({
-          site,
-          page,
-          html: plan.html,
-          expectedSource: source.html,
-          message: `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`,
-        });
+        commit = source.sourceFile
+          // A framework page: the HTML this draft was made against was built
+          // from a file, so what gets committed is that file with the edited
+          // literals in it — never the rendered page, which is output and would
+          // be overwritten by the next build anyway. Anything the edit cannot be
+          // traced back to refuses the whole publish rather than landing a
+          // partial one; see `applyHtmlEditsAsJsx`.
+          ? await publishSourcePage({ site, page, values, html: source.html, author, changed: plan.changed.length })
+          : await publishPage({
+              site,
+              page,
+              html: plan.html,
+              expectedSource: source.html,
+              message: `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`,
+            });
       } catch (error) {
         await failPublishJob(job.id, "COMMIT_FAILED", error instanceof Error ? error.message : "The commit did not happen.");
         throw error;

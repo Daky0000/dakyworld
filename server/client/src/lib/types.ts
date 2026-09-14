@@ -3121,6 +3121,13 @@ export type SiteFieldRow = {
   href?: string;
   alt?: string;
   note?: string;
+  /**
+   * True on a framework page for a field the publish could not write: it came
+   * from the code that builds the page rather than from a piece of text in it.
+   * Shown read-only, with `sourceNote` saying where it does come from.
+   */
+  sourceManaged?: true;
+  sourceNote?: string;
   decorative?: boolean;
   /** The element's own inline style, when it has one. */
   style?: string;
@@ -3206,7 +3213,9 @@ export type SitePageDetail = {
     lastPublishedAt: string | null;
   };
   /** Which of the two sources answered — the repository, or the live site. */
-  readFrom: "repository" | "live site" | "imported file";
+  readFrom: "repository" | "live site" | "imported file" | "prerendered output" | "render service";
+  /** Set when this page is built from a source file rather than being one. */
+  builtFrom?: { filePath: string; detail: string | null; writableFields: number } | null;
   sections: SiteSectionRow[];
   /** Which fields belong to a shared element, and what that element is doing. */
   shared?: { scope: Record<string, SharedFieldScope>; elements: SharedElementOnPage[] };
@@ -3307,7 +3316,7 @@ export type RollbackDiff = {
   /** Differs in markup, reads exactly the same. Counted, never listed. */
   invisibleCount: number;
   summary: FieldChangeSummary[];
-  readFrom: "repository" | "live site" | "imported file";
+  readFrom: "repository" | "live site" | "imported file" | "prerendered output" | "render service";
   warning: string;
 };
 

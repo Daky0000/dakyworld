@@ -86,6 +86,21 @@ export function matchSourceToLive(input: { source: string; filePath: string; liv
   };
 }
 
+/**
+ * Which fields of a built page a publish could actually write.
+ *
+ * Used by the visual editor, which shows the whole rendered page: everything is
+ * visible, and only what traces back to a literal in the source is editable.
+ * Saying which on the field itself is the difference between a person being
+ * told now and being told at the publish, when they have already done the work.
+ */
+export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string> } | null> {
+  const source = await pageFile(site, page).catch(() => null);
+  if (source === null) return { writable: new Set() };
+  const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: html });
+  return { writable: new Set(view.mapping.map((entry) => entry.htmlFieldId)) };
+}
+
 /** Page-scoped framework editing: the page's file, and the live page beside it. */
 export function registerWebsiteFrameworkView(router: Router, access: Access, overrides: Partial<Dependencies> = {}) {
   const deps = { ...dependencies, ...overrides };

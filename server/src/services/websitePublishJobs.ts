@@ -318,10 +318,22 @@ export async function reconcileInterruptedPublishJobs(): Promise<number> {
 
 /** What the editor shows after a publish, and on the site's activity screen. */
 export function publishJobView(job: PublishJob) {
+  // A framework publish commits a source file, and nobody sees it until the
+  // host has built the project — minutes, not the seconds a static host takes.
+  // "Waiting for the host to rebuild" is true of both and useless for this one,
+  // because the thing being waited on is a build that can fail on its own terms.
+  const built = Boolean((job.detail as { source?: unknown } | null)?.source);
   return {
     id: job.id,
     kind: job.kind,
     state: job.state,
+    /** True when what was committed is source that has to be built first. */
+    fromSource: built,
+    stateLabel: built && (job.state === "DEPLOYING" || job.state === "VERIFYING")
+      ? "Committed — waiting for the build and deploy"
+      : built && job.state === "VERIFY_FAILED"
+        ? "Committed, but the built site still shows the old version — check the build on your host"
+        : PUBLISH_JOB_STATES[job.state],
     pageId: job.pageId,
     sharedElementId: job.sharedElementId,
     commit: job.commitSha ? { sha: job.commitSha, url: job.commitUrl } : null,
@@ -380,7 +392,7 @@ export function registerWebsitePublishJobs(
         ...publishJobView(job),
         page: job.page,
         startedBy: job.startedBy,
-        label: PUBLISH_JOB_STATES[job.state],
+        label: publishJobView(job).stateLabel,
       })),
     });
   }));
@@ -392,6 +404,6 @@ export function registerWebsitePublishJobs(
       res.status(404).json({ error: "That publish is not on this website." });
       return;
     }
-    res.json({ ...publishJobView(job), label: PUBLISH_JOB_STATES[job.state] });
+    res.json({ ...publishJobView(job), label: publishJobView(job).stateLabel });
   }));
 }
