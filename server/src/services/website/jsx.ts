@@ -70,6 +70,23 @@ export type JsxField = {
   value: string;
   marker?: string;
   confidence: "explicit" | "structural";
+  /**
+   * Where the literal sits: in markup, or in a data object.
+   *
+   * It decides what the field's `tag` is worth. A literal in markup has a real
+   * tag — the element that will render it — and the mapper uses it to tell two
+   * identical strings apart. A literal in a data array has no tag at all: the
+   * element it ends up in is chosen by whichever component maps over the array,
+   * which may be in another file entirely, and the `tag` recorded for it is the
+   * name of the variable it was declared in. Comparing that to `h3` would refuse
+   * every match, which is exactly what used to happen to a page whose cards live
+   * in `data/cards.ts`.
+   *
+   * So a data field is matched on value alone. That is not a weaker rule than it
+   * looks: the mapper already requires a match to be unique in both directions,
+   * and uniqueness, not the tag, is what makes a match safe.
+   */
+  origin: "markup" | "data";
   reference: JsxSourceReference;
 };
 export type JsxIssue = {
@@ -169,13 +186,13 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
       result.issues.push({ code, message, line: point.line + 1, column: point.character + 1 });
     };
 
-    function add(node: ts.Node, kind: JsxFieldKind, tag: string, location: string, marker: string | undefined, encoding: Encoding, value = "", label?: string) {
+    function add(node: ts.Node, kind: JsxFieldKind, tag: string, location: string, marker: string | undefined, encoding: Encoding, value = "", label?: string, origin: JsxField["origin"] = "markup") {
       if (result.fields.length >= MAX_FIELDS) throw new Error("This file has too many literal fields to edit safely.");
       const start = ts.isJsxText(node) ? node.pos : node.getStart(file);
       const locator = `${marker ? `marker:${marker}` : `ast:${location}`}/${kind}`;
       const field: JsxField = {
         id: `jsx_${hash(`${filePath}\0${locator}`).slice(0, 32)}`,
-        kind, tag, label: label ?? `${tag} ${kind}`, value, ...(marker && { marker: marker.split("/text:")[0]!.split("/prop:")[0] }), confidence: marker ? "explicit" : "structural",
+        kind, tag, label: label ?? `${tag} ${kind}`, value, ...(marker && { marker: marker.split("/text:")[0]!.split("/prop:")[0] }), confidence: marker ? "explicit" : "structural", origin,
         reference: { adapter: JSX_ADAPTER_VERSION, filePath, sourceHash, locator, start, end: node.end, original: source.slice(start, node.end), encoding },
       };
       result.fields.push(field);
@@ -306,7 +323,7 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
       // A template literal would come back as a quoted string and change how the
       // file reads, so it is left alone rather than rewritten into one.
       if (ts.isNoSubstitutionTemplateLiteral(initializer)) { issue(node, "unsupported", `${rawName} is a template literal; this editor writes plain strings only.`); return; }
-      add(initializer, kind, scope || "data", `${location}/key:${rawName}`, undefined, "javascript-string", initializer.text, scope ? `${scope} ${rawName}` : rawName);
+      add(initializer, kind, scope || "data", `${location}/key:${rawName}`, undefined, "javascript-string", initializer.text, scope ? `${scope} ${rawName}` : rawName, "data");
     }
 
     function walk(node: ts.Node, location: string, depth: number, scope = ""): void {
@@ -468,8 +485,8 @@ export function applyHtmlEditsAsJsx(input: {
   }
 
   const htmlFields = readPage(input.html).fields;
-  const report = mapJsxFieldsToHtml(discovery.fields, htmlFields, { requireMarker: input.requireMarker });
-  const byTarget = new Map(report.mappings.map((mapping) => [`${mapping.htmlFieldId} ${mapping.property}`, mapping]));
+   const report = mapJsxFieldsToHtml(discovery.fields, htmlFields, { requireMarker: input.requireMarker });
+  const byTarget = new Map(report.mappings.map((mapping) => [`${mapping.htmlFieldId}\\u0000${mapping.property}`, mapping]));
   const labels = new Map(htmlFields.map((field) => [field.id, field.label]));
 
   const changes: JsxChange[] = [];
@@ -480,7 +497,7 @@ export function applyHtmlEditsAsJsx(input: {
       if (raw === undefined) continue;
       if (CODE_MANAGED[part]) { unmappable.push({ htmlFieldId, part, message: `${where}: ${CODE_MANAGED[part]}` }); continue; }
       if (part !== "value" && part !== "href" && part !== "alt") { unmappable.push({ htmlFieldId, part, message: `${where}: this kind of change is written by the code for this page.` }); continue; }
-      const mapping = byTarget.get(`${htmlFieldId} ${part}`);
+      const mapping = byTarget.get(`${htmlFieldId}\\u0000${part}`);
       if (!mapping) {
         unmappable.push({ htmlFieldId, part, message: `${where}: this came from the code rather than from a piece of text in ${input.filePath}, so it cannot be changed here.` });
         continue;
@@ -522,11 +539,14 @@ export type JsxHtmlMappingReport = {
 };
 
 /** Conservative preview hints, NOT a compiler source map or proof of provenance.
- * Both sides must have identical tags and decoded values. Matches must be unique
- * in both directions for the given HTML property. No fuzzy text/URL matching,
- * whitespace normalization, partial-rich-text matches or positional guesses.
- * A source marker must also survive as the same unique annotated HTML marker.
- * Pass fields from every participating source file together to catch collisions.
+ * A source marker matches by id alone — its tags may differ, because a marked
+ * component (`<Hero data-dw-field="x">`) renders a native element (`<h1 ...>`) —
+ * while an unmarked literal still has to agree on tag and decoded value. Matches
+ * must be unique in both directions for the given HTML property. No fuzzy
+ * text/URL matching, whitespace normalization, partial-rich-text matches or
+ * positional guesses. A source marker must also survive as the same unique
+ * annotated HTML marker. Pass fields from every participating source file
+ * together to catch collisions.
  */
 export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields: readonly SiteField[], options: { requireMarker?: boolean } = {}): JsxHtmlMappingReport {
   const report: JsxHtmlMappingReport = { mappings: [], diagnostics: [] };
@@ -543,10 +563,16 @@ export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields
     }
     const property = sourceField.kind === "href" ? "href" : sourceField.kind === "alt" ? "alt" : "value";
     const candidates = htmlFields.filter((field) => {
-      // A marker is the only bridge a component has: its rendered tag is decided
-      // by its own code, so tags are compared only when there is no marker.
+      // A marker is the faithful identity. A component marked `<Hero data-dw-field="x">`
+      // renders a native element carrying the same marker, so the tags differ and
+      // only the marker is trusted — without it, an identical string in a different
+      // element would be matched to the wrong literal.
       if (sourceField.marker) { if (field.confidence !== "annotated" || field.id !== sourceField.marker) return false; }
-      else if (field.tag !== sourceField.tag) return false;
+      // A literal declared in a data object has no tag to compare — the element
+      // it renders into is chosen by whichever component maps over the array.
+      // Its value has to be unique in both directions, which it does below, and
+      // that is the property that makes the match safe.
+      else if (sourceField.origin !== "data" && field.tag !== sourceField.tag) return false;
       if (sourceField.kind === "src") return field.kind === "image" && field.value === sourceField.value;
       if (sourceField.kind === "href" || sourceField.kind === "alt") return field[property] === sourceField.value;
       if (!["text", "link", "button"].includes(field.kind) || /<[^>]*>/.test(field.value)) return false;
