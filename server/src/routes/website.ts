@@ -406,7 +406,7 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
           ...publicField(widen(field)),
           structure: managed ? undefined : controls[field.id],
           ...(managed && !managed.writable.has(field.id)
-            ? { sourceManaged: true as const, sourceNote: `This came from the code in ${page.filePath} rather than from a piece of text in it. Change it there, or ask a developer.` }
+            ? { sourceManaged: true as const, sourceNote: managed.notes.get(field.id) ?? `This came from the code in ${page.filePath} rather than from a piece of text in it. Change it there, or ask a developer.` }
             : {}),
         })),
       })),

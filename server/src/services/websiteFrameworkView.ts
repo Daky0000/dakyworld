@@ -133,7 +133,7 @@ export function matchSourceToLive(input: { source: string; filePath: string; liv
  * Saying which on the field itself is the difference between a person being
  * told now and being told at the publish, when they have already done the work.
  */
-export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string> } | null> {
+export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string>; notes: Map<string, string> } | null> {
   // The editor and the publish have to agree about what is writable, and they
   // agree by asking the same question of the same files. When this read one file
   // and the publish read the whole manifest, every heading in a component was
@@ -141,14 +141,46 @@ export async function sourceManagedFields(site: Site, page: SitePage, html: stri
   // by the publish they were not allowed to reach.
   if (hasSourceManifest(page.filePath)) {
     const context = await pageManifest(site, page).catch(() => null);
-    if (!context) return { writable: new Set() };
+    if (!context) return { writable: new Set(), notes: new Map() };
     const wide = matchManifestToLive({ discovery: context.discovery, liveHtml: html });
-    return { writable: new Set(wide.mapping.map((entry) => entry.htmlFieldId)) };
+    // The mapper already knows why each of these is locked — which is a far more
+    // useful sentence than "it came from the code". A person told "these exact
+    // words appear more than once" can act; a person told the page is code
+    // cannot. Naming the files the words were found in is the rest of it: the
+    // brand in a header is not in `page.tsx` and saying so sends them nowhere.
+    const notes = new Map<string, string>();
+    const byValue = new Map<string, Set<string>>();
+    for (const field of context.discovery.fields) {
+      const value = field.value.trim();
+      if (!value) continue;
+      const files = byValue.get(value) ?? new Set<string>();
+      files.add(field.filePath);
+      byValue.set(value, files);
+    }
+    const values = new Map((wide.view?.htmlFields ?? []).map((field) => [field.id, field.value.trim()]));
+    for (const capability of wide.view?.capabilities ?? []) {
+      if (!capability.reason) continue;
+      // Naming the file is not a claim that the edit could be traced there —
+      // that is exactly what failed. It is the far more useful fact that these
+      // words do exist as text somewhere, and where, so a dead end becomes the
+      // one place the change can actually be made. Silent when they do not.
+      // Where the mapper named the collision, those files are the answer; the
+      // value match is the fallback for a literal that was never matched at all.
+      const named = (wide.view?.diagnostics ?? []).filter((diagnostic) => diagnostic.candidateHtmlFieldIds.includes(capability.htmlFieldId)).map((diagnostic) => diagnostic.filePath);
+      const where = [...new Set(named.length ? named : [...(byValue.get(values.get(capability.htmlFieldId) ?? " ") ?? [])])].sort();
+      notes.set(
+        capability.htmlFieldId,
+        where.length
+          ? `${capability.reason} These words are in ${where.join(" and ")} — open it under Source files to change it there.`
+          : capability.reason,
+      );
+    }
+    return { writable: new Set(wide.mapping.map((entry) => entry.htmlFieldId)), notes };
   }
   const source = await pageFile(site, page).catch(() => null);
-  if (source === null) return { writable: new Set() };
+  if (source === null) return { writable: new Set(), notes: new Map() };
   const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: html });
-  return { writable: new Set(view.mapping.map((entry) => entry.htmlFieldId)) };
+  return { writable: new Set(view.mapping.map((entry) => entry.htmlFieldId)), notes: new Map() };
 }
 
 /** Page-scoped framework editing: the page's file, and the live page beside it. */

@@ -146,6 +146,16 @@ assert.ok(
 ); passed++;
 const twinFiles = new Set(twinView.diagnostics.map((diagnostic) => diagnostic.filePath));
 assert.equal(twinFiles.size, 2, "the diagnostics name both files rather than blaming the route"); passed++;
+// And the diagnostic says which elements it is about, so the editor can tell
+// somebody which files their words are in rather than naming the route file,
+// which is where they are not.
+for (const id of collided) {
+  assert.ok(
+    twinView.diagnostics.some((diagnostic) => diagnostic.code === "ambiguous" && diagnostic.candidateHtmlFieldIds.includes(id)),
+    "each colliding element is named by an ambiguous diagnostic",
+  );
+}
+passed++;
 
 // ── A refusal fails the whole set ───────────────────────────────────────────
 const anyTarget = view.mappings.find((mapping) => mapping.property === "value")!;

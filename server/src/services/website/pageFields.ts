@@ -183,7 +183,7 @@ export type PageView = {
   capabilities: ElementCapabilities[];
   /** Fields in the source that no element on the page could be matched to, and
    * the reason for each. Shown as mapping diagnostics rather than hidden. */
-  diagnostics: Array<{ sourceFieldId: string; filePath: string; code: string; message: string }>;
+  diagnostics: Array<{ sourceFieldId: string; filePath: string; code: string; message: string; candidateHtmlFieldIds: string[] }>;
 };
 
 /**
@@ -252,6 +252,10 @@ export function matchPageToHtml(input: { discovery: PageDiscovery; html: string;
       filePath: byId.get(diagnostic.sourceFieldId)?.filePath ?? input.discovery.entry,
       code: diagnostic.code,
       message: diagnostic.message,
+      // Which elements on the page this diagnostic is about, so a caller can
+      // tell somebody which files their words were found in without matching
+      // on the sentence.
+      candidateHtmlFieldIds: diagnostic.candidateHtmlFieldIds,
     })),
   };
 }
