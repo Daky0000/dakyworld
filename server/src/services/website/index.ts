@@ -71,6 +71,8 @@ export { JSX_ADAPTER_VERSION, discoverJsxFields, applyJsxValues, applyHtmlEditsA
 export type { HtmlFieldEdit, UnmappableEdit } from "./jsx.js";
 export { renderRoute, invalidateRender, prerenderCandidates } from "./renderSource.js";
 export type { RenderedPage } from "./renderSource.js";
+export { SOURCE_LINK_VERSION, sourceLinkState, applySourceLinks } from "./sourceLinks.js";
+export type { SourceLinkEdit, SourceLinkState, SourceLinkResult } from "./sourceLinks.js";
 export { SOURCE_STYLE_VERSION, sourceStyleState, applySourceStyles } from "./sourceStyle.js";
 export type { SourceStyleEdit, SourceStyleState, SourceStyleResult } from "./sourceStyle.js";
 export { MARKDOWN_STRUCTURE_VERSION, markdownStructureNodes, changeMarkdownStructure, replayMarkdownStructure } from "./markdownStructure.js";

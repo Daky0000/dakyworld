@@ -9,15 +9,16 @@ import { useWebsiteAccess } from "./WebsiteMembers";
 import { SourceBlockStyle } from "./SourceBlockStyle";
 
 type SourceField = { id: string; label: string; tag: string; kind: "text" | "href" | "src" | "alt"; value: string; marker?: string; confidence: "explicit" | "structural" };
-type SourceBlock = { id: string; tag: string; label: string; depth: number; parentId?: string; previousId?: string; nextId?: string; marker?: string; remove: boolean; duplicate: boolean; reason?: string; duplicateReason?: string; style: string; styleable: boolean; styleReason?: string };
+type SourceBlock = { id: string; tag: string; label: string; depth: number; parentId?: string; previousId?: string; nextId?: string; marker?: string; remove: boolean; duplicate: boolean; reason?: string; duplicateReason?: string; style: string; styleable: boolean; styleReason?: string; link?: { newTab: boolean; editable: boolean; reason?: string } };
 type StyleEdit = { nodeId: string; style: string };
+type LinkEdit = { nodeId: string; newTab: boolean };
 type StructureAction = { kind: "remove" | "duplicate" | "before" | "after"; nodeId: string; targetId?: string };
 type SourceDocument = { filePath: string; sourceHash: string; repo: string; branch: string; fields: SourceField[]; blocks: SourceBlock[]; structureAdapter: string | null; styleAdapter: string | null; issues: { message: string; line?: number }[] };
 type SourcePreview = SourceDocument & { layout: string[]; droppedChanges: string[] };
 type Directory = { repo: string; branch: string; root: string; path: string; files: { path: string; name: string; type: "file" | "dir"; size: number; editable: boolean }[] };
 type Change = { fieldId: string; value: string };
 type Review = { reviewHash: string; sourceHash: string; filePath: string; repo: string; branch: string; layout: string[]; changes: { fieldId: string; label: string; before: string; after: string }[] };
-type StoredDraft = { sourceHash: string; values: Record<string, string>; actions?: StructureAction[]; styles?: Record<string, string> };
+type StoredDraft = { sourceHash: string; values: Record<string, string>; actions?: StructureAction[]; styles?: Record<string, string>; links?: Record<string, boolean> };
 type UploadedImage = { id: string; url: string; filename: string; preview: string };
 const fieldClass = "w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink focus:border-blue focus:outline-none focus:ring-1 focus:ring-blue";
 
@@ -33,7 +34,8 @@ function readDraft(key: string): StoredDraft | null {
     // malformed anyway — but refusing here keeps the panel from rendering it.
     const actions = Array.isArray(draft.actions) ? draft.actions.filter(action => action && typeof action === "object" && ["remove", "duplicate", "before", "after"].includes((action as StructureAction).kind) && typeof (action as StructureAction).nodeId === "string") : [];
     const styles = draft.styles && typeof draft.styles === "object" && !Array.isArray(draft.styles) && Object.values(draft.styles).every(value => typeof value === "string") ? draft.styles as Record<string, string> : {};
-    return { sourceHash: draft.sourceHash, values: draft.values as Record<string, string>, actions: actions as StructureAction[], styles };
+    const links = draft.links && typeof draft.links === "object" && !Array.isArray(draft.links) && Object.values(draft.links).every(value => typeof value === "boolean") ? draft.links as Record<string, boolean> : {};
+    return { sourceHash: draft.sourceHash, values: draft.values as Record<string, string>, actions: actions as StructureAction[], styles, links };
   } catch { return null; }
 }
 
@@ -86,8 +88,10 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
   const actions = draft?.actions ?? [];
   const styleDraft = draft?.styles ?? {};
   const styleEdits: StyleEdit[] = Object.entries(styleDraft).map(([nodeId, style]) => ({ nodeId, style }));
+  const linkDraft = draft?.links ?? {};
+  const linkEdits: LinkEdit[] = Object.entries(linkDraft).map(([nodeId, newTab]) => ({ nodeId, newTab }));
   const changes: Change[] = Object.entries(values).map(([fieldId, value]) => ({ fieldId, value }));
-  const input = { filePath, sourceHash: draft?.sourceHash ?? document.data?.sourceHash ?? "", changes, structure: actions, styles: styleEdits };
+  const input = { filePath, sourceHash: draft?.sourceHash ?? document.data?.sourceHash ?? "", changes, structure: actions, styles: styleEdits, links: linkEdits };
   /**
    * The file as the queued layout actions leave it.
    *
@@ -96,12 +100,12 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
    * thing that can say what the new ones are is the parser that made them.
    */
   const preview = useQuery({
-    queryKey: ["website", "source-preview", siteId, filePath, input.sourceHash, JSON.stringify(actions), JSON.stringify(styleEdits)],
-    enabled: (actions.length > 0 || styleEdits.length > 0) && Boolean(input.sourceHash),
+    queryKey: ["website", "source-preview", siteId, filePath, input.sourceHash, JSON.stringify(actions), JSON.stringify(styleEdits), JSON.stringify(linkEdits)],
+    enabled: (actions.length > 0 || styleEdits.length > 0 || linkEdits.length > 0) && Boolean(input.sourceHash),
     queryFn: () => api.post<SourcePreview>(`${endpoint}/preview`, input),
     refetchOnWindowFocus: false,
   });
-  const blocks = ((actions.length || styleEdits.length) ? preview.data?.blocks : document.data?.blocks) ?? [];
+  const blocks = ((actions.length || styleEdits.length || linkEdits.length) ? preview.data?.blocks : document.data?.blocks) ?? [];
   const layout = preview.data?.layout ?? [];
   const stale = Boolean(draft && document.data && draft.sourceHash !== document.data.sourceHash);
   useEffect(() => {
@@ -143,7 +147,7 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
   /** Queue one layout action, and forget any review prepared before it. */
   const queue = (action: StructureAction) => {
     if (!document.data) return;
-    setDraft(previous => ({ sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: previous?.values ?? {}, styles: previous?.styles ?? {}, actions: [...(previous?.actions ?? []), action] }));
+    setDraft(previous => ({ sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: previous?.values ?? {}, styles: previous?.styles ?? {}, links: previous?.links ?? {}, actions: [...(previous?.actions ?? []), action] }));
     setReview(null); setNotice(""); prepare.reset(); download.reset(); publish.reset();
   };
   /**
@@ -160,7 +164,18 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
       // mean putting a block back as it was never cleared the edit.
       const original = document.data!.blocks.find(candidate => candidate.id === block.id)?.style ?? "";
       if (style === original) delete next[block.id]; else next[block.id] = style;
-      return { sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: previous?.values ?? {}, actions: previous?.actions ?? [], styles: next };
+      return { sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: previous?.values ?? {}, actions: previous?.actions ?? [], styles: next, links: previous?.links ?? {} };
+    });
+    setReview(null); setNotice(""); prepare.reset(); download.reset(); publish.reset();
+  };
+  /** Where a link opens. Kept like a style — the block's wanted state, not a queue. */
+  const relink = (block: SourceBlock, newTab: boolean) => {
+    if (!document.data) return;
+    setDraft(previous => {
+      const next = { ...(previous?.links ?? {}) };
+      const original = document.data!.blocks.find(candidate => candidate.id === block.id)?.link?.newTab ?? false;
+      if (newTab === original) delete next[block.id]; else next[block.id] = newTab;
+      return { sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: previous?.values ?? {}, actions: previous?.actions ?? [], styles: previous?.styles ?? {}, links: next };
     });
     setReview(null); setNotice(""); prepare.reset(); download.reset(); publish.reset();
   };
@@ -174,7 +189,7 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
     setDraft(previous => {
       const next = { ...(previous?.values ?? {}) };
       if (value === field.value) delete next[field.id]; else next[field.id] = value;
-      return { sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: next, actions: previous?.actions ?? [], styles: previous?.styles ?? {} };
+      return { sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: next, actions: previous?.actions ?? [], styles: previous?.styles ?? {}, links: previous?.links ?? {} };
     });
     setReview(null); setNotice(""); prepare.reset(); download.reset(); publish.reset();
   };
@@ -203,9 +218,9 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
       {changes.length > 0 && <p className="mt-3 text-xs text-muted">{storageUnavailable ? "Browser storage is unavailable. Keep this page open until you download or publish your edits." : "Your draft is kept in this browser tab until published or discarded."}</p>}
       {stale && <div className="mt-4 rounded-xl border border-line bg-sunken p-3" role="alert"><p className="text-sm">This file changed since your draft began. Copy any text you want to keep, then discard the draft and edit the latest fields. Publishing is paused to protect the newer source.</p><details className="mt-3"><summary className="cursor-pointer text-sm">Your saved edits</summary>{changes.map(change => <div key={change.fieldId} className="mt-3"><p className="text-xs text-muted">{document.data?.fields.find(field => field.id === change.fieldId)?.label ?? "Previous source field"}</p><pre className="mt-1 whitespace-pre-wrap break-words text-sm">{change.value}</pre></div>)}</details></div>}
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button disabled={busy || stale || (!changes.length && !actions.length && !styleEdits.length)} onClick={() => prepare.mutate()}>{prepare.isPending ? "Preparing…" : "Review changes"}</Button>
-        <Button variant="secondary" disabled={busy || stale || (!changes.length && !actions.length && !styleEdits.length)} onClick={() => download.mutate()}>{download.isPending ? "Preparing file…" : "Download edited file"}</Button>
-        <Button variant="secondary" disabled={busy || (!changes.length && !actions.length && !styleEdits.length)} onClick={() => { if (window.confirm("Discard this source draft? This cannot be undone.")) { setDraft(null); setReview(null); setNotice("Draft discarded."); prepare.reset(); download.reset(); publish.reset(); } }}>Discard draft</Button>
+        <Button disabled={busy || stale || (!changes.length && !actions.length && !styleEdits.length && !linkEdits.length)} onClick={() => prepare.mutate()}>{prepare.isPending ? "Preparing…" : "Review changes"}</Button>
+        <Button variant="secondary" disabled={busy || stale || (!changes.length && !actions.length && !styleEdits.length && !linkEdits.length)} onClick={() => download.mutate()}>{download.isPending ? "Preparing file…" : "Download edited file"}</Button>
+        <Button variant="secondary" disabled={busy || (!changes.length && !actions.length && !styleEdits.length && !linkEdits.length)} onClick={() => { if (window.confirm("Discard this source draft? This cannot be undone.")) { setDraft(null); setReview(null); setNotice("Draft discarded."); prepare.reset(); download.reset(); publish.reset(); } }}>Discard draft</Button>
       </div>
     </div>
     {review && <section className="rounded-2xl border border-blue/30 bg-white p-5" aria-label="Review source changes">
@@ -240,6 +255,7 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
               <button className="rounded px-2 py-1 text-xs text-danger-text hover:bg-white disabled:opacity-40" disabled={busy || !movable} onClick={() => { if (window.confirm(`Remove ${item.label} and everything inside it? You can undo this before publishing.`)) queue({ kind: "remove", nodeId: item.id }); }}>Remove</button>
             </span>}
           {!item.reason && !item.styleable && item.styleReason && <span className="w-full text-xs text-muted">{item.styleReason}</span>}
+          {item.link && <label className="flex items-center gap-1 text-xs text-muted" title={item.link.reason ?? "Open this link in a new tab, with the rel that must go with it"}><input type="checkbox" disabled={busy || stale || !item.link.editable} checked={linkDraft[item.id] ?? item.link.newTab} onChange={event => relink(item, event.target.checked)} />New tab</label>}
           {styling === item.id && item.styleable && <div className="w-full"><SourceBlockStyle style={styleDraft[item.id] ?? item.style} disabled={busy || stale} onChange={next => restyle(item, next)} /></div>}
         </li>;
       })}</ul>

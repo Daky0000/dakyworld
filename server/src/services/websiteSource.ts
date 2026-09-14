@@ -4,7 +4,7 @@ import type { Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { commitFiles, listTree, readFile } from "../lib/github.js";
-import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, markdownStructureNodes, replayMarkdownStructure, MARKDOWN_STRUCTURE_VERSION, templateStructureNodes, replayTemplateStructure, TEMPLATE_STRUCTURE_VERSION, jsxStructureNodes, replayJsxStructure, JsxStructureError, applySourceStyles, sourceStyleState, SOURCE_STYLE_VERSION, type SourceStyleEdit, type SourceStyleState, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
+import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, markdownStructureNodes, replayMarkdownStructure, MARKDOWN_STRUCTURE_VERSION, templateStructureNodes, replayTemplateStructure, TEMPLATE_STRUCTURE_VERSION, jsxStructureNodes, replayJsxStructure, JsxStructureError, applySourceStyles, sourceStyleState, SOURCE_STYLE_VERSION, type SourceStyleEdit, type SourceStyleState, applySourceLinks, sourceLinkState, SOURCE_LINK_VERSION, type SourceLinkEdit, type SourceLinkState, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
 import { invalidateRender, publicFolder } from "./website/index.js";
 import { invalidateSource } from "./website/sourceCache.js";
@@ -26,13 +26,14 @@ const changeObject = z.object({
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
   structure: z.array(structureAction).max(100).default([]),
   styles: z.array(z.object({ nodeId: z.string().min(1).max(120), style: z.string().max(4_000) }).strict()).max(200).default([]),
+  links: z.array(z.object({ nodeId: z.string().min(1).max(120), newTab: z.boolean() }).strict()).max(200).default([]),
   changes: z.array(z.object({ fieldId: z.string().min(1).max(120), value: z.string().max(100_000) }).strict()).max(500).default([]),
 }).strict();
-const atLeastOne = (input: { structure: unknown[]; changes: unknown[]; styles: unknown[] }) => input.structure.length + input.changes.length + input.styles.length > 0;
-const ONE_EDIT = { message: "Submit at least one layout action, style or field change." };
+const atLeastOne = (input: { structure: unknown[]; changes: unknown[]; styles: unknown[]; links: unknown[] }) => input.structure.length + input.changes.length + input.styles.length + input.links.length > 0;
+const ONE_EDIT = { message: "Submit at least one layout action, style, link or field change." };
 const changeInput = changeObject.refine(atLeastOne, ONE_EDIT);
 const publishInput = changeObject.extend({ reviewHash: z.string().regex(/^[a-f0-9]{64}$/) }).refine(atLeastOne, ONE_EDIT);
-export type WebsiteSourceEdit = { filePath: string; sourceHash: string; structure?: readonly JsxStructureAction[]; styles?: readonly SourceStyleEdit[]; changes?: readonly { fieldId: string; value: string }[] };
+export type WebsiteSourceEdit = { filePath: string; sourceHash: string; structure?: readonly JsxStructureAction[]; styles?: readonly SourceStyleEdit[]; links?: readonly SourceLinkEdit[]; changes?: readonly { fieldId: string; value: string }[] };
 
 /** Relative to the site's configured repository folder, including browse calls. */
 export function websiteSourcePath(folder: string, path: string, file = false): { relative: string; repository: string } {
@@ -68,11 +69,14 @@ export type SourceAdapter = {
   styles?(source: string, filePath: string): SourceStyleState[];
   restyle?(source: string, filePath: string, edits: readonly SourceStyleEdit[]): { source: string; changed: string[]; summary: string[] };
   styleAdapter?: string;
+  /** Where each native link opens, for languages whose links are elements. */
+  links?(source: string, filePath: string): SourceLinkState[];
+  relink?(source: string, filePath: string, edits: readonly SourceLinkEdit[]): { source: string; changed: string[]; summary: string[] };
 };
 export function sourceAdapterFor(filePath: string): SourceAdapter {
   if (isMarkdownPath(filePath)) return { discover: discoverMarkdownFields, apply: applyMarkdownValues, blocks: markdownStructureNodes, replay: replayMarkdownStructure, structureAdapter: MARKDOWN_STRUCTURE_VERSION };
-  if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues, blocks: templateStructureNodes, replay: replayTemplateStructure, structureAdapter: TEMPLATE_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION };
-  return { discover: discoverJsxFields, apply: applyJsxValues, blocks: jsxStructureNodes, replay: replayJsxStructure, structureAdapter: JSX_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION };
+  if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues, blocks: templateStructureNodes, replay: replayTemplateStructure, structureAdapter: TEMPLATE_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION, links: sourceLinkState, relink: applySourceLinks };
+  return { discover: discoverJsxFields, apply: applyJsxValues, blocks: jsxStructureNodes, replay: replayJsxStructure, structureAdapter: JSX_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION, links: sourceLinkState, relink: applySourceLinks };
 }
 /**
  * Blocks for the browser: identities, reasons and current styling, never source
@@ -88,15 +92,22 @@ function blocksOf(adapter: SourceAdapter, source: string, filePath: string) {
   try {
     const styles = new Map<string, SourceStyleState>();
     if (adapter.styles) { try { for (const entry of adapter.styles(source, filePath)) styles.set(entry.nodeId, entry); } catch { /* a style read failing must not hide the layout */ } }
+    const links = new Map<string, SourceLinkState>();
+    if (adapter.links) { try { for (const entry of adapter.links(source, filePath)) links.set(entry.nodeId, entry); } catch { /* nor must a link read */ } }
     return adapter.blocks(source, filePath).map(({ start: _start, end: _end, ...node }) => {
       const style = styles.get(node.id);
-      return { ...node, style: style?.style ?? "", styleable: Boolean(style && !style.reason), ...(style?.reason && { styleReason: style.reason }) };
+      const link = links.get(node.id);
+      return {
+        ...node,
+        style: style?.style ?? "", styleable: Boolean(style && !style.reason), ...(style?.reason && { styleReason: style.reason }),
+        ...(link && { link: { newTab: link.newTab, editable: !link.reason, ...(link.reason && { reason: link.reason }) } }),
+      };
     });
   } catch { return []; }
 }
 
 export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) {
-  const input = { ...request, structure: request.structure ?? [], styles: request.styles ?? [], changes: request.changes ?? [] };
+  const input = { ...request, structure: request.structure ?? [], styles: request.styles ?? [], links: request.links ?? [], changes: request.changes ?? [] };
   const adapter = sourceAdapterFor(input.filePath);
   const base = adapter.discover(source, input.filePath);
   // Checked here rather than left to the adapter, because a layout action moves
@@ -129,6 +140,11 @@ export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) 
     try { const restyled = adapter.restyle(output, input.filePath, input.styles); output = restyled.source; layout = restyled.summary; }
     catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
   }
+  if (input.links.length) {
+    if (!adapter.relink) throw new WebsiteError(409, "Links in this kind of file cannot be retargeted from the editor.");
+    try { const relinked = adapter.relink(output, input.filePath, input.links); output = relinked.source; layout = [...layout, ...relinked.summary]; }
+    catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
+  }
   if (input.structure.length) {
     if (!adapter.replay) throw new WebsiteError(409, "Blocks in this kind of file cannot be rearranged from the editor yet.");
     try { const replayed = adapter.replay(output, input.filePath, input.structure); output = replayed.source; layout = [...layout, ...replayed.summary]; }
@@ -139,7 +155,7 @@ export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) 
   const changes = base.fields.filter(field => applied.changed.includes(field.id)).map(field => ({ fieldId: field.id, label: field.label, kind: field.kind, before: field.value, after: wanted.get(field.id)! }));
   // Binds the reviewed output to the exact input file and source bytes, layout
   // actions included. No offsets or markup supplied by a browser are trusted.
-  const reviewHash = digest(JSON.stringify([base.adapter, adapter.structureAdapter ?? null, adapter.styleAdapter ?? null, input.filePath, base.sourceHash, output]));
+  const reviewHash = digest(JSON.stringify([base.adapter, adapter.structureAdapter ?? null, adapter.styleAdapter ?? null, SOURCE_LINK_VERSION, input.filePath, base.sourceHash, output]));
   return { source: output, sourceHash: base.sourceHash, reviewHash, changes, layout };
 }
 
@@ -275,6 +291,11 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     if (input.styles.length) {
       if (!adapter.restyle) throw new WebsiteError(409, "Blocks in this kind of file cannot be restyled from the editor.");
       try { const restyled = adapter.restyle(content, current.path.relative, input.styles); content = restyled.source; layout = restyled.summary; }
+      catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
+    }
+    if (input.links.length) {
+      if (!adapter.relink) throw new WebsiteError(409, "Links in this kind of file cannot be retargeted from the editor.");
+      try { const relinked = adapter.relink(content, current.path.relative, input.links); content = relinked.source; layout = [...layout, ...relinked.summary]; }
       catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
     }
     if (input.structure.length) {
