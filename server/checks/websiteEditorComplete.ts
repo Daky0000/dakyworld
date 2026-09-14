@@ -163,15 +163,15 @@ try {
   assert.deepEqual(((await (await call("GET", `/sites/${site.id}/config`)).json()) as any).options.colours, ["#123456"]);
   assert.ok(((await (await call("GET", `/sites/${site.id}/audit`)).json()) as any[]).some((event: { kind: string }) => event.kind === "ASSET_UPLOAD"));
   const restoredResponsive = { tablet: "display: flex; gap: 1.5rem", mobile: "display: block; gap: 1rem" };
-  const version = await prisma.sitePageVersion.create({ data: { pageId: site.pageId, number: 1, html, values: { [container.id]: { style: "display: flex; gap: 3rem", responsive: restoredResponsive } } } });
+  const version = await prisma.sitePageVersion.create({ data: { pageId: site.pageId, number: 1, html: applyValues(html, { [container.id]: { style: "display: flex; gap: 3rem", responsive: restoredResponsive } }).html, values: { [container.id]: { style: "display: flex; gap: 3rem", responsive: restoredResponsive } } } });
   assert.equal((await call("POST", `${pageUrl}/versions/${version.id}/restore`, { ifRevision: 2 }, readCookie)).status, 403);
   assert.equal((await call("POST", `${pageUrl}/versions/${version.id}/restore`, { ifRevision: 1 })).status, 409);
   assert.equal((await call("POST", `${pageUrl}/versions/${version.id}/restore`, { ifRevision: 2 })).status, 200);
   const restored = await (await call("GET", pageUrl)).json() as any;
   assert.equal(restored.draft.revision, 3);
-  assert.equal(restored.draft.values[container.id].style, "display: flex; gap: 3rem");
-  assert.deepEqual(restored.draft.values[container.id].responsive, restoredResponsive);
-  assert.deepEqual(((await prisma.sitePage.findUniqueOrThrow({ where: { id: site.pageId } })).draft as any)[container.id].originalResponsive, {});
+  assert.equal(restored.sections.flatMap((section: any) => section.fields).find((field: any) => field.id === container.id).style, "display: flex; gap: 3rem");
+  assert.deepEqual(restored.sections.flatMap((section: any) => section.fields).find((field: any) => field.id === container.id).responsive, restoredResponsive);
+  assert.ok(((await prisma.sitePage.findUniqueOrThrow({ where: { id: site.pageId } })).draft as any).$document);
   assert.equal((await call("DELETE", `${pageUrl}/draft?ifRevision=2`)).status, 409);
   assert.equal((await call("DELETE", `${pageUrl}/draft?ifRevision=3`)).status, 204);
   // A subsequent import of the exported page retains its controls, and {} is a

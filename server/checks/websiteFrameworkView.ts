@@ -144,30 +144,35 @@ try {
   assert.equal(preview.headers.get("x-frame-options"), "SAMEORIGIN"); passed++;
   assert.match(preview.headers.get("content-security-policy") ?? "", /frame-ancestors 'self'/); passed++;
   const body = await preview.text();
-  // Marked: the heading that matched. Not marked: the paragraph the code built,
-  // and the pair that could not be told apart.
+  // Marked for selection: everything, so a click anywhere is answered. Marked
+  // read-only: the paragraph the code built, and the pair that could not be
+  // told apart — they outline and explain themselves rather than doing nothing.
   assert.match(body, /<h1[^>]*data-dw-field/); passed++;
-  assert.ok(!/Built by the code[^<]*/.test(body.split("data-dw-field").slice(1).join("")) || !/data-dw-field[^>]*>\s*Built by the code/.test(body)); passed++;
+  assert.match(body, /data-dw-field="[^"]*"[^>]*data-dw-readonly="true"[^>]*>\s*Built by the code/); passed++;
   // One mark per matched element, not one per matched field: the link's words
   // and its destination are the same element.
-  // Every mark in the frame is an element that a field in this file was matched
-  // to. Nothing else is clickable, because nothing else could be edited by
-  // anything on this screen.
+  // Every element is marked; the ones no field in this file was matched to
+  // carry data-dw-readonly, so they select and outline without accepting words.
   // The picker's own script contains the attribute name as a string, so only
   // real field ids are counted.
   const marks = [...body.matchAll(/data-dw-field="([^"]+)"/g)].map((match) => match[1]!).filter((id) => /^[A-Za-z0-9_.:-]+$/.test(id));
   const mapped = new Set(matched.mapping.map((entry) => entry.htmlFieldId));
   assert.ok(marks.length >= 3); passed++;
-  assert.deepEqual(marks.filter((id) => !mapped.has(id)), []); passed++;
+  assert.ok(marks.some((id) => !mapped.has(id)), "unmatched elements are still marked, so the whole page answers a click"); passed++;
+  for (const id of marks) {
+    if (mapped.has(id)) continue;
+    assert.match(body, new RegExp('data-dw-field="' + id.replace(/\./g, "\\.") + '"[^>]*data-dw-readonly="true"'));
+  }
+  passed++;
 
   // Typing on the page is switched on for the matched elements, which is what
   // makes this the builder rather than a form beside a screenshot. The words
   // come back here and become an edit to the literal they came from.
   assert.match(body, /contenteditable|startEdit/); passed++;
   assert.ok(body.includes('post({ type: "text"')); passed++;
-  // And still only where something can receive them: an element with no marker
-  // cannot be typed into, so the code-built paragraph stays read-only.
-  assert.ok(!/data-dw-field="[^"]*"[^>]*>\s*Built by the code/.test(body)); passed++;
+  // And still only where something can receive them: the picker refuses to type
+  // into a read-only mark, so the code-built paragraph stays read-only.
+  assert.ok(body.includes('if (el.hasAttribute("data-dw-readonly")) return false')); passed++;
 
   // An HTML page belongs to the visual editor and says so rather than opening
   // an editor that would show its markup as text.

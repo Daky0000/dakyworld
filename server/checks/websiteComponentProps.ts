@@ -59,12 +59,12 @@ const reparsed = discoverJsxFields(written.source, filePath);
 assert.equal(reparsed.issues.filter((issue) => issue.code === "syntax").length, 0, "the rewritten file still parses"); passed++;
 assert.equal(reparsed.fields.find((field) => field.marker === "hero.title")?.value, "Plans that fit your business"); passed++;
 
-// Two content props under one marker: ambiguous, so the marker is ignored and
-// nothing becomes writable by accident.
+// A component marker can identify several distinct props. Only the prop whose
+// exact value appears on the marked element may map to its content.
 const twoProp = marked.replace('<Hero data-dw-field="hero.title" title="Plans that fit" />', '<Hero data-dw-field="hero.title" title="Plans that fit" subtitle="Hosting, updates" />');
-const twoIssues = discoverJsxFields(twoProp, filePath).issues;
-assert.ok(twoIssues.some((issue) => issue.code === "ambiguous" && /data-dw-field/.test(issue.message)), "two content props behind one marker are flagged ambiguous"); passed++;
-assert.equal(discoverJsxFields(twoProp, filePath).fields.filter((field) => field.marker).length, 0, "the ignored marker attaches to no field"); passed++;
+const twoMappings = mapJsxFieldsToHtml(discoverJsxFields(twoProp, filePath).fields, htmlFields);
+assert.equal(twoMappings.mappings.length, 1); passed++;
+assert.equal(twoMappings.mappings[0]!.htmlFieldId, "hero.title"); passed++;
 
 // Unmarked content prop: never mapped, because the source tag cannot agree with
 // the rendered native tag — value-matching would be unsafe here.

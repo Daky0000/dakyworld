@@ -53,6 +53,8 @@ type Span = { start: number; end: number };
 
 export type SiteField = {
   id: string;
+  /** Preview-only: selection remains available when source content is read-only. */
+  previewReadOnly?: boolean;
   confidence?: "annotated" | "discovered";
   parentId?: string;
   /** Document order, without exposing source byte offsets. */

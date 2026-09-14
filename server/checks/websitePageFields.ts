@@ -162,10 +162,10 @@ const markup = await applyPageEdits({ discovery, read, html, edits: { [anyTarget
 assert.equal(markup.writes.length, 0, "formatting inside a plain literal is refused"); passed++;
 assert.ok(markup.unmappable[0]!.message.includes("rich-text"), "and points at the way to make it possible"); passed++;
 
-// Styling is not refused here any more: it has its own destination.
+// Unsupported styling cannot silently disappear from a content publish.
 const styleOnly = await applyPageEdits({ discovery, read, html, edits: { [anyTarget.htmlFieldId]: { style: "color: red" } } });
-assert.equal(styleOnly.unmappable.length, 0, "a style is not refused as unwritable"); passed++;
-assert.ok(styleOnly.problems.length > 0, "it simply changes nothing in the source, which is a different answer"); passed++;
+assert.equal(styleOnly.unmappable.length, 1, "unsupported styling is reported"); passed++;
+assert.equal(styleOnly.writes.length, 0, "unsupported styling writes nothing"); passed++;
 
 // ── A stale file is caught per file, not per page ───────────────────────────
 const moved: Record<string, string> = { ...project, "components/Hero.tsx": project["components/Hero.tsx"]!.replace("Websites that work", "Something else") };

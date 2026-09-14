@@ -42,6 +42,9 @@ type FrameworkPage = {
 export function WebsiteFrameworkEditor() {
   const { pageId = "" } = useParams();
   const [selected, setSelected] = useState<string | null>(null);
+  // An element that is on the page but not in this file. It still selects, so
+  // the click is answered; the panel says why nothing here can change it.
+  const [unmatched, setUnmatched] = useState<boolean>(false);
   const [frameToken, setFrameToken] = useState(0);
   const [publishedAt, setPublishedAt] = useState<Date | null>(null);
   const [typedOnPage, setTypedOnPage] = useState<{ fieldId: string; value: string; token: number } | null>(null);
@@ -76,7 +79,12 @@ export function WebsiteFrameworkEditor() {
       if (event.origin !== window.location.origin) return;
       const data = event.data as { source?: string; type?: string; id?: string | null; html?: string };
       if (data?.source !== "dakyworld-preview") return;
-      if (data.type === "select") { setSelected(data.id ? bySource.get(data.id) ?? null : null); return; }
+      if (data.type === "select") {
+        const fieldId = data.id ? bySource.get(data.id) ?? null : null;
+        setUnmatched(Boolean(data.id) && fieldId === null);
+        setSelected(fieldId);
+        return;
+      }
       if (data.type === "text" && data.id) {
         const fieldId = bySource.get(data.id);
         if (!fieldId) return;
@@ -88,6 +96,7 @@ export function WebsiteFrameworkEditor() {
         holder.innerHTML = data.html ?? "";
         const text = (holder.textContent ?? "").replace(/ /g, " ");
         setSelected(fieldId);
+        setUnmatched(false);
         setTypedOnPage(previous => ({ fieldId, value: text, token: (previous?.token ?? 0) + 1 }));
       }
     };
@@ -142,6 +151,7 @@ export function WebsiteFrameworkEditor() {
             src={apiUrl(`/website/pages/${encodeURIComponent(pageId)}/framework/preview?v=${frameToken}`)}
           />
           <p className="px-2 py-2 text-xs text-muted">
+            {unmatched && <span className="mb-1 block rounded-lg bg-sunken px-2 py-1 text-xs text-muted">That part of the page is not a piece of text in {data.page.filePath} — it comes from a component, a loop or a layout, so it cannot be changed from here.</span>}
             This is the published page. {shown} of {data.fields.length} {data.fields.length === 1 ? "field" : "fields"} could be matched to something on it: click one to jump to its box, or double click to type on the page itself. The rest of the page — its layout, its styling and anything built by code — stays with the code.
           </p>
         </> : <div className="p-5">

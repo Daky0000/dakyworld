@@ -1,3 +1,4 @@
+import { versionDraft } from "../services/website/versionRestore.js";
 import { rateLimit } from "../middleware/security.js";
 import type { Request } from "express";
 import { Router, json } from "express";
@@ -678,12 +679,11 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
     // page covered in selection outlines is not a preview of anything.
     const picking = req.query.pick === "1";
     const capabilities = await getWebsiteCapabilities(req, site.id);
-    // On a framework page only the elements that trace back to a literal are
-    // marked, so nothing is clickable that nothing could write. On an HTML page
-    // every field is, exactly as before.
+    // Every element can be selected. Source-managed content remains read-only
+    // in the preview and inspector, with an explanation of its source.
     const pickable = picking ? discoverFields(applied.html).fields : undefined;
     const writable = picking && source.sourceFile ? await sourceManagedFields(site, page, source.html) : null;
-    const document = buildPreview(applied.html, pageUrl(site, page), writable ? pickable!.filter((field) => writable.writable.has(field.id)) : pickable, capabilities.capabilities.edit);
+    const document = buildPreview(applied.html, pageUrl(site, page), writable ? pickable!.map((field) => ({ ...field, previewReadOnly: !writable.writable.has(field.id) })) : pickable, capabilities.capabilities.edit);
     res
       .type("html")
       .set("Cache-Control", "no-store")
@@ -939,25 +939,7 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/restore", async (req, res
     const { page, site } = await loadPage(req, req.params.pageId);
     const source = await pageSource(site, page);
     const currentValues = draftValues(page);
-    const content = discoverFields(editingSource(source.html, currentValues));
-    const byId = new Map(content.fields.map((field) => [field.id, field]));
-
-    // Restated against the page as it is now, not as it was. A value whose field
-    // no longer exists is dropped and named, rather than being restored into a
-    // draft that can never publish.
-    const stored = (version.values as Record<string, FieldValue> | null) ?? {};
-    const values: Record<string, FieldValue> = draftDocument(stored) ? restoreDocument(source.html, currentValues, version.html, `Restored complete page from version ${version.number}`) : draftDocument(currentValues) ? { [DOCUMENT_KEY]: currentValues[DOCUMENT_KEY]! } : {};
-    const dropped: string[] = [];
-    for (const [id, edit] of Object.entries(draftDocument(stored) ? {} : fieldValues(stored))) {
-      const field = byId.get(id);
-      if (!field) {
-        dropped.push(id);
-        continue;
-      }
-      const next = sanitizeValue(field, edit);
-      if (!Object.keys(next).length) continue;
-      values[id] = next;
-    }
+    const { values, dropped } = versionDraft(source.html, currentValues, version.html, Boolean(source.sourceFile), `Restored complete page from version ${version.number}`);
 
     const empty = Object.keys(values).length === 0;
     const expected = req.body?.ifRevision === undefined ? page.draftRevision : z.number().int().nonnegative().parse(req.body.ifRevision);
@@ -1107,6 +1089,8 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res
       const version = await tx.sitePageVersion.findFirst({ where: { id: req.params.versionId, pageId: page.id } });
       if (!version) throw new WebsiteError(404, "That version is not on this page.");
 
+      const expectedRevision = req.body?.ifRevision === undefined ? page.draftRevision : z.number().int().nonnegative().parse(req.body.ifRevision);
+      if (expectedRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed after the rollback review. Reopen the page before publishing this version.");
       const source = await pageSource(site, page, { fresh: true });
       if (req.body?.sourceHash && req.body.sourceHash !== createHash("sha256").update(source.html).digest("hex")) throw new WebsiteError(409, "The page changed after the rollback review. Review this version again before publishing.");
       if (source.html === version.html) {
@@ -1114,13 +1098,13 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res
       }
 
       const author = req.dbUser?.name ?? "the website editor";
-      const commit = await publishPage({
-        site,
-        page,
-        html: version.html,
-        expectedSource: source.html,
-        message: `Website: roll ${page.path} back to version ${version.number} (${author})`,
-      });
+      const restored = versionDraft(source.html, {}, version.html, Boolean(source.sourceFile), `Restored version ${version.number}`);
+      if (source.sourceFile && restored.dropped.length) throw new WebsiteError(409, "This version contains elements that no longer match the page. Restore it as a draft and review the differences first.");
+      const commit = source.sourceFile
+        ? hasSourceManifest(page.filePath)
+          ? await publishFrameworkPage({ site, page, html: source.html, values: restored.values, author, changed: Object.keys(restored.values).length })
+          : await publishSourcePage({ site, page, html: source.html, values: restored.values, author, changed: Object.keys(restored.values).length })
+        : await publishPage({ site, page, html: version.html, expectedSource: source.html, message: `Website: roll ${page.path} back to version ${version.number} (${author})` });
 
       // A rollback changes the live page like any other publish, and a price
       // rolled back is a price the agents must stop quoting.
@@ -1141,9 +1125,9 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res
         },
       });
 
-      // A rollback leaves any unpublished draft exactly where it was. It undoes a
-      // publish, not somebody's work in progress — and silently discarding a draft
-      // as a side effect of an emergency action is how an emergency becomes two.
+      // The reviewed draft must not cover the restored content when the editor
+      // reloads. A draft saved concurrently is retained rather than overwritten.
+      const cleared = await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: expectedRevision }, data: { draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, draftRevision: { increment: 1 } } });
       await tx.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date(), sourceHtml: page.sourceHtml === null ? undefined : version.html } });
 
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ROLLBACK", summary: `Restored ${page.title} to version ${version.number}`, actorName: author, actorId: req.dbUser?.id, detail: { pageId: page.id, version: written.number, restoredFrom: version.number } } });
@@ -1153,7 +1137,7 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res
         label: `Rollback to version ${version.number}`,
         commit: { sha: commit.sha, url: commit.url },
         url: pageUrl(site, page),
-        note: "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two.",
+        note: `Your host rebuilds the site after the commit. ${cleared.count ? "The saved draft was cleared." : "A newer draft was saved during publishing and has been kept; it still appears in the editor."}`,
       };
     });
     res.json(result);

@@ -107,7 +107,7 @@ export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRest
 
   const rollback = useMutation({
     mutationFn: (versionId: string) =>
-      api.post<{ version: number; restoredFrom: number; note: string }>(`/website/pages/${pageId}/versions/${versionId}/publish`, { sourceHash: confirming?.diff.sourceHash }),
+      api.post<{ version: number; restoredFrom: number; note: string }>(`/website/pages/${pageId}/versions/${versionId}/publish`, { sourceHash: confirming?.diff.sourceHash, ifRevision: draftRevision }),
     onError: (err) => setFailure(err instanceof ApiError ? err.message : "That version could not be published."),
     onSuccess: (result) => {
       setFailure(null);
@@ -206,6 +206,7 @@ export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRest
               {/* The server's own sentence, not a paraphrase. It is the whole
                   reason this dialog exists. */}
               <p className="mt-1 text-xs text-warn-text">{confirming.diff.warning}</p>
+              <p className="mt-1 text-xs text-warn-text">This also replaces the saved draft with this version.</p>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">

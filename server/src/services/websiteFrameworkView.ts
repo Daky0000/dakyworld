@@ -238,10 +238,11 @@ export function registerWebsiteFrameworkView(router: Router, access: Access, ove
         })
       : matchSourceToLive({ source, filePath: page.filePath, liveHtml: published.html });
     const matched = new Set(view.mapping.map((entry) => entry.htmlFieldId));
-    // Only the elements that came from a literal in this file are marked. The
-    // rest of the page is shown exactly as the visitor sees it and cannot be
-    // clicked, because there is nothing here that could edit it.
-    const editable = view.htmlFields.filter((field) => matched.has(field.id));
+    // Every element is marked, so the whole page answers a click the way the
+    // HTML editor does. Only the elements that came from a literal in this file
+    // can be typed into; the rest select, outline, and say in the panel why
+    // there is nothing here that could edit them.
+    const editable = view.htmlFields.map((field) => (matched.has(field.id) ? field : { ...field, previewReadOnly: true as const }));
     // Typing on the page is allowed for exactly the elements that were matched,
     // and nothing else has a marker to type into. What the browser sends back is
     // words, and they become an edit to the literal those words came from — the

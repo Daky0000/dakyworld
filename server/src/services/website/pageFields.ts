@@ -277,6 +277,8 @@ export type PageApplyResult = {
  * `jsx.ts`'s single-file path by intent, not by import, because the sentences
  * differ: here the editor knows which file would have taken the change. */
 const CODE_MANAGED: Record<string, string> = {
+  style: "Inline styling must be changed in this component's source editor.",
+  responsive: "Responsive styling must be changed in this component's source editor.",
   variant: "This button's style comes from its component, not from this page.",
   newTab: "Whether a link opens in a new tab is set in the code for this page.",
   structure: "Adding, moving or removing a section changes the code that builds this page.",
@@ -313,7 +315,7 @@ export async function applyPageEdits(input: {
     const where = labels.get(htmlFieldId) ?? "a field on this page";
     for (const [part, raw] of Object.entries(edit)) {
       if (raw === undefined) continue;
-      if (part === "style" || part === "responsive") continue; // written to the generated stylesheet, not here
+      if (["original", "originalHref", "originalAlt", "originalStyle", "originalResponsive", "originalStructure", "originalVariant", "originalNewTab"].includes(part)) continue;
       if (CODE_MANAGED[part]) { unmappable.push({ htmlFieldId, part, message: `${where}: ${CODE_MANAGED[part]}` }); continue; }
       if (part !== "value" && part !== "href" && part !== "alt") {
         unmappable.push({ htmlFieldId, part, message: `${where}: this kind of change is written by the code for this page.` });

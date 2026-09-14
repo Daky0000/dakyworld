@@ -1726,7 +1726,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       <>
                         {picked.kind === "image" && !readOnly && <WebsiteImageFraming siteId={site.id} key={`${picked.id}:${device}:${edits[picked.id]?.value ?? picked.value}`} src={(() => { try { return new URL(edits[picked.id]?.value ?? picked.value, `${site.publicUrl.replace(/\/+$/, "")}/`).toString(); } catch { return ""; } })()} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} />}
 
-                        {picked.kind !== "image" && picked.kind !== "container" && (
+                        {!readOnly && !picked.sourceManaged && picked.tag !== "title" && picked.tag !== "meta" && picked.kind !== "image" && picked.kind !== "container" && (
                           <div className="mb-2 flex justify-end">
                             <button
                               type="button"

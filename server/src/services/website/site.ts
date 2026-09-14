@@ -747,13 +747,13 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
 function markEditable(html: string, fields: SiteField[]): string {
   const marks = fields
     .filter((field) => field.attrInsert !== undefined)
-    .map((field) => ({ at: field.markerSpan?.start ?? field.attrInsert as number, end: field.markerSpan?.end ?? field.attrInsert as number, id: field.id, kind: field.kind }))
+    .map((field) => ({ at: field.markerSpan?.start ?? field.attrInsert as number, end: field.markerSpan?.end ?? field.attrInsert as number, id: field.id, kind: field.kind, readOnly: field.previewReadOnly }))
     // Backwards, so each insert leaves the earlier offsets valid.
     .sort((a, b) => b.at - a.at);
 
   let out = html;
   for (const mark of marks) {
-    out = `${out.slice(0, mark.at)} data-dw-field="${mark.id.replace(/"/g, "&quot;")}" data-dw-kind="${mark.kind}"${out.slice(mark.end)}`;
+    out = `${out.slice(0, mark.at)} data-dw-field="${mark.id.replace(/"/g, "&quot;")}" data-dw-kind="${mark.kind}"${mark.readOnly ? ' data-dw-readonly="true"' : ""}${out.slice(mark.end)}`;
   }
   return out;
 }
@@ -815,6 +815,7 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   // A button's words are typed on the page like any other words — its style and
   // its destination are the parts that live in the panel.
   function typeable(el) {
+    if (el.hasAttribute("data-dw-readonly")) return false;
     var kind = el.getAttribute("data-dw-kind");
     return kind === "text" || kind === "richtext" || kind === "link" || kind === "button";
   }
@@ -822,7 +823,7 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   // put on its children, and a data-* attribute survives sanitising on purpose
   // (the homepage figures are data-target). Handing them back would commit the
   // editor's scaffolding into the published page.
-  var OURS = ["data-dw-field", "data-dw-kind", "data-dw-shown", "data-dw-selected", "data-dw-editing", "data-dw-state-preview"];
+  var OURS = ["data-dw-field", "data-dw-kind", "data-dw-readonly", "data-dw-shown", "data-dw-selected", "data-dw-editing", "data-dw-state-preview"];
   function words(el) {
     var copy = el.cloneNode(true);
     var marked = copy.querySelectorAll("[" + OURS.join("],[") + "]");
