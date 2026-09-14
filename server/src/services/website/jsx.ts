@@ -89,8 +89,10 @@ export type JsxChange = { fieldId: string; value: string };
 export type JsxEditProblem = { code: "stale" | "unknown" | "duplicate" | "invalid" | "source"; fieldId?: string; message: string };
 export type JsxApplyResult = { source: string; changed: string[]; problems: JsxEditProblem[] };
 
+export function jsxSourceHash(value: string): string { return hash(value); }
 function hash(value: string): string { return createHash("sha256").update(value, "utf8").digest("hex"); }
 
+export function checkedJsxPath(filePath: string): string { return checkedPath(filePath); }
 function checkedPath(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/");
   if (!normalized || normalized.startsWith("/") || /[:\x00-\x1f\x7f]/.test(normalized) || normalized.split("/").some((part) => !part || part === "." || part === "..")) {
@@ -104,6 +106,7 @@ function checkedPath(filePath: string): string {
   return normalized;
 }
 
+export function jsxCompilerOptions(): ts.CompilerOptions { return compilerOptions(); }
 function compilerOptions(): ts.CompilerOptions {
   return { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React, newLine: ts.NewLineKind.LineFeed };
 }
@@ -172,11 +175,21 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
       const locator = `${marker ? `marker:${marker}` : `ast:${location}`}/${kind}`;
       const field: JsxField = {
         id: `jsx_${hash(`${filePath}\0${locator}`).slice(0, 32)}`,
-        kind, tag, label: label ?? `${tag} ${kind}`, value, ...(marker && { marker: marker.split("/text:")[0] }), confidence: marker ? "explicit" : "structural",
+        kind, tag, label: label ?? `${tag} ${kind}`, value, ...(marker && { marker: marker.split("/text:")[0]!.split("/prop:")[0] }), confidence: marker ? "explicit" : "structural",
         reference: { adapter: JSX_ADAPTER_VERSION, filePath, sourceHash, locator, start, end: node.end, original: source.slice(start, node.end), encoding },
       };
       result.fields.push(field);
-      if (marker) fieldMarkers.set(field, marker.split("/text:")[0]!);
+      if (marker) fieldMarkers.set(field, marker.split("/text:")[0]!.split("/prop:")[0]!);
+    }
+
+    /** The element's own data-dw-field, counted like any other marker so a
+     * duplicate one makes every field that uses it read-only rather than wrong. */
+    function componentMarkerOf(properties: readonly ts.JsxAttributeLike[]): string | undefined {
+      const attribute = properties.find((property): property is ts.JsxAttribute => ts.isJsxAttribute(property) && property.name.getText(file) === "data-dw-field");
+      const initializer = attribute?.initializer;
+      if (!initializer || !ts.isStringLiteral(initializer) || !/^[A-Za-z][A-Za-z0-9_.:-]{0,119}$/.test(initializer.text)) return undefined;
+      markerCounts.set(initializer.text, (markerCounts.get(initializer.text) ?? 0) + 1);
+      return initializer.text;
     }
 
     function inspect(node: ts.JsxElement | ts.JsxSelfClosingElement, location: string): boolean {
@@ -194,15 +207,20 @@ export function discoverJsxFields(source: string, rawFilePath: string): JsxDisco
         // beside a page full of their own writing.
         const properties = opening.attributes.properties;
         if (properties.some(ts.isJsxSpreadAttribute)) { issue(opening, "ambiguous", `Spread props on <${tag}> require code review.`); return true; }
+        // A marker on the component is what lets its prop be found again on the
+        // rendered page: the component decides its own tag, so nothing else
+        // about `<Hero title="…" />` predicts the <h1> a visitor sees.
+        const componentMarker = componentMarkerOf(properties);
         let offered = 0;
         for (const attribute of properties) {
           if (!ts.isJsxAttribute(attribute)) continue;
           const name = attribute.name.getText(file);
           const kind = contentKind(name);
           if (!kind) continue;
+          const marked = componentMarker ? `${componentMarker}/prop:${name}` : undefined;
           const initializer = attribute.initializer;
-          if (initializer && ts.isStringLiteral(initializer)) { add(initializer, kind, tag, `${location}/prop:${name}`, undefined, "jsx-attribute", "", `${tag} ${name}`); offered += 1; }
-          else if (initializer && ts.isJsxExpression(initializer) && initializer.expression && ts.isStringLiteral(initializer.expression)) { add(initializer.expression, kind, tag, `${location}/prop:${name}`, undefined, "javascript-string", initializer.expression.text, `${tag} ${name}`); offered += 1; }
+          if (initializer && ts.isStringLiteral(initializer)) { add(initializer, kind, tag, `${location}/prop:${name}`, marked, "jsx-attribute", "", `${tag} ${name}`); offered += 1; }
+          else if (initializer && ts.isJsxExpression(initializer) && initializer.expression && ts.isStringLiteral(initializer.expression)) { add(initializer.expression, kind, tag, `${location}/prop:${name}`, marked, "javascript-string", initializer.expression.text, `${tag} ${name}`); offered += 1; }
           else issue(attribute, "dynamic", `${tag}.${name} comes from code; this editor can change only an existing static string.`);
         }
         if (!offered) issue(opening, "unsupported", `Props and direct text of <${tag}> need a component-specific adapter.`);
@@ -525,7 +543,10 @@ export function mapJsxFieldsToHtml(sourceFields: readonly JsxField[], htmlFields
     }
     const property = sourceField.kind === "href" ? "href" : sourceField.kind === "alt" ? "alt" : "value";
     const candidates = htmlFields.filter((field) => {
-      if (field.tag !== sourceField.tag || (sourceField.marker && (field.confidence !== "annotated" || field.id !== sourceField.marker))) return false;
+      // A marker is the only bridge a component has: its rendered tag is decided
+      // by its own code, so tags are compared only when there is no marker.
+      if (sourceField.marker) { if (field.confidence !== "annotated" || field.id !== sourceField.marker) return false; }
+      else if (field.tag !== sourceField.tag) return false;
       if (sourceField.kind === "src") return field.kind === "image" && field.value === sourceField.value;
       if (sourceField.kind === "href" || sourceField.kind === "alt") return field[property] === sourceField.value;
       if (!["text", "link", "button"].includes(field.kind) || /<[^>]*>/.test(field.value)) return false;

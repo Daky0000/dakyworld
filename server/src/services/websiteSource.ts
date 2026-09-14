@@ -4,7 +4,7 @@ import type { Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { commitFiles, listTree, readFile } from "../lib/github.js";
-import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath } from "./website/index.js";
+import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, jsxStructureNodes, replayJsxStructure, JsxStructureError, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
 import { invalidateRender, publicFolder } from "./website/index.js";
 import { invalidateSource } from "./website/sourceCache.js";
@@ -14,12 +14,24 @@ import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js"
 
 const MAX_SOURCE_BYTES = 2_000_000;
 const EXCLUDED_FOLDERS = new Set(["node_modules", ".git", ".next", ".nuxt", "dist", "build", "coverage"]);
-const changeInput = z.object({
+const structureAction = z.object({
+  kind: z.enum(["remove", "duplicate", "before", "after"]),
+  nodeId: z.string().min(1).max(120),
+  targetId: z.string().min(1).max(120).optional(),
+}).strict();
+/** Layout actions replay in order against the file on the branch, and the words
+ * are written into the result. A browser sends identities, never offsets. */
+const changeObject = z.object({
   filePath: z.string().min(1).max(500),
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
-  changes: z.array(z.object({ fieldId: z.string().min(1).max(120), value: z.string().max(100_000) }).strict()).min(1).max(500),
+  structure: z.array(structureAction).max(100).default([]),
+  changes: z.array(z.object({ fieldId: z.string().min(1).max(120), value: z.string().max(100_000) }).strict()).max(500).default([]),
 }).strict();
-const publishInput = changeInput.extend({ reviewHash: z.string().regex(/^[a-f0-9]{64}$/) });
+const atLeastOne = (input: { structure: unknown[]; changes: unknown[] }) => input.structure.length + input.changes.length > 0;
+const ONE_EDIT = { message: "Submit at least one layout action or field change." };
+const changeInput = changeObject.refine(atLeastOne, ONE_EDIT);
+const publishInput = changeObject.extend({ reviewHash: z.string().regex(/^[a-f0-9]{64}$/) }).refine(atLeastOne, ONE_EDIT);
+export type WebsiteSourceEdit = { filePath: string; sourceHash: string; structure?: readonly JsxStructureAction[]; changes?: readonly { fieldId: string; value: string }[] };
 
 /** Relative to the site's configured repository folder, including browse calls. */
 export function websiteSourcePath(folder: string, path: string, file = false): { relative: string; repository: string } {
@@ -41,24 +53,56 @@ function digest(value: string) { return createHash("sha256").update(value, "utf8
  * exported, committed and audited down exactly the same path a `.tsx` is, and
  * only the parser behind it differs. See `website/frameworks.ts`.
  */
-export function sourceAdapterFor(filePath: string) {
+type SourceDiscovery = ReturnType<typeof discoverJsxFields> | ReturnType<typeof discoverTemplateFields> | ReturnType<typeof discoverMarkdownFields>;
+type SourceApply = ReturnType<typeof applyJsxValues> | ReturnType<typeof applyTemplateValues> | ReturnType<typeof applyMarkdownValues>;
+export type SourceAdapter = {
+  discover(source: string, filePath: string): SourceDiscovery;
+  apply(source: string, request: { filePath: string; sourceHash: string; changes: readonly { fieldId: string; value: string }[] }): SourceApply;
+  /** Blocks a person may rearrange. Absent while a language has no layout engine
+   * yet, which is the difference between "nothing to move" and "not built". */
+  blocks?(source: string, filePath: string): JsxStructureNode[];
+  replay?(source: string, filePath: string, actions: readonly JsxStructureAction[]): { source: string; summary: string[] };
+  structureAdapter?: string;
+};
+export function sourceAdapterFor(filePath: string): SourceAdapter {
   if (isMarkdownPath(filePath)) return { discover: discoverMarkdownFields, apply: applyMarkdownValues };
   if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues };
-  return { discover: discoverJsxFields, apply: applyJsxValues };
+  return { discover: discoverJsxFields, apply: applyJsxValues, blocks: jsxStructureNodes, replay: replayJsxStructure, structureAdapter: JSX_STRUCTURE_VERSION };
+}
+/** Blocks for the browser: identities and reasons, never source offsets. */
+function blocksOf(adapter: SourceAdapter, source: string, filePath: string) {
+  if (!adapter.blocks) return [];
+  try { return adapter.blocks(source, filePath).map(({ start: _start, end: _end, ...node }) => node); }
+  catch { return []; }
 }
 
-export function reviewWebsiteSource(source: string, input: z.infer<typeof changeInput>) {
+export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) {
+  const input = { ...request, structure: request.structure ?? [], changes: request.changes ?? [] };
   const adapter = sourceAdapterFor(input.filePath);
-  const discovery = adapter.discover(source, input.filePath);
-  const applied = adapter.apply(source, input);
+  const base = adapter.discover(source, input.filePath);
+  // Checked here rather than left to the adapter, because a layout action moves
+  // the bytes the field edits are then measured against: by the time the values
+  // are applied, the hash they were prepared for is no longer the file's.
+  if (base.sourceHash !== input.sourceHash) throw new WebsiteError(409, "The source file changed after these edits were prepared. Reload it and review the edits again.");
+  let restructured = source;
+  let layout: string[] = [];
+  if (input.structure.length) {
+    if (!adapter.replay) throw new WebsiteError(409, "Blocks in this kind of file cannot be rearranged from the editor yet.");
+    try { const replayed = adapter.replay(source, input.filePath, input.structure); restructured = replayed.source; layout = replayed.summary; }
+    catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
+  }
+  // Field IDs belong to the page as the layout actions left it, which is the
+  // state the browser was shown when it prepared these values.
+  const discovery = layout.length ? adapter.discover(restructured, input.filePath) : base;
+  const applied = adapter.apply(restructured, { filePath: input.filePath, sourceHash: discovery.sourceHash, changes: input.changes });
   if (applied.problems.length) throw new WebsiteError(applied.problems.some(problem => problem.code === "stale") ? 409 : 400, applied.problems.map(problem => problem.message).join(" "));
-  if (!applied.changed.length) throw new WebsiteError(400, "There are no changed values to review.");
+  if (!applied.changed.length && !layout.length) throw new WebsiteError(400, "There are no changed values to review.");
   const wanted = new Map(input.changes.map(change => [change.fieldId, change.value]));
   const changes = discovery.fields.filter(field => applied.changed.includes(field.id)).map(field => ({ fieldId: field.id, label: field.label, kind: field.kind, before: field.value, after: wanted.get(field.id)! }));
-  // Binds the reviewed output to the exact input file and source bytes. No source
-  // offsets or replacement snippets supplied by a browser are ever trusted.
-  const reviewHash = digest(JSON.stringify([discovery.adapter, input.filePath, discovery.sourceHash, applied.source]));
-  return { source: applied.source, sourceHash: discovery.sourceHash, reviewHash, changes };
+  // Binds the reviewed output to the exact input file and source bytes, layout
+  // actions included. No offsets or markup supplied by a browser are trusted.
+  const reviewHash = digest(JSON.stringify([discovery.adapter, adapter.structureAdapter ?? null, input.filePath, base.sourceHash, applied.source]));
+  return { source: applied.source, sourceHash: base.sourceHash, reviewHash, changes, layout };
 }
 
 type Access = { loadSite(req: Request, id: string): Promise<Site> };
@@ -158,9 +202,11 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
   router.get("/sites/:siteId/source", handler(async (req, res) => {
     const filePath = z.string().min(1).max(500).parse(req.query.filePath);
     const current = await source(req, filePath);
-    const discovery = sourceAdapterFor(current.path.relative).discover(current.content, current.path.relative);
+    const adapter = sourceAdapterFor(current.path.relative);
+    const discovery = adapter.discover(current.content, current.path.relative);
+    const blocks = blocksOf(adapter, current.content, current.path.relative);
     res.setHeader("Cache-Control", "no-store");
-    res.json({ adapter: discovery.adapter, filePath: discovery.filePath, sourceHash: discovery.sourceHash, issues: discovery.issues, fields: discovery.fields.map(({ reference: _reference, ...field }) => field), repo: current.repo, branch: current.site.repoBranch });
+    res.json({ adapter: discovery.adapter, structureAdapter: adapter.structureAdapter ?? null, filePath: discovery.filePath, sourceHash: discovery.sourceHash, issues: discovery.issues, fields: discovery.fields.map(({ reference: _reference, ...field }) => field), blocks, repo: current.repo, branch: current.site.repoBranch });
   }));
   router.post("/sites/:siteId/source/review", handler(async (req, res) => {
     const input = changeInput.parse(req.body);
