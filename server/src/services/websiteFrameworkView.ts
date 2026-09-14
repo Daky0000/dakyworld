@@ -34,6 +34,8 @@ import { discoverFields, mapJsxFieldsToHtml, pageFile, buildPreview, type SiteFi
 import { isEditableSourcePath } from "./website/index.js";
 import { pageUrl, siteRepo, WebsiteError } from "./website/site.js";
 import { sourceAdapterFor } from "./websiteSource.js";
+import { matchPageToHtml, type PageDiscovery, type PageView } from "./website/pageFields.js";
+import { hasSourceManifest, pageManifest } from "./websitePageManifest.js";
 import { fetchWebsiteText } from "../lib/websiteFetch.js";
 import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js";
 
@@ -42,8 +44,9 @@ type Dependencies = {
   file: typeof pageFile;
   live(url: string): Promise<string>;
   authorize(req: Request, siteId: string, action: WebsiteAction): Promise<unknown>;
+  manifest: typeof pageManifest;
 };
-const dependencies: Dependencies = { file: pageFile, live: fetchWebsiteText, authorize: assertWebsiteSiteAccess };
+const dependencies: Dependencies = { file: pageFile, live: fetchWebsiteText, authorize: assertWebsiteSiteAccess, manifest: pageManifest };
 
 export type FrameworkView = {
   /** The source fields, and which of them the live page can show. */
@@ -51,6 +54,42 @@ export type FrameworkView = {
   issues: unknown[];
   mapping: Array<{ sourceFieldId: string; htmlFieldId: string }>;
 };
+
+/**
+ * The same view, built from every file the page reaches rather than from its
+ * route file alone.
+ *
+ * `matchSourceToLive` below is the single-file answer and stays exactly as it
+ * was, because `.astro`, `.vue` and `.svelte` pages still use it and have no
+ * import graph this editor can walk. A JSX-family page gets this instead: the
+ * heading in the imported component and the cards in the data file are fields
+ * of the page, which on most real projects is the difference between an editor
+ * with something in it and an empty one.
+ */
+export function matchManifestToLive(input: { discovery: PageDiscovery; liveHtml: string | null }): FrameworkView & { view: (PageView & { htmlFields: SiteField[] }) | null; sources: PageDiscovery["sources"] } {
+  const view = input.liveHtml ? matchPageToHtml({ discovery: input.discovery, html: input.liveHtml }) : null;
+  const shown = new Set(view?.mappings.map((mapping) => mapping.sourceFieldId) ?? []);
+  return {
+    view,
+    sources: input.discovery.sources,
+    issues: input.discovery.issues,
+    mapping: (view?.mappings ?? []).map((mapping) => ({ sourceFieldId: mapping.sourceFieldId, htmlFieldId: mapping.htmlFieldId })),
+    fields: input.discovery.fields.map((field) => ({
+      id: field.id,
+      label: field.label,
+      kind: field.kind,
+      value: field.value,
+      ...(field.marker ? { marker: field.marker } : {}),
+      confidence: field.confidence,
+      shownOnPage: shown.has(field.id),
+      // Which file this field lives in, so the editor can say "this is in your
+      // header, which every page shares" before somebody changes it everywhere.
+      filePath: field.filePath,
+      role: field.role,
+      scope: field.shared ? ("shared" as const) : ("instance" as const),
+    })),
+  };
+}
 
 /**
  * The source file's fields, and their matches on the live page.
@@ -132,8 +171,39 @@ export function registerWebsiteFrameworkView(router: Router, access: Access, ove
   router.get("/pages/:pageId/framework", handler(async (req, res) => {
     const { page, site, source } = await load(req);
     const published = await live(site, page);
-    const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: published.html });
     res.setHeader("Cache-Control", "no-store");
+
+    // The JSX family reads every file the page reaches. Everything else keeps
+    // the single-file answer, which is the only one its adapter can give.
+    if (hasSourceManifest(page.filePath)) {
+      const { manifest, discovery } = await deps.manifest(site, page);
+      const wide = matchManifestToLive({ discovery, liveHtml: published.html });
+      res.json({
+        page: { id: page.id, title: page.title, path: page.path, filePath: page.filePath, url: pageUrl(site, page) },
+        site: { id: site.id, repo: siteRepo(site), branch: site.repoBranch, sourceKind: site.sourceKind },
+        adapter: discovery.version,
+        sourceHash: discovery.manifestHash,
+        fields: wide.fields,
+        issues: wide.issues,
+        mapping: wide.mapping,
+        // What the editor needs to be honest on screen: which files this page is
+        // made of, which parts of it are code, and what may be done to each
+        // element it is about to let somebody click on.
+        manifest: {
+          version: manifest.version,
+          entry: manifest.entry,
+          files: manifest.files.map((file) => ({ path: file.path, role: file.role, sourceHash: file.sourceHash, clientBoundary: file.clientBoundary })),
+          boundaries: manifest.boundaries,
+          truncated: manifest.truncated,
+        },
+        capabilities: wide.view?.capabilities ?? [],
+        diagnostics: wide.view?.diagnostics ?? [],
+        live: { url: pageUrl(site, page), available: published.html !== null, reason: published.reason },
+      });
+      return;
+    }
+
+    const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: published.html });
     res.json({
       page: { id: page.id, title: page.title, path: page.path, filePath: page.filePath, url: pageUrl(site, page) },
       site: { id: site.id, repo: siteRepo(site), branch: site.repoBranch, sourceKind: site.sourceKind },
@@ -150,7 +220,12 @@ export function registerWebsiteFrameworkView(router: Router, access: Access, ove
     const { page, site, source } = await load(req);
     const published = await live(site, page);
     if (published.html === null) throw new WebsiteError(409, `This page has not been published yet, so there is nothing to show. ${published.reason ?? ""}`.trim());
-    const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: published.html });
+    const view = hasSourceManifest(page.filePath)
+      ? await deps.manifest(site, page).then(({ discovery }) => {
+          const wide = matchManifestToLive({ discovery, liveHtml: published.html });
+          return { htmlFields: wide.view?.htmlFields ?? [], mapping: wide.mapping };
+        })
+      : matchSourceToLive({ source, filePath: page.filePath, liveHtml: published.html });
     const matched = new Set(view.mapping.map((entry) => entry.htmlFieldId));
     // Only the elements that came from a literal in this file are marked. The
     // rest of the page is shown exactly as the visitor sees it and cannot be

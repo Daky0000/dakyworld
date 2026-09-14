@@ -26,6 +26,8 @@ import { type AddressInfo } from "node:net";
 import type { Site, SitePage } from "@prisma/client";
 import { matchSourceToLive, registerWebsiteFrameworkView } from "../src/services/websiteFrameworkView.js";
 import { WebsiteError } from "../src/services/website/site.js";
+import { buildSourceManifest } from "../src/services/website/manifest.js";
+import { discoverPageFields } from "../src/services/website/pageFields.js";
 
 let passed = 0;
 const source = [
@@ -109,6 +111,18 @@ registerWebsiteFrameworkView(router, {
     return live;
   },
   authorize: async () => undefined,
+  // A `.tsx` page now goes through the manifest branch, so the route needs one.
+  // This page imports nothing, which makes it the useful case to pin: the wide
+  // answer and the old single-file answer must agree on a page where there is
+  // only one file to read. If they ever disagree here, the manifest has changed
+  // what a simple page looks like, and that is a regression rather than a
+  // feature.
+  manifest: async (_site, requested) => {
+    const files = [requested.filePath];
+    const read = async (path: string) => (path === requested.filePath ? source : null);
+    const manifest = await buildSourceManifest({ entry: requested.filePath, files, read });
+    return { manifest, discovery: await discoverPageFields({ manifest, read }), read, repoPathFor: (path: string) => path };
+  },
 });
 app.use("/website", router);
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
