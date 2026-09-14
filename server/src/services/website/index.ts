@@ -79,6 +79,7 @@ export type { TemplateField, TemplateFieldKind, TemplateDiscovery, TemplateIssue
 export { MARKDOWN_ADAPTER_VERSION, MARKDOWN_EXTENSIONS, discoverMarkdownFields, applyMarkdownValues, isMarkdownPath } from "./markdown.js";
 export type { MarkdownField, MarkdownDiscovery, MarkdownIssue, MarkdownApplyResult } from "./markdown.js";
 export { discoverRouterRoutes, routerCandidates } from "./router.js";
+export { pageFile } from "./site.js";
 export { publicFolder, frameworkAdapters, detectFramework, frameworkFor, nextRoutes, astroRoutes, svelteRoutes, vueRoutes, viteReactRoutes, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath } from "./frameworks.js";
 export type { FrameworkAdapter, DiscoveredRoute, SourceKind } from "./frameworks.js";
 

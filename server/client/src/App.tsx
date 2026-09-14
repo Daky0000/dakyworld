@@ -27,6 +27,7 @@ const Rehearsals = lazy(() => import("./pages/Rehearsals").then((module) => ({ d
 const ClientDetail = lazy(() => import("./pages/ClientDetail").then((module) => ({ default: module.ClientDetail })));
 const Website = lazy(() => import("./pages/Website").then((module) => ({ default: module.Website })));
 const WebsiteEditor = lazy(() => import("./pages/WebsiteEditor").then((module) => ({ default: module.WebsiteEditor })));
+const WebsiteFrameworkEditor = lazy(() => import("./pages/WebsiteFrameworkEditor").then((module) => ({ default: module.WebsiteFrameworkEditor })));
 import { WebsiteLayout } from "./components/WebsiteLayout";
 import { WebsiteGuard } from "./components/WebsiteGuard";
 const WebsiteSource = lazy(() => import("./components/WebsiteSourceEditor").then((module) => ({ default: module.WebsiteSource })));
@@ -111,6 +112,7 @@ export default function App() {
         </Route>
         <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
         <Route path="/website/pages/:pageId" element={<WebsiteGuard><WebsiteEditor /></WebsiteGuard>} />
+        <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><WebsiteFrameworkEditor /></WebsiteGuard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />
         <Route path="/settings" element={<Guard needs="settings.view"><Settings /></Guard>} />
         <Route path="/agents" element={<Guard needs="agents.view"><Agents /></Guard>} />

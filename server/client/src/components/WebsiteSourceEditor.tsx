@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, postForBlob } from "../lib/api";
@@ -25,7 +25,18 @@ function readDraft(key: string): StoredDraft | null {
   } catch { return null; }
 }
 
-function SourceFileEditor({ siteId, filePath, canPublish }: { siteId: string; filePath: string; canPublish: boolean }) {
+/**
+ * One file's fields, with review and publish.
+ *
+ * Exported because the framework page editor puts this exact panel beside the
+ * live page: same draft, same review, same commit. Two panels that agreed until
+ * they did not would be two editors.
+ *
+ * `focusFieldId` is how a click on the page reaches the right box — the caller
+ * changes it, and the field scrolls into view and takes the caret. `onPublished`
+ * lets that caller refresh its frame once a commit has landed.
+ */
+export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, onPublished }: { siteId: string; filePath: string; canPublish: boolean; focusFieldId?: string | null; onPublished?: () => void }) {
   const qc = useQueryClient();
   const { user } = useAuth();
   const storageKey = `website-source-draft:${user?.id}:${siteId}:${filePath}`;
@@ -42,6 +53,15 @@ function SourceFileEditor({ siteId, filePath, canPublish }: { siteId: string; fi
   // name one that exists — typing a path from memory is how a broken picture
   // gets published.
   const images = useQuery({ queryKey: ["website", "assets", siteId], queryFn: () => api.get<UploadedImage[]>(`/website/sites/${encodeURIComponent(siteId)}/assets`), refetchOnWindowFocus: false });
+  const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
+  useEffect(() => {
+    if (!focusFieldId) return;
+    const element = fieldRefs.current[focusFieldId];
+    if (!element) return;
+    element.scrollIntoView({ block: "center", behavior: "smooth" });
+    const input = element.querySelector("textarea, input") as HTMLElement | null;
+    input?.focus();
+  }, [focusFieldId]);
   const values = draft?.values ?? {};
   const changes: Change[] = Object.entries(values).map(([fieldId, value]) => ({ fieldId, value }));
   const input = { filePath, sourceHash: draft?.sourceHash ?? document.data?.sourceHash ?? "", changes };
@@ -77,6 +97,7 @@ function SourceFileEditor({ siteId, filePath, canPublish }: { siteId: string; fi
       setNotice(`${result.message}${result.auditRecorded ? "" : " The activity log could not be updated; the GitHub commit is available below."}`);
       await qc.invalidateQueries({ queryKey: ["website", "source", siteId, filePath] });
       await qc.invalidateQueries({ queryKey: ["website", "audit", siteId] });
+      onPublished?.();
     },
   });
   const busy = prepare.isPending || download.isPending || publish.isPending;
@@ -119,7 +140,7 @@ function SourceFileEditor({ siteId, filePath, canPublish }: { siteId: string; fi
       {document.data.issues.length > 0 && <details className="rounded-2xl border border-line bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">{document.data.issues.length} source compatibility {document.data.issues.length === 1 ? "note" : "notes"}</summary><ul className="mt-3 space-y-2 text-sm text-muted">{document.data.issues.map((issue, index) => <li key={index}>{issue.line ? `Line ${issue.line}: ` : ""}{issue.message}</li>)}</ul></details>}
       {!document.data.fields.length ? <p className="rounded-2xl border border-line bg-white p-5 text-sm text-muted">This file has no supported static fields. Dynamic values, custom component props, styles and layout need a source adapter for that component or a code change.</p> : <>
         <label className="block text-xs text-muted">Find content<input className={`${fieldClass} mt-1`} placeholder="Search text, element or marker" value={search} onChange={event => setSearch(event.target.value)} /></label>
-        <div className="grid gap-4 xl:grid-cols-2">{visible.map(field => <label key={field.id} className="block rounded-2xl border border-line bg-white p-4"><span className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-muted">{field.label}</span>{field.marker && <span className="max-w-[60%] truncate text-xs text-muted" title={field.marker}>{field.marker}</span>}</span>{field.kind === "src" && (images.data?.length ?? 0) > 0 && <select aria-label={`Choose an uploaded image for ${field.label}`} className={`${fieldClass} mt-2`} disabled={busy || stale} value="" onChange={event => { if (event.target.value) update(field, event.target.value); }}><option value="">Choose an uploaded image…</option>{images.data!.map(image => <option key={image.id} value={image.url}>{image.filename}</option>)}</select>}{field.kind === "text" ? <textarea aria-label={field.label} className={`${fieldClass} mt-2 min-h-24 resize-y`} rows={3} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} /> : <input aria-label={field.label} type="text" className={`${fieldClass} mt-2`} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} />}{field.id in values && <span className="mt-2 block text-xs text-blue">Changed</span>}</label>)}</div>
+        <div className="grid gap-4 xl:grid-cols-2">{visible.map(field => <label key={field.id} ref={element => { fieldRefs.current[field.id] = element; }} className={`block rounded-2xl border bg-white p-4 ${field.id === focusFieldId ? "border-blue ring-1 ring-blue" : "border-line"}`}><span className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-muted">{field.label}</span>{field.marker && <span className="max-w-[60%] truncate text-xs text-muted" title={field.marker}>{field.marker}</span>}</span>{field.kind === "src" && (images.data?.length ?? 0) > 0 && <select aria-label={`Choose an uploaded image for ${field.label}`} className={`${fieldClass} mt-2`} disabled={busy || stale} value="" onChange={event => { if (event.target.value) update(field, event.target.value); }}><option value="">Choose an uploaded image…</option>{images.data!.map(image => <option key={image.id} value={image.url}>{image.filename}</option>)}</select>}{field.kind === "text" ? <textarea aria-label={field.label} className={`${fieldClass} mt-2 min-h-24 resize-y`} rows={3} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} /> : <input aria-label={field.label} type="text" className={`${fieldClass} mt-2`} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} />}{field.id in values && <span className="mt-2 block text-xs text-blue">Changed</span>}</label>)}</div>
         {!visible.length && <p className="text-sm text-muted">No fields match your search.</p>}
       </>}
     </>}

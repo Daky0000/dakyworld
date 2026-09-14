@@ -97,6 +97,21 @@ async function underSiteCredential<T>(site: Site, work: () => Promise<T>): Promi
   return credential ? withGithubCredential(credential, work) : work();
 }
 
+/**
+ * A page's own file, read as bytes rather than as HTML.
+ *
+ * `pageSource` above answers "what is on this page", which for an HTML site is
+ * the same question as "what is in this file". For a framework page it is not:
+ * the file is `.tsx` or `.astro` and the page is what a build makes of it. This
+ * is the file, for the source editor and for the framework view that sits
+ * beside the live page.
+ */
+export async function pageFile(site: Site, page: SitePage): Promise<string | null> {
+  const repo = siteRepo(site);
+  if (!repo || !(await githubConfigured())) return null;
+  return underSiteCredential(site, () => readFile(repo, repoFilePath(site, page), site.repoBranch).catch(() => null));
+}
+
 export async function pageSource(site: Site, page: SitePage, options: { fresh?: boolean } = {}): Promise<PageSource> {
   if (page.sourceHtml !== null && page.sourceHtml !== undefined) return { html: page.sourceHtml, from: "imported file" };
   return underSiteCredential(site, () => readPageSource(site, page, options));

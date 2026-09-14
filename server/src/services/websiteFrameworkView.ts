@@ -1,0 +1,158 @@
+/**
+ * A framework page, edited beside the page itself.
+ *
+ * The source editor works and reads like a file browser, which is the wrong
+ * shape for the person it is for: they clicked "Edit" next to a page called
+ * Pricing and were handed `app/(marketing)/pricing/page.tsx`. What they wanted
+ * was the builder — their page, and the words on it.
+ *
+ * We cannot turn their `.tsx` into HTML ourselves. That means running their
+ * build, and even then a rendered `<h1>` has no general way back to the literal
+ * it came from once it has passed through a loop, a prop and a layout.
+ *
+ * But their site is already built and published, so the HTML exists: it is the
+ * live page. So this puts the live page in the frame, works out which of its
+ * elements came from which literal in the source file, and marks only those.
+ * Everything else is visible and not editable, which is the truth — the rest of
+ * that page is code.
+ *
+ * The matching is `mapJsxFieldsToHtml`, and it is deliberately strict: same
+ * tag, identical decoded value, unique on both sides. A guess here would show
+ * somebody a heading, take their edit, and change a different heading.
+ *
+ * Two things this is honest about rather than hiding:
+ *
+ *  - **the live page can be behind.** It is whatever the host last built, so a
+ *    publish from ten seconds ago may not be on it yet. The publish job knows
+ *    when it lands; this says plainly what it is showing.
+ *  - **a page that has never been deployed has no HTML at all.** Then there is
+ *    no frame, and the fields are still editable on their own.
+ */
+import type { Request, Response, Router } from "express";
+import type { Site, SitePage } from "@prisma/client";
+import { discoverFields, mapJsxFieldsToHtml, pageFile, buildPreview, type SiteField } from "./website/index.js";
+import { isEditableSourcePath } from "./website/index.js";
+import { pageUrl, siteRepo, WebsiteError } from "./website/site.js";
+import { sourceAdapterFor } from "./websiteSource.js";
+import { fetchWebsiteText } from "../lib/websiteFetch.js";
+import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js";
+
+type Access = { loadPage(req: Request, id: string): Promise<{ page: SitePage; site: Site }> };
+type Dependencies = {
+  file: typeof pageFile;
+  live(url: string): Promise<string>;
+  authorize(req: Request, siteId: string, action: WebsiteAction): Promise<unknown>;
+};
+const dependencies: Dependencies = { file: pageFile, live: fetchWebsiteText, authorize: assertWebsiteSiteAccess };
+
+export type FrameworkView = {
+  /** The source fields, and which of them the live page can show. */
+  fields: Array<{ id: string; label: string; kind: string; value: string; marker?: string; confidence: string; shownOnPage: boolean }>;
+  issues: unknown[];
+  mapping: Array<{ sourceFieldId: string; htmlFieldId: string }>;
+};
+
+/**
+ * The source file's fields, and their matches on the live page.
+ *
+ * Pure apart from the two reads it is given, so the matching can be checked
+ * against real files with no network — see `checks/websiteFrameworkView.ts`.
+ */
+export function matchSourceToLive(input: { source: string; filePath: string; liveHtml: string | null }): FrameworkView & { htmlFields: SiteField[]; sourceHash: string; adapter: string } {
+  const adapter = sourceAdapterFor(input.filePath);
+  const discovery = adapter.discover(input.source, input.filePath);
+  const htmlFields = input.liveHtml ? discoverFields(input.liveHtml).fields : [];
+  // The mapper takes the JSX adapter's field shape; the template and Markdown
+  // adapters produce the same one, so a `.vue` page matches on the same terms a
+  // `.tsx` page does and neither gets a private set of rules.
+  const report = input.liveHtml ? mapJsxFieldsToHtml(discovery.fields as never, htmlFields) : { mappings: [], diagnostics: [] };
+  const shown = new Set(report.mappings.map((mapping) => mapping.sourceFieldId));
+  return {
+    adapter: discovery.adapter,
+    sourceHash: discovery.sourceHash,
+    htmlFields,
+    issues: discovery.issues,
+    mapping: report.mappings.map((mapping) => ({ sourceFieldId: mapping.sourceFieldId, htmlFieldId: mapping.htmlFieldId })),
+    fields: discovery.fields.map((field) => ({
+      id: field.id,
+      label: field.label,
+      kind: field.kind,
+      value: field.value,
+      // Markdown fields have no marker; the other two adapters do.
+      ...("marker" in field && field.marker ? { marker: field.marker } : {}),
+      confidence: field.confidence,
+      shownOnPage: shown.has(field.id),
+    })),
+  };
+}
+
+/** Page-scoped framework editing: the page's file, and the live page beside it. */
+export function registerWebsiteFrameworkView(router: Router, access: Access, overrides: Partial<Dependencies> = {}) {
+  const deps = { ...dependencies, ...overrides };
+  const handler = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: (error?: unknown) => void) => { void fn(req, res).catch(next); };
+
+  const load = async (req: Request) => {
+    const { page, site } = await access.loadPage(req, req.params.pageId);
+    await deps.authorize(req, site.id, "source");
+    if (!isEditableSourcePath(page.filePath)) {
+      throw new WebsiteError(400, "This page is an HTML file. Open it in the visual editor, which edits the page itself.");
+    }
+    if (!siteRepo(site)) throw new WebsiteError(409, "Connect this site's GitHub repository in Website settings to edit its pages.");
+    const source = await deps.file(site, page);
+    if (source === null) throw new WebsiteError(404, `${page.filePath} is not on branch ${site.repoBranch}. Scan the site again to refresh its page list.`);
+    return { page, site, source };
+  };
+
+  const live = async (site: Site, page: SitePage): Promise<{ html: string | null; reason: string | null }> => {
+    try {
+      return { html: await deps.live(pageUrl(site, page)), reason: null };
+    } catch (error) {
+      // Not deployed yet, not public, or the address is wrong. All three are
+      // worth saying: the fields still work, and a blank frame with no sentence
+      // beside it reads as a broken editor.
+      return { html: null, reason: error instanceof Error ? error.message : "The live page could not be read." };
+    }
+  };
+
+  router.get("/pages/:pageId/framework", handler(async (req, res) => {
+    const { page, site, source } = await load(req);
+    const published = await live(site, page);
+    const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: published.html });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      page: { id: page.id, title: page.title, path: page.path, filePath: page.filePath, url: pageUrl(site, page) },
+      site: { id: site.id, repo: siteRepo(site), branch: site.repoBranch, sourceKind: site.sourceKind },
+      adapter: view.adapter,
+      sourceHash: view.sourceHash,
+      fields: view.fields,
+      issues: view.issues,
+      mapping: view.mapping,
+      live: { url: pageUrl(site, page), available: published.html !== null, reason: published.reason },
+    });
+  }));
+
+  router.get("/pages/:pageId/framework/preview", handler(async (req, res) => {
+    const { page, site, source } = await load(req);
+    const published = await live(site, page);
+    if (published.html === null) throw new WebsiteError(409, `This page has not been published yet, so there is nothing to show. ${published.reason ?? ""}`.trim());
+    const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: published.html });
+    const matched = new Set(view.mapping.map((entry) => entry.htmlFieldId));
+    // Only the elements that came from a literal in this file are marked. The
+    // rest of the page is shown exactly as the visitor sees it and cannot be
+    // clicked, because there is nothing here that could edit it.
+    const editable = view.htmlFields.filter((field) => matched.has(field.id));
+    // `allowEditing` false: typing happens in the panel, where the value being
+    // changed is the literal in the source file rather than the rendered text.
+    const document = buildPreview(published.html, pageUrl(site, page), editable, false);
+    res
+      .type("html")
+      .set("Cache-Control", "no-store")
+      .set("Content-Security-Policy", document.csp)
+      .set("X-Frame-Options", "SAMEORIGIN")
+      // Sent as it came, with no uploaded images swapped in: this is the page
+      // the public is already being served, so its pictures are the real ones.
+      // The HTML editor embeds drafts because its preview shows a page that has
+      // not been published; there is no such thing here.
+      .send(document.html);
+  }));
+}

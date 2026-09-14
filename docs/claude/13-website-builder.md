@@ -435,7 +435,30 @@ closes.
   repository still has real `.html` pages in it, and sending those to the source
   editor took people away from the visual editor that opens them perfectly well.
 
-Still open: a visual preview for framework pages. It needs the project built,
-which this deliberately never does. `mapJsxFieldsToHtml` already matches source
-fields to a rendered page, so the honest version is a *live* page with the
-matched fields highlighted, not a fake canvas.
+## The framework page editor
+
+Built 14 Sep 2026, after the Edit button landed somebody in a file browser when
+they had clicked a page called Pricing. `websiteFrameworkView.ts` and
+`WebsiteFrameworkEditor.tsx`: the live page on the left, that file's fields on
+the right.
+
+- **We do not build the project, and will not.** Turning a `.tsx` into HTML
+  means running somebody's toolchain, and a rendered heading has no general way
+  back to the literal it came from once it has passed through a loop, a prop and
+  a layout. The HTML already exists — it is the published page — so that is what
+  goes in the frame.
+- **`mapJsxFieldsToHtml` decides what is clickable**, and it is strict on
+  purpose: same tag, identical decoded value, unique on both sides. Two
+  identical paragraphs match nothing. A guess here would show somebody one
+  heading, take their edit, and change a different one.
+- **`allowEditing` is false in the frame.** Typing happens in the panel, because
+  the value being changed is the literal in the file, not the rendered text.
+- **The live page can be behind, and says so.** It is whatever the host last
+  built; after a publish the screen says the host is rebuilding rather than
+  pretending the picture is current.
+- **A page that was never deployed has no picture**, and the reason is on screen
+  instead of an empty frame. Its fields still edit and publish.
+- **The preview embeds no uploaded assets** — unlike the HTML editor's, which
+  shows an unpublished draft. This shows what the public is already served.
+- One element can carry two fields (a link's words and its destination); the
+  click prefers the words.

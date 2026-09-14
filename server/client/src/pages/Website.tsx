@@ -192,6 +192,10 @@ export function Website() {
                         </Button>
                       </a>
                       {/* Decided by the file, never by the site. A framework
+                          page opens beside the live page rather than in a file
+                          browser: same Edit button, same place in the list, and
+                          the difference is what can be shown, not where the
+                          person has to go. A framework
                           repository still has real HTML pages in it — a landing
                           page in `public/`, an imported file — and sending those
                           to the source editor would take somebody away from the
@@ -200,8 +204,8 @@ export function Website() {
                           other way. */}
                       <Link
                         to={
-                          SOURCE_ONLY_FILE.test(page.filePath) && current
-                            ? `/website/source?site=${encodeURIComponent(current.id)}&file=${encodeURIComponent(page.filePath)}`
+                          SOURCE_ONLY_FILE.test(page.filePath)
+                            ? `/website/pages/${page.id}/source`
                             : `/website/pages/${page.id}`
                         }
                       >
