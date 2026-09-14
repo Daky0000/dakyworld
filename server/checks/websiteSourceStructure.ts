@@ -53,6 +53,9 @@ assert.throws(() => reviewWebsiteSource(`${source}// moved`, moveLast),
 
 let current = source;
 let writes = 0;
+/** The file the fixture repository is serving, so a commit is checked against
+ * the file actually being published rather than the first one. */
+let editing = filePath;
 const app = express();
 app.use(express.json({ limit: "8mb" }));
 const router = express.Router();
@@ -61,12 +64,12 @@ registerWebsiteSource(router, { loadSite: async (_req, id) => { if (id !== site.
   list: async () => [{ path: "web/src", type: "dir", size: 0 }],
   commit: async request => {
     writes++;
-    assert.deepEqual(request.expectedFiles, [{ path: "web/src/Page.tsx", content: current }]);
+    assert.deepEqual(request.expectedFiles, [{ path: `web/${editing}`, content: current }]);
     current = request.files[0]!.content;
     return { sha: "abc123def456", url: "https://github.com/fixture/website/commit/abc123def456" };
   },
   authorize: async () => undefined,
-  audit: async audit => { assert.equal(audit.filePath, filePath); },
+  audit: async audit => { assert.equal(audit.filePath, editing); },
 });
 app.use("/website", router);
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -115,5 +118,32 @@ try {
   // Replaying the same action against the published file is refused as stale.
   assert.equal((await post("publish", { ...moveLast, reviewHash: body.reviewHash })).status, 409);
   assert.equal(writes, 1); passed++;
+  // Every language with a layout engine reaches the same routes. A .vue file is
+  // reviewed, bound and committed down the path a .tsx is.
+  const vuePath = "src/pages/Index.vue";
+  const vueSource = ["<template>", "  <main>", "    <section><h2>First</h2></section>", "    <section><h2>Second</h2></section>", "  </main>", "</template>", ""].join("\n");
+  current = vueSource; editing = vuePath;
+  const vueDocument = await (await fetch(`${origin}?filePath=${encodeURIComponent(vuePath)}`)).json() as { blocks: { id: string; tag: string }[]; structureAdapter: string };
+  assert.equal(vueDocument.structureAdapter, "template-structure-v1");
+  assert.deepEqual(vueDocument.blocks.map(item => item.tag), ["main", "section", "h2", "section", "h2"]); passed++;
+  const vueSections = vueDocument.blocks.filter(item => item.tag === "section");
+  const vueEdit = { filePath: vuePath, sourceHash: jsxSourceHash(vueSource), structure: [{ kind: "after" as const, nodeId: vueSections[0]!.id, targetId: vueSections[1]!.id }] };
+  const vueReview = await post("review", vueEdit);
+  assert.equal(vueReview.status, 200);
+  const vueBody = await vueReview.json() as { reviewHash: string; layout: string[] };
+  assert.deepEqual(vueBody.layout, ["Moved <section>"]); passed++;
+  const vuePublished = await post("publish", { ...vueEdit, reviewHash: vueBody.reviewHash });
+  assert.equal(vuePublished.status, 200);
+  assert.ok(current.indexOf("Second") < current.indexOf("First"));
+  assert.ok(current.startsWith("<template>")); passed++;
+  // A language with no layout engine says so rather than pretending.
+  const markdownPath = "content/about.md";
+  current = ["# About", "", "Words.", ""].join("\n");
+  const markdownDocument = await (await fetch(`${origin}?filePath=${encodeURIComponent(markdownPath)}`)).json() as { blocks: unknown[]; structureAdapter: string | null };
+  assert.equal(markdownDocument.structureAdapter, null);
+  assert.deepEqual(markdownDocument.blocks, []);
+  const refusedLayout = await post("review", { filePath: markdownPath, sourceHash: jsxSourceHash(current), structure: [{ kind: "remove", nodeId: "tplnode_x" }] });
+  assert.equal(refusedLayout.status, 409);
+  assert.match((await refusedLayout.json() as { error: string }).error, /cannot be rearranged from the editor yet/); passed++;
   console.log(`websiteSourceStructure: ${passed} layout review, binding and publish checks passed`);
 } finally { await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve())); }
