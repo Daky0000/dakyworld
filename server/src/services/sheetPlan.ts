@@ -1310,6 +1310,189 @@ function relabelFromHeader(grid: SheetGrid, table: PlanTable, headerRow: number)
   });
 }
 
+// --- Columns in the wrong place --------------------------------------------
+
+/**
+ * Words that only ever appear in the name of an organisation. A cell carrying
+ * one is not a person, however much of a name it looks like.
+ */
+const COMPANY_MARKERS =
+  /\b(ltd|limited|llc|inc|plc|gmbh|co|corp|company|companies|enterprises?|ventures?|holdings?|group|services?|solutions?|technolog\w*|systems?|consult\w*|agency|foundation|institute|university|school|academy|church|ministries|hospital|clinic|pharmacy|hotel|lodge|resort|restaurant|bank|insurance|logistics|construction|engineering|motors|farms?|store|shop|mart|supermarket)\b|&|@/i;
+
+/** Lower-case words that belong inside a name: van der Merwe, Kwame de Graft. */
+const NAME_PARTICLES = new Set(["van", "von", "der", "den", "de", "del", "della", "di", "da", "du", "la", "le", "bin", "binti", "ibn", "al", "el", "mac", "mc", "ap", "and"]);
+
+/**
+ * Words that turn up in the short phrases people type into a status, a note or
+ * a next-step column — the columns that otherwise pass every test a name does.
+ */
+const NOT_A_NAME =
+  /(sent|send|waiting|wait|pending|done|no|not|yes|new|old|call|called|calling|answer|answered|reply|replied|follow|followed|contact|contacted|quote|quoted|proposal|invoice|paid|unpaid|closed|open|lost|won|email|phone|meeting|visit|visited|deal|client|customer|lead|na)/i;
+
+/**
+ * A person's name: a few capitalised words of letters, no digits, no company
+ * marker, nothing that reads as something somebody did.
+ *
+ * Capitalisation is the test that does the work. "Kofi Mensah" and "Waiting on
+ * quote" are both two-or-three plain words, and without it a column of
+ * next-steps is a column of names — which is worse than the fault being fixed,
+ * because it moves the mapping off a column that had it right.
+ */
+function looksLikePerson(value: string): boolean {
+  if (value.length > 60 || /\d/.test(value)) return false;
+  if (COMPANY_MARKERS.test(value) || NOT_A_NAME.test(value)) return false;
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) return false;
+
+  // Initials ("K."), hyphenated and apostrophed names all count; anything else
+  // with punctuation in it is a sentence or an address, not a name.
+  if (!words.every((word) => /^[\p{L}][\p{L}'’.-]*$/u.test(word))) return false;
+
+  const capitalised = words.filter((word) => /^[\p{Lu}]/u.test(word));
+  if (capitalised.length < 2) return false;
+  return words.every((word) => /^[\p{Lu}]/u.test(word) || NAME_PARTICLES.has(word.toLowerCase()));
+}
+
+/** A business name: letters, and a word that says it trades. */
+function looksLikeCompany(value: string): boolean {
+  return value.length <= 80 && /[\p{L}]/u.test(value) && COMPANY_MARKERS.test(value);
+}
+
+function share(values: string[], test: (value: string) => boolean): number {
+  return values.filter(test).length / values.length;
+}
+
+/** How each repaired field reads in a sentence to the Owner. */
+const DESCRIBES: Record<string, string> = {
+  contactName: "people's names",
+  companyName: "business names",
+  contactEmail: "email addresses",
+  contactPhone: "phone numbers",
+  website: "web addresses",
+};
+
+/**
+ * What a column's own cells say it is — regardless of what it is headed.
+ *
+ * Only the readings nothing else can explain: an @ is an email address, a
+ * dialable string is a phone number, "Kofi Mensah" is a person and "Mensah
+ * Foods Ltd" is a business. Anything vaguer — a date, a status, a note — stays
+ * whatever the header called it, because the cells genuinely do not say which
+ * of several fields they belong to.
+ */
+function contentField(samples: string[]): string | null {
+  const values = samples.map((value) => value.trim()).filter((value) => value !== "" && !BLANKS.test(value));
+  // Four rows, because overruling a header wants more evidence than naming an
+  // unnamed column does.
+  if (values.length < 4) return null;
+
+  const reading = readColumn(values);
+  if (reading?.field) return reading.field;
+
+  // Names repeat far less than cities, categories and statuses do, and a
+  // column of five identical "Accra"s passes every shape test below.
+  const distinct = new Set(values.map((value) => value.toLowerCase())).size;
+  if (distinct / values.length < 0.7) return null;
+
+  if (share(values, looksLikePerson) >= 0.7) return "contactName";
+  if (share(values, looksLikeCompany) >= 0.7) return "companyName";
+  return null;
+}
+
+/**
+ * Puts a column where its contents belong rather than where its header claims.
+ *
+ * Lead sheets in the wild get this wrong constantly: people's names sitting
+ * under "Company", an email column headed "Contact", a header row one cell out
+ * so every name in the file lands in a custom column nothing reads. Mapped on
+ * the header alone, those leads import with no name — and a lead with no name
+ * is dropped by `extractRows` — or with a company where a person should be,
+ * which is what the first cold email then greets by name.
+ *
+ * So where the cells are unmistakable, the cells win. The column that was
+ * holding the field moves to wherever *its* own contents belong, or becomes a
+ * custom column, so nothing in the file is lost either way.
+ *
+ * Only ever run over a freshly analysed plan — see `repairPlan` — never over
+ * one coming back from the review screen, where every mapping is a decision
+ * somebody made by hand.
+ */
+function placeColumnsByContent(grid: SheetGrid, table: PlanTable): string[] {
+  const rows = grid.rows.slice(table.firstDataRow, Math.min(table.lastDataRow, grid.rows.length - 1) + 1).slice(0, 40);
+  if (rows.length < 4) return [];
+
+  const evidence = new Map<PlanColumn, string>();
+  for (const column of table.columns) {
+    if (column.field === "ignore") continue;
+    const found = contentField(rows.map((row) => row[column.index] ?? ""));
+    if (found) evidence.set(column, found);
+  }
+  if (!evidence.size) return [];
+
+  // One claimant per field: the leftmost, which is where the real one sits
+  // when a later column happens to repeat the shape.
+  const claimant = new Map<string, PlanColumn>();
+  for (const [column, field] of evidence) {
+    const held = claimant.get(field);
+    if (!held || column.index < held.index) claimant.set(field, column);
+  }
+
+  const repairs: string[] = [];
+  const nameOf = (column: PlanColumn) => column.header.trim() || column.label;
+  const labelOf = (field: string) => builtinField(field)?.label ?? field;
+
+  const assign = (column: PlanColumn, field: string) => {
+    const builtin = builtinField(field);
+    column.field = field;
+    column.label = builtin?.label ?? column.label;
+    column.type = builtin?.type ?? column.type;
+    delete column.key;
+  };
+
+  const demote = (column: PlanColumn) => {
+    column.field = "custom";
+    column.label = nameOf(column).slice(0, 60);
+    column.key = slugifyKey(column.label);
+  };
+
+  for (const [field, column] of claimant) {
+    if (column.field === field) continue;
+
+    const holder = table.columns.find((other) => other !== column && other.field === field);
+    // The holder is right about itself — two columns of email addresses, say.
+    // Leave both where they are rather than shuffle one into the other.
+    if (holder && evidence.get(holder) === field) continue;
+
+    const was = column.field === "custom" || column.field === "ignore" ? null : column.field;
+    assign(column, field);
+
+    if (!holder) {
+      repairs.push(
+        `"${table.title}": the column headed "${nameOf(column)}" holds ${DESCRIBES[field]}, so it was read as ${labelOf(field)}${
+          was ? ` rather than ${labelOf(was)}` : ""
+        }.`,
+      );
+      continue;
+    }
+
+    // The displaced column goes where its own cells say, if that is free.
+    const holderEvidence = evidence.get(holder);
+    const free = holderEvidence && !table.columns.some((other) => other !== holder && other.field === holderEvidence);
+    if (holderEvidence && free) assign(holder, holderEvidence);
+    else demote(holder);
+
+    repairs.push(
+      `"${table.title}": "${nameOf(column)}" holds ${DESCRIBES[field]} and "${nameOf(holder)}" does not, so ${labelOf(
+        field,
+      )} was read from "${nameOf(column)}" and "${nameOf(holder)}" ${
+        holder.field === "custom" ? "kept as a column of its own" : `read as ${labelOf(holder.field)}`
+      }.`,
+    );
+  }
+
+  return repairs;
+}
+
 /**
  * Runs the repairs over an analyst's plan and says what it changed.
  *
@@ -1370,6 +1553,11 @@ export function repairPlan(plan: ImportPlan, grids: SheetGrid[], hints: PlanTabl
         table.firstDataRow = Math.max(table.firstDataRow, realHeader + 1);
         relabelFromHeader(grid, table, realHeader);
       }
+
+      // Whatever the headers say, the cells are the evidence: a column of
+      // people's names under "Company" is a name column. Run after the header
+      // repairs above, which can change every mapping in the table.
+      repairs.push(...placeColumnsByContent(grid, table));
 
       if (previous && isContinuationOf(grid, previous, table)) {
         repairs.push(
