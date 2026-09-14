@@ -137,15 +137,16 @@ try {
   assert.equal(vuePublished.status, 200);
   assert.ok(current.indexOf("Second") < current.indexOf("First"));
   assert.ok(current.startsWith("<template>")); passed++;
-  // A language with no layout engine says so rather than pretending.
+  // Markdown rearranges its sections rather than elements, down the same routes.
   const markdownPath = "content/about.md";
   current = ["# About", "", "Words.", ""].join("\n");
-  const markdownDocument = await (await fetch(`${origin}?filePath=${encodeURIComponent(markdownPath)}`)).json() as { blocks: unknown[]; structureAdapter: string | null };
-  assert.equal(markdownDocument.structureAdapter, null);
-  assert.deepEqual(markdownDocument.blocks, []);
-  const refusedLayout = await post("review", { filePath: markdownPath, sourceHash: jsxSourceHash(current), structure: [{ kind: "remove", nodeId: "tplnode_x" }] });
+  const markdownDocument = await (await fetch(`${origin}?filePath=${encodeURIComponent(markdownPath)}`)).json() as { blocks: { id: string; label: string; duplicate: boolean }[]; structureAdapter: string | null };
+  assert.equal(markdownDocument.structureAdapter, "markdown-sections-v1");
+  assert.deepEqual(markdownDocument.blocks.map(item => item.label), ["# About"]);
+  assert.equal(markdownDocument.blocks[0]!.duplicate, false); passed++;
+  const refusedLayout = await post("review", { filePath: markdownPath, sourceHash: jsxSourceHash(current), structure: [{ kind: "remove", nodeId: "mdnode_gone" }] });
   assert.equal(refusedLayout.status, 409);
-  assert.match((await refusedLayout.json() as { error: string }).error, /cannot be rearranged from the editor yet/); passed++;
+  assert.match((await refusedLayout.json() as { error: string }).error, /no longer in this file/); passed++;
   // The browser asks what the file looks like with its queued actions applied,
   // because after one its own list of IDs describes a file that is gone.
   current = source; editing = filePath;

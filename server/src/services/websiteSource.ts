@@ -4,7 +4,7 @@ import type { Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { commitFiles, listTree, readFile } from "../lib/github.js";
-import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, templateStructureNodes, replayTemplateStructure, TEMPLATE_STRUCTURE_VERSION, jsxStructureNodes, replayJsxStructure, JsxStructureError, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
+import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, markdownStructureNodes, replayMarkdownStructure, MARKDOWN_STRUCTURE_VERSION, templateStructureNodes, replayTemplateStructure, TEMPLATE_STRUCTURE_VERSION, jsxStructureNodes, replayJsxStructure, JsxStructureError, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
 import { invalidateRender, publicFolder } from "./website/index.js";
 import { invalidateSource } from "./website/sourceCache.js";
@@ -65,7 +65,7 @@ export type SourceAdapter = {
   structureAdapter?: string;
 };
 export function sourceAdapterFor(filePath: string): SourceAdapter {
-  if (isMarkdownPath(filePath)) return { discover: discoverMarkdownFields, apply: applyMarkdownValues };
+  if (isMarkdownPath(filePath)) return { discover: discoverMarkdownFields, apply: applyMarkdownValues, blocks: markdownStructureNodes, replay: replayMarkdownStructure, structureAdapter: MARKDOWN_STRUCTURE_VERSION };
   if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues, blocks: templateStructureNodes, replay: replayTemplateStructure, structureAdapter: TEMPLATE_STRUCTURE_VERSION };
   return { discover: discoverJsxFields, apply: applyJsxValues, blocks: jsxStructureNodes, replay: replayJsxStructure, structureAdapter: JSX_STRUCTURE_VERSION };
 }
