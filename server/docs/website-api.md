@@ -71,5 +71,6 @@ The table identifies the registration source. Consult its Zod schemas for exact 
 | GET | `/sites/:siteId/source` | `websiteSource.ts` |
 | POST | `/sites/:siteId/source/export` | `websiteSource.ts` |
 | GET | `/sites/:siteId/source/files` | `websiteSource.ts` |
+| POST | `/sites/:siteId/source/preview` | `websiteSource.ts` |
 | POST | `/sites/:siteId/source/publish` | `websiteSource.ts` |
 | POST | `/sites/:siteId/source/review` | `websiteSource.ts` |
