@@ -8,11 +8,14 @@ import { Button, PageHeader } from "./ui";
 import { useWebsiteAccess } from "./WebsiteMembers";
 
 type SourceField = { id: string; label: string; tag: string; kind: "text" | "href" | "src" | "alt"; value: string; marker?: string; confidence: "explicit" | "structural" };
-type SourceDocument = { filePath: string; sourceHash: string; repo: string; branch: string; fields: SourceField[]; issues: { message: string; line?: number }[] };
+type SourceBlock = { id: string; tag: string; label: string; depth: number; parentId?: string; previousId?: string; nextId?: string; marker?: string; remove: boolean; duplicate: boolean; reason?: string; duplicateReason?: string };
+type StructureAction = { kind: "remove" | "duplicate" | "before" | "after"; nodeId: string; targetId?: string };
+type SourceDocument = { filePath: string; sourceHash: string; repo: string; branch: string; fields: SourceField[]; blocks: SourceBlock[]; structureAdapter: string | null; issues: { message: string; line?: number }[] };
+type SourcePreview = SourceDocument & { layout: string[]; droppedChanges: string[] };
 type Directory = { repo: string; branch: string; root: string; path: string; files: { path: string; name: string; type: "file" | "dir"; size: number; editable: boolean }[] };
 type Change = { fieldId: string; value: string };
-type Review = { reviewHash: string; sourceHash: string; filePath: string; repo: string; branch: string; changes: { fieldId: string; label: string; before: string; after: string }[] };
-type StoredDraft = { sourceHash: string; values: Record<string, string> };
+type Review = { reviewHash: string; sourceHash: string; filePath: string; repo: string; branch: string; layout: string[]; changes: { fieldId: string; label: string; before: string; after: string }[] };
+type StoredDraft = { sourceHash: string; values: Record<string, string>; actions?: StructureAction[] };
 type UploadedImage = { id: string; url: string; filename: string; preview: string };
 const fieldClass = "w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink focus:border-blue focus:outline-none focus:ring-1 focus:ring-blue";
 
@@ -21,7 +24,13 @@ function readDraft(key: string): StoredDraft | null {
     const candidate = JSON.parse(sessionStorage.getItem(key) ?? "null") as unknown;
     if (!candidate || typeof candidate !== "object") return null;
     const draft = candidate as Partial<StoredDraft>;
-    return typeof draft.sourceHash === "string" && draft.values && typeof draft.values === "object" && !Array.isArray(draft.values) && Object.values(draft.values).every(value => typeof value === "string") ? draft as StoredDraft : null;
+    if (typeof draft.sourceHash !== "string" || !draft.values || typeof draft.values !== "object" || Array.isArray(draft.values)) return null;
+    if (!Object.values(draft.values).every(value => typeof value === "string")) return null;
+    // A stored layout queue is read back defensively for the same reason the
+    // values are: it is browser storage, and the server will refuse anything
+    // malformed anyway — but refusing here keeps the panel from rendering it.
+    const actions = Array.isArray(draft.actions) ? draft.actions.filter(action => action && typeof action === "object" && ["remove", "duplicate", "before", "after"].includes((action as StructureAction).kind) && typeof (action as StructureAction).nodeId === "string") : [];
+    return { sourceHash: draft.sourceHash, values: draft.values as Record<string, string>, actions: actions as StructureAction[] };
   } catch { return null; }
 }
 
@@ -69,8 +78,24 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
   }, [focusFieldId]);
   const values = draft?.values ?? {};
   const typedToken = useRef(0);
+  const actions = draft?.actions ?? [];
   const changes: Change[] = Object.entries(values).map(([fieldId, value]) => ({ fieldId, value }));
-  const input = { filePath, sourceHash: draft?.sourceHash ?? document.data?.sourceHash ?? "", changes };
+  const input = { filePath, sourceHash: draft?.sourceHash ?? document.data?.sourceHash ?? "", changes, structure: actions };
+  /**
+   * The file as the queued layout actions leave it.
+   *
+   * Asked of the server rather than worked out here: after one action the IDs
+   * this panel is holding describe a file that no longer exists, and the only
+   * thing that can say what the new ones are is the parser that made them.
+   */
+  const preview = useQuery({
+    queryKey: ["website", "source-preview", siteId, filePath, input.sourceHash, JSON.stringify(actions)],
+    enabled: actions.length > 0 && Boolean(input.sourceHash),
+    queryFn: () => api.post<SourcePreview>(`${endpoint}/preview`, input),
+    refetchOnWindowFocus: false,
+  });
+  const blocks = (actions.length ? preview.data?.blocks : document.data?.blocks) ?? [];
+  const layout = preview.data?.layout ?? [];
   const stale = Boolean(draft && document.data && draft.sourceHash !== document.data.sourceHash);
   useEffect(() => {
     try {
@@ -106,15 +131,25 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
       onPublished?.();
     },
   });
-  const busy = prepare.isPending || download.isPending || publish.isPending;
-  const error = document.error || prepare.error || download.error || publish.error;
+  const busy = prepare.isPending || download.isPending || publish.isPending || preview.isFetching;
+  const error = document.error || prepare.error || download.error || publish.error || preview.error;
+  /** Queue one layout action, and forget any review prepared before it. */
+  const queue = (action: StructureAction) => {
+    if (!document.data) return;
+    setDraft(previous => ({ sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: previous?.values ?? {}, actions: [...(previous?.actions ?? []), action] }));
+    setReview(null); setNotice(""); prepare.reset(); download.reset(); publish.reset();
+  };
+  const undoLayout = () => {
+    setDraft(previous => (previous ? { ...previous, actions: (previous.actions ?? []).slice(0, -1) } : previous));
+    setReview(null); setNotice(""); prepare.reset(); download.reset(); publish.reset();
+  };
   const visible = useMemo(() => document.data?.fields.filter(field => `${field.label} ${field.value} ${field.marker ?? ""}`.toLowerCase().includes(search.toLowerCase())) ?? [], [document.data, search]);
   const update = (field: SourceField, value: string) => {
     if (!document.data) return;
     setDraft(previous => {
       const next = { ...(previous?.values ?? {}) };
       if (value === field.value) delete next[field.id]; else next[field.id] = value;
-      return { sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: next };
+      return { sourceHash: previous?.sourceHash ?? document.data!.sourceHash, values: next, actions: previous?.actions ?? [] };
     });
     setReview(null); setNotice(""); prepare.reset(); download.reset(); publish.reset();
   };
@@ -143,17 +178,44 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
       {changes.length > 0 && <p className="mt-3 text-xs text-muted">{storageUnavailable ? "Browser storage is unavailable. Keep this page open until you download or publish your edits." : "Your draft is kept in this browser tab until published or discarded."}</p>}
       {stale && <div className="mt-4 rounded-xl border border-line bg-sunken p-3" role="alert"><p className="text-sm">This file changed since your draft began. Copy any text you want to keep, then discard the draft and edit the latest fields. Publishing is paused to protect the newer source.</p><details className="mt-3"><summary className="cursor-pointer text-sm">Your saved edits</summary>{changes.map(change => <div key={change.fieldId} className="mt-3"><p className="text-xs text-muted">{document.data?.fields.find(field => field.id === change.fieldId)?.label ?? "Previous source field"}</p><pre className="mt-1 whitespace-pre-wrap break-words text-sm">{change.value}</pre></div>)}</details></div>}
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button disabled={busy || stale || !changes.length} onClick={() => prepare.mutate()}>{prepare.isPending ? "Preparing…" : "Review changes"}</Button>
-        <Button variant="secondary" disabled={busy || stale || !changes.length} onClick={() => download.mutate()}>{download.isPending ? "Preparing file…" : "Download edited file"}</Button>
-        <Button variant="secondary" disabled={busy || !changes.length} onClick={() => { if (window.confirm("Discard this source draft? This cannot be undone.")) { setDraft(null); setReview(null); setNotice("Draft discarded."); prepare.reset(); download.reset(); publish.reset(); } }}>Discard draft</Button>
+        <Button disabled={busy || stale || (!changes.length && !actions.length)} onClick={() => prepare.mutate()}>{prepare.isPending ? "Preparing…" : "Review changes"}</Button>
+        <Button variant="secondary" disabled={busy || stale || (!changes.length && !actions.length)} onClick={() => download.mutate()}>{download.isPending ? "Preparing file…" : "Download edited file"}</Button>
+        <Button variant="secondary" disabled={busy || (!changes.length && !actions.length)} onClick={() => { if (window.confirm("Discard this source draft? This cannot be undone.")) { setDraft(null); setReview(null); setNotice("Draft discarded."); prepare.reset(); download.reset(); publish.reset(); } }}>Discard draft</Button>
       </div>
     </div>
     {review && <section className="rounded-2xl border border-blue/30 bg-white p-5" aria-label="Review source changes">
-      <h3 className="font-display text-lg">Review {review.changes.length} {review.changes.length === 1 ? "change" : "changes"}</h3>
+      <h3 className="font-display text-lg">Review {review.changes.length + (review.layout?.length ?? 0)} {review.changes.length + (review.layout?.length ?? 0) === 1 ? "change" : "changes"}</h3>
       <p className="mt-2 text-sm text-muted">Publishing commits to <strong>{review.repo}</strong>, branch <strong>{review.branch}</strong>. Your hosting service may automatically build and deploy that branch.</p>
+      {(review.layout?.length ?? 0) > 0 && <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm">{review.layout.map((step, index) => <li key={index}>{step}</li>)}</ol>}
       <div className="mt-4 divide-y divide-line">{review.changes.map(change => <div key={change.fieldId} className="py-4"><p className="mb-2 text-xs font-semibold text-muted">{change.label}</p><div className="grid gap-3 sm:grid-cols-2"><div><p className="text-xs text-muted">Before</p><p className="mt-1 whitespace-pre-wrap break-words text-sm">{change.before || "(empty)"}</p></div><div><p className="text-xs text-muted">After</p><p className="mt-1 whitespace-pre-wrap break-words text-sm">{change.after || "(empty)"}</p></div></div></div>)}</div>
       <div className="mt-4 flex flex-wrap gap-3"><Button disabled={busy || !canPublish} onClick={() => publish.mutate()}>{publish.isPending ? "Committing…" : "Publish reviewed source"}</Button><Button variant="secondary" disabled={busy} onClick={() => setReview(null)}>Keep editing</Button></div>
       {!canPublish && <p className="mt-3 text-sm text-muted">Your website role can edit source but cannot publish. Download the edited file to share it with a publisher.</p>}
+    </section>}
+    {document.data && document.data.structureAdapter && blocks.length > 0 && <section className="rounded-2xl border border-line bg-white p-5" aria-label="Page layout">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-display text-lg">Layout</h3>
+        {actions.length > 0 && <button className="text-sm text-blue hover:underline disabled:opacity-50" disabled={busy} onClick={undoLayout}>Undo last layout change</button>}
+      </div>
+      <p className="mt-2 text-sm text-muted">Move, copy or remove a block of this page. Blocks the page's own code places — a list, a condition — stay with the code, and say so.</p>
+      {actions.length > 0 && <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-muted">{layout.map((step, index) => <li key={index}>{step}</li>)}</ol>}
+      {preview.isFetching && <p role="status" className="mt-3 text-sm text-muted">Working out the new layout…</p>}
+      {(preview.data?.droppedChanges.length ?? 0) > 0 && <p role="alert" className="mt-3 text-sm text-danger-text">{preview.data!.droppedChanges.length} of your text edits are no longer in this file and will not be published. Discard the draft to work from the latest source.</p>}
+      <ul className="mt-4 space-y-1">{blocks.map(item => {
+        const movable = item.remove && !stale;
+        return <li key={item.id} className="flex flex-wrap items-center gap-2 rounded-lg px-2 py-1 hover:bg-sunken" style={{ marginLeft: `${Math.min(item.depth, 6) * 14}px` }}>
+          <span className="text-sm text-ink">{item.label}</span>
+          {item.marker && <span className="max-w-[40%] truncate text-xs text-muted" title={item.marker}>{item.marker}</span>}
+          {item.reason
+            ? <span className="text-xs text-muted">{item.reason}</span>
+            : <span className="ml-auto flex flex-wrap gap-1">
+              <button className="rounded px-2 py-1 text-xs text-blue hover:bg-white disabled:opacity-40" disabled={busy || !movable || !item.previousId} title={item.previousId ? "Move above the block before it" : "This is the first block here"} onClick={() => queue({ kind: "before", nodeId: item.id, targetId: item.previousId! })}>Move up</button>
+              <button className="rounded px-2 py-1 text-xs text-blue hover:bg-white disabled:opacity-40" disabled={busy || !movable || !item.nextId} title={item.nextId ? "Move below the block after it" : "This is the last block here"} onClick={() => queue({ kind: "after", nodeId: item.id, targetId: item.nextId! })}>Move down</button>
+              <button className="rounded px-2 py-1 text-xs text-blue hover:bg-white disabled:opacity-40" disabled={busy || !movable || !item.duplicate} title={item.duplicateReason ?? "Add a copy of this block below it"} onClick={() => queue({ kind: "duplicate", nodeId: item.id })}>Duplicate</button>
+              <button className="rounded px-2 py-1 text-xs text-danger-text hover:bg-white disabled:opacity-40" disabled={busy || !movable} onClick={() => { if (window.confirm(`Remove ${item.label} and everything inside it? You can undo this before publishing.`)) queue({ kind: "remove", nodeId: item.id }); }}>Remove</button>
+            </span>}
+        </li>;
+      })}</ul>
+      {actions.length > 0 && <p className="mt-3 text-xs text-muted">A block added by Duplicate has no editable words until this change is published, because its text does not exist in the file yet.</p>}
     </section>}
     {document.data && <>
       {document.data.issues.length > 0 && <details className="rounded-2xl border border-line bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">{document.data.issues.length} source compatibility {document.data.issues.length === 1 ? "note" : "notes"}</summary><ul className="mt-3 space-y-2 text-sm text-muted">{document.data.issues.map((issue, index) => <li key={index}>{issue.line ? `Line ${issue.line}: ` : ""}{issue.message}</li>)}</ul></details>}
