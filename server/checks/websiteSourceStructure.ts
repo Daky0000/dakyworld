@@ -34,10 +34,11 @@ assert.deepEqual(reviewed.layout, ["Moved <section>"]);
 assert.ok(reviewed.source.indexOf("Second") < reviewed.source.indexOf("First"));
 assert.deepEqual(discoverJsxFields(reviewed.source, filePath).issues, []); passed++;
 
-// A layout action and the words changed in the same pass: the field IDs belong
-// to the page as the actions left it, which is what the browser was shown.
-const afterMove = discoverJsxFields(reviewed.source, filePath);
-const combined = { ...moveLast, changes: [{ fieldId: afterMove.fields.find(field => field.value === "First")!.id, value: "Third" }] };
+// A layout action and the words changed in the same pass. The field IDs belong
+// to the file the browser read, not to the rearranged one: removing a block
+// renumbers its neighbour into its ID, so values are written before anything
+// moves and an edit can never land on the block that took the other's place.
+const combined = { ...moveLast, changes: [{ fieldId: discoverJsxFields(source, filePath).fields.find(field => field.value === "First")!.id, value: "Third" }] };
 const both = reviewWebsiteSource(source, combined);
 assert.deepEqual(both.layout, ["Moved <section>"]);
 assert.equal(both.changes.length, 1);
@@ -145,5 +146,47 @@ try {
   const refusedLayout = await post("review", { filePath: markdownPath, sourceHash: jsxSourceHash(current), structure: [{ kind: "remove", nodeId: "tplnode_x" }] });
   assert.equal(refusedLayout.status, 409);
   assert.match((await refusedLayout.json() as { error: string }).error, /cannot be rearranged from the editor yet/); passed++;
+  // The browser asks what the file looks like with its queued actions applied,
+  // because after one its own list of IDs describes a file that is gone.
+  current = source; editing = filePath;
+  const writesBeforePreview = writes;
+  const untouched = await post("preview", { filePath, sourceHash });
+  assert.equal(untouched.status, 200);
+  const plain = await untouched.json() as { blocks: { tag: string }[]; fields: { value: string }[]; layout: string[] };
+  assert.deepEqual(plain.layout, []);
+  assert.deepEqual(plain.blocks.map(item => item.tag), ["main", "section", "h2", "section", "h2"]);
+  assert.equal(writes, writesBeforePreview); passed++;
+
+  const secondText = discoverJsxFields(source, filePath).fields.find(field => field.value === "Second")!.id;
+  const afterRemove = await post("preview", { filePath, sourceHash, structure: [{ kind: "remove", nodeId: block("section", 0).id }], changes: [{ fieldId: secondText, value: "Kept" }] });
+  const previewed = await afterRemove.json() as { blocks: { tag: string }[]; fields: { value: string }[]; layout: string[]; droppedChanges: string[]; sourceHash: string };
+  assert.deepEqual(previewed.layout, ["Removed <section>"]);
+  // Blocks describe the rearranged file, because that is what the next action
+  // acts on; fields describe the file itself, because that is what the values
+  // are written against.
+  assert.deepEqual(previewed.blocks.map(item => item.tag), ["main", "section", "h2"]);
+  assert.deepEqual(previewed.fields.map(item => item.value), ["First", "Second"]);
+  assert.deepEqual(previewed.droppedChanges, []);
+  // The hash returned is the file's own, so the next action still refers to it.
+  assert.equal(previewed.sourceHash, sourceHash); passed++;
+
+  // The defect this ordering exists to prevent: removing the first section
+  // renumbers the second into its ID, so an edit prepared for the surviving
+  // block must still reach that block and not the one that took its place.
+  const keepSecond = await post("review", { filePath, sourceHash, structure: [{ kind: "remove", nodeId: block("section", 0).id }], changes: [{ fieldId: secondText, value: "Kept" }] });
+  assert.equal(keepSecond.status, 200);
+  const keptReview = await keepSecond.json() as { changes: { before: string; after: string }[]; layout: string[] };
+  assert.deepEqual(keptReview.changes.map(change => [change.before, change.after]), [["Second", "Kept"]]);
+  assert.deepEqual(keptReview.layout, ["Removed <section>"]); passed++;
+  const keptFile = await (await post("export", { filePath, sourceHash, structure: [{ kind: "remove", nodeId: block("section", 0).id }], changes: [{ fieldId: secondText, value: "Kept" }] })).text();
+  assert.ok(keptFile.includes("Kept") && !keptFile.includes("First") && !keptFile.includes("Second")); passed++;
+
+  // A field a developer has since taken out of the file is named rather than
+  // failing the whole review.
+  const orphaned = await post("preview", { filePath, sourceHash, changes: [{ fieldId: "jsx_gone", value: "Gone" }] });
+  assert.deepEqual((await orphaned.json() as { droppedChanges: string[] }).droppedChanges, ["jsx_gone"]); passed++;
+
+  assert.equal((await post("preview", { filePath, sourceHash: "0".repeat(64) })).status, 409);
+  assert.equal(writes, writesBeforePreview); passed++;
   console.log(`websiteSourceStructure: ${passed} layout review, binding and publish checks passed`);
 } finally { await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve())); }

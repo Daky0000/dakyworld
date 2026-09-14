@@ -84,25 +84,36 @@ export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) 
   // the bytes the field edits are then measured against: by the time the values
   // are applied, the hash they were prepared for is no longer the file's.
   if (base.sourceHash !== input.sourceHash) throw new WebsiteError(409, "The source file changed after these edits were prepared. Reload it and review the edits again.");
-  let restructured = source;
+  /**
+   * Words first, then layout — and the order is the whole safety argument.
+   *
+   * A field ID is derived from where its element sits, so removing the first of
+   * two sections renumbers the second into the first one's ID. Writing the
+   * values afterwards would hand an edit prepared for the block that went away
+   * to the block that took its place, silently and with a green review. Applied
+   * against the file the browser actually read, every ID means what it meant
+   * when somebody typed into it, and the layout actions then move finished text.
+   *
+   * The cost is that a block created by a duplicate in this same pass has no
+   * fields to edit until it has been published once. That is a smaller thing to
+   * explain than an edit that lands on the wrong heading.
+   */
+  const applied = adapter.apply(source, { filePath: input.filePath, sourceHash: base.sourceHash, changes: input.changes });
+  if (applied.problems.length) throw new WebsiteError(applied.problems.some(problem => problem.code === "stale") ? 409 : 400, applied.problems.map(problem => problem.message).join(" "));
+  let output = applied.source;
   let layout: string[] = [];
   if (input.structure.length) {
     if (!adapter.replay) throw new WebsiteError(409, "Blocks in this kind of file cannot be rearranged from the editor yet.");
-    try { const replayed = adapter.replay(source, input.filePath, input.structure); restructured = replayed.source; layout = replayed.summary; }
+    try { const replayed = adapter.replay(output, input.filePath, input.structure); output = replayed.source; layout = replayed.summary; }
     catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
   }
-  // Field IDs belong to the page as the layout actions left it, which is the
-  // state the browser was shown when it prepared these values.
-  const discovery = layout.length ? adapter.discover(restructured, input.filePath) : base;
-  const applied = adapter.apply(restructured, { filePath: input.filePath, sourceHash: discovery.sourceHash, changes: input.changes });
-  if (applied.problems.length) throw new WebsiteError(applied.problems.some(problem => problem.code === "stale") ? 409 : 400, applied.problems.map(problem => problem.message).join(" "));
   if (!applied.changed.length && !layout.length) throw new WebsiteError(400, "There are no changed values to review.");
   const wanted = new Map(input.changes.map(change => [change.fieldId, change.value]));
-  const changes = discovery.fields.filter(field => applied.changed.includes(field.id)).map(field => ({ fieldId: field.id, label: field.label, kind: field.kind, before: field.value, after: wanted.get(field.id)! }));
+  const changes = base.fields.filter(field => applied.changed.includes(field.id)).map(field => ({ fieldId: field.id, label: field.label, kind: field.kind, before: field.value, after: wanted.get(field.id)! }));
   // Binds the reviewed output to the exact input file and source bytes, layout
   // actions included. No offsets or markup supplied by a browser are trusted.
-  const reviewHash = digest(JSON.stringify([discovery.adapter, adapter.structureAdapter ?? null, input.filePath, base.sourceHash, applied.source]));
-  return { source: applied.source, sourceHash: base.sourceHash, reviewHash, changes, layout };
+  const reviewHash = digest(JSON.stringify([base.adapter, adapter.structureAdapter ?? null, input.filePath, base.sourceHash, output]));
+  return { source: output, sourceHash: base.sourceHash, reviewHash, changes, layout };
 }
 
 type Access = { loadSite(req: Request, id: string): Promise<Site> };
@@ -207,6 +218,48 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     const blocks = blocksOf(adapter, current.content, current.path.relative);
     res.setHeader("Cache-Control", "no-store");
     res.json({ adapter: discovery.adapter, structureAdapter: adapter.structureAdapter ?? null, filePath: discovery.filePath, sourceHash: discovery.sourceHash, issues: discovery.issues, fields: discovery.fields.map(({ reference: _reference, ...field }) => field), blocks, repo: current.repo, branch: current.site.repoBranch });
+  }));
+  /**
+   * The file as the queued layout actions leave it, before anything is written.
+   *
+   * A layout action moves the bytes every field ID is derived from, so after one
+   * the browser's list of fields and blocks describes a file that no longer
+   * exists. It could not recompute them itself without holding the source and
+   * the parser, which is the thing this design refuses to let it do — so it asks
+   * here instead, and gets back the identities for the state it is showing.
+   *
+   * The fields it returns are the file's own, not the rearranged file's, because
+   * that is the state the values are written against — see `reviewWebsiteSource`
+   * for why the order is words first. The blocks are the rearranged file's, since
+   * that is what the next layout action will act on.
+   *
+   * `droppedChanges` is the honest half: an edit whose field is no longer in the
+   * file — because a developer changed it underneath — is named here rather than
+   * failing a whole review later with "this field is absent".
+   */
+  router.post("/sites/:siteId/source/preview", handler(async (req, res) => {
+    const input = changeObject.parse(req.body);
+    const current = await source(req, input.filePath);
+    const adapter = sourceAdapterFor(current.path.relative);
+    const base = adapter.discover(current.content, current.path.relative);
+    if (base.sourceHash !== input.sourceHash) throw new WebsiteError(409, "The source file changed after these edits were prepared. Reload it and review the edits again.");
+    let content = current.content;
+    let layout: string[] = [];
+    if (input.structure.length) {
+      if (!adapter.replay) throw new WebsiteError(409, "Blocks in this kind of file cannot be rearranged from the editor yet.");
+      try { const replayed = adapter.replay(content, current.path.relative, input.structure); content = replayed.source; layout = replayed.summary; }
+      catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
+    }
+    const present = new Set(base.fields.map(field => field.id));
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      adapter: base.adapter, structureAdapter: adapter.structureAdapter ?? null, filePath: current.path.relative,
+      sourceHash: base.sourceHash, issues: base.issues, layout,
+      fields: base.fields.map(({ reference: _reference, ...field }) => field),
+      blocks: blocksOf(adapter, content, current.path.relative),
+      droppedChanges: input.changes.filter(change => !present.has(change.fieldId)).map(change => change.fieldId),
+      repo: current.repo, branch: current.site.repoBranch,
+    });
   }));
   router.post("/sites/:siteId/source/review", handler(async (req, res) => {
     const input = changeInput.parse(req.body);
