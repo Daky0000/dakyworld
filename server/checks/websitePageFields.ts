@@ -67,6 +67,9 @@ const html = [
 const read = async (path: string) => project[path] ?? null;
 const manifest = await buildSourceManifest({ entry: "app/page.tsx", files: Object.keys(project), read });
 const discovery = await discoverPageFields({ manifest, read });
+const limitedDiscovery = await discoverPageFields({ manifest: { ...manifest, truncated: true }, read });
+assert.deepEqual(limitedDiscovery.fields, discovery.fields, "an import boundary does not discard already resolved component fields"); passed++;
+assert.equal(limitedDiscovery.truncated, true, "the incomplete graph remains reported"); passed++;
 
 assert.ok(discovery.fields.length > 0, "the page has editable fields at all"); passed++;
 const filesWithFields = new Set(discovery.fields.map((field) => field.filePath));

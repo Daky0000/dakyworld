@@ -124,7 +124,9 @@ export async function discoverPageFields(input: { manifest: SourceManifest; read
       if (fields.length >= MAX_PAGE_FIELDS) { truncated = true; break; }
       fields.push({ ...field, filePath: file.path, role: file.role, shared });
     }
-    if (truncated) break;
+    // A boundary elsewhere in the import graph must not discard files that
+    // the manifest already resolved. Only the field budget stops discovery.
+    if (fields.length >= MAX_PAGE_FIELDS) break;
   }
 
   return {
