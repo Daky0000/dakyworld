@@ -575,7 +575,7 @@ export async function publishPage(input: {
  * that is not there. A second publish path with its own half of this list would
  * be the same defect again, one branch along.
  */
-function githubFailure(err: unknown, repo: string, branch: string): unknown {
+export function githubFailure(err: unknown, repo: string, branch: string): unknown {
   if (err instanceof GitHubNotConfiguredError) {
     return new WebsiteError(503, "Publishing needs a GitHub token with permission to write to the website's repository. Add one under Settings → Developer.");
   }

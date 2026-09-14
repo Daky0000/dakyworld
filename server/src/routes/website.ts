@@ -6,6 +6,8 @@ import { withWebsitePublishLock } from "../services/websitePublishing.js";
 import { registerWebsiteAssistant } from "../services/websiteAssistant.js";
 import { registerWebsiteSource } from "../services/websiteSource.js";
 import { registerWebsiteFrameworkView, sourceManagedFields } from "../services/websiteFrameworkView.js";
+import { publishFrameworkPage } from "../services/websiteFrameworkPublish.js";
+import { hasSourceManifest } from "../services/websitePageManifest.js";
 import { embedWebsiteAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
 import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../services/websiteShared.js";
@@ -783,8 +785,17 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
           // literals in it — never the rendered page, which is output and would
           // be overwritten by the next build anyway. Anything the edit cannot be
           // traced back to refuses the whole publish rather than landing a
-          // partial one; see `applyHtmlEditsAsJsx`.
-          ? await publishSourcePage({ site, page, values, html: source.html, author, changed: plan.changed.length })
+          // partial one.
+          //
+          // Which of the two paths depends on how many files the page is made
+          // of. A JSX-family page goes through the whole-page publish, because
+          // its heading is in a component and its cards are in a data module and
+          // all of them have to land in one commit. An `.astro` or `.vue` page
+          // has no import graph this editor can walk, so it keeps the
+          // single-file path it has always had.
+          ? hasSourceManifest(page.filePath)
+            ? await publishFrameworkPage({ site, page, values, html: source.html, author, changed: plan.changed.length })
+            : await publishSourcePage({ site, page, values, html: source.html, author, changed: plan.changed.length })
           : await publishPage({
               site,
               page,

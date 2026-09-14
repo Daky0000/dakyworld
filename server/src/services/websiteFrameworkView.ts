@@ -134,6 +134,17 @@ export function matchSourceToLive(input: { source: string; filePath: string; liv
  * told now and being told at the publish, when they have already done the work.
  */
 export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string> } | null> {
+  // The editor and the publish have to agree about what is writable, and they
+  // agree by asking the same question of the same files. When this read one file
+  // and the publish read the whole manifest, every heading in a component was
+  // shown locked to the person editing it and would have been written happily
+  // by the publish they were not allowed to reach.
+  if (hasSourceManifest(page.filePath)) {
+    const context = await pageManifest(site, page).catch(() => null);
+    if (!context) return { writable: new Set() };
+    const wide = matchManifestToLive({ discovery: context.discovery, liveHtml: html });
+    return { writable: new Set(wide.mapping.map((entry) => entry.htmlFieldId)) };
+  }
   const source = await pageFile(site, page).catch(() => null);
   if (source === null) return { writable: new Set() };
   const view = matchSourceToLive({ source, filePath: page.filePath, liveHtml: html });
