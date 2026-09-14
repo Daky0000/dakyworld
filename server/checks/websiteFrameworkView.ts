@@ -146,6 +146,15 @@ try {
   assert.ok(marks.length >= 3); passed++;
   assert.deepEqual(marks.filter((id) => !mapped.has(id)), []); passed++;
 
+  // Typing on the page is switched on for the matched elements, which is what
+  // makes this the builder rather than a form beside a screenshot. The words
+  // come back here and become an edit to the literal they came from.
+  assert.match(body, /contenteditable|startEdit/); passed++;
+  assert.ok(body.includes('post({ type: "text"')); passed++;
+  // And still only where something can receive them: an element with no marker
+  // cannot be typed into, so the code-built paragraph stays read-only.
+  assert.ok(!/data-dw-field="[^"]*"[^>]*>\s*Built by the code/.test(body)); passed++;
+
   // An HTML page belongs to the visual editor and says so rather than opening
   // an editor that would show its markup as text.
   const wrongEditor = await fetch(`${origin}/pages/page-2/framework`);

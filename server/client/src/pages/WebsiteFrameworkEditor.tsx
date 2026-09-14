@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, apiUrl } from "../lib/api";
@@ -44,6 +44,8 @@ export function WebsiteFrameworkEditor() {
   const [selected, setSelected] = useState<string | null>(null);
   const [frameToken, setFrameToken] = useState(0);
   const [publishedAt, setPublishedAt] = useState<Date | null>(null);
+  const [typedOnPage, setTypedOnPage] = useState<{ fieldId: string; value: string; token: number } | null>(null);
+  const frame = useRef<HTMLIFrameElement | null>(null);
   const view = useQuery({ queryKey: ["website", "framework", pageId], queryFn: () => api.get<FrameworkPage>(`/website/pages/${encodeURIComponent(pageId)}/framework`), refetchOnWindowFocus: false });
   const access = useWebsiteAccess(view.data?.site.id ?? "");
 
@@ -62,16 +64,44 @@ export function WebsiteFrameworkEditor() {
     }
     return map;
   }, [view.data]);
+  // The reverse: which element on the page a given source field is showing as.
+  const toElement = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of view.data?.mapping ?? []) if (!map.has(entry.sourceFieldId)) map.set(entry.sourceFieldId, entry.htmlFieldId);
+    return map;
+  }, [view.data]);
+
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
-      const data = event.data as { source?: string; type?: string; id?: string | null };
-      if (data?.source !== "dakyworld-preview" || data.type !== "select") return;
-      setSelected(data.id ? bySource.get(data.id) ?? null : null);
+      const data = event.data as { source?: string; type?: string; id?: string | null; html?: string };
+      if (data?.source !== "dakyworld-preview") return;
+      if (data.type === "select") { setSelected(data.id ? bySource.get(data.id) ?? null : null); return; }
+      if (data.type === "text" && data.id) {
+        const fieldId = bySource.get(data.id);
+        if (!fieldId) return;
+        // The frame sends markup, because on an HTML page a heading may contain
+        // a <strong>. A literal in a source file is plain text, so this takes the
+        // words and leaves the tags: anything richer than that is a change to the
+        // code, and pretending otherwise would commit markup into a JSX string.
+        const holder = window.document.createElement("div");
+        holder.innerHTML = data.html ?? "";
+        const text = (holder.textContent ?? "").replace(/ /g, " ");
+        setSelected(fieldId);
+        setTypedOnPage(previous => ({ fieldId, value: text, token: (previous?.token ?? 0) + 1 }));
+      }
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [bySource]);
+
+  // A field taking the caret in the panel outlines its element on the page, so
+  // the two halves of the screen are never describing different things.
+  const showOnPage = (fieldId: string) => {
+    const elementId = toElement.get(fieldId);
+    if (!elementId) return;
+    frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", type: "select", id: elementId }, window.location.origin);
+  };
 
   if (view.isLoading) return <p role="status" className="text-sm text-muted">Opening this page…</p>;
   if (view.error) {
@@ -106,12 +136,13 @@ export function WebsiteFrameworkEditor() {
         {data.live.available ? <>
           <iframe
             key={frameToken}
+            ref={frame}
             title={`${data.page.title} as it is published`}
             className="h-[70vh] w-full rounded-xl border border-line bg-white"
             src={apiUrl(`/website/pages/${encodeURIComponent(pageId)}/framework/preview?v=${frameToken}`)}
           />
           <p className="px-2 py-2 text-xs text-muted">
-            This is the published page. {shown} of {data.fields.length} {data.fields.length === 1 ? "field" : "fields"} could be matched to something on it — click one to jump to it. The rest of the page is built by code and is not editable here.
+            This is the published page. {shown} of {data.fields.length} {data.fields.length === 1 ? "field" : "fields"} could be matched to something on it: click one to jump to its box, or double click to type on the page itself. The rest of the page — its layout, its styling and anything built by code — stays with the code.
           </p>
         </> : <div className="p-5">
           <h2 className="font-display text-lg">No published page to show yet</h2>
@@ -128,6 +159,8 @@ export function WebsiteFrameworkEditor() {
               filePath={data.page.filePath}
               canPublish={access.data?.capabilities.publish === true}
               focusFieldId={selected}
+              typedOnPage={typedOnPage}
+              onFieldFocus={showOnPage}
               onPublished={() => { setPublishedAt(new Date()); setFrameToken(token => token + 1); }}
             />}
       </section>

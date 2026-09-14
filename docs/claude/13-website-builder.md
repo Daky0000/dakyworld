@@ -460,5 +460,29 @@ the right.
   instead of an empty frame. Its fields still edit and publish.
 - **The preview embeds no uploaded assets** — unlike the HTML editor's, which
   shows an unpublished draft. This shows what the public is already served.
+- **Typing on the page works**, for the matched elements only: the preview's
+  own picker is switched on, the words come back as a `text` message, the tags
+  are stripped (a literal in a source file is plain text), and it becomes an
+  ordinary edit to that field. The frame is never the record of anything.
+- **Selection is two-way.** A field taking the caret outlines its element.
+
+### What a framework page cannot have, and why
+
+The HTML editor can do more because it owns the file: what it shows *is* the
+bytes it writes. On a framework page the file is not the page, so the parts of
+the builder that edit markup have nothing to write into:
+
+- **styling** — the editor writes an inline `style` onto an element. The
+  rendered `<div>` came from a component; unless the class list is a literal in
+  this file, there is no byte to change;
+- **structure — adding, moving or deleting sections** — those splice nodes. In
+  JSX the "section" may be a `<Features items={…} />` or a `.map()`, and moving
+  the rendered node means editing code;
+- **shared elements and layers**, for the same reason;
+- **anything not traceable to a unique literal** — text from a CMS, a computed
+  string, a value that appears twice.
+
+That list is the honest boundary rather than a backlog. Text, links, image
+sources and alt text are what a literal can be, and those are what is offered.
 - One element can carry two fields (a link's words and its destination); the
   click prefers the words.

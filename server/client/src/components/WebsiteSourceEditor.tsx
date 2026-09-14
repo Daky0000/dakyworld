@@ -35,8 +35,13 @@ function readDraft(key: string): StoredDraft | null {
  * `focusFieldId` is how a click on the page reaches the right box — the caller
  * changes it, and the field scrolls into view and takes the caret. `onPublished`
  * lets that caller refresh its frame once a commit has landed.
+ *
+ * `typedOnPage` is the other direction: somebody typing on the live page in the
+ * frame, whose words arrive here and become an ordinary edit to that field. The
+ * token is what makes a repeat of the same value still count, because typing the
+ * old text back is a real edit.
  */
-export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, onPublished }: { siteId: string; filePath: string; canPublish: boolean; focusFieldId?: string | null; onPublished?: () => void }) {
+export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, typedOnPage, onFieldFocus, onPublished }: { siteId: string; filePath: string; canPublish: boolean; focusFieldId?: string | null; typedOnPage?: { fieldId: string; value: string; token: number } | null; onFieldFocus?: (fieldId: string) => void; onPublished?: () => void }) {
   const qc = useQueryClient();
   const { user } = useAuth();
   const storageKey = `website-source-draft:${user?.id}:${siteId}:${filePath}`;
@@ -63,6 +68,7 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, o
     input?.focus();
   }, [focusFieldId]);
   const values = draft?.values ?? {};
+  const typedToken = useRef(0);
   const changes: Change[] = Object.entries(values).map(([fieldId, value]) => ({ fieldId, value }));
   const input = { filePath, sourceHash: draft?.sourceHash ?? document.data?.sourceHash ?? "", changes };
   const stale = Boolean(draft && document.data && draft.sourceHash !== document.data.sourceHash);
@@ -112,6 +118,19 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, o
     });
     setReview(null); setNotice(""); prepare.reset(); download.reset(); publish.reset();
   };
+  // Words typed on the page itself. Applied here rather than in the frame,
+  // because what is being changed is the literal in the file — the frame is
+  // showing what the host built from it, and cannot be the record of anything.
+  useEffect(() => {
+    if (!typedOnPage || typedOnPage.token === typedToken.current) return;
+    typedToken.current = typedOnPage.token;
+    const field = document.data?.fields.find(candidate => candidate.id === typedOnPage.fieldId);
+    if (field) update(field, typedOnPage.value);
+    // `update` is recreated each render and closes over the current draft; the
+    // token guard is what keeps this from applying the same words twice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typedOnPage, document.data]);
+
   return <section className="min-w-0 space-y-4" aria-label={`Edit ${filePath}`}>
     <div className="rounded-2xl border border-line bg-white p-5">
       <h2 className="break-all font-display text-lg">{filePath}</h2>
@@ -140,7 +159,7 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, o
       {document.data.issues.length > 0 && <details className="rounded-2xl border border-line bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">{document.data.issues.length} source compatibility {document.data.issues.length === 1 ? "note" : "notes"}</summary><ul className="mt-3 space-y-2 text-sm text-muted">{document.data.issues.map((issue, index) => <li key={index}>{issue.line ? `Line ${issue.line}: ` : ""}{issue.message}</li>)}</ul></details>}
       {!document.data.fields.length ? <p className="rounded-2xl border border-line bg-white p-5 text-sm text-muted">This file has no supported static fields. Dynamic values, custom component props, styles and layout need a source adapter for that component or a code change.</p> : <>
         <label className="block text-xs text-muted">Find content<input className={`${fieldClass} mt-1`} placeholder="Search text, element or marker" value={search} onChange={event => setSearch(event.target.value)} /></label>
-        <div className="grid gap-4 xl:grid-cols-2">{visible.map(field => <label key={field.id} ref={element => { fieldRefs.current[field.id] = element; }} className={`block rounded-2xl border bg-white p-4 ${field.id === focusFieldId ? "border-blue ring-1 ring-blue" : "border-line"}`}><span className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-muted">{field.label}</span>{field.marker && <span className="max-w-[60%] truncate text-xs text-muted" title={field.marker}>{field.marker}</span>}</span>{field.kind === "src" && (images.data?.length ?? 0) > 0 && <select aria-label={`Choose an uploaded image for ${field.label}`} className={`${fieldClass} mt-2`} disabled={busy || stale} value="" onChange={event => { if (event.target.value) update(field, event.target.value); }}><option value="">Choose an uploaded image…</option>{images.data!.map(image => <option key={image.id} value={image.url}>{image.filename}</option>)}</select>}{field.kind === "text" ? <textarea aria-label={field.label} className={`${fieldClass} mt-2 min-h-24 resize-y`} rows={3} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} /> : <input aria-label={field.label} type="text" className={`${fieldClass} mt-2`} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} />}{field.id in values && <span className="mt-2 block text-xs text-blue">Changed</span>}</label>)}</div>
+        <div className="grid gap-4 xl:grid-cols-2">{visible.map(field => <label key={field.id} ref={element => { fieldRefs.current[field.id] = element; }} className={`block rounded-2xl border bg-white p-4 ${field.id === focusFieldId ? "border-blue ring-1 ring-blue" : "border-line"}`}><span className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-muted">{field.label}</span>{field.marker && <span className="max-w-[60%] truncate text-xs text-muted" title={field.marker}>{field.marker}</span>}</span>{field.kind === "src" && (images.data?.length ?? 0) > 0 && <select aria-label={`Choose an uploaded image for ${field.label}`} className={`${fieldClass} mt-2`} disabled={busy || stale} value="" onChange={event => { if (event.target.value) update(field, event.target.value); }}><option value="">Choose an uploaded image…</option>{images.data!.map(image => <option key={image.id} value={image.url}>{image.filename}</option>)}</select>}{field.kind === "text" ? <textarea aria-label={field.label} onFocus={() => onFieldFocus?.(field.id)} className={`${fieldClass} mt-2 min-h-24 resize-y`} rows={3} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} /> : <input aria-label={field.label} type="text" onFocus={() => onFieldFocus?.(field.id)} className={`${fieldClass} mt-2`} maxLength={100_000} disabled={busy || stale} value={values[field.id] ?? field.value} onChange={event => update(field, event.target.value)} />}{field.id in values && <span className="mt-2 block text-xs text-blue">Changed</span>}</label>)}</div>
         {!visible.length && <p className="text-sm text-muted">No fields match your search.</p>}
       </>}
     </>}

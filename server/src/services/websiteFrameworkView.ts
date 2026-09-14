@@ -141,9 +141,11 @@ export function registerWebsiteFrameworkView(router: Router, access: Access, ove
     // rest of the page is shown exactly as the visitor sees it and cannot be
     // clicked, because there is nothing here that could edit it.
     const editable = view.htmlFields.filter((field) => matched.has(field.id));
-    // `allowEditing` false: typing happens in the panel, where the value being
-    // changed is the literal in the source file rather than the rendered text.
-    const document = buildPreview(published.html, pageUrl(site, page), editable, false);
+    // Typing on the page is allowed for exactly the elements that were matched,
+    // and nothing else has a marker to type into. What the browser sends back is
+    // words, and they become an edit to the literal those words came from — the
+    // frame is never the record of anything, the file is.
+    const document = buildPreview(published.html, pageUrl(site, page), editable, true);
     res
       .type("html")
       .set("Cache-Control", "no-store")
