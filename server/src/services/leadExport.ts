@@ -188,3 +188,52 @@ export async function renderLeadsPdf(groups: ExportGroup[], title: string, subti
   doc.end();
   return done;
 }
+
+// --- CSV -------------------------------------------------------------------
+
+/** RFC 4180: quote anything containing a comma, quote, or newline; double inner quotes. */
+function csvCell(text: string): string {
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/**
+ * The plainest export there is: one flat table, for anything that wants to
+ * read the leads rather than look at them.
+ *
+ * CSV has no sheets, so grouped exports can't keep a batch per tab the way the
+ * workbook does. Instead every group's columns are unioned into one header and
+ * a leading `Batch` column says which batch a row came from — a row keeps its
+ * own values and leaves the columns it never had empty. With a single group
+ * (or none) the batch column is dropped and the output is exactly the table.
+ *
+ * Excel on a Windows machine reads UTF-8 only when the file starts with a BOM,
+ * so the buffer carries one; without it, accented business names arrive mangled.
+ */
+export function renderLeadsCsv(groups: ExportGroup[]): Buffer {
+  const multi = groups.length > 1;
+
+  // Union the columns in the order the groups declare them, first one wins.
+  const columns: ResolvedField[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const field of group.fields) {
+      if (seen.has(field.key)) continue;
+      seen.add(field.key);
+      columns.push(field);
+    }
+  }
+
+  const header = [...(multi ? ["Batch"] : []), ...columns.map((field) => field.label)];
+  const lines = [header.map(csvCell).join(",")];
+
+  for (const group of groups) {
+    const has = new Set(group.fields.map((field) => field.key));
+    for (const lead of group.leads) {
+      const cells = columns.map((field) => (has.has(field.key) ? textValue(valueOf(lead, field)) : ""));
+      lines.push([...(multi ? [group.name] : []), ...cells].map(csvCell).join(","));
+    }
+  }
+
+  // CRLF, because that is what RFC 4180 and every spreadsheet expect.
+  return Buffer.from(`﻿${lines.join("\r\n")}\r\n`, "utf8");
+}

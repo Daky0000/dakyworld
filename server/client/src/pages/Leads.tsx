@@ -879,6 +879,13 @@ function ExportMenu({ query, count }: { query: string; count: number }) {
         Excel
       </a>
       <a
+        href={href("csv")}
+        title={`Export ${count} lead${count === 1 ? "" : "s"} to a plain CSV file`}
+        className="rounded-full inline-flex items-center gap-2 border border-line-strong px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition hover:border-ink"
+      >
+        CSV
+      </a>
+      <a
         href={href("pdf")}
         title={`Export ${count} lead${count === 1 ? "" : "s"} to a printable PDF`}
         className="rounded-full inline-flex items-center gap-2 border border-line-strong px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition hover:border-ink"

@@ -13,7 +13,7 @@ import {
   resolveFields,
   slugifyKey,
 } from "../services/leadFields.js";
-import { renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
+import { renderLeadsCsv, renderLeadsPdf, renderLeadsXlsx, type ExportGroup } from "../services/leadExport.js";
 import { TAG_COLOURS, deleteTag, listTags, normaliseTags, registerTags, retagLeads, tagSlug } from "../services/leadTags.js";
 import { BulkCountChanged, countTarget, deleteLeads, targetIds, updateLeads } from "../services/leadBulk.js";
 import { STALE_AFTER_DAYS, caseStrength, isStale, latestAuditReport, prepareLead, prepareLeads, storedPrep } from "../services/leadPrep.js";
@@ -658,7 +658,7 @@ leadsRouter.delete("/tags/:id", async (req, res, next) => {
 });
 
 /**
- * GET /api/leads/export?format=xlsx|pdf — the current view, as a file.
+ * GET /api/leads/export?format=xlsx|csv|pdf — the current view, as a file.
  *
  * Takes exactly the same query string as the table, so what downloads is what
  * you were looking at. Grouped by batch, each batch keeps its own columns —
@@ -668,8 +668,8 @@ leadsRouter.delete("/tags/:id", async (req, res, next) => {
 leadsRouter.get("/export", async (req, res, next) => {
   try {
     const format = String(req.query.format ?? "xlsx").toLowerCase();
-    if (format !== "xlsx" && format !== "pdf") {
-      return res.status(400).json({ error: "format must be xlsx or pdf" });
+    if (format !== "xlsx" && format !== "csv" && format !== "pdf") {
+      return res.status(400).json({ error: "format must be xlsx, csv or pdf" });
     }
 
     const where = await leadWhere(req.query as Record<string, unknown>);
@@ -693,20 +693,25 @@ leadsRouter.get("/export", async (req, res, next) => {
     }
 
     const stamp = new Date().toISOString().slice(0, 10);
-    const filename = `dakyworld-leads-${stamp}.${format === "pdf" ? "pdf" : "xlsx"}`;
+    const filename = `dakyworld-leads-${stamp}.${format}`;
     const subtitle = `${leads.length} lead${leads.length === 1 ? "" : "s"} · exported ${stamp}${
       leads.length === EXPORT_LIMIT ? ` · capped at ${EXPORT_LIMIT}` : ""
     }`;
 
+    const TYPES: Record<string, string> = {
+      pdf: "application/pdf",
+      csv: "text/csv; charset=utf-8",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    };
+
     const file =
       format === "pdf"
         ? await renderLeadsPdf(groups, "Lead export", subtitle)
-        : await renderLeadsXlsx(groups, "Leads");
+        : format === "csv"
+          ? renderLeadsCsv(groups)
+          : await renderLeadsXlsx(groups, "Leads");
 
-    res.setHeader(
-      "Content-Type",
-      format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
+    res.setHeader("Content-Type", TYPES[format]);
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(file);
   } catch (err) {
