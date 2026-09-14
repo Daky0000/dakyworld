@@ -4,7 +4,7 @@ import type { Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { commitFiles, listTree, readFile } from "../lib/github.js";
-import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, markdownStructureNodes, replayMarkdownStructure, MARKDOWN_STRUCTURE_VERSION, templateStructureNodes, replayTemplateStructure, TEMPLATE_STRUCTURE_VERSION, jsxStructureNodes, replayJsxStructure, JsxStructureError, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
+import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFields, discoverMarkdownFields, discoverTemplateFields, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath, isMarkdownPath, isTemplatePath, markdownStructureNodes, replayMarkdownStructure, MARKDOWN_STRUCTURE_VERSION, templateStructureNodes, replayTemplateStructure, TEMPLATE_STRUCTURE_VERSION, jsxStructureNodes, replayJsxStructure, JsxStructureError, applySourceStyles, sourceStyleState, SOURCE_STYLE_VERSION, type SourceStyleEdit, type SourceStyleState, JSX_STRUCTURE_VERSION, type JsxStructureAction, type JsxStructureNode } from "./website/index.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
 import { invalidateRender, publicFolder } from "./website/index.js";
 import { invalidateSource } from "./website/sourceCache.js";
@@ -25,13 +25,14 @@ const changeObject = z.object({
   filePath: z.string().min(1).max(500),
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
   structure: z.array(structureAction).max(100).default([]),
+  styles: z.array(z.object({ nodeId: z.string().min(1).max(120), style: z.string().max(4_000) }).strict()).max(200).default([]),
   changes: z.array(z.object({ fieldId: z.string().min(1).max(120), value: z.string().max(100_000) }).strict()).max(500).default([]),
 }).strict();
-const atLeastOne = (input: { structure: unknown[]; changes: unknown[] }) => input.structure.length + input.changes.length > 0;
-const ONE_EDIT = { message: "Submit at least one layout action or field change." };
+const atLeastOne = (input: { structure: unknown[]; changes: unknown[]; styles: unknown[] }) => input.structure.length + input.changes.length + input.styles.length > 0;
+const ONE_EDIT = { message: "Submit at least one layout action, style or field change." };
 const changeInput = changeObject.refine(atLeastOne, ONE_EDIT);
 const publishInput = changeObject.extend({ reviewHash: z.string().regex(/^[a-f0-9]{64}$/) }).refine(atLeastOne, ONE_EDIT);
-export type WebsiteSourceEdit = { filePath: string; sourceHash: string; structure?: readonly JsxStructureAction[]; changes?: readonly { fieldId: string; value: string }[] };
+export type WebsiteSourceEdit = { filePath: string; sourceHash: string; structure?: readonly JsxStructureAction[]; styles?: readonly SourceStyleEdit[]; changes?: readonly { fieldId: string; value: string }[] };
 
 /** Relative to the site's configured repository folder, including browse calls. */
 export function websiteSourcePath(folder: string, path: string, file = false): { relative: string; repository: string } {
@@ -63,21 +64,39 @@ export type SourceAdapter = {
   blocks?(source: string, filePath: string): JsxStructureNode[];
   replay?(source: string, filePath: string, actions: readonly JsxStructureAction[]): { source: string; summary: string[] };
   structureAdapter?: string;
+  /** Absent for a language whose appearance is not an element attribute. */
+  styles?(source: string, filePath: string): SourceStyleState[];
+  restyle?(source: string, filePath: string, edits: readonly SourceStyleEdit[]): { source: string; changed: string[]; summary: string[] };
+  styleAdapter?: string;
 };
 export function sourceAdapterFor(filePath: string): SourceAdapter {
   if (isMarkdownPath(filePath)) return { discover: discoverMarkdownFields, apply: applyMarkdownValues, blocks: markdownStructureNodes, replay: replayMarkdownStructure, structureAdapter: MARKDOWN_STRUCTURE_VERSION };
-  if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues, blocks: templateStructureNodes, replay: replayTemplateStructure, structureAdapter: TEMPLATE_STRUCTURE_VERSION };
-  return { discover: discoverJsxFields, apply: applyJsxValues, blocks: jsxStructureNodes, replay: replayJsxStructure, structureAdapter: JSX_STRUCTURE_VERSION };
+  if (isTemplatePath(filePath)) return { discover: discoverTemplateFields, apply: applyTemplateValues, blocks: templateStructureNodes, replay: replayTemplateStructure, structureAdapter: TEMPLATE_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION };
+  return { discover: discoverJsxFields, apply: applyJsxValues, blocks: jsxStructureNodes, replay: replayJsxStructure, structureAdapter: JSX_STRUCTURE_VERSION, styles: sourceStyleState, restyle: applySourceStyles, styleAdapter: SOURCE_STYLE_VERSION };
 }
-/** Blocks for the browser: identities and reasons, never source offsets. */
+/**
+ * Blocks for the browser: identities, reasons and current styling, never source
+ * offsets.
+ *
+ * The style a block already carries is merged in here rather than sent as a
+ * second list, because the panel needs one row per block: what it is, whether it
+ * can be moved, whether it can be restyled, and what it is wearing. Two lists
+ * keyed by the same ID would only be joined again on the other side.
+ */
 function blocksOf(adapter: SourceAdapter, source: string, filePath: string) {
   if (!adapter.blocks) return [];
-  try { return adapter.blocks(source, filePath).map(({ start: _start, end: _end, ...node }) => node); }
-  catch { return []; }
+  try {
+    const styles = new Map<string, SourceStyleState>();
+    if (adapter.styles) { try { for (const entry of adapter.styles(source, filePath)) styles.set(entry.nodeId, entry); } catch { /* a style read failing must not hide the layout */ } }
+    return adapter.blocks(source, filePath).map(({ start: _start, end: _end, ...node }) => {
+      const style = styles.get(node.id);
+      return { ...node, style: style?.style ?? "", styleable: Boolean(style && !style.reason), ...(style?.reason && { styleReason: style.reason }) };
+    });
+  } catch { return []; }
 }
 
 export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) {
-  const input = { ...request, structure: request.structure ?? [], changes: request.changes ?? [] };
+  const input = { ...request, structure: request.structure ?? [], styles: request.styles ?? [], changes: request.changes ?? [] };
   const adapter = sourceAdapterFor(input.filePath);
   const base = adapter.discover(source, input.filePath);
   // Checked here rather than left to the adapter, because a layout action moves
@@ -102,9 +121,17 @@ export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) 
   if (applied.problems.length) throw new WebsiteError(applied.problems.some(problem => problem.code === "stale") ? 409 : 400, applied.problems.map(problem => problem.message).join(" "));
   let output = applied.source;
   let layout: string[] = [];
+  // Styles are attribute edits on the same blocks the layout acts on, so they
+  // run in the middle: after the words, which do not move anything, and before
+  // the blocks move, while every block ID still means what the browser was shown.
+  if (input.styles.length) {
+    if (!adapter.restyle) throw new WebsiteError(409, "Blocks in this kind of file cannot be restyled from the editor.");
+    try { const restyled = adapter.restyle(output, input.filePath, input.styles); output = restyled.source; layout = restyled.summary; }
+    catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
+  }
   if (input.structure.length) {
     if (!adapter.replay) throw new WebsiteError(409, "Blocks in this kind of file cannot be rearranged from the editor yet.");
-    try { const replayed = adapter.replay(output, input.filePath, input.structure); output = replayed.source; layout = replayed.summary; }
+    try { const replayed = adapter.replay(output, input.filePath, input.structure); output = replayed.source; layout = [...layout, ...replayed.summary]; }
     catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
   }
   if (!applied.changed.length && !layout.length) throw new WebsiteError(400, "There are no changed values to review.");
@@ -112,7 +139,7 @@ export function reviewWebsiteSource(source: string, request: WebsiteSourceEdit) 
   const changes = base.fields.filter(field => applied.changed.includes(field.id)).map(field => ({ fieldId: field.id, label: field.label, kind: field.kind, before: field.value, after: wanted.get(field.id)! }));
   // Binds the reviewed output to the exact input file and source bytes, layout
   // actions included. No offsets or markup supplied by a browser are trusted.
-  const reviewHash = digest(JSON.stringify([base.adapter, adapter.structureAdapter ?? null, input.filePath, base.sourceHash, output]));
+  const reviewHash = digest(JSON.stringify([base.adapter, adapter.structureAdapter ?? null, adapter.styleAdapter ?? null, input.filePath, base.sourceHash, output]));
   return { source: output, sourceHash: base.sourceHash, reviewHash, changes, layout };
 }
 
@@ -217,7 +244,7 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     const discovery = adapter.discover(current.content, current.path.relative);
     const blocks = blocksOf(adapter, current.content, current.path.relative);
     res.setHeader("Cache-Control", "no-store");
-    res.json({ adapter: discovery.adapter, structureAdapter: adapter.structureAdapter ?? null, filePath: discovery.filePath, sourceHash: discovery.sourceHash, issues: discovery.issues, fields: discovery.fields.map(({ reference: _reference, ...field }) => field), blocks, repo: current.repo, branch: current.site.repoBranch });
+    res.json({ adapter: discovery.adapter, structureAdapter: adapter.structureAdapter ?? null, styleAdapter: adapter.styleAdapter ?? null, filePath: discovery.filePath, sourceHash: discovery.sourceHash, issues: discovery.issues, fields: discovery.fields.map(({ reference: _reference, ...field }) => field), blocks, repo: current.repo, branch: current.site.repoBranch });
   }));
   /**
    * The file as the queued layout actions leave it, before anything is written.
@@ -245,15 +272,20 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     if (base.sourceHash !== input.sourceHash) throw new WebsiteError(409, "The source file changed after these edits were prepared. Reload it and review the edits again.");
     let content = current.content;
     let layout: string[] = [];
+    if (input.styles.length) {
+      if (!adapter.restyle) throw new WebsiteError(409, "Blocks in this kind of file cannot be restyled from the editor.");
+      try { const restyled = adapter.restyle(content, current.path.relative, input.styles); content = restyled.source; layout = restyled.summary; }
+      catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
+    }
     if (input.structure.length) {
       if (!adapter.replay) throw new WebsiteError(409, "Blocks in this kind of file cannot be rearranged from the editor yet.");
-      try { const replayed = adapter.replay(content, current.path.relative, input.structure); content = replayed.source; layout = replayed.summary; }
+      try { const replayed = adapter.replay(content, current.path.relative, input.structure); content = replayed.source; layout = [...layout, ...replayed.summary]; }
       catch (error) { throw error instanceof JsxStructureError ? new WebsiteError(409, error.message) : error; }
     }
     const present = new Set(base.fields.map(field => field.id));
     res.setHeader("Cache-Control", "no-store");
     res.json({
-      adapter: base.adapter, structureAdapter: adapter.structureAdapter ?? null, filePath: current.path.relative,
+      adapter: base.adapter, structureAdapter: adapter.structureAdapter ?? null, styleAdapter: adapter.styleAdapter ?? null, filePath: current.path.relative,
       sourceHash: base.sourceHash, issues: base.issues, layout,
       fields: base.fields.map(({ reference: _reference, ...field }) => field),
       blocks: blocksOf(adapter, content, current.path.relative),

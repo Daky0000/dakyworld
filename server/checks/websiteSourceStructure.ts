@@ -189,5 +189,56 @@ try {
 
   assert.equal((await post("preview", { filePath, sourceHash: "0".repeat(64) })).status, 409);
   assert.equal(writes, writesBeforePreview); passed++;
-  console.log(`websiteSourceStructure: ${passed} layout review, binding and publish checks passed`);
+  // Styling rides the same routes, and a block carries its current style in the
+  // same row as its layout controls, because the panel needs one row per block.
+  current = source; editing = filePath;
+  const styled = await (await fetch(`${origin}?filePath=${encodeURIComponent(filePath)}`)).json() as { styleAdapter: string; blocks: { id: string; tag: string; style: string; styleable: boolean; styleReason?: string }[] };
+  assert.equal(styled.styleAdapter, "source-inline-style-v1");
+  const firstSection = styled.blocks.filter(item => item.tag === "section")[0]!;
+  assert.equal(firstSection.style, "");
+  assert.equal(firstSection.styleable, true);
+  // The outermost block cannot move and can still be restyled.
+  const main = styled.blocks.find(item => item.tag === "main")!;
+  assert.equal(main.styleable, true); passed++;
+
+  const styleEdit = { filePath, sourceHash, styles: [{ nodeId: firstSection.id, style: "background-color: #eef; padding: 24px" }] };
+  const styleReview = await post("review", styleEdit);
+  assert.equal(styleReview.status, 200);
+  const styleBody = await styleReview.json() as { reviewHash: string; layout: string[]; changes: unknown[] };
+  assert.deepEqual(styleBody.layout, ["Restyled <section>"]);
+  assert.deepEqual(styleBody.changes, []); passed++;
+
+  const styleFile = await (await post("export", styleEdit)).text();
+  assert.ok(styleFile.includes('style={{ backgroundColor: "#eef", padding: "24px" }}'));
+  assert.ok(styleFile.includes('data-dw-field="one"')); passed++;
+
+  const stylePublished = await post("publish", { ...styleEdit, reviewHash: styleBody.reviewHash });
+  assert.equal(stylePublished.status, 200);
+  assert.ok(current.includes('style={{ backgroundColor: "#eef", padding: "24px" }}')); passed++;
+
+  // Words, style and layout in one pass, in the order that keeps every ID true.
+  current = source;
+  const together = {
+    filePath, sourceHash,
+    changes: [{ fieldId: discoverJsxFields(source, filePath).fields.find(field => field.value === "First")!.id, value: "Opening" }],
+    styles: [{ nodeId: block("section", 0).id, style: "color: #123456" }],
+    structure: [{ kind: "after" as const, nodeId: block("section", 0).id, targetId: block("section", 1).id }],
+  };
+  const combinedFile = await (await post("export", together)).text();
+  assert.ok(combinedFile.includes("Opening") && !combinedFile.includes("First"));
+  assert.ok(combinedFile.indexOf("Second") < combinedFile.indexOf("Opening"));
+  assert.ok(combinedFile.includes('style={{ color: "#123456" }}'));
+  // The style landed on the block the words did, not on the one it moved past.
+  assert.ok(/style=\{\{ color: "#123456" \}\}[^]*Opening/.test(combinedFile)); passed++;
+
+  // A style the code computes is refused at the route, with the reason intact.
+  current = 'const Page = ({ s }: any) => (<main><section style={s}><h2>A</h2></section></main>);';
+  const computed = await (await fetch(`${origin}?filePath=${encodeURIComponent(filePath)}`)).json() as { blocks: { tag: string; id: string; styleable: boolean; styleReason?: string }[] };
+  const computedSection = computed.blocks.find(item => item.tag === "section")!;
+  assert.equal(computedSection.styleable, false);
+  assert.match(computedSection.styleReason!, /comes from code/);
+  const refusedStyle = await post("review", { filePath, sourceHash: jsxSourceHash(current), styles: [{ nodeId: computedSection.id, style: "color: red" }] });
+  assert.equal(refusedStyle.status, 409);
+  assert.match((await refusedStyle.json() as { error: string }).error, /comes from code/); passed++;
+  console.log(`websiteSourceStructure: ${passed} layout, style, review, binding and publish checks passed`);
 } finally { await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve())); }
