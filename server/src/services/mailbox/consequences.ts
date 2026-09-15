@@ -1,6 +1,6 @@
 import type { MailMessage, MailThread } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
-import { sendSlack } from "../../lib/slack.js";
+import { postNotification } from "../slack/notify.js";
 import { getSetting, SETTING } from "../../lib/settings.js";
 import { stopOnReply } from "../emailSequences.js";
 
@@ -212,7 +212,10 @@ export async function announce(message: MailMessage, result: ConsequenceResult):
   const title = result.unsubscribed ? "Opted out" : result.bounced ? "An address bounced" : "Somebody replied by email";
   const lines = [`*${who}* — ${message.subject}`, message.snippet ? `“${message.snippet}”` : "", ...result.notes].filter(Boolean);
 
-  await sendSlack({ title, text: lines.join("\n") }).catch((err) =>
-    console.warn("[mailbox] Slack notice failed:", (err as Error).message),
-  );
+  await postNotification({
+    // Keyed on the message, so re-reading a folder after a restart does not
+    // announce a reply somebody already saw.
+    idempotencyKey: `mail:${message.id}:consequence`,
+    text: `*${title}*\n${lines.join("\n")}`,
+  }).catch((err) => console.warn("[mailbox] Slack notice failed:", (err as Error).message));
 }

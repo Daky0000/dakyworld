@@ -1,6 +1,8 @@
+import { FLAG, flagOn } from "../../lib/featureFlags.js";
 import { prisma } from "../../lib/prisma.js";
 import { sendSlackBlocks, slackConfigured, settleSlackMessage } from "../../lib/slack.js";
 import { appUrl } from "../emailSender.js";
+import { POSTED_BY_WEBHOOK, enqueueSlack } from "../slack/queue.js";
 
 /**
  * A task that stopped to ask a person, as a message in Slack.
@@ -42,10 +44,11 @@ export const ANSWER_VIEW = { callbackId: "dky_task_answer_view", blockId: "answe
 /**
  * Stands in for a channel on a webhook-only Slack, which reports neither.
  *
- * Not a channel name and never sent to Slack — it is only ever read back here,
- * as the record that this question did reach a wall somewhere.
+ * Defined beside the delivery queue now, because the queue's worker is the
+ * other thing that writes it. Re-exported here because this is where its
+ * meaning is — the record that a question reached a wall somewhere.
  */
-const POSTED_BY_WEBHOOK = "webhook";
+export { POSTED_BY_WEBHOOK };
 
 interface CardTask {
   id: string;
@@ -57,6 +60,8 @@ interface CardTask {
   attempts: number;
   slackChannel: string | null;
   slackTs: string | null;
+  /** Stamped afresh on every stop, so two stops of one run are tellable apart. */
+  finishedAt: Date | null;
 }
 
 function button(text: string, actionId: string, value: string, style?: "primary" | "danger") {
@@ -204,7 +209,7 @@ export async function postTaskCard(taskId: string): Promise<boolean> {
 
     const task = await prisma.agentTask.findUnique({
       where: { id: taskId },
-      select: { id: true, agentKey: true, title: true, status: true, blockedReason: true, error: true, attempts: true, slackChannel: true, slackTs: true },
+      select: { id: true, agentKey: true, title: true, status: true, blockedReason: true, error: true, attempts: true, slackChannel: true, slackTs: true, finishedAt: true },
     });
     if (!task || (task.status !== "BLOCKED" && task.status !== "FAILED")) return false;
     if (task.status === "FAILED" && (await tooManyFailuresJustNow(taskId))) {
@@ -214,6 +219,34 @@ export async function postTaskCard(taskId: string): Promise<boolean> {
 
     const options = task.status === "BLOCKED" ? await optionsFor(taskId) : [];
     const { text, blocks } = await taskBlocks(task, options, null);
+
+    // Through the queue, where a Slack that is down means a row that is tried
+    // again rather than a question nobody ever hears. The direct path below is
+    // kept so switching the flag off is a setting rather than a deploy.
+    if (await flagOn(FLAG.SLACK_QUEUE)) {
+      await enqueueSlack({
+        // Three things, because one card about a task is not the same as the
+        // next: the same task may ask a question, be answered, be asked again
+        // and later fail. The status tells those apart in kind, `attempts`
+        // tells one run from the next, and `finishedAt` — stamped afresh on
+        // every stop — tells two stops apart even within one run. Getting this
+        // wrong would silently deduplicate a second question against the
+        // first, which is the exact failure this whole queue exists to end.
+        idempotencyKey: `task:${taskId}:${task.status.toLowerCase()}:${task.attempts}:${task.finishedAt?.getTime() ?? 0}`,
+        kind: "POST",
+        orderKey: `task:${taskId}`,
+        // One slot for the whole conversation about this task, so a question
+        // still waiting to go out when its answer arrives is replaced by the
+        // answer rather than posted and immediately corrected.
+        coalesceKey: "card",
+        text,
+        blocks,
+        subjectType: "agentTask",
+        subjectId: taskId,
+      });
+      return true;
+    }
+
     const result = await sendSlackBlocks({ text, blocks });
     if (result.delivered) {
       // Recorded even when Slack gave us nothing to edit. A webhook returns no
@@ -247,7 +280,7 @@ export async function postTaskCard(taskId: string): Promise<boolean> {
 export async function settleTaskCard(taskId: string, by: string | null, answer: string | null): Promise<void> {
   const task = await prisma.agentTask.findUnique({
     where: { id: taskId },
-    select: { id: true, agentKey: true, title: true, status: true, blockedReason: true, error: true, attempts: true, slackChannel: true, slackTs: true },
+    select: { id: true, agentKey: true, title: true, status: true, blockedReason: true, error: true, attempts: true, slackChannel: true, slackTs: true, finishedAt: true },
   });
   // Nothing was ever posted, so there is nothing to tidy — and no reason to
   // announce an answer to a question the channel never saw.
@@ -256,6 +289,24 @@ export async function settleTaskCard(taskId: string, by: string | null, answer: 
   try {
     if (!(await slackConfigured())) return;
     const { text, blocks } = await taskBlocks(task, [], { by, answer });
+
+    if (await flagOn(FLAG.SLACK_QUEUE)) {
+      await enqueueSlack({
+        idempotencyKey: `task:${taskId}:settled:${task.attempts}:${task.status.toLowerCase()}:${task.finishedAt?.getTime() ?? 0}`,
+        kind: "SETTLE",
+        orderKey: `task:${taskId}`,
+        // The same slot the question used. A question that never left is
+        // replaced by its own answer, which is the one case where sending
+        // nothing at all is the right outcome.
+        coalesceKey: "card",
+        channel: task.slackChannel === POSTED_BY_WEBHOOK ? null : task.slackChannel,
+        ts: task.slackTs,
+        text,
+        blocks,
+      });
+      return;
+    }
+
     await settleSlackMessage(task.slackChannel, task.slackTs, { text, blocks });
   } catch (err) {
     console.error("[agent] could not update the escalation card:", (err as Error).message);

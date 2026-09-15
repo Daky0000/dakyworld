@@ -1,7 +1,9 @@
 import type { ActionRequest } from "@prisma/client";
+import { FLAG, flagOn } from "../lib/featureFlags.js";
 import { prisma } from "../lib/prisma.js";
 import { sendSlackBlocks, slackConfigured, settleSlackMessage } from "../lib/slack.js";
 import { appUrl } from "./emailSender.js";
+import { enqueueSlack } from "./slack/queue.js";
 import { resolveTool } from "./tools/catalogue.js";
 
 /**
@@ -119,6 +121,21 @@ export async function postApprovalCard(requestId: string): Promise<boolean> {
 
   try {
     const { text, blocks } = await approvalBlocks(request, null);
+
+    if (await flagOn(FLAG.SLACK_QUEUE)) {
+      await enqueueSlack({
+        idempotencyKey: `action:${requestId}:card`,
+        kind: "POST",
+        orderKey: `action:${requestId}`,
+        coalesceKey: "card",
+        text,
+        blocks,
+        subjectType: "actionRequest",
+        subjectId: requestId,
+      });
+      return true;
+    }
+
     const result = await sendSlackBlocks({ text, blocks });
     if (result.delivered && result.ts && result.channel) {
       await prisma.actionRequest.update({ where: { id: requestId }, data: { slackChannel: result.channel, slackTs: result.ts } });
@@ -141,6 +158,29 @@ export async function settleApprovalCard(request: ActionRequest, decidedBy: stri
   if (!(await slackConfigured())) return;
   try {
     const { text, blocks } = await approvalBlocks(request, decidedBy);
+
+    if (await flagOn(FLAG.SLACK_QUEUE)) {
+      await enqueueSlack({
+        // The status is in the key because a request is decided once but can
+        // be decided and then executed, and both are worth showing.
+        idempotencyKey: `action:${request.id}:settled:${request.status.toLowerCase()}`,
+        kind: "SETTLE",
+        orderKey: `action:${request.id}`,
+        // The same slot the card used, so a request decided in the app before
+        // its card ever left replaces that card rather than following it. The
+        // alternative posts a live Approve button under an action that has
+        // already been carried out, which is the exact stale-button problem
+        // this file was written to avoid. The outcome is still announced:
+        // with nothing to edit, a settle posts.
+        coalesceKey: "card",
+        channel: request.slackChannel,
+        ts: request.slackTs,
+        text,
+        blocks,
+      });
+      return;
+    }
+
     await settleSlackMessage(request.slackChannel, request.slackTs, { text, blocks });
   } catch (err) {
     console.error("[approvals] could not update the card:", (err as Error).message);

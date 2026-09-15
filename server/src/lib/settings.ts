@@ -694,6 +694,22 @@ export const SETTING = {
    * than at thirty.
    */
   AGENT_MAX_HIRES_PER_DAY: "agents.maxHiresPerDay",
+
+  /**
+   * The capability switches.
+   *
+   * Each fronts a path that changes how work already in flight behaves, so
+   * each reads off unless something switches it on, and each can be pinned
+   * from the deploy — see the env map below. That pinning is the whole point:
+   * turning a misbehaving capability off should not require a build.
+   */
+  FLAG_SLACK_QUEUE: "flags.slackQueue",
+  FLAG_REQUEST_BUDGETS: "flags.requestBudgets",
+  FLAG_SLACK_CONVERSATIONS: "flags.slackConversations",
+  FLAG_WORKFLOWS: "flags.workflows",
+  FLAG_DELIVERABLES: "flags.deliverables",
+  FLAG_PROMPT_VERSIONS: "flags.promptVersions",
+  FLAG_AGENT_DASHBOARD: "flags.agentDashboard",
 } as const;
 
 /** Env fallbacks, checked before the database. */
@@ -789,6 +805,15 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   // Pinning this one from the deploy is the difference between rotating the
   // secret in the UI and having every sender break on the next restart.
   [SETTING.WEBHOOK_SECRET]: "WEBHOOK_SECRET",
+  // A capability that is misbehaving in production has to be switchable off by
+  // somebody who is not waiting on a build.
+  [SETTING.FLAG_SLACK_QUEUE]: "FLAG_SLACK_QUEUE",
+  [SETTING.FLAG_REQUEST_BUDGETS]: "FLAG_REQUEST_BUDGETS",
+  [SETTING.FLAG_SLACK_CONVERSATIONS]: "FLAG_SLACK_CONVERSATIONS",
+  [SETTING.FLAG_WORKFLOWS]: "FLAG_WORKFLOWS",
+  [SETTING.FLAG_DELIVERABLES]: "FLAG_DELIVERABLES",
+  [SETTING.FLAG_PROMPT_VERSIONS]: "FLAG_PROMPT_VERSIONS",
+  [SETTING.FLAG_AGENT_DASHBOARD]: "FLAG_AGENT_DASHBOARD",
 };
 
 // One process, one cache. Writes go through setSetting, which clears it.

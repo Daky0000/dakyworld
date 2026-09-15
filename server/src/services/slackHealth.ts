@@ -1,6 +1,7 @@
 import { SETTING, getSetting } from "../lib/settings.js";
 import { defaultChannel, slackApprovers, slackInbound, slackTransport, type SlackInbound, type SlackTransport } from "../lib/slack.js";
 import { appUrl } from "./emailSender.js";
+import { slackQueueHealth, type SlackQueueHealth } from "./slack/queue.js";
 
 /**
  * Whether Slack actually works, said in the words that name the fix.
@@ -47,6 +48,15 @@ export interface SlackHealth {
     /** Proof, or the lack of it: has a request from Slack ever verified here. */
     everVerified: boolean;
   } & SlackInbound;
+  /**
+   * What the delivery queue is holding.
+   *
+   * The sixth fault, and the one the first five could not have named: every
+   * setting correct, and a message that still never arrived because Slack was
+   * down for the ninety seconds it was sent in. A failed delivery is now a row,
+   * so it is now a number here.
+   */
+  queue: SlackQueueHealth;
   /** The two URLs that have to be pasted into the Slack app, spelled out. */
   requestUrls: { actions: string; commands: string };
   /** What is wrong, worst first, each one naming what to do about it. */
@@ -56,13 +66,14 @@ export interface SlackHealth {
 }
 
 export async function slackHealth(): Promise<SlackHealth> {
-  const [transport, channel, secret, approvers, inbound, base] = await Promise.all([
+  const [transport, channel, secret, approvers, inbound, base, queue] = await Promise.all([
     slackTransport(),
     defaultChannel(),
     getSetting(SETTING.SLACK_SIGNING_SECRET),
     slackApprovers(),
     slackInbound(),
     appUrl(),
+    slackQueueHealth(),
   ]);
 
   const problems: string[] = [];
@@ -103,6 +114,19 @@ export async function slackHealth(): Promise<SlackHealth> {
     );
   }
 
+  // Said here rather than left to the Alerts table, because a message that
+  // was given up on is exactly the case where nobody thinks to go and look.
+  if (queue.failed > 0) {
+    problems.push(
+      `${queue.failed} Slack message${queue.failed === 1 ? " was" : "s were"} given up on. Each one is listed below with the reason and a Retry button — a card that never arrived is a decision nobody was asked to make.`,
+    );
+  }
+  if (queue.uncertain > 0) {
+    problems.push(
+      `${queue.uncertain} Slack message${queue.uncertain === 1 ? "" : "s"} left this app without Slack confirming it. Check the channel before retrying — retrying automatically would risk posting the same card twice.`,
+    );
+  }
+
   const outboundReady = transport !== "NONE" && !(transport === "TOKEN" && !channel);
 
   return {
@@ -114,6 +138,7 @@ export async function slackHealth(): Promise<SlackHealth> {
       everVerified: Boolean(inbound.lastOkAt),
       ...inbound,
     },
+    queue,
     requestUrls: { actions: `${base}/api/slack/actions`, commands: `${base}/api/slack/commands` },
     problems,
     ready: outboundReady && Boolean(secret) && Boolean(inbound.lastOkAt),

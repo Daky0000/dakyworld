@@ -1,5 +1,8 @@
 import type { AgentDepartment, AgentHireRequest, HireRequestStatus, Prisma } from "@prisma/client";
+import { FLAG, flagOn } from "../../lib/featureFlags.js";
 import { prisma } from "../../lib/prisma.js";
+import { postNotification } from "../slack/notify.js";
+import { enqueueSlack } from "../slack/queue.js";
 import { remember, subjectOf } from "./memory.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { listAllTools } from "../tools/catalogue.js";
@@ -1093,6 +1096,21 @@ async function postHireCard(requestId: string): Promise<boolean> {
 
   try {
     const { text, blocks } = await hireBlocks(request, null);
+
+    if (await flagOn(FLAG.SLACK_QUEUE)) {
+      await enqueueSlack({
+        idempotencyKey: `hire:${requestId}:card`,
+        kind: "POST",
+        orderKey: `hire:${requestId}`,
+        coalesceKey: "card",
+        text,
+        blocks,
+        subjectType: "hireRequest",
+        subjectId: requestId,
+      });
+      return true;
+    }
+
     const result = await sendSlackBlocks({ text, blocks });
     if (result.delivered && result.ts && result.channel) {
       await prisma.agentHireRequest.update({ where: { id: requestId }, data: { slackChannel: result.channel, slackTs: result.ts } });
@@ -1231,7 +1249,10 @@ export async function postGapNotice(): Promise<{ posted: boolean; count: number 
     return `• *${gap.skillNeeded}* — ${gap.timesRequested} agents (${gap.requestedBy.join(", ")}) _(${age}, ${review})_`;
   });
 
-  await sendSlackBlocks({
+  // One key per day per size, so two ticks raising the same digest produce
+  // one message while a genuinely longer list is correctly a new one.
+  await postNotification({
+    idempotencyKey: `digest:gaps:${new Date().toISOString().slice(0, 10)}:${ready.length}`,
     text,
     blocks: [
       { type: "header", text: { type: "plain_text", text, emoji: false } },

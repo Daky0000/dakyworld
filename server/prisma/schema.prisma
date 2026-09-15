@@ -1440,10 +1440,10 @@ model Product {
   tagline String @default("")
 
   /// What a customer with no retainer pays each month. Zero means free to all.
-  monthlyPrice Decimal @db.Decimal(12, 2)
+  monthlyPrice Decimal  @db.Decimal(12, 2)
   /// Charged once, at setup. Null where there is nothing to set up.
   setupPrice   Decimal? @db.Decimal(12, 2)
-  currency     String  @default("GHS")
+  currency     String   @default("GHS")
 
   /// Where the product is described on the public site, for the price block's link.
   publicPath String @default("")
@@ -4076,7 +4076,7 @@ model Site {
   /// "sveltekit", "nuxt", "vue", "vite-react — or null for a plain HTML site.
   /// It decides which editor a page opens in, so an unbuilt framework route is
   /// never handed to the editor that can only read rendered HTML.
-  sourceKind           String?
+  sourceKind String?
 
   /// A client's site rather than Dakyworld's own, when set.
   client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
@@ -4395,4 +4395,118 @@ model SiteMember {
 
   @@unique([siteId, userId])
   @@index([userId])
+}
+
+// --- The Slack delivery queue -----------------------------------------------
+//
+// Every outgoing notification was a bare `fetch` inside the code that had
+// something to say. That is fine right up until Slack is slow, rate-limiting,
+// or holding a token somebody revoked last week — at which point the message
+// is gone, and the only record that it was ever meant to exist was a line in
+// a log nobody reads. A card asking the Owner to approve a spend could simply
+// never arrive, and nothing in the app would look wrong.
+//
+// So the message becomes a row first and a request second. What it costs is
+// one insert; what it buys is that a failed delivery is a thing you can see,
+// a thing that retries itself, and a thing somebody can press a button on.
+
+enum SlackDeliveryStatus {
+  /// Written down, not yet picked up.
+  PENDING
+  /// Leased by a worker; a request is on the wire or about to be.
+  SENDING
+  DELIVERED
+  /// Failed in a way that waiting might fix. `nextAttemptAt` says when.
+  RETRYING
+  /// Given up on: eight attempts, twenty-four hours, or a failure no amount of
+  /// waiting fixes. Needs a person.
+  FAILED
+  /// A newer update for the same card replaced this one before it was sent.
+  /// Not a failure — the opposite, a message we were right not to send.
+  SUPERSEDED
+  /// The request left and never answered. We do not know whether Slack has it.
+  /// Never retried automatically: a repeated `chat.postMessage` is a second
+  /// card, and two cards asking for the same approval is worse than none.
+  UNCERTAIN
+}
+
+enum SlackDeliveryKind {
+  POST
+  UPDATE
+  /// Edit the card if it is still there, post the outcome if it is not.
+  SETTLE
+}
+
+model SlackDelivery {
+  id String @id @default(cuid())
+
+  /// What this message *is*, stably, across every retry and every restart.
+  ///
+  /// Enqueueing is therefore idempotent: a boot pass that re-raises the same
+  /// escalation, or two ticks racing over one blocked task, produce one row
+  /// and one card rather than two. The shape is
+  /// `task:<id>:escalation:<n>` — the subject, what about it, which revision.
+  idempotencyKey String @unique
+
+  /// Everything about one card, in the order it was written: `task:<id>`.
+  /// Null means the message stands alone and may overtake anything else.
+  orderKey String?
+
+  /// Which slot within `orderKey` this occupies. A newer pending row with the
+  /// same pair replaces the older one, because a card that has not gone out
+  /// yet should go out saying the current thing rather than yesterday's thing
+  /// followed immediately by a correction. Null never coalesces.
+  coalesceKey String?
+
+  /// Position within `orderKey`. Ordering on `createdAt` alone puts two rows
+  /// written in the same millisecond in an arbitrary order, and for a card
+  /// that is the difference between "answered" landing before the question.
+  seq Int
+
+  kind   SlackDeliveryKind
+  status SlackDeliveryStatus @default(PENDING)
+
+  channel  String?
+  /// Slack's message id. Set on UPDATE and SETTLE; written back on POST.
+  ts       String?
+  text     String
+  blocks   Json?
+  threadTs String?
+
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime @default(now())
+  /// The hard wall, twenty-four hours after the first enqueue. A card about
+  /// something that happened yesterday is not worth delivering today.
+  expiresAt     DateTime
+
+  leaseOwner String?
+  leaseUntil DateTime?
+
+  /// A sentence naming the actual fix, not a code.
+  lastError     String?
+  /// Slack's own code, for the retry decision. See `isPermanentSlackError`.
+  lastErrorCode String?
+  /// True when no backoff will help: a revoked token, a channel the bot was
+  /// never invited to. Straight to FAILED, and it waits for a person.
+  permanent     Boolean @default(false)
+
+  retriedById String?
+  retriedAt   DateTime?
+
+  /// The record that owns this card, so a delivered POST can write its
+  /// `slackChannel`/`slackTs` back onto it. Deliberately not a foreign key:
+  /// these point at four different tables, and a delivery must outlive the
+  /// deletion of the thing it was about for the history to mean anything.
+  subjectType String?
+  subjectId   String?
+
+  firstTriedAt DateTime?
+  deliveredAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([orderKey, seq])
+  @@index([subjectType, subjectId])
+  @@index([status, createdAt])
 }

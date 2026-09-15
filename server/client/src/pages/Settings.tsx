@@ -3460,9 +3460,32 @@ interface SlackHealth {
     lastRefusedAt: string | null;
     lastRefusedReason: string | null;
   };
+  queue: {
+    pending: number;
+    retrying: number;
+    failed: number;
+    uncertain: number;
+    lastSuccessAt: string | null;
+    oldestPendingAt: string | null;
+  };
   requestUrls: { actions: string; commands: string };
   problems: string[];
   ready: boolean;
+}
+
+interface SlackDelivery {
+  id: string;
+  status: "PENDING" | "SENDING" | "DELIVERED" | "RETRYING" | "FAILED" | "SUPERSEDED" | "UNCERTAIN";
+  kind: "POST" | "UPDATE" | "SETTLE";
+  text: string;
+  attempts: number;
+  permanent: boolean;
+  lastError: string | null;
+  subjectType: string | null;
+  subjectId: string | null;
+  createdAt: string;
+  deliveredAt: string | null;
+  nextAttemptAt: string;
 }
 
 function SlackHealthNote() {
@@ -3518,6 +3541,131 @@ function SlackHealthNote() {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * What has been said to Slack lately, and what became of it.
+ *
+ * The sixth fault, and the one the diagnostic above could never have named:
+ * every setting correct, and a message that still never arrived because Slack
+ * was rate-limiting for the ninety seconds it was sent in. Before the delivery
+ * queue that left no trace anywhere — so this table is not a nicety, it is the
+ * only place a lost message is visible at all.
+ *
+ * Deliberately shows the failures first and hides the ordinary traffic. A
+ * table of four hundred delivered notifications is a table nobody scrolls, and
+ * the two rows that matter would be somewhere in the middle of it.
+ */
+function SlackDeliveries() {
+  const qc = useQueryClient();
+  const [showAll, setShowAll] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const deliveries = useQuery({
+    queryKey: ["slack", "deliveries", showAll],
+    queryFn: () =>
+      api.get<SlackDelivery[]>(`/settings/slack/deliveries?sinceDays=7&limit=50${showAll ? "" : "&status=FAILED,UNCERTAIN,RETRYING,PENDING"}`),
+  });
+
+  const retry = useMutation({
+    mutationFn: (id: string) => api.post<SlackDelivery>(`/settings/slack/deliveries/${id}/retry`),
+    onSuccess: () => {
+      setError(null);
+      void qc.invalidateQueries({ queryKey: ["slack"] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const rows = deliveries.data ?? [];
+  if (!showAll && rows.length === 0) {
+    return (
+      <p className="mt-3 text-xs text-muted">
+        Nothing is waiting or has been given up on in the last week.{" "}
+        <button type="button" className="underline" onClick={() => setShowAll(true)}>
+          Show everything sent
+        </button>
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h4 className="text-sm text-ink">{showAll ? "Everything sent to Slack" : "Slack messages waiting or given up on"}</h4>
+        <button type="button" className="text-xs text-muted underline" onClick={() => setShowAll((value) => !value)}>
+          {showAll ? "Only what needs attention" : "Show everything sent"}
+        </button>
+      </div>
+
+      {error && <p className="mb-2 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{error}</p>}
+
+      <div className="overflow-x-auto border border-line">
+        <table className="w-full min-w-[40rem] text-left text-xs">
+          <thead className="border-b border-line text-muted">
+            <tr>
+              <th className="px-3 py-2 font-normal">Message</th>
+              <th className="px-3 py-2 font-normal">State</th>
+              <th className="px-3 py-2 font-normal">Tries</th>
+              <th className="px-3 py-2 font-normal">When</th>
+              <th className="px-3 py-2 font-normal" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id} className="border-b border-line last:border-0 align-top">
+                <td className="px-3 py-2 text-ink">
+                  <span className="line-clamp-2">{row.text.replace(/[*_`]/g, "").slice(0, 160)}</span>
+                  {/* The sentence naming the fix, not the code. A row that says
+                      FAILED and nothing else sends somebody to the server log. */}
+                  {row.lastError && <span className="mt-1 block text-muted">{row.lastError}</span>}
+                </td>
+                <td className="px-3 py-2">
+                  <span
+                    className={
+                      row.status === "DELIVERED"
+                        ? "text-muted"
+                        : row.status === "FAILED"
+                          ? "text-danger-text"
+                          : row.status === "UNCERTAIN"
+                            ? "text-warn-text"
+                            : "text-ink"
+                    }
+                  >
+                    {row.status === "UNCERTAIN" ? "Unknown" : row.status.charAt(0) + row.status.slice(1).toLowerCase()}
+                  </span>
+                  {row.permanent && <span className="mt-0.5 block text-muted">Needs a setting changed</span>}
+                </td>
+                <td className="px-3 py-2 text-muted">{row.attempts}</td>
+                <td className="px-3 py-2 text-muted">{new Date(row.deliveredAt ?? row.createdAt).toLocaleString()}</td>
+                <td className="px-3 py-2">
+                  {/* Only the two that will never move on their own. Offering a
+                      Retry on a message the queue is about to send anyway is how
+                      somebody posts the same card twice. */}
+                  {(row.status === "FAILED" || row.status === "UNCERTAIN") && (
+                    <button
+                      type="button"
+                      className="whitespace-nowrap text-xs underline disabled:opacity-50"
+                      disabled={retry.isPending}
+                      onClick={() => retry.mutate(row.id)}
+                    >
+                      Send again
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {rows.some((row) => row.status === "UNCERTAIN") && (
+        <p className="mt-2 text-xs text-muted">
+          An unknown message left this app without Slack confirming it. Look in the channel before sending it again — it may already be
+          there.
+        </p>
+      )}
     </div>
   );
 }
@@ -3616,6 +3764,7 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
       )}
 
       <SlackHealthNote />
+      <SlackDeliveries />
 
       {/* What an agent will actually interrupt you about, said plainly. The
           feature is worth nothing if nobody knows a question ever arrives. */}

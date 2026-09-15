@@ -1,4 +1,5 @@
 import { AnalystError, callClaude, forStructuredOutput, type Effort, type FailureKind, type PromptImage } from "../claude.js";
+import { retryAfterMs } from "../retryAfter.js";
 import { costOf, rateFor, type ModelRate } from "../claudePricing.js";
 import { recordLlmCall } from "../llmLedger.js";
 import { SETTING, getSetting, setSetting } from "../settings.js";
@@ -284,22 +285,6 @@ const FREE_TIMEOUT_MS = 60_000;
 /** A 429 or a 5xx is worth repeating. A 400 or a 401 will say the same thing again. */
 function worthRetrying(status: number): boolean {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-}
-
-/**
- * How long the vendor asked us to wait, when it says.
- *
- * `Retry-After` is either a number of seconds or an HTTP date, and honouring it
- * matters more than any backoff we invent: it is the only number that knows
- * when the window actually resets.
- */
-function retryAfterMs(response: Response): number | null {
-  const header = response.headers.get("retry-after");
-  if (!header) return null;
-  const seconds = Number(header);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-  const at = Date.parse(header);
-  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
 }
 
 function pause(ms: number): Promise<void> {

@@ -4,7 +4,8 @@ import { readMailerConfig, sendMail } from "../lib/mailer.js";
 import { logoSources, signature, toHtml, toText } from "./emailRender.js";
 import { companyProfile } from "./systemProfile.js";
 import { readCaptureConfig } from "./captureConfig.js";
-import { sendSlack, slackConfigured } from "../lib/slack.js";
+import { slackConfigured } from "../lib/slack.js";
+import { postNotification } from "./slack/notify.js";
 import type { RunDiagnostics } from "./scraperRunner.js";
 
 /**
@@ -93,10 +94,14 @@ export async function reportRun(run: ScraperRun, source: ScraperSource): Promise
   // Slack second, and never allowed to undo the email: the report has already
   // been delivered by the time this runs.
   if (await slackConfigured()) {
-    await sendSlack({
-      title: subject,
-      text: body.split("\n").slice(0, 12).join("\n"),
-      link: { text: "Open lead sources", url: `${await appUrl()}/lead-sources` },
+    const summary = body.split("\n").slice(0, 12).join("\n");
+    const link = `${await appUrl()}/lead-sources`;
+    // Keyed on the run rather than the clock, so a report raised twice for one
+    // capture is one message. A capture that genuinely runs again gets a new
+    // run id and so a new key.
+    await postNotification({
+      idempotencyKey: `capture:${run.id}:report`,
+      text: `*${subject}*\n${summary}\n<${link}|Open lead sources>`,
     }).catch((err) => console.error("[capture] Slack report failed:", (err as Error).message));
   }
 

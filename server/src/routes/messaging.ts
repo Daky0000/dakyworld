@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { markRead, parseWebhook, verifyTokenMatches, verifyWebhookSignature } from "../lib/whatsapp.js";
 import { applyDeliveryStatus, recordInbound } from "../services/messageSender.js";
-import { sendSlack } from "../lib/slack.js";
+import { postNotification } from "../services/slack/notify.js";
 
 /**
  * Replies coming back, and delivery receipts.
@@ -126,7 +126,7 @@ messagingRouter.post("/whatsapp", async (req: Request, res: Response) => {
       // dropped enquiry.
       void markRead(inbound.id).catch((err) => console.warn("[messaging] could not mark read:", (err as Error).message));
 
-      await announce(result.optedOut, inbound.profileName ?? inbound.from, inbound.text);
+      await announce(result.message.id, result.optedOut, inbound.profileName ?? inbound.from, inbound.text);
     }
 
     for (const status of statuses) {
@@ -153,13 +153,16 @@ messagingRouter.post("/whatsapp", async (req: Request, res: Response) => {
  * a day long — and nobody is watching the Messages screen. Slack failing must
  * never lose the message, hence the catch.
  */
-async function announce(optedOut: boolean, who: string, text: string | null) {
+async function announce(messageId: string, optedOut: boolean, who: string, text: string | null) {
   const line = optedOut
     ? `*${who}* asked not to be contacted again on WhatsApp. They have been opted out everywhere.`
     : `*${who}* replied on WhatsApp: ${text ? `“${text.slice(0, 300)}”` : "(a photo or voice note)"}\nThe 24-hour window to answer in your own words is open now.`;
-  await sendSlack({ title: optedOut ? "Opted out" : "A prospect replied", text: line }).catch((err) =>
-    console.warn("[messaging] Slack notice failed:", (err as Error).message),
-  );
+  // Keyed on the message, so a webhook Meta delivers twice — which it does —
+  // announces once.
+  await postNotification({
+    idempotencyKey: `whatsapp:${messageId}:reply`,
+    text: `*${optedOut ? "Opted out" : "A prospect replied"}*\n${line}`,
+  }).catch((err) => console.warn("[messaging] Slack notice failed:", (err as Error).message));
 }
 
 // --- SMS, through Hubtel ---------------------------------------------------
@@ -233,11 +236,11 @@ messagingRouter.post("/sms/inbound", async (req: Request, res: Response) => {
       providerMessageId: field(payload, "MessageId", "Id"),
     });
     await settle(event.id, { messageId: result.message.id, optedOut: result.optedOut });
-    await sendSlack({
-      title: result.optedOut ? "Opted out" : "A prospect replied",
+    await postNotification({
+      idempotencyKey: `sms:${result.message.id}:reply`,
       text: result.optedOut
-        ? `*${from}* replied STOP by text. They have been opted out everywhere.`
-        : `*${from}* replied by text: ${text ? `“${text.slice(0, 300)}”` : "(no text)"}`,
+        ? `*Opted out*\n*${from}* replied STOP by text. They have been opted out everywhere.`
+        : `*A prospect replied*\n*${from}* replied by text: ${text ? `“${text.slice(0, 300)}”` : "(no text)"}`,
     }).catch(() => undefined);
   } catch (err) {
     console.error("[messaging] SMS intake failed:", err);

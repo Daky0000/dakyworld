@@ -256,6 +256,53 @@ produce one on demand. The health read never posts: a check that puts a message
 in the channel every time somebody opens Settings is a check that gets turned
 off.
 
+**A sixth fault the health check could not have named, and the queue that ended
+it** — `services/slack/queue.ts`, `services/slack/worker.ts`, the delivery table
+under Settings → Alerts. Every setting can be correct and a message still never
+arrive, because Slack was rate-limiting, restarting or holding a token somebody
+revoked during the ninety seconds it was sent in. Outgoing notifications used to
+be a bare `fetch` inside the code that had something to say, so that message was
+gone and the only record it had ever been meant to exist was a line in a log.
+
+A notification is now a row first and a request second:
+
+- **Written before it is sent.** `enqueueSlack()` is one insert. It cannot fail
+  because Slack is down, and it is safe to call from the middle of a task doing
+  something more important.
+- **`idempotencyKey` makes enqueueing idempotent**, which is what lets a boot
+  pass re-raise every open escalation without asking whether it already did.
+- **`orderKey` + `seq` keep one card's messages in order**, because an answer
+  arriving before its own question is the worst thing a queue like this can do.
+  `coalesceKey` is the other half: a question still waiting to go out when its
+  answer lands is *replaced* by the answer rather than posted and immediately
+  corrected. Rows already `SENDING` are never coalesced — a request on the wire
+  cannot be recalled, and pretending otherwise would make the status a lie.
+- **The lease is `runTask`'s claim, one table across** — a conditional
+  `updateMany` plus a `leaseOwner` of the same shape as `runOwner`. No Redis, no
+  second service. The candidate query is raw SQL because "the earliest unsent
+  message per order key, but only if nothing earlier is still in flight" is a
+  correlated `NOT EXISTS` the Prisma query API cannot express.
+- **Three outcomes, not two.** Permanent failures (`invalid_auth`,
+  `channel_not_found`, `missing_scope` — `isPermanentSlackError`) stop at once
+  rather than backing off for a day against a setting only a person can fix.
+  Transient ones back off with jitter and honour `Retry-After`. And a request
+  that left and never answered is recorded **UNCERTAIN and never retried
+  automatically**: an aborted `chat.postMessage` may well have posted, and
+  retrying asks for the same decision twice.
+- **The worker has its own five-second interval**, not the scheduler's minute.
+  A capture starting fifty seconds late is nothing; a card appearing a minute
+  after somebody pressed the button has already sent them back to the app.
+- **`slackTs` is written back inside the same transaction as the status flip.**
+  A delivery marked delivered whose subject never learned the message id is
+  worse than one that failed, because the card can then never be settled and
+  nothing will try again. `POSTED_BY_WEBHOOK` survives the move for the same
+  reason it existed: it is how a webhook-only transport records that a question
+  reached a wall somewhere.
+
+All of it sits behind `flags.slackQueue` (`lib/featureFlags.ts`), so the direct
+path is a setting away rather than a deploy away. `checks/slackQueue.ts` drives
+the real worker against a local stub — no network, no token, no workspace.
+
 `/dakyworld` also answers `status`, `tasks`, `answer` and `approvals`.
 `status` counts NEEDS_APPROVAL tasks separately from the approval queue —
 only outward and spending previews become cards, so a task holding a prepared

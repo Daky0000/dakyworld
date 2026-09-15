@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { retryAfterMs } from "./retryAfter.js";
 import { SETTING, getSetting, setSetting } from "./settings.js";
 
 /**
@@ -39,11 +40,51 @@ const TIMEOUT_MS = 10_000;
 
 export class SlackError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /**
+   * Slack's own error string, when it gave one — `invalid_auth`,
+   * `channel_not_found`, `ratelimited`.
+   *
+   * The message is for a person and says what to do about it; this is for
+   * code, and the difference matters to anything deciding whether to try
+   * again. A revoked token and a rate limit both arrive as a 200 with
+   * `ok: false`, so the status cannot tell them apart, and retrying the first
+   * forever is how a queue spends a day discovering the token is still
+   * revoked.
+   */
+  code: string | null;
+  /**
+   * How long Slack asked us to wait, when it said. Captured here because the
+   * `Response` does not survive the throw, and the number is worth more than
+   * any backoff we invent: it is the only one that knows when the window
+   * actually resets.
+   */
+  retryAfterMs: number | null;
+  constructor(status: number, message: string, code?: string | null, retryAfterMs?: number | null) {
     super(message);
     this.name = "SlackError";
     this.status = status;
+    this.code = code ?? null;
+    this.retryAfterMs = retryAfterMs ?? null;
   }
+}
+
+/**
+ * Failures no amount of waiting will fix: they need somebody to change a
+ * setting or invite the bot. A queue must stop on these rather than back off.
+ */
+const PERMANENT_CODES = new Set([
+  "invalid_auth",
+  "token_revoked",
+  "account_inactive",
+  "missing_scope",
+  "channel_not_found",
+  "not_in_channel",
+  "invalid_arguments",
+  "is_archived",
+]);
+
+export function isPermanentSlackError(err: unknown): boolean {
+  return err instanceof SlackError && err.code !== null && PERMANENT_CODES.has(err.code);
 }
 
 export type SlackTransport = "TOKEN" | "WEBHOOK" | "NONE";
@@ -136,7 +177,7 @@ export async function sendSlack(message: SlackMessage): Promise<SlackResult> {
     // Slack answers 200 with `ok: false` for real failures, so the status code
     // alone means nothing here.
     const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string; channel?: string } | null;
-    if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+    if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error), payload?.error, retryAfterMs(response));
     return { delivered: true, transport: "TOKEN", channel: payload.channel ?? channel, ts: payload.ts ?? null };
   }
 
@@ -144,7 +185,7 @@ export async function sendSlack(message: SlackMessage): Promise<SlackResult> {
     const response = await post(webhook, { text: message.text, blocks: blocks(message) });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
-      throw new SlackError(response.status, `Slack rejected the webhook: ${detail || response.statusText}`);
+      throw new SlackError(response.status, `Slack rejected the webhook: ${detail || response.statusText}`, null, retryAfterMs(response));
     }
     return { delivered: true, transport: "WEBHOOK", channel: null };
   }
@@ -180,7 +221,7 @@ export async function verifySlack(credential: { token?: string; webhookUrl?: str
       headers: { Authorization: `Bearer ${credential.token}`, "Content-Type": "application/json" },
     });
     const payload = (await response.json().catch(() => null)) as { ok?: boolean; team?: string; error?: string } | null;
-    if (!payload?.ok) throw new SlackError(401, slackErrorMessage(payload?.error));
+    if (!payload?.ok) throw new SlackError(401, slackErrorMessage(payload?.error), payload?.error);
     return { transport: "TOKEN", team: payload.team ?? null };
   }
 
@@ -360,7 +401,7 @@ export async function updateSlack(channel: string, ts: string, message: SlackMes
   const body = "blocks" in message ? { channel, ts, text: message.text, blocks: message.blocks } : { channel, ts, text: message.text, blocks: blocks(message) };
   const response = await post(`${apiBase()}/chat.update`, body, token);
   const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-  if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+  if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error), payload?.error, retryAfterMs(response));
   return true;
 }
 
@@ -384,7 +425,7 @@ export async function sendSlackBlocks(input: { text: string; blocks: unknown[]; 
     if (!channel) throw new SlackError(400, "No Slack channel to send to. Set a default channel under Settings → Alerts.");
     const response = await post(`${apiBase()}/chat.postMessage`, { channel, text: input.text, blocks: input.blocks }, token);
     const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string; channel?: string } | null;
-    if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+    if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error), payload?.error, retryAfterMs(response));
     return { delivered: true, transport: "TOKEN", channel: payload.channel ?? channel, ts: payload.ts ?? null };
   }
 
@@ -392,7 +433,7 @@ export async function sendSlackBlocks(input: { text: string; blocks: unknown[]; 
     const response = await post(webhook, { text: input.text, blocks: input.blocks });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
-      throw new SlackError(response.status, `Slack rejected the webhook: ${detail || response.statusText}`);
+      throw new SlackError(response.status, `Slack rejected the webhook: ${detail || response.statusText}`, null, retryAfterMs(response));
     }
     return { delivered: true, transport: "WEBHOOK", channel: null };
   }
@@ -420,7 +461,7 @@ export async function openSlackModal(triggerId: string, view: unknown): Promise<
   if (!token) return false;
   const response = await post(`${apiBase()}/views.open`, { trigger_id: triggerId, view }, token);
   const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-  if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+  if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error), payload?.error, retryAfterMs(response));
   return true;
 }
 
@@ -440,7 +481,7 @@ export async function updateSlackModal(viewId: string, view: unknown): Promise<v
   if (!token) throw new SlackError(503, "The Slack bot token is no longer configured.");
   const response = await post(`${apiBase()}/views.update`, { view_id: viewId, view }, token);
   const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-  if (!response.ok || !payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+  if (!response.ok || !payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error), payload?.error, retryAfterMs(response));
 }
 
 /** A missing or uneditable card must not silence the outcome of a decision. */

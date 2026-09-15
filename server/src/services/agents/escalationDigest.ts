@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting } from "../../lib/settings.js";
-import { sendSlackBlocks, slackConfigured } from "../../lib/slack.js";
+import { slackConfigured } from "../../lib/slack.js";
+import { postNotification } from "../slack/notify.js";
 
 /**
  * The questions nobody has answered yet, gathered once a week.
@@ -160,7 +161,12 @@ export async function postEscalationDigest(): Promise<{ posted: boolean; count: 
   });
 
   const text = `${open.length} agent question(s) waiting on you`;
-  await sendSlackBlocks({
+  // One key per day per size. A digest raised twice by two ticks is the same
+  // digest; a digest raised again after another question arrives is a new one
+  // and worth seeing.
+  const digestKey = `digest:escalations:${new Date().toISOString().slice(0, 10)}:${open.length}`;
+  await postNotification({
+    idempotencyKey: digestKey,
     text,
     blocks: [
       { type: "header", text: { type: "plain_text", text, emoji: false } },

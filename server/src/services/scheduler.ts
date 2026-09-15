@@ -11,6 +11,8 @@ import { dispatchDueMessages } from "./messageSender.js";
 import { runDueSequences } from "./emailSequences.js";
 import { readMailboxOnce } from "./mailbox/watcher.js";
 import { runDueTasks, resumeInterruptedTasks } from "./agents/runner.js";
+import { pruneDeliveries } from "./slack/queue.js";
+import { reclaimExpiredLeases, startSlackQueueWorker, stopSlackQueueWorker } from "./slack/worker.js";
 import { pruneCheckpoints } from "./agents/checkpoint.js";
 import { pruneMemories } from "./agents/memory.js";
 import { enforceRetention, retentionEnforced } from "./retention.js";
@@ -215,6 +217,12 @@ async function housekeepingTick(now: Date) {
   // deletes one when it is presented, but a session nobody ever returns to is
   // never presented — so without this the table keeps every token hash the
   // system has ever issued.
+  // Slack messages that arrived, a month ago. The history is worth keeping
+  // while somebody might still ask why a card did or did not appear; past that
+  // it is a table that only grows.
+  const prunedDeliveries = await pruneDeliveries(30);
+  if (prunedDeliveries) console.log(`[scheduler] pruned ${prunedDeliveries} delivered Slack message(s)`);
+
   const dropped = await purgeExpiredSessions();
   if (dropped) console.log(`[scheduler] cleared ${dropped} expired session(s)`);
 
@@ -426,6 +434,15 @@ export function startScheduler() {
   // COMMITTING may or may not have reached GitHub, and guessing either way is
   // worse than asking — see reconcileInterruptedPublishJobs.
   void reconcileInterruptedPublishJobs().catch((err) => console.error("[scheduler] publish reconcile failed:", err));
+  // Slack messages the last process was in the middle of sending. Each is
+  // holding a lease that stops anything else picking it up, and unlike an
+  // agent run there is nobody watching a screen to notice — so a card asking
+  // for a decision would simply sit there until the lease aged out.
+  void reclaimExpiredLeases().catch((err) => console.error("[scheduler] slack lease reclaim failed:", err));
+  // Its own interval rather than the minute tick. A capture starting fifty
+  // seconds late is nothing; a card appearing a minute after somebody pressed
+  // the button has already sent them back to the app to check.
+  startSlackQueueWorker();
   void tick().catch((err) => console.error("[scheduler] first tick failed:", err));
   console.log("  → Scheduler running (lead capture, lead hunts, care plan billing, email, WhatsApp/SMS, agent tasks — checks every minute)");
 }
@@ -433,4 +450,5 @@ export function startScheduler() {
 export function stopScheduler() {
   if (timer) clearInterval(timer);
   timer = null;
+  stopSlackQueueWorker();
 }

@@ -74,6 +74,8 @@ import {
 } from "../lib/hostingerMail.js";
 import { logoSources, signature, toHtml, toText } from "../services/emailRender.js";
 import { SlackError, sendSlack, slackTransport, verifySlack } from "../lib/slack.js";
+import type { SlackDeliveryStatus } from "@prisma/client";
+import { DeliveryNotRetryable, deliveryHistory, retrySlackDelivery } from "../services/slack/queue.js";
 import { slackHealth } from "../services/slackHealth.js";
 import { GitHubError, verifyGitHubToken } from "../lib/github.js";
 import { calendarReady, listCalendars } from "../lib/calendar.js";
@@ -1952,6 +1954,61 @@ settingsRouter.post("/slack/test", async (req, res, next) => {
     res.json(result);
   } catch (err) {
     if (err instanceof SlackError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+/**
+ * What the queue has tried to send, and what became of it.
+ *
+ * The point of the whole delivery queue is that a message nobody received is
+ * visible from inside the app rather than only in a log, and this is the route
+ * that makes that true.
+ */
+settingsRouter.get("/slack/deliveries", async (req, res, next) => {
+  try {
+    const query = z
+      .object({
+        status: z.string().optional(),
+        subjectType: z.string().max(40).optional(),
+        subjectId: z.string().max(60).optional(),
+        sinceDays: z.coerce.number().int().min(1).max(90).optional(),
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+      })
+      .parse(req.query ?? {});
+
+    const statuses = (query.status ?? "")
+      .split(",")
+      .map((value) => value.trim().toUpperCase())
+      .filter(Boolean) as SlackDeliveryStatus[];
+
+    res.json(
+      await deliveryHistory({
+        status: statuses.length ? statuses : undefined,
+        subjectType: query.subjectType,
+        subjectId: query.subjectId,
+        since: query.sinceDays ? new Date(Date.now() - query.sinceDays * 86_400_000) : undefined,
+        limit: query.limit,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Sends a given-up message again, because somebody fixed what was wrong.
+ *
+ * Refuses anything the queue will get to on its own, and refuses a delivered
+ * message outright: the button exists to rescue a message, not to post a
+ * second copy of one that arrived.
+ */
+settingsRouter.post("/slack/deliveries/:id/retry", async (req, res, next) => {
+  try {
+    const delivery = await retrySlackDelivery(req.params.id, req.dbUser?.id ?? null);
+    res.json(delivery);
+  } catch (err) {
+    if (err instanceof DeliveryNotRetryable) return res.status(409).json({ error: err.message });
     next(err);
   }
 });
