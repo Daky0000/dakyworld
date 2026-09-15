@@ -55,3 +55,40 @@ export async function postNotification(input: Notification): Promise<boolean> {
     : await sendSlack({ text: input.text, channel: input.channel });
   return result.delivered;
 }
+
+/**
+ * A list of lines as however many section blocks it takes.
+ *
+ * Slack refuses a section whose text runs past 3,000 characters, and refuses
+ * it as `invalid_blocks` — a name that says nothing about which block or why.
+ * Both digests built one section out of an unbounded list, so each worked
+ * perfectly until there was enough to report, and then failed on exactly the
+ * days the report mattered most. Twenty waiting escalations at a hundred and
+ * fifty characters each is over the line.
+ *
+ * Splits on line boundaries, because a digest cut mid-sentence is worse than
+ * one that runs to two blocks.
+ */
+const SECTION_LIMIT = 2_900;
+
+export function sectionsFrom(lines: string[]): unknown[] {
+  const sections: unknown[] = [];
+  let current: string[] = [];
+  let length = 0;
+
+  for (const line of lines) {
+    // One line longer than a whole section is its own problem; trim it rather
+    // than let it take the whole digest down with it.
+    const safe = line.length > SECTION_LIMIT ? `${line.slice(0, SECTION_LIMIT - 1)}…` : line;
+    if (length + safe.length + 1 > SECTION_LIMIT && current.length > 0) {
+      sections.push({ type: "section", text: { type: "mrkdwn", text: current.join("\n") } });
+      current = [];
+      length = 0;
+    }
+    current.push(safe);
+    length += safe.length + 1;
+  }
+
+  if (current.length > 0) sections.push({ type: "section", text: { type: "mrkdwn", text: current.join("\n") } });
+  return sections;
+}

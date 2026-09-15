@@ -1,7 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting } from "../../lib/settings.js";
 import { slackConfigured } from "../../lib/slack.js";
-import { postNotification } from "../slack/notify.js";
+import { postNotification, sectionsFrom } from "../slack/notify.js";
 
 /**
  * The questions nobody has answered yet, gathered once a week.
@@ -183,7 +183,7 @@ export async function postEscalationDigest(): Promise<{ posted: boolean; count: 
             },
           ]
         : []),
-      { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+      ...sectionsFrom(lines),
       ...(open.length > 20
         ? [{ type: "context", elements: [{ type: "mrkdwn", text: `…and ${open.length - 20} more on the Agents screen.` }] }]
         : []),

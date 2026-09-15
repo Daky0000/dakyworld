@@ -103,6 +103,14 @@ export async function enqueueSlack(input: EnqueueInput): Promise<SlackDelivery> 
           subjectType: input.subjectType ?? null,
           subjectId: input.subjectId ?? null,
           seq,
+          // Stamped from this process's clock rather than left to the column
+          // default, which is the database's. The worker decides what is due
+          // using its own clock, so two clocks were deciding one comparison
+          // and a few milliseconds of skew made a message that had just been
+          // written briefly not yet due. Live that costs one five-second tick
+          // and nobody notices; it is still two answers to a question that
+          // should only have one.
+          nextAttemptAt: now,
           expiresAt: new Date(now.getTime() + TTL_MS),
         },
       });

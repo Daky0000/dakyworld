@@ -40,6 +40,7 @@ import { SETTING, clearSettingsCache, deleteSetting, setSetting } from "../src/l
 import { FLAG, forgetFlags, setFlag } from "../src/lib/featureFlags.js";
 import { postTaskCard, settleTaskCard } from "../src/services/agents/escalationCards.js";
 import { recordCreated, transition } from "../src/services/agents/state.js";
+import { postNotification, sectionsFrom } from "../src/services/slack/notify.js";
 import { enqueueSlack, retrySlackDelivery, slackQueueHealth } from "../src/services/slack/queue.js";
 import { drainSlackQueue, reclaimExpiredLeases } from "../src/services/slack/worker.js";
 
@@ -70,6 +71,22 @@ let behaviour: Behaviour = { kind: "ok" };
 const posted: Array<{ text: string; channel?: string }> = [];
 let tsCounter = 0;
 
+/**
+ * Slack's own limits, as the stub enforces them.
+ *
+ * A section over 3,000 characters is refused as `invalid_blocks` — a name that
+ * says nothing about which block or why. Without this the stub accepts
+ * anything, and a digest that cannot be posted live passes here.
+ */
+function badBlocks(blocks: unknown): string | null {
+  if (!Array.isArray(blocks)) return null;
+  for (const block of blocks as Array<{ type?: string; text?: { text?: string } }>) {
+    if (block?.type === "section" && (block.text?.text?.length ?? 0) > 3000) return "section too long";
+    if (block?.type === "section" && !block.text?.text) return "section with no text";
+  }
+  return blocks.length > 50 ? "too many blocks" : null;
+}
+
 function stub(): Promise<Server> {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -88,6 +105,8 @@ function stub(): Promise<Server> {
     if (behaviour.kind === "error") {
       return res.json({ ok: false, error: behaviour.code });
     }
+    const bad = badBlocks(req.body?.blocks);
+    if (bad) return res.json({ ok: false, error: "invalid_blocks" });
     posted.push({ text: String(req.body?.text ?? ""), channel: req.body?.channel });
     res.json({ ok: true, ts: `171000.${++tsCounter}`, channel: req.body?.channel ?? CHANNEL });
   });
@@ -353,6 +372,30 @@ async function main() {
   );
 
   await setFlag(FLAG.SLACK_QUEUE, false);
+
+  console.log("\nA digest with more waiting on it than fits in one block");
+  // The bug this caught in production: both digests built one section out of
+  // an unbounded list, so each worked perfectly until there was enough to
+  // report — and then failed as `invalid_blocks` on exactly the days the
+  // report mattered most.
+  const many = Array.from({ length: 40 }, (_, i) => `• *Agent ${i}* — a question that is quite long, ${"x".repeat(120)} _(${i}d)_`);
+  const split = sectionsFrom(many);
+  check("is split into more than one section", split.length > 1, `got ${split.length}`);
+  check(
+    "and no section is over the limit Slack actually enforces",
+    split.every((block) => ((block as { text: { text: string } }).text.text.length ?? 0) <= 3000),
+  );
+  check("and keeps every line", split.map((b) => (b as { text: { text: string } }).text.text).join("\n").split("\n").length === many.length);
+
+  posted.length = 0;
+  // Through the queue, so the outcome is a row that can be asserted on rather
+  // than a send that either threw or did not.
+  await setFlag(FLAG.SLACK_QUEUE, true);
+  await postNotification({ idempotencyKey: "harness:digest", text: "40 questions waiting on you", blocks: [...split] });
+  await setFlag(FLAG.SLACK_QUEUE, false);
+  await drainSlackQueue();
+  check("so the digest actually reaches the channel", posted.length === 1, `sent ${posted.length}`);
+  check("rather than being refused as invalid_blocks", (await rowFor("digest"))?.status === "DELIVERED", (await rowFor("digest"))?.lastError ?? "");
 
   console.log("\nHealth");
   const health = await slackQueueHealth();

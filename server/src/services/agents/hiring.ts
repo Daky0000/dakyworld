@@ -1,7 +1,7 @@
 import type { AgentDepartment, AgentHireRequest, HireRequestStatus, Prisma } from "@prisma/client";
 import { FLAG, flagOn } from "../../lib/featureFlags.js";
 import { prisma } from "../../lib/prisma.js";
-import { postNotification } from "../slack/notify.js";
+import { postNotification, sectionsFrom } from "../slack/notify.js";
 import { enqueueSlack } from "../slack/queue.js";
 import { remember, subjectOf } from "./memory.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
@@ -1267,7 +1267,7 @@ export async function postGapNotice(): Promise<{ posted: boolean; count: number 
           },
         ],
       },
-      { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+      ...sectionsFrom(lines),
     ],
   });
 
