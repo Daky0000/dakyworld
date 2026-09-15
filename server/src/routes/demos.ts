@@ -5,6 +5,7 @@ import { buildDemo, demoUrl, subjectFromLead } from "../services/demoBuilder.js"
 import { appUrl } from "../services/emailSender.js";
 import { companyProfile } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import { recordBuild } from "../services/concept/record.js";
 
 /**
  * Demos: the pages built for prospects, and the public serving of them.
@@ -123,9 +124,15 @@ demosRouter.post("/build", async (req, res, next) => {
     }
 
     const subject = subjectFromLead(lead, (lead.research?.audit ?? null) as never, (lead.research?.look ?? null) as never);
+    const startedAt = Date.now();
     const result = await buildDemo(subject, { rebuild: input.rebuild });
+    // Every door into `buildDemo` records the same thing: the page enters the
+    // workflow at NEEDS_REVIEW with its checks run. A page built here and not
+    // recorded would be a page the gate has never heard of.
+    const checks = await recordBuild(input.leadId, result, { by: req.dbUser?.id ?? null, startedAt, rebuild: input.rebuild });
     res.status(201).json({
       ...result,
+      checks,
       lookedAtFirst: Boolean(lead.research),
       notes: lead.research
         ? result.notes

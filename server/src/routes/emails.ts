@@ -29,6 +29,7 @@ import { FileStoreError, MAX_UPLOAD_BODY, deleteFile, fileSummary, readFile, sto
 import { LOGO_CID, LOGO_DARK_CID, brandDataUrl } from "../lib/brandAssets.js";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import { outreachGate } from "../services/concept/gate.js";
 
 /**
  * Everything to do with outbound email.
@@ -348,6 +349,12 @@ emailsRouter.post("/draft", async (req, res, next) => {
     if (input.leadId && input.demo !== "never" && DEMO_PURPOSES.has(input.purpose)) {
       demo = await ensureDemoForLead(input.leadId, { force: input.demo === "always" });
     }
+
+    // The same refusal the Proposals screen makes, for the same reason: a page
+    // exists for this business and nobody has cleared it, so the letter that
+    // would carry its link is not written yet.
+    const allowed = await outreachGate(input.leadId ?? null);
+    if (!allowed.ok) return res.status(409).json({ error: allowed.reason });
 
     // Resolved after the prep, so the draft is written from the filled-in
     // record rather than the one that walked in.

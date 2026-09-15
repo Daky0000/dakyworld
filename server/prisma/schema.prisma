@@ -363,6 +363,9 @@ model Lead {
   /// What each hunt decided about this business, and under which thesis.
   verdicts     LeadVerdict[]
 
+  /// Where this lead has got to in the redesign-concept workflow.
+  concept LeadConcept?
+
   /// Evidence bundles related to this lead, stored at `evidence:/${lead_id}/${source}` paths.
   evidence      Evidence[]
   /// PDF reports related to this lead, stored at `pdf:/${lead_id}/report.pdf` paths.
@@ -4509,4 +4512,120 @@ model SlackDelivery {
   @@index([orderKey, seq])
   @@index([subjectType, subjectId])
   @@index([status, createdAt])
+}
+
+/// Where one lead has got to in the redesign-concept workflow.
+///
+/// Deliberately separate from `DemoStatus`. That enum describes a *page* — is
+/// this HTML fit to show, has the link gone out. This describes the *lead's*
+/// progress through a pipeline that touches five other things: the audit that
+/// justified building at all, the checks the page had to pass, the proposal,
+/// the letter, and the one approval that covers all of them. A page can be
+/// READY while the lead is still held because the proposal names a price
+/// nobody has looked at.
+enum ConceptStage {
+  /// Eligible, nothing done yet.
+  QUALIFIED
+  /// The website audit has run and the redesign call is on the record.
+  AUDIT_COMPLETE
+  /// A page is being built right now.
+  BUILDING
+  /// Built, and waiting for a person. Automated checks may have passed or failed.
+  NEEDS_REVIEW
+  /// Automated checks passed and a reviewer signed off the page itself.
+  PREVIEW_CHECKED
+  PROPOSAL_READY
+  EMAIL_READY
+  /// A person approved this exact preview, proposal, recipient and letter.
+  APPROVED
+  /// The send has been claimed. Exactly one claim can exist.
+  SENDING
+  SENT
+  /// Deliberately not doing this one — `reason` says why.
+  SKIPPED
+  /// Something broke. `reason` says what, and nothing downstream may proceed.
+  FAILED
+}
+
+/// Whether the page is the argument or the alternative.
+enum ConceptKind {
+  /// They have no website, so the page is what a website could be.
+  NEW_SITE
+  /// They have one and it scored badly enough to argue for replacing it.
+  REDESIGN
+}
+
+/// One lead's journey from qualified to sent, and everything that must be true
+/// before the next step is allowed.
+///
+/// The ids below are plain strings rather than relations on purpose: this row
+/// is a record of *what was approved*, and a proposal later deleted should
+/// leave the history saying a proposal was approved rather than quietly
+/// nulling itself.
+model LeadConcept {
+  id     String @id @default(cuid())
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId String @unique
+
+  stage  ConceptStage @default(QUALIFIED)
+  kind   ConceptKind  @default(NEW_SITE)
+  /// Why it is where it is — always set on SKIPPED and FAILED.
+  reason String?
+
+  /// What was decided about their current site, and by which audit run.
+  auditId       String?
+  redesignCall  String?
+  redesignScore Int?
+
+  demoId      String?
+  /// The page version these checks and this approval were taken against.
+  demoVersion Int?
+
+  /// `services/concept/checks.ts` `PreviewChecks`, as run.
+  checks        Json?
+  checkAttempts Int      @default(0)
+  /// True when the first build passed every automated check. Null until checked.
+  firstPassOk   Boolean?
+
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  reviewNotes String?
+
+  proposalId     String?
+  emailMessageId String?
+
+  /// A hash over the exact preview, proposal, recipient and letter that were
+  /// approved. Any edit to any of them changes it and the approval is void.
+  approvalFingerprint String?
+  /// The four approved things as they stood, so a later mismatch can say which
+  /// of them moved rather than only that something did.
+  approvalSubject     Json?
+  approvedBy          String?
+  approvedAt          DateTime?
+
+  // --- What the pilot is measuring ---------------------------------------
+  buildMs      Int?
+  buildCostUsd Decimal @default(0) @db.Decimal(10, 4)
+  rebuilds     Int     @default(0)
+
+  /// Set inside the transaction that claims the one initial send for this
+  /// lead. Its presence — not the email row's status — is what makes a second
+  /// initial outreach impossible.
+  initialSendClaimedAt DateTime?
+  sentAt               DateTime?
+  /// The send neither succeeded nor provably failed. Held for a person.
+  sendUncertain        Boolean   @default(false)
+
+  repliedAt          DateTime?
+  meetingAt          DateTime?
+  proposalAcceptedAt DateTime?
+  revenueUsd         Decimal?  @db.Decimal(12, 2)
+
+  /// Every stage it has been in: `[{ stage, at, reason, by }]`. Append-only.
+  history Json @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stage])
 }

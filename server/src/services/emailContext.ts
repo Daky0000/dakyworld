@@ -1,6 +1,6 @@
 import type { LeadSource } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { demoUrl } from "./demoBuilder.js";
+import { previewGate } from "./concept/gate.js";
 import { appUrl } from "./emailSender.js";
 
 /**
@@ -203,21 +203,29 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
   }
   if (lead.emails.length === 0) facts.push("We have never emailed this person before.");
 
-  // The demo, when one has been built. The link is a fact like any other, and
-  // the email that carries it is useless without it — a "go and look at this"
-  // with nothing to look at is the worst email in the set.
-  if (lead.demos.length) {
-    const base = await appUrl();
-    for (const demo of lead.demos) {
-      const brief = (demo.brief ?? null) as { headline?: string; sections?: string[] } | null;
-      facts.push(
-        `A demo page has been built for them at ${demoUrl(demo.slug, base)} — ${demo.title}${
-          brief?.headline ? `, headlined "${brief.headline}"` : ""
-        }${brief?.sections?.length ? `, with sections: ${brief.sections.join(", ")}` : ""}. Status: ${demo.status.toLowerCase()}${
-          demo.views > 0 ? `, opened ${demo.views} time${demo.views === 1 ? "" : "s"}` : ", not opened yet"
-        }.`,
-      );
-    }
+  // The demo, when one has been built **and checked**. The link is a fact like
+  // any other, and the email that carries it is useless without it — a "go and
+  // look at this" with nothing to look at is the worst email in the set.
+  //
+  // The gate is why this is not simply `lead.demos[0]`. An unchecked page is
+  // worse than no page: the letter would send a stranger to a page carrying
+  // their own business name with their phone number wrong on it, and by then
+  // the link has been opened. When the gate is shut the drafter is told so in
+  // words rather than left to infer it from silence — a drafter that is simply
+  // not told about a page writes around it, and a drafter that is told there
+  // is no checked page knows not to promise one.
+  const gate = await previewGate(lead.id);
+  if (gate.ok && gate.demo) {
+    const brief = (gate.demo.brief ?? null) as { headline?: string; sections?: string[] } | null;
+    facts.push(
+      `A checked concept page has been built for them at ${gate.url} — ${gate.demo.title}${
+        brief?.headline ? `, headlined "${brief.headline}"` : ""
+      }${brief?.sections?.length ? `, with sections: ${brief.sections.join(", ")}` : ""}. It has passed its quality checks and been reviewed${
+        gate.demo.views > 0 ? `, and they have opened it ${gate.demo.views} time${gate.demo.views === 1 ? "" : "s"}` : ", and they have not opened it yet"
+      }.`,
+    );
+  } else if (lead.demos.length) {
+    facts.push(`A page exists for them but it is not fit to send: ${gate.reason} Do not offer a link and do not describe a page as though it exists.`);
   }
 
   // Everything that came from going and looking: what research established,

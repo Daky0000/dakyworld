@@ -9,6 +9,7 @@ const LeadSources = lazy(() => import("./pages/LeadSources").then((module) => ({
 const Hunts = lazy(() => import("./pages/Hunts").then((module) => ({ default: module.Hunts })));
 const Proposals = lazy(() => import("./pages/Proposals").then((module) => ({ default: module.Proposals })));
 const Demos = lazy(() => import("./pages/Demos").then((module) => ({ default: module.Demos })));
+const Concepts = lazy(() => import("./pages/Concepts").then((module) => ({ default: module.Concepts })));
 const Projects = lazy(() => import("./pages/Projects").then((module) => ({ default: module.Projects })));
 const ProjectDetail = lazy(() => import("./pages/ProjectDetail").then((module) => ({ default: module.ProjectDetail })));
 const Invoices = lazy(() => import("./pages/Invoices").then((module) => ({ default: module.Invoices })));
@@ -84,6 +85,7 @@ export default function App() {
         <Route path="/hunts" element={<Guard needs="leads.sources"><Hunts /></Guard>} />
         <Route path="/proposals" element={<Guard needs="proposals.view"><Proposals /></Guard>} />
         <Route path="/demos" element={<Guard needs="demos.view"><Demos /></Guard>} />
+        <Route path="/concepts" element={<Guard needs="demos.view"><Concepts /></Guard>} />
         <Route path="/projects" element={<Guard needs="projects.view"><Projects /></Guard>} />
         <Route path="/projects/:id" element={<Guard needs="projects.view"><ProjectDetail /></Guard>} />
         <Route path="/invoices" element={<Guard needs="invoices.view"><Invoices /></Guard>} />

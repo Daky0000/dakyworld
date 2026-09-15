@@ -1,5 +1,8 @@
 import { prisma } from "../lib/prisma.js";
 import { auditCompany, type AuditSubject, type CompanyAudit } from "./companyAudit.js";
+import { previewGate } from "./concept/gate.js";
+import { normaliseCall } from "./audit/redesign.js";
+import type { WebsiteAuditReport } from "./audit/types.js";
 import { TIER_LABEL } from "./carePlanCatalogue.js";
 
 /**
@@ -31,6 +34,30 @@ export interface ProposalContext {
   audit: CompanyAudit;
   /** True when we have never spoken to them — changes the whole tone of the ask. */
   cold: boolean;
+  /**
+   * The concept page, only ever when it has passed its checks and been
+   * reviewed.
+   *
+   * A proposal that links a page is a proposal whose first paragraph can be
+   * "here is what we already built you", which is a different document from
+   * one that describes what might be built. It is also the one place an
+   * unchecked page would do the most damage: a proposal is read slowly, kept,
+   * and forwarded, so a wrong phone number in it is wrong for months.
+   *
+   * Null when there is no page or the gate is shut. `previewNote` then says
+   * which, so the writer does not have to infer it from an absence.
+   */
+  preview: { url: string; headline: string | null; sections: string[] } | null;
+  previewNote: string | null;
+  /**
+   * What the audit team found wrong with the site the concept replaces, worst
+   * first, with the redesign verdict at the head of it.
+   *
+   * This is the evidence half of the same argument: the page shows what could
+   * be, and these say why the one they have is not it. Empty for a business
+   * with no website, where there is nothing to have found.
+   */
+  siteFindings: string[];
 }
 
 function line(label: string, value: unknown): string | null {
@@ -132,6 +159,14 @@ export async function leadProposalContext(leadId: string): Promise<ProposalConte
 
   const audit = await auditCompany(toAuditSubject(lead));
 
+  // The page and the reasons, fetched together because a proposal that carries
+  // one without the other is half an argument: a link with no findings is a
+  // free sample, and findings with no link is a list of complaints.
+  const gate = await previewGate(lead.id);
+  const brief = (gate.demo?.brief ?? null) as { headline?: string; sections?: string[] } | null;
+  const preview = gate.ok && gate.url ? { url: gate.url, headline: brief?.headline ?? null, sections: brief?.sections ?? [] } : null;
+  const siteFindings = await auditFindingLines(lead.id);
+
   return {
     kind: "lead",
     leadId: lead.id,
@@ -142,7 +177,41 @@ export async function leadProposalContext(leadId: string): Promise<ProposalConte
     facts,
     audit,
     cold,
+    preview,
+    previewNote: preview ? null : gate.reason,
+    siteFindings,
   };
+}
+
+/**
+ * The stored audit's worst findings as lines a writer can quote.
+ *
+ * Read from the stored report rather than re-run: the report is what the
+ * client was or will be shown, and a proposal arguing from a second, fresher
+ * set of findings is a proposal that disagrees with its own attachment.
+ */
+async function auditFindingLines(leadId: string): Promise<string[]> {
+  const stored = await prisma.websiteAudit.findFirst({ where: { leadId }, orderBy: { ranAt: "desc" } });
+  const report = (stored?.report ?? null) as WebsiteAuditReport | null;
+  if (!report) return [];
+
+  const lines: string[] = [];
+  const redesign = report.redesign;
+  if (redesign) {
+    const score = typeof redesign.score === "number" ? ` (${redesign.score}/100 on how it looks)` : "";
+    lines.push(`The review's verdict on their current site: ${normaliseCall(redesign.call).toLowerCase().replace(/_/g, " ")}${score}.`);
+    if (redesign.summary) lines.push(redesign.summary);
+  }
+
+  const severity: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, GOOD: 9 };
+  const findings = (report.disciplines ?? [])
+    .flatMap((discipline) => discipline.findings ?? [])
+    .filter((finding) => finding.severity !== "GOOD")
+    .sort((a, b) => (severity[a.severity] ?? 5) - (severity[b.severity] ?? 5))
+    .slice(0, 6);
+  for (const finding of findings) lines.push(`${finding.severity}: ${finding.observed}`);
+
+  return lines;
 }
 
 function toAuditSubject(lead: {
@@ -234,6 +303,12 @@ export async function clientProposalContext(clientId: string): Promise<ProposalC
     facts,
     audit,
     cold: false,
+    // A client is somebody we are already working with, and the concept page is
+    // a cold-outreach instrument. Nothing here is a gate failing — there is
+    // simply no concept in this shape of proposal.
+    preview: null,
+    previewNote: null,
+    siteFindings: [],
   };
 }
 

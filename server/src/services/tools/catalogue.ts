@@ -46,6 +46,8 @@ import { interpret } from "../captureIntent.js";
 import { nextInvoiceNumber } from "../invoiceNumber.js";
 import { writeProposal } from "../../lib/proposalWriter.js";
 import { resolveProposalContext } from "../proposalContext.js";
+import { recordBuild } from "../concept/record.js";
+import { outreachGate } from "../concept/gate.js";
 import { toolStatuses } from "../toolRegistry.js";
 import { callClaude } from "../../lib/claude.js";
 import { callModel, generateImage } from "../../lib/models/call.js";
@@ -1045,8 +1047,15 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         ])
         .default("CUSTOM"),
     }),
-    run: async (input, ctx) =>
-      composeMessage({
+    run: async (input, ctx) => {
+      // A first letter for a lead whose concept page is not cleared waits with
+      // the proposal, for the same reason: it is the letter that carries the
+      // link. Everything else — a follow-up, an invoice — passes through.
+      if (["COLD_OUTREACH", "DEMO_READY"].includes(input.purpose)) {
+        const allowed = await outreachGate(input.leadId ?? null);
+        if (!allowed.ok) throw new Error(allowed.reason ?? "The concept page for this lead has not been cleared.");
+      }
+      return composeMessage({
         subject: input.subject,
         body: input.body,
         purpose: input.purpose as any,
@@ -1057,7 +1066,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         clientId: input.clientId ?? null,
         createdById: ctx.userId,
         status: "DRAFT" as any,
-      }),
+      });
+    },
   },
   {
     key: "email.send",
@@ -2235,6 +2245,8 @@ export const TOOLS: ToolDefinition<any, any>[] = [
       brief: z.string().max(4000).optional(),
     }),
     run: async (input) => {
+      const allowed = await outreachGate(input.leadId ?? null);
+      if (!allowed.ok) throw new Error(allowed.reason ?? "The concept page for this lead has not been cleared.");
       const context = await resolveProposalContext({ leadId: input.leadId ?? null, clientId: input.clientId ?? null });
       const result = await writeProposal(context, input.brief ?? null);
       return result;
@@ -3025,10 +3037,15 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         // into it, which is the one thing this feature exists not to be.
         throw new Error("Nobody has looked at this business yet. Run lead.prepare first — a demo built from a bare record is a template.");
       }
+      const startedAt = Date.now();
       const result = await buildDemo(subjectFromLead(lead, lead.research.audit as never, lead.research.look as never), {
         rebuild: input.rebuild,
       });
-      return result;
+      // The same recording the Build button and the automatic pass do. A page
+      // an agent builds has to enter the workflow like any other, or the gate
+      // would see a demo nobody ever checked and a lead with no stage at all.
+      const checks = await recordBuild(input.leadId, result, { startedAt, rebuild: input.rebuild });
+      return { ...result, checks, stage: "NEEDS_REVIEW" };
     },
   },
   {

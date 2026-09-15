@@ -10,6 +10,8 @@ import { writeProposal } from "../lib/proposalWriter.js";
 import { resolveProposalContext } from "../services/proposalContext.js";
 import { auditCompany, sortFindings } from "../services/companyAudit.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import { noteProposal } from "../services/concept/progress.js";
+import { outreachGate } from "../services/concept/gate.js";
 
 export const proposalsRouter = Router();
 
@@ -86,6 +88,10 @@ proposalsRouter.post("/", async (req, res, next) => {
     const proposal = await prisma.proposal.create({
       data: { ...data, body: json(body), audit: json(audit) },
     });
+    // Attaches it to the lead's concept file, and moves the lead on when the
+    // proposal was the thing it was waiting for. Silent for every proposal
+    // that has nothing to do with that workflow, which is most of them.
+    await noteProposal(proposal.leadId, proposal.id);
     res.status(201).json(proposal);
   } catch (err) {
     next(err);
@@ -127,6 +133,11 @@ proposalsRouter.post("/draft", async (req, res, next) => {
       })
       .refine((value) => value.leadId || value.clientId, { message: "Say which lead or client this proposal is for" })
       .parse(req.body);
+
+    // A page has been built for this lead and has not been cleared: the
+    // proposal is the document written around that link, so it waits.
+    const allowed = await outreachGate(input.leadId ?? null);
+    if (!allowed.ok) return res.status(409).json({ error: allowed.reason });
 
     const context = await resolveProposalContext(input);
     const { draft, model, inputTokens, outputTokens } = await writeProposal(context, input.brief);

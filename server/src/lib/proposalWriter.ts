@@ -266,6 +266,29 @@ function buildPrompt(context: ProposalContext, brief: string | null | undefined)
     auditForPrompt(context.audit),
   ];
 
+  // The page and the reasons. The preview is only ever here when it has passed
+  // its checks and been reviewed — `proposalContext` asks the gate — so the
+  // writer never has to judge whether a link is fit to print, and a proposal
+  // can no longer be the document that leaks an unchecked page.
+  if (context.siteFindings.length) {
+    parts.push(
+      "",
+      "What our review found wrong with the site they have now — argue from these and nothing else:",
+      context.siteFindings.map((finding) => `- ${finding}`).join("\n"),
+    );
+  }
+  if (context.preview) {
+    parts.push(
+      "",
+      `We have already built them a concept homepage, and it has been checked. It is at ${context.preview.url}${
+        context.preview.headline ? `, headlined "${context.preview.headline}"` : ""
+      }${context.preview.sections.length ? `, with sections: ${context.preview.sections.join(", ")}` : ""}.`,
+      "Put that link in the proposal, and say plainly that the concept homepage is finished and free to look at while the full project is the work being quoted for. Never describe the concept as though it were the delivered site.",
+    );
+  } else if (context.previewNote) {
+    parts.push("", `There is no concept page fit to show them: ${context.previewNote} Do not mention or link one.`);
+  }
+
   if (context.cold) {
     parts.push(
       "",

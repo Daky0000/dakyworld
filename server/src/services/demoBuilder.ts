@@ -242,6 +242,17 @@ export function sanitiseDemoHtml(html: string): { html: string; stripped: string
     return `${before}#${after}`;
   });
 
+  // ...and a form that posts *nowhere* is worse than one that posts offsite,
+  // because to the visitor it looks exactly like one that worked. There is no
+  // inbox behind this page, so an enquiry typed into it is a customer the
+  // business lost at the moment we were trying to win them. Every field is
+  // disabled rather than the form being removed: the contact section is part of
+  // what is being demonstrated, and a concept page without one shows the
+  // opposite of the argument it was built to make.
+  const inert = makeFormsInert(out);
+  out = inert.html;
+  stripped.push(...inert.stripped);
+
   // Hotlinked images: they break under the CSP and they are somebody else's
   // property. Left as a note rather than silently swapped for a placeholder.
   for (const match of out.matchAll(/<img\b[^>]*\bsrc\s*=\s*["'](https?:\/\/[^"']+)["']/gi)) {
@@ -249,6 +260,63 @@ export function sanitiseDemoHtml(html: string): { html: string; stripped: string
   }
 
   return { html: out, stripped };
+}
+
+/**
+ * Disables every control inside every form, and cancels submission twice over.
+ *
+ * `inert` on the form element is not enough on its own — older browsers ignore
+ * it, and this page gets opened on whatever phone the prospect happens to own.
+ * So each field carries `disabled` (which also keeps it out of the submitted
+ * set), the form carries an inline `onsubmit` that returns false, and the
+ * action is pinned to `#`. Three belts, because the failure is silent: a form
+ * that appears to send and does not is indistinguishable from one that works.
+ */
+export function makeFormsInert(html: string): { html: string; stripped: string[] } {
+  const stripped: string[] = [];
+  let forms = 0;
+
+  const out = html.replace(/<form\b[\s\S]*?<\/form>/gi, (form) => {
+    forms += 1;
+    let next = form.replace(/<(input|textarea|select|button)\b([^>]*?)(\/?)>/gi, (_match, tag: string, attrs: string, close: string) => {
+      if (/\bdisabled\b/i.test(attrs)) return `<${tag}${attrs}${close}>`;
+      return `<${tag}${attrs} disabled aria-disabled="true"${close}>`;
+    });
+    next = next.replace(/<form\b([^>]*)>/i, (_match, attrs: string) => {
+      const cleaned = attrs.replace(/\saction\s*=\s*["'][^"']*["']/gi, "").replace(/\sonsubmit\s*=\s*["'][^"']*["']/gi, "");
+      return `<form${cleaned} action="#" onsubmit="return false" inert data-dw-inert="concept">`;
+    });
+    return next;
+  });
+
+  if (forms) {
+    stripped.push(`${forms} form${forms === 1 ? "" : "s"} made inert — a concept page must not be able to take a visitor's details`);
+  }
+  return { html: out, stripped };
+}
+
+/** What the page itself says to a crawler. */
+const ROBOTS_META = '<meta name="robots" content="noindex, nofollow, noarchive, noimageindex">';
+
+/**
+ * Keeps the page out of the search index from inside the page itself.
+ *
+ * `X-Robots-Tag` on the response is the real enforcement and stays. This is the
+ * copy that survives the page being saved, forwarded, or served by anything
+ * other than our own route. Neither of them makes the page *private* — the
+ * unguessable link is what keeps it unfound, and the banner is what stops it
+ * being mistaken for theirs if it is found anyway.
+ */
+export function withNoIndex(html: string): string {
+  if (/<meta\b[^>]*name\s*=\s*["']robots["']/i.test(html)) {
+    return html.replace(/<meta\b[^>]*name\s*=\s*["']robots["'][^>]*>/i, ROBOTS_META);
+  }
+  const headOpen = /<head\b[^>]*>/i.exec(html);
+  if (headOpen) {
+    const at = headOpen.index + headOpen[0].length;
+    return `${html.slice(0, at)}\n${ROBOTS_META}${html.slice(at)}`;
+  }
+  return `${ROBOTS_META}\n${html}`;
 }
 
 /**
@@ -405,7 +473,7 @@ export async function buildDemo(subject: DemoSubject, options: { rebuild?: boole
   // 3. Make it safe to serve, and make it say what it is.
   const cleaned = sanitiseDemoHtml(result.data.html);
   if (cleaned.stripped.length) notes.push(`Removed from the page before serving: ${cleaned.stripped.join("; ")}.`);
-  const html = withBanner(cleaned.html, subject.businessName, profile.displayName, profile.web ?? "dakyworld.com");
+  const html = withNoIndex(withBanner(cleaned.html, subject.businessName, profile.displayName, profile.web ?? "dakyworld.com"));
 
   const existing = options.rebuild ? await prisma.demo.findFirst({ where: { leadId: subject.leadId }, orderBy: { createdAt: "desc" } }) : null;
   const slug = existing?.slug ?? (await uniqueSlug(subject.businessName, null));

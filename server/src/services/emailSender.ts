@@ -8,6 +8,8 @@ import { renderInvoicePdfFor } from "./invoicePdf.js";
 import { readFile } from "./fileStore.js";
 import { renderEmail } from "./emailRender.js";
 import { resolveContext } from "./emailContext.js";
+import { claimSend, settleSend } from "./concept/send.js";
+import { noteEmailDraft } from "./concept/progress.js";
 
 /**
  * Sending. Everything that decides whether an email actually leaves is here,
@@ -168,6 +170,13 @@ export async function sendMessage(id: string): Promise<SendResult> {
   if (message.status === "SENDING") return { sent: false, reason: "in-flight" };
   if (message.status === "CANCELLED") return { sent: false, reason: "cancelled" };
 
+  // What was approved, and whether this lead's one first letter is still
+  // unclaimed. A lead outside the concept workflow passes straight through —
+  // see services/concept/send.ts, which is also where the reason this is not
+  // simply a status check is written down.
+  const claim = await claimSend(message);
+  if (!claim.ok) return { sent: false, reason: claim.reason ?? "held" };
+
   const suppressed = await isSuppressed(message.toEmail);
   if (suppressed) {
     await prisma.emailMessage.update({
@@ -179,7 +188,21 @@ export async function sendMessage(id: string): Promise<SendResult> {
 
   // Claim it before the network call, so a crash leaves a SENDING row to
   // investigate rather than a DRAFT that looks safe to send again.
-  await prisma.emailMessage.update({ where: { id }, data: { status: "SENDING", attempts: { increment: 1 } } });
+  //
+  // **A conditional update, not a read followed by a write.** The status was
+  // read at the top of this function, and between that read and this write two
+  // callers — the Send button and the scheduler coming due in the same second —
+  // can both have seen DRAFT. Narrowing the update by status is what makes the
+  // second one lose: `count` is 0 and it stops here rather than opening a
+  // socket for a letter that is already in flight.
+  const taken = await prisma.emailMessage.updateMany({
+    where: { id, status: { in: ["DRAFT", "SCHEDULED", "FAILED"] } },
+    data: { status: "SENDING", attempts: { increment: 1 } },
+  });
+  if (taken.count !== 1) {
+    const now = await prisma.emailMessage.findUnique({ where: { id }, select: { status: true, messageId: true } });
+    return { sent: false, reason: now?.status === "SENT" ? "already-sent" : "in-flight", messageId: now?.messageId ?? undefined };
+  }
 
   try {
     const attachments = await resolveAttachments(parseAttachments(message.attachments));
@@ -203,13 +226,30 @@ export async function sendMessage(id: string): Promise<SendResult> {
       where: { id },
       data: { status: "SENT", sentAt: new Date(), messageId: result.messageId, error: null },
     });
+    await settleSend(message.leadId, { sent: true });
     await logCommunication(message);
     // The Hostinger path answers a send with no body, so there is no
     // Message-ID to report; sent is still sent.
     return { sent: true, messageId: result.messageId ?? undefined };
   } catch (err) {
     const reason = err instanceof MailerError ? err.message : (err as Error).message;
-    await prisma.emailMessage.update({ where: { id }, data: { status: "FAILED", failedAt: new Date(), error: reason } });
+
+    // **A refusal and a silence are not the same failure.** A MailerError is
+    // the server saying no — nothing was delivered, and the row can go back to
+    // FAILED where it is safe to correct and send again. Anything else is a
+    // socket that closed or a call that never came back, and the letter may
+    // well have arrived. Retrying that is how a stranger gets two first emails,
+    // so the row stays SENDING — which every path in this file already refuses
+    // to touch — and the lead is held as uncertain for a person to reconcile
+    // against the mailbox.
+    const uncertain = !(err instanceof MailerError);
+    await prisma.emailMessage.update({
+      where: { id },
+      data: uncertain
+        ? { error: `Unresolved: ${reason} The message may have been delivered; check the mailbox before sending again.` }
+        : { status: "FAILED", failedAt: new Date(), error: reason },
+    });
+    await settleSend(message.leadId, { sent: false, uncertain, reason });
     return { sent: false, reason };
   }
 }
@@ -389,7 +429,7 @@ export async function composeMessage(args: {
   const attachments = [...(args.attachments ?? [])];
   attachments.push(...(await automaticAttachments({ ...args, existing: attachments })));
 
-  return prisma.emailMessage.create({
+  const created = await prisma.emailMessage.create({
     data: {
       subject: rendered.subject,
       bodyHtml: rendered.html,
@@ -416,6 +456,12 @@ export async function composeMessage(args: {
       createdById: args.createdById ?? null,
     },
   });
+
+  // A first letter for a lead in the concept workflow moves it to EMAIL_READY.
+  // Follow-ups, thank-yous and invoice deliveries are different letters with
+  // different decisions behind them, so `noteEmailDraft` ignores them.
+  await noteEmailDraft(created.leadId, created.id, created.purpose);
+  return created;
 }
 
 /** The scheduler's half: anything scheduled whose time has come. */

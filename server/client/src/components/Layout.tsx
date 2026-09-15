@@ -61,6 +61,7 @@ const navItems: NavItem[] = [
   },
   { to: "/proposals", label: "Proposals", needs: "proposals.view" },
   { to: "/demos", label: "Demos", needs: "demos.view" },
+  { to: "/concepts", label: "Concept review", needs: "demos.view" },
   { to: "/projects", label: "Projects", needs: "projects.view" },
   { to: "/invoices", label: "Invoices", needs: "invoices.view" },
   { to: "/care-plans", label: "Retainers", needs: "retainers.view" },

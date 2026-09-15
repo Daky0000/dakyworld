@@ -15,6 +15,7 @@ import { reviewSecurity } from "./security.js";
 import { reviewUx } from "./ux.js";
 import { decideRedesign, type RedesignVerdict } from "./redesign.js";
 import { synthesise } from "./synthesis.js";
+import { noteAudit } from "../concept/progress.js";
 import {
   DISCIPLINES,
   DISCIPLINE_NAMES,
@@ -315,6 +316,15 @@ export async function runWebsiteAudit(subject: AuditSubject, options: RunOptions
       costUsd: new Prisma.Decimal(report.costUsd.toFixed(4)),
     },
     select: { id: true },
+  });
+
+  // The concept workflow's file on this lead carries which review justified a
+  // rebuild, so the queue can show the verdict beside the page it produced.
+  // Silent and non-throwing when the lead is not in that workflow at all.
+  await noteAudit(subject.leadId, {
+    auditId: stored.id,
+    redesignCall: report.redesign?.call ?? null,
+    redesignScore: report.redesign?.score ?? null,
   });
 
   const base = screenshotFiles.length ? `${(await appUrl()).replace(/\/$/, "")}/api/audits/${stored.id}/screenshot` : null;
