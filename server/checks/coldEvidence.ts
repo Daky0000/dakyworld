@@ -354,7 +354,18 @@ async function main() {
   check("a business with a site is not one of these", !demoIsTheArgument({ website: "https://theirs.example", audit: null }));
 
   const noSite = await prisma.lead.create({
-    data: { contactName: `Ama ${MARK}`, companyName: "No Site Ltd", contactEmail: `nosite.${MARK}@example.invalid`, website: null, source: "OUTREACH" },
+    // QUALIFIED because eligibility refuses anything earlier than that now —
+    // a page is built for businesses we have decided to approach, and a lead
+    // still being qualified would be skipped for that reason rather than for
+    // the one this case is about.
+    data: {
+      contactName: `Ama ${MARK}`,
+      companyName: "No Site Ltd",
+      contactEmail: `nosite.${MARK}@example.invalid`,
+      website: null,
+      source: "OUTREACH",
+      status: "QUALIFIED",
+    },
   });
 
   // Nobody has looked at them yet: a page built from a bare record is a
@@ -380,7 +391,7 @@ async function main() {
   // The negative: a business that has a website is never given one behind
   // somebody's back. A redesign pitch is a decision, not a default.
   const hasSite = await prisma.lead.create({
-    data: { contactName: `Yaw ${MARK}`, companyName: "Has Site Ltd", website: "https://hassite.example", source: "OUTREACH" },
+    data: { contactName: `Yaw ${MARK}`, companyName: "Has Site Ltd", website: "https://hassite.example", source: "OUTREACH", status: "QUALIFIED" },
   });
   await prisma.leadResearch.create({
     data: { leadId: hasSite.id, ranAt: new Date(), filled: {}, audit: auditWith(["HIGH"]) as never, facts: [], notes: [], costUsd: 0 },
