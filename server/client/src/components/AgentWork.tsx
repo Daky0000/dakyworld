@@ -21,9 +21,8 @@ import { Badge, Button, Drawer, Field, RelativeTime, StatusDot } from "./ui";
  * a workforce — *what is happening right now* — and this is the panel that
  * does. It is the reason the agent drawer is worth opening.
  *
- * A running task polls. Everything else does not: a queue that refetches every
- * two seconds while nothing is running is a request per second per open drawer
- * for no information at all.
+ * Running work refreshes frequently. Idle lists refresh more slowly because
+ * schedules and Slack decisions can change their state outside this drawer.
  */
 
 const STATUS_TONE: Record<AgentTaskStatus, "live" | "ok" | "warn" | "bad" | "idle"> = {
@@ -103,8 +102,8 @@ export function AgentWork({ agent }: { agent: AgentDetail }) {
   const { data } = useQuery({
     queryKey: ["agent-work", agent.key],
     queryFn: () => api.get<AgentWorkData>(`/agents/${agent.key}/tasks`),
-    // Only while something is turning. A still board does not need polling.
-    refetchInterval: (query) => ((query.state.data?.running.length ?? 0) > 0 ? 3000 : false),
+    // Queued work can start and approvals can settle outside this drawer.
+    refetchInterval: (query) => ((query.state.data?.running.length ?? 0) > 0 ? 3000 : 10_000),
   });
 
   const refresh = () => {
@@ -245,7 +244,10 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
     queryKey: ["agent-task", taskId],
     queryFn: () => api.get<AgentTaskDetail>(`/agents/tasks/${taskId}`),
     enabled: Boolean(taskId),
-    refetchInterval: (query) => (query.state.data?.status === "RUNNING" ? 2000 : false),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "RUNNING" ? 2000 : status && ["QUEUED", "BLOCKED", "NEEDS_APPROVAL"].includes(status) ? 5000 : false;
+    },
   });
 
   const act = useMutation({

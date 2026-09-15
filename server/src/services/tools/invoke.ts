@@ -755,10 +755,3 @@ async function record(entry: {
     return undefined;
   }
 }
-
-/** The ceiling on a single spending call, from Settings. Null means no ceiling. */
-export async function maxCallSpend(): Promise<number | null> {
-  const raw = await getSetting(SETTING.AGENT_MAX_CALL_USD);
-  const parsed = Number.parseFloat(raw ?? "");
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}

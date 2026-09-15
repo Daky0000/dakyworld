@@ -663,7 +663,6 @@ export const SETTING = {
    * runs first silences the other for the week.
    */
   GAP_NOTICE_SENT: "agents.gapNotice.sentWeek",
-  AGENT_MAX_CALL_USD: "agents.maxCallUsd",
 
   /**
    * What happens when the Agent Creator proposes a new agent: `ASK` or `AUTO`.

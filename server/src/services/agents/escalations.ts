@@ -110,17 +110,16 @@ export async function recordOwnerAnswer(task: { id: string; brief: string; statu
   });
   await appendOwnerAnswer(task.id, text);
 
-  // A BLOCKED task is moved back into the queue explicitly. One that is QUEUED
-  // or FAILED is left where it is — the claim accepts both — and moving it
-  // would write a transition saying nothing happened.
-  if (task.status === "BLOCKED") {
+  // Both stopped states must be queued: a busy agent will not claim a FAILED
+  // task through the scheduler, even though a direct run can claim it.
+  if (task.status === "BLOCKED" || task.status === "FAILED") {
     await transition(task.id, {
       to: "QUEUED",
       reason: by.who ? `Answered by ${by.who}; requeued with the answer on its brief.` : "Answered; requeued with the answer on its brief.",
       actor: by.slackUserId ? "slack" : "owner",
       actorId: by.userId ?? null,
-      expect: ["BLOCKED"],
-      data: { blockedReason: null, finishedAt: null, startedAt: null, runOwner: null, interruptRequested: false },
+      expect: [task.status],
+      data: { error: null, blockedReason: null, finishedAt: null, startedAt: null, runOwner: null, interruptRequested: false },
     });
   }
 
@@ -140,6 +139,9 @@ export async function answerTask(taskId: string, answer: string, by: AnsweredBy)
   if (text.length === 0) throw new AnswerRefused("An empty answer is not an answer.");
 
   const { task, busy } = await readyToResume(taskId);
+  if (task.status !== "BLOCKED" && task.status !== "FAILED") {
+    throw new AnswerRefused(`That task is ${task.status.toLowerCase()}; it is no longer waiting for an answer.`);
+  }
   await recordOwnerAnswer(task, text, by);
 
   if (busy) return { taskId: task.id, started: false, queued: true };

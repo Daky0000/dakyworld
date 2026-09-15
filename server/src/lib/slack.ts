@@ -135,9 +135,9 @@ export async function sendSlack(message: SlackMessage): Promise<SlackResult> {
     const response = await post(`${apiBase()}/chat.postMessage`, { channel, text: message.text, blocks: blocks(message) }, token);
     // Slack answers 200 with `ok: false` for real failures, so the status code
     // alone means nothing here.
-    const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string } | null;
+    const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string; channel?: string } | null;
     if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
-    return { delivered: true, transport: "TOKEN", channel, ts: payload.ts ?? null };
+    return { delivered: true, transport: "TOKEN", channel: payload.channel ?? channel, ts: payload.ts ?? null };
   }
 
   if (webhook) {
@@ -340,6 +340,7 @@ export async function slackApprovers(): Promise<string[]> {
 }
 
 export async function mayDecideFromSlack(userId: string | null | undefined): Promise<boolean> {
+  if (!userId) return false;
   const allowed = await slackApprovers();
   if (allowed.length === 0) return true;
   return Boolean(userId && allowed.includes(userId));
@@ -382,9 +383,9 @@ export async function sendSlackBlocks(input: { text: string; blocks: unknown[]; 
     const channel = input.channel?.trim() || fallbackChannel;
     if (!channel) throw new SlackError(400, "No Slack channel to send to. Set a default channel under Settings → Alerts.");
     const response = await post(`${apiBase()}/chat.postMessage`, { channel, text: input.text, blocks: input.blocks }, token);
-    const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string } | null;
+    const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; ts?: string; channel?: string } | null;
     if (!payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
-    return { delivered: true, transport: "TOKEN", channel, ts: payload.ts ?? null };
+    return { delivered: true, transport: "TOKEN", channel: payload.channel ?? channel, ts: payload.ts ?? null };
   }
 
   if (webhook) {
@@ -411,10 +412,8 @@ export async function sendSlackBlocks(input: { text: string; blocks: unknown[]; 
  * Returns false rather than throwing when there is no token, so a caller can
  * fall back to saying "use the command instead" in one line.
  *
- * `trigger_id` expires three seconds after the click, which is the reason the
- * interaction router opens the dialog *before* it acknowledges rather than
- * after: an acknowledgement first and a dialog second is a dialog that never
- * opens, and it fails silently.
+ * `trigger_id` expires three seconds after the click. Acknowledge immediately
+ * and start this call without waiting for any other work.
  */
 export async function openSlackModal(triggerId: string, view: unknown): Promise<boolean> {
   const token = await getSetting(SETTING.SLACK_BOT_TOKEN);
@@ -431,5 +430,27 @@ export async function openSlackModal(triggerId: string, view: unknown): Promise<
  * the only way to say anything at all to somebody on a webhook-only setup.
  */
 export async function replyToInteraction(responseUrl: string, text: string, replaceOriginal = false): Promise<void> {
-  await post(responseUrl, { text, replace_original: replaceOriginal, response_type: "ephemeral" }).catch(() => undefined);
+  const response = await post(responseUrl, { text, replace_original: replaceOriginal, response_type: "ephemeral" });
+  if (!response.ok) throw new SlackError(response.status, "Slack could not deliver the reply. Check the decision in Dakyworld OS.");
+}
+
+/** Keeps a submitted modal visible until its decision has a confirmed outcome. */
+export async function updateSlackModal(viewId: string, view: unknown): Promise<void> {
+  const token = await getSetting(SETTING.SLACK_BOT_TOKEN);
+  if (!token) throw new SlackError(503, "The Slack bot token is no longer configured.");
+  const response = await post(`${apiBase()}/views.update`, { view_id: viewId, view }, token);
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+  if (!response.ok || !payload?.ok) throw new SlackError(response.status, slackErrorMessage(payload?.error));
+}
+
+/** A missing or uneditable card must not silence the outcome of a decision. */
+export async function settleSlackMessage(channel: string | null, ts: string | null, message: { text: string; blocks: unknown[] }): Promise<void> {
+  if (channel && ts) {
+    try {
+      if (await updateSlack(channel, ts, message)) return;
+    } catch (err) {
+      console.warn("[slack] could not edit the original card; posting its outcome:", (err as Error).message);
+    }
+  }
+  await sendSlackBlocks({ ...message, ...(channel && ts ? { channel } : {}) });
 }

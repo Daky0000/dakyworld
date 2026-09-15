@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, StatTile, StatusDot, Toggle } from "../components/ui";
 import type { Agent, AgentDetail, AgentList } from "../lib/types";
 import { AgentMemories, AgentWork } from "../components/AgentWork";
@@ -94,9 +95,10 @@ export function Agents() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["agents"],
     queryFn: () => api.get<AgentList>("/agents"),
+    refetchInterval: 10_000,
   });
 
   const setStatus = useMutation({
@@ -125,7 +127,7 @@ export function Agents() {
       <PageHeader
         eyebrow="Workforce"
         title="Agents"
-        subtitle="Every agent is a job with a mission, a manager and a ceiling on what it may do unasked. Nothing here acts on its own until you raise it."
+        subtitle="Each agent has a mission, a manager and limits on what it may do. Check status, autonomy and dry run to see what can run."
         action={
           <div className="flex items-center gap-2">
             <StartTheDay />
@@ -137,7 +139,7 @@ export function Agents() {
       {/* The only number that really matters is how much can act unattended. */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="On the roster" value={data?.summary.total ?? "—"} />
-        <StatTile label="Active" value={data?.summary.active ?? "—"} sub="the rest are drafts" />
+        <StatTile label="Active" value={data?.summary.active ?? "—"} sub="taking work from their queues" />
         <StatTile
           label="Can act unattended"
           value={data?.summary.aboveDraft ?? "—"}
@@ -213,6 +215,11 @@ export function Agents() {
 
       {isLoading ? (
         <div className="text-sm text-muted">Loading…</div>
+      ) : error ? (
+        <div role="alert" className="space-y-2 text-sm text-danger-text">
+          <p>Could not load agents: {error.message}</p>
+          <Button onClick={() => void refetch()}>Try again</Button>
+        </div>
       ) : agents.length === 0 ? (
         <EmptyState message="No agents have been seeded yet. They're created on server start — restart the API and they'll appear." />
       ) : (
@@ -973,26 +980,32 @@ interface DayStarted {
  * and a hunt starts an Apify capture and audits five businesses.
  */
 function StartTheDay() {
+  const { can } = useAuth();
   const queryClient = useQueryClient();
   const [withHunts, setWithHunts] = useState(false);
   const [result, setResult] = useState<DayStarted | null>(null);
 
   const start = useMutation({
-    mutationFn: () => api.post<DayStarted>("/agents/start-the-day", { hunts: withHunts }),
+    mutationFn: () => api.post<DayStarted>("/agents/start-the-day", { hunts: withHunts && can("leads.sources") }),
     onSuccess: (data) => {
       setResult(data);
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
-      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-work"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-task"] });
     },
   });
+
+  if (!can("agents.run")) return null;
 
   return (
     <div className="relative">
       <div className="flex items-center gap-2">
-        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted" title="A hunt starts an Apify capture and audits five businesses. That costs money.">
-          <input type="checkbox" checked={withHunts} onChange={(event) => setWithHunts(event.target.checked)} />
-          hunts too
-        </label>
+        {can("leads.sources") && (
+          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted" title="A hunt starts an Apify capture and audits five businesses. That costs money.">
+            <input type="checkbox" checked={withHunts} onChange={(event) => setWithHunts(event.target.checked)} />
+            hunts too
+          </label>
+        )}
         <Button variant="accent" disabled={start.isPending} onClick={() => start.mutate()}>
           {start.isPending ? "Starting…" : "Run agents now"}
         </Button>
@@ -1005,7 +1018,7 @@ function StartTheDay() {
           ) : (
             <p className="text-ink">{result?.summary}</p>
           )}
-          <button className="mt-2 text-xs text-muted hover:text-ink" onClick={() => setResult(null)}>
+          <button className="mt-2 text-xs text-muted hover:text-ink" onClick={() => { setResult(null); start.reset(); }}>
             Close
           </button>
         </div>

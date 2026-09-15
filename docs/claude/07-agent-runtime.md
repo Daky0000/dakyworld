@@ -180,12 +180,15 @@ plus a timestamp, so the router is mounted **above the JSON parser** in
   hear from within three seconds, and a retried Approve would be a second agent
   — so `applyHire` is idempotent about an already-approved request rather than
   throwing, and `tmp/slackButtons.ts` asserts that a re-delivery creates nothing.
-- **The one exception is opening a dialog.** A `trigger_id` is dead three
-  seconds after the click, so `views.open` runs *before* the acknowledgement.
-  Acknowledging first means the dialog never opens, and it fails silently.
-  A `view_submission` refusal also has to be answered synchronously with a
-  `response_action`, because a dialog that closes on a rejected answer looks
-  exactly like one that accepted it.
+- **Acknowledge before opening a dialog, then exchange the trigger immediately.**
+  Both the acknowledgement and `views.open` have a three-second deadline.
+  Waiting for the API response before acknowledging makes a slow modal look
+  like a failed click. Submissions validate permissions and empty input inline,
+  then replace the form with a processing view. `views.update` shows the actual
+  outcome, including refusals, instead of closing a dialog on an unsaved answer.
+  Slash commands also acknowledge first and return results via `response_url`.
+  `checks/agentSlackCommunications.ts` covers slow modal calls, result delivery,
+  stale answers, and status totals beyond the five displayed examples.
 
 **An agent that stops and asks is heard now** — `agents/escalationCards.ts`,
 `agents/escalations.ts`. `escalate` wrote `BLOCKED` to a row and nothing else,
@@ -575,14 +578,11 @@ is not evidence a house rule stopped being true. `refreshStaleServers()` says
 *"fire-and-forget from a route"* in its own doc and no route fired it, so a
 connected MCP server's advertised tools were read once and never again.
 
-**`maxCallSpend()` is a ceiling nothing enforces and nothing can set.**
-`agents.maxCallUsd` is read by that one function, the function is called by
-nothing, and no route exposes the setting — so it is unreachable in both
-directions. Enforcing it properly needs a pre-call estimate the catalogue does
-not have (only `capture.run` can price itself ahead, and only inside its
-`preview`, as a sentence). Left as a finding rather than a half-built guard;
-the precedent for the other direction is the three permission keys that were
-**deleted rather than shipped** because no route could enforce them.
+**The unused per-call spending setting has been removed.** `maxCallSpend()`
+was never invoked and `agents.maxCallUsd` had no settings route. Keeping them
+suggested a guard that did not exist. Task and other enforced budgets remain;
+a future per-call guard needs structured pre-call estimates before it can
+promise a limit.
 
 **One id gathers a run** — `traceId` on `AgentTask`, stamped on every
 `ToolCall`, `LlmCall` and `AgentTaskTransition` it causes. Every one of those

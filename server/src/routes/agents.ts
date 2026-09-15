@@ -38,6 +38,7 @@ import {
 } from "../services/agents/hiring.js";
 import { slackConfigured } from "../lib/slack.js";
 import { gateBy, registerEnforced } from "../middleware/permissionGate.js";
+import { requirePermission } from "../middleware/auth.js";
 
 /**
  * The workforce.
@@ -74,6 +75,7 @@ agentsRouter.use(
     edit: "agents.edit",
     remove: "agents.edit",
     routes: [
+      { path: /^\/start-the-day$/, method: "POST", permission: "agents.run" },
       // Running work is where the money goes, and it is a different decision from
       // rewriting what an agent is told.
       { path: /^\/[^/]+\/tasks$/, method: "POST", permission: "agents.run" },
@@ -603,6 +605,10 @@ agentsRouter.get("/:key/autonomy", async (req, res, next) => {
 agentsRouter.post("/start-the-day", async (req, res, next) => {
   try {
     const { hunts } = z.object({ hunts: z.boolean().default(false) }).parse(req.body ?? {});
+    if (hunts && !req.permissions?.has("leads.sources")) {
+      requirePermission("leads.sources")(req, res, next);
+      return;
+    }
     res.json(await startTheDay({ includeHunts: hunts }));
   } catch (err) {
     next(err);

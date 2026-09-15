@@ -1,6 +1,6 @@
 import type { ActionRequest } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { sendSlackBlocks, slackConfigured, updateSlack } from "../lib/slack.js";
+import { sendSlackBlocks, slackConfigured, settleSlackMessage } from "../lib/slack.js";
 import { appUrl } from "./emailSender.js";
 import { resolveTool } from "./tools/catalogue.js";
 
@@ -141,8 +141,7 @@ export async function settleApprovalCard(request: ActionRequest, decidedBy: stri
   if (!(await slackConfigured())) return;
   try {
     const { text, blocks } = await approvalBlocks(request, decidedBy);
-    if (request.slackChannel && request.slackTs && (await updateSlack(request.slackChannel, request.slackTs, { text, blocks }))) return;
-    await sendSlackBlocks({ text, blocks });
+    await settleSlackMessage(request.slackChannel, request.slackTs, { text, blocks });
   } catch (err) {
     console.error("[approvals] could not update the card:", (err as Error).message);
   }

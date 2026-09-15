@@ -3,7 +3,7 @@ import { prisma } from "../../lib/prisma.js";
 import { remember, subjectOf } from "./memory.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { listAllTools } from "../tools/catalogue.js";
-import { sendSlackBlocks, slackConfigured, updateSlack } from "../../lib/slack.js";
+import { sendSlackBlocks, slackConfigured, settleSlackMessage } from "../../lib/slack.js";
 import { appUrl } from "../emailSender.js";
 import { appendToConversation } from "./checkpoint.js";
 import { recordCreated, transition } from "./state.js";
@@ -1122,8 +1122,7 @@ async function settleHireCard(requestId: string, decidedBy: string | null): Prom
 
   try {
     const { text, blocks } = await hireBlocks(request, decidedBy);
-    if (request.slackChannel && request.slackTs && (await updateSlack(request.slackChannel, request.slackTs, { text, blocks }))) return;
-    await sendSlackBlocks({ text, blocks });
+    await settleSlackMessage(request.slackChannel, request.slackTs, { text, blocks });
   } catch (err) {
     console.error("[hiring] could not update the hire card:", (err as Error).message);
   }

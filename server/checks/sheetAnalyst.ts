@@ -611,7 +611,9 @@ Let me know if you would like it changed.`
   console.log("\nThe negatives for running a table on");
   const bothReported = repairPlan({ summary: "", tables: longHints as any }, [long as any], longHints);
   check("a table with another below it is left where it ends", bothReported.plan.tables.length === 2, `${bothReported.plan.tables.length} tables`);
-  check("...and nothing is reported as repaired", bothReported.repairs.length === 0, JSON.stringify(bothReported.repairs));
+  // Column meaning can be corrected independently of table boundaries.
+  check("...and neither table is reported as extended", !bothReported.repairs.some((line) => line.includes("carry on")), JSON.stringify(bothReported.repairs));
+  check("...and both table ends stay unchanged", bothReported.plan.tables.every((table, i) => table.lastDataRow === longHints[i]?.lastDataRow));
   const untouched = repairPlan({ summary: "", tables: [PEOPLE, COMPANIES] as any }, [GRID as any], hints);
   check(
     "the people table does not run on into the companies table",

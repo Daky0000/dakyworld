@@ -5,6 +5,7 @@ import {
   openSlackModal,
   replyToInteraction,
   verifySlackRequest,
+  updateSlackModal,
 } from "../lib/slack.js";
 import { ANSWER_VIEW, TASK_ACTIONS } from "../services/agents/escalationCards.js";
 import { AnswerRefused, answerTask, answerWithOption, blockedTasks, leaveBlocked, retryTask } from "../services/agents/escalations.js";
@@ -98,6 +99,7 @@ interface Interaction {
   trigger_id?: string;
   actions?: BlockAction[];
   view?: {
+    id?: string;
     callback_id?: string;
     private_metadata?: string;
     state?: { values?: Record<string, Record<string, { value?: string | null }>> };
@@ -128,10 +130,8 @@ slackRouter.post("/actions", async (req, res, next) => {
 
       // Declining a prepared action, with the reason typed in.
       //
-      // Answered synchronously like the escalation dialog below and for the
-      // same reason: Slack shows an error inline on a `response_action` and
-      // closes the dialog on an empty 200, so a refusal that is not returned
-      // *now* looks exactly like an acceptance.
+      // Validate input inline, then keep the modal open while saving. An empty
+      // acknowledgement would close it before the decision was confirmed.
       if (view?.callback_id === DECLINE_VIEW.callbackId) {
         const requestId = view.private_metadata ?? "";
         const reason = view.state?.values?.[DECLINE_VIEW.blockId]?.[DECLINE_VIEW.actionId]?.value ?? "";
@@ -147,10 +147,18 @@ slackRouter.post("/actions", async (req, res, next) => {
             errors: { [DECLINE_VIEW.blockId]: "Say why, or use the plain Decline button instead." },
           });
         }
-        res.status(200).send("");
+        if (!view.id) return res.status(400).send("No modal id.");
+        res.json({ response_action: "update", view: decisionView("Saving your decision… If this does not update, check Approvals in Dakyworld OS before trying again.") });
         void (async () => {
-          const outcome = await decline(requestId, { slackUserId: userId, note: `Declined in Slack by ${who}: ${reason.trim()}` });
-          if (!outcome.alreadySettled) await settleApprovalCard(outcome.request, who);
+          try {
+            const outcome = await decline(requestId, { slackUserId: userId, note: `Declined in Slack by ${who}: ${reason.trim()}` });
+            if (!outcome.alreadySettled) await settleApprovalCard(outcome.request, who);
+            await updateSlackModal(view.id!, decisionView(outcome.alreadySettled
+              ? `That action was already ${outcome.request.status.toLowerCase()}.`
+              : "Declined. Your reason has been recorded."));
+          } catch (err) {
+            await updateSlackModal(view.id!, decisionView(decisionError(err)));
+          }
         })().catch((err) => console.error("[slack] could not decline that action:", (err as Error).message));
         return;
       }
@@ -173,10 +181,18 @@ slackRouter.post("/actions", async (req, res, next) => {
         return res.json({ response_action: "errors", errors: { [ANSWER_VIEW.blockId]: "An empty answer is not an answer." } });
       }
 
-      res.status(200).send("");
-      void answerTask(taskId, typed, { slackUserId: userId, who: `${who} in Slack` }).catch((err) =>
-        console.error("[slack] could not answer that task:", (err as Error).message),
-      );
+      if (!view.id) return res.status(400).send("No modal id.");
+      res.json({ response_action: "update", view: decisionView("Saving your answer… If this does not update, check the task in Dakyworld OS before trying again.") });
+      void (async () => {
+        try {
+          const outcome = await answerTask(taskId, typed, { slackUserId: userId, who: `${who} in Slack` });
+          await updateSlackModal(view.id!, decisionView(outcome.started
+            ? "Answered. The agent has been asked to resume."
+            : "Answered. The task is queued until the agent is free."));
+        } catch (err) {
+          await updateSlackModal(view.id!, decisionView(decisionError(err)));
+        }
+      })().catch((err) => console.error("[slack] could not show the answer outcome:", (err as Error).message));
       return;
     }
 
@@ -185,10 +201,8 @@ slackRouter.post("/actions", async (req, res, next) => {
     const action = interaction.actions?.[0];
     const responseUrl = interaction.response_url ?? null;
 
-    // The one thing that cannot wait for the acknowledgement. A `trigger_id`
-    // is dead three seconds after the click, so opening the dialog *after*
-    // answering Slack means it never opens — and it fails silently, which is
-    // the worst shape a failure can have here.
+    // Acknowledge before the API request, then exchange the trigger immediately.
+    // Both have a three-second deadline; a slow views.open must not delay the ACK.
     if (
       (action?.action_id === TASK_ACTIONS.answer || action?.action_id === APPROVAL_ACTIONS.declineWithReason) &&
       interaction.trigger_id &&
@@ -201,12 +215,14 @@ slackRouter.post("/actions", async (req, res, next) => {
         return;
       }
       let opened = false;
+      let openError: string | null = null;
+      res.status(200).send("");
       try {
         opened = await openSlackModal(interaction.trigger_id, declining ? declineView(action.value) : answerView(action.value));
       } catch (err) {
+        openError = (err as Error).message;
         console.error("[slack] could not open the dialog:", (err as Error).message);
       }
-      res.status(200).send("");
       if (!opened) {
         // A webhook-only Slack has no API to open a dialog with, so the thing
         // that does the same job is offered instead of nothing. For a decline
@@ -214,7 +230,7 @@ slackRouter.post("/actions", async (req, res, next) => {
         // reason is the part that is lost, not the decision.
         await replyToInteraction(
           responseUrl ?? "",
-          declining
+          openError ? `The dialog could not open: ${openError} Use the original card or Dakyworld OS to answer.` : declining
             ? "Typing a reason here needs a bot token. Either add one under Settings → Alerts, or use the plain Decline button on this card and add the reason under Approvals."
             : `Typing an answer here needs a bot token. Either add one under Settings → Alerts, or answer with \`/dakyworld answer ${action.value} your answer\`.`,
         ).catch(() => undefined);
@@ -417,7 +433,7 @@ async function handleAction(
       return;
     }
     console.error("[slack] could not carry out that action:", (err as Error).message);
-    await say("Something went wrong carrying that out. It has been logged, and nothing was changed.");
+    await say("The result could not be confirmed. Check the task or approval in Dakyworld OS before trying again.");
   }
 }
 
@@ -427,16 +443,20 @@ async function handleAction(
  * `/dakyworld hiring` and friends.
  *
  * The standing policy has to be changeable somewhere other than a hiring card,
- * or it can only be changed while one is on the screen. Answered inline —
- * these are a read and a setting write, both fast enough for Slack's three
- * seconds without the acknowledge-then-work dance the buttons need.
+ * or it can only be changed while one is on the screen. Commands acknowledge
+ * first and send their results through Slack's response URL.
  */
 slackRouter.post("/commands", async (req, res, next) => {
+  let responseUrl: string | null = null;
   try {
     const raw = await authenticate(req, res, "command");
     if (raw === null) return;
 
     const fields = formFields(raw);
+    responseUrl = fields.response_url || null;
+    // Slack supplies a response URL for commands. Do the database work after
+    // acknowledging, so a slow query cannot turn a completed command into a timeout.
+    if (responseUrl) res.status(200).send("");
     // Kept in the case it was typed. The topic is lowered for matching, and an
     // answer is a sentence a person wrote — lowercasing it would hand the agent
     // "yes, use the cedi price, not the usd one" and lose the names in it.
@@ -446,10 +466,12 @@ slackRouter.post("/commands", async (req, res, next) => {
     const who = fields.user_name ?? userId ?? "somebody in Slack";
     const [topic, argument] = text.split(/\s+/);
 
-    const ephemeral = (message: string) => res.json({ response_type: "ephemeral", text: message });
+    const ephemeral = (message: string) => responseUrl
+      ? replyToInteraction(responseUrl, message)
+      : res.json({ response_type: "ephemeral", text: message });
 
     if (!topic || topic === "help") {
-      return ephemeral(
+      return await ephemeral(
         [
           "*What I answer:*",
           "`/dakyworld ping` — prove this workspace can reach Dakyworld OS",
@@ -481,11 +503,11 @@ slackRouter.post("/commands", async (req, res, next) => {
      */
     if (topic === "ping") {
       const health = await slackHealth();
-      return ephemeral(
+      return await ephemeral(
         [
           ":white_check_mark: *Slack can reach Dakyworld OS.* That proves the signing secret, the request URL and the app install all line up.",
           health.outbound.ready
-            ? `Posting back out works too — ${health.outbound.transport === "TOKEN" ? `bot token, default channel ${health.outbound.channel}` : "incoming webhook"}.`
+            ? `Outbound is configured — ${health.outbound.transport === "TOKEN" ? `bot token, default channel ${health.outbound.channel}` : "incoming webhook"}. Use the test message in Settings to verify delivery.`
             : ":warning: Posting *out* is not set up, so cards will not appear here. Settings → Alerts.",
           health.inbound.openToAnyone
             ? ":warning: Nobody is named under “Who may approve”, so anyone who can see this channel can decide things."
@@ -495,7 +517,7 @@ slackRouter.post("/commands", async (req, res, next) => {
     }
 
     if (topic === "status") {
-      const [waiting, approvals, prepared, hires, health] = await Promise.all([
+      const [waiting, approvals, prepared, hires, health, waitingCount] = await Promise.all([
         blockedTasks(5),
         countPending(),
         // Counted separately from the approval queue, and not folded into it.
@@ -507,20 +529,21 @@ slackRouter.post("/commands", async (req, res, next) => {
         prisma.agentTask.count({ where: { status: "NEEDS_APPROVAL", rehearsal: false } }),
         listHireRequests("PENDING"),
         slackHealth(),
+        prisma.agentTask.count({ where: { status: "BLOCKED", rehearsal: false } }),
       ]);
       const lines = [
-        `*${waiting.length}* agent(s) stopped and asked · *${approvals}* action(s) waiting on a decision · *${prepared}* task(s) holding prepared work · *${hires.length}* hire(s) proposed`,
+        `*${waitingCount}* task(s) stopped and asked · *${approvals}* action(s) waiting on a decision · *${prepared}* task(s) holding prepared work · *${hires.length}* hire(s) proposed`,
       ];
       if (waiting.length > 0) lines.push("", "*Stopped and asking:*", ...waiting.map((task) => `• ${task.agent.name} — ${task.blockedReason ?? task.title}`));
       if (health.problems.length > 0) lines.push("", `:warning: ${health.problems[0]}`);
       if (waiting.length === 0 && approvals === 0 && prepared === 0 && hires.length === 0) lines.push("", "Nothing is waiting on you.");
-      return ephemeral(lines.join("\n"));
+      return await ephemeral(lines.join("\n"));
     }
 
     if (topic === "tasks") {
       const waiting = await blockedTasks(10);
-      if (waiting.length === 0) return ephemeral("No agent is waiting on you. Nothing has stopped and asked.");
-      return ephemeral(
+      if (waiting.length === 0) return await ephemeral("No agent is waiting on you. Nothing has stopped and asked.");
+      return await ephemeral(
         [
           "*Stopped and asking:*",
           ...waiting.map((task) =>
@@ -546,7 +569,7 @@ slackRouter.post("/commands", async (req, res, next) => {
      */
     if (topic === "answer") {
       if (!(await mayDecideFromSlack(userId))) {
-        return ephemeral("You are not on the list of people who can answer these. Ask the Owner to add your Slack user id under Settings → Alerts.");
+        return await ephemeral("You are not on the list of people who can answer these. Ask the Owner to add your Slack user id under Settings → Alerts.");
       }
       // Split off the topic and the id from the text as typed, so the answer
       // keeps its capitals and its punctuation.
@@ -554,25 +577,25 @@ slackRouter.post("/commands", async (req, res, next) => {
       const [taskId, ...words] = rest.split(/\s+/);
       const answer = rest.slice(taskId ? taskId.length : 0).trim();
       if (!taskId || words.length === 0 || !answer) {
-        return ephemeral("Say which task and what to do — `/dakyworld answer <task id> <your answer>`. `/dakyworld tasks` lists them with their ids.");
+        return await ephemeral("Say which task and what to do — `/dakyworld answer <task id> <your answer>`. `/dakyworld tasks` lists them with their ids.");
       }
       try {
         const outcome = await answerTask(taskId, answer, { slackUserId: userId, who: `${who} in Slack` });
-        return ephemeral(
+        return await ephemeral(
           outcome.started
             ? "Answered — it has picked up where it stopped."
             : "Answered. That agent is on another job, so this goes back in the queue and starts as soon as it is free.",
         );
       } catch (err) {
-        if (err instanceof AnswerRefused) return ephemeral(err.message);
+        if (err instanceof AnswerRefused) return await ephemeral(err.message);
         throw err;
       }
     }
 
     if (topic === "approvals") {
       const pending = await listRequests("PENDING", 10);
-      if (pending.length === 0) return ephemeral("Nothing is waiting on a decision.");
-      return ephemeral(
+      if (pending.length === 0) return await ephemeral("Nothing is waiting on a decision.");
+      return await ephemeral(
         `*Prepared and waiting on you:*\n${pending
           .map((request) => `• *${request.agent.name}* — ${request.wouldDo.slice(0, 160)}${request.spends ? " :coin:" : ""}`)
           .join("\n")}`,
@@ -582,10 +605,10 @@ slackRouter.post("/commands", async (req, res, next) => {
     if (topic === "hiring") {
       if (argument === "auto" || argument === "ask") {
         if (!(await mayDecideFromSlack(userId))) {
-          return ephemeral("You are not on the list of people who can change this. Ask the Owner to add your Slack user id under Settings → Alerts.");
+          return await ephemeral("You are not on the list of people who can change this. Ask the Owner to add your Slack user id under Settings → Alerts.");
         }
         const policy = await setHirePolicy(argument.toUpperCase() as HirePolicy, `${who} in Slack`);
-        return ephemeral(
+        return await ephemeral(
           policy === "AUTO"
             ? "Hiring is now *automatic*. Proposals become agents as soon as the Agent Creator makes them — at autonomy 1 with dry run on, so nothing they decide takes effect. Each one still lands here with an Undo on it."
             : "Hiring is *ask first*. Nothing is created until you approve it here.",
@@ -593,7 +616,7 @@ slackRouter.post("/commands", async (req, res, next) => {
       }
       const current = await hirePolicy();
       const waiting = (await listHireRequests("PENDING")).length;
-      return ephemeral(
+      return await ephemeral(
         current === "AUTO"
           ? `Hiring is *automatic* — the Agent Creator's proposals become agents immediately, at autonomy 1 with dry run on. \`/dakyworld hiring ask\` to change it.`
           : `Hiring is *ask first*${waiting ? `, and ${waiting} proposal(s) are waiting on you` : ""}. \`/dakyworld hiring auto\` to change it.`,
@@ -602,8 +625,8 @@ slackRouter.post("/commands", async (req, res, next) => {
 
     if (topic === "hires") {
       const pending = await listHireRequests("PENDING");
-      if (pending.length === 0) return ephemeral("Nothing is waiting on a hiring decision.");
-      return ephemeral(
+      if (pending.length === 0) return await ephemeral("Nothing is waiting on a hiring decision.");
+      return await ephemeral(
         `*Waiting on you:*\n${pending
           .map((request) => `• *${request.name}* (\`${request.key}\`) — ${request.deliverable} · reports to \`${request.managerKey}\``)
           .join("\n")}`,
@@ -612,16 +635,35 @@ slackRouter.post("/commands", async (req, res, next) => {
 
     if (topic === "gaps") {
       const gaps = await openGaps();
-      if (gaps.length === 0) return ephemeral("No open skill gaps. Every craft an agent has asked for either exists or has been settled.");
-      return ephemeral(
+      if (gaps.length === 0) return await ephemeral("No open skill gaps. Every craft an agent has asked for either exists or has been settled.");
+      return await ephemeral(
         `*Crafts nobody here has:*\n${gaps
           .map((gap) => `• *${gap.skillNeeded}* — asked for by ${gap.timesRequested} agent(s) [${gap.status.toLowerCase()}]`)
           .join("\n")}`,
       );
     }
 
-    return ephemeral(`I do not know “${topic}”. Try \`/dakyworld help\`.`);
+    return await ephemeral(`I do not know “${topic}”. Try \`/dakyworld help\`.`);
   } catch (err) {
-    next(err);
+    if (res.headersSent) {
+      console.error("[slack] command failed:", (err as Error).message);
+      if (responseUrl) await replyToInteraction(responseUrl, decisionError(err)).catch((replyError) =>
+        console.error("[slack] could not deliver command error:", (replyError as Error).message));
+    } else next(err);
   }
 });
+
+function decisionView(text: string) {
+  return {
+    type: "modal",
+    title: { type: "plain_text", text: "Decision status" },
+    close: { type: "plain_text", text: "Close" },
+    blocks: [{ type: "section", text: { type: "plain_text", text: text.slice(0, 3000) } }],
+  };
+}
+
+function decisionError(err: unknown): string {
+  if (err instanceof AnswerRefused || err instanceof ApprovalRefused || err instanceof HireRefused) return err.message;
+  console.error("[slack] decision failed:", err instanceof Error ? err.message : err);
+  return "The result could not be confirmed. Check the task or approval in Dakyworld OS before trying again.";
+}

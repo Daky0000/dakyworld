@@ -16,6 +16,42 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    name: Database regression checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dakyworld_checks
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/dakyworld_checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: server
+      - run: npx prisma generate
+        working-directory: server
+      - run: npx prisma migrate deploy
+        working-directory: server
+      - run: npm run checks:types
+        working-directory: server
+      - run: npm run checks
+        working-directory: server
+
   secrets:
     name: Credentials
     runs-on: ubuntu-latest

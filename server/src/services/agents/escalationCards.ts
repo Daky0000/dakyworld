@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma.js";
-import { sendSlackBlocks, slackConfigured, updateSlack } from "../../lib/slack.js";
+import { sendSlackBlocks, slackConfigured, settleSlackMessage } from "../../lib/slack.js";
 import { appUrl } from "../emailSender.js";
 
 /**
@@ -256,9 +256,7 @@ export async function settleTaskCard(taskId: string, by: string | null, answer: 
   try {
     if (!(await slackConfigured())) return;
     const { text, blocks } = await taskBlocks(task, [], { by, answer });
-    if (!(task.slackChannel && task.slackTs && (await updateSlack(task.slackChannel, task.slackTs, { text, blocks })))) {
-      await sendSlackBlocks({ text, blocks });
-    }
+    await settleSlackMessage(task.slackChannel, task.slackTs, { text, blocks });
   } catch (err) {
     console.error("[agent] could not update the escalation card:", (err as Error).message);
   } finally {
