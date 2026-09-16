@@ -759,7 +759,7 @@ export interface AppSettings {
     sms: { configured: boolean; envManaged: boolean; smsId: string | null; sender: string | null };
   };
   /** Which repositories agents may write to. Empty means none, deliberately. */
-  agentRepos: { envManaged: boolean; repos: string; writable: boolean };
+  agentRepos: { envManaged: boolean; repos: string; writable: boolean; bare: string[] };
   cloudinary: { configured: boolean; envManaged: boolean; cloudName: string | null; apiKey: string | null };
   alerts: {
     configured: boolean;

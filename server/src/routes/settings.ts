@@ -77,7 +77,7 @@ import { SlackError, sendSlack, slackTransport, verifySlack } from "../lib/slack
 import type { SlackDeliveryStatus } from "@prisma/client";
 import { DeliveryNotRetryable, deliveryHistory, retrySlackDelivery } from "../services/slack/queue.js";
 import { slackHealth } from "../services/slackHealth.js";
-import { GitHubError, verifyGitHubToken } from "../lib/github.js";
+import { GitHubError, allowedRepos, bareEntries, verifyGitHubToken } from "../lib/github.js";
 import { calendarReady, listCalendars } from "../lib/calendar.js";
 import { rotateWebhookSecret, webhookSecret } from "../lib/webhooks.js";
 import { clearReadinessCache } from "../services/tools/readiness.js";
@@ -290,6 +290,26 @@ async function describeAll(req: Request) {
       envManaged: isEnvManaged(SETTING.GITHUB_ALLOWED_REPOS),
       repos: githubRepos ?? "",
       writable: Boolean(githubRepos?.trim()),
+      /**
+       * Entries that name no owner, and so now match nothing.
+       *
+       * A bare `laluxury` used to match a repository of that name belonging to
+       * anybody, which is not a fence — a repository name is not unique in the
+       * world, and a fork is the proof. Narrowing it was right and is also
+       * silent: a site that published perfectly yesterday refuses today, at the
+       * moment somebody presses Publish, with the reason two screens away.
+       *
+       * Boot writes a line about it to the log. That is the same answer
+       * `slackHealth.ts` exists to argue against — a warning nobody reads is
+       * not a warning — so it is said here as well, on the screen carrying the
+       * field somebody has to edit.
+       *
+       * Parsed by `allowedRepos()` rather than re-split here. The splitting
+       * rule belongs to the enforcement, and a second copy of it would agree
+       * with the first until the day somebody changed one — the same fault
+       * `safeStyle` was just consolidated to end.
+       */
+      bare: bareEntries(await allowedRepos()),
     },
     cloudinary: {
       configured: Boolean(cloudName && cloudKey && cloudSecret),

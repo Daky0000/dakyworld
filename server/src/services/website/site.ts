@@ -654,6 +654,36 @@ export async function publishSourcePage(input: {
   });
 }
 
+/**
+ * Every column of a page except the one that holds a whole website.
+ *
+ * `SitePage.sourceHtml` is the entire file for an *imported* page — up to 2 MB,
+ * and that is the path a site built in Lovable or Bolt arrives through. It is
+ * null for a repository-connected site, which is why listing forty pages felt
+ * free right up until the first customer who pasted their HTML in.
+ *
+ * Use this for a query whose rows are *listed*, and not for one whose rows are
+ * then handed to `pageSource` — which returns `sourceHtml` directly when a page
+ * has one, so stripping the column there would silently send an imported page
+ * off to read a repository it does not have. That rules out the onboarding,
+ * readiness, survey and shared-element sweeps, every one of which loads pages
+ * in order to read them; they are not being wasteful, they are paying for the
+ * thing they are about to use.
+ *
+ * What is left is the two that genuinely only list: the page table, and the
+ * scan's comparison of what it already knows about. Named rather than spelled
+ * out per query for the reason `MESSAGE_FIELDS` in routes/inbox.ts is — a
+ * column you must not select is a rule, and a rule is worth one name.
+ */
+/** A page as everything that lists them sees it: all of it but the file. */
+export type SitePageSummary = Omit<SitePage, "sourceHtml">;
+
+export const PAGE_LIST_FIELDS = {
+  id: true, siteId: true, title: true, path: true, filePath: true, status: true,
+  sortOrder: true, draft: true, draftRevision: true, draftSavedAt: true,
+  draftSavedById: true, lastPublishedAt: true, createdAt: true, updatedAt: true,
+} as const;
+
 export async function publishPages(input: {
   site: Site;
   message: string;
@@ -680,11 +710,18 @@ export async function publishPages(input: {
 
   return underSiteCredential(input.site, async () => {
   try {
-    const assets = await Promise.all(input.pages.map((entry) => websiteAssetFiles(input.site, entry.html)));
+    // One pass over the whole commit, not one per page.
+    //
+    // This was `Promise.all(pages.map(...))`, and each of those calls loaded
+    // every image on the site. Ten pages meant ten concurrent copies of the
+    // entire asset library in memory to publish one change — the shape that
+    // has taken this service down before. The pages are joined first and the
+    // assets resolved once against all of them, which also removes the
+    // de-duplication that only existed because the same file arrived N times.
+    const assets = await websiteAssetFiles(input.site, input.pages.map((entry) => entry.html).join(" "));
     const files = [
       ...input.pages.map((entry) => ({ path: repoFilePath(input.site, entry.page), content: entry.html })),
-      // One asset can be referenced by two of the pages in the same commit.
-      ...[...new Map(assets.flat().map((file) => [file.path, file])).values()],
+      ...assets,
     ];
     const expected = input.pages
       .filter((entry) => entry.expectedSource !== undefined)

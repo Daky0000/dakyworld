@@ -4353,11 +4353,35 @@ model SiteAsset {
   filename    String
   repoPath    String
   contentType String
-  content     Bytes
-  alt         String   @default("")
-  createdAt   DateTime @default(now())
+
+  /// The bytes, until the published site is carrying them instead.
+  ///
+  /// Nullable because this is a *cache of an upload in flight*, not the file.
+  /// The repository is the source of truth for everything else in this module
+  /// and an image is no exception: once a publish has been verified live, the
+  /// copy here is a second copy of a file the public is already being served,
+  /// sitting in the database that gets backed up and restored. `publishedAt`
+  /// below is what makes it safe to drop.
+  content Bytes?
+
+  /// Bytes, held beside the blob so a listing needn't read one.
+  ///
+  /// `StoredFile` learned this and `SiteAsset` did not, so showing a file size
+  /// meant loading the file. It also survives the content being swept, which is
+  /// the only way the asset library can still say how big a published image is.
+  size Int
+
+  /// When a publish carrying this file was *verified live*, not when it was
+  /// committed. Null until then, and null forever for an asset nobody published.
+  /// Nothing sweeps on a commit: until the file is confirmed readable at its
+  /// address, the copy above is the only copy.
+  publishedAt DateTime?
+
+  alt       String   @default("")
+  createdAt DateTime @default(now())
 
   @@unique([siteId, repoPath])
+  @@index([publishedAt])
 }
 
 model SiteAuditEvent {

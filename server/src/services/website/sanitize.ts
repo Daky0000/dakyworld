@@ -1,4 +1,5 @@
 import { parseHtml, type ElementNode } from "./parse.js";
+import { safeStyle } from "./regions.js";
 
 /**
  * What a client is allowed to put into their own website.
@@ -59,24 +60,6 @@ export function escapeText(text: string): string {
 
 function escapeAttr(value: string): string {
   return value.replace(/&/g, "&amp;").replace(new RegExp(DOUBLE_QUOTE, "g"), "&quot;").replace(/</g, "&lt;");
-}
-
-/**
- * A style attribute with anything that can fetch or execute removed.
- *
- * CSS cannot run scripts in any browser this site supports, but `url()` can
- * reach a third-party server from a page on the company's domain, and that is a
- * request nobody asked for. Declarations are otherwise left as written: the
- * pages already carry `style="color:var(--blue)"` inside headings, and stripping
- * the attribute would silently un-colour half a dozen of them.
- */
-function safeStyle(value: string): string {
-  const cleaned = value
-    .split(";")
-    .map((declaration) => declaration.trim())
-    .filter((declaration) => declaration && !/url\s*\(|expression\s*\(|javascript:|@import/i.test(declaration))
-    .join("; ");
-  return cleaned;
 }
 
 export type LinkCheck = { ok: true; href: string } | { ok: false; reason: string };
@@ -144,6 +127,20 @@ function render(source: string, element: ElementNode, depth: number): string {
       continue;
     }
     if (attribute.name === "style") {
+      // The same `safeStyle` the properties panel writes through, not a second
+      // one with looser rules. There were two — this file had its own, which
+      // dropped four patterns and allowed everything else, including quotes and
+      // angle brackets. Escaping downstream meant it never became a hole, which
+      // is exactly why it would have survived until the day something stopped
+      // escaping. Two implementations of one rule agree until they do not.
+      //
+      // No `originalStyle` is passed because at this depth there is nothing to
+      // pass: this is a style attribute on an inline tag *inside* a rich-text
+      // value, arriving whole from a browser, with no record of what the
+      // developer wrote. So it is held to the rule for new CSS, which is the
+      // stricter reading and the right one for markup typed into a box.
+      // `color:var(--blue)` — the declaration the pages actually carry inside
+      // headings — passes it unchanged.
       const style = safeStyle(attribute.value);
       if (style) attrs.push(`style="${escapeAttr(style)}"`);
       continue;

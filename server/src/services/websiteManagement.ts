@@ -7,7 +7,7 @@ import { prisma } from "../lib/prisma.js";
 import { buildPublishPlan, discoverFields, describeChanges, parse, editingSource } from "./website/index.js";
 import { pageSource, WebsiteError } from "./website/site.js";
 import { sniff } from "../lib/fileType.js";
-import { assetUrl, embedWebsiteAssets } from "./websiteAssets.js";
+import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets.js";
 import { assertWebsiteConnectionChange, canManageWebsiteConnection } from "./websiteAccess.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
@@ -91,12 +91,48 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     if (!mime || !formats[mime]) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP or GIF image. SVG and executable formats are not supported.");
     if (content.length > 5_000_000 || !content.length) throw new WebsiteError(400, "Choose an image smaller than 5 MB.");
     const asset = await prisma.$transaction(async tx => {
-      const uploaded = await tx.siteAsset.create({ data: { siteId: site.id, filename: input.filename, repoPath: `assets/dw/${randomUUID()}.${formats[mime]}`, contentType: mime, content, alt: input.alt } });
+      const uploaded = await tx.siteAsset.create({ data: { siteId: site.id, filename: input.filename, repoPath: `assets/dw/${randomUUID()}.${formats[mime]}`, contentType: mime, content, size: content.length, alt: input.alt } });
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${input.filename}`, ...actor(req), detail: { assetId: uploaded.id, contentType: mime, bytes: content.length } } });
       return uploaded;
     });
     res.status(201).json({ id: asset.id, url: assetUrl(site, asset.repoPath), alt: asset.alt });
   }));
+  /**
+   * Removing an uploaded image.
+   *
+   * There was no way to do this at all, so the table only ever grew — for every
+   * customer, for ever. The gate already resolved `/assets/:id` to the `edit`
+   * action, so the permission had been decided; only the endpoint was missing.
+   *
+   * **It refuses while an unpublished draft still points at the file**, which is
+   * the one case where deleting does real damage: the draft would publish a page
+   * referencing a picture this system no longer holds and can no longer commit,
+   * and the customer would find out by looking at their live site. A reference
+   * from an already-published page is not a reason to refuse — that file is in
+   * their repository and stays there whatever happens to this row.
+   */
+  router.delete("/sites/:siteId/assets/:assetId", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const asset = await prisma.siteAsset.findFirst({ where: { id: req.params.assetId, siteId: site.id }, select: { id: true, filename: true, repoPath: true, size: true } });
+    if (!asset) throw new WebsiteError(404, "That image is not part of this site.");
+
+    // Page drafts *and* shared-element drafts — see `unpublishedUsesOf`, which
+    // is where the rule and the reason for its second half live.
+    const holding = await unpublishedUsesOf(site, asset.repoPath);
+    if (holding.length) {
+      throw new WebsiteError(
+        409,
+        `${asset.filename} is still used by an unpublished draft on ${holding.join(", ")}. Publish or discard ${holding.length === 1 ? "that draft" : "those drafts"} first, or change the picture there, and then delete it.`,
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.siteAsset.delete({ where: { id: asset.id } });
+      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_DELETED", summary: `Deleted ${asset.filename}`, ...actor(req), detail: { assetId: asset.id, repoPath: asset.repoPath, bytes: asset.size } } });
+    });
+    res.status(204).end();
+  }));
+
   router.get("/sites/:siteId/audit", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     const events = await prisma.siteAuditEvent.findMany({ where: { siteId: site.id }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 100 });

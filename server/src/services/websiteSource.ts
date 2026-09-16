@@ -8,7 +8,7 @@ import { applyJsxValues, applyMarkdownValues, applyTemplateValues, discoverJsxFi
 import { siteRepo, WebsiteError } from "./website/site.js";
 import { invalidateRender, publicFolder } from "./website/index.js";
 import { invalidateSource } from "./website/sourceCache.js";
-import { assetUrl } from "./websiteAssets.js";
+import { websiteAssetFilesIn } from "./websiteAssets.js";
 import { failPublishJob, sourcePublishCommitted, startPublishJob } from "./websitePublishJobs.js";
 import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js";
 
@@ -214,16 +214,10 @@ type Dependencies = {
 };
 const dependencies: Dependencies = {
   read: readFile, list: listTree, commit: commitFiles, authorize: assertWebsiteSiteAccess,
-  assets: async ({ site, source }) => {
-    const uploaded = await prisma.siteAsset.findMany({ where: { siteId: site.id } });
-    // The framework's own static folder, not the site's page folder: a build
-    // copies `public/` to the root, and an image committed anywhere else is a
-    // file in the repository that the built site cannot see.
-    const folder = publicFolder(site.sourceKind);
-    return uploaded
-      .filter((asset) => source.includes(assetUrl(site, asset.repoPath)))
-      .map((asset) => ({ path: [folder, asset.repoPath].filter(Boolean).join("/"), content: Buffer.from(asset.content).toString("base64"), encoding: "base64" as const }));
-  },
+  // The framework's own static folder, not the site's page folder: a build
+  // copies `public/` to the root, and an image committed anywhere else is a
+  // file in the repository that the built site cannot see.
+  assets: async ({ site, source }) => websiteAssetFilesIn(site, source, publicFolder(site.sourceKind)),
   track: async ({ site, filePath, startedById }) => startPublishJob({ site, kind: "PAGE", startedById, detail: { filePath, source: true } }),
   tracked: async ({ id, site, filePath, commit, changes }) => {
     // The route file the scan listed, where it listed one: its address is what a

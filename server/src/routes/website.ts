@@ -39,7 +39,7 @@ import {
   type FieldValue,
   type SiteField,
 } from "../services/website/index.js";
-import { discoverPages, pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
+import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
 import { offerPagePublished } from "../services/context/business.js";
 
 /**
@@ -196,7 +196,7 @@ websiteRouter.get("/sites/:siteId/pages", async (req, res, next) => {
     const pages = await prisma.sitePage.findMany({
       where: { siteId: site.id },
       orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
-      include: { draftSavedBy: { select: { id: true, name: true } } },
+      select: { ...PAGE_LIST_FIELDS, draftSavedBy: { select: { id: true, name: true } } },
     });
 
     res.json({
@@ -247,7 +247,7 @@ websiteRouter.post("/sites/:siteId/scan", async (req, res, next) => {
       await prisma.site.update({ where: { id: site.id }, data: { ...(movedTo !== null && { repoPath: movedTo }), sourceKind } });
     }
 
-    const existing = await prisma.sitePage.findMany({ where: { siteId: site.id } });
+    const existing = await prisma.sitePage.findMany({ where: { siteId: site.id }, select: PAGE_LIST_FIELDS });
     const byFile = new Map(existing.map((page) => [page.filePath, page]));
 
     let added = 0;

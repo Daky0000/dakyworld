@@ -331,20 +331,34 @@ export async function allowedRepos(): Promise<string[]> {
  * field — rather than something that arrived switched on.
  *
  * `*` opens everything the token can see, for when that is genuinely wanted.
+ *
+ * **An entry must name an owner.** This used to match a bare repository name as
+ * well, so a list saying `laluxury` permitted `laluxury` belonging to *anybody*
+ * — and a repository name is not a unique thing in the world, which is what a
+ * fork is. The shared token can reach every repository its account can see, so
+ * the only thing standing between a bug and somebody else's code is this list,
+ * and a fence that matches half an address is not one. Bare names are now
+ * ignored rather than reinterpreted: silently widening the list somebody wrote
+ * is how the old behaviour happened in the first place.
  */
 export async function repoAllowed(repo: string): Promise<boolean> {
   const full = (await fullName(repo)).toLowerCase();
   const allowed = await allowedRepos();
   if (allowed.length === 0) return false;
   if (allowed.includes("*")) return true;
-  return allowed.includes(full) || allowed.includes(full.split("/")[1]);
+  return allowed.includes(full);
+}
+
+/** Entries that name no owner, so they match nothing. For telling somebody. */
+export function bareEntries(allowed: readonly string[]): string[] {
+  return allowed.filter((entry) => entry !== "*" && !entry.includes("/"));
 }
 
 export class RepoNotAllowedError extends GitHubError {
   constructor(repo: string) {
     super(
       403,
-      `Agents are not allowed to write to ${repo}. Add it to the writable repositories under Settings -> Developer — the list is empty by default, deliberately.`,
+      `Agents are not allowed to write to ${repo}. Add it to the writable repositories under Settings -> Developer as ${repo.includes("/") ? repo : `owner/${repo}`} — the list is empty by default, deliberately, and an entry naming no owner matches nothing.`,
     );
   }
 }

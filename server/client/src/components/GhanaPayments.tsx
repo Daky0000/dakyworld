@@ -356,10 +356,21 @@ export function AgentReposPanel({ settings }: { settings: AppSettings }) {
         <EnvNote variable="GITHUB_ALLOWED_REPOS" />
       ) : (
         <div className="mt-4 max-w-xl space-y-3">
+          {/* Said where the field is, not only in a boot log. A bare entry
+              stopped matching anything the day the rule was narrowed, and the
+              symptom is a publish refused two screens away. */}
+          {settings.agentRepos.bare.length > 0 && (
+            <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">
+              {settings.agentRepos.bare.join(", ")} {settings.agentRepos.bare.length === 1 ? "names" : "name"} no owner, so{" "}
+              {settings.agentRepos.bare.length === 1 ? "it matches" : "they match"} nothing. Write each as{" "}
+              <code className="font-mono text-xs">owner/name</code> — a repository name on its own is not unique, and it used to
+              match one belonging to anybody.
+            </p>
+          )}
           <Field
             label="Writable repositories"
             full
-            hint="One per line, or comma separated — owner/name, or just the name when a default owner is set. Use * to allow everything the token can see."
+            hint="One per line, or comma separated. Each must name its owner — owner/name. Use * to allow everything the token can see."
           >
             <textarea rows={3} className="input font-mono text-xs" value={repos} placeholder="Daky0000/dakyworld" onChange={(event) => setRepos(event.target.value)} />
           </Field>

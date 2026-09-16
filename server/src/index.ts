@@ -45,6 +45,7 @@ import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
 import { websiteRouter } from "./routes/website.js";
 import { apiRateLimit, forceHttps, securityHeaders, webhookRateLimit } from "./middleware/security.js";
+import { allowedRepos, bareEntries } from "./lib/github.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
 import { ensureStandingWork } from "./services/agents/standingWork.js";
@@ -308,6 +309,23 @@ ensureSystemRoles()
       void ensureDakyworldSite()
         .then((created) => created && console.log("  → Added dakyworld.com to the website editor"))
         .catch((err) => console.error("Website seed failed:", err));
+      // A writable-repository entry that names no owner used to match any
+      // repository with that name, belonging to anybody. It now matches
+      // nothing, which is right and is also silent: a site that published fine
+      // yesterday would refuse today, at the moment somebody pressed Publish,
+      // with the reason two screens away. Said here instead.
+      void allowedRepos()
+        .then((allowed) => {
+          const bare = bareEntries(allowed);
+          if (bare.length) {
+            console.warn(
+              `  → ${bare.join(", ")} in the writable repositories names no owner and now matches nothing. ` +
+                "Rewrite each as owner/name under Settings → Developer, or publishing to it will be refused.",
+            );
+          }
+        })
+        .catch(() => {});
+
       // Drops from the Owner's own free ladders anything NVIDIA has stopped
       // listing. It never *picks* a ladder — the shipped ones were probed by
       // hand and the assignment is the point — and it never touches a job
