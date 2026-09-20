@@ -124,8 +124,8 @@ const PAGES = [
     priority: "0.8",
     changefreq: "monthly",
     breadcrumb: [["Products", "/products"]],
-    keywords: "Dakyworld products, website builder Ghana, edit your own website, website editor for clients",
-    schema: ["webpage"],
+    keywords: "Dakyworld products, business software Ghana, digital tools for business, Dakyworld Website Builder",
+    schema: ["collection"],
   },
   {
     file: "website-builder.html",

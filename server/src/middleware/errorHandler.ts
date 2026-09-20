@@ -6,6 +6,7 @@ import { HubtelError } from "../lib/hubtel.js";
 import { MessagingError } from "../services/messageSender.js";
 import { BudgetExceeded } from "../services/budgets.js";
 import { WebsiteError } from "../services/website/site.js";
+import { GitHubError } from "../lib/github.js";
 
 /**
  * The one place an unhandled error becomes a response.
@@ -30,6 +31,15 @@ import { WebsiteError } from "../services/website/site.js";
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   const reference = Math.random().toString(36).slice(2, 10);
   console.error(`[${reference}]`, err);
+
+  // An upstream credential failure is not an expired Dakyworld session.
+  // Use a fixed message rather than exposing GitHub's arbitrary response body.
+  if (err instanceof GitHubError && err.status === 401) {
+    return res.status(503).json({
+      error: "GitHub rejected the connection credentials. Ask the site administrator to reconnect GitHub or update the token under Settings > Developer, then try again.",
+      reference,
+    });
+  }
 
   if (err && typeof err === "object" && "issues" in err) {
     return res.status(400).json({ error: "Validation failed", details: (err as { issues: unknown }).issues });
