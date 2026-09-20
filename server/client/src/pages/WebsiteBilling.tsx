@@ -1,71 +1,32 @@
-import { PlannedScreen } from "../components/PlannedScreen";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, ApiError } from "../lib/api";
+import { Badge, Button, PageHeader } from "../components/ui";
 
-/**
- * What the customer pays — plan §8.
- *
- * The plan asks for a separate License model with activation tokens bound to a
- * domain. That belongs to the installed-module product, which is not what is
- * being sold: a builder subscription here is a retainer with a tier, and this
- * company already bills retainers.
- */
+type Purchase = { id: string; status: string; businessName: string; contactName: string; email: string; websiteUrl: string; monthlyPrice: string; setupPrice: string; currency: string; product: { name: string }; invoice: { invoiceNumber: string; status: string; paymentUrl: string | null } | null };
+type Booking = { id: string; businessName: string; contactName: string; email: string; phone: string; reason: string; goals: string; requestedAt: string; status: string; adminNotes: string | null };
+type Commerce = { purchases: Purchase[]; bookings: Booking[] };
+const PURCHASE_STATES = ["PAYMENT_PENDING", "SETUP_PAID", "SETUP_IN_PROGRESS", "READY", "ACTIVE", "FAILED", "CANCELLED"];
+const BOOKING_STATES = ["REQUESTED", "CONFIRMED", "COMPLETED", "CANCELLED"];
+
 export function WebsiteBilling() {
-  return (
-    <PlannedScreen
-      title="License & Billing"
-      summary="The plan a customer is on, what it entitles them to, and where they pay."
-      willHold={[
-        "Plan and tier, active sites against the ceiling, renewal date, and this month's AI usage.",
-        "The features the plan carries — visual editor, AI edits, image uploads, scheduled publish.",
-        "A link through to the Paystack customer portal, and the invoices this plan has raised.",
-        "The subscription's state, in the words a person needs: active, payment problem, expired, suspended.",
-      ]}
-      decided={[
-        "Billing reuses CarePlan + Invoice + Paystack rather than a parallel License model. CarePlan already does monthly fees in GHS, billing days, auto-invoicing, pause and churn, and cycles.",
-        "entitlement(site) resolves the plan to { maxSites, features[], state }, and the gate reads that — never a stored counter, which drifts the first time a write fails.",
-        "A lapsed subscription is a sentence naming what to do, not \"Something went wrong\". BudgetExceeded is the precedent for that error class.",
-      ]}
-      waitingOn={["An entitlement service over CarePlan", "A link from Site to the CarePlan that pays for it"]}
-    >
-      <div className="rounded-2xl border border-line bg-white px-5 py-4">
-        <h3 className="font-display text-sm tracking-[-.02em]">The rule that is not a preference</h3>
-        <p className="mt-1.5 text-sm text-muted">
-          <strong className="text-ink">Never take a customer's public website down because their builder subscription lapsed.</strong> They
-          paid a developer to build that site; this is a convenience over it, not the thing holding it up. When a plan expires the published
-          site stays exactly where it is, and editing, AI and publishing stop.
-        </p>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[420px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
-                <th className="py-2 pr-4 font-normal">State</th>
-                <th className="py-2 font-normal">Behaviour</th>
-              </tr>
-            </thead>
-            <tbody className="text-muted">
-              <tr className="border-b border-line/60">
-                <td className="py-2 pr-4 text-ink">Active</td>
-                <td className="py-2">Full editing, AI and publishing.</td>
-              </tr>
-              <tr className="border-b border-line/60">
-                <td className="py-2 pr-4 text-ink">Payment problem</td>
-                <td className="py-2">Full access during a 7–14 day grace period, with warnings.</td>
-              </tr>
-              <tr className="border-b border-line/60">
-                <td className="py-2 pr-4 text-ink">Expired</td>
-                <td className="py-2">The published site stays live. Editing and AI stop.</td>
-              </tr>
-              <tr className="border-b border-line/60">
-                <td className="py-2 pr-4 text-ink">Suspended</td>
-                <td className="py-2">Access disabled after a clear account action.</td>
-              </tr>
-              <tr>
-                <td className="py-2 pr-4 text-ink">Server unavailable</td>
-                <td className="py-2">Temporary grace. A failure on our side is not the customer's fault.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </PlannedScreen>
-  );
+  const qc = useQueryClient();
+  const commerce = useQuery({ queryKey: ["website-commerce"], queryFn: () => api.get<Commerce>("/products/website-commerce") });
+  const purchase = useMutation({ mutationFn: ({ id, status }: { id: string; status: string }) => api.patch(`/products/website-commerce/purchases/${id}`, { status }), onSuccess: () => qc.invalidateQueries({ queryKey: ["website-commerce"] }) });
+  const booking = useMutation({ mutationFn: ({ id, ...data }: { id: string; status?: string; requestedAt?: string; adminNotes?: string }) => api.patch(`/products/website-commerce/bookings/${id}`, data), onSuccess: () => qc.invalidateQueries({ queryKey: ["website-commerce"] }) });
+  const error = commerce.error || purchase.error || booking.error;
+
+  return <div><PageHeader title="Website sales & bookings" subtitle="Setup purchases paid through Paystack and Managed Website consultations." action={<a href="/products/pricing" className="text-sm font-semibold text-blue hover:underline">Adjust plan pricing</a>} />
+    {error && <p role="alert" className="mb-4 rounded-xl bg-danger-surface p-3 text-sm text-danger-text">{error instanceof ApiError ? error.message : "The commercial records could not be updated."}</p>}
+    {commerce.isLoading && <p className="text-sm text-muted">Loading purchases and bookings…</p>}
+    <section className="mb-8"><h2 className="mb-3 font-display text-xl">Purchases</h2><div className="space-y-3">{commerce.data?.purchases.map(row => <article key={row.id} className="rounded-2xl border border-line bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold">{row.businessName} · {row.product.name}</h3><p className="text-xs text-muted">{row.contactName} · {row.email} · <a className="underline" href={row.websiteUrl} target="_blank" rel="noreferrer">website</a></p></div><Badge tone={row.status === "ACTIVE" ? "positive" : row.status === "FAILED" || row.status === "CANCELLED" ? "danger" : "info"}>{row.status.replaceAll("_", " ")}</Badge></div>
+      <p className="mt-3 text-sm text-muted">{row.currency} {Number(row.setupPrice).toLocaleString()} setup · {row.currency} {Number(row.monthlyPrice).toLocaleString()}/month · {row.invoice?.invoiceNumber ?? "No invoice"} ({row.invoice?.status ?? "pending"})</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2"><select aria-label={`Status for ${row.businessName}`} value={row.status} onChange={event => purchase.mutate({ id: row.id, status: event.target.value })} className="h-9 rounded-xl border border-line bg-white px-3 text-sm">{PURCHASE_STATES.map(state => <option key={state}>{state}</option>)}</select>{row.invoice?.paymentUrl && row.invoice.status !== "PAID" && <a href={row.invoice.paymentUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">Open payment</Button></a>}</div>
+    </article>)}</div>{commerce.data?.purchases.length === 0 && <p className="text-sm text-muted">No website purchases yet.</p>}</section>
+    <section><h2 className="mb-3 font-display text-xl">Managed consultations</h2><div className="space-y-3">{commerce.data?.bookings.map(row => <article key={row.id} className="rounded-2xl border border-line bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold">{row.businessName}</h3><p className="text-xs text-muted">{row.contactName} · {row.email} · {row.phone}</p></div><Badge tone={row.status === "CONFIRMED" || row.status === "COMPLETED" ? "positive" : row.status === "CANCELLED" ? "danger" : "warn"}>{row.status}</Badge></div>
+      <p className="mt-3 text-sm"><strong>Requested:</strong> {new Date(row.requestedAt).toLocaleString()}</p><p className="mt-1 text-sm text-muted"><strong>Reason:</strong> {row.reason}</p><p className="mt-1 text-sm text-muted"><strong>Goals:</strong> {row.goals}</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3"><label className="text-xs text-muted">Status<select aria-label={`Booking status for ${row.businessName}`} value={row.status} onChange={event => booking.mutate({ id: row.id, status: event.target.value })} className="mt-1 block h-9 w-full rounded-xl border border-line bg-white px-3 text-sm">{BOOKING_STATES.map(state => <option key={state}>{state}</option>)}</select></label><label className="text-xs text-muted">Consultation time<input type="datetime-local" defaultValue={new Date(row.requestedAt).toISOString().slice(0,16)} onChange={event => booking.mutate({ id: row.id, requestedAt: event.target.value })} className="mt-1 block h-9 w-full rounded-xl border border-line bg-white px-3 text-sm" /></label><label className="text-xs text-muted">Internal notes<input defaultValue={row.adminNotes ?? ""} onBlur={event => booking.mutate({ id: row.id, adminNotes: event.target.value })} className="mt-1 block h-9 w-full rounded-xl border border-line bg-white px-3 text-sm" /></label></div>
+    </article>)}</div>{commerce.data?.bookings.length === 0 && <p className="text-sm text-muted">No Managed consultations requested.</p>}</section>
+  </div>;
 }

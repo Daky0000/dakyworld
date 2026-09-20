@@ -29,6 +29,41 @@ export const webhooksRouter = Router();
 const UNSIGNED_OK = new Set(["website-form", "contact-form"]);
 const MAX_BODY = 128 * 1024;
 
+/**
+ * The origins the public website is served from, and the only ones granted a
+ * cross-origin write.
+ *
+ * The contact form lives on dakyworld.com and this API lives on
+ * os.dakyworld.com, so the browser needs to be told the write is welcome. It is
+ * told for these origins and no others, and only for the sources in
+ * `UNSIGNED_OK` — a signed sender is a server and has no origin to match.
+ *
+ * Deliberately NOT `Access-Control-Allow-Origin: *` the way the public price
+ * catalogue beside it is: that route is a public read, and this one creates a
+ * row. And deliberately not the global `cors({ credentials: true })` grant in
+ * index.ts either, because that would hand the whole authenticated API to this
+ * origin to buy one form a response it can read.
+ */
+const SITE_ORIGINS = new Set([
+  "https://dakyworld.com",
+  "https://www.dakyworld.com",
+]);
+
+/**
+ * Says yes to the site's own origin and stays silent for everyone else.
+ *
+ * Silence is the right refusal: without the header the browser refuses to let
+ * the page read the response, which is exactly the outcome wanted, and the
+ * request itself is still judged on its merits by the handler.
+ */
+function allowSiteOrigin(req: Request, res: Response): void {
+  const origin = req.headers.origin;
+  if (typeof origin !== "string" || !SITE_ORIGINS.has(origin)) return;
+  const source = String(req.params.source ?? "").toLowerCase();
+  if (!UNSIGNED_OK.has(source)) return;
+  res.set("Access-Control-Allow-Origin", origin).set("Vary", "Origin");
+}
+
 function parseBody(raw: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(raw);
@@ -57,6 +92,8 @@ function safeHeaders(req: Request): Record<string, string> {
 }
 
 async function receive(req: Request, res: Response) {
+  allowSiteOrigin(req, res);
+
   const source = String(req.params.source ?? "unknown")
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "")
@@ -115,6 +152,16 @@ async function receive(req: Request, res: Response) {
 }
 
 webhooksRouter.post("/:source", receive);
+
+/**
+ * The preflight for that write. A form post sent as JSON is not a "simple"
+ * request, so the browser asks first; without an answer it never sends the
+ * enquiry at all.
+ */
+webhooksRouter.options("/:source", (req, res) => {
+  allowSiteOrigin(req, res);
+  res.set("Access-Control-Allow-Methods", "POST, OPTIONS").set("Access-Control-Allow-Headers", "Content-Type").status(204).end();
+});
 
 /** A sender can check its URL and signature without creating anything. */
 webhooksRouter.get("/:source/ping", (req, res) => {

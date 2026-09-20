@@ -70,7 +70,7 @@ export interface RaisedPayment {
  * most likely to hit, because a card can sit in the approval queue for a day
  * and get settled by bank transfer in the meantime.
  */
-export async function raisePayment(invoiceId: string, rail: Rail): Promise<RaisedPayment> {
+export async function raisePayment(invoiceId: string, rail: Rail, options: { callbackUrl?: string } = {}): Promise<RaisedPayment> {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: { client: { select: { name: true, company: true, email: true, phone: true } } },
@@ -94,7 +94,7 @@ export async function raisePayment(invoiceId: string, rail: Rail): Promise<Raise
       amount,
       currency: invoice.currency,
       reference,
-      callbackUrl: `${base}/invoices`,
+      callbackUrl: options.callbackUrl ?? `${base}/invoices`,
       metadata: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber },
     });
     url = link.url;
@@ -144,9 +144,15 @@ export async function settleFromProvider(reference: string): Promise<{ invoice: 
   if (!status.paid) return { invoice, changed: false };
 
   const paidVia = describeChannel(status.channel);
+  const paymentAuthorization = "authorizationCode" in status && typeof status.authorizationCode === "string" ? status.authorizationCode : null;
   const updated = await prisma.invoice.update({
     where: { id: invoice.id },
     data: { status: "PAID", paidAt: status.paidAt ?? new Date(), paidVia },
+  });
+
+  await prisma.websitePurchase.updateMany({
+    where: { invoiceId: invoice.id, status: "PAYMENT_PENDING" },
+    data: { status: "SETUP_PAID", setupPaidAt: status.paidAt ?? new Date(), paymentAuthorization },
   });
 
   // Lifetime value is the client's, and it is what the dashboard and the

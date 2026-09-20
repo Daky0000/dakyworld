@@ -63,11 +63,19 @@ const OFFER_PAGES = [
   "index.html",
   "services.html",
   "pricing.html",
-  "monthly-support.html",
-  "one-time-projects.html",
-  "foundation-build.html",
+  "products.html",
   "about.html",
 ];
+/*
+ * `monthly-support.html`, `one-time-projects.html` and `foundation-build.html`
+ * used to be on that list and are no longer pages. Each is a redirect stub
+ * whose entire visible prose is a sentence saying it "has moved to Pricing" —
+ * so they contributed nothing to the extraction while spending three of its
+ * seven slots, and fed the model a line about the offer having moved that it
+ * had to be trusted to ignore. The prices they used to carry are on
+ * pricing.html, which is read above. `products.html` replaces them: the
+ * Website Builder is sold on it and on nothing else in this list.
+ */
 
 /** How much of one page's prose is worth sending. Past this it is footers and FAQs. */
 const MAX_PAGE_CHARS = 12_000;

@@ -64,6 +64,60 @@
           "item": "https://dakyworld.com/contact"
         }
       ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://dakyworld.com/contact#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What kind of businesses do you work with?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Growing businesses with an active customer journey or recurring operational work: professional firms, commerce businesses, schools, non-profits and organisations that need their website, workflows and business tools to work together."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need to know exactly what I need?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. You only need to explain the problem or the goal. We will help you work out what should be done first."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can you work with an existing website or system?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Usually, yes. We can review, improve, connect and keep improving websites, workflows and tools built by another provider."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do you offer ongoing work?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. A monthly partnership gives your business an agreed capacity each month to keep improving the website, customer journey, automations and connected tools."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do you provide IT support, device repair or cybersecurity?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Dakyworld focuses on digital systems and automation. We do not provide office hardware support, device repair, network installation or managed cybersecurity services."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Where are you based?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "We are based in Kumasi, Ghana, and work remotely with businesses across Ghana and West Africa."
+          }
+        }
+      ]
     }
   ]
 }
@@ -77,17 +131,19 @@
 <!-- that file, and nothing then until the visitor allows analytics. -->
 <script src="/assets/analytics.js" defer></script>
 <!-- END SEO -->
-<link rel="icon" href="assets/brand/favicon-32.png" sizes="32x32" type="image/png">
-<link rel="icon" href="assets/brand/favicon-32-dark.png" sizes="32x32" type="image/png" media="(prefers-color-scheme: dark)">
-<link rel="apple-touch-icon" href="assets/brand/favicon-180.png">
+<link rel="icon" href="/assets/brand/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/assets/brand/favicon-32-dark.png" sizes="32x32" type="image/png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="/assets/brand/favicon-180.png">
 <!-- Typefaces are served from this origin, not from Google. See assets/fonts.css. -->
-<link rel="stylesheet" href="assets/fonts.css">
+<link rel="preload" href="/assets/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/fonts.css">
 <!-- Tailwind's Preflight, written out and served from here. The CDN that used
      to supply it also shipped a 400KB in-browser compiler on every page view,
      to serve twenty-eight utility classes. See the head of base.css. -->
-<link rel="stylesheet" href="assets/base.css">
-<link rel="stylesheet" href="assets/site.css">
-<link rel="stylesheet" href="assets/pages.css">
+<link rel="stylesheet" href="/assets/base.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/pages.css">
 </head>
 <body>
 <a href="#main" class="skip-link">Skip to content</a>
@@ -99,7 +155,7 @@
     <a href="/" class="brand" aria-label="Dakyworld home">
       <img
         class="brand-logo"
-        src="assets/brand/header-lockup-on-dark.png"
+        src="/assets/brand/header-lockup-on-dark.png"
         alt="Dakyworld"
         width="379"
         height="68"
@@ -378,7 +434,7 @@
   <div class="wrap">
     <div class="footer-grid">
       <div>
-        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96" loading="lazy" decoding="async"></a>
+        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="/assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96" loading="lazy" decoding="async"></a>
         <p class="footer-blurb">Dakyworld is your outsourced digital systems and automation team for growing businesses in Ghana and West Africa. We build, connect and improve the systems that help businesses win customers and operate more efficiently.</p>
       </div>
       <div>
@@ -443,20 +499,45 @@
       select.value = selected;
     }
 
+    /* Where they came from.
+
+       This used to branch on `window.location.pathname` for 'pricing',
+       'services', 'work' and the rest. Every one of those branches was dead:
+       this script only ever runs on the contact page, so the first test —
+       'contact' — always matched and the answer was always 'contact-page'.
+       The one thing it was meant to record, which page sent them, was the one
+       thing it could not see.
+
+       The referrer can see it, because it is the page they left. Read only
+       when it is one of ours: an external referrer is a different fact and
+       belongs under its own name, not mislabelled as a page of this site.
+
+       A campaign tag still wins over all of it — someone who arrived tagged
+       told us where they came from directly, and that beats an inference. */
     var sourceValue = 'direct';
-    var pathname = window.location.pathname;
-    if (pathname.indexOf('contact') !== -1) sourceValue = 'contact-page';
-    else if (pathname.indexOf('pricing') !== -1) sourceValue = 'pricing-page';
-    else if (pathname.indexOf('services') !== -1) sourceValue = 'services-page';
-    else if (pathname.indexOf('how-we-work') !== -1) sourceValue = 'how-we-work-page';
-    else if (pathname.indexOf('work') !== -1) sourceValue = 'work-page';
-    else if (pathname.indexOf('index') !== -1 || pathname === '/' || pathname === '') sourceValue = 'homepage';
-    
+
+    try {
+      var ref = document.referrer ? new URL(document.referrer) : null;
+      if (ref && ref.host === window.location.host) {
+        var page = ref.pathname.replace(/\/+$/, '').split('/').pop() || 'homepage';
+        sourceValue = page.replace(/\.html$/, '') + '-page';
+        if (page === 'index' || page === 'homepage') sourceValue = 'homepage';
+      } else if (ref) {
+        sourceValue = 'referral:' + ref.hostname;
+      }
+    } catch (err) {
+      /* A referrer we cannot parse tells us nothing; 'direct' stands. */
+    }
+
+    // An explicit plan or programme in the URL is a stronger signal than the
+    // page before it: it says what they want, not just where they were.
+    if (interest) sourceValue = interest + '-enquiry';
+
     var utmSource = params.get('utm_source');
     if (utmSource) sourceValue = utmSource;
     source.value = sourceValue;
   })();
 </script>
-<script src="assets/site.js"></script>
+<script src="/assets/site.js"></script>
 </body>
 </html>

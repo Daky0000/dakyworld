@@ -15,7 +15,7 @@
     '    <a href="/" class="brand" aria-label="Dakyworld home">',
     '      <img',
     '        class="brand-logo"',
-    '        src="assets/brand/header-lockup-on-dark.png"',
+    '        src="/assets/brand/header-lockup-on-dark.png"',
     '        alt="Dakyworld"',
     '        width="379"',
     '        height="68"',
@@ -60,7 +60,7 @@
     '  <div class="wrap">',
     '    <div class="footer-grid">',
     '      <div>',
-    '        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96" loading="lazy" decoding="async"></a>',
+    '        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="/assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96" loading="lazy" decoding="async"></a>',
     '        <p class="footer-blurb">Dakyworld is your outsourced digital systems and automation team for growing businesses in Ghana and West Africa. We build, connect and improve the systems that help businesses win customers and operate more efficiently.</p>',
     '      </div>',
     '      <div>',
@@ -379,9 +379,30 @@
   }
 
   /* Forms.
-     Neither of these is wired to a backend yet, so they say so rather than
-     claiming a message was sent. Replace both handlers with a real POST (or
-     a form service) before launch. */
+
+     The contact form posts to the intake endpoint on Dakyworld OS, which
+     de-duplicates the enquiry against the pipeline, scores it and files it at
+     QUALIFYING. See server/src/services/webhookIntake.ts.
+
+     Three things this deliberately does NOT do:
+
+     - **It does not lose the enquiry when the request fails.** A network drop,
+       a cold server or a browser that refuses the cross-origin call all end at
+       the same place: the address and the phone number, on screen, with the
+       message the visitor typed still in the form so they can copy it. The
+       worst outcome for a contact form is a visitor who believes they have
+       been in touch and has not.
+     - **It does not claim more than it knows.** The endpoint answers 202 with
+       `acted: false` when the honeypot or the clock says script, and that is
+       still a success to the person who typed it — telling a real visitor they
+       look like a bot is the one reply guaranteed to be wrong when the filter
+       is. So the wording is the same either way, and the truth of it lives in
+       the WebhookEvent row.
+     - **It does not disable the button forever.** If the post fails the form
+       has to be usable again.
+  */
+  var INTAKE = 'https://os.dakyworld.com/api/webhooks/website-form';
+
   function settle(button, label, ms) {
     var original = button.innerHTML;
     button.innerHTML = label;
@@ -390,6 +411,12 @@
       button.innerHTML = original;
       button.disabled = false;
     }, ms || 4000);
+  }
+
+  function say(el, text) {
+    if (!el) return;
+    el.textContent = text;
+    el.hidden = false;
   }
 
   // Stamped on load so the server can tell how long the form was open. A
@@ -404,39 +431,73 @@
       e.preventDefault();
       if (!form.reportValidity()) return;
 
-      var note = document.getElementById('formNote');
-      var status = form.querySelector('.form-status');
-      var message =
-        'This form is not connected to an inbox yet — please email ' +
-        'info@dakyworld.com or call +233 545 950 611 and we will reply the same day.';
-
-      if (status) {
-        status.textContent = message;
-        status.hidden = false;
-      } else if (note) {
-        note.textContent = message;
-        note.hidden = false;
-      }
+      var status = form.querySelector('.form-status') || document.getElementById('formNote');
       var button = form.querySelector('.submit,[type="submit"]');
-      if (button) settle(button, 'Not connected yet');
+      var original = button ? button.innerHTML : null;
+
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = 'Sending…';
+      }
+      say(status, 'Sending your enquiry…');
+
+      var payload = {};
+      // FormData keeps the honeypot and the timestamp, which is the point:
+      // both are fields on the form and both have to reach the server.
+      new FormData(form).forEach(function (value, key) { payload[key] = value; });
+
+      function restore() {
+        if (button && original !== null) {
+          button.innerHTML = original;
+          button.disabled = false;
+        }
+      }
+
+      function failed() {
+        restore();
+        say(
+          status,
+          'That did not send — please email info@dakyworld.com or call ' +
+          '+233 545 950 611 and we will reply the same day. Your message is ' +
+          'still in the form above.'
+        );
+      }
+
+      fetch(INTAKE, {
+        method: 'POST',
+        credentials: 'omit',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then(function (response) {
+          if (!response.ok) throw new Error('refused');
+          say(status, 'Thank you — that is with us. We reply to every enquiry within one working day.');
+          form.reset();
+          // Re-stamp, so a second enquiry from the same tab is not judged
+          // against the clock of the first one.
+          if (started) started.value = String(Date.now());
+          if (button) settle(button, 'Sent ✓', 6000);
+        })
+        .catch(failed);
     });
   }
 
+  /* The newsletter is not wired to a list yet, so it says so rather than
+     claiming a subscription that does not exist. */
   var newsletter = document.getElementById('newsletterForm');
   if (newsletter) {
     newsletter.addEventListener('submit', function (e) {
       e.preventDefault();
       if (!newsletter.reportValidity()) return;
-      var status = document.getElementById('newsletterStatus');
-      if (status) {
-        status.textContent =
-          'Sign-up is not live yet. Email info@dakyworld.com with “subscribe” and we will add you.';
-        status.hidden = false;
-      }
+      say(
+        document.getElementById('newsletterStatus'),
+        'Sign-up is not live yet. Email info@dakyworld.com with “subscribe” and we will add you.'
+      );
       var button = newsletter.querySelector('button');
       if (button) settle(button, 'Not live yet');
     });
   }
+
   /* The pricing menu opens on hover and on focus, in CSS — see site.css.
      It used to toggle on click, which cannot survive the trigger becoming a
      link to the pricing page: a click has to navigate there. */

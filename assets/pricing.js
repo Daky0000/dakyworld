@@ -62,7 +62,48 @@
         slot.setAttribute('data-dw-price-updated', '');
       });
     })
+    .then(function () {
+      /* ── The same number, in the structured data ────────────────────────
+         The page now publishes a SoftwareApplication with an Offer on it, and
+         an Offer carrying a price the catalogue has since moved is worse than
+         one carrying none: a search engine will quote it. So the offer is
+         rewritten from the same response that rewrote the visible price, and
+         the two cannot disagree.
+
+         Silent on every failure, exactly like the block above — a page whose
+         JSON-LD did not update still has correct JSON-LD, just older. */
+      updateOfferSchema();
+    })
     .catch(function () {
       /* The published price stands. */
     });
+
+  function updateOfferSchema() {
+    var blocks = document.querySelectorAll('script[type="application/ld+json"]');
+    Array.prototype.forEach.call(blocks, function (block) {
+      var data;
+      try {
+        data = JSON.parse(block.textContent);
+      } catch (err) {
+        return;
+      }
+      var graph = data && data['@graph'];
+      if (!Array.isArray(graph)) return;
+
+      var touched = false;
+      graph.forEach(function (node) {
+        if (!node || node['@type'] !== 'SoftwareApplication' || !node.offers) return;
+        // The visible price is already correct by the time this runs, so it is
+        // the one thing that does not need fetching twice.
+        var slot = document.querySelector('[data-dw-price][data-dw-part="monthly"]');
+        if (!slot) return;
+        var amount = slot.textContent.replace(/[^0-9.]/g, '');
+        if (!amount || node.offers.price === amount) return;
+        node.offers.price = amount;
+        touched = true;
+      });
+
+      if (touched) block.textContent = JSON.stringify(data);
+    });
+  }
 })();

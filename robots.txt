@@ -10,4 +10,11 @@ Disallow: /website-drafts/
 # the sign-in — but it is not a page anybody should reach from a search result.
 Disallow: /admin
 
+# An internal architecture document that was published to the site root by
+# accident. Left in place so any link to it still resolves, but it is not a
+# page of this website and must not be indexed as one. It also carries a
+# noindex of its own — this rule stops it being crawled at all, the meta tag
+# covers a crawler that reaches it by a route other than this file.
+Disallow: /AGENT_SYSTEM_PLAN.html
+
 Sitemap: https://dakyworld.com/sitemap.xml

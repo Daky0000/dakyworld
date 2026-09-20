@@ -11,6 +11,7 @@
  */
 import assert from "node:assert/strict";
 import { decideAccess, money, tierName, SHIPPED_PRODUCTS } from "../src/services/products.js";
+import { PLAN_ENTITLEMENTS, WEBSITE_TIERS } from "../src/services/websiteCommerce.js";
 
 let checks = 0;
 function check(name: string, condition: unknown) { assert.ok(condition, name); checks++; }
@@ -68,5 +69,13 @@ check("the Website Builder ships in the catalogue", builder !== undefined);
 check("with a price", Number(builder.monthlyPrice) > 0);
 equal("pointing at its own public page", builder.publicPath, "/website-builder");
 check("every shipped product has a stable key", SHIPPED_PRODUCTS.every((product) => /^[a-z][a-z0-9-]*$/.test(product.key)));
+equal("three website plans ship", SHIPPED_PRODUCTS.map(product => product.key), ["website-builder", "website-care", "managed-website"]);
+equal("Editor starts at GHS 450", SHIPPED_PRODUCTS[0].monthlyPrice, "450.00");
+equal("Care starts at GHS 900", SHIPPED_PRODUCTS[1].monthlyPrice, "900.00");
+equal("Managed starts at GHS 3,000", SHIPPED_PRODUCTS[2].monthlyPrice, "3000.00");
+equal("the public keys resolve to tiers", WEBSITE_TIERS, { "website-builder": "EDITOR", "website-care": "CARE", "managed-website": "MANAGED" });
+equal("Editor allows two users", PLAN_ENTITLEMENTS.EDITOR.userLimit, 2);
+equal("Care includes sixty technical minutes", PLAN_ENTITLEMENTS.CARE.includedTechnicalMinutes, 60);
+equal("Managed includes four technical hours", PLAN_ENTITLEMENTS.MANAGED.includedTechnicalMinutes, 240);
 
 console.log(`products: ${checks} checks — retainers include everything, everyone else is quoted a real number, and no path is free by accident`);

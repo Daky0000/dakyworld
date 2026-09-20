@@ -64,6 +64,26 @@
           "item": "https://dakyworld.com/products"
         }
       ]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://dakyworld.com/website-builder#software",
+      "name": "Dakyworld Website Builder",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web browser",
+      "url": "https://dakyworld.com/website-builder",
+      "provider": {
+        "@id": "https://dakyworld.com/#organization"
+      },
+      "description": "Edit your own website in place and publish when you are ready. Included at no extra cost on any Dakyworld monthly partnership.",
+      "offers": {
+        "@type": "Offer",
+        "@id": "https://dakyworld.com/website-builder#offer",
+        "priceCurrency": "GHS",
+        "price": "300",
+        "availability": "https://schema.org/InStock",
+        "url": "https://dakyworld.com/website-builder"
+      }
     }
   ]
 }
@@ -77,16 +97,18 @@
 <!-- that file, and nothing then until the visitor allows analytics. -->
 <script src="/assets/analytics.js" defer></script>
 <!-- END SEO -->
-<link rel="icon" href="assets/brand/favicon-32.png" sizes="32x32" type="image/png">
-<link rel="icon" href="assets/brand/favicon-32-dark.png" sizes="32x32" type="image/png" media="(prefers-color-scheme: dark)">
-<link rel="apple-touch-icon" href="assets/brand/favicon-180.png">
+<link rel="icon" href="/assets/brand/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/assets/brand/favicon-32-dark.png" sizes="32x32" type="image/png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="/assets/brand/favicon-180.png">
 <!-- Typefaces are served from this origin, not from Google. See assets/fonts.css. -->
-<link rel="stylesheet" href="assets/fonts.css">
+<link rel="preload" href="/assets/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/fonts.css">
 <!-- Tailwind's Preflight, written out and served from here. The CDN that used
      to supply it also shipped a 400KB in-browser compiler on every page view,
      to serve twenty-eight utility classes. See the head of base.css. -->
-<link rel="stylesheet" href="assets/base.css">
-<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="/assets/base.css">
+<link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
 <a href="#main" class="skip-link">Skip to content</a>
@@ -98,7 +120,7 @@
     <a href="/" class="brand" aria-label="Dakyworld home">
       <img
         class="brand-logo"
-        src="assets/brand/header-lockup-on-dark.png"
+        src="/assets/brand/header-lockup-on-dark.png"
         alt="Dakyworld"
         width="379"
         height="68"
@@ -260,7 +282,7 @@
   <div class="wrap">
     <div class="footer-grid">
       <div>
-        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96" loading="lazy" decoding="async"></a>
+        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="/assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96" loading="lazy" decoding="async"></a>
         <p class="footer-blurb">Dakyworld is your outsourced digital systems and automation team for growing businesses in Ghana and West Africa. We build, connect and improve the systems that help businesses win customers and operate more efficiently.</p>
       </div>
       <div>
@@ -298,7 +320,7 @@
   </div>
 </footer>
 
-<script src="assets/site.js"></script>
-<script src="assets/pricing.js" defer></script>
+<script src="/assets/site.js"></script>
+<script src="/assets/pricing.js" defer></script>
 </body>
 </html>

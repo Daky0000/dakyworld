@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { requirePermission } from "../middleware/auth.js";
 import { listProducts, publicCatalogue, updateProduct } from "../services/products.js";
+import { createManagedBooking, listWebsiteCommerce, startWebsitePurchase, updateBooking, updatePurchaseStatus } from "../services/websiteCommerce.js";
+import { rateLimit } from "../middleware/security.js";
 
 /**
  * The product catalogue: one door for the public website, one for the office.
@@ -42,6 +44,44 @@ publicProductsRouter.options("/products", (_req, res) => {
   res.set("Access-Control-Allow-Origin", "*").set("Access-Control-Allow-Methods", "GET, OPTIONS").status(204).end();
 });
 
+const purchaseInput = z.object({
+  productKey: z.enum(["website-builder", "website-care"]),
+  businessName: z.string().trim().min(2).max(160),
+  contactName: z.string().trim().min(2).max(120),
+  email: z.string().trim().email().max(200),
+  phone: z.string().trim().max(40).optional(),
+  websiteUrl: z.string().trim().url().max(500),
+  notes: z.string().trim().max(2000).optional(),
+});
+
+const bookingInput = z.object({
+  businessName: z.string().trim().min(2).max(160), contactName: z.string().trim().min(2).max(120),
+  email: z.string().trim().email().max(200), phone: z.string().trim().min(7).max(40), websiteUrl: z.string().trim().url().max(500),
+  reason: z.string().trim().min(2).max(500), goals: z.string().trim().min(10).max(3000), notes: z.string().trim().max(2000).optional(),
+  requestedAt: z.coerce.date().refine(value => value.getTime() > Date.now(), "Choose a future consultation time."),
+});
+const commerceRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 10, message: "Too many purchase or booking attempts. Try again in {minutes}." });
+
+function publicCors(req: { headers: { origin?: string } }, res: { set: (field: string, value: string) => unknown }) {
+  const origin = req.headers.origin;
+  if (origin && ["https://dakyworld.com", "https://www.dakyworld.com", "http://localhost:5173"].includes(origin)) res.set("Access-Control-Allow-Origin", origin);
+  res.set("Vary", "Origin");
+}
+
+publicProductsRouter.post("/website-purchases", commerceRateLimit, async (req, res, next) => {
+  try { publicCors(req, res); res.status(201).json(await startWebsitePurchase(purchaseInput.parse(req.body))); }
+  catch (err) { next(err); }
+});
+
+publicProductsRouter.post("/managed-bookings", commerceRateLimit, async (req, res, next) => {
+  try { publicCors(req, res); const booking = await createManagedBooking(bookingInput.parse(req.body)); res.status(201).json({ id: booking.id, status: booking.status, requestedAt: booking.requestedAt }); }
+  catch (err) { next(err); }
+});
+
+publicProductsRouter.options(["/website-purchases", "/managed-bookings"], (req, res) => {
+  publicCors(req, res); res.set("Access-Control-Allow-Methods", "POST, OPTIONS").set("Access-Control-Allow-Headers", "Content-Type").status(204).end();
+});
+
 export const productsRouter = Router();
 
 productsRouter.get("/", requirePermission("website.view"), async (_req, res, next) => {
@@ -66,6 +106,24 @@ productsRouter.get("/", requirePermission("website.view"), async (_req, res, nex
   } catch (err) {
     next(err);
   }
+});
+
+productsRouter.get("/website-commerce", requirePermission("website.manage"), async (_req, res, next) => {
+  try { res.json(await listWebsiteCommerce()); } catch (err) { next(err); }
+});
+
+productsRouter.patch("/website-commerce/purchases/:id", requirePermission("website.manage"), async (req, res, next) => {
+  try {
+    const { status } = z.object({ status: z.enum(["PAYMENT_PENDING", "SETUP_PAID", "SETUP_IN_PROGRESS", "READY", "ACTIVE", "FAILED", "CANCELLED"]) }).parse(req.body);
+    res.json(await updatePurchaseStatus(req.params.id, status));
+  } catch (err) { next(err); }
+});
+
+productsRouter.patch("/website-commerce/bookings/:id", requirePermission("website.manage"), async (req, res, next) => {
+  try {
+    const body = z.object({ status: z.enum(["REQUESTED", "CONFIRMED", "COMPLETED", "CANCELLED"]).optional(), requestedAt: z.coerce.date().optional(), adminNotes: z.string().max(3000).optional() }).parse(req.body);
+    res.json(await updateBooking(req.params.id, body));
+  } catch (err) { next(err); }
 });
 
 const priceInput = z.object({

@@ -189,21 +189,22 @@ model Client {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  contacts       Contact[]
-  leads          Lead[]
-  proposals      Proposal[]
-  projects       Project[]
-  carePlans      CarePlan[]
-  invoices       Invoice[]
-  communications Communication[]
-  emails         EmailMessage[]
-  enrollments    EmailEnrollment[]
-  messages       Message[]
-  threads        MessageThread[]
-  agentTasks     AgentTask[]
-  mailMessages   MailMessage[]
-  mailThreads    MailThread[]
-  sites          Site[]
+  contacts         Contact[]
+  leads            Lead[]
+  proposals        Proposal[]
+  projects         Project[]
+  carePlans        CarePlan[]
+  invoices         Invoice[]
+  communications   Communication[]
+  emails           EmailMessage[]
+  enrollments      EmailEnrollment[]
+  messages         Message[]
+  threads          MessageThread[]
+  agentTasks       AgentTask[]
+  mailMessages     MailMessage[]
+  mailThreads      MailThread[]
+  sites            Site[]
+  websitePurchases WebsitePurchase[]
 }
 
 model Contact {
@@ -1460,10 +1461,87 @@ model Product {
   updatedById String?
   updatedBy   User?   @relation("ProductPrices", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  websitePurchases WebsitePurchase[]
 
   @@index([active, sortOrder])
+}
+
+enum WebsitePlanTier {
+  EDITOR
+  CARE
+  MANAGED
+}
+
+enum WebsitePurchaseStatus {
+  PAYMENT_PENDING
+  SETUP_PAID
+  SETUP_IN_PROGRESS
+  READY
+  ACTIVE
+  FAILED
+  CANCELLED
+}
+
+enum ManagedBookingStatus {
+  REQUESTED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+model WebsitePurchase {
+  id                       String                @id @default(cuid())
+  client                   Client                @relation(fields: [clientId], references: [id])
+  clientId                 String
+  invoice                  Invoice?              @relation(fields: [invoiceId], references: [id])
+  invoiceId                String?               @unique
+  product                  Product               @relation(fields: [productId], references: [id])
+  productId                String
+  tier                     WebsitePlanTier
+  status                   WebsitePurchaseStatus @default(PAYMENT_PENDING)
+  businessName             String
+  contactName              String
+  email                    String
+  phone                    String?
+  websiteUrl               String
+  notes                    String?
+  compatibilityStatus      String
+  compatibilityNotes       String?
+  monthlyPrice             Decimal               @db.Decimal(12, 2)
+  setupPrice               Decimal               @db.Decimal(12, 2)
+  currency                 String                @default("GHS")
+  setupPaidAt              DateTime?
+  activatedAt              DateTime?
+  nextBillingAt            DateTime?
+  paymentAuthorization     String?
+  providerPlanCode         String?
+  providerSubscriptionCode String?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+
+  @@index([status, createdAt])
+  @@index([clientId, tier])
+}
+
+model ManagedBooking {
+  id           String               @id @default(cuid())
+  businessName String
+  contactName  String
+  email        String
+  phone        String
+  websiteUrl   String
+  reason       String
+  goals        String
+  notes        String?
+  requestedAt  DateTime
+  status       ManagedBookingStatus @default(REQUESTED)
+  adminNotes   String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([status, requestedAt])
 }
 
 model CarePlan {
@@ -1617,11 +1695,12 @@ model Invoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lineItems  InvoiceLineItem[]
-  cycle      CarePlanCycle?
-  emails     EmailMessage[]
-  agentTasks AgentTask[]
-  Message    Message[]
+  lineItems       InvoiceLineItem[]
+  cycle           CarePlanCycle?
+  emails          EmailMessage[]
+  agentTasks      AgentTask[]
+  Message         Message[]
+  websitePurchase WebsitePurchase?
 
   /// A payment webhook arrives quoting the provider's reference and nothing
   /// else, so this is the lookup that has to be fast — and it is on the path
@@ -4347,8 +4426,8 @@ model SharedElementInstance {
 }
 
 model SiteAsset {
-  id          String   @id @default(cuid())
-  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  id          String @id @default(cuid())
+  site        Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
   siteId      String
   filename    String
   repoPath    String

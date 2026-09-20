@@ -140,6 +140,7 @@ export interface PaystackStatus {
   channel: string | null;
   paidAt: Date | null;
   customerEmail: string | null;
+  authorizationCode: string | null;
 }
 
 export async function verifyTransaction(reference: string): Promise<PaystackStatus> {
@@ -151,6 +152,7 @@ export async function verifyTransaction(reference: string): Promise<PaystackStat
     channel: string | null;
     paid_at: string | null;
     customer?: { email?: string };
+    authorization?: { authorization_code?: string };
   }>(`/transaction/verify/${encodeURIComponent(reference)}`);
 
   return {
@@ -161,7 +163,18 @@ export async function verifyTransaction(reference: string): Promise<PaystackStat
     channel: data.channel ?? null,
     paidAt: data.paid_at ? new Date(data.paid_at) : null,
     customerEmail: data.customer?.email ?? null,
+    authorizationCode: data.authorization?.authorization_code ?? null,
   };
+}
+
+export async function createSubscriptionPlan(input: { name: string; amount: number; currency: string }) {
+  const data = await call<{ plan_code: string }>("/plan", { method: "POST", body: { name: input.name, amount: toMinor(input.amount), interval: "monthly", currency: input.currency } });
+  return data.plan_code;
+}
+
+export async function createSubscription(input: { email: string; planCode: string; authorizationCode: string }) {
+  const data = await call<{ subscription_code: string; next_payment_date?: string }>("/subscription", { method: "POST", body: { customer: input.email, plan: input.planCode, authorization: input.authorizationCode } });
+  return { code: data.subscription_code, nextPaymentAt: data.next_payment_date ? new Date(data.next_payment_date) : null };
 }
 
 /** Confirms a key works, and says which mode it is in, before it is stored. */

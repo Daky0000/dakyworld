@@ -30,12 +30,30 @@ import { prisma } from "../lib/prisma.js";
 export const SHIPPED_PRODUCTS: Array<Pick<Product, "key" | "name" | "tagline" | "publicPath" | "sortOrder"> & { monthlyPrice: string; setupPrice: string | null }> = [
   {
     key: "website-builder",
-    name: "Website Builder",
-    tagline: "Edit your own website in place and publish when you are ready.",
-    monthlyPrice: "750.00",
+    name: "Editor",
+    tagline: "Self-service website editing for one website and up to two users.",
+    monthlyPrice: "450.00",
     setupPrice: "1500.00",
     publicPath: "/website-builder",
     sortOrder: 1,
+  },
+  {
+    key: "website-care",
+    name: "Website Care",
+    tagline: "Editing, monitoring and 60 minutes of technical assistance each month.",
+    monthlyPrice: "900.00",
+    setupPrice: "1500.00",
+    publicPath: "/website-builder",
+    sortOrder: 2,
+  },
+  {
+    key: "managed-website",
+    name: "Managed Website",
+    tagline: "Higher-touch ownership with up to four hours of technical work each month.",
+    monthlyPrice: "3000.00",
+    setupPrice: null,
+    publicPath: "/website-builder",
+    sortOrder: 3,
   },
 ];
 
