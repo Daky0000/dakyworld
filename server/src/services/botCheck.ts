@@ -72,6 +72,47 @@ export interface BotVerdict {
   reason: string | null;
 }
 
+/**
+ * The half of the check that judges what was written rather than how fast, or
+ * by what kind of caller.
+ *
+ * Split out because the agent door needs exactly this and none of the rest:
+ * an assistant acting for a real customer trips the honeypot and beats the
+ * clock by its nature, but an advert is still an advert whoever posted it, and
+ * a line break in a header field is still an injection attempt. See
+ * `AGENT_SOURCE` in services/webhookIntake.ts for the whole argument.
+ */
+export function looksLikeSpamContent(payload: Record<string, unknown>): BotVerdict {
+  // What is in it. Only the free-text fields — a real enquiry from a web
+  // agency might legitimately mention one URL, and `website` is a field of
+  // its own that is supposed to hold one.
+  const body = [payload.message, payload.notes, payload.enquiry, payload.details, payload.comments]
+    .map(text)
+    .join("\n")
+    .slice(0, 5000);
+
+  const links = body.match(LINK_PATTERN)?.length ?? 0;
+  if (links > MAX_LINKS) {
+    return { reason: `That message carries ${links} links, which is an advert rather than an enquiry.` };
+  }
+
+  const lower = body.toLowerCase();
+  const phrase = SPAM_PHRASES.find((entry) => lower.includes(entry));
+  if (phrase) {
+    return { reason: `That message reads as bulk marketing (“${phrase}”).` };
+  }
+
+  // Header injection. A newline in a field that ends up in an email header
+  // is somebody trying to add their own Bcc.
+  for (const field of ["name", "email", "subject", "company"]) {
+    if (/[\r\n]/.test(text(payload[field]))) {
+      return { reason: `The ${field} field contained a line break, which is a mail-header injection attempt.` };
+    }
+  }
+
+  return { reason: null };
+}
+
 export function looksAutomated(payload: Record<string, unknown>): BotVerdict {
   // 1. The honeypot. A person never sees this field, so anything in it is a
   //    script filling in every input it found.
@@ -93,32 +134,6 @@ export function looksAutomated(payload: Record<string, unknown>): BotVerdict {
     }
   }
 
-  // 3. What is in it. Only the free-text fields — a real enquiry from a web
-  //    agency might legitimately mention one URL, and `website` is a field of
-  //    its own that is supposed to hold one.
-  const body = [payload.message, payload.notes, payload.enquiry, payload.details, payload.comments]
-    .map(text)
-    .join("\n")
-    .slice(0, 5000);
-
-  const links = body.match(LINK_PATTERN)?.length ?? 0;
-  if (links > MAX_LINKS) {
-    return { reason: `That message carries ${links} links, which is an advert rather than an enquiry.` };
-  }
-
-  const lower = body.toLowerCase();
-  const phrase = SPAM_PHRASES.find((entry) => lower.includes(entry));
-  if (phrase) {
-    return { reason: `That message reads as bulk marketing (“${phrase}”).` };
-  }
-
-  // 4. Header injection. A newline in a field that ends up in an email header
-  //    is somebody trying to add their own Bcc.
-  for (const field of ["name", "email", "subject", "company"]) {
-    if (/[\r\n]/.test(text(payload[field]))) {
-      return { reason: `The ${field} field contained a line break, which is a mail-header injection attempt.` };
-    }
-  }
-
-  return { reason: null };
+  // 3 and 4. What was written, and whether a field is carrying a mail header.
+  return looksLikeSpamContent(payload);
 }

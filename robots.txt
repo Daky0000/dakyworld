@@ -18,3 +18,11 @@ Disallow: /admin
 Disallow: /AGENT_SYSTEM_PLAN.html
 
 Sitemap: https://dakyworld.com/sitemap.xml
+
+# For AI assistants and agents. Says what we sell, what it costs, where the
+# authoritative price feed is, and — the part no sitemap can carry — how to
+# send a real enquiry that reaches a person. The contact form on this site is
+# defended against automated submission, so an agent that uses it is discarded
+# silently; llms.txt points at the door built for it instead.
+# https://llmstxt.org
+LLMs: https://dakyworld.com/llms.txt

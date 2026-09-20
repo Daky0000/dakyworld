@@ -4,7 +4,7 @@ import { SETTING, getSetting } from "../lib/settings.js";
 import { buildDedupeKey, cleanWebsite, scoreLead, type NormalizedLead } from "./leadMapping.js";
 import { enrolNewLeads } from "./emailSequences.js";
 import { registerTags } from "./leadTags.js";
-import { looksAutomated } from "./botCheck.js";
+import { looksAutomated, looksLikeSpamContent } from "./botCheck.js";
 
 /**
  * What to do with an event somebody else sent us.
@@ -54,17 +54,59 @@ function pick(payload: Record<string, unknown>, names: string[]): string | null 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /**
+ * The door an AI assistant acting for a real customer is told to use.
+ *
+ * It exists because the defences on the human form are aimed at exactly the
+ * shape of an honest agent. `botCheck` bins a submission that fills a hidden
+ * field — which is what a form-filling agent does to every input it finds —
+ * and bins one completed in under three seconds, which is every agent. Both
+ * rules are right for the form a person types into, and both would lose a
+ * customer who sent an assistant instead.
+ *
+ * So the agent gets its own entrance rather than the human one being weakened:
+ * announced in the site's `llms.txt`, no honeypot, no clock, and every lead it
+ * creates tagged `via-agent` so nobody mistakes one for a person who typed.
+ *
+ * What still guards it: the rate limiter in front of the whole webhook router,
+ * the body cap, the content checks that have nothing to do with timing, and
+ * the fact that it can create a lead and do nothing else whatsoever.
+ */
+export const AGENT_SOURCE = "agent-enquiry";
+
+export interface IntakeOptions {
+  /**
+   * True when the post came through `AGENT_SOURCE`. Skips the two checks that
+   * only ever describe a machine, because on this door a machine is the
+   * expected caller rather than the thing being kept out.
+   */
+  agentDoor?: boolean;
+}
+
+/**
  * Turns a form post into a lead. Deliberately forgiving about field names —
  * a website form, a Typeform and a Zap all name the same five fields
  * differently, and rejecting one because it said `full_name` rather than
  * `name` would lose a real enquiry.
  */
-export async function intakeFormLead(payload: Record<string, unknown>): Promise<IntakeResult> {
+export async function intakeFormLead(
+  payload: Record<string, unknown>,
+  options: IntakeOptions = {},
+): Promise<IntakeResult> {
   // This is the one endpoint an anonymous caller can write to, so it is the one
   // that needs to tell a person from a script. Flagged posts are still recorded
   // as WebhookEvents — see services/botCheck.ts for why nothing is deleted.
-  const bot = looksAutomated(payload);
-  if (bot.reason) return { handled: false, result: null, note: `Not created: ${bot.reason}` };
+  //
+  // The agent door skips it: see AGENT_SOURCE above for why a check that looks
+  // for machine behaviour is the wrong instrument on the entrance built for
+  // machines. The content rules it also carries are not lost — they are
+  // re-applied below, without the two timing-and-honeypot rules.
+  if (!options.agentDoor) {
+    const bot = looksAutomated(payload);
+    if (bot.reason) return { handled: false, result: null, note: `Not created: ${bot.reason}` };
+  } else {
+    const spam = looksLikeSpamContent(payload);
+    if (spam.reason) return { handled: false, result: null, note: `Not created: ${spam.reason}` };
+  }
 
   const name = pick(payload, ["name", "fullName", "full_name", "contactName", "firstName"]);
   const email = pick(payload, ["email", "emailAddress", "email_address", "contactEmail"])?.toLowerCase() ?? null;
@@ -101,8 +143,23 @@ export async function intakeFormLead(payload: Record<string, unknown>): Promise<
     externalId: null,
     // Somebody who filled in a form told you why they were there. It belongs
     // on the record, not in the raw payload nobody opens.
-    discoveryNotes: [service ? `Interested in: ${service}` : null, message].filter(Boolean).join("\n\n") || null,
-    tags: ["inbound", ...(service ? [service.toLowerCase().slice(0, 40)] : [])],
+    discoveryNotes:
+      [
+        // Whoever picks this up needs to know before they reply that they are
+        // answering an assistant, not the person who will decide.
+        options.agentDoor
+          ? "Sent by an AI assistant acting for this person, through the agent door documented in llms.txt."
+          : null,
+        service ? `Interested in: ${service}` : null,
+        message,
+      ]
+        .filter(Boolean)
+        .join("\n\n") || null,
+    tags: [
+      "inbound",
+      ...(options.agentDoor ? ["via-agent"] : []),
+      ...(service ? [service.toLowerCase().slice(0, 40)] : []),
+    ],
     closed: false,
     externalKey: email ? `email:${email}` : null,
   };
@@ -165,10 +222,12 @@ export async function intakeFormLead(payload: Record<string, unknown>): Promise<
 }
 
 /** Which source names have a handler behind them. */
-export const HANDLED_SOURCES = ["website-form", "contact-form", "lead"] as const;
+export const HANDLED_SOURCES = ["website-form", "contact-form", "lead", AGENT_SOURCE] as const;
 
 export async function handleEvent(source: string, payload: Record<string, unknown>): Promise<IntakeResult> {
-  if ((HANDLED_SOURCES as readonly string[]).includes(source)) return intakeFormLead(payload);
+  if ((HANDLED_SOURCES as readonly string[]).includes(source)) {
+    return intakeFormLead(payload, { agentDoor: source === AGENT_SOURCE });
+  }
   return {
     handled: false,
     result: null,

@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { prisma } from "../lib/prisma.js";
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER, verifySignature } from "../lib/webhooks.js";
-import { handleEvent } from "../services/webhookIntake.js";
+import { AGENT_SOURCE, handleEvent } from "../services/webhookIntake.js";
 
 /**
  * Events in, from everything that isn't Stripe.
@@ -25,8 +25,16 @@ import { handleEvent } from "../services/webhookIntake.js";
  */
 export const webhooksRouter = Router();
 
-/** Sources allowed to act while unsigned. See above. */
-const UNSIGNED_OK = new Set(["website-form", "contact-form"]);
+/**
+ * Sources allowed to act while unsigned. See above.
+ *
+ * `agent-enquiry` is here for the same reason the website's own form is: the
+ * caller is a stranger's AI assistant acting for a real customer, and it has
+ * nowhere to have been given a secret. It is documented in the site's
+ * `llms.txt` and it can create a lead and do nothing else. The argument for
+ * the door existing at all is in services/webhookIntake.ts under AGENT_SOURCE.
+ */
+const UNSIGNED_OK = new Set(["website-form", "contact-form", AGENT_SOURCE]);
 const MAX_BODY = 128 * 1024;
 
 /**
