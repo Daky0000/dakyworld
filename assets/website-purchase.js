@@ -36,6 +36,12 @@
     fetch(API + endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       .then(function (response) { return response.json().then(function (body) { if (!response.ok) throw new Error(body.error || 'That could not be completed.'); return body; }); })
       .then(function (body) { if (managed) { status.textContent = 'Booking requested. We will email you after review.'; button.hidden = true; } else if (body.paymentUrl) { window.location.assign(body.paymentUrl); } else throw new Error('Paystack did not return a payment page.'); })
-      .catch(function (error) { status.textContent = error.message; button.disabled = false; });
+      .catch(function (error) {
+        var unavailable = /unauthor|not found|answered 404|answered 401/i.test(error.message);
+        status.textContent = unavailable
+          ? 'Online checkout is temporarily unavailable. Email info@dakyworld.com or call +233 545 950 611 and we will open the same Paystack checkout for you.'
+          : error.message;
+        button.disabled = false;
+      });
   });
 })();
