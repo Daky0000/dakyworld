@@ -32,11 +32,6 @@
         byKey[product.key] = product;
       });
 
-      // The Website Builder page is one three-tier offer. During a split
-      // deployment the old API may know only the former single product; using
-      // that stale row would make one card disagree with the other two.
-      if (document.querySelector('[data-dw-price="website-care"]') && (!byKey['website-builder'] || !byKey['website-care'] || !byKey['managed-website'])) return;
-
       Array.prototype.forEach.call(slots, function (slot) {
         var product = byKey[slot.getAttribute('data-dw-price')];
         if (!product) return;

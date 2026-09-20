@@ -48,6 +48,26 @@
       }
     },
     {
+      "@type": "SoftwareApplication",
+      "@id": "https://dakyworld.com/website-builder#software",
+      "name": "Dakyworld Website Builder",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web browser",
+      "url": "https://dakyworld.com/website-builder",
+      "provider": {
+        "@id": "https://dakyworld.com/#organization"
+      },
+      "description": "Edit your own website in place and publish when you are ready. Included at no extra cost on any Dakyworld monthly partnership.",
+      "offers": {
+        "@type": "Offer",
+        "@id": "https://dakyworld.com/website-builder#offer",
+        "priceCurrency": "GHS",
+        "price": "300",
+        "availability": "https://schema.org/InStock",
+        "url": "https://dakyworld.com/website-builder"
+      }
+    },
+    {
       "@type": "BreadcrumbList",
       "@id": "https://dakyworld.com/website-builder#breadcrumb",
       "itemListElement": [
@@ -132,26 +152,6 @@
           }
         }
       ]
-    },
-    {
-      "@type": "SoftwareApplication",
-      "@id": "https://dakyworld.com/website-builder#software",
-      "name": "Dakyworld Website Builder",
-      "applicationCategory": "BusinessApplication",
-      "operatingSystem": "Web browser",
-      "url": "https://dakyworld.com/website-builder",
-      "provider": {
-        "@id": "https://dakyworld.com/#organization"
-      },
-      "description": "Edit your own website in place and publish when you are ready. Included at no extra cost on any Dakyworld monthly partnership.",
-      "offers": {
-        "@type": "Offer",
-        "@id": "https://dakyworld.com/website-builder#offer",
-        "priceCurrency": "GHS",
-        "price": "450",
-        "availability": "https://schema.org/InStock",
-        "url": "https://dakyworld.com/website-builder"
-      }
     }
   ]
 }
@@ -387,7 +387,7 @@
         <div class="eyebrow">Getting access</div>
         <h2 class="display">How to sign up.</h2>
       </div>
-      <p>Choose Editor or Website Care here, pass the first compatibility check, and pay the setup fee securely through Paystack. Managed Website starts with a consultation because it reserves Dakyworld technical capacity.</p>
+      <p>Start here, pass the first compatibility check, and set up monthly billing securely through Paystack. There is no setup fee, and nothing is charged until we know the Builder can carry your website.</p>
     </div>
 
     <div class="spec-list">
@@ -404,7 +404,7 @@
         </div>
       </article>
       <article class="spec-row spec-row--step">
-        <div class="step-head"><span class="step-n">03</span><h3>Pay the setup fee securely</h3></div>
+        <div class="step-head"><span class="step-n">03</span><h3>Set up billing securely</h3></div>
         <div class="spec-body">
           <p>Paystack handles the checkout. Dakyworld never receives or stores your card details. Monthly billing starts only after the website passes readiness checks.</p>
         </div>
@@ -424,7 +424,7 @@
       <article class="spec-row spec-row--step"><div class="step-head"><span class="step-n">06</span><h3>Your subscription starts when the website is ready</h3></div><div class="spec-body"><p>Your team receives accounts and an onboarding walkthrough. Recurring billing starts only after the editor is ready to use.</p></div></article>
     </div>
 
-    <p class="band-copy" style="margin-top:36px">Already on a Dakyworld retainer? The Website Builder remains included. Standalone customers can choose and purchase a plan below.</p>
+    <p class="band-copy" style="margin-top:36px">Already on a Dakyworld retainer? The Website Builder remains included. Everybody else pays for it on its own, below.</p>
   </div>
 </section>
 
@@ -438,17 +438,15 @@
       <p>If Dakyworld already looks after your systems each month, the Website Builder is part of that. If not, it is sold on its own, and the price is here rather than behind an enquiry.</p>
     </div>
 
-    <div class="builder-plans" aria-label="Website Builder plans">
-      <article class="builder-plan"><h3>Editor</h3><p class="builder-plan-for">For teams making their own routine updates</p><p class="builder-price"><span data-dw-price="website-builder" data-dw-part="monthly">GHS 450</span><small>/month</small></p><p><span data-dw-price="website-builder" data-dw-part="setup">GHS 1,500</span> setup</p><ul><li>1 website · up to 2 users</li><li>Visual text, image and link editing</li><li>Desktop, tablet and phone controls</li><li>Drafts, review and GitHub publishing</li><li>Version history, rollback and assets</li></ul><button class="btn btn-dark" type="button" data-purchase-plan="website-builder">Get Started</button></article>
-      <article class="builder-plan builder-plan-popular"><span class="builder-badge">Most popular · Recommended</span><h3>Website Care</h3><p class="builder-plan-for">For most businesses that want oversight too</p><p class="builder-price"><span data-dw-price="website-care" data-dw-part="monthly">GHS 900</span><small>/month</small></p><p><span data-dw-price="website-care" data-dw-part="setup">GHS 1,500</span> setup</p><ul><li>Everything in Editor · up to 5 users</li><li>Health monitoring and compatibility checks</li><li>Priority support and monthly review</li><li>60 minutes technical assistance/month</li><li>Minor layout, configuration and form fixes</li></ul><button class="btn btn-primary" type="button" data-purchase-plan="website-care">Choose Website Care</button></article>
-      <article class="builder-plan"><h3>Managed Website</h3><p class="builder-plan-for">For organisations wanting Dakyworld hands-on</p><p class="builder-price"><span data-dw-price="managed-website" data-dw-part="monthly">GHS 3,000</span><small>/month</small></p><p>Setup included · 3-month minimum</p><ul><li>Everything in Website Care · up to 10 users</li><li>Highest support priority</li><li>4 hours technical work/month</li><li>Proactive maintenance and recommendations</li><li>Assisted website changes and reporting</li></ul><button class="btn btn-dark" type="button" data-book-managed>Book Managed Setup</button></article>
+    <div class="builder-plans builder-plans--single" aria-label="Website Builder price">
+      <article class="builder-plan builder-plan-popular"><h3>Website Builder</h3><p class="builder-plan-for">For teams making their own routine updates</p><p class="builder-price"><span data-dw-price="website-builder" data-dw-part="monthly">GHS 300</span><small>/month</small></p><p class="builder-plan-setup"><span data-dw-price="website-builder" data-dw-part="setup">no setup fee</span></p><ul><li>One website, connected to your own repository</li><li>Visual text, image and link editing</li><li>Desktop, tablet and phone controls</li><li>Drafts, review and GitHub publishing</li><li>Version history, rollback and assets</li><li>A login for each person, with what they may change</li></ul><button class="btn btn-primary" type="button" data-purchase-plan="website-builder">Get Started</button></article>
     </div>
 
-    <dialog class="builder-checkout" id="builderCheckout"><form method="dialog" class="builder-checkout-card"><button class="builder-close" value="cancel" aria-label="Close">×</button><h3 id="builderCheckoutTitle">Start your website setup</h3><input type="hidden" name="productKey"><div class="builder-form-grid"><label>Business name<input required name="businessName"></label><label>Contact name<input required name="contactName"></label><label>Email<input required type="email" name="email"></label><label>Phone<input name="phone"></label><label class="wide">Website URL<input required type="url" name="websiteUrl" placeholder="https://example.com"></label><label class="wide managed-only">Preferred consultation time<input type="datetime-local" name="requestedAt"></label><label class="wide managed-only">Primary reason<textarea name="reason"></textarea></label><label class="wide managed-only">Website problems or goals<textarea name="goals"></textarea></label><label class="wide">Notes<textarea name="notes"></textarea></label></div><p class="builder-form-status" role="status"></p><button class="btn btn-primary" type="submit">Continue</button></form></dialog>
+    <dialog class="builder-checkout" id="builderCheckout"><form method="dialog" class="builder-checkout-card"><button class="builder-close" value="cancel" aria-label="Close">&times;</button><h3 id="builderCheckoutTitle">Start your website setup</h3><input type="hidden" name="productKey"><div class="builder-form-grid"><label>Business name<input required name="businessName"></label><label>Contact name<input required name="contactName"></label><label>Email<input required type="email" name="email"></label><label>Phone<input name="phone"></label><label class="wide">Website URL<input required type="url" name="websiteUrl" placeholder="https://example.com"></label><label class="wide">Notes<textarea name="notes"></textarea></label></div><p class="builder-form-status" role="status"></p><button class="btn btn-primary" type="submit">Continue</button></form></dialog>
 
-    <p class="body max-w-4xl" style="margin-top:40px">The setup fee is the half-hour that decides whether this works: reading your website page by page, connecting your repository, setting your own colours and fonts so the editor offers yours rather than ours, linking the parts that repeat, and walking your team through it on your own site. If the compatibility review finds the Builder cannot carry your website, you are told before any of it is charged.</p>
+    <p class="body max-w-4xl" style="margin-top:40px">Setting it up costs nothing extra: we read your website page by page, connect your repository, set your own colours and fonts so the editor offers yours rather than ours, link the parts that repeat, and walk your team through it on your own site. If the compatibility review finds the Builder cannot carry your website, you are told before anything is charged.</p>
 
-    <p class="body max-w-4xl" style="margin-top:20px">Editor and Website Care can be cancelled at the end of the paid period. Managed Website has a three-month minimum commitment. Included technical time resets monthly and does not roll over. Major development and new integrations are quoted separately.</p>
+    <p class="body max-w-4xl" style="margin-top:20px">Billing is monthly and can be cancelled at the end of the paid period. Major development and new integrations are quoted separately.</p>
 
     <a href="/pricing" class="link inline-block mt-7">See the monthly retainers &rarr;</a>
   </div>

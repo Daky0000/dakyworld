@@ -20,6 +20,8 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { articles } from "./build-articles.mjs";
 
 const ORIGIN = "https://dakyworld.com";
 const SHARE_IMAGE = `${ORIGIN}/assets/brand/og-share.png`;
@@ -77,6 +79,28 @@ const COMPANY = {
 };
 
 /**
+ * The nine posts under /blog, described by the same front matter that builds
+ * them — so an article's date, section and reading time are stated once, in
+ * the .md file, and reach the card, the page and the `BlogPosting` from there.
+ * `keywords` is the section, which is as much as is honest for a post.
+ */
+const ARTICLES = articles.map((article) => ({
+  file: `blog/${article.slug}.html`,
+  path: article.path,
+  priority: "0.5",
+  changefreq: "yearly",
+  breadcrumb: [["Insights", "/insights"], [article.meta.title, article.path]],
+  keywords: article.meta.section.toLowerCase(),
+  schema: ["article"],
+  article: {
+    published: article.meta.published,
+    section: article.meta.section,
+    minutes: article.minutes,
+    words: article.words,
+  },
+}));
+
+/**
  * Every page, in the order they appear in the sitemap.
  *
  * `keywords` is short and honest on purpose. Google has ignored the tag since
@@ -86,7 +110,7 @@ const COMPANY = {
  *
  * `priority` and `changefreq` are hints, not instructions — the crawler decides.
  */
-const PAGES = [
+export const PAGES = [
   {
     file: "index.html",
     path: "/",
@@ -125,7 +149,7 @@ const PAGES = [
     changefreq: "monthly",
     breadcrumb: [["Products", "/products"]],
     keywords: "Dakyworld products, business software Ghana, digital tools for business, Dakyworld Website Builder",
-    schema: ["collection"],
+    schema: ["collection", "software"],
   },
   {
     file: "website-builder.html",
@@ -134,7 +158,7 @@ const PAGES = [
     changefreq: "monthly",
     breadcrumb: [["Products", "/products"], ["Website Builder", "/website-builder"]],
     keywords: "website builder, edit website without code, publish website changes, client website editor Ghana",
-    schema: ["webpage"],
+    schema: ["webpage", "software"],
   },
   {
     file: "website-builder-setup.html",
@@ -208,6 +232,7 @@ const PAGES = [
     keywords: "terms and conditions, service agreement Ghana",
     schema: ["webpage"],
   },
+  ...ARTICLES,
 ];
 
 // --- reading what each page already says -------------------------------------
@@ -233,6 +258,34 @@ function decode(text) {
 }
 
 const attr = (value) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * The questions and answers a page already shows, read out of its own markup.
+ *
+ * Every FAQ on this site is the same shape — `<details><summary>question<span>+
+ * </span></summary><p>answer</p></details>` — so the schema can be built from
+ * the copy instead of being typed a second time into this file. That is not
+ * only tidier: a hand-kept copy is how the FAQ blocks came to live *inside* the
+ * do-not-edit markers in the first place, where the next run of this script
+ * would have deleted them. Read it from the page and the two cannot disagree.
+ *
+ * A page with no `<details>` gets no FAQPage, which is the correct outcome for
+ * every page that has no questions on it.
+ */
+function readFaq(html) {
+  const out = [];
+  for (const block of html.matchAll(/<details>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/g)) {
+    /* The `<span>+</span>` is the open/close chevron, not part of the question —
+       strip the span and its contents before the tags, or every question in the
+       schema ends in a plus sign. */
+    const question = decode(
+      block[1].replace(/<span\b[^>]*>[\s\S]*?<\/span>/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim(),
+    );
+    const answer = decode(block[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    if (question && answer) out.push({ question, answer });
+  }
+  return out;
+}
 
 // --- structured data ----------------------------------------------------------
 
@@ -298,6 +351,27 @@ const website = {
   publisher: { "@id": `${ORIGIN}/#organization` },
 };
 
+/**
+ * The Website Builder, as a product a search engine can quote.
+ *
+ * The price here is the published one, and it is also the fallback: at runtime
+ * assets/pricing.js replaces both the visible number and the `price` on this
+ * offer from `os.dakyworld.com/api/public/products`, so the office moves a
+ * price in one place. What this constant must never become is a *different*
+ * number from the one the OS holds — a crawler reads the static value, and a
+ * price in a search result that the checkout does not charge is the one kind
+ * of drift that costs more than it saves. If the OS number moves permanently,
+ * move this one too and re-run.
+ */
+const WEBSITE_BUILDER = {
+  name: "Dakyworld Website Builder",
+  path: "/website-builder",
+  description:
+    "Edit your own website in place and publish when you are ready. Included at no extra cost on any Dakyworld monthly partnership.",
+  price: "300",
+  setup: null,
+};
+
 /** The four lines the site itself lists under Services. */
 const SERVICE_CATALOGUE = [
   ["Websites and web platforms", "Websites, landing pages, e-commerce journeys, customer portals and internal web tools."],
@@ -306,7 +380,7 @@ const SERVICE_CATALOGUE = [
   ["Training and consulting", "Workshops, AI-adoption support, workflow reviews and leadership guidance."],
 ];
 
-function schemaFor(page, title, description) {
+function schemaFor(page, title, description, faq) {
   const url = `${ORIGIN}${page.path}`;
   const graph = [];
 
@@ -358,6 +432,46 @@ function schemaFor(page, title, description) {
     if (kind === "webpage") {
       graph.push({ "@type": "WebPage", "@id": `${url}#page`, url, name: title, description, isPartOf: { "@id": `${ORIGIN}/#website` } });
     }
+    if (kind === "software") {
+      graph.push({
+        "@type": "SoftwareApplication",
+        "@id": `${ORIGIN}${WEBSITE_BUILDER.path}#software`,
+        name: WEBSITE_BUILDER.name,
+        applicationCategory: "BusinessApplication",
+        operatingSystem: "Web browser",
+        url: `${ORIGIN}${WEBSITE_BUILDER.path}`,
+        provider: { "@id": `${ORIGIN}/#organization` },
+        description: WEBSITE_BUILDER.description,
+        offers: {
+          "@type": "Offer",
+          "@id": `${ORIGIN}${WEBSITE_BUILDER.path}#offer`,
+          priceCurrency: COMPANY.currency,
+          price: WEBSITE_BUILDER.price,
+          availability: "https://schema.org/InStock",
+          url: `${ORIGIN}${WEBSITE_BUILDER.path}`,
+        },
+      });
+    }
+    if (kind === "article" && page.article) {
+      graph.push({
+        "@type": "BlogPosting",
+        "@id": `${url}#article`,
+        headline: page.article.headline ?? title,
+        description,
+        url,
+        mainEntityOfPage: { "@type": "WebPage", "@id": `${url}#page` },
+        datePublished: page.article.published,
+        dateModified: page.article.published,
+        articleSection: page.article.section,
+        wordCount: page.article.words,
+        timeRequired: `PT${page.article.minutes}M`,
+        inLanguage: "en-GB",
+        image: SHARE_IMAGE,
+        isPartOf: { "@id": `${ORIGIN}/insights#blog` },
+        author: { "@id": `${ORIGIN}/#organization` },
+        publisher: { "@id": `${ORIGIN}/#organization` },
+      });
+    }
   }
 
   if (page.breadcrumb?.length) {
@@ -369,6 +483,20 @@ function schemaFor(page, title, description) {
         position: index + 1,
         name,
         item: `${ORIGIN}${href === "/" ? "/" : href}`,
+      })),
+    });
+  }
+
+  /* Read from the page's own `<details>`, so the questions on screen and the
+     questions in the schema are the same sentences by construction. */
+  if (faq?.length) {
+    graph.push({
+      "@type": "FAQPage",
+      "@id": `${url}#faq`,
+      mainEntity: faq.map((entry) => ({
+        "@type": "Question",
+        name: entry.question,
+        acceptedAnswer: { "@type": "Answer", text: entry.answer },
       })),
     });
   }
@@ -436,9 +564,10 @@ const CSP = [
   "upgrade-insecure-requests",
 ].join("; ");
 
-function headBlock(page, title, description) {
+function headBlock(page, title, description, faq) {
   const url = `${ORIGIN}${page.path}`;
-  const json = JSON.stringify(schemaFor(page, title, description), null, 2);
+  const json = JSON.stringify(schemaFor(page, title, description, faq), null, 2);
+  const isArticle = Boolean(page.article);
 
   return [
     BEGIN,
@@ -452,7 +581,14 @@ function headBlock(page, title, description) {
     ...(VERIFICATION.google ? [`<meta name="google-site-verification" content="${attr(VERIFICATION.google)}">`] : []),
     ...(VERIFICATION.bing ? [`<meta name="msvalidate.01" content="${attr(VERIFICATION.bing)}">`] : []),
     ``,
-    `<meta property="og:type" content="website">`,
+    `<meta property="og:type" content="${isArticle ? "article" : "website"}">`,
+    ...(isArticle
+      ? [
+          `<meta property="article:published_time" content="${page.article.published}">`,
+          `<meta property="article:section" content="${attr(page.article.section)}">`,
+          `<meta property="article:publisher" content="${ORIGIN}/">`,
+        ]
+      : []),
     `<meta property="og:site_name" content="${COMPANY.name}">`,
     `<meta property="og:locale" content="en_GB">`,
     `<meta property="og:url" content="${url}">`,
@@ -506,6 +642,12 @@ function applyTo(html, block) {
 
 // --- run ----------------------------------------------------------------------
 
+/* Imported by build-breadcrumbs.mjs for the trails, which must be the same
+   table the JSON-LD is built from. Importing a module runs it, so everything
+   below happens only when this file is the program being run. */
+const RUN_DIRECTLY = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+if (RUN_DIRECTLY) {
+
 const check = process.argv.includes("--check");
 const stale = [];
 
@@ -515,7 +657,7 @@ for (const page of PAGES) {
   const description = between(html, 'name="description" content="', '"');
   if (!rawTitle || !description) throw new Error(`${page.file}: missing a title or a description to build from`);
 
-  const next = applyTo(html, headBlock(page, decode(rawTitle.trim()), decode(description.trim())));
+  const next = applyTo(html, headBlock(page, decode(rawTitle.trim()), decode(description.trim()), readFaq(html)));
   if (next === html) continue;
   if (check) stale.push(page.file);
   else writeFileSync(page.file, next);
@@ -535,6 +677,13 @@ Disallow: /website-drafts/
 # The way in to the website editor. Not secret — it holds nothing but a link to
 # the sign-in — but it is not a page anybody should reach from a search result.
 Disallow: /admin
+
+# An internal architecture document that was published to the site root by
+# accident. Left in place so any link to it still resolves, but it is not a
+# page of this website and must not be indexed as one. It also carries a
+# noindex of its own — this rule stops it being crawled at all, the meta tag
+# covers a crawler that reaches it by a route other than this file.
+Disallow: /AGENT_SYSTEM_PLAN.html
 
 Sitemap: ${ORIGIN}/sitemap.xml
 `;
@@ -579,4 +728,5 @@ if (check) {
   console.log("SEO metadata is up to date.");
 } else {
   console.log(`Wrote SEO metadata into ${PAGES.length} pages, plus robots.txt and sitemap.xml.`);
+}
 }

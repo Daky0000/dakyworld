@@ -47,6 +47,21 @@ const PATTERNS = [
  * one of these is documentation, not a leak.
  */
 const ALLOWED = [
+  /*
+   * A PEM header is the same 31 characters whether it opens a real key or a
+   * documentation example, so these two cannot be told apart by the match —
+   * only by the line around it. Both are tested, hence the note above about
+   * what each entry is matched against.
+   *
+   *   docs/github-app.md   GITHUB_APP_PRIVATE_KEY=-----BEGIN …-----\n…\n-----END …-----
+   *   configureGithubApp   prose: "a shell that reads `-----BEGIN …-----` as …"
+   *
+   * Left unlisted, these two made `npm run security` fail on every run, which
+   * is the failure mode that matters: a check that always cries wolf is a
+   * check nobody reads the day it is right.
+   */
+  /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----\\n/,
+  /`-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----`/,
   /postgres(?:ql)?:\/\/postgres:postgres@/,
   /postgres(?:ql)?:\/\/user:password@/,
   /postgres(?:ql)?:\/\/[^\s:@"']+:(?:password|changeme|your[-_]?password|xxx+|\.\.\.)@/i,
@@ -68,7 +83,10 @@ function findingsIn(text, where) {
     for (const { name, re } of PATTERNS) {
       const match = re.exec(line);
       if (!match) continue;
-      if (ALLOWED.some((allowed) => allowed.test(match[0]))) continue;
+      // Against the match for the credential shapes that carry their own tell
+      // ("user:password@"), and against the whole line for the ones that do
+      // not — a PEM header looks identical either way.
+      if (ALLOWED.some((allowed) => allowed.test(match[0]) || allowed.test(line))) continue;
       found.push({ where, line: index + 1, name, sample: `${match[0].slice(0, 12)}…` });
     }
   });

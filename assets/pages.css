@@ -597,3 +597,60 @@
 }
 .plan .price-after{margin:22px 0 0;font-size:13px;line-height:1.7;color:var(--muted)}
 .plan .price-after strong{color:var(--ink);font-weight:600}
+
+/* ── The journal ────────────────────────────────────────────────────────────
+   Added Sep 2026, when the nine article cards on /insights stopped being
+   decoration and became links to posts that exist. */
+
+/* The whole card is the link, not a word inside it: a 300px target beats a
+   twelve-pixel arrow, and the arrow was never clickable in the first place. */
+.article-link{display:block;color:inherit;text-decoration:none}
+.article-link:hover{color:inherit}
+
+/* A reading column. 68 characters is the width at which the eye stops having
+   to travel, and the standfirst sits wider so the two read as a unit. */
+/* An article has no hero, so its breadcrumb is the first thing under a fixed
+   header and would sit behind it. Every other page opens with a dark hero
+   that does the clearing itself. */
+main > .breadcrumb:first-child{padding-top:112px}
+@media(max-width:760px){main > .breadcrumb:first-child{padding-top:92px}}
+.article-page{padding:34px 0 90px}
+@media(max-width:760px){.article-page{padding:22px 0 64px}}
+.article-head h1{margin:18px 0 0;font-size:clamp(34px,4.6vw,58px);line-height:1.04;letter-spacing:-.04em;max-width:18ch}
+.article-standfirst{margin:24px 0 0;max-width:60ch;font-size:19px;line-height:1.7;color:var(--ink)}
+.article-byline{margin:20px 0 0;font-size:var(--label-sm);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+
+.article-prose{margin-top:46px;max-width:68ch}
+.article-prose p{margin:0 0 22px;font-size:17px;line-height:1.85;color:#26303f}
+.article-prose h2{
+  margin:48px 0 18px;font-family:"Space Grotesk",sans-serif;
+  font-size:26px;line-height:1.2;letter-spacing:-.03em;color:var(--ink);
+}
+.article-prose h3{margin:34px 0 12px;font-size:19px;line-height:1.3;color:var(--ink)}
+.article-prose ul,.article-prose ol{margin:0 0 22px;padding-left:22px;display:grid;gap:10px}
+.article-prose li{font-size:17px;line-height:1.75;color:#26303f}
+.article-prose strong{color:var(--ink);font-weight:700}
+.article-prose a{color:var(--blue);text-underline-offset:3px}
+.article-prose blockquote{
+  margin:34px 0;padding:4px 0 4px 26px;border-left:3px solid var(--lime);
+}
+.article-prose blockquote p{
+  margin:0;font-family:"Space Grotesk",sans-serif;font-size:21px;
+  line-height:1.5;letter-spacing:-.02em;color:var(--ink);
+}
+
+.article-next{
+  margin-top:64px;padding:34px;border:1px solid var(--line);border-radius:20px;
+  background:var(--cream);max-width:68ch;
+}
+.article-next h2{margin:0;font-family:"Space Grotesk",sans-serif;font-size:23px;letter-spacing:-.03em}
+.article-next p{margin:12px 0 22px;color:var(--muted);font-size:15px;line-height:1.75;max-width:56ch}
+.article-next .link{margin-left:18px}
+
+@media(max-width:760px){
+  .article-standfirst{font-size:17px}
+  .article-prose{margin-top:34px}
+  .article-prose p,.article-prose li{font-size:16px}
+  .article-next{padding:26px}
+  .article-next .link{display:inline-block;margin:16px 0 0}
+}

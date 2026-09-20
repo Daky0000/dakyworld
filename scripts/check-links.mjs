@@ -22,7 +22,21 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const SKIP = new Set(["AGENT_SYSTEM_PLAN.html"]);
-const pages = readdirSync(".").filter((f) => f.endsWith(".html") && !SKIP.has(f));
+const ARTICLE_DIR = "blog";
+
+/**
+ * The pages at the root, plus the articles one level down in `blog/`.
+ *
+ * Only that one subdirectory: the site is flat apart from the journal, and a
+ * recursive walk here would start checking `server/` and `website-drafts/`,
+ * which are not this website.
+ */
+const pages = [
+  ...readdirSync(".").filter((f) => f.endsWith(".html") && !SKIP.has(f)),
+  ...readdirSync(ARTICLE_DIR)
+    .filter((f) => f.endsWith(".html"))
+    .map((f) => `${ARTICLE_DIR}/${f}`),
+];
 const known = new Set(pages.map((f) => `/${f.replace(/\.html$/, "")}`).concat(["/", "/index"]));
 
 /** Commented-out markup is not a link. `insights.html` carries a placeholder for an article that does not exist yet. */

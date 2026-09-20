@@ -10,12 +10,13 @@
     "scan:secrets:history": "node scripts/scan-secrets.mjs --history",
     "audit": "npm --prefix server audit --omit=dev --audit-level=high && npm --prefix server/client audit --omit=dev --audit-level=high",
     "security": "npm run scan:secrets && npm run audit",
+    "articles": "node scripts/build-articles.mjs",
     "seo": "node scripts/build-seo.mjs",
     "seo:check": "node scripts/build-seo.mjs --check",
     "breadcrumbs": "node scripts/build-breadcrumbs.mjs",
     "links": "node scripts/check-links.mjs",
     "links:fix": "node scripts/check-links.mjs --fix",
-    "site": "npm run seo && npm run breadcrumbs && npm run links",
+    "site": "npm run articles && npm run seo && npm run breadcrumbs && npm run links",
     "consent:check": "node scripts/check-consent.mjs"
   },
   "engines": {
