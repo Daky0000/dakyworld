@@ -24,7 +24,7 @@
  */
 import { conceptEligibility, verdictArguesForRedesign } from "../src/services/concept/eligibility.js";
 import { runPreviewChecks } from "../src/services/concept/checks.js";
-import { makeFormsInert, withNoIndex } from "../src/services/demoBuilder.js";
+import { decodeHtmlUpload, extractHtmlMetadata, makeFormsInert, prepareImportedDemoHtml, withNoIndex } from "../src/services/demoBuilder.js";
 import { approvalFingerprint, whatChanged, type ApprovalSubject } from "../src/services/concept/approval.js";
 import type { RedesignVerdict } from "../src/services/audit/redesign.js";
 
@@ -241,6 +241,41 @@ for (const [what, changed] of [
 {
   const changed = whatChanged(subject, { ...subject, demoHtml: "<h1>New</h1>", toEmail: "other@adjei.gh" });
   check("a mismatch names what moved", changed.includes("the preview page") && changed.includes("the recipient"), changed.join(", "));
+}
+
+// --- Imported HTML demo handling --------------------------------------------
+
+console.log("\nimported html demos");
+
+{
+  const sampleHtml = "<!DOCTYPE html><html><head><title>Kofi Cocoa — Artisan Roasters</title></head><body><h1>Kofi Cocoa</h1><form action=\"/submit\"><input name=\"email\"></form></body></html>";
+  const b64 = `data:text/html;base64,${Buffer.from(sampleHtml, "utf8").toString("base64")}`;
+  const decoded = decodeHtmlUpload({ dataBase64: b64 });
+  check("decodes base64 data URL HTML upload", decoded.includes("<h1>Kofi Cocoa</h1>"));
+
+  const meta = extractHtmlMetadata(decoded, "kofi-cocoa.html");
+  check("extracts business name from <title>", meta.businessName === "Kofi Cocoa", meta.businessName ?? "");
+  check("extracts full title from <title>", meta.title === "Kofi Cocoa — Artisan Roasters", meta.title ?? "");
+
+  const prepared = prepareImportedDemoHtml(decoded, {
+    businessName: meta.businessName ?? "Kofi Cocoa",
+    senderName: "Dakyworld",
+    senderSite: "https://dakyworld.com",
+    includeBanner: true,
+    makeInert: true,
+  }).html;
+  check("prepared imported HTML adds noindex and disables forms", prepared.includes("noindex, nofollow") && prepared.includes("disabled"));
+  check("prepared imported HTML includes optional banner when requested", prepared.includes("id=\"dw-demo-bar\""));
+
+  let rejectedBinary = false;
+  try {
+    // PNG magic bytes disguised as base64 HTML
+    const fakePng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]).toString("base64");
+    decodeHtmlUpload({ dataBase64: fakePng });
+  } catch {
+    rejectedBinary = true;
+  }
+  check("rejects binary files disguised as HTML upload via byte sniffing", rejectedBinary);
 }
 
 console.log(bad ? `\n${bad} failed` : "\nall good");

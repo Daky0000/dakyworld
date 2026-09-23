@@ -80,8 +80,8 @@ function check(ok: boolean, label: string) {
  * defend; anything that falls out of a seed without landing here fails the run.
  */
 const UNHELD_BY_DESIGN: Record<string, string> = {
-  "calendar.write": "Google's calendar scopes need the connection redone rather than topped up. Grant it when that is done.",
-  "whatsapp.send": "The writers hold `whatsapp.link`, which prepares a message a person sends from their own phone. Sending as a brand is a separate decision.",
+  // Both `calendar.write` (coo, outreach.followup) and `whatsapp.send` (outreach.writer,
+  // outreach.followup, client.notifier) are now held and gated by the approval queue at autonomy < 3.
 };
 
 console.log(`${AGENT_SEEDS.length} agents in the roster.\n`);

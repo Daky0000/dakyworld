@@ -189,16 +189,24 @@ interface StandingSeed {
 
 const STANDING_SEEDS: StandingSeed[] = [
   {
+    agentKey: "ceo",
+    title: "Sync weekly company priorities and Founding Partner slot availability",
+    runTimes: ["07:00"],
+    brief: `Read the week's record and the company living context: what shipped, what slipped, cash position, Founding Partner slots remaining (0–3), and active blockers.
+
+Pick the top priorities across the 5-Stage Value Loop (Audit -> Visual Proof -> Build -> Automate -> Retain) and state what Dakyworld is deliberately NOT doing today.
+
+Call \`update_living_context\` on \`company\` to keep \`weekly_company_priorities\`, \`founding_partner_slots_left\`, and \`deliberate_exclusions\` current for all 57 downstream agents.`,
+  },
+  {
     agentKey: "hunt.strategist",
     title: "Is the pipeline being fed, and by what argument?",
     runTimes: ["07:15"],
-    brief: `Read the state of the pipeline before anything else is done today, and answer one question: does Dakyworld have enough businesses worth writing to, and are the reasons we went looking for them still holding?
+    brief: `Read the state of the pipeline and \`priority_vertical\` in company living context before anything else is done today, and answer one question: does Dakyworld have enough businesses worth writing to, and are the reasons we went looking for them still holding?
 
 Work from what the last cycles actually returned rather than from the totals. Which qualifiers fired on the businesses that qualified, and which have never once been true on anybody. Say plainly whether the leads already on the books are enough to work, or whether the shortage is real.
 
-When the shortage is real, write the thesis that should close it: the target in a sentence somebody would say out loud, why them, what we would sell them, the tests that decide a fit, the disqualifiers, and what would make you retire it. Hand it over for the Owner to enable. You do not enable it and you do not start a hunt — that spends money twice a day and it is not your decision.
-
-When the shortage is not real, say so, and say what the actual bottleneck is instead. Recommending a hunt while thousands of captured businesses sit unjudged is the expensive wrong answer.`,
+When the shortage is real, write the thesis that should close it across our high-LTV ICP verticals (Clinics/Med-Spas, Real Estate, Law/Consulting, Logistics, Hospitality, Funded Startups): the target in a sentence somebody would say out loud, why them, what we would sell them from our 4 active capabilities, the tests that decide a fit, the disqualifiers, and what would make you retire it. Update \`active_hunt_thesis\` via \`update_living_context\` and hand it over for the Owner to enable.`,
   },
   {
     agentKey: "lead.enricher",
@@ -206,9 +214,9 @@ When the shortage is not real, say so, and say what the actual bottleneck is ins
     runTimes: ["08:00"],
     brief: `Take a batch of leads that cannot be judged yet because too much of the record is empty, and fill in what can be filled from sources that can be cited.
 
-Fill a blank or leave it blank. Never overwrite a value something or somebody else has already established, and never guess. Carry the address every value came from at the moment you write it down. Prefer what a business says about itself on its own site to what a search inferred about it, and where two sources disagree, say so and fill nothing.
+Fill a blank or leave it blank. Never overwrite a value something or somebody else has already established, and never guess. Carry the address every value came from at the moment you write it down. Identify whether they use WhatsApp for bookings, whether their mobile site works at 390px, and who the decision-maker is.
 
-Report which fields were filled, the source behind each, what is still blank, and anything that needs a person's eye before it is used.`,
+Update \`decision_maker_context\` and \`reachable_channels\` via \`update_living_context\`, and report which fields were filled, the source behind each, and what is still blank.`,
   },
   {
     agentKey: "mail.room",
@@ -216,11 +224,9 @@ Report which fields were filled, the source behind each, what is still blank, an
     runTimes: ["08:15", "14:00"],
     brief: `Read what has come in and has not been given to anybody yet.
 
-Most of the post is already sorted by the time it reaches you, so what arrives here is what did not fit — which means the useful answer is nearly always "this belongs to X", not "here is a reply".
+Classify each message's intent (\`POSITIVE_REPLY | OBJECTION | SUPPORT_REQUEST | BILLING_QUERY | OOO_NOISE\`), update \`last_inbound_intent\` via \`update_living_context\`, and route it to the specialist who owns it (\`outreach.followup\` for prospect replies/objections, \`support.desk\` or \`cco\` for active clients).
 
-Anything that reads as an opt-out, a complaint or a legal notice goes to a person immediately, whatever else it also says.
-
-Report what arrived, who each one belongs to, and what is still unassigned and why.`,
+Anything that reads as an opt-out, a complaint or a legal notice goes to a person immediately.`,
   },
   {
     agentKey: "lead.orchestrator",
@@ -228,45 +234,81 @@ Report what arrived, who each one belongs to, and what is still unassigned and w
     runTimes: ["08:30"],
     brief: `Take a batch of leads nobody has judged and decide, for each, what happens to it next.
 
-Open the lead and read what has actually been checked on it — the research, the audit, the look at the homepage, anything already sent or said. Not the trade, not the name, not what businesses like this usually need. Score on those findings only, and say which fact moved the score and in which direction.
+Open the lead and read what has actually been checked on it — the research, the audit, the look at the homepage, anything already sent or said. Score on those findings only (0–100), matching each qualified lead to one of Dakyworld's 6 Outreach Scenarios (1. Slow/Broken 390px Mobile Site, 2. Invisible Local SEO, 3. Manual WhatsApp/Booking Admin Chaos, 4. Disconnected CRM/Billing, 5. Event/Trigger Follow-Up, 6. Past Enquiry Revival).
 
-Where the record is thin, the next step is "look at them first" — never a lower score. A low score on an unexamined lead is a decision dressed up as a measurement, and it takes that business out of every list from then on.
+Call \`update_living_context\` on the lead with \`bleeding_neck_fault\`, \`matched_outreach_scenario\`, and \`recommended_entry_offer\`, then route top leads to \`review.look\` / \`dev.web\` for visual proof and \`outreach.writer\` for first touch.`,
+  },
+  {
+    agentKey: "review.look",
+    title: "Run 5-Second 390px mobile reviews on today's top qualified leads",
+    runTimes: ["08:45"],
+    brief: `Inspect the websites of today's qualified leads at 390px mobile and desktop (\`site.look\`).
 
-Finish with the score, the one or two facts that decided it, the next step, and who takes it. Low confidence or contradictory evidence goes to a person.`,
+Run the 5-Second Stranger Test: within 5 seconds on a 390px phone screen, can a buyer tell (a) what this business sells, (b) why they are credible, and (c) how to book or message them on WhatsApp with one thumb tap?
+
+Record both the exact visual faults and the \`preserve_list\` (working logo, brand colours, real photography, strong reviews) into living context via \`update_living_context\` (\`first_impression_5s_verdict\` and \`preserve_list\`) so \`dev.web\` and \`outreach.writer\` have concrete visual proof before 09:30.`,
+  },
+  {
+    agentKey: "dev.web",
+    title: "Build speculative 390px preview demos for top-scored leads",
+    runTimes: ["09:05"],
+    brief: `For top-qualified leads where \`first_impression_5s_verdict\` and \`preserve_list\` are ready and no demo exists yet, build a fast, mobile-first 390px speculative preview (\`demo.build\`) that fixes their primary first-screen conversion leak while preserving their real brand assets.
+
+Save \`demo_url\` into the lead's living context (\`update_living_context\`) so \`outreach.writer\` can include the live side-by-side preview link at 09:30.`,
   },
   {
     agentKey: "outreach.writer",
     title: "Write the first letter to today's qualified leads",
     runTimes: ["09:30"],
-    brief: `Take the leads qualified since yesterday and write the first message to each one.
+    brief: `Take the leads qualified since yesterday and write the first message (Email and/or WhatsApp draft) to each one.
 
-Prepare the lead before writing a word: what they do, what was actually found on their setup, and what is worth saying about it. The letter is argued from that evidence and from nothing else — never from what businesses of that trade usually need.
+Read the lead's living context (\`bleeding_neck_fault\`, \`matched_outreach_scenario\`, \`demo_url\`, \`first_impression_5s_verdict\`) before writing a word. Anchor the message in the single strongest verifiable observation or speculative preview link.
 
-Check the address is not suppressed before drafting. Where there is no email but there is a number, say which channel this one should be reached on instead.
-
-Finish with the message, the evidence each claim rests on, and anything you could not verify.`,
+Check the suppression list before drafting, and call \`update_living_context\` with \`touch_1_hook_used\` and \`channel_selected\` (\`Email | WhatsApp\`).`,
   },
   {
     agentKey: "email.sequencer",
     title: "Work today's sending queue",
     runTimes: ["10:30"],
-    brief: `Look at what is drafted and waiting to go out, and at what is already enrolled in a sequence.
+    brief: `Look at what is drafted and waiting to go out, and at what is already enrolled in a 4-Touch sequence.
 
-Check every address against the suppression list before anything is sent or enrolled. Stop a sequence where the lead has replied, bounced or asked to be left alone — a follow-up after a reply is the fastest way to lose both the lead and the sending reputation.
+Check every address against the suppression list and \`inbox.read\` before anything is sent or enrolled. Stop a sequence the moment a lead replies on Email or WhatsApp, bounces, or asks to be left alone.
 
-Report what went out, what was held and why, and anything about the sending pattern a person should look at.`,
+Update \`sequence_touch_stage\` via \`update_living_context\` and report what went out, what was held, and why.`,
   },
   {
     agentKey: "outreach.followup",
-    title: "Follow up on outreach that has gone quiet",
+    title: "Follow up on outreach that has gone quiet and handle replies with LARA",
     runTimes: ["11:30"],
-    brief: `Find the outreach that was sent, was not answered, and is now due a second or third touch.
+    brief: `Find outreach due for Touch 2 (Day 4: 390px Mobile / Cost-of-Inaction Angle), Touch 3 (Day 9: Speculative Demo Walkthrough), or Touch 4 (Day 15: Clean Zero-Guilt Breakup), plus any prospect replies needing LARA objection handling.
 
-A follow-up is a new reason to reply, not a reminder that you wrote. Read what the first message argued and what has been found or has changed since, and lead with that. Where there is nothing new to say, say the thread should be closed rather than padded.
+Read \`touch_1_hook_used\` and \`demo_url\` in living context so you never repeat the same angle. For positive replies or objections, apply the LARA Framework (Listen -> Acknowledge -> Reframe with Evidence -> Ask) and propose two concrete slots for a 20-Minute Diagnostic Call.
 
-Stop entirely on anyone who replied, bounced, or asked to be left alone.
+Update \`followup_stage\` via \`update_living_context\`.`,
+  },
+  {
+    agentKey: "cmo",
+    title: "Draft daily 5-Pillar LinkedIn & Instagram authority content from live audits",
+    runTimes: ["13:00"],
+    brief: `Read the latest anonymized website audit findings, speculative demos, and automation ROI metrics from living context, and draft today's authority post from Dakyworld's 5 Content Pillars (30% Live Website Teardowns, 25% Automation ROI Stories, 20% Founder POV, 15% System Walkthroughs, 10% Founding Partner Offer).
 
-Report what was written, what was closed, and why in each case.`,
+Attach all five required elements — audience, problem, verified proof, call to action, and distribution plan — and update \`active_campaign_hook\` via \`update_living_context\`.`,
+  },
+  {
+    agentKey: "cfo",
+    title: "Reconcile 50/40/10 milestone payment gates and overdue receivables",
+    runTimes: ["15:00"],
+    brief: `Check active projects and open invoices against Dakyworld's 50/40/10 payment gates (50% mobilisation deposit before kickoff, 40% staging approval before DNS launch, 10% handover; 100% upfront under GHS 10,000).
+
+Update \`payment_gate_status\` (\`CLEARED_FOR_KICKOFF | CLEARED_FOR_LAUNCH | HOLD_OVERDUE\`) in living context so delivery agents know clearance status, and flag any overdue invoices for \`billing.collector\`.`,
+  },
+  {
+    agentKey: "client.notifier",
+    title: "Prepare 4-Bullet Client Pulse updates for active projects",
+    runTimes: ["16:00"],
+    brief: `Check active client projects and their living context (\`current_milestone\`, \`staging_url\`, \`active_blocker\`).
+
+Where a project milestone moved or a Friday Client Pulse is due, draft the 4-Bullet Client Pulse (1. What shipped in business outcome terms, 2. Preview/proof link, 3. What ships next, 4. One item needed from the client and by when) and update \`last_client_update_summary\` via \`update_living_context\`.`,
   },
 ];
 
@@ -278,21 +320,15 @@ export interface StandingWorkSeeded {
 }
 
 /**
- * Puts the seven schedules above on the database.
+ * Puts the standing schedules above on the database.
  *
- * Additive and marked, on the same contract `AGENT_SEEDS` and the lead theses
- * keep: a schedule that already exists is left exactly as it is, including
- * `enabled` — and unlike a hunt, these are seeded **on**, because standing work
- * spends model tokens rather than somebody's Apify balance, and an agent with
- * no reason to start is the whole problem this closes.
- *
- * The marker means a schedule the Owner later disables or deletes stays gone.
- * Without it every deploy would put back the one thing they had just switched
- * off, which is the failure that makes a switch not a switch.
+ * Additive per `(agentKey, title)` pair so newly added schedules in
+ * `STANDING_SEEDS` are created automatically on boot while any existing
+ * schedule the Owner has modified or disabled is left untouched.
  */
 export async function ensureStandingWork(): Promise<StandingWorkSeeded | null> {
   const marker = SETTING.AGENT_STANDING_WORK;
-  if (await getSetting(marker)) return null;
+  const firstRun = !(await getSetting(marker));
 
   const now = new Date();
   const created: StandingWorkSeeded["created"] = [];
@@ -305,9 +341,6 @@ export async function ensureStandingWork(): Promise<StandingWorkSeeded | null> {
       continue;
     }
 
-    // Adopt rather than duplicate. Somebody who has already written this
-    // schedule by hand should not get a second copy raising a second task
-    // every morning.
     const existing = await prisma.agentSchedule.findFirst({
       where: { agentKey: seed.agentKey, title: seed.title },
       select: { id: true },
@@ -325,6 +358,7 @@ export async function ensureStandingWork(): Promise<StandingWorkSeeded | null> {
     created.push(schedule);
   }
 
-  await setSetting(marker, new Date().toISOString());
-  return { created, skipped, firstRun: true };
+  if (firstRun) await setSetting(marker, new Date().toISOString());
+  if (created.length === 0 && !firstRun) return null;
+  return { created, skipped, firstRun };
 }

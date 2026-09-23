@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type {
   Client,
+  Demo,
   EmailAttachment,
   EmailContext,
   EmailDraft,
@@ -53,7 +54,11 @@ export interface ComposerTarget {
   toEmail?: string;
   toName?: string;
   purpose?: EmailPurpose;
-  /** Pre-attached deliverables — an invoice being sent, a proposal going out. */
+  /** Pre-filled subject, body, or AI brief when launched from a specific action (e.g. Share Demo). */
+  initialSubject?: string;
+  initialBody?: string;
+  initialBrief?: string;
+  /** Pre-attached deliverables — an invoice being sent, a proposal going out, or a demo HTML file. */
   attachments?: EmailAttachment[];
   invoiceId?: string;
   proposalId?: string;
@@ -94,13 +99,13 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
   const hasRecipient = Boolean(recipient.leadId || recipient.clientId || recipient.toEmail);
 
   // Reset the whole panel whenever it is opened on something new.
-  const key = `${target?.leadId ?? ""}|${target?.clientId ?? ""}|${target?.toEmail ?? ""}|${target?.message?.id ?? ""}|${target?.invoiceId ?? ""}|${target?.proposalId ?? ""}`;
+  const key = `${target?.leadId ?? ""}|${target?.clientId ?? ""}|${target?.toEmail ?? ""}|${target?.message?.id ?? ""}|${target?.invoiceId ?? ""}|${target?.proposalId ?? ""}|${target?.initialSubject ?? ""}|${JSON.stringify(target?.attachments ?? [])}`;
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   useEffect(() => {
     if (!open || key === loadedKey) return;
     setLoadedKey(key);
-    setSubject(target?.message?.subject ?? "");
-    setBody(target?.message?.bodyText ?? "");
+    setSubject(target?.message?.subject ?? target?.initialSubject ?? "");
+    setBody(target?.message?.bodyText ?? target?.initialBody ?? "");
     setPurpose(target?.message?.purpose ?? target?.purpose ?? "CUSTOM");
     setToEmail(target?.message?.toEmail ?? target?.toEmail ?? "");
     // An email opened on an invoice (or a proposal) starts with that document
@@ -115,7 +120,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
         ],
     );
     setAttachReport(true);
-    setBrief("");
+    setBrief(target?.initialBrief ?? "");
     setNotice(null);
     setRationale(null);
     setDraftResult(null);
@@ -541,6 +546,14 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
             automatic={automatic}
             attachReport={attachReport}
             onAttachReport={setAttachReport}
+            leadId={recipient.leadId}
+            clientId={recipient.clientId}
+            onInsertText={(text) =>
+              setBody((current) => {
+                const trimmed = current.trimEnd();
+                return trimmed ? `${trimmed}\n\n${text}` : text;
+              })
+            }
           />
         </>
       )}
@@ -637,6 +650,7 @@ function attachmentLabel(attachment: EmailAttachment): string {
   if ("invoiceId" in attachment) return "Invoice PDF";
   if ("proposalId" in attachment) return "Proposal PDF";
   if ("auditId" in attachment) return "Website review PDF";
+  if ("demoId" in attachment) return "Demo HTML page";
   return "attachment";
 }
 
@@ -671,19 +685,51 @@ function AttachmentPanel({
   automatic = [],
   attachReport = true,
   onAttachReport,
+  leadId,
+  clientId,
+  onInsertText,
 }: {
   attachments: EmailAttachment[];
   onChange: (next: EmailAttachment[]) => void;
   automatic?: PreviewAttachment[];
   attachReport?: boolean;
   onAttachReport?: (next: boolean) => void;
+  leadId?: string;
+  clientId?: string;
+  onInsertText?: (text: string) => void;
 }) {
   const [uploading, setUploading] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showLink, setShowLink] = useState(false);
+  const [showDemos, setShowDemos] = useState(false);
+  const [demoFilter, setDemoFilter] = useState("");
   const [url, setUrl] = useState("");
   const [linkName, setLinkName] = useState("");
+
+  const { data: demoData } = useQuery({
+    queryKey: ["demos", ""],
+    queryFn: () => api.get<{ demos: Demo[]; base: string }>("/demos"),
+    enabled: showDemos || Boolean(leadId) || Boolean(clientId),
+  });
+
+  const sortedDemos = useMemo(() => {
+    const all = demoData?.demos ?? [];
+    const q = demoFilter.trim().toLowerCase();
+    const filtered = q
+      ? all.filter(
+          (d) =>
+            d.businessName.toLowerCase().includes(q) ||
+            d.title.toLowerCase().includes(q) ||
+            d.slug.toLowerCase().includes(q),
+        )
+      : all;
+    return [...filtered].sort((a, b) => {
+      const aMatch = (leadId && a.lead?.id === leadId) || (clientId && a.client?.id === clientId) ? 1 : 0;
+      const bMatch = (leadId && b.lead?.id === leadId) || (clientId && b.client?.id === clientId) ? 1 : 0;
+      return bMatch - aMatch;
+    });
+  }, [demoData?.demos, demoFilter, leadId, clientId]);
 
   const upload = async (files: FileList | File[]) => {
     setError(null);
@@ -729,18 +775,97 @@ function AttachmentPanel({
 
   return (
     <div className="mt-5 border-t border-line pt-4">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Attachments{going > 0 ? ` (${going})` : ""}
         </span>
-        <button
-          type="button"
-          onClick={() => setShowLink(!showLink)}
-          className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
-        >
-          {showLink ? "Hide link form" : "Attach a link instead"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowDemos(!showDemos)}
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-blue transition hover:underline"
+          >
+            {showDemos ? "Hide demos" : "Insert or attach a demo"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowLink(!showLink)}
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
+          >
+            {showLink ? "Hide link form" : "Attach a link instead"}
+          </button>
+        </div>
       </div>
+
+      {showDemos && (
+        <div className="mb-3 rounded-xl border border-line bg-sunken p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+              Demos &amp; Previews — insert public URL or attach .html file
+            </span>
+            <input
+              type="search"
+              className="input h-7 max-w-[200px] text-xs"
+              placeholder="Filter demos…"
+              value={demoFilter}
+              onChange={(event) => setDemoFilter(event.target.value)}
+            />
+          </div>
+          {sortedDemos.length === 0 ? (
+            <p className="text-xs text-muted">No demos found. Import or build a demo on the Demos page first.</p>
+          ) : (
+            <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
+              {sortedDemos.slice(0, 12).map((d) => {
+                const isAttached = attachments.some((att) => "kind" in att && att.kind === "demo" && att.demoId === d.id);
+                const isForRecipient =
+                  (leadId && d.lead?.id === leadId) || (clientId && d.client?.id === clientId);
+                return (
+                  <div
+                    key={d.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 font-medium text-ink">
+                        <span className="truncate">{d.businessName}</span>
+                        <span className="text-muted">·</span>
+                        <span className="truncate text-muted">{d.title}</span>
+                        {isForRecipient && <Badge tone="info">This recipient</Badge>}
+                      </div>
+                      <div className="truncate font-mono text-[11px] text-muted">{d.url}</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {onInsertText && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onInsertText(d.url)}
+                        >
+                          Insert URL
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant={isAttached ? "ghost" : "secondary"}
+                        disabled={isAttached}
+                        onClick={() => {
+                          if (!isAttached) {
+                            onChange([
+                              ...attachments,
+                              { kind: "demo", demoId: d.id, name: `${d.slug}.html` },
+                            ]);
+                          }
+                        }}
+                      >
+                        {isAttached ? "HTML Attached" : "Attach .html"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* The ones nobody picked. Drawn first and marked, because these are the
           files a sender would otherwise never see before pressing Send. */}
@@ -793,11 +918,13 @@ function AttachmentPanel({
             return (
               <div key={index} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 py-2 text-sm">
                 <span className="flex min-w-0 items-center gap-2">
-                  <Badge tone="muted">{kind === "stored" ? "file" : kind === "audit" ? "review" : kind}</Badge>
+                  <Badge tone="muted">{kind === "stored" ? "file" : kind === "audit" ? "review" : kind === "demo" ? "html demo" : kind}</Badge>
                   <span className="truncate">{attachmentLabel(attachment)}</span>
                   {size && <span className="shrink-0 text-xs text-muted">{size}</span>}
-                  {(kind === "invoice" || kind === "proposal" || kind === "audit") && (
-                    <span className="shrink-0 text-xs text-muted">rendered when it sends</span>
+                  {(kind === "invoice" || kind === "proposal" || kind === "audit" || kind === "demo") && (
+                    <span className="shrink-0 text-xs text-muted">
+                      {kind === "demo" ? "attached as .html file" : "rendered when it sends"}
+                    </span>
                   )}
                 </span>
                 <button

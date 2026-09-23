@@ -1,5 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
+import { currentRun } from "../../lib/runContext.js";
 import { authoredInstruction, hasBeenAuthored } from "../agents/authored.js";
+import { livingContextBlock, subjectOf } from "../agents/memory.js";
 import { briefSettingKey, writerJob, type WriterJob } from "./registry.js";
 
 /**
@@ -159,5 +161,51 @@ export async function writerSystem(
   parts: { preamble?: string[]; facts?: string[]; contract: string },
 ): Promise<string> {
   const brief = await resolveBrief(jobKey, shipped);
-  return composeWriterSystem(brief, parts);
+
+  const dynamicFacts: string[] = [];
+  try {
+    const ambient = currentRun();
+    const subjects: string[] = [];
+    if (ambient?.taskId) {
+      const task = await prisma.agentTask.findUnique({
+        where: { id: ambient.taskId },
+        select: { leadId: true, clientId: true, projectId: true, proposalId: true, invoiceId: true },
+      });
+      if (task?.leadId) subjects.push(subjectOf.lead(task.leadId));
+      if (task?.clientId) subjects.push(subjectOf.client(task.clientId));
+      if (task?.projectId) subjects.push(subjectOf.project(task.projectId));
+      if (task?.proposalId) subjects.push(subjectOf.proposal(task.proposalId));
+      if (task?.invoiceId) subjects.push(subjectOf.invoice(task.invoiceId));
+    }
+
+    const [livingState, ownerAgent] = await Promise.all([
+      livingContextBlock(subjects),
+      brief.source === "shipped"
+        ? prisma.agent.findUnique({
+            where: { key: brief.job.agentKey },
+            select: { name: true, mission: true, prompt: true },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    if (ownerAgent && ownerAgent.prompt && typeof ownerAgent.prompt === "object") {
+      const p = ownerAgent.prompt as Record<string, string | undefined>;
+      if (p.process?.trim()) {
+        dynamicFacts.push(
+          `OWNING AGENT PROCESS & COMMERCIAL ALIGNMENT (${ownerAgent.name} — ${ownerAgent.mission}):\n${p.process.trim()}`,
+        );
+      }
+    }
+
+    if (livingState) {
+      dynamicFacts.push(livingState);
+    }
+  } catch {
+    // Never fail a draft if living state lookup is unavailable.
+  }
+
+  return composeWriterSystem(brief, {
+    ...parts,
+    facts: [...(parts.facts ?? []), ...dynamicFacts],
+  });
 }

@@ -1,6 +1,6 @@
 import type { AgentTask } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
-import { subjectOf } from "./memory.js";
+import { livingContextBlock, subjectOf } from "./memory.js";
 import { dossierForPrompt } from "../context/dossier.js";
 
 /**
@@ -47,7 +47,17 @@ export async function describeTask(task: AgentTask): Promise<string> {
     if (parent) parts.push("", `Handed to you by ${parent.agent.name}, as part of: ${parent.title}.`);
   }
 
-  const records = await resolveRecords(task);
+  const subjects = taskSubjects(task);
+  const [records, livingState, dossier] = await Promise.all([
+    resolveRecords(task),
+    livingContextBlock(subjects),
+    dossierForPrompt(subjects),
+  ]);
+
+  if (livingState) {
+    parts.push("", livingState);
+  }
+
   if (records.length > 0) {
     parts.push("", "WHAT THIS IS ABOUT — the current state of the record. Anything not here, fetch with a tool rather than assume:", ...records);
   }
@@ -59,7 +69,6 @@ export async function describeTask(task: AgentTask): Promise<string> {
   // Kept short on purpose: this is paid for on every task whether it turns out
   // to matter or not, so it is the headlines and a sentence saying the rest is
   // one `context.read` away.
-  const dossier = await dossierForPrompt(taskSubjects(task));
   if (dossier) parts.push("", dossier);
 
   if (task.input && typeof task.input === "object") {
@@ -68,7 +77,7 @@ export async function describeTask(task: AgentTask): Promise<string> {
 
   parts.push(
     "",
-    "Work the task. Use your tools to establish what is true before you conclude anything. When you are finished, say what you did, what you found, and what a person should do next.",
+    "Work the task. Use your tools to establish what is true before you conclude anything. When your work establishes or updates a key state fact (e.g. decision_maker, bleeding_neck_fault, matched_outreach_scenario, price_anchor_quoted, payment_gate_status, active_campaign_hook), call `update_living_context` so the next agent in the chain sees the updated state immediately.",
   );
 
   return parts.join("\n");

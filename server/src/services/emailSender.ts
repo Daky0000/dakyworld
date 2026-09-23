@@ -45,7 +45,8 @@ export type StoredAttachment =
   | { kind?: "file"; name: string; url: string; contentType?: string }
   | { kind: "invoice"; invoiceId: string; name?: string }
   | { kind: "proposal"; proposalId: string; name?: string }
-  | { kind: "audit"; auditId: string; name?: string };
+  | { kind: "audit"; auditId: string; name?: string }
+  | { kind: "demo"; demoId: string; name?: string };
 
 export function parseAttachments(value: unknown): StoredAttachment[] {
   if (!Array.isArray(value)) return [];
@@ -123,6 +124,28 @@ export async function resolveAttachments(stored: StoredAttachment[]): Promise<At
       });
       const safeTitle = proposal.title.replace(/[^\w\- ]+/g, "").slice(0, 60) || "Proposal";
       resolved.push({ filename: `${safeTitle}.pdf`, content: pdf, contentType: "application/pdf" });
+      continue;
+    }
+
+    if ("kind" in entry && entry.kind === "demo") {
+      const demo = await prisma.demo.findUnique({
+        where: { id: entry.demoId },
+        select: { slug: true, html: true },
+      });
+      if (!demo) {
+        console.warn(`[email] demo ${entry.demoId} is gone — sending without it.`);
+        continue;
+      }
+      const filename = entry.name?.trim()
+        ? entry.name.trim().endsWith(".html")
+          ? entry.name.trim()
+          : `${entry.name.trim()}.html`
+        : `${demo.slug}.html`;
+      resolved.push({
+        filename,
+        content: Buffer.from(demo.html, "utf8"),
+        contentType: "text/html; charset=utf-8",
+      });
       continue;
     }
 

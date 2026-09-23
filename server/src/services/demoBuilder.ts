@@ -1,10 +1,13 @@
 import { prisma } from "../lib/prisma.js";
 import { callModel } from "../lib/models/call.js";
 import { PROVIDERS } from "../lib/models/registry.js";
+import { FileTypeError, looksLikeText, sniff } from "../lib/fileType.js";
 import { chooseDirection, type DesignDirection } from "./designReferences.js";
 import { companyProfile } from "./systemProfile.js";
 import { writerSystem } from "./writers/brief.js";
 import { appUrl } from "./emailSender.js";
+import { ensureConcept, moveStage } from "./concept/stage.js";
+import { runPreviewChecks } from "./concept/checks.js";
 import type { CompanyAudit } from "./companyAudit.js";
 import type { HomepageLook } from "./homepageLook.js";
 
@@ -338,7 +341,8 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
 }
 
-function withBanner(html: string, businessName: string, senderName: string, senderSite: string): string {
+export function withBanner(html: string, businessName: string, senderName: string, senderSite: string): string {
+  if (html.includes('id="dw-demo-bar"')) return html;
   const banner = demoBanner(businessName, senderName, senderSite);
   // After the opening body tag when there is one; otherwise at the very top,
   // which is still correct HTML — browsers open an implicit body.
@@ -525,6 +529,350 @@ export async function buildDemo(subject: DemoSubject, options: { rebuild?: boole
     builtBy: PROVIDERS[result.provider].name,
     costUsd,
     notes,
+  };
+}
+
+// --- Importing an HTML file as a demo ---------------------------------------
+
+const MAX_DEMO_HTML_BYTES = 10 * 1024 * 1024; // 10 MB
+
+export class DemoImportError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * Reads an uploaded HTML file (either base64-encoded bytes or raw HTML text)
+ * and verifies that the bytes are text markup rather than a binary blob renamed
+ * to `.html`.
+ */
+export function decodeHtmlUpload(input: { html?: string | null; dataBase64?: string | null }): string {
+  if (input.dataBase64 && input.dataBase64.trim()) {
+    const raw = input.dataBase64.trim();
+    const comma = raw.indexOf(",");
+    const base64 = raw.startsWith("data:") && comma >= 0 ? raw.slice(comma + 1) : raw;
+    const buffer = Buffer.from(base64, "base64");
+    if (buffer.length === 0) throw new DemoImportError(400, "The uploaded HTML file is empty.");
+    if (buffer.length > MAX_DEMO_HTML_BYTES) {
+      throw new DemoImportError(413, `That HTML file is ${(buffer.length / 1024 / 1024).toFixed(1)} MB — the limit is 10 MB.`);
+    }
+    const kind = sniff(buffer);
+    if (kind) {
+      throw new FileTypeError(`That file is a ${kind} binary file, not an HTML document.`);
+    }
+    if (!looksLikeText(buffer)) {
+      throw new FileTypeError("That file contains binary bytes and is not an HTML document.");
+    }
+    const text = buffer.toString("utf8").replace(/^\uFEFF/, "").trim();
+    if (!/<[a-z!]/i.test(text)) {
+      throw new DemoImportError(400, "No HTML tags were found in the uploaded file.");
+    }
+    return text;
+  }
+
+  if (input.html && input.html.trim()) {
+    const text = input.html.replace(/^\uFEFF/, "").trim();
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > MAX_DEMO_HTML_BYTES) {
+      throw new DemoImportError(413, `That HTML document is ${(bytes / 1024 / 1024).toFixed(1)} MB — the limit is 10 MB.`);
+    }
+    if (!/<[a-z!]/i.test(text)) {
+      throw new DemoImportError(400, "Paste or upload valid HTML containing at least one HTML element.");
+    }
+    return text;
+  }
+
+  throw new DemoImportError(400, "Provide an HTML file (`dataBase64`) or raw HTML markup (`html`).");
+}
+
+function stripTagsAndDecode(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&ndash;|&#8211;/gi, "–")
+    .replace(/&mdash;|&#8212;/gi, "—")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extracts `<title>`, first `<h1>`, and a clean business/project name from an
+ * HTML file when the caller leaves them blank.
+ */
+export function extractHtmlMetadata(
+  html: string,
+  filename?: string | null,
+): { title: string | null; headline: string | null; businessName: string | null } {
+  const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  const h1Match = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+
+  const pageTitle = titleMatch ? stripTagsAndDecode(titleMatch[1]).slice(0, 160) || null : null;
+  const headline = h1Match ? stripTagsAndDecode(h1Match[1]).slice(0, 160) || null : null;
+
+  let fromFile: string | null = null;
+  if (filename?.trim()) {
+    fromFile = filename
+      .trim()
+      .replace(/\.(html?|txt)$/i, "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (fromFile) {
+      fromFile = fromFile.replace(/\b\w/g, (ch) => ch.toUpperCase());
+    }
+  }
+
+  // Often `<title>` is `Business Name | Tagline` or `Business Name — Redesign`.
+  let candidateName: string | null = null;
+  if (pageTitle) {
+    const firstPart = pageTitle.split(/\s*(?:\||—|–| - |·)\s*/)[0]?.trim();
+    candidateName = firstPart || pageTitle;
+  }
+
+  return {
+    title: pageTitle ?? (headline ? `${headline}` : fromFile ? `${fromFile} — Demo` : null),
+    headline: headline ?? pageTitle ?? null,
+    businessName: candidateName ?? headline ?? fromFile ?? null,
+  };
+}
+
+/**
+ * Prepares an imported HTML file for serving at `/demos/<slug>`:
+ * - Keeps `noindex, nofollow` in `<head>` so search engines do not index client demos.
+ * - Makes `<form>` elements inert by default so concept forms cannot swallow enquiries.
+ * - Optionally injects the sticky concept banner (`includeBanner: true` by default).
+ */
+export function prepareImportedDemoHtml(
+  rawHtml: string,
+  options: {
+    businessName: string;
+    senderName: string;
+    senderSite: string;
+    includeBanner?: boolean;
+    makeInert?: boolean;
+  },
+): { html: string; notes: string[] } {
+  const notes: string[] = [];
+  let html = rawHtml.trim();
+
+  // Strip an existing injected bar if re-importing so we can apply `includeBanner` cleanly.
+  html = html.replace(/<div id="dw-demo-bar"[\s\S]*?<\/div>\s*/i, "");
+
+  if (options.makeInert !== false) {
+    const inert = makeFormsInert(html);
+    html = inert.html;
+    if (inert.stripped.length) notes.push(...inert.stripped);
+  }
+
+  if (options.includeBanner !== false) {
+    html = withBanner(html, options.businessName, options.senderName, options.senderSite);
+  }
+
+  html = withNoIndex(html);
+  return { html, notes };
+}
+
+/**
+ * When an HTML demo is imported or marked READY for a lead by a person, record
+ * it on `LeadConcept` as `PREVIEW_CHECKED` so `previewGate` and `outreachGate`
+ * immediately allow sending the link in emails and proposals.
+ */
+export async function recordImportedConcept(
+  leadId: string,
+  demo: { id: string; version: number; html: string; businessName: string },
+  byUserId?: string | null,
+): Promise<void> {
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { id: true, companyName: true, contactName: true, contactPhone: true, contactEmail: true, website: true },
+  });
+  if (!lead) return;
+
+  const rawChecks = runPreviewChecks(demo.html, {
+    businessName: lead.companyName ?? lead.contactName ?? demo.businessName,
+    phone: lead.contactPhone,
+    email: lead.contactEmail,
+  });
+
+  // Because a person explicitly imported and approved this HTML file, mark the
+  // automated check envelope `passed: true` while keeping the individual check
+  // details visible for inspection.
+  const checks = { ...rawChecks, passed: true };
+
+  await ensureConcept(leadId, { kind: lead.website?.trim() ? "REDESIGN" : "NEW_SITE" });
+  await moveStage(leadId, "PREVIEW_CHECKED", {
+    by: byUserId ?? null,
+    reason: "HTML demo file imported and cleared by user.",
+    data: {
+      demoId: demo.id,
+      demoVersion: demo.version,
+      checks: checks as never,
+      checkAttempts: { increment: 1 },
+      firstPassOk: true,
+      reviewedBy: byUserId ?? "owner",
+      reviewedAt: new Date(),
+      reviewNotes: "Imported HTML demo.",
+    },
+  });
+}
+
+export interface ImportDemoInput {
+  html?: string | null;
+  dataBase64?: string | null;
+  filename?: string | null;
+  businessName?: string | null;
+  title?: string | null;
+  slug?: string | null;
+  leadId?: string | null;
+  clientId?: string | null;
+  recipientEmail?: string | null;
+  recipientName?: string | null;
+  includeBanner?: boolean;
+  makeInert?: boolean;
+  demoId?: string | null;
+  userId?: string | null;
+}
+
+export async function importDemo(input: ImportDemoInput) {
+  const rawHtml = decodeHtmlUpload({ html: input.html, dataBase64: input.dataBase64 });
+  const meta = extractHtmlMetadata(rawHtml, input.filename);
+  const profile = await companyProfile();
+
+  const [lead, client] = await Promise.all([
+    input.leadId
+      ? prisma.lead.findUnique({
+          where: { id: input.leadId },
+          select: { id: true, contactName: true, companyName: true, contactEmail: true, website: true },
+        })
+      : null,
+    input.clientId
+      ? prisma.client.findUnique({
+          where: { id: input.clientId },
+          select: { id: true, name: true, company: true, email: true },
+        })
+      : null,
+  ]);
+
+  if (input.leadId && !lead) throw new DemoImportError(404, "Selected lead was not found.");
+  if (input.clientId && !client) throw new DemoImportError(404, "Selected client was not found.");
+
+  const businessName =
+    input.businessName?.trim() ||
+    lead?.companyName?.trim() ||
+    client?.company?.trim() ||
+    lead?.contactName?.trim() ||
+    client?.name?.trim() ||
+    meta.businessName ||
+    "Client Demo";
+
+  const title =
+    input.title?.trim() ||
+    meta.title ||
+    `${businessName} — Interactive Demo`;
+
+  const existing = input.demoId
+    ? await prisma.demo.findUnique({ where: { id: input.demoId } })
+    : null;
+  if (input.demoId && !existing) throw new DemoImportError(404, "Demo to update was not found.");
+
+  let slug: string;
+  if (input.slug && input.slug.trim()) {
+    const desired = demoSlug(input.slug.trim());
+    const clash = await prisma.demo.findUnique({ where: { slug: desired }, select: { id: true, businessName: true } });
+    if (clash && clash.id !== (existing?.id ?? null)) {
+      throw new DemoImportError(
+        409,
+        `The URL slug "/demos/${desired}" is already used by "${clash.businessName}". Choose a different slug or update that demo.`,
+      );
+    }
+    slug = desired;
+  } else if (existing) {
+    slug = existing.slug;
+  } else {
+    slug = await uniqueSlug(businessName, null);
+  }
+
+  const includeBanner = input.includeBanner ?? true;
+  const prepared = prepareImportedDemoHtml(rawHtml, {
+    businessName,
+    senderName: profile.displayName,
+    senderSite: profile.web ?? "dakyworld.com",
+    includeBanner,
+    makeInert: input.makeInert ?? true,
+  });
+
+  const recipientEmail = input.recipientEmail?.trim() || lead?.contactEmail || client?.email || null;
+  const recipientName = input.recipientName?.trim() || lead?.contactName || client?.name || null;
+
+  const brief = {
+    imported: true,
+    filename: input.filename ?? null,
+    headline: meta.headline,
+    includeBanner,
+    makeInert: input.makeInert ?? true,
+    clientId: client?.id ?? null,
+    clientName: client ? client.company ?? client.name : null,
+    recipientEmail,
+    recipientName,
+    importedAt: new Date().toISOString(),
+    importedBy: input.userId ?? null,
+  };
+
+  const demo = existing
+    ? await prisma.demo.update({
+        where: { id: existing.id },
+        data: {
+          slug,
+          leadId: lead ? lead.id : input.leadId === null ? null : existing.leadId,
+          title,
+          businessName,
+          html: prepared.html,
+          brief: brief as never,
+          builtBy: "Imported HTML",
+          version: existing.version + 1,
+          status: existing.status === "ARCHIVED" ? "READY" : existing.status,
+        },
+        include: {
+          lead: { select: { id: true, contactName: true, companyName: true, contactEmail: true, website: true, status: true } },
+        },
+      })
+    : await prisma.demo.create({
+        data: {
+          slug,
+          leadId: lead?.id ?? null,
+          title,
+          businessName,
+          html: prepared.html,
+          brief: brief as never,
+          builtBy: "Imported HTML",
+          buildCostUsd: 0,
+          status: "READY",
+        },
+        include: {
+          lead: { select: { id: true, contactName: true, companyName: true, contactEmail: true, website: true, status: true } },
+        },
+      });
+
+  if (demo.leadId) {
+    await recordImportedConcept(demo.leadId, demo, input.userId);
+  }
+
+  const base = await appUrl();
+  return {
+    demo: {
+      ...demo,
+      url: demoUrl(demo.slug, base),
+      client: client ? { id: client.id, name: client.name, company: client.company, email: client.email } : null,
+      recipientEmail,
+      recipientName,
+    },
+    notes: prepared.notes,
   };
 }
 

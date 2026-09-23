@@ -1166,7 +1166,9 @@ export type EmailAttachment =
   | { kind: "invoice"; invoiceId: string; name?: string }
   | { kind: "proposal"; proposalId: string; name?: string }
   /** The website review a first letter carries — added by the server, shown in the composer. */
-  | { kind: "audit"; auditId: string; name?: string };
+  | { kind: "audit"; auditId: string; name?: string }
+  /** An HTML demo page attached directly as a file. */
+  | { kind: "demo"; demoId: string; name?: string };
 
 /** What the upload endpoint answers with. */
 export interface StoredFile {
@@ -1179,7 +1181,8 @@ export interface StoredFile {
 
 /** One attachment as the preview describes it — enough to draw a chip. */
 export interface PreviewAttachment {
-  kind: "stored" | "file" | "invoice" | "proposal" | "audit";
+  kind: "stored" | "file" | "invoice" | "proposal" | "audit" | "demo";
+  demoId?: string | null;
   name: string;
   contentType: string | null;
   size: number | null;
@@ -1280,6 +1283,9 @@ export interface Demo {
   /** The public address, assembled server-side so there is one spelling of it. */
   url: string;
   lead?: { id: string; contactName: string; companyName?: string | null; contactEmail?: string | null; website?: string | null } | null;
+  client?: { id: string; name: string; company?: string | null; email?: string | null } | null;
+  recipientEmail?: string | null;
+  recipientName?: string | null;
   /** The design direction it was built to, and where that came from. */
   references?: {
     direction: string;
@@ -1289,7 +1295,18 @@ export interface Demo {
     fromLiveSources: boolean;
     note?: string | null;
   } | null;
-  brief?: { headline?: string; sections?: string[]; usedFacts?: string[] } | null;
+  brief?: {
+    headline?: string;
+    sections?: string[];
+    usedFacts?: string[];
+    imported?: boolean;
+    fileName?: string | null;
+    clientId?: string | null;
+    recipientEmail?: string | null;
+    recipientName?: string | null;
+    includeBanner?: boolean;
+    notes?: string | null;
+  } | null;
 }
 
 // --- The website audit team -------------------------------------------------

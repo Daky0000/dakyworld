@@ -48,7 +48,23 @@ const shut = (reason: string, concept: LeadConcept | null = null, demo: Demo | n
 
 export async function previewGate(leadId: string): Promise<PreviewGate> {
   const concept = await conceptFor(leadId);
-  if (!concept) return shut("This lead has no concept page — nothing has been built for them.");
+  if (!concept) {
+    const imported = await prisma.demo.findFirst({
+      where: { leadId, builtBy: "Imported HTML", status: { notIn: ["ARCHIVED", "DECLINED"] } },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (imported) {
+      return {
+        ok: true,
+        reason: null,
+        concept: null,
+        demo: imported,
+        url: demoUrl(imported.slug, await appUrl()),
+        checks: { passed: true, ranAt: imported.updatedAt.toISOString(), checks: [] },
+      };
+    }
+    return shut("This lead has no concept page — nothing has been built for them.");
+  }
   if (concept.stage === "SKIPPED") return shut(`This lead was skipped: ${concept.reason ?? "no reason recorded"}`, concept);
   if (concept.stage === "FAILED") return shut(`The concept failed: ${concept.reason ?? "no reason recorded"}`, concept);
   if (!concept.demoId) return shut("No page has been built for this lead yet.", concept);

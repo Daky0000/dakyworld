@@ -15,8 +15,8 @@ import { invokeTool } from "../tools/invoke.js";
 import { outwardKey } from "../tools/idempotency.js";
 import { companyProfile, contactBlock } from "../systemProfile.js";
 import { VOICE } from "../dakyworld.js";
-import { brandBlock } from "../context/business.js";
-import { MemoryRefused, recall, remember, subjectOf, type Recalled } from "./memory.js";
+import { brandBlock, catalogueBlock } from "../context/business.js";
+import { MemoryRefused, recall, remember, subjectOf, upsertLivingContext, type Recalled } from "./memory.js";
 import { authoredInstruction } from "./authored.js";
 import { describeTask, taskSubjects } from "./context.js";
 import { appendNote, renderDossier } from "../context/dossier.js";
@@ -681,6 +681,7 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
         dryRun: false,
         data: { input, output: result.output, replayed: result.replayed },
       });
+      await autoSyncToolLivingContext(tool.key, input as Record<string, unknown>, result.output, task, agent.key);
       return { content: clipToolResult(JSON.stringify(result.output ?? null)) };
     },
   }));
@@ -718,6 +719,94 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
 /** Default on. Off removes a sentence from the brief and changes nothing else. */
 async function relevanceOn(): Promise<boolean> {
   return (await getSetting(SETTING.ENABLE_TOOL_RELEVANCE)) !== "false";
+}
+
+/**
+ * Automatically updates the record's Living Context when a state-changing tool
+ * succeeds, ensuring zero-drop context continuity even if a free/smaller model
+ * completes a tool call without explicitly invoking `update_living_context`.
+ */
+async function autoSyncToolLivingContext(
+  toolKey: string,
+  input: Record<string, unknown>,
+  output: unknown,
+  task: AgentTask,
+  agentKey: string,
+): Promise<void> {
+  const [subject] = taskSubjects(task);
+  if (!subject) return;
+  const out = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
+
+  try {
+    if (toolKey === "demo.build") {
+      const url = String(out.url ?? out.previewUrl ?? out.slug ?? "Speculative preview generated");
+      await upsertLivingContext({
+        subject,
+        key: "demo_preview_url",
+        value: url,
+        reason: "Auto-synced after demo.build",
+        agentKey,
+        sourceTaskId: task.id,
+      });
+    } else if (toolKey === "audit.website") {
+      const score = out.overallScore ?? out.score ?? "completed";
+      const summary = typeof out.summary === "string" ? out.summary.slice(0, 180) : `Audit score: ${String(score)}`;
+      await upsertLivingContext({
+        subject,
+        key: "latest_audit_score",
+        value: `${String(score)} — ${summary}`,
+        reason: "Auto-synced after audit.website",
+        agentKey,
+        sourceTaskId: task.id,
+      });
+    } else if (toolKey === "proposal.draft") {
+      const title = String(out.title ?? input.title ?? "Proposal drafted");
+      const total = out.totalAmount ?? out.amount ?? input.totalAmount ?? "";
+      await upsertLivingContext({
+        subject,
+        key: "proposal_summary_quoted",
+        value: `${title}${total ? ` (GHS ${String(total)})` : ""}`,
+        reason: "Auto-synced after proposal.draft",
+        agentKey,
+        sourceTaskId: task.id,
+      });
+    } else if (toolKey === "lead.update") {
+      const status = input.status ?? out.status;
+      const score = input.leadScore ?? out.leadScore;
+      if (status || score !== undefined) {
+        await upsertLivingContext({
+          subject,
+          key: "lead_qualification_state",
+          value: `status=${String(status ?? "unchanged")}, score=${String(score ?? "unchanged")}`,
+          reason: "Auto-synced after lead.update",
+          agentKey,
+          sourceTaskId: task.id,
+        });
+      }
+    } else if (toolKey === "email.draft" || toolKey === "whatsapp.link") {
+      const subjectLine = String(out.subject ?? input.subject ?? toolKey);
+      await upsertLivingContext({
+        subject,
+        key: "latest_outreach_draft",
+        value: `${toolKey}: ${subjectLine}`.slice(0, 220),
+        reason: `Auto-synced after ${toolKey}`,
+        agentKey,
+        sourceTaskId: task.id,
+      });
+    } else if (toolKey === "invoice.draft") {
+      const total = out.total ?? out.amount ?? input.amount ?? "";
+      await upsertLivingContext({
+        subject,
+        key: "latest_invoice_draft",
+        value: `Draft invoice prepared${total ? ` (GHS ${String(total)})` : ""}`,
+        reason: "Auto-synced after invoice.draft",
+        agentKey,
+        sourceTaskId: task.id,
+      });
+    }
+  } catch {
+    // Non-blocking auto-sync
+  }
 }
 
 export interface Counters {
@@ -932,10 +1021,10 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
         kind: z.enum(["DECISION", "OUTCOME", "FACT", "LESSON", "PREFERENCE"]),
         content: z.string().min(8).max(600).describe("The thing itself, in one or two sentences. Write the conclusion, not the working."),
         about: z
-          .enum(["this task", "myself", "the whole company"])
+          .enum(["this task", "this record (shared)", "myself", "the whole company"])
           .default("this task")
           .describe(
-            "'this task' files it against the record this task is about. 'myself' files it as a standing lesson only you will be shown. 'the whole company' shares it with every agent — use that only for something that is true of how Dakyworld works, never for an opinion of your own.",
+            "'this task' files it against the record this task is about for you. 'this record (shared)' shares this finding with every agent that works on this lead/client/project. 'myself' files it as a standing lesson only you will be shown. 'the whole company' shares it company-wide with every agent across all tasks.",
           ),
         importance: z.number().int().min(1).max(5).default(3).describe("5 only for something that should always outrank other memories."),
       }),
@@ -943,12 +1032,11 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
     ) as Record<string, unknown>,
     run: async (input) => {
       const subjects = taskSubjects(task);
-      const shared = input.about === "the whole company";
-      // A shared memory about no particular record is about the company; a
-      // shared memory formed while working on a lead stays filed against that
-      // lead, so widening who sees it never widens when it comes up.
-      const about = shared
-        ? (subjects[0] ?? subjectOf.company())
+      const isCompanyWide = input.about === "the whole company";
+      const isRecordShared = input.about === "this record (shared)";
+      const shared = isCompanyWide || isRecordShared;
+      const about = isCompanyWide
+        ? subjectOf.company()
         : input.about === "myself" || subjects.length === 0
           ? subjectOf.self()
           : subjects[0];
@@ -971,9 +1059,63 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       });
       return {
         content: shared
-          ? `Kept for the whole company, against ${about}. Every agent will be shown this.`
+          ? `Kept for the whole workforce, against ${about}. Every agent will be shown this.`
           : `Kept, against ${about}.`,
       };
+    },
+  };
+
+  const updateLivingContextTool: AgentTool = {
+    name: "update_living_context",
+    description:
+      "Update or set a named Living Context state variable so the entire workforce immediately adapts as facts change over time. Unlike `remember` (which appends notes), `update_living_context` replaces the previous value for the same key in-place so downstream agents always read the latest truth (e.g. decision_maker, bleeding_neck_fault, matched_outreach_scenario, price_anchor_quoted, payment_gate_status, active_campaign_hook, founding_partner_slots_left, priority_vertical). Never include credentials or secrets.",
+    inputSchema: zodToJsonSchema(
+      z.object({
+        scope: z
+          .enum(["this record", "the whole company"])
+          .default("this record")
+          .describe("'this record' updates the living state on the current lead, client or project. 'the whole company' updates company-wide living state seen across all runs."),
+        key: z
+          .string()
+          .min(2)
+          .max(48)
+          .describe("Snake_case state key, e.g. decision_maker, bleeding_neck_fault, matched_outreach_scenario, price_anchor_quoted, payment_gate_status, active_campaign_hook, founding_partner_slots_left."),
+        value: z
+          .string()
+          .min(2)
+          .max(450)
+          .describe("The current verified value or state for this key."),
+        reason: z
+          .string()
+          .max(200)
+          .optional()
+          .describe("Short evidence or reason why this state was set or changed."),
+      }),
+      { target: "jsonSchema7", $refStrategy: "none" },
+    ) as Record<string, unknown>,
+    run: async (input) => {
+      const subjects = taskSubjects(task);
+      const targetSubject =
+        input.scope === "the whole company" ? subjectOf.company() : (subjects[0] ?? subjectOf.company());
+      try {
+        const updated = await upsertLivingContext({
+          subject: targetSubject,
+          key: String(input.key ?? ""),
+          value: String(input.value ?? ""),
+          reason: input.reason ? String(input.reason) : undefined,
+          agentKey: agent.key,
+          sourceTaskId: task.id,
+        });
+        await step(task.id, "REMEMBERED", `Updated living context [${updated.key}] on ${updated.subject}: ${String(input.value ?? "").slice(0, 220)}`, {
+          data: { subject: updated.subject, key: updated.key, livingContext: true },
+        });
+        return {
+          content: `Living context [${updated.key}] updated on ${updated.subject}. Downstream agents will now read this updated state.`,
+        };
+      } catch (err) {
+        if (err instanceof MemoryRefused) return { content: err.message, isError: true };
+        throw err;
+      }
     },
   };
 
@@ -1432,7 +1574,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
   // road to the Agent Creator. Both are cheap. What is pruned is only ever a
   // tool that would refuse — see `workflowAvailability`.
   const can = workflowAvailability(agent, task, counters, consultLimit);
-  const tools: AgentTool[] = [escalate, rememberTool];
+  const tools: AgentTool[] = [escalate, rememberTool, updateLivingContextTool];
   if (can.history) tools.push(noteTool, historyTool);
   if (can.delegate) tools.push(delegate);
   tools.push(findAgentTool);
@@ -1706,20 +1848,31 @@ const SCOPE_CONTAINMENT_DIRECTIVE = `STRICT SCOPE BOUNDARIES & CONTEXT-GROUNDED 
 
 const COMMERCIAL_AGENTS = new Set([
   "lead.orchestrator",
+  "commercial.ops",
   "growth.outreach",
   "sales.proposal",
   "proposal.writer",
   "pipeline.manager",
+  "pipeline.hygiene",
   "pricing.calculator",
   "outreach.writer",
+  "reply.handler",
+  "careplan.manager",
+  "analytics.upsell",
+  "client.renewal",
   "cro",
+  "cmo",
 ]);
 
-const COMMERCIAL_BID_ESCALATION_PROTOCOL = `COMMERCIAL VALUE & BID ESCALATION PROTOCOL:
+function buildCommercialBidProtocol(liveCatalogue: string): string {
+  return `COMMERCIAL VALUE, TWO-OPTION ANCHOR & BID ESCALATION PROTOCOL:
 When evaluating a lead, proposal, client opportunity, or pitch:
-- Assess Value Signals in Context: Actively inspect the provided context for commercial indicators — business size, multi-branch presence, high Google review counts (e.g. 50+ or 200+ reviews), outdated/vulnerable CMS, lack of automated booking/inquiry routing, or existing proposal history.
-- Proactively Raise the Bid: When strong value signals or operational complexities are evident in the context, do NOT settle for the minimal baseline tier (e.g. GHS 3,500 / $500). Proactively recommend or raise the bid to a premium or multi-phase package (e.g. GHS 7,500 to GHS 18,000+ / $1,500 to $3,500+) covering full redesign, mobile optimization, workflow automation, and ongoing care plans.
-- Ground Justification in Facts: Anchor the higher bid strictly in the concrete facts and business liabilities identified in the context. Never quote a generic price without tying it to the observed operational scale.`;
+- Live Dakyworld Catalogue & Tiers:
+${liveCatalogue || "Website Builder: GHS 300/mo · Foundation Partner: GHS 3,000/mo Founding (GHS 5,000/mo std) · Growth Partner: GHS 7,000/mo Founding (GHS 12,500/mo std) · Transformation Partner: GHS 15,000/mo Founding (GHS 25,000/mo std) · Workflow Automation: from GHS 8,000 · Foundation Build: from GHS 15,000 · Connected Growth System: from GHS 35,000"}
+- Strictly Respect Retired Boundaries (\`doesNotDo\`): Never pitch standalone cybersecurity pen-testing, cloud infrastructure hosting, email workspace setup, or logo/brand identity design. Frame external TLS/DNS/DMARC observations strictly as conversion and deliverability hygiene inside a Website Build or Care Plan.
+- Two-Option Proposal Architecture: Whenever scoping a build or retainer, present **Option A (Core Diagnostic Fix)** alongside **Option B (Complete Connected Growth System + Managed Care Plan)** so the client compares two high-value Dakyworld outcomes rather than Dakyworld vs. doing nothing.
+- Payment & Validity Guardrails: Standard builds follow a **50% mobilisation deposit / 40% staging approval / 10% launch handover** split (engagements under GHS 10,000 are 100% upfront). All proposals carry a 14-day validity window. Never discount price without removing a corresponding scope item.`;
+}
 
 /**
  * The prompt, in labelled pieces.
@@ -1746,7 +1899,11 @@ export async function composePrompt(
   // the tool list, costs a whole turn on a call that cannot resolve, which is
   // far more than the schema it saved.
   const can = options.can ?? ALL_WORKFLOW;
-  const profile = await companyProfile();
+  const [profile, liveCatalogue, liveBrandBlock] = await Promise.all([
+    companyProfile(),
+    catalogueBlock(),
+    brandBlock(),
+  ]);
 
   const regions: PromptRegion[] = [
     {
@@ -1775,31 +1932,25 @@ export async function composePrompt(
   if (COMMERCIAL_AGENTS.has(agent.key)) {
     regions.push({
       key: "commercial",
-      label: "Commercial bid escalation",
-      source: "Commercial policy — evaluates context signals to raise proposal bids proactively.",
+      label: "Commercial bid escalation & two-option pricing",
+      source: "Live commercial policy — evaluates context signals and applies live businessOffer() tiers.",
       editable: false,
-      text: COMMERCIAL_BID_ESCALATION_PROTOCOL,
+      text: buildCommercialBidProtocol(liveCatalogue),
     });
   }
 
-  // Who Dakyworld is and how it writes — 390 tokens, identical on every
-  // agent's prompt whether or not it ever produces a sentence a client reads.
-  // An agent that only reads numbers or fixes a server has no use for "sign
-  // off as Dan" or the service catalogue's pitch, and paying for it on every
-  // one of its tasks bought nothing. Held to a deny-list rather than an
-  // allow-list: an agent the roster doesn't yet know about — one the Agent
-  // Creator hires tomorrow — defaults to *keeping* it, which costs tokens
-  // rather than silently shipping off-brand prose from a writer nobody added
-  // to a list.
-  if (!NO_BRAND_VOICE.has(agent.key)) {
-    regions.push({
-      key: "brand",
-      label: "Who Dakyworld is",
-      source: "Read from dakyworld.com — Settings → Business context. The same for every agent.",
-      editable: false,
-      text: await brandBlock(),
-    });
-  }
+  // Every single agent in the workforce — including Board, C-Suite, Operational
+  // Managers, and Technical Specialists — receives `brandBlock()` ("Who Dakyworld is")
+  // so no agent ever recommends retired services (`doesNotDo`) or stale prices.
+  // Only the customer-facing prose style guide (`VOICE`) is skipped for `NO_BRAND_VOICE`
+  // internal/technical agents.
+  regions.push({
+    key: "brand",
+    label: "Who Dakyworld is",
+    source: "Read from dakyworld.com — Settings → Business context. Synced across all 58 agents.",
+    editable: false,
+    text: liveBrandBlock,
+  });
   regions.push({
     key: "contact",
     label: "The company's details",
@@ -1888,9 +2039,10 @@ The tools this applies to: ${external.map((tool) => `\`${tool.key}\``).join(", "
 - You have been given a task and a set of tools. Use the tools to find out what is true rather than assuming. Never state a fact about a lead, a client or a system that a tool did not tell you.
 - Some of your tools will answer "PREPARED, NOT DONE". That is not a failure — it means your autonomy level requires a person to approve that kind of action. Carry on and prepare the rest of the work so there is one thing to approve rather than five.
 - Some will be refused outright. That is also information: work around it, or escalate.
-- Use \`remember\` for a decision worth having next time, and for what came of it. Never write down a credential. Share one with the whole company only when it is a fact about how Dakyworld works that every agent would need — your own conclusions stay yours.
+- **Keep the Living Context flowing:** Use \`update_living_context\` whenever your work establishes or updates an operational fact that downstream agents need to read (for example: \`decision_maker\`, \`bleeding_neck_fault\`, \`matched_outreach_scenario\`, \`price_anchor_quoted\`, \`payment_gate_status\`, \`active_campaign_hook\`, \`founding_partner_slots_left\`). It updates the key in-place so the next agent in the chain never acts on stale state.
+- Use \`remember\` for a decision worth having next time, and for what came of it. Never write down a credential. Share one with the whole company (\`about: "the whole company"\`) when it is a standing house rule or company-wide learning, or with this record (\`about: "this record (shared)"\`) when every colleague working on this company needs to know it.
 ${can.history ? HISTORY_ETIQUETTE : ""}- Use \`escalate\` the moment you are unsure, or the work touches money, scope, security, a live system or a public claim. Stopping is not failing.
-- When you are done, say what you did, what you found, and what a person should do next — in plain English, in a few sentences. That final message is what gets read.
+- When you are done, say what you did, what you found, what living context you updated, and what a person should do next — in plain English, in a few sentences. That final message is what gets read.
 
 You are not working alone. There are ${await rosterSize()} agents here, each with one craft, and the difference between a good outcome and a mediocre one is usually whether the right one was asked. **When the work needs a craft that is not yours, the answer is never to attempt it anyway.** Work through it in this order, and stop at the first step that answers:
 

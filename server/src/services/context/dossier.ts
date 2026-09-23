@@ -38,17 +38,18 @@ import { findSecret, MemoryRefused } from "../agents/memory.js";
  * mean something.
  */
 
-export type SubjectKind = "lead" | "client" | "project";
+export type SubjectKind = "lead" | "client" | "project" | "company";
 
 export interface Subject {
   kind: SubjectKind;
   id: string;
-  /** The canonical string — `lead:abc123`. Same vocabulary as memory's subjects. */
+  /** The canonical string — `lead:abc123` or `company`. Same vocabulary as memory's subjects. */
   key: string;
 }
 
 /** Null when the string is not a subject this can gather on. */
 export function parseSubject(raw: string): Subject | null {
+  if (raw === "company") return { kind: "company", id: "company", key: "company" };
   const [kind, ...rest] = raw.split(":");
   const id = rest.join(":");
   if (!id) return null;
@@ -106,6 +107,23 @@ async function resolveSubject(subject: Subject): Promise<{ header: DossierHeader
   const clientIds: string[] = [];
   const projectIds: string[] = [];
   const alsoKnownAs: string[] = [];
+
+  if (subject.kind === "company") {
+    return {
+      header: {
+        name: "Dakyworld (Company-Wide Living Context)",
+        found: true,
+        alsoKnownAs,
+        facts: [
+          "Scope: Company-wide strategic state shared across all 58 agents.",
+          "Capabilities: Websites (Builder GHS 300/mo, Foundation GHS 15k), Workflow Automation & AI (GHS 8k), System Integrations (GHS 35k), and Training.",
+        ],
+      },
+      leadIds,
+      clientIds,
+      projectIds,
+    };
+  }
 
   if (subject.kind === "lead") {
     const lead = await prisma.lead.findUnique({
@@ -453,12 +471,69 @@ export interface DossierOptions {
  * to see it — which is why the PDF export renders this same text rather than
  * assembling a second version of it.
  */
+export interface LivingContextItem {
+  id: string;
+  subject: string;
+  key: string;
+  value: string;
+  previousValue: string | null;
+  updatedBy: string;
+  updatedAt: Date;
+}
+
+/**
+ * Reads the active `living_context` whiteboard keys for a subject (plus its
+ * linked lead/client alias and company-wide context when appropriate).
+ */
+export async function listLivingContext(subjectKey: string, includeCompany = false): Promise<LivingContextItem[]> {
+  const subject = parseSubject(subjectKey);
+  if (!subject) return [];
+  const { alsoKnownAs } = (await resolveSubject(subject)).header;
+  const subjects = [...new Set([subject.key, ...alsoKnownAs, ...(includeCompany ? ["company"] : [])])];
+
+  const rows = await prisma.agentMemory.findMany({
+    where: {
+      scope: "SHARED",
+      subject: { in: subjects },
+      content: { startsWith: "[state:" },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    orderBy: [{ createdAt: "desc" }],
+  });
+
+  const seen = new Set<string>();
+  const items: LivingContextItem[] = [];
+
+  for (const row of rows) {
+    const match = /^\[state:([^\]]+)\]\s*(.+)$/.exec(row.content);
+    if (!match) continue;
+    const [, rawKey, rawVal] = match;
+    const dedupKey = `${row.subject}::${rawKey}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+
+    items.push({
+      id: row.id,
+      subject: row.subject ?? subject.key,
+      key: rawKey,
+      value: rawVal,
+      previousValue: null,
+      updatedBy: row.authorKey ?? row.agentKey ?? "system",
+      updatedAt: row.createdAt,
+    });
+  }
+
+  return items;
+}
+
 export async function renderDossier(subjectKey: string, options: DossierOptions = {}): Promise<string> {
   const subject = parseSubject(subjectKey);
   if (!subject) return `No such record: ${subjectKey}.`;
 
   const { header, entries } = await gatherEntries(subject);
   if (!header.found) return `No record found for ${subjectKey}.`;
+
+  const living = await listLivingContext(subject.key, subject.kind !== "company");
 
   const limit = options.limit ?? 40;
   const pinned = entries.filter((entry) => entry.pinned);
@@ -467,6 +542,14 @@ export async function renderDossier(subjectKey: string, options: DossierOptions 
 
   const lines: string[] = [`# ${header.name}`, ""];
   for (const fact of header.facts) lines.push(`- ${fact}`);
+
+  if (living.length > 0) {
+    lines.push("", "## Active Living Context (Agent Whiteboard)", "");
+    for (const item of living) {
+      const scopeTag = item.subject === "company" && subject.kind !== "company" ? " _(company)_" : "";
+      lines.push(`- **\`${item.key}\`**${scopeTag}: ${item.value} _(by \`${item.updatedBy}\` on ${when(item.updatedAt)})_`);
+    }
+  }
 
   if (pinned.length > 0) {
     lines.push("", "## Worth knowing before you do anything", "");

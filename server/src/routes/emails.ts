@@ -96,6 +96,7 @@ const attachment = z.union([
   // automatic attachments and hands the list back on save — without this,
   // opening a draft that carries a report and pressing Send answers 400.
   z.object({ kind: z.literal("audit"), auditId: z.string().cuid(), name: z.string().optional() }),
+  z.object({ kind: z.literal("demo"), demoId: z.string().min(1), name: z.string().optional() }),
 ]);
 
 // Writing to a client under the company's name is not a junior privilege.
@@ -898,6 +899,24 @@ async function describeAttachments(entries: StoredAttachment[], automatic = fals
           url: null,
           note: "Rendered fresh when it sends.",
           missing: !proposal,
+          automatic,
+        };
+      }
+      if ("kind" in entry && entry.kind === "demo") {
+        const demo = await prisma.demo.findUnique({
+          where: { id: entry.demoId },
+          select: { slug: true, html: true },
+        });
+        return {
+          kind: "demo" as const,
+          demoId: entry.demoId,
+          name: entry.name ?? (demo ? `${demo.slug}.html` : "Demo.html"),
+          contentType: "text/html",
+          size: demo ? Buffer.byteLength(demo.html, "utf8") : null,
+          fileId: null,
+          url: demo ? `/demos/${demo.slug}` : null,
+          note: "Interactive HTML demo page attached directly.",
+          missing: !demo,
           automatic,
         };
       }

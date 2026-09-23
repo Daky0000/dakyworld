@@ -1,16 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
-import { MemoryRefused } from "../services/agents/memory.js";
-import { appendNote, deleteNote, editNote, gatherEntries, listNotes, parseSubject, renderDossier } from "../services/context/dossier.js";
+import { MemoryRefused, upsertLivingContext } from "../services/agents/memory.js";
+import { appendNote, deleteNote, editNote, gatherEntries, listLivingContext, listNotes, parseSubject, renderDossier } from "../services/context/dossier.js";
 import { renderMarkdownPdf } from "../services/markdownPdf.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
 /**
  * A company's history — what happened, as opposed to what an agent concluded.
  *
- * Mounted at `/api/context/:subject`, where a subject is `lead:abc123` or
- * `client:xyz` — the same vocabulary agent memory files against, so one
- * spelling answers both questions.
+ * Mounted at `/api/context/:subject`, where a subject is `lead:abc123`,
+ * `client:xyz`, `project:123` or `company` — the same vocabulary agent memory
+ * files against, so one spelling answers both questions.
  *
  * **Two formats, one source.** The Markdown is what the agents read; the PDF
  * renders that same Markdown onto the letterhead rather than assembling a
@@ -32,23 +32,69 @@ contextRouter.use(
 
 const NOTE_KINDS = ["NOTE", "CALL", "MEETING", "REPLY", "DECISION", "OUTCOME", "RISK"] as const;
 
-/** The dossier, as structured entries for the panel to draw. */
+/** The dossier, as structured entries + active living context for the panel to draw. */
 contextRouter.get("/:subject", async (req, res, next) => {
   try {
     const subject = parseSubject(req.params.subject);
-    if (!subject) return res.status(400).json({ error: "Use lead:<id>, client:<id> or project:<id>." });
+    if (!subject) return res.status(400).json({ error: "Use company, lead:<id>, client:<id> or project:<id>." });
 
     const { header, entries } = await gatherEntries(subject);
     if (!header.found) return res.status(404).json({ error: "No record found for that." });
 
+    const livingContext = await listLivingContext(subject.key, subject.kind !== "company");
     const limit = Number.parseInt(String(req.query.limit ?? "60"), 10);
     res.json({
       subject: subject.key,
       header,
+      livingContext,
       entries: entries.slice(0, Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 60),
       total: entries.length,
     });
   } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Reads or updates the Dynamic Living Context whiteboard (`kind: "living_context"`)
+ * for `company`, `lead:<id>`, `client:<id>` or `project:<id>`.
+ */
+contextRouter.get("/:subject/living", async (req, res, next) => {
+  try {
+    const subject = parseSubject(req.params.subject);
+    if (!subject) return res.status(400).json({ error: "Use company, lead:<id>, client:<id> or project:<id>." });
+
+    const includeCompany = req.query.includeCompany !== "false" && subject.kind !== "company";
+    const livingContext = await listLivingContext(subject.key, includeCompany);
+    res.json({ subject: subject.key, livingContext });
+  } catch (err) {
+    next(err);
+  }
+});
+
+contextRouter.put("/:subject/living", async (req, res, next) => {
+  try {
+    const subject = parseSubject(req.params.subject);
+    if (!subject) return res.status(400).json({ error: "Use company, lead:<id>, client:<id> or project:<id>." });
+
+    const input = z
+      .object({
+        key: z.string().min(2).max(80),
+        value: z.string().min(2).max(1200),
+        reason: z.string().max(240).optional(),
+      })
+      .parse(req.body);
+
+    const saved = await upsertLivingContext({
+      agentKey: "owner",
+      subject: subject.key,
+      key: input.key,
+      value: input.value,
+      reason: input.reason ?? "Owner manual override via Dossier API",
+    });
+    res.json({ ok: true, subject: subject.key, saved });
+  } catch (err) {
+    if (err instanceof MemoryRefused) return res.status(400).json({ error: err.message });
     next(err);
   }
 });
@@ -62,7 +108,7 @@ contextRouter.get("/:subject", async (req, res, next) => {
 contextRouter.get("/:subject/document", async (req, res, next) => {
   try {
     const subject = parseSubject(req.params.subject);
-    if (!subject) return res.status(400).json({ error: "Use lead:<id>, client:<id> or project:<id>." });
+    if (!subject) return res.status(400).json({ error: "Use company, lead:<id>, client:<id> or project:<id>." });
 
     const { header } = await gatherEntries(subject);
     if (!header.found) return res.status(404).json({ error: "No record found for that." });

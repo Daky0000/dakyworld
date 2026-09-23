@@ -381,3 +381,252 @@ export async function pruneMemories(agentKey?: string): Promise<number> {
   });
   return count;
 }
+
+export interface LivingContextUpsertInput {
+  subject: string;
+  key: string;
+  value: string;
+  reason?: string;
+  agentKey: string;
+  sourceTaskId?: string | null;
+}
+
+/**
+ * Updates or creates a keyed living context variable in-place (`[state:<key>] ...`).
+ *
+ * Unlike `remember()`, which appends distinct conclusions over time, `upsertLivingContext()`
+ * supersedes the previous value for the same `(subject, key)` pair so downstream agents
+ * always read the latest operational truth (e.g. `decision_maker`, `bleeding_neck_fault`,
+ * `matched_outreach_scenario`, `price_anchor_quoted`, `payment_gate_status`,
+ * `active_campaign_hook`, `founding_partner_slots_left`) without stale contradictions.
+ */
+export async function upsertLivingContext(input: LivingContextUpsertInput) {
+  const cleanKey = input.key
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+
+  if (cleanKey.length < 2) {
+    throw new MemoryRefused("Provide a clear state key (for example: decision_maker, bleeding_neck_fault, price_anchor_quoted).");
+  }
+
+  const cleanValue = input.value.trim();
+  if (cleanValue.length < 2) {
+    throw new MemoryRefused("Provide a non-empty value for the living context key.");
+  }
+
+  const reasonSuffix = input.reason?.trim() ? ` — (${input.reason.trim()})` : "";
+  const prefix = `[state:${cleanKey}]`;
+  const content = `${prefix} ${cleanValue}${reasonSuffix}`.slice(0, CONTENT_MAX);
+
+  const secret = findSecret(content);
+  if (secret) {
+    throw new MemoryRefused(
+      `That looks like it contains ${secret}. Living context is injected into agent prompts — record the operational state, never a credential.`,
+    );
+  }
+
+  const existing = await prisma.agentMemory.findFirst({
+    where: {
+      scope: "SHARED",
+      subject: input.subject,
+      content: { startsWith: `${prefix} ` },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const memoryRow = existing
+    ? await prisma.agentMemory.update({
+        where: { id: existing.id },
+        data: {
+          content,
+          authorKey: input.agentKey,
+          importance: 5,
+          lastUsedAt: new Date(),
+          sourceTaskId: input.sourceTaskId ?? existing.sourceTaskId,
+        },
+      })
+    : await prisma.agentMemory.create({
+        data: {
+          scope: "SHARED",
+          agentKey: null,
+          authorKey: input.agentKey,
+          kind: "FACT",
+          subject: input.subject,
+          content,
+          importance: 5,
+          sourceTaskId: input.sourceTaskId ?? null,
+        },
+      });
+
+  // If this subject is a dossier entity (lead:*, client:*, project:*), also upsert
+  // a pinned ContextNote so the human operator and dossier reader see the live state.
+  if (/^(lead|client|project):.+/.test(input.subject)) {
+    const notePrefix = `[State: ${cleanKey}]`;
+    const summary = `${notePrefix} ${cleanValue}`.slice(0, 300);
+    const existingNote = await prisma.contextNote.findFirst({
+      where: {
+        subject: input.subject,
+        summary: { startsWith: notePrefix },
+      },
+      orderBy: { occurredAt: "desc" },
+    });
+    if (existingNote) {
+      await prisma.contextNote.update({
+        where: { id: existingNote.id },
+        data: {
+          summary,
+          body: input.reason?.trim() ? `Updated by ${input.agentKey}: ${input.reason.trim()}` : `Updated by ${input.agentKey}`,
+          authorKey: input.agentKey,
+          pinned: true,
+          occurredAt: new Date(),
+          sourceTaskId: input.sourceTaskId ?? existingNote.sourceTaskId,
+        },
+      });
+    } else {
+      await prisma.contextNote.create({
+        data: {
+          subject: input.subject,
+          kind: "DECISION",
+          summary,
+          body: input.reason?.trim() ? `Set by ${input.agentKey}: ${input.reason.trim()}` : `Set by ${input.agentKey}`,
+          authorKey: input.agentKey,
+          pinned: true,
+          occurredAt: new Date(),
+          sourceTaskId: input.sourceTaskId ?? null,
+        },
+      });
+    }
+  }
+
+  return { key: cleanKey, subject: input.subject, content: memoryRow.content };
+}
+
+/**
+ * Renders the current keyed Living State for both `company` and the active record subjects
+ * (`lead:<id>`, `client:<id>`, `project:<id>`) so every agent in a workflow chain
+ * inherits the latest evolved state immediately.
+ */
+export async function livingContextBlock(subjects: string[]): Promise<string | null> {
+  const querySubjects = [...new Set(["company", ...subjects.filter(Boolean)])];
+  const rows = await prisma.agentMemory.findMany({
+    where: {
+      scope: "SHARED",
+      subject: { in: querySubjects },
+      content: { startsWith: "[state:" },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    orderBy: [{ createdAt: "desc" }],
+    take: 40,
+  });
+
+  if (rows.length === 0) return null;
+
+  // Deduplicate by (subject, stateKey) keeping the most recently updated entry
+  const seen = new Set<string>();
+  const companyLines: string[] = [];
+  const entityLines: string[] = [];
+
+  for (const row of rows) {
+    const match = /^\[state:([^\]]+)\]\s*(.+)$/.exec(row.content);
+    if (!match) continue;
+    const [, stateKey, stateVal] = match;
+    const dedupKey = `${row.subject}::${stateKey}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+
+    const by = row.authorKey ? ` [updated by ${row.authorKey}]` : "";
+    const formatted = `- **${stateKey}**: ${stateVal}${by}`;
+    if (row.subject === "company") {
+      companyLines.push(formatted);
+    } else {
+      entityLines.push(`- **${stateKey}** (${row.subject}): ${stateVal}${by}`);
+    }
+  }
+
+  if (companyLines.length === 0 && entityLines.length === 0) return null;
+
+  return [
+    "DYNAMIC LIVING CONTEXT — self-updating state shared across the workforce. Use `update_living_context` whenever your work establishes or changes one of these values so downstream agents stay synchronized:",
+    ...(companyLines.length > 0 ? ["", "**Company-Wide Live State (`company`):**", ...companyLines] : []),
+    ...(entityLines.length > 0 ? ["", "**Active Record & Cross-Agent Handoff State:**", ...entityLines] : []),
+  ].join("\n");
+}
+
+const BASELINE_COMPANY_STATE: Array<{ key: string; value: string; reason: string; agentKey: string }> = [
+  {
+    key: "founding_partner_slots_left",
+    value: "3 of 3 Founding Partner slots available (Foundation GHS 3,000/mo vs 5,000 std · Growth GHS 7,000/mo vs 12,500 std · Transformation GHS 15,000/mo vs 25,000 std — rate locked while continuous)",
+    reason: "Initial startup launch allocation",
+    agentKey: "ceo",
+  },
+  {
+    key: "priority_vertical",
+    value: "Private Clinics & Diagnostics, B2B Logistics & Clearing, Real Estate Developers, Legal/Accounting Consultancies, and Multi-Branch Retail/Hospitality",
+    reason: "Highest-yield verticals for Dakyworld's 4 active pillars",
+    agentKey: "board.growth",
+  },
+  {
+    key: "current_quarterly_bet",
+    value: "Audit-First Outbound Motion: Verified Technical Fault -> 48-Hour Speculative 390px Mobile Preview -> 20-Minute Diagnostic Call -> Two-Option Anchor Proposal",
+    reason: "5-Stage Value Creation Loop from Dakyworld Startup Growth & Sales Kit",
+    agentKey: "board.growth",
+  },
+  {
+    key: "active_campaign_hook",
+    value: "The 11-Second Mobile Bleed & Manual WhatsApp Admin Tax (30% Live Teardowns · 25% Automation ROI · 20% Founder POV · 15% System Walkthroughs · 10% Direct Offers)",
+    reason: "Synchronized inbound and outbound campaign angle",
+    agentKey: "cmo",
+  },
+  {
+    key: "payment_gate_policy",
+    value: "50% mobilisation deposit before kickoff / 40% on staging approval before DNS production go-live / 10% on handover (100% upfront under GHS 10,000); 14-day proposal validity",
+    reason: "Non-negotiable commercial cash-flow protection",
+    agentKey: "board.capital",
+  },
+  {
+    key: "delivery_capacity_status",
+    value: "GREEN — standard SLAs active (Day 1–3 Onboarding Lock, 7–10 business days Workflow Automation [from GHS 8,000], 21 days Foundation Build [from GHS 15,000])",
+    reason: "Baseline operational capacity",
+    agentKey: "coo",
+  },
+  {
+    key: "brand_voice_guardrail",
+    value: "Plain British English, Ghanaian commercial register, zero AI slop, zero unverified claims; standalone security, cloud, email-workspace and branding are retired",
+    reason: "Dakyworld Brand Voice & Scope Containment Bible",
+    agentKey: "board.risk",
+  },
+];
+
+/**
+ * Seeds the baseline `company` living state keys on boot if they do not exist yet.
+ * Never overwrites a key once an agent or the Owner has updated it.
+ */
+export async function ensureBaselineLivingContext(): Promise<number> {
+  let seeded = 0;
+  for (const item of BASELINE_COMPANY_STATE) {
+    const prefix = `[state:${item.key}] `;
+    const exists = await prisma.agentMemory.findFirst({
+      where: {
+        scope: "SHARED",
+        subject: "company",
+        content: { startsWith: prefix },
+      },
+      select: { id: true },
+    });
+    if (exists) continue;
+    await upsertLivingContext({
+      subject: "company",
+      key: item.key,
+      value: item.value,
+      reason: item.reason,
+      agentKey: item.agentKey,
+    });
+    seeded += 1;
+  }
+  return seeded;
+}
+
+

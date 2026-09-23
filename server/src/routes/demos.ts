@@ -1,8 +1,18 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { buildDemo, demoUrl, subjectFromLead } from "../services/demoBuilder.js";
+import { FileTypeError } from "../lib/fileType.js";
+import {
+  DemoImportError,
+  buildDemo,
+  demoSlug,
+  demoUrl,
+  importDemo,
+  recordImportedConcept,
+  subjectFromLead,
+} from "../services/demoBuilder.js";
 import { appUrl } from "../services/emailSender.js";
+import { MAX_UPLOAD_BODY } from "../services/fileStore.js";
 import { companyProfile } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { recordBuild } from "../services/concept/record.js";
@@ -11,10 +21,10 @@ import { recordBuild } from "../services/concept/record.js";
  * Demos: the pages built for prospects, and the public serving of them.
  *
  * Two routers, because they answer to different people. `demosRouter` is the
- * Owner's — list, build, rebuild, retire — and sits behind the session like
- * every other API route. `demoPagesRouter` is the prospect's, mounted before
- * the auth middleware in index.ts, and serves one page to anybody holding the
- * link.
+ * Owner's — list, build, import, rebuild, retire — and sits behind the session
+ * like every other API route. `demoPagesRouter` is the prospect's, mounted
+ * before the auth middleware in index.ts, and serves one page to anybody
+ * holding the link.
  *
  * **The index is deliberately not public.** `/demos/<slug>` is unlisted rather
  * than secret: whoever has the link can open it, which is what makes it
@@ -30,16 +40,36 @@ demosRouter.use(
   gateBy({
     view: "demos.view",
     create: "demos.create",
-    // The only thing PATCH changes is the status, and SENT is what puts a page
-    // carrying a stranger's business name in front of them.
+    // PATCH changes status, URL slug, metadata, or replaces HTML.
     edit: "demos.publish",
     remove: "demos.delete",
   }),
 );
 
+// Imported HTML files ride in the JSON body (raw or base64), so this router
+// mounts its own larger body parser after the permission check. See index.ts -> UPLOAD_PATHS.
+demosRouter.use(express.json({ limit: MAX_UPLOAD_BODY }));
+
+interface DemoBriefMeta {
+  imported?: boolean;
+  filename?: string | null;
+  headline?: string | null;
+  includeBanner?: boolean;
+  clientId?: string | null;
+  clientName?: string | null;
+  recipientEmail?: string | null;
+  recipientName?: string | null;
+}
+
+function readBriefMeta(brief: unknown): DemoBriefMeta {
+  if (!brief || typeof brief !== "object") return {};
+  return brief as DemoBriefMeta;
+}
+
 const listQuery = z.object({
   status: z.enum(["DRAFT", "READY", "SENT", "ACCEPTED", "DECLINED", "ARCHIVED"]).optional(),
   leadId: z.string().optional(),
+  clientId: z.string().optional(),
 });
 
 demosRouter.get("/", async (req, res, next) => {
@@ -47,7 +77,10 @@ demosRouter.get("/", async (req, res, next) => {
     const query = listQuery.parse(req.query);
     const [demos, base] = await Promise.all([
       prisma.demo.findMany({
-        where: { ...(query.status ? { status: query.status } : {}), ...(query.leadId ? { leadId: query.leadId } : {}) },
+        where: {
+          ...(query.status ? { status: query.status } : {}),
+          ...(query.leadId ? { leadId: query.leadId } : {}),
+        },
         orderBy: { updatedAt: "desc" },
         // The HTML is the largest column in the database and no list needs it.
         select: {
@@ -64,13 +97,44 @@ demosRouter.get("/", async (req, res, next) => {
           buildCostUsd: true,
           createdAt: true,
           updatedAt: true,
+          brief: true,
           references: true,
           lead: { select: { id: true, contactName: true, companyName: true, contactEmail: true, website: true, status: true } },
         },
       }),
       appUrl(),
     ]);
-    res.json({ demos: demos.map((demo) => ({ ...demo, url: demoUrl(demo.slug, base) })), base });
+
+    const clientIds = [
+      ...new Set(
+        demos
+          .map((demo) => readBriefMeta(demo.brief).clientId)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
+    ];
+    const clients = clientIds.length
+      ? await prisma.client.findMany({
+          where: { id: { in: clientIds } },
+          select: { id: true, name: true, company: true, email: true },
+        })
+      : [];
+    const clientById = new Map(clients.map((client) => [client.id, client]));
+
+    const enriched = demos
+      .map((demo) => {
+        const meta = readBriefMeta(demo.brief);
+        const client = meta.clientId ? (clientById.get(meta.clientId) ?? null) : null;
+        return {
+          ...demo,
+          url: demoUrl(demo.slug, base),
+          client,
+          recipientEmail: meta.recipientEmail ?? demo.lead?.contactEmail ?? client?.email ?? null,
+          recipientName: meta.recipientName ?? demo.lead?.contactName ?? client?.name ?? null,
+        };
+      })
+      .filter((demo) => !query.clientId || demo.client?.id === query.clientId);
+
+    res.json({ demos: enriched, base });
   } catch (err) {
     next(err);
   }
@@ -83,8 +147,77 @@ demosRouter.get("/:id", async (req, res, next) => {
       include: { lead: { select: { id: true, contactName: true, companyName: true, contactEmail: true, website: true } } },
     });
     if (!demo) return res.status(404).json({ error: "No such demo" });
-    res.json({ ...demo, url: demoUrl(demo.slug, await appUrl()) });
+    const meta = readBriefMeta(demo.brief);
+    const client = meta.clientId
+      ? await prisma.client.findUnique({
+          where: { id: meta.clientId },
+          select: { id: true, name: true, company: true, email: true },
+        })
+      : null;
+    res.json({
+      ...demo,
+      url: demoUrl(demo.slug, await appUrl()),
+      client,
+      recipientEmail: meta.recipientEmail ?? demo.lead?.contactEmail ?? client?.email ?? null,
+      recipientName: meta.recipientName ?? demo.lead?.contactName ?? client?.name ?? null,
+    });
   } catch (err) {
+    next(err);
+  }
+});
+
+demosRouter.get("/:id/download", async (req, res, next) => {
+  try {
+    const demo = await prisma.demo.findUnique({
+      where: { id: req.params.id },
+      select: { slug: true, html: true },
+    });
+    if (!demo) return res.status(404).json({ error: "No such demo" });
+    const safeSlug = demo.slug.replace(/[^a-z0-9\-_]+/gi, "-") || "demo";
+    res
+      .status(200)
+      .set({
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${safeSlug}.html"`,
+      })
+      .send(demo.html);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const importInput = z.object({
+  html: z.string().nullish(),
+  dataBase64: z.string().nullish(),
+  filename: z.string().max(240).nullish(),
+  businessName: z.string().max(200).nullish(),
+  title: z.string().max(200).nullish(),
+  slug: z.string().max(100).nullish(),
+  leadId: z.string().nullish(),
+  clientId: z.string().nullish(),
+  recipientEmail: z.string().max(200).nullish(),
+  recipientName: z.string().max(200).nullish(),
+  includeBanner: z.boolean().default(true),
+  makeInert: z.boolean().default(true),
+  demoId: z.string().nullish(),
+});
+
+/**
+ * Imports an HTML file (or raw HTML markup) as a hosted demo with its own
+ * public URL (`/demos/<slug>`), ready to share via link or attach to an email.
+ */
+demosRouter.post("/import", async (req, res, next) => {
+  try {
+    const input = importInput.parse(req.body);
+    const result = await importDemo({
+      ...input,
+      userId: req.dbUser?.id ?? null,
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    if (err instanceof DemoImportError || err instanceof FileTypeError) {
+      return res.status(err.status).json({ error: err.message });
+    }
     next(err);
   }
 });
@@ -146,20 +279,103 @@ demosRouter.post("/build", async (req, res, next) => {
 const updateInput = z.object({
   status: z.enum(["DRAFT", "READY", "SENT", "ACCEPTED", "DECLINED", "ARCHIVED"]).optional(),
   title: z.string().min(1).max(200).optional(),
+  businessName: z.string().min(1).max(200).optional(),
+  slug: z.string().min(1).max(100).optional(),
+  leadId: z.string().nullish(),
+  clientId: z.string().nullish(),
+  recipientEmail: z.string().max(200).nullish(),
+  recipientName: z.string().max(200).nullish(),
+  includeBanner: z.boolean().optional(),
+  html: z.string().nullish(),
+  dataBase64: z.string().nullish(),
+  filename: z.string().max(240).nullish(),
 });
 
 demosRouter.patch("/:id", async (req, res, next) => {
   try {
     const input = updateInput.parse(req.body);
+    const existing = await prisma.demo.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: "No such demo" });
+
+    // If new HTML was uploaded, run the full import update path.
+    if ((input.html && input.html.trim()) || (input.dataBase64 && input.dataBase64.trim())) {
+      const prevMeta = readBriefMeta(existing.brief);
+      const updated = await importDemo({
+        demoId: existing.id,
+        html: input.html,
+        dataBase64: input.dataBase64,
+        filename: input.filename,
+        businessName: input.businessName ?? existing.businessName,
+        title: input.title ?? existing.title,
+        slug: input.slug ?? existing.slug,
+        leadId: input.leadId === undefined ? existing.leadId : input.leadId,
+        clientId: input.clientId === undefined ? prevMeta.clientId : input.clientId,
+        recipientEmail: input.recipientEmail === undefined ? prevMeta.recipientEmail : input.recipientEmail,
+        recipientName: input.recipientName === undefined ? prevMeta.recipientName : input.recipientName,
+        includeBanner: input.includeBanner ?? prevMeta.includeBanner ?? true,
+        userId: req.dbUser?.id ?? null,
+      });
+      return res.json(updated.demo);
+    }
+
+    let nextSlug: string | undefined;
+    if (input.slug !== undefined) {
+      const desired = demoSlug(input.slug);
+      const clash = await prisma.demo.findUnique({ where: { slug: desired }, select: { id: true, businessName: true } });
+      if (clash && clash.id !== existing.id) {
+        return res.status(409).json({
+          error: `The URL slug "/demos/${desired}" is already used by "${clash.businessName}". Choose a different slug.`,
+        });
+      }
+      nextSlug = desired;
+    }
+
+    const prevMeta = readBriefMeta(existing.brief);
+    const nextMeta: DemoBriefMeta = {
+      ...prevMeta,
+      ...(input.clientId !== undefined ? { clientId: input.clientId } : {}),
+      ...(input.recipientEmail !== undefined ? { recipientEmail: input.recipientEmail } : {}),
+      ...(input.recipientName !== undefined ? { recipientName: input.recipientName } : {}),
+      ...(input.includeBanner !== undefined ? { includeBanner: input.includeBanner } : {}),
+    };
+
     const demo = await prisma.demo.update({
       where: { id: req.params.id },
       data: {
         ...(input.title ? { title: input.title } : {}),
+        ...(input.businessName ? { businessName: input.businessName } : {}),
+        ...(nextSlug ? { slug: nextSlug } : {}),
+        ...(input.leadId !== undefined ? { leadId: input.leadId } : {}),
         ...(input.status ? { status: input.status, ...(input.status === "SENT" ? { sentAt: new Date() } : {}) } : {}),
+        brief: nextMeta as never,
+      },
+      include: {
+        lead: { select: { id: true, contactName: true, companyName: true, contactEmail: true, website: true, status: true } },
       },
     });
-    res.json({ ...demo, url: demoUrl(demo.slug, await appUrl()) });
+
+    if (demo.leadId && (demo.builtBy === "Imported HTML" || input.status === "READY" || input.status === "SENT")) {
+      await recordImportedConcept(demo.leadId, demo, req.dbUser?.id ?? null);
+    }
+
+    const client = nextMeta.clientId
+      ? await prisma.client.findUnique({
+          where: { id: nextMeta.clientId },
+          select: { id: true, name: true, company: true, email: true },
+        })
+      : null;
+
+    res.json({
+      ...demo,
+      url: demoUrl(demo.slug, await appUrl()),
+      client,
+      recipientEmail: nextMeta.recipientEmail ?? demo.lead?.contactEmail ?? client?.email ?? null,
+      recipientName: nextMeta.recipientName ?? demo.lead?.contactName ?? client?.name ?? null,
+    });
   } catch (err) {
+    if (err instanceof DemoImportError || err instanceof FileTypeError) {
+      return res.status(err.status).json({ error: err.message });
+    }
     next(err);
   }
 });
@@ -184,6 +400,10 @@ export const demoPagesRouter = Router();
  * strips the obvious things at build time so the page does not arrive visibly
  * broken by its own headers, but a page written by a model and served from
  * Dakyworld's own domain does not get to decide what it may load.
+ *
+ * When a demo was imported directly from an HTML file by the Owner (`IMPORTED_CSP`),
+ * `https:` assets (Tailwind CDN, web fonts, external images, icon libraries) are
+ * allowed so the imported file renders faithfully while forms remain inert.
  */
 const CSP = [
   "default-src 'none'",
@@ -194,6 +414,18 @@ const CSP = [
   "form-action 'none'",
   "frame-ancestors 'none'",
   "base-uri 'none'",
+].join("; ");
+
+const IMPORTED_CSP = [
+  "default-src 'self' https: data: blob:",
+  "img-src 'self' https: data: blob:",
+  "style-src 'self' 'unsafe-inline' https:",
+  "font-src 'self' https: data:",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
+  "media-src 'self' https: data: blob:",
+  "connect-src 'self' https:",
+  "form-action 'none'",
+  "frame-ancestors 'self'",
 ].join("; ");
 
 demoPagesRouter.get("/:slug", async (req, res, next) => {
@@ -212,11 +444,13 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       .update({ where: { id: demo.id }, data: { views: { increment: 1 }, lastViewedAt: new Date() } })
       .catch(() => undefined);
 
+    const isImported = demo.builtBy === "Imported HTML" || readBriefMeta(demo.brief).imported === true;
+
     res
       .status(200)
       .type("html")
       .set({
-        "Content-Security-Policy": CSP,
+        "Content-Security-Policy": isImported ? IMPORTED_CSP : CSP,
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
         // A concept page for somebody else's business has no business in a

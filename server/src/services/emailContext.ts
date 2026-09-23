@@ -275,6 +275,7 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
       category: lead.category ?? "business",
       website: lead.website ?? "",
       rating: lead.rating ? String(lead.rating) : "",
+      demo_url: gate.ok && gate.url ? gate.url : "",
     },
   };
 }
@@ -294,6 +295,19 @@ export async function clientContext(clientId: string): Promise<RecipientContext>
 
   const site = await prisma.site.findFirst({ where: { clientId: client.id }, include: { pages: true } });
 
+  const recentDemos = await prisma.demo.findMany({
+    orderBy: { updatedAt: "desc" },
+    take: 50,
+    select: { id: true, slug: true, title: true, businessName: true, brief: true, views: true },
+  });
+  const clientDemo =
+    recentDemos.find((d) => {
+      const brief = d.brief && typeof d.brief === "object" && !Array.isArray(d.brief) ? (d.brief as Record<string, unknown>) : null;
+      return brief?.clientId === client.id;
+    }) ?? null;
+  const baseUrl = (await appUrl()).replace(/\/$/, "");
+  const clientDemoUrl = clientDemo ? `${baseUrl}/demos/${clientDemo.slug}` : "";
+
   const primary = client.contacts.find((contact) => contact.isPrimary) ?? client.contacts[0] ?? null;
 
   const facts = [
@@ -305,6 +319,14 @@ export async function clientContext(clientId: string): Promise<RecipientContext>
     line("Lifetime value", `GHS ${client.lifetimeValue}`),
     line("Payment terms", client.creditTerms),
   ].filter((entry): entry is string => entry !== null);
+
+  if (clientDemo) {
+    facts.push(
+      `An interactive demo page "${clientDemo.title}" has been prepared for them at ${clientDemoUrl}${
+        clientDemo.views > 0 ? ` (opened ${clientDemo.views} time(s))` : " (ready to preview)"
+      }.`,
+    );
+  }
 
   if (site) {
     facts.push(
@@ -342,13 +364,17 @@ export async function clientContext(clientId: string): Promise<RecipientContext>
     phone: primary?.phone ?? client.phone,
     name: primary?.name ?? client.name,
     facts,
-    findingIds: site ? ["site-built"] : [],
+    findingIds: [
+      ...(site ? ["site-built"] : []),
+      ...(clientDemo ? ["concept-ready"] : []),
+    ],
     variables: {
       first_name: firstName(primary?.name ?? client.name),
       contact_name: primary?.name ?? client.name,
       company: client.company ?? client.name,
       client_name: client.name,
       sector: client.sector ?? "",
+      demo_url: clientDemoUrl,
     },
   };
 }
