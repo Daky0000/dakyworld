@@ -138,7 +138,7 @@ function People() {
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+            <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               <th className="px-4 py-3 font-mono font-normal">Person</th>
               <th className="px-4 py-3 font-mono font-normal">Role</th>
               <th className="px-4 py-3 font-mono font-normal">Features</th>
@@ -585,7 +585,7 @@ function Roles({ canManage }: { canManage: boolean }) {
               {role.description && <p className="mt-2 text-[13px] leading-relaxed text-muted">{role.description}</p>}
             </div>
             <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
-              <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 {role.superAdmin ? "Every feature" : `${role.permissions.length} features`} ·{" "}
                 {role.userCount === 1 ? "1 person" : `${role.userCount} people`}
               </span>
@@ -802,11 +802,11 @@ function PermissionMatrix({
                 onClick={() => setCollapsed({ ...collapsed, [module.key]: !isCollapsed })}
                 className="flex items-center gap-2 text-left"
               >
-                <span aria-hidden className={`text-[9px] text-muted transition ${isCollapsed ? "" : "rotate-90"}`}>
-                  ▶
+                <span aria-hidden className="text-[11px] text-muted">
+                  {isCollapsed ? "Show" : "Hide"}
                 </span>
                 <span className="text-[13px] font-bold">{module.label}</span>
-                <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                   {counts[module.key]}/{module.permissions.length}
                 </span>
               </button>
@@ -836,7 +836,7 @@ function PermissionMatrix({
                     >
                       <span
                         aria-hidden
-                        className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded text-[10px] leading-none ${
+                        className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded text-[11px] leading-none ${
                           state === "denied"
                             ? "bg-warn-surface text-warn-text"
                             : state === "extra"
@@ -846,7 +846,7 @@ function PermissionMatrix({
                                 : "border border-line-strong"
                         }`}
                       >
-                        {state === "denied" ? "−" : on ? "✓" : ""}
+                        {state === "denied" ? "No" : on ? "Yes" : ""}
                       </span>
                       <span className="min-w-0">
                         <span className="flex flex-wrap items-center gap-2">

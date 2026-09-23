@@ -181,13 +181,34 @@ export async function remember(input: MemoryInput) {
   const shared = input.shared ?? false;
   const scope = shared ? "SHARED" : "AGENT";
 
-  const existing = await prisma.agentMemory.findFirst({
-    where: { scope, agentKey: shared ? null : input.agentKey, subject: input.subject, content },
+  const normalized = content.replace(/\s+/g, " ").toLowerCase();
+  const existingList = await prisma.agentMemory.findMany({
+    where: { scope, agentKey: shared ? null : input.agentKey, subject: input.subject },
+    orderBy: { createdAt: "desc" },
+    take: 25,
   });
-  if (existing) {
+
+  const matching = existingList.find((m) => {
+    if (m.content === content) return true;
+    const existingNorm = m.content.replace(/\s+/g, " ").toLowerCase();
+    if (existingNorm === normalized) return true;
+    if (normalized.length > 20 && existingNorm.length > 20) {
+      const wordsA = new Set(normalized.split(" "));
+      const wordsB = new Set(existingNorm.split(" "));
+      const common = [...wordsA].filter((w) => wordsB.has(w)).length;
+      const union = new Set([...wordsA, ...wordsB]).size;
+      if (union > 0 && common / union >= 0.82) return true;
+    }
+    return false;
+  });
+
+  if (matching) {
     return prisma.agentMemory.update({
-      where: { id: existing.id },
-      data: { importance: Math.min(5, existing.importance + 1), sourceTaskId: input.sourceTaskId ?? existing.sourceTaskId },
+      where: { id: matching.id },
+      data: {
+        importance: Math.min(5, Math.max(matching.importance, input.importance ?? 3) + 1),
+        sourceTaskId: input.sourceTaskId ?? matching.sourceTaskId,
+      },
     });
   }
 

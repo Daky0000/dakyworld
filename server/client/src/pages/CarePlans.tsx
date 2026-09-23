@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { BillOutcome, CarePlan, CarePlanCycle } from "../lib/types";
-import { Badge, Button, Card, EmptyState, Money, PageHeader, RelativeTime, StatTile, StatusDot } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Loading, Money, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot } from "../components/ui";
 import { CarePlanEditor } from "../components/CarePlanEditor";
 
 /** The tiers as dakyworld.com names them. See `services/carePlanCatalogue.ts`. */
@@ -90,25 +90,27 @@ export function CarePlans() {
       {notice && (
         <div className="overflow-hidden rounded-2xl mb-6 flex items-center justify-between gap-4 border border-line-strong bg-white px-4 py-3 text-sm">
           <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)} className="font-mono text-[10px] uppercase tracking-[.14em] text-muted hover:text-ink">
+          <button type="button" onClick={() => setNotice(null)} className="font-sans text-[11px] uppercase tracking-[.06em] text-muted hover:text-ink">
             Dismiss
           </button>
         </div>
       )}
 
-      <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Recurring / month" value={<Money amount={mrr} />} sub={`${active.length} active plan${active.length === 1 ? "" : "s"}`} />
-        <StatTile
-          label="Next invoice"
-          value={nextUp ? <RelativeTime value={nextUp.nextBillingAt} /> : "—"}
-          sub={nextUp ? nextUp.client.name : "Nothing scheduled"}
-        />
-        <StatTile label="Reviews due" value={reviewsDue} sub={reviewsDue > 0 ? "Book them this week" : "All current"} />
-        <StatTile label="Over included hours" value={overHours} sub={overHours > 0 ? "Overage bills next cycle" : "Everyone inside their hours"} />
+      <div className="mb-8">
+        <StatGrid columns={4}>
+          <StatTile label="Recurring / month" value={<Money amount={mrr} />} sub={`${active.length} active plan${active.length === 1 ? "" : "s"}`} />
+          <StatTile
+            label="Next invoice"
+            value={nextUp ? <RelativeTime value={nextUp.nextBillingAt} /> : "—"}
+            sub={nextUp ? nextUp.client.name : "Nothing scheduled"}
+          />
+          <StatTile label="Reviews due" value={reviewsDue} sub={reviewsDue > 0 ? "Book them this week" : "All current"} />
+          <StatTile label="Over included hours" value={overHours} sub={overHours > 0 ? "Overage bills next cycle" : "Everyone inside their hours"} />
+        </StatGrid>
       </div>
 
       {isLoading ? (
-        <div className="text-sm text-muted">Loading…</div>
+        <Loading label="Loading retainers" rows={3} />
       ) : !plans || plans.length === 0 ? (
         <EmptyState
           message="No care plans yet. A retainer is what turns a delivered project into recurring revenue — add one for a client you've already delivered for."
@@ -211,7 +213,7 @@ function PlanCard({
               <button
                 type="button"
                 onClick={() => onAct("reviewed")}
-                className="font-mono text-[10px] uppercase tracking-[.12em] underline underline-offset-2"
+                className="font-sans text-[11px] uppercase tracking-[.06em] underline underline-offset-2"
               >
                 Mark held
               </button>
@@ -223,7 +225,8 @@ function PlanCard({
 
         <div className="flex shrink-0 flex-wrap gap-2">
           <Button variant="ghost" size="sm" onClick={onToggle}>
-            {expanded ? "Hide history" : "History"}
+            <span>{expanded ? "Hide history" : "History"}</span>
+
           </Button>
           <Button variant="secondary" size="sm" onClick={onEdit}>
             Edit
@@ -319,7 +322,7 @@ function PlanHistory({ planId }: { planId: string }) {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead>
-              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 <th className="py-2 pr-4">Period</th>
                 <th className="py-2 pr-4">Fee</th>
                 <th className="py-2 pr-4">Hours</th>

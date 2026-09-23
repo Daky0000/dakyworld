@@ -129,7 +129,7 @@ export function LeadCell({
         value={lead.status}
         onChange={(event) => onStatus(event.target.value)}
         onClick={(event) => event.stopPropagation()}
-        className="rounded-full border border-line-strong bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
+        className="rounded-full border border-line-strong bg-white px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em]"
       >
         {STATUSES.map((status) => (
           <option key={status} value={status}>
@@ -548,7 +548,7 @@ export function ColumnManager({
                   type="button"
                   onClick={() => move(index, -1)}
                   disabled={index === 0}
-                  className="px-1 text-[10px] leading-none text-muted transition hover:text-ink disabled:opacity-20"
+                  className="px-1 text-[11px] leading-none text-muted transition hover:text-ink disabled:opacity-20"
                   aria-label={`Move ${field.label} up`}
                 >
                   ▲
@@ -557,7 +557,7 @@ export function ColumnManager({
                   type="button"
                   onClick={() => move(index, 1)}
                   disabled={index === fields.length - 1}
-                  className="px-1 text-[10px] leading-none text-muted transition hover:text-ink disabled:opacity-20"
+                  className="px-1 text-[11px] leading-none text-muted transition hover:text-ink disabled:opacity-20"
                   aria-label={`Move ${field.label} down`}
                 >
                   ▼
@@ -573,7 +573,7 @@ export function ColumnManager({
               {field.builtin ? (
                 <span className="flex items-center gap-2">
                   <Badge tone="muted">lead field</Badge>
-                  <span className="font-mono text-[10px] text-muted">{field.key}</span>
+                  <span className="font-mono text-[11px] text-muted">{field.key}</span>
                 </span>
               ) : (
                 <>
@@ -586,7 +586,7 @@ export function ColumnManager({
                   <select
                     value={field.type}
                     onChange={(event) => update(index, { type: event.target.value as LeadFieldType })}
-                    className="rounded-full border border-line-strong bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
+                    className="rounded-full border border-line-strong bg-white px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em]"
                   >
                     {FIELD_TYPES.map((type) => (
                       <option key={type} value={type}>
@@ -599,7 +599,7 @@ export function ColumnManager({
 
               <span className="flex-1" />
 
-              <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <label className="flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 <input
                   type="checkbox"
                   checked={!field.hidden}
@@ -612,7 +612,7 @@ export function ColumnManager({
               <button
                 type="button"
                 onClick={() => setDraft(fields.filter((_, position) => position !== index))}
-                className="font-mono text-[10px] uppercase tracking-[.12em] text-muted transition hover:text-danger-text"
+                className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-danger-text"
               >
                 Remove
               </button>
@@ -641,7 +641,7 @@ export function ColumnManager({
             Add
           </Button>
           {data && (
-            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+            <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               {data.scope === "group" ? "This batch has its own columns" : data.scope === "default" ? "Saved default set" : "Built-in set"}
             </span>
           )}

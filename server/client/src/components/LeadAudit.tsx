@@ -48,7 +48,7 @@ export function LeadAuditSection({ lead, onDone }: { lead: Lead; onDone: () => v
 
   return (
     <section>
-      <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Website review</h3>
+      <h3 className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Website review</h3>
 
       {!latest ? (
         <div className="rounded-2xl border border-line bg-white p-4">
@@ -176,7 +176,7 @@ function AuditDetail({
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {report.disciplines.map((discipline) => (
             <div key={discipline.discipline}>
-              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{AUDIT_DISCIPLINE_NAMES[discipline.discipline]}</p>
+              <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{AUDIT_DISCIPLINE_NAMES[discipline.discipline]}</p>
               <p className="mt-0.5 font-mono text-lg leading-none text-ink">{discipline.scored ? discipline.score : "—"}</p>
               <span className="mt-1.5 block h-1.5 w-full overflow-hidden rounded-full bg-line">
                 {/* An empty track for a section that did not run. A full bar over
@@ -188,7 +188,7 @@ function AuditDetail({
                   />
                 )}
               </span>
-              <p className="mt-1 text-[10px] text-muted">{discipline.reviewer}</p>
+              <p className="mt-1 text-[11px] text-muted">{discipline.reviewer}</p>
             </div>
           ))}
         </div>
@@ -197,7 +197,7 @@ function AuditDetail({
           <>
             <p className="mt-4 whitespace-pre-line text-sm text-ink">{report.synthesis.executiveSummary}</p>
             <div className="mt-3 rounded-xl border border-blue/25 bg-blue/5 p-3">
-              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">Do this first</p>
+              <p className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">Do this first</p>
               <p className="mt-1 text-sm text-ink">{report.synthesis.theOneThing}</p>
             </div>
           </>
@@ -208,7 +208,7 @@ function AuditDetail({
 
       {shots.length > 0 && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Their homepage, marked up</p>
+          <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Their homepage, marked up</p>
           <p className="mt-1 text-[11px] text-muted">
             The numbered boxes mark roughly where each UI/UX point applies — the area, not the pixel. Open one to see it full size.
           </p>
@@ -235,7 +235,7 @@ function AuditDetail({
                       className="block max-h-64 w-full object-cover object-top"
                     />
                   </a>
-                  <p className="flex items-center justify-between gap-2 border-t border-line px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                  <p className="flex items-center justify-between gap-2 border-t border-line px-3 py-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                     <span>{shot.view === "mobile" ? "On a phone" : "On a desktop"}</span>
                     {shots.some((entry) => entry.full && entry.view === shot.view) && (
                       <a
@@ -328,7 +328,7 @@ function RedesignSeverityChip({ severity }: { severity: RedesignSeverity }) {
   const loud = severity === "CRITICAL" || severity === "HIGH";
   return (
     <span
-      className={`rounded-[10px] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[.12em] ${
+      className={`rounded-[10px] px-1.5 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] ${
         loud ? "bg-ink text-cream" : "border border-line text-muted"
       }`}
     >
@@ -371,15 +371,15 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
   return (
     <div className="rounded-2xl border border-line bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Does this page need a redesign?</p>
-        <span className={`rounded-full px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.12em] ${tone.chip}`}>{tone.label}</span>
+        <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Does this page need a redesign?</p>
+        <span className={`rounded-full px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] ${tone.chip}`}>{tone.label}</span>
       </div>
 
       {typeof call.score === "number" && (
         <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-xl bg-sunken px-3 py-2">
           <span className="font-mono text-2xl font-semibold text-ink">{call.score}</span>
           <span className="font-mono text-xs text-muted">/100</span>
-          <span className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">{redesignScoreBand(call.score)}</span>
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">{redesignScoreBand(call.score)}</span>
           {/* Two numbers in one drawer needs saying how they relate, or a reader takes them as a contradiction. */}
           <span className="w-full text-[11px] text-muted">How the page looks. It is one of the five things the site's own score is worked out from.</span>
         </div>
@@ -394,7 +394,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
       {call.scores && call.scores.length > 0 && (
         <details className="mt-3 rounded-xl border border-line">
-          <summary className="cursor-pointer px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">How the ten add up</summary>
+          <summary className="cursor-pointer px-3 py-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">How the ten add up</summary>
           <ul className="space-y-2 border-t border-line px-3 py-2">
             {call.scores.map((row) => (
               <li key={row.category}>
@@ -422,7 +422,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
                 {issue.severity && <RedesignSeverityChip severity={issue.severity} />}
                 <span className="text-sm font-semibold text-ink">{issue.title || redesignCategoryName(issue.category)}</span>
               </div>
-              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">
+              <p className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">
                 {redesignCategoryName(issue.category)} · {issue.view === "mobile" ? "phone" : "desktop"}
                 {issue.necessity ? ` · ${REDESIGN_NECESSITY_NAMES[issue.necessity]}` : ""}
               </p>
@@ -441,7 +441,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
           ["Landing on it", call.impact.howItFeels],
         ].map(([label, value]) => (
           <div key={label} className="rounded-xl border border-line p-2.5">
-            <dt className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</dt>
+            <dt className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{label}</dt>
             <dd className="mt-0.5 text-[13px] text-ink">{value}</dd>
           </div>
         ))}
@@ -449,7 +449,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
       {call.firstLook && (
         <div className="mt-3 rounded-xl border border-line p-3">
-          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Five seconds on it — {call.firstLook.score}/100</p>
+          <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Five seconds on it — {call.firstLook.score}/100</p>
           <ul className="mt-1.5 space-y-1">
             {(
               [
@@ -472,18 +472,18 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
       {(call.sections?.length || call.problems?.length || call.standing || call.age) && (
         <details className="mt-3 rounded-xl border border-line">
-          <summary className="cursor-pointer px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">The rest of the audit</summary>
+          <summary className="cursor-pointer px-3 py-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">The rest of the audit</summary>
           <div className="space-y-3 border-t border-line px-3 py-2">
             {call.sections && call.sections.length > 0 && (
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">The page, top to bottom</p>
+                <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">The page, top to bottom</p>
                 <ul className="mt-1 space-y-1.5">
                   {call.sections.map((part, index) => (
                     <li key={`${part.name}-${index}`} className="border-l-2 border-line pl-3">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <RedesignSeverityChip severity={part.severity} />
                         <span className="text-[13px] font-semibold text-ink">{part.name}</span>
-                        {part.needsRebuilding && <span className="font-mono text-[9px] uppercase tracking-[.12em] text-blue">rebuild</span>}
+                        {part.needsRebuilding && <span className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">rebuild</span>}
                       </div>
                       {part.works && <p className="text-[12px] text-ink">{part.works}</p>}
                       {part.doesNotWork && <p className="text-[12px] text-muted">{part.doesNotWork}</p>}
@@ -495,11 +495,11 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
             {call.problems && call.problems.length > 0 && (
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">The biggest problems</p>
+                <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">The biggest problems</p>
                 <ol className="mt-1 space-y-1.5">
                   {call.problems.map((problem, index) => (
                     <li key={`${problem.problem}-${index}`} className="flex gap-2 text-[13px]">
-                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[10px] text-cream">{index + 1}</span>
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[10px] bg-ink font-mono text-[11px] text-cream">{index + 1}</span>
                       <span>
                         <span className="font-semibold text-ink">{problem.problem}</span> <span className="text-muted">{problem.whyItMatters}</span>
                         <span className="block text-[12px] text-faint">Seen: {problem.evidence}</span>
@@ -512,7 +512,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
             {call.standing?.assessment && (
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                   {call.standing.looksEstablished ? "It looks like a real firm" : "It does not look like a real firm"}
                 </p>
                 <p className="mt-0.5 text-[13px] text-ink">{call.standing.assessment}</p>
@@ -530,7 +530,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
             {call.age?.why && (
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">How old it looks — {REDESIGN_ERA_NAMES[call.age.era]}</p>
+                <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">How old it looks — {REDESIGN_ERA_NAMES[call.age.era]}</p>
                 <p className="mt-0.5 text-[13px] text-ink">{call.age.why}</p>
               </div>
             )}
@@ -540,7 +540,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
       {call.strengths && call.strengths.length > 0 && (
         <div className="mt-3 rounded-xl border border-lime/40 bg-lime/10 p-3">
-          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-ink">What is already good</p>
+          <p className="font-sans text-[11px] uppercase tracking-[.06em] text-ink">What is already good</p>
           <ul className="mt-1 space-y-1">
             {call.strengths.map((entry) => (
               <li key={entry.strength} className="text-[13px]">
@@ -555,7 +555,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
         <ol className="mt-3 space-y-1.5">
           {call.direction.map((step, index) => (
             <li key={step.change} className="flex gap-2 text-sm">
-              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[10px] text-cream">{index + 1}</span>
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[10px] bg-ink font-mono text-[11px] text-cream">{index + 1}</span>
               <span>
                 <span className="font-semibold text-ink">{step.change}</span> <span className="text-muted">{step.why}</span>
               </span>
@@ -566,7 +566,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
       {call.worthIt?.why && (
         <p className="mt-3 text-[13px] text-muted">
-          <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Worth paying for? {REDESIGN_WORTH_NAMES[call.worthIt.answer]}.</span>{" "}
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Worth paying for? {REDESIGN_WORTH_NAMES[call.worthIt.answer]}.</span>{" "}
           {call.worthIt.why}
         </p>
       )}
@@ -575,10 +575,10 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
 
       <div className="mt-3 rounded-xl border border-blue/25 bg-blue/5 p-3">
         <div className="flex items-center justify-between gap-2">
-          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">The paragraph for a proposal</p>
+          <p className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">The paragraph for a proposal</p>
           <button
             type="button"
-            className="font-mono text-[10px] uppercase tracking-[.12em] text-blue transition hover:text-ink"
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-blue transition hover:text-ink"
             onClick={() => {
               void navigator.clipboard?.writeText(call.summary).then(
                 () => setCopied(true),
@@ -689,7 +689,7 @@ function DisciplineCard({
 
         {good.length > 0 && (
           <div className="rounded-xl border border-lime/40 bg-lime/10 p-3">
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">What is right here</p>
+            <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">What is right here</p>
             <ul className="mt-1.5 space-y-1 text-sm text-ink">
               {good.map((finding) => (
                 <li key={finding.id}>
@@ -702,7 +702,7 @@ function DisciplineCard({
 
         {discipline.checked.length > 0 && (
           <details>
-            <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-muted">What was examined</summary>
+            <summary className="cursor-pointer font-sans text-[11px] uppercase tracking-[.06em] text-muted">What was examined</summary>
             <ul className="mt-1.5 space-y-1 text-[12px] text-muted">
               {discipline.checked.map((entry) => (
                 <li key={entry}>· {entry}</li>
@@ -732,14 +732,14 @@ function FindingRow({ finding }: { finding: AuditFindingDetail }) {
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={severityTone(finding.severity)}>{finding.severity === "LOW" ? "MINOR" : finding.severity}</Badge>
         <span className="text-sm font-semibold text-ink">{finding.title}</span>
-        {finding.marker != null && <span className="font-mono text-[10px] text-muted">box {finding.marker}</span>}
+        {finding.marker != null && <span className="font-mono text-[11px] text-muted">box {finding.marker}</span>}
       </div>
       <p className="mt-1.5 text-sm text-ink">{finding.observed}</p>
       <p className="mt-1.5 text-sm text-muted">
         <span className="font-semibold text-ink">What it costs them.</span> {finding.impact}
       </p>
       <p className="mt-1.5 rounded-xl bg-sunken px-2.5 py-1.5 text-sm text-ink">
-        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Say it like this</span>
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Say it like this</span>
         <br />
         {finding.plainly}
       </p>

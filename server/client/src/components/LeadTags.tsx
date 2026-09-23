@@ -74,7 +74,7 @@ export function TagChip({
 
   return (
     <span
-      className={`inline-flex items-center gap-1 border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[.08em] ${tone} ${
+      className={`inline-flex items-center gap-1 border px-2 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] ${tone} ${
         onClick ? "cursor-pointer transition hover:border-ink/40" : ""
       }`}
       onClick={onClick}
@@ -170,7 +170,7 @@ export function TagPicker({
             <button
               type="button"
               onClick={() => add(asSlug)}
-              className="rounded-xl border border-blue/40 bg-blue/5 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[.08em] text-blue transition hover:bg-blue/10"
+              className="rounded-xl border border-blue/40 bg-blue/5 px-2 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] text-blue transition hover:bg-blue/10"
             >
               + {typed.trim()}
             </button>
@@ -237,7 +237,7 @@ export function TagManager({ onClose }: { onClose: () => void }) {
         <Button size="sm" onClick={() => setCreating((open) => !open)}>
           {creating ? "Cancel" : "New tag"}
         </Button>
-        <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           {tags.length} tag{tags.length === 1 ? "" : "s"} ·{" "}
           {tags.filter((tag) => tag.autoCreated).length} coined by a capture
         </span>
@@ -273,12 +273,12 @@ export function TagManager({ onClose }: { onClose: () => void }) {
           ) : (
             <div key={tag.id} className="rounded-xl flex flex-wrap items-center gap-3 border border-line px-3 py-2">
               <TagChip slug={tag.slug} lookup={new Map([[tag.slug, tag]])} />
-              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+              <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 {tag.leads} lead{tag.leads === 1 ? "" : "s"}
                 {tag.groups > 0 ? ` · ${tag.groups} list${tag.groups === 1 ? "" : "s"}` : ""}
               </span>
               {tag.autoCreated && (
-                <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted" title="Coined by a capture, an import or a webhook">
+                <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted" title="Coined by a capture, an import or a webhook">
                   auto
                 </span>
               )}
@@ -287,7 +287,7 @@ export function TagManager({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 onClick={() => setEditing(tag.id)}
-                className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+                className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
               >
                 Edit
               </button>
@@ -302,7 +302,7 @@ export function TagManager({ onClose }: { onClose: () => void }) {
                   }
                 }}
                 disabled={remove.isPending}
-                className="font-mono text-[10px] uppercase tracking-[.14em] text-danger-text/70 transition hover:text-danger-text"
+                className="font-sans text-[11px] uppercase tracking-[.06em] text-danger-text/70 transition hover:text-danger-text"
               >
                 Delete
               </button>
@@ -371,7 +371,7 @@ function TagForm({
       </Field>
 
       {tag && (
-        <p className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+        <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Stored as {tag.slug} — renaming does not change that, so nothing loses the tag.
         </p>
       )}

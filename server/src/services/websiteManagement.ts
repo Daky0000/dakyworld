@@ -7,6 +7,7 @@ import { prisma } from "../lib/prisma.js";
 import { buildPublishPlan, discoverFields, describeChanges, parse, editingSource } from "./website/index.js";
 import { pageSource, WebsiteError } from "./website/site.js";
 import { sniff } from "../lib/fileType.js";
+import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets.js";
 import { assertWebsiteConnectionChange, canManageWebsiteConnection } from "./websiteAccess.js";
 
@@ -90,9 +91,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const formats: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
     if (!mime || !formats[mime]) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP or GIF image. SVG and executable formats are not supported.");
     if (content.length > 5_000_000 || !content.length) throw new WebsiteError(400, "Choose an image smaller than 5 MB.");
+    const optimized = await optimizeImageBuffer(content);
     const asset = await prisma.$transaction(async tx => {
-      const uploaded = await tx.siteAsset.create({ data: { siteId: site.id, filename: input.filename, repoPath: `assets/dw/${randomUUID()}.${formats[mime]}`, contentType: mime, content, size: content.length, alt: input.alt } });
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${input.filename}`, ...actor(req), detail: { assetId: uploaded.id, contentType: mime, bytes: content.length } } });
+      const uploaded = await tx.siteAsset.create({ data: { siteId: site.id, filename: input.filename, repoPath: `assets/dw/${randomUUID()}.${optimized.extension}`, contentType: optimized.contentType, content: optimized.content, size: optimized.content.length, alt: input.alt } });
+      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${input.filename}`, ...actor(req), detail: { assetId: uploaded.id, contentType: optimized.contentType, bytes: optimized.content.length, strippedExif: optimized.strippedExif } } });
       return uploaded;
     });
     res.status(201).json({ id: asset.id, url: assetUrl(site, asset.repoPath), alt: asset.alt });

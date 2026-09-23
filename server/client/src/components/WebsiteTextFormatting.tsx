@@ -42,8 +42,8 @@ export function WebsiteTextFormatting({ element, readOnly, onChange, hideWhenEmp
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <label className="flex items-center gap-1">Text colour<input aria-label="Selected text colour" type="color" value={colour} onChange={event => { setColour(event.target.value); apply({ color: event.target.value }); }} className="h-8 w-9" /></label>
       <label className="flex items-center gap-1">Highlight<input aria-label="Selected text highlight" type="color" value={highlight} onChange={event => { setHighlight(event.target.value); apply({ "background-color": event.target.value }); }} className="h-8 w-9" /></label>
-      {([['Bold', { 'font-weight': '700' }], ['Italic', { 'font-style': 'italic' }], ['Underline', { 'text-decoration': 'underline' }]] as const).map(([label, styles]) => <button key={label} type="button" onMouseDown={event => event.preventDefault()} onClick={() => apply(styles)} className="rounded-lg border border-line bg-white px-2 py-1.5 disabled:opacity-40">{label}</button>)}
-      <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => apply({ "font-weight": "normal", "font-style": "normal" })} className="rounded-lg border border-line bg-white px-2 py-1.5 disabled:opacity-40">Regular weight & style</button>
+      {([['Bold', { 'font-weight': '700' }], ['Italic', { 'font-style': 'italic' }], ['Underline', { 'text-decoration': 'underline' }]] as const).map(([label, styles]) => <button key={label} type="button" onMouseDown={event => event.preventDefault()} onClick={() => apply(styles)} className="rounded-[10px] border border-line bg-white px-2 py-1.5 disabled:opacity-40">{label}</button>)}
+      <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => apply({ "font-weight": "normal", "font-style": "normal" })} className="rounded-[10px] border border-line bg-white px-2 py-1.5 disabled:opacity-40">Regular weight & style</button>
     </div>
   </fieldset>;
 }

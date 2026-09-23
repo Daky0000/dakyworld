@@ -94,7 +94,7 @@ export function AgentHiring() {
   return (
     <section className="space-y-3">
       <div>
-        <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Hiring</h2>
+        <h2 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Hiring</h2>
         <p className="mt-0.5 text-xs text-muted">
           When an agent hits work no craft here covers, it says so. The Agent Creator decides whether that needs somebody new.
         </p>
@@ -172,7 +172,7 @@ export function AgentHiring() {
 
       {openGaps.length > 0 && (
         <Card>
-          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Crafts nobody here has</p>
+          <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Crafts nobody here has</p>
           <ul className="mt-2 space-y-2">
             {openGaps.map((gap) => (
               <li key={gap.id} className="text-sm">

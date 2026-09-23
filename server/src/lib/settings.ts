@@ -123,6 +123,8 @@ export const SETTING = {
    * `ANTHROPIC_MODEL` to put the whole workforce back on one model.
    */
   ANTHROPIC_MODEL_ECONOMY: "anthropic.model.economy",
+  /** Concurrency ceiling for agent task executions across the process. Defaults to 6. */
+  AGENT_CONCURRENCY_LIMIT: "agents.maxConcurrentTasks",
   /**
    * Per-model rate overrides as JSON, so a price change doesn't need a
    * redeploy: `{"claude-opus-5":{"inputPerMTok":5,"outputPerMTok":25}}`.

@@ -385,6 +385,21 @@ export const COLD_EMAIL_SCENARIOS: ColdEmailScenario[] = [
     exampleAsk: "If useful, I can send the detail; otherwise, no reply is needed.",
     guard: "Requires a real earlier conversation and a real new fact. Without both it is not a reconnection, it is another cold email.",
   },
+  {
+    number: 19,
+    key: "concept-pitch",
+    name: "We built a working preview of your website",
+    signals: ["concept-ready", "site-built"],
+    manual: false,
+    priority: 92,
+    contact: "Founder, MD, or Decision Maker",
+    subjectExamples: ["A preview of {{company}}'s website", "Live concept for {{company}}", "Working preview for {{company}}"],
+    guidance:
+      "Open directly with what was built: a live, working interactive preview designed specifically for their business. Provide the preview link clearly on its own line. Highlight one or two tailored details from the brief (e.g. mobile responsiveness, quick booking/inquiry flow, modern layout, fast load). State plainly that it is functional, testable right now on phones and computers, and carries zero commitment or cost to explore. Close with a low-friction question asking if they would like to review it or see any adjustments.",
+    exampleAsk: "Would you like to take a look, or have us adjust anything on it?",
+    guard:
+      "Only send when a checked preview link or website actually exists in the context facts. Do not invent features that are not on the demo or site page. Never claim the website is already their official live domain.",
+  },
 ];
 
 const BY_KEY = new Map(COLD_EMAIL_SCENARIOS.map((scenario) => [scenario.key, scenario]));

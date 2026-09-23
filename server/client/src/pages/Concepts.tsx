@@ -1,23 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { Badge, Button, Card, EmptyState, PageHeader, RelativeTime } from "../components/ui";
-
-/**
- * The review queue: every lead part-way through the concept workflow, and the
- * two decisions that let one move.
- *
- * The screen is built around the fact that **approving the page and approving
- * the outreach are different judgements**. The first is about a thing carrying
- * somebody else's business name — are these their services, does it claim
- * anything we cannot support, does it hold up on a phone. The second is about a
- * letter going to a person. One button standing for both would mean a page
- * signed off by somebody who never read the email.
- *
- * Nothing here can be ticked from the list. Both decisions open the lead's own
- * file first, because the only honest way to sign off a page is to have opened
- * it.
- */
+import { Badge, Button, Card, EmptyState, Loading, PageHeader, RelativeTime, StatGrid, StatTile } from "../components/ui";
 
 interface ConceptRow {
   id: string;
@@ -101,6 +85,7 @@ const STAGE_TONE: Record<string, "default" | "positive" | "muted" | "warn" | "da
 export function Concepts() {
   const qc = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string>("ALL");
 
   const { data, isLoading } = useQuery({
     queryKey: ["concepts"],
@@ -114,69 +99,194 @@ export function Concepts() {
 
   const concepts = data?.concepts ?? [];
 
+  // Summary Metrics
+  const stats = useMemo(() => {
+    let needsReview = 0;
+    let approved = 0;
+    let inBuilding = 0;
+    let failingChecks = 0;
+
+    for (const c of concepts) {
+      if (c.stage === "NEEDS_REVIEW" || c.stage === "PREVIEW_CHECKED") needsReview++;
+      else if (c.stage === "APPROVED" || c.stage === "EMAIL_READY") approved++;
+      else if (c.stage === "BUILDING") inBuilding++;
+      if (c.checksPassed === false) failingChecks++;
+    }
+
+    return {
+      total: concepts.length,
+      needsReview,
+      approved,
+      inBuilding,
+      failingChecks,
+    };
+  }, [concepts]);
+
+  // Filtered concepts
+  const filtered = useMemo(() => {
+    if (filter === "ALL") return concepts;
+    if (filter === "REVIEW") {
+      return concepts.filter((c) => c.stage === "NEEDS_REVIEW" || c.stage === "PREVIEW_CHECKED");
+    }
+    if (filter === "APPROVED") {
+      return concepts.filter((c) => c.stage === "APPROVED" || c.stage === "EMAIL_READY" || c.stage === "SENT");
+    }
+    if (filter === "BUILDING") {
+      return concepts.filter((c) => c.stage === "BUILDING" || c.stage === "AUDIT_COMPLETE");
+    }
+    return concepts.filter((c) => c.stage === filter);
+  }, [concepts, filter]);
+
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
-        title="Concept review"
+        title="Concept Review"
         subtitle="Leads with a homepage concept in progress. Nothing here reaches a prospect until the page has been checked and the letter approved."
+        action={
+          <div className="flex items-center gap-2">
+            <Badge tone={data?.autoRedesign ? "info" : "muted"}>
+              {data?.autoRedesign ? "Auto Pilot On" : "Auto Pilot Off"}
+            </Badge>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setAuto.mutate(!data?.autoRedesign)}
+              disabled={setAuto.isPending}
+            >
+              {data?.autoRedesign ? "Disable Auto Pilot" : "Enable Auto Pilot"}
+            </Button>
+          </div>
+        }
       />
 
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <Badge tone={data?.autoRedesign ? "info" : "muted"}>{data?.autoRedesign ? "Automatic redesigns on" : "Automatic redesigns off"}</Badge>
-        <Button variant="secondary" size="sm" onClick={() => setAuto.mutate(!data?.autoRedesign)}>
-          {data?.autoRedesign ? "Switch automatic redesigns off" : "Switch automatic redesigns on"}
-        </Button>
-        <p className="text-sm text-muted">
-          While this is off, a lead with a poor site is recorded as eligible and left alone — pages are built by hand, one at a time.
-        </p>
+      {/* Metrics Seam Grid */}
+      <StatGrid columns={4}>
+        <StatTile
+          label="In Concept Pipeline"
+          value={stats.total}
+          sub="Total active concept flows"
+        />
+        <StatTile
+          label="Awaiting Human Review"
+          value={stats.needsReview}
+          sub={stats.needsReview > 0 ? "Requires page inspection" : "All current"}
+        />
+        <StatTile
+          label="Ready to Send"
+          value={stats.approved}
+          sub="Approved & queued outreach"
+        />
+        <StatTile
+          label="Automated QA Checks"
+          value={stats.failingChecks > 0 ? `${stats.failingChecks} failing` : "100% passed"}
+          sub={stats.failingChecks > 0 ? "Fix before approving" : "All previews verified"}
+        />
+      </StatGrid>
+
+      {/* Status Filter Tabs */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-line pb-3">
+        {[
+          ["ALL", "All Concepts", concepts.length],
+          ["REVIEW", "Needs Review", stats.needsReview],
+          ["APPROVED", "Approved", stats.approved],
+          ["BUILDING", "In Generation", stats.inBuilding],
+        ].map(([key, label, count]) => {
+          const isActive = filter === key;
+          return (
+            <button
+              key={key as string}
+              type="button"
+              onClick={() => setFilter(key as string)}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition  ${
+                isActive
+                  ? "bg-ink text-white"
+                  : "border border-line bg-white text-muted hover:border-ink/40 hover:text-ink"
+              }`}
+            >
+              <span>{label as string}</span>
+              <span
+                className={`rounded-full px-1.5 py-0.2 text-[11px] font-mono ${
+                  isActive ? "bg-white/20 text-white" : "bg-sunken text-muted"
+                }`}
+              >
+                {count as number}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {isLoading ? <p className="text-sm text-muted">Loading…</p> : null}
+      {isLoading ? (
+        <Loading label="Loading concept queue" rows={4} />
+      ) : filtered.length === 0 ? (
+        <EmptyState message="Nothing is currently part-way through the concept workflow." />
+      ) : (
+        <div className="space-y-3.5">
+          {filtered.map((concept) => {
+            const isExpanded = open === concept.leadId;
+            return (
+              <Card key={concept.id} interactive className="p-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-display text-base font-medium text-ink">
+                        {concept.lead.companyName ?? concept.lead.contactName}
+                      </h3>
+                      <Badge tone={STAGE_TONE[concept.stage] ?? "default"}>
+                        {STAGE_LABEL[concept.stage] ?? concept.stage}
+                      </Badge>
+                      <Badge tone="muted">{concept.kind === "REDESIGN" ? "Redesign" : "First site"}</Badge>
+                      {concept.redesignScore !== null && (
+                        <Badge tone="muted">{concept.redesignScore}/100 design score</Badge>
+                      )}
+                      {concept.sendUncertain && <Badge tone="danger">Send unresolved</Badge>}
+                    </div>
 
-      {!isLoading && concepts.length === 0 ? <EmptyState message="Nothing is part-way through the concept workflow." /> : null}
+                    {concept.reason && <p className="mt-1.5 text-xs text-muted max-w-3xl">{concept.reason}</p>}
 
-      <div className="space-y-3">
-        {concepts.map((concept) => (
-          <Card key={concept.id}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate text-base font-medium text-ink">{concept.lead.companyName ?? concept.lead.contactName}</h3>
-                  <Badge tone={STAGE_TONE[concept.stage] ?? "default"}>{STAGE_LABEL[concept.stage] ?? concept.stage}</Badge>
-                  <Badge tone="muted">{concept.kind === "REDESIGN" ? "Redesign" : "First site"}</Badge>
-                  {concept.redesignScore !== null ? <Badge tone="muted">{concept.redesignScore}/100 on how it looks</Badge> : null}
-                  {concept.sendUncertain ? <Badge tone="danger">Send unresolved</Badge> : null}
+                    <p className="mt-2 text-xs text-muted">
+                      Updated <RelativeTime value={concept.updatedAt} />
+                      {concept.checksPassed === false && (
+                        <span className="text-danger font-semibold">
+                          {" "}· {concept.checksFailed} automated check{concept.checksFailed === 1 ? "" : "s"} failing
+                        </span>
+                      )}
+                      {concept.previewVersion !== null &&
+                        concept.checkedVersion !== null &&
+                        concept.previewVersion !== concept.checkedVersion && (
+                          <span className="text-warn-text"> · rebuilt since checked</span>
+                        )}
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {concept.previewUrl && (
+                      <a
+                        href={concept.previewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-full border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:border-ink/40 hover:bg-sunken"
+                      >
+                        Open Page
+                      </a>
+                    )}
+                    <Button
+                      size="sm"
+                      variant={isExpanded ? "secondary" : "primary"}
+                      onClick={() => setOpen(isExpanded ? null : concept.leadId)}
+                    >
+                      <span>{isExpanded ? "Close" : "Review Concept"}</span>
+
+                    </Button>
+                  </div>
                 </div>
-                {concept.reason ? <p className="mt-2 max-w-3xl text-sm text-muted">{concept.reason}</p> : null}
-                <p className="mt-2 text-xs text-muted">
-                  Updated <RelativeTime value={concept.updatedAt} />
-                  {concept.checksPassed === false ? ` · ${concept.checksFailed} automated check${concept.checksFailed === 1 ? "" : "s"} failing` : ""}
-                  {concept.previewVersion !== null && concept.checkedVersion !== null && concept.previewVersion !== concept.checkedVersion
-                    ? " · rebuilt since it was checked"
-                    : ""}
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                {concept.previewUrl ? (
-                  <a
-                    className="rounded-full border border-line px-3 py-1.5 text-sm text-ink hover:bg-sunken"
-                    href={concept.previewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open the page
-                  </a>
-                ) : null}
-                <Button size="sm" onClick={() => setOpen(open === concept.leadId ? null : concept.leadId)}>
-                  {open === concept.leadId ? "Close" : "Review"}
-                </Button>
-              </div>
-            </div>
 
-            {open === concept.leadId ? <ConceptDetail leadId={concept.leadId} /> : null}
-          </Card>
-        ))}
-      </div>
+                {isExpanded && <ConceptDetail leadId={concept.leadId} />}
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -206,146 +316,120 @@ function ConceptDetail({ leadId }: { leadId: string }) {
     onSuccess: invalidate,
   });
 
-  if (isLoading || !data) return <p className="mt-4 text-sm text-muted">Loading…</p>;
+  if (isLoading || !data) return <p className="mt-4 text-xs text-muted">Loading detail…</p>;
 
   const allTicked = data.reviewerChecks.every((entry) => confirmed.includes(entry.id));
 
   return (
-    <div className="mt-6 space-y-6 border-t border-line pt-6">
-      <div className="grid gap-6 md:grid-cols-2">
-        <section>
-          <h4 className="mb-2 text-sm font-medium text-ink">What they have now</h4>
+    <div className="mt-5 space-y-5 border-t border-line/60 pt-5">
+      <div className="grid gap-5 md:grid-cols-2">
+        <section className="rounded-xl border border-line/60 bg-sunken/40 p-4">
+          <h4 className="font-display text-xs font-medium text-ink">What they have now</h4>
           {data.lead.website ? (
-            <a className="text-sm text-ink underline" href={data.lead.website} target="_blank" rel="noreferrer">
+            <a className="mt-1 block text-xs text-blue underline" href={data.lead.website} target="_blank" rel="noreferrer">
               {data.lead.website}
             </a>
           ) : (
-            <p className="text-sm text-muted">No website on file — the page is the whole argument.</p>
+            <p className="mt-1 text-xs text-muted">No website on file — the concept is the whole argument.</p>
           )}
           {data.audit ? (
-            <p className="mt-2 text-sm text-muted">
-              Reviewed <RelativeTime value={data.audit.ranAt} />: {data.audit.overallScore}/100, {data.audit.verdict}.
+            <p className="mt-2 text-xs text-muted">
+              Audited <RelativeTime value={data.audit.ranAt} />: <span className="font-semibold text-ink">{data.audit.overallScore}/100</span>, {data.audit.verdict}.
             </p>
           ) : (
-            <p className="mt-2 text-sm text-muted">No website review on file.</p>
+            <p className="mt-2 text-xs text-muted">No website review on file.</p>
           )}
         </section>
 
-        <section>
-          <h4 className="mb-2 text-sm font-medium text-ink">The concept</h4>
+        <section className="rounded-xl border border-line/60 bg-sunken/40 p-4">
+          <h4 className="font-display text-xs font-medium text-ink">The concept</h4>
           {data.preview ? (
-            <p className="text-sm text-muted">
-              <a className="text-ink underline" href={data.preview.url} target="_blank" rel="noreferrer">
+            <div className="mt-1 text-xs text-muted">
+              <a className="font-medium text-blue underline" href={data.preview.url} target="_blank" rel="noreferrer">
                 {data.preview.url}
               </a>
-              {" — "}version {data.preview.version}, opened {data.preview.views} time{data.preview.views === 1 ? "" : "s"}.
-            </p>
+              <div className="mt-1">
+                Version {data.preview.version} · Opened {data.preview.views} time{data.preview.views === 1 ? "" : "s"}.
+              </div>
+            </div>
           ) : (
-            <p className="text-sm text-muted">Nothing built yet.</p>
+            <p className="mt-1 text-xs text-muted">Nothing built yet.</p>
           )}
         </section>
       </div>
 
-      <section>
-        <div className="mb-2 flex items-center justify-between">
-          <h4 className="text-sm font-medium text-ink">Automated checks</h4>
-          <Button size="sm" variant="secondary" onClick={() => recheck.mutate()}>
-            Run them again
+      <section className="rounded-xl border border-line/60 bg-white p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h4 className="font-display text-xs font-medium text-ink">Automated QA Checks</h4>
+          <Button size="sm" variant="secondary" onClick={() => recheck.mutate()} disabled={recheck.isPending}>
+            {recheck.isPending ? "Rechecking…" : "Run QA Recheck"}
           </Button>
         </div>
         {data.checks ? (
-          <ul className="space-y-1">
-            {data.checks.checks.map((entry) => (
-              <li key={entry.id} className="text-sm">
-                <span className={entry.ok ? "text-positive-text" : "text-danger-text"}>{entry.ok ? "✓" : "✗"}</span>{" "}
-                <span className="text-ink">{entry.label}</span>
-                {entry.detail ? <span className="text-muted"> — {entry.detail}</span> : null}
-              </li>
+          <div className="space-y-2">
+            {data.checks.checks.map((c) => (
+              <div key={c.id} className="flex items-center justify-between text-xs">
+                <span className={c.ok ? "text-ink" : "font-semibold text-danger"}>
+                  {c.ok ? "Passed:" : "Needs review:"} {c.label}
+                </span>
+                {c.detail && <span className="text-muted font-mono text-[11px]">{c.detail}</span>}
+              </div>
             ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted">Not checked yet.</p>
-        )}
-      </section>
-
-      <section>
-        <h4 className="mb-2 text-sm font-medium text-ink">What only you can check</h4>
-        <ul className="space-y-2">
-          {data.reviewerChecks.map((entry) => (
-            <li key={entry.id} className="flex items-start gap-2 text-sm text-ink">
-              <input
-                id={`${leadId}-${entry.id}`}
-                type="checkbox"
-                className="mt-1"
-                checked={confirmed.includes(entry.id)}
-                onChange={(event) =>
-                  setConfirmed((current) => (event.target.checked ? [...current, entry.id] : current.filter((id) => id !== entry.id)))
-                }
-              />
-              <label htmlFor={`${leadId}-${entry.id}`}>{entry.label}</label>
-            </li>
-          ))}
-        </ul>
-        <textarea
-          className="mt-3 w-full rounded-xl border border-line p-3 text-sm"
-          rows={3}
-          placeholder="Notes — required if you are sending it back."
-          value={notes}
-          onChange={(event) => setNotes(event.target.value)}
-        />
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" disabled={!allTicked || !data.checks?.passed} onClick={() => review.mutate("pass")}>
-            The page is fit to be seen
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => review.mutate("reject")}>
-            Send it back
-          </Button>
-        </div>
-        {!data.checks?.passed ? (
-          <p className="mt-2 text-sm text-muted">The automated checks have to pass before the page can be signed off.</p>
-        ) : null}
-      </section>
-
-      <section>
-        <h4 className="mb-2 text-sm font-medium text-ink">The outreach</h4>
-        {data.proposal ? (
-          <p className="text-sm text-muted">
-            Proposal: {data.proposal.title} — {data.proposal.currency} {data.proposal.priceAmount}
-          </p>
-        ) : (
-          <p className="text-sm text-muted">No proposal attached.</p>
-        )}
-        {data.email ? (
-          <div className="mt-2 rounded-xl border border-line p-3">
-            <p className="text-sm text-ink">
-              To {data.email.toEmail} — <strong>{data.email.subject}</strong>
-            </p>
-            <div className="mt-2 max-h-64 overflow-auto text-sm text-muted" dangerouslySetInnerHTML={{ __html: data.email.bodyHtml }} />
           </div>
         ) : (
-          <p className="mt-2 text-sm text-muted">No letter drafted yet.</p>
+          <p className="text-xs text-muted">No checks recorded yet.</p>
         )}
-        <div className="mt-3">
-          <Button size="sm" variant="accent" disabled={!data.gate.ok || !data.email} onClick={() => approve.mutate()}>
-            Approve this exact page, proposal and letter
-          </Button>
-        </div>
-        {!data.gate.ok ? <p className="mt-2 text-sm text-muted">{data.gate.reason}</p> : null}
-        <p className="mt-2 text-xs text-muted">
-          Editing any of them afterwards voids this approval — the send compares what is about to go with what you signed off.
-        </p>
       </section>
 
-      <section>
-        <h4 className="mb-2 text-sm font-medium text-ink">How it got here</h4>
-        <ol className="space-y-1">
-          {data.concept.history.map((entry, index) => (
-            <li key={`${entry.stage}-${index}`} className="text-sm text-muted">
-              <span className="text-ink">{STAGE_LABEL[entry.stage] ?? entry.stage}</span> · <RelativeTime value={entry.at} />
-              {entry.reason ? ` — ${entry.reason}` : ""}
-            </li>
-          ))}
-        </ol>
+      <section className="rounded-xl border border-line bg-white p-4">
+        <h4 className="font-display text-xs font-medium text-ink mb-2">Reviewer Checklist</h4>
+        <div className="space-y-2">
+          {data.reviewerChecks.map((rc) => {
+            const isChecked = confirmed.includes(rc.id);
+            return (
+              <label key={rc.id} className="flex items-center gap-2 text-xs text-ink cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={(e) => {
+                    if (e.target.checked) setConfirmed([...confirmed, rc.id]);
+                    else setConfirmed(confirmed.filter((id) => id !== rc.id));
+                  }}
+                  className="rounded"
+                />
+                <span>{rc.label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => review.mutate("pass")}
+            disabled={!allTicked || review.isPending}
+          >
+            Sign off page
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => review.mutate("reject")}
+            disabled={review.isPending}
+          >
+            Reject concept
+          </Button>
+          {data.concept.stage === "NEEDS_REVIEW" && (
+            <Button
+              size="sm"
+              variant="accent"
+              onClick={() => approve.mutate()}
+              disabled={approve.isPending || !data.gate.ok}
+            >
+              Approve for Outreach
+            </Button>
+          )}
+        </div>
       </section>
     </div>
   );

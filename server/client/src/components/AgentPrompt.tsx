@@ -2,7 +2,58 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { AgentDetail, CompiledPrompt, OrganisedPrompt, ShippedPrompt, WriterBrief } from "../lib/types";
-import { Button, Field } from "./ui";
+import { Badge, Button, Field } from "./ui";
+
+export interface SavedPromptPreset {
+  id: string;
+  name: string;
+  category: "bidding" | "scope" | "pitch" | "quality";
+  description: string;
+  snippet: string;
+}
+
+export const SAVED_PROMPT_PRESETS: SavedPromptPreset[] = [
+  {
+    id: "raise-bid-commercial",
+    name: "Commercial Bid Escalation",
+    category: "bidding",
+    description: "Evaluates context signals (reviews, branches, tech debt) to raise project bids from baseline to high-value tiers (GHS 7.5k-18k+).",
+    snippet: `COMMERCIAL VALUE & BID ESCALATION DIRECTIVE:
+- When reviewing client context, inspect operational volume signals: review counts (50+ / 200+), multi-branch footprint, CMS vulnerabilities, and booking friction.
+- Proactively escalate proposal recommendations: do not default to single-page baseline builds (GHS 3,500 / $500). Recommend comprehensive redesigns or automation packages (GHS 7,500 to GHS 18,000+ / $1,500 to $3,500+) with clear operational justification.
+- Anchor all pricing in observed business liabilities rather than generic estimates.`,
+  },
+  {
+    id: "strict-scope-fenced",
+    name: "Strict Scope & Evidence Fence",
+    category: "scope",
+    description: "Forces agent to reason only within provided context facts and strictly within its assigned craft toolkit.",
+    snippet: `STRICT SCOPE & GROUNDED REASONING FENCE:
+- Reason ONLY from explicit facts provided in your task context, database records, and tool outputs. Never assume or extrapolate unobserved claims.
+- Find solutions strictly within your assigned scope. If a problem touches domains outside your craft, stop and route via consult, handOff, or escalate.
+- Propose finished, actionable deliverables without speculative filler.`,
+  },
+  {
+    id: "website-product-pitch",
+    name: "Website & Product Pitch Specialist",
+    category: "pitch",
+    description: "Directs outreach writer to pitch custom-built websites/demos with preview link, mobile readiness, and low friction.",
+    snippet: `PRODUCT & WEBSITE PITCH DOCTRINE:
+- Lead directly with what was built: introduce the live working preview/concept built specifically for the client's business.
+- Provide the preview link on its own line. Highlight 1-2 concrete features (mobile optimization, quick contact CTA, fast load).
+- State that it is live and testable on phones/desktops with zero obligation. End with a simple, friendly ask for feedback.`,
+  },
+  {
+    id: "high-conversion-proposer",
+    name: "High-Conversion Proposal Closer",
+    category: "bidding",
+    description: "Structures proposals around concrete audit evidence, phased deliverables, and ongoing monthly care plans.",
+    snippet: `PROPOSAL CONVERSION & VALUE STRUCTURING:
+- Map every proposal line item directly to an observed audit finding with verifiable evidence.
+- Structure scope into clear phases: Build, Migration/Automation, and Handover.
+- Always include an ongoing maintenance and care plan tier (GHS 750 - 2,500/mo) to protect their digital investment.`,
+  },
+];
 
 /**
  * The instruction, as the model actually receives it.
@@ -142,6 +193,19 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
     onError: (err: Error) => setNotice(err.message),
   });
 
+  const [showSavedPrompts, setShowSavedPrompts] = useState(false);
+
+  const applyPreset = (preset: SavedPromptPreset, action: "append" | "replace") => {
+    if (action === "append") {
+      setProse((prev) => (prev.trim() ? `${prev.trim()}\n\n${preset.snippet}` : preset.snippet));
+      setNotice(`Appended "${preset.name}" to instruction. Review below and save.`);
+    } else {
+      setProse(preset.snippet);
+      setNotice(`Replaced instruction with "${preset.name}". Review below and save.`);
+    }
+    setMode("prose");
+  };
+
   const { data: shipped } = useQuery({
     queryKey: ["agent-shipped", agent.key],
     queryFn: () => api.get<ShippedPrompt>(`/agents/${agent.key}/prompt/shipped`),
@@ -158,31 +222,40 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Its system prompt</h3>
+        <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Its system prompt</h3>
         {compiled?.overridden && (
-          <span className="font-mono text-[9px] uppercase tracking-[.1em] text-blue" title="Written here, replacing the ten shipped sections">
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-blue" title="Written here, replacing the ten shipped sections">
             rewritten
           </span>
         )}
         {compiled && (
-          <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted" title="Roughly what this costs to send before the task itself">
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted" title="Roughly what this costs to send before the task itself">
             ~{compiled.approxTokens.toLocaleString()} tokens
           </span>
         )}
         <span className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setShowSavedPrompts(!showSavedPrompts)}
+          className={`font-sans text-[11px] uppercase tracking-[.06em] transition ${
+            showSavedPrompts ? "text-accent font-semibold" : "text-muted hover:text-ink"
+          }`}
+        >
+          {showSavedPrompts ? "Hide saved prompts" : "Saved prompts"}
+        </button>
         {mode === "read" ? (
           <>
             <button
               type="button"
               onClick={() => setMode("layers")}
-              className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+              className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
             >
               Edit as sections
             </button>
             <button
               type="button"
               onClick={() => setMode("prose")}
-              className="font-mono text-[10px] uppercase tracking-[.14em] text-blue transition hover:underline"
+              className="font-sans text-[11px] uppercase tracking-[.06em] text-blue transition hover:underline"
             >
               Edit
             </button>
@@ -191,12 +264,57 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
           <button
             type="button"
             onClick={() => setMode("read")}
-            className="font-mono text-[10px] uppercase tracking-[.14em] text-blue transition hover:underline"
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-blue transition hover:underline"
           >
             Done
           </button>
         )}
       </div>
+
+      {showSavedPrompts && (
+        <div className="rounded-2xl border border-line bg-cream/40 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-xs font-semibold text-ink">Saved Prompts Library</h4>
+              <p className="text-[11px] text-muted">
+                Proven prompt directives to enforce scope boundaries, pitch built products, and raise commercial bids.
+              </p>
+            </div>
+            <Badge tone="default">{SAVED_PROMPT_PRESETS.length} templates</Badge>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {SAVED_PROMPT_PRESETS.map((preset) => (
+              <div key={preset.id} className="flex flex-col justify-between rounded-xl border border-line bg-white p-3 shadow-sm">
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-ink">{preset.name}</span>
+                    <Badge tone={preset.category === "bidding" ? "positive" : preset.category === "scope" ? "warn" : "info"}>
+                      {preset.category}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted leading-relaxed">{preset.description}</p>
+                </div>
+                <div className="mt-3 flex items-center justify-end gap-2 border-t border-line/60 pt-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => applyPreset(preset, "append")}
+                  >
+                    + Append
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => applyPreset(preset, "replace")}
+                  >
+                    Replace
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isLoading && <p className="text-sm text-muted">Assembling what it is told…</p>}
 
@@ -223,7 +341,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
           */}
           {compiled.writes && compiled.writes.length > 0 && (
             <div className="rounded-xl border border-line bg-white px-3 py-2">
-              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">What this wording writes</p>
+              <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">What this wording writes</p>
               <p className="mt-0.5 text-[11px] text-muted">
                 Not only {agent.name}'s own tasks. These are written elsewhere in the app, and this instruction is what writes them.
               </p>
@@ -240,9 +358,9 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
           {compiled.regions.map((region) => (
             <div key={region.key} className={region.editable ? "" : "border-l-2 border-line pl-3"}>
               <div className="flex flex-wrap items-baseline gap-2">
-                <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{region.label}</p>
+                <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{region.label}</p>
                 {!region.editable && (
-                  <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted">assembled when it runs</span>
+                  <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">assembled when it runs</span>
                 )}
               </div>
               <p className="mt-0.5 text-[11px] text-muted">{region.source}</p>
@@ -280,7 +398,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
               <button
                 type="button"
                 onClick={() => setProse(compiled.instruction)}
-                className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+                className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
               >
                 Discard changes
               </button>
@@ -310,7 +428,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
             would be a model editing a prompt with nobody looking.
           */}
           <div className="rounded-xl border border-line bg-white px-3 py-3">
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Paste an instruction and have it sorted</p>
+            <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Paste an instruction and have it sorted</p>
             <p className="mt-0.5 text-[11px] text-muted">
               Write the doctrine however you write it — a playbook, a page of rules, a paste out of a document — and a model files it
               under the headings below. It copies your sentences and never rewrites them. Nothing is saved until you press Save sections.
@@ -379,7 +497,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
                 <button
                   type="button"
                   onClick={() => setComparing((current) => !current)}
-                  className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+                  className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                 >
                   {comparing ? "Hide shipped" : "Show shipped"}
                 </button>
@@ -390,14 +508,14 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
 
           {comparing && shipped && (
             <div className="rounded-xl space-y-3 border border-line bg-cream p-3">
-              <p className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">The wording this agent shipped with</p>
+              <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">The wording this agent shipped with</p>
               {shipped.layers
                 .filter((layer) => shipped.prompt[layer]?.trim())
                 .map((layer) => {
                   const changed = (shipped.prompt[layer] ?? "") !== (draft[layer] ?? "");
                   return (
                     <div key={layer} className={changed ? "border-l-2 border-blue pl-2" : ""}>
-                      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                      <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                         {layer}
                         {changed && <span className="ml-2 text-blue">changed</span>}
                       </p>
@@ -423,7 +541,7 @@ function ResetButton({ pending, onReset }: { pending: boolean; onReset: () => vo
           onReset();
         }
       }}
-      className="font-mono text-[10px] uppercase tracking-[.14em] text-danger-text/70 transition hover:text-danger-text"
+      className="font-sans text-[11px] uppercase tracking-[.06em] text-danger-text/70 transition hover:text-danger-text"
     >
       Reset to shipped
     </button>
@@ -504,13 +622,13 @@ function WriterBriefRow({
           {label}
         </button>
         {outward && (
-          <span className="font-mono text-[9px] uppercase tracking-[.1em] text-blue" title="Somebody outside Dakyworld reads this">
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-blue" title="Somebody outside Dakyworld reads this">
             goes outside
           </span>
         )}
         {brief && (
           <span
-            className={`font-mono text-[9px] uppercase tracking-[.1em] ${brief.edited ? "text-blue" : "text-muted"}`}
+            className={`font-sans text-[11px] uppercase tracking-[.06em] ${brief.edited ? "text-blue" : "text-muted"}`}
             title={brief.explains}
           >
             {brief.edited ? "your wording" : "shipped wording"}
@@ -539,7 +657,7 @@ function WriterBriefRow({
                   <button
                     type="button"
                     onClick={() => setText(brief.text)}
-                    className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+                    className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                   >
                     Undo
                   </button>
@@ -549,7 +667,7 @@ function WriterBriefRow({
                   <button
                     type="button"
                     onClick={() => setText(brief.shipped)}
-                    className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+                    className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                     title="Loads the shipped wording into the box. Nothing changes until you save."
                   >
                     Put the shipped wording back

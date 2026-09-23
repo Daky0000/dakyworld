@@ -335,7 +335,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
             {form.steps.map((step, index) => (
               <div key={index} className="rounded-2xl border border-line bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+                  <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                     Step {index + 1} · {index === 0 ? "after enrolment" : "after the step before"}
                   </span>
                   <div className="flex items-center gap-2">
@@ -351,7 +351,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
                     <button
                       type="button"
                       onClick={() => setForm({ ...form, steps: form.steps.filter((_, position) => position !== index) })}
-                      className="ml-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-danger-text"
+                      className="ml-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted hover:text-danger-text"
                     >
                       Remove
                     </button>

@@ -23,7 +23,26 @@ function timezones(): string[] {
       /* fall through */
     }
   }
-  return ["Africa/Accra", "Africa/Lagos", "Africa/Nairobi", "Africa/Johannesburg", "Europe/London", "America/New_York", "UTC"];
+  return [
+    "Africa/Accra",
+    "Africa/Lagos",
+    "Africa/Nairobi",
+    "Africa/Johannesburg",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Europe/Zurich",
+    "Europe/Amsterdam",
+    "Asia/Dubai",
+    "Asia/Singapore",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+    "Australia/Melbourne",
+    "America/New_York",
+    "America/Chicago",
+    "America/Los_Angeles",
+    "UTC",
+  ];
 }
 
 export type SourceDraft = Omit<ScraperSource, "id" | "createdAt" | "_count" | "runs" | "lastRunAt" | "nextRunAt"> & {
@@ -245,7 +264,7 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
           </div>
 
           <details className="mt-4 rounded-2xl border border-line bg-white">
-            <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+            <summary className="cursor-pointer px-4 py-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               Field map (only if an actor names things unusually)
             </summary>
             <div className="border-t border-line p-4">
@@ -388,7 +407,7 @@ function PreviewPanel({ preview }: { preview: MappingPreview }) {
                 <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 text-xs text-muted">
                   {(["contactEmail", "contactPhone", "website", "city", "category"] as const).map((field) => (
                     <div key={field} className="contents">
-                      <dt className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">{field}</dt>
+                      <dt className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{field}</dt>
                       <dd className="truncate">{(lead[field] as string) ?? "—"}</dd>
                     </div>
                   ))}
@@ -403,7 +422,7 @@ function PreviewPanel({ preview }: { preview: MappingPreview }) {
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">{children}</h3>;
+  return <h3 className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{children}</h3>;
 }
 
 /** Validation for the JSON textareas — a bad paste should say so, not 400 later. */

@@ -1,14 +1,9 @@
-import { useEffect, type ReactNode } from "react";
+import { Children, isValidElement, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
-/**
- * The house eyebrow — a short lime dash followed by a tracked micro-label.
- * The one piece of the marketing site's language that belongs on every
- * Dakyworld surface, including this one.
- */
+/** Quiet section label shared by every workspace page. */
 export function Eyebrow({ children }: { children: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[.15em] text-muted">
-      <span className="h-[3px] w-[22px] shrink-0 rounded-full bg-lime" aria-hidden />
+    <span className="os-eyebrow">
       {children}
     </span>
   );
@@ -29,11 +24,11 @@ export function PageHeader({
     // Wraps rather than overflows. `items-end` on a row that cannot fit its
     // action pushed the button off the right edge on a narrow window, which is
     // where the one thing you came to the page to do usually lives.
-    <div className="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+    <div className="os-page-header">
       <div className="min-w-0">
         {eyebrow && <div className="mb-3">{<Eyebrow>{eyebrow}</Eyebrow>}</div>}
-        <h1 className="font-display text-3xl tracking-[-.03em]">{title}</h1>
-        {subtitle && <p className="mt-1 max-w-2xl text-sm text-muted">{subtitle}</p>}
+        <h1 className="os-page-title">{title}</h1>
+        {subtitle && <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">{subtitle}</p>}
       </div>
       {action}
     </div>
@@ -80,13 +75,21 @@ export function Card({
   children,
   className = "",
   flush,
+  interactive,
 }: {
   children: ReactNode;
   className?: string;
   flush?: boolean;
+  interactive?: boolean;
 }) {
   return (
-    <div className={`overflow-hidden rounded-2xl border border-line bg-white ${flush ? "" : "p-6"} ${className}`}>
+    <div
+      className={`os-card overflow-hidden rounded-2xl border border-line bg-white transition-colors duration-200 ${
+        interactive
+          ? "cursor-pointer hover:border-blue"
+          : ""
+      } ${flush ? "" : "p-6"} ${className}`}
+    >
       {children}
     </div>
   );
@@ -103,36 +106,24 @@ export function Badge({
   // reach for it — warn is ochre, danger is the cool red, and both come from
   // the status families in tailwind.config.js rather than from Tailwind stock.
   const toneClass = {
-    default: "text-ink bg-ink/10",
-    positive: "text-positive-text bg-positive-surface",
-    warn: "text-warn-text bg-warn-surface",
-    danger: "text-danger-text bg-danger-surface",
-    info: "text-info-text bg-info-surface",
-    muted: "text-muted bg-sunken",
+    default: "text-ink bg-ink/10 border-ink/10",
+    positive: "text-positive-text bg-positive-surface border-positive-line/50",
+    warn: "text-warn-text bg-warn-surface border-warn-line/50",
+    danger: "text-danger-text bg-danger-surface border-danger-line/50",
+    info: "text-info-text bg-info-surface border-info-line/50",
+    muted: "text-muted bg-sunken border-line",
   }[tone];
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[.1em] ${toneClass}`}
+      className={`os-badge inline-flex items-center rounded-[10px] border px-2.5 py-1 text-[11px] font-medium ${toneClass}`}
     >
       {children}
     </span>
   );
 }
 
-/**
- * The dark circular arrow that rides inside an accent button (design system
- * §19). Exported so a page can put one on a link that is not a Button.
- */
-export function Pip({ children = "↗" }: { children?: ReactNode }) {
-  return (
-    <span
-      className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink text-[11px] leading-none text-lime transition-transform group-hover:translate-x-px group-hover:-translate-y-px"
-      aria-hidden
-    >
-      {children}
-    </span>
-  );
-}
+/** Kept for existing imports; the interface uses text-only actions. */
+export function Pip(_props: { children?: ReactNode }) { return null; }
 
 export function Button({
   children,
@@ -159,11 +150,11 @@ export function Button({
   className?: string;
 }) {
   const base =
-    "group inline-flex items-center gap-2 rounded-full font-semibold transition disabled:pointer-events-none disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue";
-  const sizing = size === "sm" ? "px-3 py-1.5 text-[11px]" : "px-4 py-2 text-[13px]";
+    "os-button group inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue";
+  const sizing = size === "sm" ? "px-3.5 py-2 text-xs" : "px-4 py-2.5 text-[13px]";
   const styles = {
-    primary: "bg-ink text-white hover:-translate-y-px hover:shadow-lift",
-    accent: "bg-lime text-ink hover:-translate-y-px hover:shadow-accent",
+    primary: "bg-ink text-white hover:bg-blue",
+    accent: "bg-lime text-ink hover:bg-lime/80",
     secondary: "border border-line text-ink hover:border-ink/40 hover:bg-sunken",
     ghost: "text-muted hover:text-ink",
     // Quiet until pointed at, then unmistakable. A red-outlined pill sitting
@@ -182,7 +173,7 @@ export function Button({
 
 export function Table({ children }: { children: ReactNode }) {
   return (
-    <div className="overflow-x-auto rounded-2xl border border-line bg-white">
+    <div className="os-table overflow-x-auto rounded-2xl border border-line bg-white">
       <table className="w-full min-w-[640px] text-left text-sm">{children}</table>
     </div>
   );
@@ -199,7 +190,7 @@ export function Table({ children }: { children: ReactNode }) {
 export function Thead({ children }: { children: ReactNode }) {
   return (
     <thead>
-      <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">{children}</tr>
+      {Children.toArray(children).some(child => isValidElement(child) && child.type === "tr") ? children : <tr className="border-b border-line bg-sunken text-xs font-medium text-muted">{children}</tr>}
     </thead>
   );
 }
@@ -214,7 +205,7 @@ export function Th({
   className?: string;
 }) {
   const alignment = align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left";
-  return <th className={`px-4 py-3 font-normal ${alignment} ${className}`}>{children}</th>;
+  return <th className={`px-5 py-4 font-medium ${alignment} ${className}`}>{children}</th>;
 }
 
 export function Td({
@@ -268,7 +259,7 @@ export function Money({ amount, currency = "GHS" }: { amount: number | string; c
 
 export function EmptyState({ message, action }: { message: string; action?: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-dashed border-line-strong bg-white/40 p-10 text-center text-sm text-muted">
+    <div className="os-empty rounded-2xl border border-line bg-sunken p-10 text-center text-sm leading-relaxed text-muted">
       <p>{message}</p>
       {action && <div className="mt-4 flex justify-center">{action}</div>}
     </div>
@@ -331,7 +322,7 @@ export function Notice({
   return (
     <div
       role={tone === "danger" ? "alert" : undefined}
-      className={`flex flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-xl border px-3.5 py-2.5 text-sm ${toneClass} ${className}`}
+      className={`os-notice flex flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-xl border px-5 py-4 text-sm ${toneClass} ${className}`}
     >
       <div className="min-w-0 flex-1">
         {title && <div className="font-semibold">{title}</div>}
@@ -357,7 +348,7 @@ export function Field({
 }) {
   return (
     <label className={`block text-sm ${full ? "sm:col-span-2" : ""}`}>
-      <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[.1em] text-muted">{label}</span>
+      <span className="mb-2 block text-xs font-medium text-ink">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
     </label>
@@ -380,7 +371,7 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
           className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? "left-[1.15rem]" : "left-0.5"}`}
         />
       </span>
-      <span className={`text-[11px] font-bold uppercase tracking-[.1em] ${checked ? "text-ink" : "text-muted"}`}>{label}</span>
+      <span className={`text-xs font-medium ${checked ? "text-ink" : "text-muted"}`}>{label}</span>
     </button>
   );
 }
@@ -399,7 +390,7 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
  */
 export function StatGrid({ children, columns = 4 }: { children: ReactNode; columns?: 3 | 4 | 5 }) {
   const cols = { 3: "sm:grid-cols-3", 4: "sm:grid-cols-2 lg:grid-cols-4", 5: "sm:grid-cols-3 lg:grid-cols-5" }[columns];
-  return <div className={`grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-line bg-line ${cols}`}>{children}</div>;
+  return <div className={`os-stat-grid grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line ${cols}`}>{children}</div>;
 }
 
 export function StatTile({
@@ -415,9 +406,13 @@ export function StatTile({
   standalone?: boolean;
 }) {
   return (
-    <div className={`bg-white px-5 py-4 ${standalone ? "rounded-2xl border border-line" : ""}`}>
+    <div
+      className={`os-stat-tile bg-white px-6 py-6 ${
+        standalone ? "rounded-2xl border border-line shadow-xs" : ""
+      }`}
+    >
       <div className="micro">{label}</div>
-      <div className="mt-2 font-display text-2xl leading-none tracking-[-.04em]">{value}</div>
+      <div className="mt-3 font-display text-3xl font-medium leading-none tracking-[-.04em] text-ink">{value}</div>
       {sub && <div className="mt-1.5 text-xs text-muted">{sub}</div>}
     </div>
   );
@@ -466,6 +461,69 @@ export function RelativeTime({ value }: { value: string | null | undefined }) {
 
 // --- Overlay ---------------------------------------------------------------
 
+/** A text-labelled disclosure for secondary navigation and compact actions. */
+export function Dropdown({ label, children, active = false }: { label: ReactNode; children: ReactNode; active?: boolean }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) ref.current?.removeAttribute("open");
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && ref.current?.open) {
+        ref.current.open = false;
+        ref.current.querySelector("summary")?.focus();
+        event.stopPropagation();
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeOnEscape); };
+  }, []);
+  return <details ref={ref} className={`os-dropdown ${active ? "is-active" : ""}`}>
+    <summary>{label}<span className="os-dropdown-indicator" aria-hidden>Menu</span></summary>
+    <div className="os-dropdown-panel" onClick={event => {
+      if ((event.target as HTMLElement).closest("a,button")) ref.current?.removeAttribute("open");
+    }}>{children}</div>
+  </details>;
+}
+
+/** Keep keyboard focus in the topmost overlay and restore the invoking control. */
+function useOverlay(open: boolean, onClose: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const viewport = document.querySelector<HTMLElement>(".os-viewport");
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousViewportOverflow = viewport?.style.overflow;
+    document.body.style.overflow = "hidden";
+    if (viewport) viewport.style.overflow = "hidden";
+    const timer = requestAnimationFrame(() => ref.current?.focus());
+    const onKey = (event: KeyboardEvent) => {
+      const dialogs = document.querySelectorAll('[data-os-overlay="true"]');
+      if (dialogs[dialogs.length - 1] !== ref.current) return;
+      if (event.key === "Escape") { event.preventDefault(); close.current(); }
+      if (event.key !== "Tab") return;
+      const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]') ?? []).filter(node => node.getClientRects().length && node.getAttribute("aria-hidden") !== "true");
+      const first = nodes[0], last = nodes[nodes.length - 1];
+      if (!first) { event.preventDefault(); ref.current?.focus(); return; }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === ref.current)) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      cancelAnimationFrame(timer);
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousBodyOverflow;
+      if (viewport) viewport.style.overflow = previousViewportOverflow || "";
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [open]);
+  return ref;
+}
+
 /** Right-hand slide-over used for lead detail and the source editor. */
 export function Drawer({
   open,
@@ -484,32 +542,26 @@ export function Drawer({
   footer?: ReactNode;
   wide?: boolean;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    // Stop the page behind from scrolling under the panel.
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
-    };
-  }, [open, onClose]);
+  const overlayRef = useOverlay(open, onClose);
+  const titleId = useId();
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm" onClick={onClose} aria-hidden />
-      <aside
-        className={`relative flex h-full w-full flex-col border-l border-ink/10 bg-cream shadow-2xl ${wide ? "max-w-3xl" : "max-w-xl"}`}
+      <div className="absolute inset-0 bg-ink/30 " onClick={onClose} aria-hidden />
+      <div
+        className={`os-drawer relative flex h-full w-full flex-col ${wide ? "max-w-3xl" : "max-w-xl"}`}
+        ref={overlayRef}
+        tabIndex={-1}
+        data-os-overlay="true"
+        aria-labelledby={titleId}
         role="dialog"
         aria-modal="true"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-line bg-white px-6 py-4">
+        <header className="flex items-start justify-between gap-4 border-b border-line bg-white px-7 py-6">
           <div className="min-w-0">
-            <h2 className="truncate font-display text-xl tracking-[-.03em]">{title}</h2>
+            <h2 id={titleId} className="os-overlay-title">{title}</h2>
             {subtitle && <div className="mt-0.5 text-xs text-muted">{subtitle}</div>}
           </div>
           <button
@@ -520,9 +572,9 @@ export function Drawer({
             Close
           </button>
         </header>
-        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
-        {footer && <footer className="border-t border-line bg-white px-6 py-4">{footer}</footer>}
-      </aside>
+        <div className="os-overlay-body flex-1 overflow-y-auto px-7 py-6">{children}</div>
+        {footer && <footer className="border-t border-line bg-white px-7 py-5">{footer}</footer>}
+      </div>
     </div>
   );
 }
@@ -552,33 +604,28 @@ export function Modal({
   footer?: ReactNode;
   size?: "wide" | "full";
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
-    };
-  }, [open, onClose]);
+  const overlayRef = useOverlay(open, onClose);
+  const titleId = useId();
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
-      <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} aria-hidden />
+      <div className="fixed inset-0 bg-ink/40 " onClick={onClose} aria-hidden />
       <div
-        className={`relative flex w-full flex-col overflow-hidden rounded-2xl border border-ink/10 bg-cream shadow-2xl ${
-          size === "full" ? "max-w-[92rem]" : "max-w-6xl"
+        className={`os-modal relative flex w-full flex-col overflow-hidden ${
+          size === "full" ? "max-w-[92rem]" : "max-w-4xl"
         }`}
+        ref={overlayRef}
+        tabIndex={-1}
+        data-os-overlay="true"
+        aria-labelledby={titleId}
         role="dialog"
         aria-modal="true"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-line bg-white px-6 py-4">
+        <header className="flex items-start justify-between gap-4 border-b border-line bg-white px-7 py-6">
           <div className="min-w-0">
-            <h2 className="truncate font-display text-xl tracking-[-.03em]">{title}</h2>
+            <h2 id={titleId} className="os-overlay-title">{title}</h2>
             {subtitle && <div className="mt-0.5 text-xs text-muted">{subtitle}</div>}
           </div>
           <button
@@ -592,8 +639,8 @@ export function Modal({
         </header>
         {/* Capped rather than full-height: a modal as tall as the window with a
             short table in it reads as a broken page. */}
-        <div className="max-h-[70vh] flex-1 overflow-auto px-6 py-5">{children}</div>
-        {footer && <footer className="border-t border-line bg-white px-6 py-4">{footer}</footer>}
+        <div className="os-overlay-body max-h-[70vh] flex-1 overflow-auto px-7 py-6">{children}</div>
+        {footer && <footer className="border-t border-line bg-white px-7 py-5">{footer}</footer>}
       </div>
     </div>
   );
@@ -601,12 +648,114 @@ export function Modal({
 
 /** Status pill shared by leads, runs and sources. */
 export function StatusDot({ tone }: { tone: "live" | "ok" | "warn" | "bad" | "idle" }) {
+  if (tone === "live") {
+    return (
+      <span className="relative flex h-2.5 w-2.5 shrink-0 items-center justify-center" aria-hidden>
+        <span className="sr-only" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-lime" />
+      </span>
+    );
+  }
   const colour = {
-    live: "bg-lime animate-pulse",
     ok: "bg-positive",
     warn: "bg-warn",
     bad: "bg-danger",
     idle: "bg-line-strong",
   }[tone];
   return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${colour}`} aria-hidden />;
+}
+
+// --- Micro-Interactions & Loaders ------------------------------------------
+
+/** Accessible floating tooltip with smooth micro-animation. */
+export function Tooltip({
+  content,
+  children,
+  placement = "top",
+}: {
+  content: ReactNode;
+  children: ReactNode;
+  placement?: "top" | "bottom" | "left" | "right";
+}) {
+  const [visible, setVisible] = useState(false);
+  const positionClasses = {
+    top: "bottom-full left-1/2 -translate-x-1/2 mb-2",
+    bottom: "top-full left-1/2 -translate-x-1/2 mt-2",
+    left: "right-full top-1/2 -translate-y-1/2 mr-2",
+    right: "left-full top-1/2 -translate-y-1/2 ml-2",
+  }[placement];
+
+  return (
+    <span
+      className="relative inline-flex items-center"
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+      onFocus={() => setVisible(true)}
+      onBlur={() => setVisible(false)}
+    >
+      {children}
+      {visible && (
+        <span
+          role="tooltip"
+          className={`pointer-events-none absolute z-50 whitespace-nowrap rounded-[10px] bg-ink px-2.5 py-1 font-mono text-[11px] font-medium tracking-wide text-white shadow-xl transition-all duration-150 ${positionClasses}`}
+        >
+          {content}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Interactive tactile copy-to-clipboard button with visual feedback. */
+export function CopyButton({
+  text,
+  label,
+  className = "",
+}: {
+  text: string;
+  label?: string;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback if clipboard API is restricted
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Copied to clipboard!" : `Copy ${label || text}`}
+      className={`group inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-[11px] font-medium text-muted transition-all duration-150 hover:border-ink/40 hover:text-ink  ${className}`}
+    >
+      {copied ? "Copied" : label || "Copy"}
+    </button>
+  );
+}
+
+/** Shimmer skeleton box for content loading. */
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-xl bg-sunken ${className}`} aria-hidden />;
+}
+
+/** Structured card skeleton loader. */
+export function SkeletonCard({ lines = 3 }: { lines?: number }) {
+  return (
+    <div className="os-card rounded-2xl border border-line bg-white p-6">
+      <Skeleton className="mb-4 h-6 w-1/3" />
+      <div className="space-y-2">
+        {Array.from({ length: lines }).map((_, i) => (
+          <Skeleton key={i} className={`h-4 ${i === lines - 1 ? "w-2/3" : "w-full"}`} />
+        ))}
+      </div>
+    </div>
+  );
 }

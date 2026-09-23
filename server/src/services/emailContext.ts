@@ -215,7 +215,9 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
   // not told about a page writes around it, and a drafter that is told there
   // is no checked page knows not to promise one.
   const gate = await previewGate(lead.id);
+  const extraSignals: string[] = [];
   if (gate.ok && gate.demo) {
+    extraSignals.push("concept-ready");
     const brief = (gate.demo.brief ?? null) as { headline?: string; sections?: string[] } | null;
     facts.push(
       `A checked concept page has been built for them at ${gate.url} — ${gate.demo.title}${
@@ -224,8 +226,21 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
         gate.demo.views > 0 ? `, and they have opened it ${gate.demo.views} time${gate.demo.views === 1 ? "" : "s"}` : ", and they have not opened it yet"
       }.`,
     );
+    facts.push(
+      `Interactive working prototype built specifically for them: ${gate.url}. It is responsive, mobile-ready, and available immediately to preview with zero commitment.`,
+    );
   } else if (lead.demos.length) {
     facts.push(`A page exists for them but it is not fit to send: ${gate.reason} Do not offer a link and do not describe a page as though it exists.`);
+  }
+
+  const site = lead.clientId
+    ? await prisma.site.findFirst({ where: { clientId: lead.clientId }, include: { pages: true } })
+    : null;
+  if (site) {
+    extraSignals.push("site-built");
+    facts.push(
+      `A full website project "${site.name}" has been built in the Website Builder (${site.publicUrl}, ${site.pages.length} page(s), ${site.sourceKind ?? "custom HTML"}). It is ready to pitch, review, or publish.`,
+    );
   }
 
   // Everything that came from going and looking: what research established,
@@ -251,7 +266,7 @@ export async function leadContext(leadId: string): Promise<RecipientContext> {
     phone: lead.contactPhone,
     name: lead.contactName,
     facts,
-    findingIds: [...new Set([...findingIdsFromReport(lead.websiteAudits[0]?.report), ...findingIdsFrom(lead.research?.audit)])],
+    findingIds: [...new Set([...findingIdsFromReport(lead.websiteAudits[0]?.report), ...findingIdsFrom(lead.research?.audit), ...extraSignals])],
     variables: {
       first_name: firstName(lead.contactName),
       contact_name: lead.contactName,
@@ -277,6 +292,8 @@ export async function clientContext(clientId: string): Promise<RecipientContext>
   });
   if (!client) throw new Error("Client not found");
 
+  const site = await prisma.site.findFirst({ where: { clientId: client.id }, include: { pages: true } });
+
   const primary = client.contacts.find((contact) => contact.isPrimary) ?? client.contacts[0] ?? null;
 
   const facts = [
@@ -288,6 +305,12 @@ export async function clientContext(clientId: string): Promise<RecipientContext>
     line("Lifetime value", `GHS ${client.lifetimeValue}`),
     line("Payment terms", client.creditTerms),
   ].filter((entry): entry is string => entry !== null);
+
+  if (site) {
+    facts.push(
+      `A website project "${site.name}" is built in the Website Builder at ${site.publicUrl} (${site.pages.length} page(s), ${site.sourceKind ?? "custom HTML"}).`,
+    );
+  }
 
   for (const plan of client.carePlans) {
     facts.push(
@@ -319,6 +342,7 @@ export async function clientContext(clientId: string): Promise<RecipientContext>
     phone: primary?.phone ?? client.phone,
     name: primary?.name ?? client.name,
     facts,
+    findingIds: site ? ["site-built"] : [],
     variables: {
       first_name: firstName(primary?.name ?? client.name),
       contact_name: primary?.name ?? client.name,

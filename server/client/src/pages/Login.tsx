@@ -45,29 +45,19 @@ export function Login() {
   const inputClass = "input";
 
   return (
-    // §28, at the smallest scale it works at: dark navy, one soft blue glow
-    // behind the panel, and nothing else. This is the one screen in the OS with
-    // no work on it, so it is the one place the brand can be the whole of what
-    // you see — and a front door that looked like any other admin login was the
-    // first thing anybody met. No arcs and no grid: §29 is explicit that the
-    // portal graphic does not go everywhere, and a sign-in form is not a hero.
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-navy px-6 py-12 text-ink">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-1/2 top-1/2 h-[46rem] w-[46rem] -translate-x-1/2 -translate-y-[58%] rounded-full opacity-[.55]"
-        style={{ background: "radial-gradient(circle, rgba(49,87,255,.55) 0%, rgba(49,87,255,.10) 45%, transparent 70%)" }}
-      />
-      <div className="relative w-full max-w-sm">
+    <div className="os-login">
+      <section className="os-login-intro"><span className="os-caption">Dakyworld OS</span><h2>Good work.<br />Clear direction.</h2><p>One considered workspace for your business, your clients and everything ahead.</p><span className="os-login-edition">The business workspace</span></section>
+      <div className="os-login-form">
         <div className="mb-8 flex items-center gap-3">
-          <img src="/brand/mark-on-dark-96.png" alt="" width={36} height={36} className="h-9 w-9" />
+          <img src="/brand/mark-on-light-96.png" alt="" width={36} height={36} className="h-9 w-9" />
           <div className="leading-none">
-            <div className="font-display text-base font-bold tracking-[-.03em] text-white">Dakyworld OS</div>
-            <div className="mt-1 font-mono text-[10px] uppercase tracking-[.14em] text-white/55">Internal Operations</div>
+            <div className="font-display text-base font-medium tracking-[-.03em] text-ink">Dakyworld OS</div>
+            <div className="mt-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Internal Operations</div>
           </div>
         </div>
 
-        <form onSubmit={onSubmit} className="rounded-2xl border border-white/10 bg-white p-7 shadow-shell">
-          <h1 className="font-display text-2xl tracking-[-.03em]">{challenge ? "Two-factor" : "Sign in"}</h1>
+        <form onSubmit={onSubmit} className="os-login-fields">
+          <h1 className="font-display text-3xl tracking-[-.03em]">{challenge ? "Two-factor" : "Sign in"}</h1>
 
           {challenge ? (
             <>
@@ -147,8 +137,8 @@ export function Login() {
           )}
         </form>
 
-        <p className="mt-4 text-center text-xs text-white/55">
-          Locked out? Reset <span className="font-mono">OWNER_PASSWORD</span> in Railway and redeploy.
+        <p className="mt-4 text-center text-xs text-muted">
+          Need access? Contact your workspace administrator.
         </p>
       </div>
     </div>

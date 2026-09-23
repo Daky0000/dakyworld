@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { requirePermission } from "../middleware/auth.js";
 import { listProducts, publicCatalogue, updateProduct } from "../services/products.js";
-import { createManagedBooking, listWebsiteCommerce, startWebsitePurchase, updateBooking, updatePurchaseStatus } from "../services/websiteCommerce.js";
+import { createManagedBooking, inspectPublicWebsite, listWebsiteCommerce, startWebsitePurchase, updateBooking, updatePurchaseStatus } from "../services/websiteCommerce.js";
 import { rateLimit } from "../middleware/security.js";
 
 /**
@@ -46,12 +46,17 @@ publicProductsRouter.options("/products", (_req, res) => {
 
 const purchaseInput = z.object({
   productKey: z.enum(["website-builder", "website-care"]),
+  billingCycle: z.enum(["monthly", "annual"]).optional().default("monthly"),
   businessName: z.string().trim().min(2).max(160),
   contactName: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(200),
   phone: z.string().trim().max(40).optional(),
   websiteUrl: z.string().trim().url().max(500),
   notes: z.string().trim().max(2000).optional(),
+});
+
+const websiteCheckInput = z.object({
+  websiteUrl: z.string().trim().min(3).max(500),
 });
 
 const bookingInput = z.object({
@@ -61,12 +66,25 @@ const bookingInput = z.object({
   requestedAt: z.coerce.date().refine(value => value.getTime() > Date.now(), "Choose a future consultation time."),
 });
 const commerceRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 10, message: "Too many purchase or booking attempts. Try again in {minutes}." });
+const websiteCheckRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 25, message: "Too many website scan requests. Try again in {minutes}." });
 
 function publicCors(req: { headers: { origin?: string } }, res: { set: (field: string, value: string) => unknown }) {
   const origin = req.headers.origin;
   if (origin && ["https://dakyworld.com", "https://www.dakyworld.com", "http://localhost:5173"].includes(origin)) res.set("Access-Control-Allow-Origin", origin);
+  else res.set("Access-Control-Allow-Origin", "*");
   res.set("Vary", "Origin");
 }
+
+publicProductsRouter.post("/website-check", websiteCheckRateLimit, async (req, res, next) => {
+  try {
+    publicCors(req, res);
+    const { websiteUrl } = websiteCheckInput.parse(req.body ?? {});
+    const inspection = await inspectPublicWebsite(websiteUrl);
+    res.json(inspection);
+  } catch (err) {
+    next(err);
+  }
+});
 
 publicProductsRouter.post("/website-purchases", commerceRateLimit, async (req, res, next) => {
   try { publicCors(req, res); res.status(201).json(await startWebsitePurchase(purchaseInput.parse(req.body))); }
@@ -78,7 +96,7 @@ publicProductsRouter.post("/managed-bookings", commerceRateLimit, async (req, re
   catch (err) { next(err); }
 });
 
-publicProductsRouter.options(["/website-purchases", "/managed-bookings"], (req, res) => {
+publicProductsRouter.options(["/website-check", "/website-purchases", "/managed-bookings"], (req, res) => {
   publicCors(req, res); res.set("Access-Control-Allow-Methods", "POST, OPTIONS").set("Access-Control-Allow-Headers", "Content-Type").status(204).end();
 });
 

@@ -1984,7 +1984,7 @@ export interface AgentDetail extends Agent {
 /** The shipped wording for a seeded agent, for comparing against an edit. */
 /** One labelled block of the prompt an agent actually receives. */
 export interface PromptRegion {
-  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "method" | "working";
+  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "method" | "working" | "scope" | "commercial" | "untrusted" | string;
   label: string;
   /** Where the words come from, for somebody deciding whether they can change them. */
   source: string;
@@ -3108,10 +3108,11 @@ export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "con
 
 /** One thing on a page somebody can change. Offsets stay on the server. */
 export type SiteFieldRow = {
-  structure?: { remove: boolean; duplicate: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string };
+  structure?: { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string };
   id: string;
   parentId?: string;
   order?: number;
+  repeatable?: boolean;
   confidence?: "annotated" | "discovered";
   kind: FieldKind;
   label: string;
@@ -3294,6 +3295,10 @@ export type PublishResult = {
   commit: { sha: string; url: string };
   url: string;
   note: string;
+  mode?: "commit" | "pull_request";
+  prUrl?: string;
+  prNumber?: number;
+  branch?: string;
 };
 
 export type SitePageVersionRow = {
@@ -3346,3 +3351,84 @@ export type WebsiteOverviewData = {
     changed: number;
   }>;
 };
+
+/* -------------------------------------------------- Website Builder Agent */
+
+export type SiteAgentOverview = {
+  pageCount: number;
+  fonts: Array<{ family: string; uses: number; pages: string[] }>;
+  colors: Array<{ code: string; uses: number; pages: string[] }>;
+  phoneNumbers: Array<{ number: string; uses: number; pages: string[] }>;
+  emails: Array<{ email: string; uses: number; pages: string[] }>;
+};
+
+export type SiteAgentPageChange = {
+  fieldId: string;
+  label: string;
+  property: string;
+  before: string;
+  after: string;
+};
+
+export type SiteAgentPagePlan = {
+  pageId: string;
+  pageTitle: string;
+  pagePath: string;
+  draftRevision: number;
+  changes: SiteAgentPageChange[];
+  edits: Record<string, FieldEdit>;
+};
+
+export type SiteAgentAttachment = {
+  id: string;
+  filename: string;
+  url: string;
+  previewUrl?: string;
+  contentType: string;
+  kind: "image" | "file";
+  size?: number;
+  alt?: string | null;
+};
+
+export type SiteAgentStructuralAction = {
+  pageId: string;
+  pageTitle: string;
+  kind: "remove" | "duplicate" | "before" | "after";
+  fieldId: string;
+  targetId?: string;
+  label: string;
+};
+
+export type SiteAgentPermissionMode = "smart" | "full" | "ask";
+
+export type SiteAgentPlan = {
+  explanation: string;
+  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment";
+  summary: {
+    totalPages: number;
+    affectedPages: number;
+    totalChanges: number;
+  };
+  pages: SiteAgentPagePlan[];
+  structuralActions?: SiteAgentStructuralAction[];
+  editorCommand?: "undo" | "redo" | "discard" | null;
+  requiresApproval?: boolean;
+  approvalReasons?: string[];
+  riskLevel?: "low" | "medium" | "high";
+  costUsd?: number;
+  model?: string;
+};
+
+export type SiteAgentApplyResult = {
+  appliedPages: number;
+  totalChanges: number;
+  results: Array<{
+    pageId: string;
+    pageTitle: string;
+    success: boolean;
+    message: string;
+    newRevision?: number;
+  }>;
+};
+
+

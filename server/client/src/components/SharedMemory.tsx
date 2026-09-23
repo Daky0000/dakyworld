@@ -96,7 +96,7 @@ export function SharedMemoryPanel() {
       </div>
 
       {data && (
-        <p className="mt-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+        <p className="mt-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           {data.summary.total} shared · {data.summary.standing} on every task
           {data.summary.total - data.summary.standing > 0 && ` · ${data.summary.total - data.summary.standing} about a specific record`}
           {data.summary.neverUsed > 0 && ` · ${data.summary.neverUsed} never recalled`}
@@ -172,7 +172,7 @@ export function SharedMemoryPanel() {
             <div key={memory.id} className="rounded-xl flex items-start justify-between gap-3 border border-line bg-white px-3 py-2">
               <span className="min-w-0 flex-1">
                 <span className="block text-sm leading-relaxed text-ink">{memory.content}</span>
-                <span className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
+                <span className="mt-1 flex flex-wrap items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                   <span>{memory.kind.toLowerCase()}</span>
                   <code className="text-muted">{memory.subject}</code>
                   <span>importance {memory.importance}</span>
@@ -186,7 +186,7 @@ export function SharedMemoryPanel() {
                 <button
                   type="button"
                   onClick={() => setEditing(memory.id)}
-                  className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
+                  className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                 >
                   Edit
                 </button>
@@ -195,7 +195,7 @@ export function SharedMemoryPanel() {
                   onClick={() => {
                     if (confirm("Delete this? Every agent stops being told it.")) remove.mutate(memory.id);
                   }}
-                  className="font-mono text-[10px] uppercase tracking-[.1em] text-danger-text/60 transition hover:text-danger-text"
+                  className="font-sans text-[11px] uppercase tracking-[.06em] text-danger-text/60 transition hover:text-danger-text"
                 >
                   Forget
                 </button>
@@ -233,7 +233,7 @@ function EditRow({
     <div className="rounded-xl space-y-2 border border-blue/30 bg-blue/5 px-3 py-2.5">
       <textarea rows={3} className="input" value={content} onChange={(event) => setContent(event.target.value)} />
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <label className="flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Importance
           <select value={importance} onChange={(event) => setImportance(Number(event.target.value))} className="input w-16">
             {[1, 2, 3, 4, 5].map((level) => (
@@ -251,11 +251,11 @@ function EditRow({
         >
           {pending ? "Saving…" : "Save"}
         </Button>
-        <button type="button" onClick={onCancel} className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+        <button type="button" onClick={onCancel} className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Cancel
         </button>
       </div>
-      <p className="font-mono text-[9px] uppercase tracking-[.1em] text-muted">
+      <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
         Applies to every agent, on their next task.
       </p>
     </div>

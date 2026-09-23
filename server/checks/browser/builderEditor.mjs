@@ -10,6 +10,8 @@ const capabilities = Object.fromEntries(["view", "edit", "review", "publish", "m
 const document = { site: { id: "demo", name: "Demo website", publicUrl: "https://example.com", repo: "demo/site" }, links: [], readFrom: "imported file", page: { id: "one", title: "Home", path: "/", filePath: "index.html", status: "LIVE", url: "https://example.com", lastPublishedAt: null }, sections: [{ id: "hero", label: "Hero", kind: "section", fields: [{ id: "hero.title", kind: "text", tag: "h1", value: "Welcome home", preview: "Welcome home", label: "Main heading", order: 0 }] }], draft: { revision: 0, savedAt: null, savedBy: null, values: {} }, problems: [] };
 await page.route("**/api/**", route => {
   const url = new URL(route.request().url());
+  // Presence leases are expected on mount; all other writes remain subject to the assertions below.
+  if (url.pathname.endsWith("/presence")) return route.fulfill({ json: { editors: [] } });
   if (route.request().method() !== "GET") writes.push(url.pathname);
   if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "tester", name: "Client", external: true, permissions: [] } });
   if (url.pathname.endsWith("/access")) return route.fulfill({ json: { capabilities } });

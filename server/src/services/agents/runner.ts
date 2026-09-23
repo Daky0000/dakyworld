@@ -54,9 +54,20 @@ import { planFor } from "./retry.js";
  * approve, which is what autonomy level 1 is *for*.
  */
 
-/** Concurrency across the whole process. One service, one loop, one ceiling. */
-const MAX_CONCURRENT = 2;
+/** Default concurrency across the whole process. Configurable via AGENT_CONCURRENCY_LIMIT setting. */
+export const DEFAULT_MAX_CONCURRENT = 6;
+export const MAX_CONCURRENT = DEFAULT_MAX_CONCURRENT;
 const running = new Set<string>();
+
+/** Resolves effective concurrency ceiling from setting or default. */
+export async function getEffectiveConcurrencyLimit(): Promise<number> {
+  const custom = await getSetting(SETTING.AGENT_CONCURRENCY_LIMIT);
+  if (custom) {
+    const val = parseInt(custom, 10);
+    if (!isNaN(val) && val > 0) return Math.min(val, 20);
+  }
+  return DEFAULT_MAX_CONCURRENT;
+}
 
 /**
  * Who this process is, from the database's point of view.
@@ -1612,7 +1623,19 @@ function routingSteps(can: WorkflowAvailability): string {
 
 /** One labelled block of the assembled prompt. */
 export interface PromptRegion {
-  key: "instruction" | "skills" | "brand" | "contact" | "voice" | "shared" | "own" | "untrusted" | "method" | "working";
+  key:
+    | "instruction"
+    | "skills"
+    | "brand"
+    | "contact"
+    | "voice"
+    | "shared"
+    | "own"
+    | "untrusted"
+    | "method"
+    | "working"
+    | "scope"
+    | "commercial";
   /** The heading the screen puts on it. */
   label: string;
   /** Where the words come from, in a sentence, for somebody deciding whether they can change them. */
@@ -1659,7 +1682,7 @@ const NO_BRAND_VOICE = new Set([
   // Executive and board — strategic reasoning over other agents' output, read-only toolkits.
   "ceo", "board.chair", "cro", "cmo", "coo", "cto", "cfo", "cco",
   // Revenue — pipeline, research and infrastructure, not writing.
-  "email.sequencer", "analytics.upsell", "lead.orchestrator", "lead.enricher", "lead.capture", "email.deliverability",
+  "email.sequencer", "analytics.upsell", "lead.orchestrator", "lead.enricher", "lead.capture", "email.deliverability", "pipeline.manager",
   // Delivery — planning, not client correspondence.
   "delivery.director",
   // Finance — arithmetic and template documents.
@@ -1669,12 +1692,34 @@ const NO_BRAND_VOICE = new Set([
   // design.ux — see above.
   "design.graphic", "seo.specialist", "seo.local", "seo.keywords",
   // Technology — nothing here is read by anybody outside the company.
-  "dev.web", "dev.hosting", "sec.analyst", "qa.tester", "dev.automation", "analytics.engine", "integration.manager",
+  "dev.web", "dev.hosting", "sec.analyst", "qa.tester", "dev.automation", "analytics.engine", "integration.manager", "dev.db", "ops.cleaner", "monitor.pulse", "data.sanitizer", "lead.dedup", "tool.verifier",
   // Client — analysis, not correspondence.
   "analytics.churn",
   // Risk and People — internal governance.
   "risk.qa", "people.recruiter", "people.ops",
 ]);
+
+const SCOPE_CONTAINMENT_DIRECTIVE = `STRICT SCOPE BOUNDARIES & CONTEXT-GROUNDED REASONING:
+- Think and reason EXCLUSIVELY from the explicit facts provided in your task context, retrieved memory, and tool outputs. Do not extrapolate, assume, or promise capabilities outside your assigned mandate.
+- Every solution you propose must remain strictly within your assigned craft and toolkit boundaries. Never hallucinate external tools, unobserved facts, unmeasured metrics, or unverified claims.
+- If an issue or opportunity lies outside your craft or touches money, live external systems, or policy changes, do NOT attempt it yourself — escalate via \`escalate\` or route to the proper specialist via \`handOff\` / \`delegate\`.`;
+
+const COMMERCIAL_AGENTS = new Set([
+  "lead.orchestrator",
+  "growth.outreach",
+  "sales.proposal",
+  "proposal.writer",
+  "pipeline.manager",
+  "pricing.calculator",
+  "outreach.writer",
+  "cro",
+]);
+
+const COMMERCIAL_BID_ESCALATION_PROTOCOL = `COMMERCIAL VALUE & BID ESCALATION PROTOCOL:
+When evaluating a lead, proposal, client opportunity, or pitch:
+- Assess Value Signals in Context: Actively inspect the provided context for commercial indicators — business size, multi-branch presence, high Google review counts (e.g. 50+ or 200+ reviews), outdated/vulnerable CMS, lack of automated booking/inquiry routing, or existing proposal history.
+- Proactively Raise the Bid: When strong value signals or operational complexities are evident in the context, do NOT settle for the minimal baseline tier (e.g. GHS 3,500 / $500). Proactively recommend or raise the bid to a premium or multi-phase package (e.g. GHS 7,500 to GHS 18,000+ / $1,500 to $3,500+) covering full redesign, mobile optimization, workflow automation, and ongoing care plans.
+- Ground Justification in Facts: Anchor the higher bid strictly in the concrete facts and business liabilities identified in the context. Never quote a generic price without tying it to the observed operational scale.`;
 
 /**
  * The prompt, in labelled pieces.
@@ -1712,6 +1757,13 @@ export async function composePrompt(
       text: authoredInstruction(agent),
     },
     {
+      key: "scope",
+      label: "Scope containment & grounded reasoning",
+      source: "System policy — strict boundary fencing for all agents.",
+      editable: false,
+      text: SCOPE_CONTAINMENT_DIRECTIVE,
+    },
+    {
       key: "skills",
       label: "What it is relied on for",
       source: "The skills on this agent, edited on this screen.",
@@ -1719,6 +1771,16 @@ export async function composePrompt(
       text: agent.skills.length > 0 ? `What you are relied on for:\n${agent.skills.map((skill) => `- ${skill}`).join("\n")}` : "",
     },
   ];
+
+  if (COMMERCIAL_AGENTS.has(agent.key)) {
+    regions.push({
+      key: "commercial",
+      label: "Commercial bid escalation",
+      source: "Commercial policy — evaluates context signals to raise proposal bids proactively.",
+      editable: false,
+      text: COMMERCIAL_BID_ESCALATION_PROTOCOL,
+    });
+  }
 
   // Who Dakyworld is and how it writes — 390 tokens, identical on every
   // agent's prompt whether or not it ever produces a sentence a client reads.
@@ -2683,12 +2745,13 @@ export async function resumeInterruptedTasks(): Promise<number> {
  * picked up: a DRAFT agent's queue fills and waits, which is what lets a task
  * be lined up before its agent is switched on.
  */
-export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Promise<number> {
+export async function runDueTasks(now = new Date(), limit?: number): Promise<number> {
   // Before anything is picked up, because a task stuck in RUNNING now blocks
   // its agent rather than just itself.
   await reapAbandoned(now);
 
-  const capacity = Math.max(0, limit - running.size);
+  const effectiveLimit = limit ?? (await getEffectiveConcurrencyLimit());
+  const capacity = Math.max(0, effectiveLimit - running.size);
   if (capacity === 0) return 0;
 
   // More than the capacity, because most of what comes back will be skipped:
@@ -2701,11 +2764,12 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
       OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }],
       agent: { status: "ACTIVE", tasks: { none: { status: "RUNNING" } } },
     },
-    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     take: capacity * 8,
     select: {
       id: true,
       agentKey: true,
+      priority: true,
+      createdAt: true,
       // Carried on the row that is already being read, so the pace check below
       // costs a count and not a second lookup per task.
       agent: { select: { key: true, name: true, maxTasksPerDay: true, maxTasksPerWeek: true, maxTasksPerMonth: true } },
@@ -2713,13 +2777,26 @@ export async function runDueTasks(now = new Date(), limit = MAX_CONCURRENT): Pro
   });
   if (due.length === 0) return 0;
 
+  // Anti-starvation priority queue:
+  // Priority 1=urgent, 2=normal, 3=low.
+  // Each 30 minutes of wait time boosts effective priority score by 1 point,
+  // preventing low-priority tasks from starving indefinitely behind newer high-priority tasks.
+  const sortedDue = [...due].sort((a, b) => {
+    const ageMinutesA = (now.getTime() - new Date(a.createdAt).getTime()) / 60_000;
+    const ageMinutesB = (now.getTime() - new Date(b.createdAt).getTime()) / 60_000;
+    const scoreA = a.priority - Math.min(2, ageMinutesA / 30);
+    const scoreB = b.priority - Math.min(2, ageMinutesB / 30);
+    if (scoreA !== scoreB) return scoreA - scoreB;
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+
   // One per agent, highest priority first — which the ordering above has
   // already decided, so the first task seen for an agent is the right one.
   const started: string[] = [];
   const takenThisTick = new Set<string>();
   let heldByBudget = 0;
   let heldByPace = 0;
-  for (const task of due) {
+  for (const task of sortedDue) {
     if (started.length >= capacity) break;
     if (running.has(task.id)) continue;
     if (busyAgents.has(task.agentKey) || takenThisTick.has(task.agentKey)) continue;

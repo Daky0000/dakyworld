@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, StatTile, StatusDot, Toggle } from "../components/ui";
+import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, StatGrid, StatTile, StatusDot, Toggle } from "../components/ui";
 import type {
   CatalogueResponse,
   CatalogueTool,
@@ -57,7 +57,7 @@ export function Tools() {
         subtitle="Everything an agent can be given access to. Add a key here and every agent granted that tool can use it — nothing is switched on for them automatically."
       />
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <StatGrid columns={3}>
         <StatTile label="Connections ready" value={data?.summary.ready ?? "—"} />
         <StatTile
           label="Waiting on a key"
@@ -69,7 +69,7 @@ export function Tools() {
           value={data ? `${data.summary.callable} / ${data.summary.total}` : "—"}
           sub="what an agent could run right now"
         />
-      </div>
+      </StatGrid>
 
       {isLoading ? (
         <div className="text-sm text-muted">Loading…</div>
@@ -82,7 +82,7 @@ export function Tools() {
           return (
             <section key={group.state} className="space-y-3">
               <div>
-                <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">{group.heading}</h2>
+                <h2 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{group.heading}</h2>
                 <p className="mt-1 text-sm text-muted">{group.note}</p>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
@@ -104,7 +104,7 @@ export function Tools() {
 
 function ToolCard({ tool }: { tool: ToolStatus }) {
   return (
-    <Card className="h-full">
+    <Card className="h-full" interactive>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <StatusDot tone={DOT[tool.state]} />
@@ -127,7 +127,7 @@ function ToolCard({ tool }: { tool: ToolStatus }) {
       )}
 
       {tool.tools.length > 0 && (
-        <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <p className="mt-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           {tool.tools.length} tool{tool.tools.length === 1 ? "" : "s"}
           {tool.outwardTools > 0 && ` · ${tool.outwardTools} reach outside`}
         </p>
@@ -143,14 +143,14 @@ function ToolCard({ tool }: { tool: ToolStatus }) {
           {/* The quick way in, when a tool has one — Hostinger's mailbox is a
               token where SMTP is five fields. */}
           {tool.shortcut && tool.state !== "PLANNED" && (
-            <Link to={tool.shortcut.to} className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline">
+            <Link to={tool.shortcut.to} className="font-sans text-[11px] uppercase tracking-[.06em] text-blue hover:underline">
               {tool.shortcut.label}
             </Link>
           )}
           {tool.settingsTab && tool.state !== "PLANNED" && (
             <Link
               to={`/settings?tab=${tool.settingsTab}`}
-              className="font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink hover:underline"
+              className="font-sans text-[11px] uppercase tracking-[.06em] text-muted hover:text-ink hover:underline"
             >
               {tool.state === "NEEDS_KEY" ? "Set it up ↗" : "Change ↗"}
             </Link>
@@ -172,7 +172,7 @@ function Catalogue({ catalogue, onAssign }: { catalogue: CatalogueResponse; onAs
     <section className="space-y-3">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">The catalogue</h2>
+          <h2 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">The catalogue</h2>
           <p className="mt-1 text-sm text-muted">
             {catalogue.summary.total} tools an agent can be granted. {catalogue.summary.outward} of them reach outside the company and{" "}
             {catalogue.summary.spending} spend money — those stay behind dry run until an agent is explicitly trusted with them.
@@ -181,7 +181,7 @@ function Catalogue({ catalogue, onAssign }: { catalogue: CatalogueResponse; onAs
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}
-          className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline"
+          className="shrink-0 font-sans text-[11px] uppercase tracking-[.06em] text-blue hover:underline"
         >
           {open ? "Hide" : "Show all"}
         </button>
@@ -194,7 +194,7 @@ function Catalogue({ catalogue, onAssign }: { catalogue: CatalogueResponse; onAs
             if (list.length === 0) return null;
             return (
               <div key={group}>
-                <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">{group}</h3>
+                <h3 className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{group}</h3>
                 <div className="grid gap-2 md:grid-cols-2">
                   {list.map((tool) => <CatalogueRow key={tool.key} tool={tool} onAssign={onAssign} />)}
                 </div>
@@ -216,7 +216,7 @@ function CatalogueRow({ tool, onAssign }: { tool: CatalogueTool; onAssign: (key:
             <StatusDot tone={tool.ready ? "ok" : "warn"} />
             <span className="truncate text-sm font-medium">{tool.name}</span>
           </div>
-          <code className="mt-0.5 block font-mono text-[10px] text-muted">{tool.key}</code>
+          <code className="mt-0.5 block font-mono text-[11px] text-muted">{tool.key}</code>
         </div>
         <div className="flex shrink-0 gap-1">
           {tool.spends && <Badge>$</Badge>}
@@ -231,7 +231,7 @@ function CatalogueRow({ tool, onAssign }: { tool: CatalogueTool; onAssign: (key:
       <button
         type="button"
         onClick={() => onAssign(tool.key)}
-        className="mt-2 font-mono text-[10px] uppercase tracking-[.1em] text-blue hover:underline"
+        className="mt-2 font-sans text-[11px] uppercase tracking-[.06em] text-blue hover:underline"
       >
         Who can use it
       </button>
@@ -387,7 +387,7 @@ function Connections() {
     <section className="space-y-3">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Connected tools</h2>
+          <h2 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Connected tools</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted">
             Anything that speaks MCP. Its tools join the catalogue and are granted, called and audited exactly like the built-in ones — this
             is how a new capability arrives without a deploy. Image generation is the obvious one: connect a server that draws and{" "}
@@ -406,14 +406,14 @@ function Connections() {
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {servers.map((server) => (
-            <Card key={server.id} className="h-full">
+            <Card key={server.id} className="h-full" interactive>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <StatusDot tone={server.lastError ? "bad" : server.enabled ? "ok" : "idle"} />
                     <span className="font-display text-lg tracking-[-.02em]">{server.name}</span>
                   </div>
-                  <code className="mt-0.5 block truncate font-mono text-[10px] text-muted">{server.url}</code>
+                  <code className="mt-0.5 block truncate font-mono text-[11px] text-muted">{server.url}</code>
                 </div>
                 <div className="flex shrink-0 gap-1">
                   {server.spends && <Badge>$</Badge>}
@@ -427,7 +427,7 @@ function Connections() {
               {server.lastError ? (
                 <p className="mt-3 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-sm text-danger-text">{server.lastError}</p>
               ) : (
-                <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                <p className="mt-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                   {server.toolCount} tool{server.toolCount === 1 ? "" : "s"}
                   {server.hasAuth ? " · authorised" : " · no credential"}
                 </p>
@@ -436,11 +436,11 @@ function Connections() {
               {server.tools.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {server.tools.slice(0, 6).map((tool) => (
-                    <span key={tool.name} title={tool.description ?? undefined} className="rounded-xl border border-line bg-cream px-1.5 py-0.5 font-mono text-[10px] text-muted">
+                    <span key={tool.name} title={tool.description ?? undefined} className="rounded-xl border border-line bg-cream px-1.5 py-0.5 font-mono text-[11px] text-muted">
                       {tool.name}
                     </span>
                   ))}
-                  {server.tools.length > 6 && <span className="px-1 py-0.5 text-[10px] text-muted">+{server.tools.length - 6}</span>}
+                  {server.tools.length > 6 && <span className="px-1 py-0.5 text-[11px] text-muted">+{server.tools.length - 6}</span>}
                 </div>
               )}
 
@@ -454,14 +454,14 @@ function Connections() {
                   type="button"
                   onClick={() => refresh.mutate(server.id)}
                   disabled={refresh.isPending}
-                  className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
+                  className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                 >
                   {refresh.isPending ? "Checking…" : "Re-check"}
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditing(server)}
-                  className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
+                  className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                 >
                   Settings
                 </button>
@@ -637,7 +637,7 @@ function ConnectionDrawer({ open, server, onClose }: { open: boolean; server: Mc
         </Field>
 
         <div className="overflow-hidden rounded-2xl border border-line bg-cream p-4">
-          <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it's trusted with</h3>
+          <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it's trusted with</h3>
           <p className="mt-1 text-xs leading-relaxed text-muted">
             These three decide how a call is gated, and they are read from here rather than from anything the server says about itself. A
             server describing its own tool as harmless is a server asking to act unwatched.

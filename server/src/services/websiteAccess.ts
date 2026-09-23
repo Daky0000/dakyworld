@@ -111,7 +111,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/sites\/[^/]+\/members(?:\/[^/]+)?\/?$/.test(path)) return "members";
   if (/\/(?:source|source-project)(?:\/|$)/.test(path)) return "source";
   if (/^\/sites\/[^/]+\/config\/?$/.test(path)) return "manage";
-  if (method === "GET" || method === "HEAD") return "view";
+  if (method === "GET" || method === "HEAD" || /\/presence\/?$/.test(path)) return "view";
   if (/\/publish\/?$/.test(path)) return "publish";
   // Making an element shared, or stopping it being one, changes how every page
   // that carries it is edited. Editing the shared element, detaching one page's
@@ -122,12 +122,12 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   // publishes to, which is the same decision as changing its repository.
   if (/^\/sites\/[^/]+\/github-app\/?$/.test(path)) return "manage";
   if (/^\/shared\/[^/]+\/(?:draft|instances)(?:\/|$)/.test(path)) return "edit";
-  if (/\/draft\/?$/.test(path) || /\/restore\/?$/.test(path) || /\/structure\/?$/.test(path)) return "edit";
+  if (/\/draft\/?$/.test(path) || /\/restore\/?$/.test(path) || /\/structure\/?$/.test(path) || /\/name-fields\/?$/.test(path)) return "edit";
   if (/\/assets(?:\/[^/]+)?\/?$/.test(path)) return "edit";
   if (/\/(?:scan|import)\/?$/.test(path)) return "manage";
   if (/^\/(?:sites|pages)\/[^/]+\/?$/.test(path)) return "manage";
-  // AI suggestions may cost money and produce draft changes, but cannot publish.
-  if (/\/(?:ai|suggest|assistant)(?:\/|$)/.test(path)) return "edit";
+  // AI suggestions, SEO actions, comments, and agent plans produce draft/site changes.
+  if (/\/(?:ai|suggest|assistant|agent|seo|insert-section|comments|health-monitor)(?:\/|$)/.test(path)) return "edit";
   return null;
 }
 

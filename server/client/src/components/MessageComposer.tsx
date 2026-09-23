@@ -436,7 +436,7 @@ function DraftNotes({ draft, blocked }: { draft: MessageDraftResponse; blocked: 
       )}
 
       <div className="rounded-xl border border-line bg-white px-4 py-3">
-        <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Why this angle</div>
+        <div className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Why this angle</div>
         <p className="mt-1.5 text-sm text-ink">{draft.rationale}</p>
         <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted">
           <span>Written by {draft.model}</span>

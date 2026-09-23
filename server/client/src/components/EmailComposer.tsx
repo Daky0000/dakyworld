@@ -347,7 +347,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
               key={option}
               type="button"
               onClick={() => setTab(option)}
-              className={`-mb-px border-b-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition ${
+              className={`-mb-px border-b-2 px-3 py-2 font-sans text-[11px] uppercase tracking-[.06em] transition ${
                 tab === option ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"
               }`}
             >
@@ -403,7 +403,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
               <button
                 type="button"
                 onClick={() => setShowFacts(!showFacts)}
-                className="flex w-full items-center justify-between px-4 py-2.5 text-left font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink"
+                className="flex w-full items-center justify-between px-4 py-2.5 text-left font-sans text-[11px] uppercase tracking-[.06em] text-muted hover:text-ink"
               >
                 <span>What we know about them ({context.facts.length})</span>
                 <span aria-hidden>{showFacts ? "−" : "+"}</span>
@@ -420,9 +420,37 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
             </div>
           )}
 
+          {/* Quick Pitch Action for built prototypes / websites */}
+          {context?.facts?.some(
+            (f) =>
+              f.includes("concept page has been built") ||
+              f.includes("Interactive working prototype") ||
+              f.includes("Website Builder") ||
+              f.includes("website project"),
+          ) && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/[.05] p-3.5">
+              <div className="flex items-center gap-2 text-xs text-ink">
+                <Badge tone="positive">Prototype Ready</Badge>
+                <span className="font-medium">Working website preview exists for this recipient</span>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setPurpose("DEMO_READY");
+                  setBrief("Pitch the working website preview / prototype we built specifically for them. Highlight the live preview link, mobile responsiveness, tailored design, and zero commitment.");
+                  setTimeout(() => draft.mutate(), 50);
+                }}
+                disabled={draft.isPending}
+              >
+                Pitch Built Website
+              </Button>
+            </div>
+          )}
+
           {/* The drafter. */}
           <div className="overflow-hidden rounded-2xl mb-5 border border-blue/30 bg-blue/[.05] p-4">
-            <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-blue">
+            <div className="mb-2 flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-blue">
               <StatusDot tone="live" /> Draft it with AI
             </div>
             <textarea
@@ -459,7 +487,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
 
           {relevantTemplates.length > 0 && (
             <div className="mb-5">
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Or start from a template</div>
+              <div className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Or start from a template</div>
               <div className="flex flex-wrap gap-2">
                 {relevantTemplates.map((template) => (
                   <button
@@ -472,7 +500,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
                       setPurpose(template.purpose);
                       setRationale(null);
                     }}
-                    className="rounded-full border border-line-strong px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:border-ink hover:text-ink"
+                    className="rounded-full border border-line-strong px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:border-ink hover:text-ink"
                   >
                     {template.name}
                   </button>
@@ -499,7 +527,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
                   type="button"
                   title={value || "(empty for this recipient)"}
                   onClick={() => setBody((current) => `${current}{{${name}}}`)}
-                  className="rounded-xl border border-line bg-white px-1.5 py-0.5 font-mono text-[10px] text-muted transition hover:border-ink/40 hover:text-ink"
+                  className="rounded-xl border border-line bg-white px-1.5 py-0.5 font-mono text-[11px] text-muted transition hover:border-ink/40 hover:text-ink"
                 >
                   {`{{${name}}}`}
                 </button>
@@ -556,7 +584,7 @@ function RecipientPicker({ onPick }: { onPick: (picked: { leadId?: string; clien
 
       {matchingClients.length > 0 && (
         <div className="mt-5">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Clients</div>
+          <div className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Clients</div>
           {matchingClients.map((client) => (
             <button
               key={client.id}
@@ -573,7 +601,7 @@ function RecipientPicker({ onPick }: { onPick: (picked: { leadId?: string; clien
 
       {matchingLeads.length > 0 && (
         <div className="mt-5">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Leads</div>
+          <div className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Leads</div>
           {matchingLeads.map((lead) => (
             <button
               key={lead.id}
@@ -702,13 +730,13 @@ function AttachmentPanel({
   return (
     <div className="mt-5 border-t border-line pt-4">
       <div className="mb-2 flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Attachments{going > 0 ? ` (${going})` : ""}
         </span>
         <button
           type="button"
           onClick={() => setShowLink(!showLink)}
-          className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
         >
           {showLink ? "Hide link form" : "Attach a link instead"}
         </button>
@@ -746,7 +774,7 @@ function AttachmentPanel({
                   <button
                     type="button"
                     onClick={() => onAttachReport(!attachReport)}
-                    className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-muted transition hover:text-ink"
+                    className="shrink-0 font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                   >
                     {off ? "Attach it again" : "Remove"}
                   </button>
@@ -775,7 +803,7 @@ function AttachmentPanel({
                 <button
                   type="button"
                   onClick={() => remove(index)}
-                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-muted transition hover:text-ink"
+                  className="shrink-0 font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                 >
                   Remove
                 </button>
@@ -954,7 +982,7 @@ export function EmailPreviewPane({
       )}
 
       <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           {isFetching ? "Rendering…" : "As it will arrive"}
         </span>
         <div className="flex gap-1.5">
@@ -963,7 +991,7 @@ export function EmailPreviewPane({
               key={option}
               type="button"
               onClick={() => setWidth(option)}
-              className={`border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+              className={`border px-2 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] transition ${
                 width === option ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink/40"
               }`}
             >
@@ -984,7 +1012,7 @@ export function EmailPreviewPane({
       </div>
 
       <details className="rounded-2xl border border-line bg-white px-4 py-3">
-        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <summary className="cursor-pointer font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           The plain-text half
         </summary>
         <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-muted">{data.text}</p>
@@ -996,7 +1024,7 @@ export function EmailPreviewPane({
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex gap-3 px-4 py-2">
-      <dt className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</dt>
+      <dt className="w-16 shrink-0 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{label}</dt>
       <dd className="min-w-0 flex-1 break-words">{children}</dd>
     </div>
   );
@@ -1043,7 +1071,7 @@ function DraftReport({
           prospect did. */}
       {checks && checks.blocking.length > 0 && (
         <div className="rounded-2xl border border-danger-line bg-danger-surface p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-danger-text">
+          <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-danger-text">
             Do not send this yet — {checks.blocking.length} check{checks.blocking.length === 1 ? "" : "s"} failed
           </div>
           <ul className="space-y-1 text-xs leading-relaxed text-danger-text">
@@ -1057,7 +1085,7 @@ function DraftReport({
       )}
       {checks && checks.warnings.length > 0 && (
         <div className="rounded-2xl border border-warn-line bg-warn-surface p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">Worth a second look</div>
+          <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-warn-text">Worth a second look</div>
           <ul className="space-y-1 text-xs leading-relaxed text-warn-text">
             {checks.warnings.map((check) => (
               <li key={check.id}>
@@ -1071,7 +1099,7 @@ function DraftReport({
           out — so "why is this not about the slow homepage" has an answer. */}
       {scenario && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+          <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             Playbook scenario {scenario.number}
           </div>
           <p className="text-sm font-medium text-ink">{scenario.name}</p>
@@ -1089,7 +1117,7 @@ function DraftReport({
           is not, remembers that — so this is louder than the rest. */}
       {weak && (
         <div className="rounded-2xl border border-warn-line bg-warn-surface p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">Nothing serious was found</div>
+          <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-warn-text">Nothing serious was found</div>
           <p className="text-xs leading-relaxed text-warn-text">
             Their site and email set-up check out — the worst of it is minor housekeeping. There may be no real reason for this
             business to reply, and a cold email about nothing costs the chance to write to them the year they do need somebody. Read
@@ -1102,7 +1130,7 @@ function DraftReport({
           difference between a link and a promise of one. */}
       {result.demo && (
         <div className={`rounded-2xl border p-4 ${result.demo.url ? "border-line bg-white" : "border-warn-line bg-warn-surface"}`}>
-          <div className={`mb-1 font-mono text-[10px] uppercase tracking-[.12em] ${result.demo.url ? "text-muted" : "text-warn-text"}`}>
+          <div className={`mb-1 font-sans text-[11px] uppercase tracking-[.06em] ${result.demo.url ? "text-muted" : "text-warn-text"}`}>
             {result.demo.url ? (result.demo.built ? "A demo page was built for them just now" : "They already have a demo page") : "No demo page"}
           </div>
           {result.demo.url ? (
@@ -1120,7 +1148,7 @@ function DraftReport({
           that actually carries them are two different things. */}
       {result.willAttachReport && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">The full review goes with this email</div>
+          <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">The full review goes with this email</div>
           <p className="text-xs leading-relaxed text-ink">
             More than one serious fault was found, so the letter names the strongest one and the rest are attached as a PDF. It is
             on the letter already — see the chip under Attachments, which is also where it can be taken off.
@@ -1130,7 +1158,7 @@ function DraftReport({
       {/* What the look found, when this request went and looked. */}
       {prep && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+          <div className="mb-2 flex flex-wrap items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             <span>{prep.ranNow ? "Looked at them just now" : "Read from an earlier look"}</span>
             {prep.researchedBy && (
               <Badge tone={prep.searchedLiveSources ? "muted" : "warn"}>
@@ -1162,7 +1190,7 @@ function DraftReport({
 
       {unseen && (
         <div className="rounded-2xl border border-warn-line bg-warn-surface p-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">Nobody has seen their page</div>
+          <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-warn-text">Nobody has seen their page</div>
           <p className="text-xs leading-relaxed text-warn-text">
             Their site was checked by machine but never photographed, so nothing is known about how it looks — the half a business owner
             actually cares about. What is left is technical detail, and an email built on that reads as trivia. Connect Apify under Lead
@@ -1181,20 +1209,20 @@ function DraftReport({
       {polish && (
         <div className="rounded-2xl border border-line bg-white p-4">
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Read and polished by {polish.polishedBy}</span>
+            <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Read and polished by {polish.polishedBy}</span>
             <Badge tone={polish.servesPurpose ? "positive" : "warn"}>
               {polish.servesPurpose ? "Does its job" : "Does not do its job yet"}
             </Badge>
             <span className="flex-1" />
             {result.beforePolish && (
-              <button type="button" onClick={onToggle} className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline">
+              <button type="button" onClick={onToggle} className="font-sans text-[11px] uppercase tracking-[.06em] text-blue hover:underline">
                 {showingOriginal ? "Use the polished version" : "Show the unpolished draft"}
               </button>
             )}
           </div>
           {polish.changes.length > 0 && (
             <>
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">What it changed</div>
+              <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it changed</div>
               <ul className="space-y-1 text-xs text-muted">
                 {polish.changes.map((change, index) => (
                   <li key={index} className="leading-relaxed">
@@ -1206,7 +1234,7 @@ function DraftReport({
           )}
           {polish.concerns.length > 0 && (
             <div className="mt-3 border-t border-line pt-2">
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">Still weak, before you send it</div>
+              <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-warn-text">Still weak, before you send it</div>
               <ul className="space-y-1 text-xs text-warn-text">
                 {polish.concerns.map((concern, index) => (
                   <li key={index} className="leading-relaxed">
@@ -1218,7 +1246,7 @@ function DraftReport({
           )}
           {polish.added.length > 0 && (
             <div className="mt-2 rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-xs text-danger-text">
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em]">Added, and not in the facts — check before sending</div>
+              <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em]">Added, and not in the facts — check before sending</div>
               <ul className="space-y-1">
                 {polish.added.map((entry, index) => (
                   <li key={index}>· {entry}</li>

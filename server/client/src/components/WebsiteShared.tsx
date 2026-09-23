@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, apiUrl } from "../lib/api";
 import { Badge, Button } from "./ui";
 import type { SharedElementOnPage, SharedReview } from "../lib/types";
 
@@ -44,7 +44,7 @@ export function SharedElementPanel({
   return (
     <div className={`border-b border-line px-4 py-3 ${linked ? "bg-blue/[.03]" : ""}`}>
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted">{linked ? "Shared element" : "Local element"}</span>
+        <span className="font-sans text-[11px] font-bold uppercase tracking-[.06em] text-muted">{linked ? "Shared element" : "Local element"}</span>
         {linked ? <Badge tone="info">{element.linkedPages} pages</Badge> : <Badge>Detached</Badge>}
       </div>
       <div className="truncate text-[13px] font-semibold text-ink">{element.name}</div>
@@ -56,7 +56,7 @@ export function SharedElementPanel({
           </p>
 
           <fieldset className="mt-2.5" disabled={readOnly || act.isPending}>
-            <legend className="mb-1.5 text-[10px] uppercase tracking-[.08em] text-muted">Apply changes to</legend>
+            <legend className="mb-1.5 text-[11px] uppercase tracking-[.08em] text-muted">Apply changes to</legend>
             <label className="flex items-start gap-2 text-[12px] text-ink">
               <input type="radio" name={`scope-${element.instanceId}`} checked readOnly className="mt-0.5 accent-blue" />
               <span>All {element.linkedPages} linked pages</span>
@@ -75,7 +75,7 @@ export function SharedElementPanel({
               />
               <span>
                 Only this page
-                <span className="block text-[10px] leading-relaxed text-muted">Makes this copy independent first. Nothing on the page changes.</span>
+                <span className="block text-[11px] leading-relaxed text-muted">Makes this copy independent first. Nothing on the page changes.</span>
               </span>
             </label>
           </fieldset>
@@ -135,6 +135,7 @@ export function SharedElementPanel({
 export function SharedPublishReview({ sharedElementId, onClose, onPublished }: { sharedElementId: string; onClose: () => void; onPublished: () => void }) {
   const qc = useQueryClient();
   const [failure, setFailure] = useState<string | null>(null);
+  const [previewPageId, setPreviewPageId] = useState<string | null>(null);
 
   const review = useQuery({
     queryKey: ["website", "shared", sharedElementId, "review"],
@@ -164,7 +165,7 @@ export function SharedPublishReview({ sharedElementId, onClose, onPublished }: {
 
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-ink/40 p-6" role="dialog" aria-modal="true" aria-label="Shared change review">
-      <div className="w-full max-w-2xl rounded-2xl border border-line bg-white p-5 shadow-xl shadow-ink/10">
+      <div className="w-full max-w-3xl rounded-2xl border border-line bg-white p-5 shadow-xl shadow-ink/10">
         {review.isLoading && <p className="text-sm text-muted">Working out what this would change…</p>}
         {review.isError && <p className="text-sm text-warn-text">{review.error instanceof ApiError ? review.error.message : "That change could not be reviewed."}</p>}
 
@@ -192,8 +193,17 @@ export function SharedPublishReview({ sharedElementId, onClose, onPublished }: {
               {review.data.pages.map((page) => (
                 <li key={page.pageId} className={`rounded-xl border p-3 ${page.blocked ? "border-warn-line bg-warn-surface/40" : "border-line"}`}>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold text-ink">{page.title}</span>
-                    <span className="font-mono text-[10px] text-muted">{page.path}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-ink">{page.title}</span>
+                      <span className="font-mono text-[11px] text-muted">{page.path}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewPageId(previewPageId === page.pageId ? null : page.pageId)}
+                      className={`rounded-[10px] px-2 py-0.5 text-xs transition border ${previewPageId === page.pageId ? "bg-ink text-white border-ink" : "bg-white text-muted hover:text-ink border-line"}`}
+                    >
+                      {previewPageId === page.pageId ? "Hide preview" : "Preview"}
+                    </button>
                   </div>
                   {page.blocked ? (
                     <p className="mt-1 text-xs text-warn-text">{page.blocked}</p>
@@ -208,6 +218,19 @@ export function SharedPublishReview({ sharedElementId, onClose, onPublished }: {
                     </ul>
                   ) : (
                     <p className="mt-1 text-xs text-muted">Already says all of this.</p>
+                  )}
+                  {previewPageId === page.pageId && (
+                    <div className="mt-3 overflow-hidden rounded-xl border border-line bg-sunken">
+                      <div className="flex items-center justify-between border-b border-line bg-white px-3 py-1.5 text-xs text-muted">
+                        <span>Live Preview: {page.title}</span>
+                        <span className="font-mono text-[11px]">{page.path}</span>
+                      </div>
+                      <iframe
+                        src={apiUrl(`/website/pages/${page.pageId}/preview`)}
+                        title={`Preview of ${page.title}`}
+                        className="h-64 w-full bg-white"
+                      />
+                    </div>
                   )}
                 </li>
               ))}
@@ -319,7 +342,7 @@ export function MakeSharedPanel({
   return (
     <div className="border-b border-line bg-blue/[.03] px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[.14em] text-muted">Make shared</span>
+        <span className="font-sans text-[11px] font-bold uppercase tracking-[.06em] text-muted">Make shared</span>
         <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-muted hover:text-ink">
           Cancel
         </button>

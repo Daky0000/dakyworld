@@ -61,7 +61,10 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
   for (const asset of assets) {
     const content = bytes.get(asset.id);
     if (!content) continue;
-    out = out.split(assetUrl(site, asset.repoPath)).join(`data:${asset.contentType};base64,${content.toString("base64")}`);
+    const replacement = asset.contentType.startsWith("image/")
+      ? `data:${asset.contentType};base64,${content.toString("base64")}`
+      : `/api/website/sites/${site.id}/assets/${asset.id}/content`;
+    out = out.split(assetUrl(site, asset.repoPath)).join(replacement);
   }
   return out;
 }

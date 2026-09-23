@@ -342,7 +342,7 @@ export function LeadImport() {
             )}
             <Link
               to="/leads"
-              className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+              className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-sans text-xs uppercase tracking-[.06em] transition hover:border-ink"
             >
               Back to leads
             </Link>
@@ -434,7 +434,7 @@ function Connections({ connections }: { connections?: AppSettings }) {
   return (
     <Card className="mb-8">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-        <span className="font-mono text-[11px] uppercase tracking-[.14em] text-muted">Connections</span>
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Connections</span>
 
         <span className="flex items-center gap-2 text-sm">
           <StatusDot tone={analyst?.configured ? "ok" : "idle"} />
@@ -457,9 +457,9 @@ function Connections({ connections }: { connections?: AppSettings }) {
         <span className="flex-1" />
         <Link
           to="/settings"
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-blue transition hover:underline"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-blue transition hover:underline"
         >
-          Set up in Settings →
+          Set up in Settings
         </Link>
       </div>
     </Card>
@@ -567,7 +567,7 @@ function SourceStep({
 
       {chosen && sheets.length > 1 && (
         <div className="mt-6">
-          <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Tabs to read</h3>
+          <h3 className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Tabs to read</h3>
           <div className="flex flex-wrap gap-2">
             {sheets.map((sheet) => {
               const active = chosenSheets.includes(sheet);
@@ -576,7 +576,7 @@ function SourceStep({
                   key={sheet}
                   type="button"
                   onClick={() => onSheets(active ? chosenSheets.filter((name) => name !== sheet) : [...chosenSheets, sheet])}
-                  className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+                  className={`px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition ${
                     active ? "bg-ink text-cream" : "bg-sunken text-muted hover:text-ink"
                   }`}
                 >
@@ -634,10 +634,10 @@ function ReadingProgress({
   return (
     <Card className="mb-8">
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-        <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">
+        <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           {halted ? "Stopped" : "Reading the workbook"}
         </h3>
-        <span className="font-mono text-[11px] uppercase tracking-[.12em] text-muted">
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           {complete} of {total} tabs · {reading.tables.length} {reading.tables.length === 1 ? "table" : "tables"} ·{" "}
           {rows.toLocaleString()} rows
         </span>
@@ -670,14 +670,14 @@ function ReadingProgress({
       {(reading.done.length > 0 || reading.remaining.length > 0) && (
         <div className="mt-4 flex flex-wrap gap-1.5">
           {reading.done.map((name) => (
-            <span key={name} className="bg-blue/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-blue">
-              ✓ {name}
+            <span key={name} className="bg-blue/10 px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-blue">
+              Imported: {name}
             </span>
           ))}
           {reading.remaining.map((name) => (
             <span
               key={name}
-              className={`px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] ${
+              className={`px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] ${
                 name === reading.current ? "bg-ink text-cream" : "bg-sunken text-muted"
               }`}
             >
@@ -793,7 +793,7 @@ function DrivePicker({
                     <RelativeTime value={file.modifiedTime} />
                   </span>
                 )}
-                {loadingId === file.id && <span className="font-mono text-[10px] uppercase text-muted">opening…</span>}
+                {loadingId === file.id && <span className="font-sans text-[11px] uppercase text-muted">opening…</span>}
               </button>
             </li>
           ))}
@@ -842,7 +842,7 @@ function ReviewStep({
     <section className="mb-10">
       {importing && (
         <div className="mb-4 rounded-2xl border border-blue/30 bg-blue/5 px-4 py-3">
-          <p className="text-sm font-mono uppercase tracking-[.12em] text-blue">
+          <p className="text-sm font-sans uppercase tracking-[.06em] text-blue">
             Importing… {analysis.import.leadsCreated} created, {analysis.import.leadsUpdated} updated so far
           </p>
         </div>
@@ -892,7 +892,7 @@ function ReviewStep({
       {error instanceof Error && <Note tone="bad">{error.message}</Note>}
 
       <div className="overflow-hidden rounded-2xl sticky bottom-4 mt-6 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
-        <span className="font-mono text-[11px] uppercase tracking-[.14em]">
+        <span className="font-sans text-[11px] uppercase tracking-[.06em]">
           {groups.length} list{groups.length === 1 ? "" : "s"} · {included.length} table{included.length === 1 ? "" : "s"} · {totalRows} leads
         </span>
         <span className="flex-1" />
@@ -900,7 +900,7 @@ function ReviewStep({
           type="button"
           onClick={onRecheck}
           disabled={rechecking}
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/70 transition hover:text-cream disabled:opacity-50"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-cream/70 transition hover:text-cream disabled:opacity-50"
         >
           {rechecking ? "Rechecking…" : "Recheck preview"}
         </button>
@@ -908,7 +908,7 @@ function ReviewStep({
           type="button"
           onClick={onCommit}
           disabled={committing || !included.length}
-          className="bg-cream px-4 py-2 font-mono text-[11px] uppercase tracking-[.12em] text-ink transition hover:bg-white disabled:opacity-50"
+          className="bg-cream px-4 py-2 font-sans text-[11px] uppercase tracking-[.06em] text-ink transition hover:bg-white disabled:opacity-50"
         >
           {committing ? (importing ? "Resuming…" : "Importing…") : (importing ? "Resume import" : "Import into leads")}
         </button>
@@ -960,7 +960,7 @@ function GroupingCard({
               type="button"
               title={choice.hint}
               onClick={() => onGrouping(choice.value)}
-              className={`px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition ${
+              className={`px-3 py-2 font-sans text-[11px] uppercase tracking-[.06em] transition ${
                 grouping === choice.value ? "bg-ink text-cream" : "text-muted hover:text-ink"
               }`}
             >
@@ -984,7 +984,7 @@ function GroupingCard({
                   </Badge>
                 ))}
               </div>
-              <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 {group.tables.length > 1 && `${group.tables.length} tables · `}
                 {rowsIn(group.tables)} rows
               </span>
@@ -1040,13 +1040,13 @@ function TableCard({
             onChange={(event) => onChange({ title: event.target.value })}
             className="w-full border-b border-transparent bg-transparent font-display text-xl outline-none transition focus:border-ink/30"
           />
-          <p className="mt-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+          <p className="mt-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             {table.sheet} · rows {table.firstDataRow + 1}–{table.lastDataRow + 1}
             {table.headerRow !== null && ` · header row ${table.headerRow + 1}`} · {kept.length} columns
             {custom.length > 0 && ` (${custom.length} new)`}
           </p>
           {landsIn && (
-            <p className="mt-1 font-mono text-[10px] uppercase tracking-[.12em] text-blue">Joins the list “{landsIn}”</p>
+            <p className="mt-1 font-sans text-[11px] uppercase tracking-[.06em] text-blue">Joins the list “{landsIn}”</p>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -1059,12 +1059,12 @@ function TableCard({
       {table.notes && <p className="mb-4 text-sm text-muted">{table.notes}</p>}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <label className="flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Source
           <select
             value={table.leadSource}
             onChange={(event) => onChange({ leadSource: event.target.value })}
-            className="rounded-[10px] border border-line-strong bg-white px-2 py-1 text-[10px]"
+            className="rounded-[10px] border border-line-strong bg-white px-2 py-1 text-[11px]"
           >
             {LEAD_SOURCES.map((source) => (
               <option key={source} value={source}>
@@ -1073,7 +1073,7 @@ function TableCard({
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <label className="flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Rows start at
           <input
             type="number"
@@ -1083,7 +1083,7 @@ function TableCard({
             className="rounded-[10px] w-20 border border-line-strong px-2 py-1 text-[11px]"
           />
         </label>
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <label className="flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           and end at
           <input
             type="number"
@@ -1103,7 +1103,7 @@ function TableCard({
         <div className="mb-5 rounded-2xl border border-line">
           {table.columns.map((column, index) => (
             <div key={`${column.index}-${index}`} className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 last:border-0">
-              <span className="w-28 truncate font-mono text-[10px] uppercase tracking-[.1em] text-muted" title={column.header}>
+              <span className="w-28 truncate font-sans text-[11px] uppercase tracking-[.06em] text-muted" title={column.header}>
                 {column.header || `col ${column.index + 1}`}
               </span>
               <input
@@ -1130,7 +1130,7 @@ function TableCard({
                 <select
                   value={column.type}
                   onChange={(event) => updateColumn(index, { type: event.target.value as LeadFieldType })}
-                  className="rounded-full border border-line-strong bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em]"
+                  className="rounded-full border border-line-strong bg-white px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em]"
                 >
                   {FIELD_TYPES.map((type) => (
                     <option key={type} value={type}>
@@ -1151,7 +1151,7 @@ function TableCard({
         <div className="overflow-x-auto rounded-2xl border border-line">
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 {Object.keys(preview.sample[0]).map((header) => (
                   <th key={header} className="whitespace-nowrap px-3 py-2">
                     {header}
@@ -1197,9 +1197,9 @@ function Finished({
         {done.groups.map((group) => (
           <li key={group.id} className="flex items-center gap-3 px-4 py-3">
             <span className="flex-1">{group.name}</span>
-            <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{group.leads} rows</span>
-            <Link to={`/leads?groupId=${group.id}`} className="font-mono text-[10px] uppercase tracking-[.12em] text-blue">
-              Open →
+            <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{group.leads} rows</span>
+            <Link to={`/leads?groupId=${group.id}`} className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">
+              Open
             </Link>
           </li>
         ))}
@@ -1207,7 +1207,7 @@ function Finished({
       <div className="mt-5 flex gap-3">
         <Link
           to="/leads"
-          className="inline-flex items-center gap-2 bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-cream"
+          className="inline-flex items-center gap-2 bg-ink px-4 py-2 font-sans text-xs uppercase tracking-[.06em] text-cream"
         >
           Go to leads
         </Link>
@@ -1223,11 +1223,11 @@ function History({ history }: { history: LeadImportRecord[] }) {
   if (!history.length) return null;
   return (
     <section>
-      <h2 className="mb-3 font-mono text-[11px] uppercase tracking-[.14em] text-muted">Recent imports</h2>
+      <h2 className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Recent imports</h2>
       <div className="overflow-x-auto rounded-2xl border border-line bg-white">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead>
-            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+            <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               <th className="px-4 py-3">File</th>
               <th className="px-4 py-3">Read by</th>
               <th className="px-4 py-3">Tables</th>
@@ -1282,7 +1282,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       type="button"
       onClick={onClick}
-      className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] transition ${
+      className={`px-3 py-1.5 font-sans text-[11px] uppercase tracking-[.06em] transition ${
         active ? "bg-ink text-cream" : "bg-sunken text-muted hover:text-ink"
       }`}
     >

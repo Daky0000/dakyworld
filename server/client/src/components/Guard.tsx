@@ -23,8 +23,8 @@ export function Guard({ needs, children }: { needs: string; children: ReactNode 
 
   return (
     <Card className="mx-auto max-w-lg p-8 text-center">
-      <div className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Not available to you</div>
-      <h1 className="mt-3 font-display text-[22px] font-bold tracking-[-.03em]">This screen isn't part of your role</h1>
+      <div className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Not available to you</div>
+      <h1 className="mt-3 font-display text-[22px] font-medium tracking-[-.03em]">This screen isn't part of your role</h1>
       <p className="mt-3 text-[13px] leading-relaxed text-muted">
         {user?.roleName ? (
           <>
@@ -78,7 +78,7 @@ export function Landing({ children }: { children: ReactNode }) {
 
   return (
     <Card className="mx-auto max-w-lg p-8 text-center">
-      <h1 className="font-display text-[22px] font-bold tracking-[-.03em]">Welcome</h1>
+      <h1 className="font-display text-[22px] font-medium tracking-[-.03em]">Welcome</h1>
       <p className="mt-3 text-[13px] leading-relaxed text-muted">
         The dashboard isn't part of your role, but the rest of your work is waiting.
       </p>

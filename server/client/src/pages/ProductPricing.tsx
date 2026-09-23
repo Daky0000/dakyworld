@@ -131,7 +131,7 @@ function ProductRow({ product, mayEdit, onSaved }: { product: Product; mayEdit: 
       <fieldset className="mt-4 grid gap-3 sm:grid-cols-4" disabled={!mayEdit || save.isPending}>
         <label className="text-xs text-muted">
           Currency
-          <input className={`${INPUT} mt-1 font-mono uppercase`} maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value)} />
+          <input className={`${INPUT} mt-1 font-sans uppercase`} maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value)} />
         </label>
         <label className="text-xs text-muted">
           Each month

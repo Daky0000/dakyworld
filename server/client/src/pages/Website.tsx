@@ -7,6 +7,8 @@ import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { SitePageRow, SiteSummary } from "../lib/types";
 import { Badge, Button, EmptyState, PageHeader, RelativeTime, Table } from "../components/ui";
+import { WebsiteClientOnboarding } from "../components/WebsiteClientOnboarding";
+import { WebsiteGuideModal } from "../components/WebsiteGuideModal";
 
 /**
  * A page whose file the visual editor cannot open, and which therefore edits as
@@ -34,6 +36,7 @@ export function Website() {
   const [showHidden, setShowHidden] = useState(false);
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
 
@@ -92,11 +95,17 @@ export function Website() {
           current.repo ? "Publishing commits the page and the live site rebuilds." : "No repository is connected, so pages can be edited but not published."
         }`}
         action={
-          canManage ? (
-            <div className="flex gap-2"><ImportWebsitePage key={current.id} siteId={current.id} /><Button variant="secondary" onClick={() => scan.mutate()} disabled={scan.isPending}>
-              {scan.isPending ? "Looking…" : "Look for new pages"}
-            </Button></div>
-          ) : undefined
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => setGuideOpen(true)}>
+              Guide & Tips
+            </Button>
+            {canManage && <ImportWebsitePage key={current.id} siteId={current.id} />}
+            {canManage && (
+              <Button variant="secondary" onClick={() => scan.mutate()} disabled={scan.isPending}>
+                {scan.isPending ? "Looking…" : "Look for new pages"}
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -108,7 +117,7 @@ export function Website() {
               key={site.id}
               type="button"
               onClick={() => setSiteId(site.id)}
-              className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] ${
+              className={`border px-3 py-1.5 font-sans text-[11px] uppercase tracking-[.06em] ${
                 site.id === current.id ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink/40"
               }`}
             >
@@ -131,6 +140,12 @@ export function Website() {
       {scanResult && <p className="mb-4 rounded-2xl border border-line bg-white p-4 text-sm text-ink">{scanResult}</p>}
       {scanError && <p className="mb-4 rounded-2xl border border-warn-line bg-warn-surface p-4 text-sm text-warn-text">{scanError}</p>}
 
+      <WebsiteClientOnboarding
+        siteId={current.id}
+        siteName={current.name}
+        firstPageId={visible[0]?.id}
+      />
+
       {pages.isLoading ? (
         <div className="text-sm text-muted">Loading pages…</div>
       ) : all.length === 0 ? (
@@ -148,7 +163,7 @@ export function Website() {
         <>
           <Table>
             <thead>
-              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 <th className="px-4 py-3 font-normal">Page</th>
                 <th className="px-4 py-3 font-normal">Address</th>
                 <th className="px-4 py-3 font-normal">State</th>
@@ -225,6 +240,10 @@ export function Website() {
             </button>
           )}
         </>
+      )}
+
+      {current && (
+        <WebsiteGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
       )}
     </div>
   );

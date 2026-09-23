@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { CssValueField } from "./CssValueField";
 import {
   ALIGN_ICONS, BORDER_STYLES, CASES, COLOURS, ColourField, DIRECTION_ICONS, DISPLAY_ICONS, EXTRA_LABEL, EXTRA_SEED,
-  FONTS, IconChoice, IconToggle, JUSTIFY_ICONS, Lines, NumberField, PaletteContext, Row, SIDES, Section, Segmented,
+  FONTS, IconChoice, IconToggle, JUSTIFY_ICONS, NumberField, PaletteContext, Row, SIDES, Section, Segmented,
   SelectField, SubBlock, WEIGHTS, expandBox, parseStyle, readShadow, readTransform, toNumber, writeStyle, type Extra,
 } from "./InspectorControls";
 import {
@@ -256,7 +256,7 @@ export function ElementInspector({
             <span
               data-origin={`${first.property}+${second.property}`}
               title={`${first.label}: ${ORIGIN_TITLE[left.origin]} ${second.label}: ${ORIGIN_TITLE[right.origin]}`}
-              className={`font-mono text-[9px] uppercase tracking-[.08em] ${left.overridden || right.overridden ? "text-blue" : "text-faint"}`}
+              className={`font-sans text-[11px] uppercase tracking-[.06em] ${left.overridden || right.overridden ? "text-blue" : "text-faint"}`}
             >
               Mixed
             </span>
@@ -339,7 +339,7 @@ export function ElementInspector({
    */
   const box = (property: "padding" | "margin") => (
     <div className="pt-0.5">
-      <div className="mb-1 text-[10px] uppercase tracking-[.06em] text-muted">{property}</div>
+      <div className="mb-1 text-[11px] uppercase tracking-[.06em] text-muted">{property}</div>
       <div className="grid grid-cols-[1fr_28px_1fr] items-center gap-1">
         <div />
         <SideField property={property} side="top" />
@@ -506,10 +506,10 @@ export function ElementInspector({
                     onCommit?.();
                   }}
                   options={[
-                    { value: "left", title: "Left", label: <Lines widths={[10, 6, 8]} align="start" /> },
-                    { value: "center", title: "Centre", label: <Lines widths={[10, 6, 8]} align="center" /> },
-                    { value: "right", title: "Right", label: <Lines widths={[10, 6, 8]} align="end" /> },
-                    { value: "justify", title: "Justify", label: <Lines widths={[10, 10, 10]} align="start" /> },
+                    { value: "left", title: "Left", label: "Left" },
+                    { value: "center", title: "Centre", label: "Centre" },
+                    { value: "right", title: "Right", label: "Right" },
+                    { value: "justify", title: "Justify", label: "Justify" },
                   ]}
                 />
               }
@@ -605,7 +605,7 @@ export function ElementInspector({
             {extras.includes("box-shadow") ? (
               <Shadow property="box-shadow" declarations={declarations} disabled={disabled} onSet={set} onCommit={onCommit} />
             ) : siteShadow ? (
-              <div className="rounded-xl bg-cream/70 px-2.5 py-2 text-[10px] leading-relaxed text-muted">
+              <div className="rounded-xl bg-cream/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
                 The website already gives this a shadow — <span className="font-mono">{siteShadow}</span>. Adding one here replaces it.
                 <button
                   type="button"
@@ -673,7 +673,7 @@ export function ElementInspector({
               {capabilities.gridChild && <Choice property="justify-self" label="Justify self" options={["auto", "stretch", "start", "center", "end"]} />}
               {!zIndex && <Text property="z-index" label="Stack order" short="Stack" />}
               <Text property="background-image" label="Gradient" />
-              <p className="text-[10px] leading-relaxed text-muted">
+              <p className="text-[11px] leading-relaxed text-muted">
                 A linear-gradient or radial-gradient. Photographs are replaced through the picture control.
               </p>
 
@@ -742,7 +742,7 @@ export function ElementInspector({
               )}
 
               {untouched.length > 0 && (
-                <div className="rounded-xl bg-cream/70 px-2.5 py-2 text-[10px] leading-relaxed text-muted">
+                <div className="rounded-xl bg-cream/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
                   <span className="font-semibold text-muted">Also on this element, left alone:</span>{" "}
                   <span className="font-mono">{untouched.map(([property, declaration]) => `${property}: ${declaration}`).join("; ")}</span>
                 </div>
@@ -796,7 +796,7 @@ function Origin({
       <span
         data-origin={value.property}
         title={`${ORIGIN_TITLE[value.origin]}${readable ? ` Now: ${readable}.` : ""}`}
-        className={`font-mono text-[9px] uppercase tracking-[.08em] ${value.overridden ? "text-blue" : "text-faint"}`}
+        className={`font-sans text-[11px] uppercase tracking-[.06em] ${value.overridden ? "text-blue" : "text-faint"}`}
       >
         {ORIGIN_LABEL[value.origin]}
       </span>
@@ -806,7 +806,7 @@ function Origin({
           onClick={onReset}
           title={value.source ? `Put this back to the website's ${value.source}` : "Put this back to the website's own styling"}
           aria-label={`Reset ${value.property}`}
-          className="text-[10px] leading-none text-muted transition hover:text-ink"
+          className="text-[11px] leading-none text-muted transition hover:text-ink"
         >
           ↺
         </button>

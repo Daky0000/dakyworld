@@ -1,7 +1,7 @@
 import { interactionCss } from "../../shared/websiteInteraction.js";
 import { websiteAssetFiles } from "../websiteAssets.js";
 import { randomBytes } from "node:crypto";
-import { commitFiles, GitHubError, GitHubNotConfiguredError, githubConfigured, listRepoFiles, listTree, readFile, RepoNotAllowedError, withGithubCredential } from "../../lib/github.js";
+import { commitFiles, createBranch, openPullRequest, GitHubError, GitHubNotConfiguredError, githubConfigured, listRepoFiles, listTree, readFile, RepoNotAllowedError, withGithubCredential } from "../../lib/github.js";
 import { siteGithubCredential } from "../githubApp.js";
 import type { Site, SitePage } from "@prisma/client";
 import type { SiteField } from "./regions.js";
@@ -108,7 +108,7 @@ async function fetchLive(url: string): Promise<string> {
  * them, so a nested read during a commit inherits it without knowing — see
  * `withGithubCredential`.
  */
-async function underSiteCredential<T>(site: Site, work: () => Promise<T>): Promise<T> {
+export async function underSiteCredential<T>(site: Site, work: () => Promise<T>): Promise<T> {
   const credential = await siteGithubCredential(site);
   return credential ? withGithubCredential(credential, work) : work();
 }
@@ -548,11 +548,13 @@ export async function publishPage(input: {
   html: string;
   message: string;
   expectedSource?: string;
+  branchOverride?: string;
 }): Promise<{ sha: string; url: string }> {
   return publishPages({
     site: input.site,
     message: input.message,
     pages: [{ page: input.page, html: input.html, expectedSource: input.expectedSource }],
+    branchOverride: input.branchOverride,
   });
 }
 
@@ -616,13 +618,15 @@ export async function publishSourcePage(input: {
   html: string;
   author: string;
   changed: number;
+  branchOverride?: string;
 }): Promise<{ sha: string; url: string }> {
   const repo = siteRepo(input.site);
   if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository in Website settings before publishing.");
+  const targetBranch = input.branchOverride ?? input.site.repoBranch;
   return underSiteCredential(input.site, async () => {
-    const current = await readFile(repo, repoFilePath(input.site, input.page), input.site.repoBranch).catch(() => null);
+    const current = await readFile(repo, repoFilePath(input.site, input.page), targetBranch).catch(() => null);
     if (current === null) {
-      throw new WebsiteError(404, `${repoFilePath(input.site, input.page)} is not in ${repo} on branch ${input.site.repoBranch}. Rescan the site so its page list matches the repository.`);
+      throw new WebsiteError(404, `${repoFilePath(input.site, input.page)} is not in ${repo} on branch ${targetBranch}. Rescan the site so its page list matches the repository.`);
     }
     const written = applyHtmlEditsAsJsx({ source: current, filePath: input.page.filePath, html: input.html, edits: input.values });
     if (written.unmappable.length) {
@@ -638,7 +642,7 @@ export async function publishSourcePage(input: {
     try {
       const commit = await commitFiles({
         repo,
-        branch: input.site.repoBranch,
+        branch: targetBranch,
         message: `Website: ${input.changed} change${input.changed === 1 ? "" : "s"} on ${input.page.path} (${input.author})`,
         // Guarded against the file as it is this second, so a developer editing
         // the same component while somebody edits its words loses nothing.
@@ -649,7 +653,7 @@ export async function publishSourcePage(input: {
       invalidateRender(input.site, input.page);
       return commit;
     } catch (err) {
-      throw githubFailure(err, repo, input.site.repoBranch);
+      throw githubFailure(err, repo, targetBranch);
     }
   });
 }
@@ -684,10 +688,81 @@ export const PAGE_LIST_FIELDS = {
   draftSavedById: true, lastPublishedAt: true, createdAt: true, updatedAt: true,
 } as const;
 
+function extractPageTitleText(html: string): string | null {
+  const match = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  return match ? match[1]!.trim() : null;
+}
+
+function extractMetaDescriptionText(html: string): string | null {
+  const match = /<meta\b[^>]*\bname\s*=\s*["']description["'][^>]*>/i.exec(html);
+  if (!match) return null;
+  const contentMatch = /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(match[0]);
+  return contentMatch ? (contentMatch[1] ?? contentMatch[2] ?? "").trim() : null;
+}
+
+function escapeMetaAttrValue(val: string): string {
+  return val
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function replaceMetaContentOutsideGeneratedBlocks(
+  html: string,
+  attrName: "property" | "name",
+  attrValue: string,
+  newContent: string,
+): string {
+  const escaped = escapeMetaAttrValue(newContent);
+  const seoBlockRegex = /<!--\s*BEGIN SEO[\s\S]*?<!--\s*END SEO\s*-->/gi;
+  const protectedRanges: Array<[number, number]> = [];
+  for (const m of html.matchAll(seoBlockRegex)) {
+    if (m.index !== undefined) {
+      protectedRanges.push([m.index, m.index + m[0].length]);
+    }
+  }
+  const tagRegex = new RegExp(
+    `<meta\\b[^>]*\\b${attrName}\\s*=\\s*["']${attrValue}["'][^>]*>`,
+    "gi",
+  );
+  return html.replace(tagRegex, (fullTag, offset: number) => {
+    if (protectedRanges.some(([start, end]) => offset >= start && offset < end)) {
+      return fullTag;
+    }
+    if (/\bcontent\s*=\s*"[^"]*"/i.test(fullTag)) {
+      return fullTag.replace(/\bcontent\s*=\s*"[^"]*"/i, `content="${escaped}"`);
+    }
+    if (/\bcontent\s*=\s*'[^']*'/i.test(fullTag)) {
+      return fullTag.replace(/\bcontent\s*=\s*'[^']*'/i, `content='${escaped}'`);
+    }
+    return fullTag;
+  });
+}
+
+export function syncSocialMetaTags(html: string, expectedSource?: string): string {
+  if (!expectedSource) return html;
+  let updated = html;
+  const oldTitle = extractPageTitleText(expectedSource);
+  const newTitle = extractPageTitleText(html);
+  if (newTitle && oldTitle !== null && newTitle !== oldTitle) {
+    updated = replaceMetaContentOutsideGeneratedBlocks(updated, "property", "og:title", newTitle);
+    updated = replaceMetaContentOutsideGeneratedBlocks(updated, "name", "twitter:title", newTitle);
+  }
+  const oldDesc = extractMetaDescriptionText(expectedSource);
+  const newDesc = extractMetaDescriptionText(html);
+  if (newDesc && oldDesc !== null && newDesc !== oldDesc) {
+    updated = replaceMetaContentOutsideGeneratedBlocks(updated, "property", "og:description", newDesc);
+    updated = replaceMetaContentOutsideGeneratedBlocks(updated, "name", "twitter:description", newDesc);
+  }
+  return updated;
+}
+
 export async function publishPages(input: {
   site: Site;
   message: string;
   pages: Array<{ page: SitePage; html: string; expectedSource?: string }>;
+  branchOverride?: string;
 }): Promise<{ sha: string; url: string }> {
   const repo = siteRepo(input.site);
   if (!repo) {
@@ -708,6 +783,8 @@ export async function publishPages(input: {
   }
   if (!input.pages.length) throw new WebsiteError(400, "There are no pages to publish.");
 
+  const targetBranch = input.branchOverride ?? input.site.repoBranch;
+
   return underSiteCredential(input.site, async () => {
   try {
     // One pass over the whole commit, not one per page.
@@ -718,9 +795,13 @@ export async function publishPages(input: {
     // has taken this service down before. The pages are joined first and the
     // assets resolved once against all of them, which also removes the
     // de-duplication that only existed because the same file arrived N times.
-    const assets = await websiteAssetFiles(input.site, input.pages.map((entry) => entry.html).join(" "));
+    const syncedPages = input.pages.map((entry) => ({
+      ...entry,
+      html: syncSocialMetaTags(entry.html, entry.expectedSource),
+    }));
+    const assets = await websiteAssetFiles(input.site, syncedPages.map((entry) => entry.html).join(" "));
     const files = [
-      ...input.pages.map((entry) => ({ path: repoFilePath(input.site, entry.page), content: entry.html })),
+      ...syncedPages.map((entry) => ({ path: repoFilePath(input.site, entry.page), content: entry.html })),
       ...assets,
     ];
     const expected = input.pages
@@ -729,7 +810,7 @@ export async function publishPages(input: {
 
     const commit = await commitFiles({
       repo,
-      branch: input.site.repoBranch,
+      branch: targetBranch,
       message: input.message,
       expectedFiles: expected.length ? expected : undefined,
       files,
@@ -741,8 +822,59 @@ export async function publishPages(input: {
     for (const entry of input.pages) invalidateSource(input.site.id, entry.page.filePath);
     return commit;
   } catch (err) {
-    throw githubFailure(err, repo, input.site.repoBranch);
+    throw githubFailure(err, repo, targetBranch);
   }
+  });
+}
+
+export async function publishPagesAsPullRequest(input: {
+  site: Site;
+  title: string;
+  body?: string;
+  pages: Array<{ page: SitePage; html: string; expectedSource?: string }>;
+}): Promise<{ sha: string; url: string; prUrl: string; prNumber: number; branch: string }> {
+  const repo = siteRepo(input.site);
+  if (!repo) {
+    throw new WebsiteError(409, `${input.site.name} has no repository connected. Add one on the site's settings before publishing.`);
+  }
+  if (!(await githubConfigured())) {
+    throw new WebsiteError(503, "Publishing needs a GitHub token with permission to write to the website's repository. Add one under Settings → Developer.");
+  }
+  if (!input.pages.length) throw new WebsiteError(400, "There are no pages to publish.");
+
+  return underSiteCredential(input.site, async () => {
+    try {
+      const slug = input.pages[0]?.page.path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "content";
+      const branch = `content/${slug}-${Date.now().toString(36)}`;
+
+      await createBranch(repo, branch);
+
+      const commit = await publishPages({
+        site: input.site,
+        message: input.title,
+        pages: input.pages,
+        branchOverride: branch,
+      });
+
+      const prBody = input.body || `### Website Content Updates\n\n- **Target branch**: \`${input.site.repoBranch}\`\n- **Pages modified**: ${input.pages.map(p => `\`${p.page.path}\``).join(", ")}\n\nSubmitted via Dakyworld Website Editor.`;
+      const pr = await openPullRequest({
+        repo,
+        branch,
+        title: input.title,
+        body: prBody,
+        base: input.site.repoBranch,
+      });
+
+      return {
+        sha: commit.sha,
+        url: commit.url,
+        prUrl: pr.url,
+        prNumber: pr.number,
+        branch,
+      };
+    } catch (err) {
+      throw githubFailure(err, repo, input.site.repoBranch);
+    }
   });
 }
 
@@ -916,6 +1048,25 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
     mark(el);
     post({ type: "select", id: el.getAttribute("data-dw-field") });
     startEdit(el);
+  }, true);
+
+  document.addEventListener("contextmenu", function (event) {
+    var el = event.target && event.target.closest ? event.target.closest("[data-dw-field]") : null;
+    if (editing && el === editing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    stopEdit();
+    mark(el);
+    var id = el ? el.getAttribute("data-dw-field") : null;
+    post({
+      type: "contextmenu",
+      id: id,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      tag: el ? el.tagName.toLowerCase() : null,
+      kind: el ? el.getAttribute("data-dw-kind") : null,
+      text: el ? (el.innerText || el.textContent || "").trim() : ""
+    });
   }, true);
 
   document.addEventListener("input", function () {

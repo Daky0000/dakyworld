@@ -31,9 +31,9 @@ export function WebsiteAssetLibrary({ siteId, onSelect }: { siteId: string; onSe
       <label className="block text-xs text-muted">Image description<input className="mt-1 h-9 w-full rounded-xl border border-line bg-white px-2 text-xs text-ink" value={alt} onChange={e => setAlt(e.target.value)} placeholder="Describe what the image shows" /></label>
       <Button size="sm" disabled={!file || upload.isPending} onClick={() => upload.mutate()}>{upload.isPending ? "Uploading…" : onSelect ? "Upload & preview" : "Upload image"}</Button>
       {upload.error && <p role="alert" className="text-xs text-danger-text">{(upload.error as Error).message}</p>}
-      <p className="text-[10px] leading-relaxed text-muted">Images go live with the page when you publish. HTML downloads include uploaded images.</p>
+      <p className="text-[11px] leading-relaxed text-muted">Images go live with the page when you publish. HTML downloads include uploaded images.</p>
     </div>}
-    {candidate && onSelect && <section className="rounded-xl border border-line p-3" aria-label="Review replacement image"><h3 className="text-sm font-semibold">Preview replacement</h3><div className="my-3 grid grid-cols-2 gap-2">{["Desktop", "Phone"].map(device => <figure key={device}><figcaption className="text-xs text-muted">{device}</figcaption><img src={candidate.preview} alt={candidate.alt} onError={() => setPreviewFailed(true)} className={`mx-auto mt-1 h-28 object-contain ${device === "Phone" ? "w-3/4" : "w-full"}`} /></figure>)}</div><label className="block text-xs">Image description<input maxLength={500} className="my-2 w-full rounded-lg border border-line p-2 text-sm" value={candidate.alt} onChange={e => setCandidate({ ...candidate, alt: e.target.value })} /></label><p className="mb-2 text-xs text-muted">After choosing this image, use Crop & focal point to adjust its framing.</p>{previewFailed && <p role="alert" className="text-xs text-danger-text">Image preview failed. Choose another image or retry after checking your connection.</p>}<div className="flex gap-2"><Button size="sm" disabled={previewFailed} onClick={() => { onSelect(candidate); setCandidate(null); }}>Use this image</Button><button type="button" className="px-2 text-sm" onClick={() => setCandidate(null)}>Cancel</button></div></section>}
+    {candidate && onSelect && <section className="rounded-xl border border-line p-3" aria-label="Review replacement image"><h3 className="text-sm font-semibold">Preview replacement</h3><div className="my-3 grid grid-cols-2 gap-2">{["Desktop", "Phone"].map(device => <figure key={device}><figcaption className="text-xs text-muted">{device}</figcaption><img src={candidate.preview} alt={candidate.alt} onError={() => setPreviewFailed(true)} className={`mx-auto mt-1 h-28 object-contain ${device === "Phone" ? "w-3/4" : "w-full"}`} /></figure>)}</div><label className="block text-xs">Image description<input maxLength={500} className="my-2 w-full rounded-[10px] border border-line p-2 text-sm" value={candidate.alt} onChange={e => setCandidate({ ...candidate, alt: e.target.value })} /></label><p className="mb-2 text-xs text-muted">After choosing this image, use Crop & focal point to adjust its framing.</p>{previewFailed && <p role="alert" className="text-xs text-danger-text">Image preview failed. Choose another image or retry after checking your connection.</p>}<div className="flex gap-2"><Button size="sm" disabled={previewFailed} onClick={() => { onSelect(candidate); setCandidate(null); }}>Use this image</Button><button type="button" className="px-2 text-sm" onClick={() => setCandidate(null)}>Cancel</button></div></section>}
     {assets.isLoading && <p className="text-xs text-muted">Loading images…</p>}
     {assets.error && <p role="alert" className="text-xs text-danger-text">{(assets.error as Error).message}</p>}
     <div className="grid grid-cols-2 gap-2">{assets.data?.map(asset => <button type="button" key={asset.id} disabled={!onSelect} onClick={() => { setCandidate(asset); setPreviewFailed(false); }} className="overflow-hidden rounded-xl border border-line bg-white text-left enabled:hover:border-blue" title={`Use ${asset.filename}`}><img src={asset.preview} alt={asset.alt} className="h-24 w-full object-contain" /><span className="block truncate px-2 py-2 text-[11px] text-muted">{asset.filename}</span></button>)}</div>
@@ -48,3 +48,40 @@ export function WebsiteAssets() {
   return <div><PageHeader title="Images" subtitle="Your website's uploaded images, ready to use in the visual editor." /><select aria-label="Website" value={id ?? ""} onChange={e => setSelected(e.target.value)} className="mb-6 h-10 rounded-xl border border-line bg-white px-3 text-sm">{sites.data?.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select>{id ? <div className="max-w-3xl"><WebsiteAssetLibrary key={id} siteId={id} /></div> : <p className="text-sm text-muted">Connect a website to manage its images.</p>}</div>;
 }
 
+export function WebsiteAssetPickerModal({ siteId, onSelect, onClose }: {
+  siteId: string;
+  onSelect: (asset: { url: string; alt: string }) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="asset-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-xs"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl border border-line bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line px-5 py-4">
+          <div>
+            <h2 id="asset-modal-title" className="font-display text-base font-semibold text-ink">
+              Choose from Asset Library
+            </h2>
+            <p className="text-xs text-muted">Select an image from this site or upload a new one</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-[10px] text-muted hover:bg-sunken hover:text-ink"
+            aria-label="Close"
+          >
+            Close
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          <WebsiteAssetLibrary siteId={siteId} onSelect={onSelect} />
+        </div>
+      </div>
+    </div>
+  );
+}

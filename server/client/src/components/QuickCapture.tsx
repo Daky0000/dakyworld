@@ -33,6 +33,10 @@ const KIND_LABEL: Record<CaptureTargetKind, string> = {
 const EXAMPLES = [
   "kessben.com",
   "dental clinics in Kumasi",
+  "luxury aesthetic clinics in Dubai",
+  "b2b freight logistics in Amsterdam",
+  "commercial HVAC contractors in Sydney",
+  "family office wealth advisors in Zurich",
   "instagram.com/adjeidental",
   "scrape their LinkedIn for contact details",
 ];
@@ -111,7 +115,7 @@ export function QuickCapture() {
     <Card>
       <div className="flex items-baseline justify-between gap-4">
         <h2 className="font-display text-xl tracking-[-.02em]">Quick capture</h2>
-        <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">no setup needed</span>
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">no setup needed</span>
       </div>
       <p className="mt-1.5 text-sm text-muted">
         Paste a link — a website, a Google Maps place, a LinkedIn company, a Facebook Page, an Instagram account — or just
@@ -134,7 +138,7 @@ export function QuickCapture() {
             key={example}
             type="button"
             onClick={() => setText(example)}
-            className="rounded-full border border-line px-2.5 py-1 font-mono text-[10px] text-muted transition hover:border-blue/40 hover:text-ink"
+            className="rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-muted transition hover:border-blue/40 hover:text-ink"
           >
             {example}
           </button>
@@ -146,7 +150,7 @@ export function QuickCapture() {
           {read.isPending ? "Reading…" : "Read this"}
         </Button>
         {intent && !intent.free && (
-          <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">interpreted by Claude</span>
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">interpreted by Claude</span>
         )}
       </div>
 
@@ -172,7 +176,7 @@ export function QuickCapture() {
 
           {intent.targets.length > 0 && (
             <>
-              <h3 className="mt-4 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+              <h3 className="mt-4 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 About to capture — nothing has run yet
               </h3>
               <ul className="mt-2 space-y-2">
@@ -181,7 +185,7 @@ export function QuickCapture() {
                     {/* The task is a choice, not a verdict — reading it wrong
                         should cost a click, not a wasted paid run. */}
                     <select
-                      className="rounded-full shrink-0 border border-line bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink"
+                      className="rounded-full shrink-0 border border-line bg-white px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-ink"
                       value={target.kind}
                       onChange={(event) => retask(i, event.target.value as CaptureTargetKind)}
                       aria-label="What to run this as"
@@ -277,7 +281,7 @@ function TaskPicker({
 
   return (
     <div className="mt-4 border-t border-line pt-4">
-      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Or say what it is</h3>
+      <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Or say what it is</h3>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {tasks.map((entry) => (
           <button
@@ -288,7 +292,7 @@ function TaskPicker({
               // The words already typed are usually the input itself.
               setValue(seed.trim().split("\n")[0] ?? "");
             }}
-            className={`rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+            className={`rounded-full border px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition ${
               chosen === entry.kind ? "border-ink bg-ink text-cream" : "border-line text-muted hover:border-blue/40 hover:text-ink"
             }`}
           >
@@ -318,7 +322,7 @@ function TaskPicker({
               {busy ? "Starting…" : `Run as ${task.label}`}
             </Button>
           </div>
-          <p className="mt-1.5 font-mono text-[10px] text-muted">runs {task.actorId}</p>
+          <p className="mt-1.5 font-mono text-[11px] text-muted">runs {task.actorId}</p>
         </form>
       )}
     </div>
@@ -354,7 +358,7 @@ function CostNote({ estimate }: { estimate: CaptureEstimate }) {
       {estimate.tasks.length > 1 && (
         <ul className="mt-1 space-y-0.5">
           {estimate.tasks.map((task) => (
-            <li key={task.kind} className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">
+            <li key={task.kind} className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               {task.label} × {task.count} —{" "}
               {task.estimate.totalUsd == null ? "not priced" : `$${task.estimate.totalUsd.toFixed(2)}`}
             </li>

@@ -121,7 +121,7 @@ export function AgentWork({ agent }: { agent: AgentDetail }) {
     <section className="space-y-4">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it is working on</h3>
+          <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it is working on</h3>
           {data && (
             <p className="mt-1 text-sm text-muted">
               {running.length > 0 ? `${running.length} in flight · ` : ""}
@@ -179,7 +179,7 @@ function Group({
 }) {
   return (
     <div>
-      {label && <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</p>}
+      {label && <p className="mb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{label}</p>}
       <div className="space-y-1.5">
         {tasks.map((task) => (
           <button
@@ -201,7 +201,7 @@ function Group({
                     {task.pausedBecause ?? task.blockedReason ?? task.error ?? task.summary}
                   </span>
                 )}
-                <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 font-mono text-[10px] uppercase tracking-[.1em] text-muted">
+                <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                   {/* Paused reads instead of "queued", not beside it. The
                       status is the same and the news is not: this one is
                       waiting on a vendor and will start itself. */}
@@ -294,7 +294,7 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
       footer={
         task && (
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">
+            <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               {task.toolCalls} tool call{task.toolCalls === 1 ? "" : "s"} · ${task.costUsd.toFixed(4)}
               {task.attempts > 1 && ` · attempt ${task.attempts}`}
               {task.resumesFrom && ` · saved at step ${task.resumesFrom.steps}`}
@@ -332,7 +332,7 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
 
           {task.status === "BLOCKED" && (
             <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5">
-              <p className="font-mono text-[10px] uppercase tracking-[.12em] text-warn-text">It stopped and asked</p>
+              <p className="font-sans text-[11px] uppercase tracking-[.06em] text-warn-text">It stopped and asked</p>
               <p className="mt-1.5 text-sm text-warn-text">{task.blockedReason}</p>
               <div className="mt-3">
                 <Field label="Your answer" hint="Added to the brief. What it was originally asked stays on the record." full>
@@ -354,19 +354,19 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
 
           {task.summary && (
             <section>
-              <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it says it did</h4>
+              <h4 className="mb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it says it did</h4>
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{task.summary}</p>
             </section>
           )}
 
           <section>
-            <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it was asked</h4>
+            <h4 className="mb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it was asked</h4>
             <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted">{task.brief}</p>
             {linked.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {linked.map((entry, index) => (
                   <span key={index} className="rounded-xl border border-line bg-cream px-2 py-0.5 text-xs text-muted">
-                    <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted">{entry!.label}</span> {entry!.text}
+                    <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{entry!.label}</span> {entry!.text}
                   </span>
                 ))}
               </div>
@@ -376,35 +376,59 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
           <RunCost task={task} />
 
           <section>
-            <h4 className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+            <h4 className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               What it did{task.status === "RUNNING" && <span className="ml-2 text-blue">· still going</span>}
             </h4>
-            <ol className="space-y-1.5">
+            <ol className="relative ml-2 space-y-2.5 border-l-2 border-line pl-4">
               {task.steps.map((step) => {
                 const style = STEP_STYLE[step.kind] ?? STEP_STYLE.THOUGHT;
                 return (
-                  <li key={step.id} className="flex gap-2.5 border-l border-line pl-3">
-                    <span className={`mt-0.5 shrink-0 font-mono text-xs ${style.tone}`} aria-hidden>
-                      {style.mark}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm leading-relaxed text-ink">{step.message}</span>
-                      <span className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
-                        <span className={style.tone}>{step.kind.toLowerCase().replace("_", " ")}</span>
-                        {step.tool && <code className="text-muted">{step.tool}</code>}
-                        <RelativeTime value={step.createdAt} />
-                      </span>
-                    </span>
+                  <li key={step.id} className="group relative">
+                    <span
+                      className={`absolute -left-[23px] top-2 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-white shadow-xs transition group-hover:scale-125 ${
+                        step.kind === "FINISHED"
+                          ? "bg-lime"
+                          : step.kind === "FAILED" || step.kind === "REFUSED"
+                          ? "bg-danger"
+                          : step.kind === "TOOL_CALL" || step.kind === "DELEGATED" || step.kind === "CONSULTED"
+                          ? "bg-blue"
+                          : "bg-line-strong"
+                      }`}
+                      aria-hidden
+                    />
+                    <div className="rounded-xl border border-line/70 bg-white p-3 shadow-[0_1px_4px_rgba(8,16,31,0.02)] transition group-hover:border-line-strong group-hover:shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/40 pb-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className={`font-sans text-[11px] font-bold uppercase tracking-[.06em] ${style.tone}`}>
+                            {step.kind.toLowerCase().replace("_", " ")}
+                          </span>
+                          {step.tool && (
+                            <code className="rounded border border-line/60 bg-cream px-1.5 py-0.5 font-mono text-[11px] text-ink">
+                              {step.tool}
+                            </code>
+                          )}
+                        </div>
+                        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+                          <RelativeTime value={step.createdAt} />
+                        </span>
+                      </div>
+                      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-ink">{step.message}</p>
+                    </div>
                   </li>
                 );
               })}
-              {task.status === "RUNNING" && task.steps.length === 0 && <li className="text-sm text-muted">Thinking…</li>}
+              {task.status === "RUNNING" && (
+                <li className="flex items-center gap-2 text-sm text-muted">
+                  <span className="h-2 w-2 animate-ping rounded-full bg-blue" />
+                  Thinking…
+                </li>
+              )}
             </ol>
           </section>
 
           {task.children.length > 0 && (
             <section>
-              <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">Handed to others</h4>
+              <h4 className="mb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Handed to others</h4>
               <ul className="space-y-1 text-sm text-muted">
                 {task.children.map((child) => (
                   <li key={child.id}>
@@ -456,7 +480,7 @@ function RunCost({ task }: { task: AgentTaskDetail }) {
 
   return (
     <section>
-      <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it is costing</h4>
+      <h4 className="mb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it is costing</h4>
       <div className="flex flex-wrap items-baseline gap-2 text-sm">
         <span className="font-medium text-ink">${budget.spentUsd.toFixed(4)}</span>
         <span className="text-muted">
@@ -617,7 +641,7 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
   return (
     <section className="space-y-3">
       <div>
-        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it remembers</h3>
+        <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it remembers</h3>
         {data && (
           <p className="mt-1 text-sm text-muted">
             {data.summary.total} across {data.summary.subjects} subject{data.summary.subjects === 1 ? "" : "s"}
@@ -643,7 +667,7 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
             >
               <span className="min-w-0 flex-1">
                 <span className="block text-sm leading-relaxed text-ink">{memory.content}</span>
-                <span className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
+                <span className="mt-1 flex flex-wrap items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                   {/* Marked, because these are the company's rather than this
                       agent's — and forgetting one would take it away from all
                       of them, which is why this row doesn't offer to. */}
@@ -657,14 +681,14 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
                 </span>
               </span>
               {memory.scope === "SHARED" ? (
-                <span className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-muted" title="Shared with every agent — manage it on the Agents screen">
+                <span className="shrink-0 font-sans text-[11px] uppercase tracking-[.06em] text-muted" title="Shared with every agent — manage it on the Agents screen">
                   shared
                 </span>
               ) : (
                 <button
                   type="button"
                   onClick={() => remove.mutate(memory.id)}
-                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
+                  className="shrink-0 font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                 >
                   Forget
                 </button>

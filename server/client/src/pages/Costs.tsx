@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { Badge, Button, Card, EmptyState, PageHeader, StatTile, Table } from "../components/ui";
+import { Badge, Button, Card, EmptyState, PageHeader, StatGrid, StatTile, Table } from "../components/ui";
 import type { BudgetAction, BudgetPeriod, BudgetRow, BudgetScope, CostReport, DaySpend, Outcome, SpendRow } from "../lib/types";
 
 /**
@@ -55,14 +55,16 @@ export function Costs() {
         title="Costs"
         subtitle="Every model call and every tool call this app has paid for, priced at the moment it was made. Spend is recorded against the feature, the agent and the run that caused it."
         action={
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {WINDOWS.map((option) => (
               <button
                 key={option}
                 type="button"
                 onClick={() => setDays(option)}
-                className={`rounded-full border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[.12em] transition ${
-                  days === option ? "border-blue bg-blue text-white" : "border-line text-muted hover:border-ink/30"
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold uppercase tracking-wider transition ${
+                  days === option
+                    ? "bg-ink text-cream shadow-sm"
+                    : "border border-line bg-white text-muted hover:border-ink/20 hover:text-ink"
                 }`}
               >
                 {option} days
@@ -76,7 +78,7 @@ export function Costs() {
         <div className="text-sm text-muted">Loading…</div>
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatGrid columns={4}>
             <StatTile
               label={`Spent · ${summary.windowDays} days`}
               value={usd(summary.totalUsd)}
@@ -94,7 +96,7 @@ export function Costs() {
               written={summary.cacheCreationTokens}
             />
             <FailureTile calls={summary.failedCalls} cost={summary.failedUsd} refused={summary.refusedCalls} dryRun={summary.dryRunCalls} />
-          </div>
+          </StatGrid>
 
           <DailyChart days={data.daily} />
 
@@ -225,7 +227,7 @@ function DailyChart({ days }: { days: DaySpend[] }) {
           );
         })}
       </div>
-      <div className="mt-2 flex justify-between font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+      <div className="mt-2 flex justify-between font-sans text-[11px] uppercase tracking-[.06em] text-muted">
         <span>{days[0]?.day}</span>
         <span>peak {usd(peak)}</span>
         <span>{days.at(-1)?.day}</span>
@@ -260,7 +262,7 @@ function SpendTable({
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+            <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               <th className="px-4 py-3 font-normal">{keyHeading}</th>
               <th className="px-4 py-3 text-right font-normal">Calls</th>
               {tokensColumn && <th className="px-4 py-3 text-right font-normal">Tokens</th>}
@@ -288,7 +290,7 @@ function SpendTable({
               </tr>
             ))}
             <tr className="bg-cream/40">
-              <td className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <td className="px-4 py-2.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 {rows.length} row{rows.length === 1 ? "" : "s"}
               </td>
               <td />
@@ -332,7 +334,7 @@ function Outcomes({ outcomes, totalUsd, days }: { outcomes: Outcome[]; totalUsd:
       </div>
       <Table>
         <thead>
-          <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+          <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             <th className="px-4 py-3 font-normal">Outcome</th>
             <th className="px-4 py-3 font-normal">Counted as</th>
             <th className="px-4 py-3 text-right font-normal">Count</th>
@@ -361,7 +363,7 @@ function Outcomes({ outcomes, totalUsd, days }: { outcomes: Outcome[]; totalUsd:
 }
 
 function Heading({ children }: { children: React.ReactNode }) {
-  return <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">{children}</h2>;
+  return <h2 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{children}</h2>;
 }
 
 // --- Ceilings ---------------------------------------------------------------
@@ -427,7 +429,7 @@ function Budgets({ agentKeys, toolKeys }: { agentKeys: string[]; toolKeys: strin
       ) : (
         <Table>
           <thead>
-            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+            <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               <th className="px-4 py-3 font-normal">Scope</th>
               <th className="px-4 py-3 font-normal">Period</th>
               <th className="px-4 py-3 text-right font-normal">Spent</th>
@@ -470,7 +472,7 @@ function Budgets({ agentKeys, toolKeys }: { agentKeys: string[]; toolKeys: strin
                       type="button"
                       onClick={() => remove.mutate(budget.id)}
                       disabled={remove.isPending}
-                      className="font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink"
+                      className="font-sans text-[11px] uppercase tracking-[.06em] text-muted hover:text-ink"
                     >
                       Remove
                     </button>
@@ -520,7 +522,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
     <Card>
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Applies to</label>
+          <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">Applies to</label>
           <select
             value={scopeType}
             onChange={(event) => {
@@ -537,7 +539,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
 
         {scopeType !== "GLOBAL" && (
           <div>
-            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Which one</label>
+            <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">Which one</label>
             <input
               list="costs-scope-options"
               value={scopeId}
@@ -556,7 +558,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
         )}
 
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Period</label>
+          <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">Period</label>
           <select value={period} onChange={(event) => setPeriod(event.target.value as BudgetPeriod)} className="input mt-1 w-36">
             <option value="MONTH">Each month</option>
             <option value="DAY">Each day</option>
@@ -564,7 +566,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
         </div>
 
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Warn at ($)</label>
+          <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">Warn at ($)</label>
           <input
             type="number"
             min="0"
@@ -577,7 +579,7 @@ function BudgetForm({ agentKeys, toolKeys, onSaved }: { agentKeys: string[]; too
         </div>
 
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Ceiling ($)</label>
+          <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">Ceiling ($)</label>
           <input
             type="number"
             min="0"

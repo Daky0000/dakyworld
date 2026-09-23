@@ -49,14 +49,14 @@ export function ProposalPreview({
           <a
             href={`${pdf}?download=1`}
             download
-            className="rounded-full inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-cream transition hover:bg-ink/90"
+            className="rounded-full inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2 font-sans text-xs uppercase tracking-[.06em] text-cream transition hover:bg-ink/90"
           >
             Download PDF
           </a>
           <a
             href={docx}
             download
-            className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+            className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-sans text-xs uppercase tracking-[.06em] transition hover:border-ink"
           >
             Download Word
           </a>
@@ -64,9 +64,9 @@ export function ProposalPreview({
             href={pdf}
             target="_blank"
             rel="noreferrer"
-            className="font-mono text-[11px] uppercase tracking-[.12em] text-blue"
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-blue"
           >
-            Open in a new tab →
+            Open in a new tab
           </a>
         </div>
       }

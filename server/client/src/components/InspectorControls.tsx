@@ -228,15 +228,11 @@ export function Section({
           type="button"
           onClick={onToggle}
           aria-expanded={open}
+          aria-label={title}
           disabled={!onToggle}
           className="flex min-w-0 flex-1 items-center gap-1.5 py-2.5 text-left text-[11px] font-semibold tracking-[.01em] text-ink transition hover:text-blue disabled:cursor-default disabled:hover:text-ink"
         >
-          {onToggle && (
-            <span aria-hidden className={`text-[8px] text-faint transition-transform ${open ? "rotate-90" : ""}`}>
-              ▶
-            </span>
-          )}
-          <span className="truncate">{title}</span>
+          <span className="truncate">{title}</span>{onToggle && <span className="ml-auto text-[11px] font-normal text-muted">{open ? "Hide" : "Show"}</span>}
           {changed && <span aria-label="Changed here" title="Something in this group has been changed" className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue" />}
         </button>
         {action}
@@ -257,7 +253,7 @@ export function Section({
 export function Row({ label, control, rail }: { label?: string; control: React.ReactNode; rail?: React.ReactNode }) {
   return (
     <div data-row className="flex min-w-0 items-center gap-2">
-      {label !== undefined && <span title={label} className="w-[62px] shrink-0 truncate text-[10px] uppercase tracking-[.04em] text-muted">{label}</span>}
+      {label !== undefined && <span title={label} className="w-[62px] shrink-0 truncate text-[11px] uppercase tracking-[.04em] text-muted">{label}</span>}
       <div className="flex min-w-0 flex-1 items-center gap-1.5">{control}</div>
       <div className="flex w-[50px] shrink-0 justify-end">{rail}</div>
     </div>
@@ -369,7 +365,7 @@ export function NumberField({
         }}
       />
       <span
-        className={`shrink-0 cursor-ew-resize select-none font-mono text-[9px] ${unit ? "text-muted" : "text-faint"}`}
+        className={`shrink-0 cursor-ew-resize select-none font-mono text-[11px] ${unit ? "text-muted" : "text-faint"}`}
         title={`${label} — drag to change`}
         onPointerDown={scrub}
       >
@@ -475,7 +471,7 @@ export function ColourField({
           <span className="h-3.5 w-3.5 shrink-0 rounded border border-line-strong" style={{ background: CHECKER }}>
             <span className="block h-full w-full rounded" style={{ backgroundColor: value || "transparent" }} />
           </span>
-          <span className="font-mono text-[10px] uppercase text-ink">{value ? colour.hex.replace("#", "") : "auto"}</span>
+          <span className="font-sans text-[11px] uppercase text-ink">{value ? colour.hex.replace("#", "") : "auto"}</span>
         </button>
       </div>
 
@@ -508,9 +504,9 @@ export function ColourField({
               onBlur={() => onCommit?.()}
             />
             <div className="flex h-7 flex-1 items-center gap-1 rounded-xl border border-line px-2">
-              <span className="text-[10px] text-muted">#</span>
+              <span className="text-[11px] text-muted">#</span>
               <input
-                className="w-full bg-transparent font-mono text-[11px] uppercase text-ink outline-none"
+                className="w-full bg-transparent font-sans text-[11px] uppercase text-ink outline-none"
                 maxLength={6}
                 value={colour.hex.replace("#", "")}
                 onChange={(event) => {
@@ -523,7 +519,7 @@ export function ColourField({
           </div>
 
           <div className="mt-2 flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-[.08em] text-muted">Alpha</span>
+            <span className="text-[11px] uppercase tracking-[.08em] text-muted">Alpha</span>
             <input
               type="range"
               min={0}
@@ -533,7 +529,7 @@ export function ColourField({
               onPointerUp={() => onCommit?.()}
               className="h-1.5 flex-1 accent-blue"
             />
-            <span className="w-8 text-right font-mono text-[10px] text-muted">{Math.round(colour.alpha * 100)}%</span>
+            <span className="w-8 text-right font-mono text-[11px] text-muted">{Math.round(colour.alpha * 100)}%</span>
           </div>
 
           {allowNone && (
@@ -574,7 +570,7 @@ export function IconToggle({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`flex ${CONTROL_HEIGHT} w-7 shrink-0 items-center justify-center rounded-lg text-[12px] transition ${
+      className={`flex ${CONTROL_HEIGHT} w-7 shrink-0 items-center justify-center rounded-[10px] text-[12px] transition ${
         on ? "bg-blue text-white" : "bg-sunken text-muted hover:text-ink"
       }`}
     >
@@ -595,7 +591,7 @@ export function Segmented({
   onChange: (next: string) => void;
 }) {
   return (
-    <div className={`flex ${CONTROL_HEIGHT} flex-1 overflow-hidden rounded-lg bg-sunken p-0.5`}>
+    <div className={`flex ${CONTROL_HEIGHT} flex-1 overflow-hidden rounded-[10px] bg-sunken p-0.5`}>
       {options.map((option) => (
         <button
           key={option.value}
@@ -603,7 +599,7 @@ export function Segmented({
           title={option.title}
           disabled={disabled}
           onClick={() => onChange(option.value === value ? "" : option.value)}
-          className={`flex flex-1 items-center justify-center rounded-[5px] text-[11px] transition ${
+          className={`flex flex-1 items-center justify-center rounded-[10px] text-[11px] transition ${
             value === option.value ? "bg-white text-ink shadow-sm shadow-ink/10" : "text-muted hover:text-ink"
           }`}
         >
@@ -616,10 +612,10 @@ export function Segmented({
 
 export function SubBlock({ title, onRemove, children }: { title: string; onRemove: () => void; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg bg-sunken p-2">
+    <div className="rounded-[10px] bg-sunken p-2">
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-[.06em] text-muted">{title}</span>
-        <button type="button" onClick={onRemove} className="text-[10px] text-muted transition hover:text-danger-text">
+        <span className="text-[11px] font-semibold uppercase tracking-[.06em] text-muted">{title}</span>
+        <button type="button" onClick={onRemove} className="text-[11px] text-muted transition hover:text-danger-text">
           Remove
         </button>
       </div>
@@ -683,71 +679,13 @@ export function Lines({ widths, align }: { widths: number[]; align: "start" | "c
   );
 }
 
-/* ------------------------------------------------------------------ icons */
+/** Compatibility exports for callers that supply layout choices. Controls render their titles. */
+export const JUSTIFY_ICONS: Record<string, React.ReactNode> = Object.fromEntries(["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"].map(value => [value, value]));
+export const ALIGN_ICONS: Record<string, React.ReactNode> = Object.fromEntries(["flex-start", "center", "flex-end", "stretch", "baseline"].map(value => [value, value]));
+export const DIRECTION_ICONS: Record<string, React.ReactNode> = Object.fromEntries(["row", "column", "row-reverse", "column-reverse"].map(value => [value, value]));
+export const DISPLAY_ICONS: Record<string, React.ReactNode> = Object.fromEntries(["block", "flex", "grid", "inline-block", "none"].map(value => [value, value]));
 
-/**
- * The layout controls, as pictures.
- *
- * "space-between" is a phrase somebody has to learn; five boxes pushed to the
- * edges of a frame is the thing itself. Every icon here draws the arrangement it
- * sets, at the size it is set at, which is why they are hand-drawn rectangles
- * rather than a symbol font: an icon of a bar chart standing in for "distribute"
- * would be exactly the jargon this replaces.
- */
-function Frame({ children, vertical }: { children: React.ReactNode; vertical?: boolean }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden focusable="false" className={vertical ? "" : ""}>
-      <rect x="0.5" y="0.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" strokeOpacity=".25" />
-      {children}
-    </svg>
-  );
-}
-
-const bar = (x: number, y: number, width: number, height: number) => <rect key={`${x}-${y}`} x={x} y={y} width={width} height={height} rx="1" fill="currentColor" />;
-
-/** Where children sit along the main axis. */
-export const JUSTIFY_ICONS: Record<string, React.ReactNode> = {
-  "flex-start": <Frame>{[bar(3, 4, 2.5, 8), bar(6.5, 4, 2.5, 8)]}</Frame>,
-  center: <Frame>{[bar(4.5, 4, 2.5, 8), bar(8, 4, 2.5, 8)]}</Frame>,
-  "flex-end": <Frame>{[bar(6.5, 4, 2.5, 8), bar(10, 4, 2.5, 8)]}</Frame>,
-  "space-between": <Frame>{[bar(3, 4, 2.5, 8), bar(10.5, 4, 2.5, 8)]}</Frame>,
-  "space-around": <Frame>{[bar(3.5, 4, 2.5, 8), bar(9.5, 4, 2.5, 8)]}</Frame>,
-  "space-evenly": <Frame>{[bar(4, 4, 2.5, 8), bar(9, 4, 2.5, 8)]}</Frame>,
-};
-
-/** Where children sit across it. */
-export const ALIGN_ICONS: Record<string, React.ReactNode> = {
-  "flex-start": <Frame>{[bar(3.5, 3, 3, 5), bar(8, 3, 3, 8)]}</Frame>,
-  center: <Frame>{[bar(3.5, 5.5, 3, 5), bar(8, 4, 3, 8)]}</Frame>,
-  "flex-end": <Frame>{[bar(3.5, 8, 3, 5), bar(8, 5, 3, 8)]}</Frame>,
-  stretch: <Frame>{[bar(3.5, 3, 3, 10), bar(8, 3, 3, 10)]}</Frame>,
-  baseline: <Frame>{[bar(3.5, 4, 3, 6), bar(8, 6, 3, 4)]}</Frame>,
-};
-
-export const DIRECTION_ICONS: Record<string, React.ReactNode> = {
-  row: <Frame>{[bar(3, 4.5, 3.5, 7), bar(8, 4.5, 3.5, 7)]}</Frame>,
-  column: <Frame>{[bar(4.5, 3, 7, 3.5), bar(4.5, 8, 7, 3.5)]}</Frame>,
-  "row-reverse": <Frame>{[bar(3, 4.5, 3.5, 7), bar(8, 4.5, 3.5, 7)]}<path d="M11 2.5 L13 2.5" stroke="currentColor" strokeWidth="1.2" /></Frame>,
-  "column-reverse": <Frame>{[bar(4.5, 3, 7, 3.5), bar(4.5, 8, 7, 3.5)]}<path d="M13 11 L13 13" stroke="currentColor" strokeWidth="1.2" /></Frame>,
-};
-
-export const DISPLAY_ICONS: Record<string, React.ReactNode> = {
-  block: <Frame>{[bar(3, 3.5, 10, 3), bar(3, 8, 10, 3)]}</Frame>,
-  flex: DIRECTION_ICONS.row,
-  grid: <Frame>{[bar(3, 3, 4.5, 4.5), bar(8.5, 3, 4.5, 4.5), bar(3, 8.5, 4.5, 4.5), bar(8.5, 8.5, 4.5, 4.5)]}</Frame>,
-  "inline-block": <Frame>{[bar(3, 5.5, 4.5, 5), bar(8.5, 5.5, 4.5, 5)]}</Frame>,
-  none: (
-    <Frame>
-      <path d="M4 12 L12 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </Frame>
-  ),
-};
-
-/**
- * A segmented control of pictures, with the words kept for the tooltip and for
- * anybody using a screen reader. Falls back to a select when there are more
- * choices than fit — five is the most that reads at this width.
- */
+/** A wrapping text control with explicit labels for every layout option. */
 export function IconChoice({
   label,
   value,
@@ -762,7 +700,7 @@ export function IconChoice({
   onChange: (next: string) => void;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className={`flex ${CONTROL_HEIGHT} flex-1 items-center gap-0.5 rounded-lg bg-sunken p-0.5`}>
+    <div role="radiogroup" aria-label={label} className="flex flex-wrap flex-1 items-center gap-1 rounded-xl bg-sunken p-1">
       {options.map((option) => (
         <button
           key={option.value}
@@ -773,11 +711,11 @@ export function IconChoice({
           title={option.title}
           disabled={disabled}
           onClick={() => onChange(option.value)}
-          className={`flex h-6 flex-1 items-center justify-center rounded-[5px] transition ${
+          className={`flex min-h-8 flex-1 items-center justify-center rounded-[10px] px-2 text-[11px] transition ${
             value === option.value ? "bg-white text-ink shadow-sm shadow-ink/10" : "text-muted hover:text-ink"
           }`}
         >
-          {option.icon}
+          {option.title.replaceAll("flex-", "").replaceAll("space-", "")}
         </button>
       ))}
     </div>

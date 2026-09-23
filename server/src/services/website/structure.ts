@@ -7,7 +7,7 @@ import { regenerateResponsiveStyles } from "./responsive.js";
 import { DOCUMENT_KEY, boundedHistory, draftDocument, editingSource, fieldValues, sourceHash, type DraftDocument, type DocumentSnapshot } from "./document.js";
 
 export type StructureAction = { kind: "remove" | "duplicate" | "before" | "after"; fieldId: string; targetId?: string } | { kind: "undo" | "redo" };
-export type StructureControl = { remove: boolean; duplicate: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string };
+export type StructureControl = { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string };
 export class StructureError extends Error { status = 409; }
 const BLOCKED = new Set(["html", "head", "body", "script", "style", "form", "input", "select", "textarea", "iframe", "template", "canvas", "video", "audio", "object", "embed", "link", "meta"]);
 const escapeAttribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -37,8 +37,9 @@ export function structureControls(source: string): Record<string, StructureContr
     if (reason || !node) return [field.id, { remove: false, duplicate: false, reason }];
     const siblings = node.parent!.children.filter(child => fieldAt.has(child.attrInsert) && !structuralReason(child));
     const index = siblings.indexOf(node);
-    const hasIds = node.tag === "main" || [...walk(node)].some(child => attrNode(child, "id"));
-    return [field.id, { remove: true, duplicate: !hasIds, previousId: index > 0 ? fieldAt.get(siblings[index - 1]!.attrInsert)!.id : undefined, nextId: index < siblings.length - 1 ? fieldAt.get(siblings[index + 1]!.attrInsert)!.id : undefined, group: sourceHash(String(node.parent!.start)).slice(0, 16), duplicateReason: node.tag === "main" ? "A page should have one main region. Duplicate one of its inner sections instead." : hasIds ? "This block uses fixed HTML IDs. Duplicate an inner block without IDs to preserve selectors and links." : undefined } satisfies StructureControl];
+    const isRepeatable = Boolean(attrNode(node, "data-dw-repeatable") || (node.parent && attrNode(node.parent, "data-dw-repeatable")));
+    const hasIds = node.tag === "main" || (!isRepeatable && [...walk(node)].some(child => attrNode(child, "id")));
+    return [field.id, { remove: true, duplicate: !hasIds, repeatable: isRepeatable, previousId: index > 0 ? fieldAt.get(siblings[index - 1]!.attrInsert)!.id : undefined, nextId: index < siblings.length - 1 ? fieldAt.get(siblings[index + 1]!.attrInsert)!.id : undefined, group: sourceHash(String(node.parent!.start)).slice(0, 16), duplicateReason: node.tag === "main" ? "A page should have one main region. Duplicate one of its inner sections instead." : hasIds ? "This block uses fixed HTML IDs. Duplicate an inner block without IDs to preserve selectors and links." : undefined } satisfies StructureControl];
   }));
 }
 
@@ -96,6 +97,7 @@ export function changeStructure(source: string, values: Record<string, FieldValu
         if (attr.name === "data-dw-node") edits.push({ start: attr.start - node.start, end: attr.end - node.start, text: `data-dw-node="${child === node ? cloneId : freshId()}"` });
         if (attr.name === "data-dw-field") edits.push({ start: attr.start - node.start, end: attr.end - node.start, text: "" });
         if (attr.name === "data-dw-style") edits.push({ start: attr.start - node.start, end: attr.end - node.start, text: `data-dw-style="dw-${randomBytes(12).toString("hex")}"` });
+        if (attr.name === "id") edits.push({ start: attr.start - node.start, end: attr.end - node.start, text: `id="${attr.value}-${randomBytes(4).toString("hex")}"` });
       }
     }
     html = splice(rendered, [{ start: node.end, end: node.end, text: `\n${splice(block, edits)}` }]); selectedId = cloneId;

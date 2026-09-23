@@ -12,7 +12,7 @@ import type {
   RehearsalSummary,
 } from "../lib/types";
 import { STEP_LABEL, STEP_STYLE } from "../components/AgentWork";
-import { Badge, Button, Card, EmptyState, Eyebrow, Field, PageHeader, RelativeTime, StatTile, StatusDot } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Eyebrow, Field, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot } from "../components/ui";
 
 /**
  * The rehearsal room.
@@ -255,7 +255,7 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
                     <span className="truncate text-sm font-semibold">{row.businessName || row.host}</span>
                     <Badge tone="muted">{row.scenarioName}</Badge>
                   </span>
-                  <span className="mt-1 block font-mono text-[10px] uppercase tracking-[.1em] text-muted">
+                  <span className="mt-1 block font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                     {row.host} · {row.taskCount} agent task{row.taskCount === 1 ? "" : "s"} · {row.toolCalls} tool call
                     {row.toolCalls === 1 ? "" : "s"}
                     {row.preparedCalls > 0 && ` · ${row.preparedCalls} prepared`} · <RelativeTime value={row.startedAt} />
@@ -286,14 +286,14 @@ function ScenarioCard({ scenario, chosen, onChoose }: { scenario: RehearsalScena
         {scenario.reach === "wide" && <Badge tone="warn">wide</Badge>}
       </span>
       <span className="mt-1 block text-xs leading-relaxed text-muted">{scenario.purpose}</span>
-      <span className="mt-2 block font-mono text-[10px] uppercase tracking-[.1em] text-muted">
+      <span className="mt-2 block font-sans text-[11px] uppercase tracking-[.06em] text-muted">
         starts with {scenario.startAgentName}
         {scenario.available && scenario.wouldWake > 0 && ` · wakes ${scenario.wouldWake}`}
       </span>
       {scenario.unavailableBecause && <span className="mt-2 block text-xs text-warn-text">{scenario.unavailableBecause}</span>}
       {chosen && (
         <span className="mt-3 block border-t border-blue/20 pt-2.5">
-          <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">What this shows you</span>
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">What this shows you</span>
           <span className="mt-1 block space-y-0.5">
             {scenario.exercises.map((line) => (
               <span key={line} className="block text-xs leading-relaxed text-muted">
@@ -393,36 +393,38 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
         !live && <p className="mb-5 text-xs text-muted">Any agents this run switched on have been put back.</p>
       )}
 
-      <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <StatTile
-          label="Spent"
-          value={`$${run.spend.costUsd.toFixed(3)}`}
-          sub={
-            run.budgetUsd && run.budgetUsd > 0
-              ? `of $${run.budgetUsd.toFixed(2)} · ${run.spend.modelCalls} model run${run.spend.modelCalls === 1 ? "" : "s"}`
-              : `${run.spend.modelCalls} model run${run.spend.modelCalls === 1 ? "" : "s"}`
-          }
-        />
-        <StatTile label="Agents on it" value={run.agents.length} sub={`${run.agents.reduce((sum, agent) => sum + agent.tasks.length, 0)} tasks`} />
-        <StatTile label="Tool calls" value={run.spend.toolCalls} sub={run.spend.refusedCalls > 0 ? `${run.spend.refusedCalls} refused` : "none refused"} />
-        <StatTile
-          label="Prepared, not done"
-          value={run.spend.preparedCalls}
-          sub={run.spend.preparedCalls > 0 ? "would need your approval" : "nothing outward yet"}
-        />
-        <StatTile
-          label="Tokens"
-          value={`${Math.round((run.spend.inputTokens + run.spend.cacheReadTokens + run.spend.outputTokens) / 1000)}k`}
-          // The cached share is the part worth watching. Every turn of an agent
-          // re-sends the ones before it, so a run whose cache reads dwarf its
-          // fresh input is one that paid for its instructions once instead of
-          // a dozen times — and one where they are zero is a run that did not.
-          sub={
-            run.spend.cacheReadTokens > 0
-              ? `${run.spend.cacheReadTokens.toLocaleString()} from cache · ${run.spend.inputTokens.toLocaleString()} fresh · ${run.spend.outputTokens.toLocaleString()} out`
-              : `${run.spend.inputTokens.toLocaleString()} in · ${run.spend.outputTokens.toLocaleString()} out`
-          }
-        />
+      <div className="mb-8">
+        <StatGrid columns={5}>
+          <StatTile
+            label="Spent"
+            value={`$${run.spend.costUsd.toFixed(3)}`}
+            sub={
+              run.budgetUsd && run.budgetUsd > 0
+                ? `of $${run.budgetUsd.toFixed(2)} · ${run.spend.modelCalls} model run${run.spend.modelCalls === 1 ? "" : "s"}`
+                : `${run.spend.modelCalls} model run${run.spend.modelCalls === 1 ? "" : "s"}`
+            }
+          />
+          <StatTile label="Agents on it" value={run.agents.length} sub={`${run.agents.reduce((sum, agent) => sum + agent.tasks.length, 0)} tasks`} />
+          <StatTile label="Tool calls" value={run.spend.toolCalls} sub={run.spend.refusedCalls > 0 ? `${run.spend.refusedCalls} refused` : "none refused"} />
+          <StatTile
+            label="Prepared, not done"
+            value={run.spend.preparedCalls}
+            sub={run.spend.preparedCalls > 0 ? "would need your approval" : "nothing outward yet"}
+          />
+          <StatTile
+            label="Tokens"
+            value={`${Math.round((run.spend.inputTokens + run.spend.cacheReadTokens + run.spend.outputTokens) / 1000)}k`}
+            // The cached share is the part worth watching. Every turn of an agent
+            // re-sends the ones before it, so a run whose cache reads dwarf its
+            // fresh input is one that paid for its instructions once instead of
+            // a dozen times — and one where they are zero is a run that did not.
+            sub={
+              run.spend.cacheReadTokens > 0
+                ? `${run.spend.cacheReadTokens.toLocaleString()} from cache · ${run.spend.inputTokens.toLocaleString()} fresh · ${run.spend.outputTokens.toLocaleString()} out`
+                : `${run.spend.inputTokens.toLocaleString()} in · ${run.spend.outputTokens.toLocaleString()} out`
+            }
+          />
+        </StatGrid>
       </div>
 
       <div className="grid gap-8 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -434,7 +436,7 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
         <div>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <Eyebrow>What happened, in order</Eyebrow>
-            <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.1em] text-muted">
+            <label className="flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               <input type="checkbox" checked={follow} onChange={(event) => setFollow(event.target.checked)} className="accent-[#3157FF]" />
               Follow along
             </label>
@@ -446,7 +448,7 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
                 key={key}
                 type="button"
                 onClick={() => setLens(key)}
-                className={`rounded-full px-3 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+                className={`rounded-full px-3 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition ${
                   lens === key ? "bg-ink text-white" : "border border-line text-muted hover:border-ink/40 hover:text-ink"
                 }`}
               >
@@ -457,7 +459,7 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
               <button
                 type="button"
                 onClick={() => setOnlyAgent(null)}
-                className="rounded-full border border-blue/40 bg-blue/[.06] px-3 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-blue"
+                className="rounded-full border border-blue/40 bg-blue/[.06] px-3 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-blue"
               >
                 {run.agents.find((agent) => agent.key === onlyAgent)?.name ?? onlyAgent} ×
               </button>
@@ -508,7 +510,7 @@ function TheFloor({ run, onlyAgent, onPick }: { run: RehearsalDetail; onlyAgent:
     return (
       <div key={`${key}-${depth}-${kind ?? "root"}`} className={depth > 0 ? "ml-3 border-l border-line pl-3" : ""}>
         {kind && (
-          <span className="mb-0.5 block font-mono text-[9px] uppercase tracking-[.12em] text-muted">
+          <span className="mb-0.5 block font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             {kind === "DELEGATED" ? "delegated to" : kind === "HANDED_OFF" ? "handed to" : "asked"}
           </span>
         )}
@@ -527,7 +529,7 @@ function TheFloor({ run, onlyAgent, onPick }: { run: RehearsalDetail; onlyAgent:
             <span className="mt-0.5 block truncate text-xs text-muted">{agent?.title ?? (consultOnly ? "asked for an opinion" : "not reached")}</span>
           )}
           {agent && (
-            <span className="mt-1 block font-mono text-[9px] uppercase tracking-[.1em] text-muted">
+            <span className="mt-1 block font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               {agent.steps} step{agent.steps === 1 ? "" : "s"} · {agent.toolCalls} tool
               {agent.preparedCalls > 0 && ` · ${agent.preparedCalls} prepared`} · ${agent.costUsd.toFixed(3)}
             </span>
@@ -580,7 +582,7 @@ function Timeline({ steps, live }: { steps: RehearsalStep[]; live: boolean }) {
         <div key={`${group.agentKey}-${index}`} className="rounded-2xl border border-line bg-white">
           <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-2.5">
             <span className="text-sm font-semibold">{group.agentName}</span>
-            <span className="truncate font-mono text-[10px] uppercase tracking-[.1em] text-muted">{group.taskTitle}</span>
+            <span className="truncate font-sans text-[11px] uppercase tracking-[.06em] text-muted">{group.taskTitle}</span>
           </div>
           <ol className="divide-y divide-line/60">
             {group.steps.map((step) => (
@@ -602,9 +604,7 @@ function Step({ step }: { step: RehearsalStep }) {
   return (
     <li className="px-4 py-2.5">
       <div className="flex gap-3">
-        <span className={`mt-0.5 shrink-0 font-mono text-xs ${style.tone}`} aria-hidden>
-          {style.mark}
-        </span>
+
         <div className="min-w-0 flex-1">
           <p
             className={`whitespace-pre-wrap text-sm leading-relaxed ${
@@ -613,7 +613,7 @@ function Step({ step }: { step: RehearsalStep }) {
           >
             {step.message}
           </p>
-          <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted">
+          <div className="mt-1 flex flex-wrap items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             <span className={style.tone}>{STEP_LABEL[step.kind] ?? step.kind.toLowerCase()}</span>
             {step.tool && <code className="text-muted">{step.tool}</code>}
             {step.dryRun && <span className="text-warn-text">not carried out</span>}
@@ -677,8 +677,8 @@ function Prepared({ run }: { run: RehearsalDetail }) {
               <span
                 className={
                   action.outward
-                    ? "font-mono text-[9px] uppercase tracking-[.1em] text-warn-text"
-                    : "font-mono text-[9px] uppercase tracking-[.1em] text-muted"
+                    ? "font-sans text-[11px] uppercase tracking-[.06em] text-warn-text"
+                    : "font-sans text-[11px] uppercase tracking-[.06em] text-muted"
                 }
               >
                 {run.agents.find((agent) => agent.key === action.agentKey)?.name ?? action.agentKey}
@@ -692,22 +692,22 @@ function Prepared({ run }: { run: RehearsalDetail }) {
               </p>
             )}
             {action.status === "EXECUTED" && (
-              <p className="mt-1 font-mono text-[10px] uppercase tracking-[.1em] text-danger-text">
+              <p className="mt-1 font-sans text-[11px] uppercase tracking-[.06em] text-danger-text">
                 Carried out for real — cost ${action.costUsd.toFixed(4)}. This should have stayed a preview.
               </p>
             )}
             {action.why && (
               <dl className="mt-2 space-y-1 border-t border-warn-line pt-2 text-xs leading-relaxed text-muted">
                 <div>
-                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-warn-text">Why </dt>
+                  <dt className="inline font-sans text-[11px] uppercase tracking-[.06em] text-warn-text">Why </dt>
                   <dd className="inline">{action.why}</dd>
                 </div>
                 <div>
-                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-warn-text">Gains </dt>
+                  <dt className="inline font-sans text-[11px] uppercase tracking-[.06em] text-warn-text">Gains </dt>
                   <dd className="inline">{action.gain}</dd>
                 </div>
                 <div>
-                  <dt className="inline font-mono text-[9px] uppercase tracking-[.1em] text-warn-text">Risk </dt>
+                  <dt className="inline font-sans text-[11px] uppercase tracking-[.06em] text-warn-text">Risk </dt>
                   <dd className="inline">{action.risk}</dd>
                 </div>
               </dl>

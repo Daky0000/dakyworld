@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, StatTile, StatusDot, Toggle } from "../components/ui";
+import { Badge, Button, Card, Drawer, EmptyState, Field, PageHeader, StatGrid, StatTile, StatusDot, Toggle } from "../components/ui";
 import type { Agent, AgentDetail, AgentList } from "../lib/types";
 import { AgentMemories, AgentWork } from "../components/AgentWork";
 import { AgentPromptEditor } from "../components/AgentPrompt";
@@ -118,9 +118,32 @@ export function Agents() {
   });
   const [batchNote, setBatchNote] = useState<string | null>(null);
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedDept, setSelectedDept] = useState("ALL");
+  const [selectedStatus, setSelectedStatus] = useState<"ALL" | "ACTIVE" | "DRAFT" | "PAUSED" | "BUSY">("ALL");
+
   const agents = data?.agents ?? [];
   const drafts = agents.filter((agent) => agent.status === "DRAFT");
-  const byTier = TIER_ORDER.map((tier) => [tier, agents.filter((a) => a.tier === tier)] as const).filter(([, list]) => list.length > 0);
+
+  const filteredAgents = agents.filter((agent) => {
+    if (selectedDept !== "ALL" && agent.department !== selectedDept) return false;
+    if (selectedStatus === "ACTIVE" && agent.status !== "ACTIVE") return false;
+    if (selectedStatus === "DRAFT" && agent.status !== "DRAFT") return false;
+    if (selectedStatus === "PAUSED" && agent.status !== "PAUSED") return false;
+    if (selectedStatus === "BUSY" && !(agent.work && (agent.work.running > 0 || agent.work.waiting > 0))) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const nameMatch = agent.name.toLowerCase().includes(q);
+      const missionMatch = agent.mission.toLowerCase().includes(q);
+      const keyMatch = agent.key.toLowerCase().includes(q);
+      const skillMatch = agent.skills.some((s) => s.toLowerCase().includes(q));
+      const deptMatch = (DEPARTMENTS[agent.department] ?? agent.department).toLowerCase().includes(q);
+      if (!nameMatch && !missionMatch && !keyMatch && !skillMatch && !deptMatch) return false;
+    }
+    return true;
+  });
+
+  const byTier = TIER_ORDER.map((tier) => [tier, filteredAgents.filter((a) => a.tier === tier)] as const).filter(([, list]) => list.length > 0);
 
   return (
     <div className="space-y-8">
@@ -137,7 +160,7 @@ export function Agents() {
       />
 
       {/* The only number that really matters is how much can act unattended. */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <StatGrid columns={4}>
         <StatTile label="On the roster" value={data?.summary.total ?? "—"} />
         <StatTile label="Active" value={data?.summary.active ?? "—"} sub="taking work from their queues" />
         <StatTile
@@ -150,11 +173,24 @@ export function Agents() {
           value={data?.summary.working ?? "—"}
           sub={data?.summary.waiting ? `${data.summary.waiting} waiting on you` : "nothing in flight"}
         />
-      </div>
+      </StatGrid>
 
       {/* Above the roster, because a proposal waiting on a decision is the one
           thing on this screen that is blocking work rather than describing it. */}
       <AgentHiring />
+
+      <div className="os-filterbar os-agent-filters">
+        <label className="os-filter-search"><span>Find an agent</span><input type="search" className="input" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Name, mission or skill" /></label>
+        <label><span>Status</span><select className="input" value={selectedStatus} onChange={event => setSelectedStatus(event.target.value as typeof selectedStatus)}>
+          <option value="ALL">All statuses ({agents.length})</option>
+          <option value="ACTIVE">Active ({agents.filter(agent => agent.status === "ACTIVE").length})</option>
+          <option value="BUSY">Busy ({agents.filter(agent => agent.work && (agent.work.running > 0 || agent.work.waiting > 0)).length})</option>
+          <option value="DRAFT">Draft ({drafts.length})</option>
+          <option value="PAUSED">Paused ({agents.filter(agent => agent.status === "PAUSED").length})</option>
+        </select></label>
+        <label><span>Department</span><select className="input" value={selectedDept} onChange={event => setSelectedDept(event.target.value)}><option value="ALL">All departments</option>{Object.entries(DEPARTMENTS).filter(([key]) => agents.some(agent => agent.department === key)).map(([key,label]) => <option key={key} value={key}>{label} ({agents.filter(agent => agent.department === key).length})</option>)}</select></label>
+        {(searchQuery || selectedStatus !== "ALL" || selectedDept !== "ALL") && <Button variant="ghost" onClick={() => { setSearchQuery(""); setSelectedStatus("ALL"); setSelectedDept("ALL"); }}>Clear filters</Button>}
+      </div>
 
       {batchNote && (
         <p className="rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink">
@@ -174,14 +210,14 @@ export function Agents() {
       */}
       {(picked.size > 0 || drafts.length > 0) && (
         <div className="overflow-hidden rounded-2xl flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
-          <span className="font-mono text-[11px] uppercase tracking-[.14em]">
+          <span className="font-sans text-[11px] uppercase tracking-[.06em]">
             {picked.size > 0 ? `${picked.size} picked` : `${drafts.length} draft${drafts.length === 1 ? "" : "s"} on the roster`}
           </span>
           {picked.size === 0 ? (
             <button
               type="button"
               onClick={() => setPicked(new Set(drafts.map((agent) => agent.key)))}
-              className="rounded-full border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10"
+              className="rounded-full border border-cream/40 px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-cream hover:bg-cream/10"
             >
               Pick every draft
             </button>
@@ -193,7 +229,7 @@ export function Agents() {
                   type="button"
                   disabled={setStatus.isPending}
                   onClick={() => setStatus.mutate({ keys: [...picked], status })}
-                  className="rounded-full border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10 disabled:text-cream/40"
+                  className="rounded-full border border-cream/40 px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-cream hover:bg-cream/10 disabled:text-cream/40"
                 >
                   {status === "ACTIVE" ? "Set active" : status === "PAUSED" ? "Pause" : "Back to draft"}
                 </button>
@@ -201,13 +237,13 @@ export function Agents() {
               <button
                 type="button"
                 onClick={() => setPicked(new Set())}
-                className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60 hover:text-cream"
+                className="font-sans text-[11px] uppercase tracking-[.06em] text-cream/60 hover:text-cream"
               >
                 Clear
               </button>
             </>
           )}
-          <span className="font-mono text-[10px] uppercase tracking-[.1em] text-cream/50">
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-cream/50">
             Status only — what each may do unasked stays where it is
           </span>
         </div>
@@ -220,79 +256,141 @@ export function Agents() {
           <p>Could not load agents: {error.message}</p>
           <Button onClick={() => void refetch()}>Try again</Button>
         </div>
-      ) : agents.length === 0 ? (
-        <EmptyState message="No agents have been seeded yet. They're created on server start — restart the API and they'll appear." />
+      ) : filteredAgents.length === 0 ? (
+        <EmptyState
+          message={
+            searchQuery || selectedDept !== "ALL" || selectedStatus !== "ALL"
+              ? "No agents match the current search or filters."
+              : "No agents have been seeded yet. They're created on server start — restart the API and they'll appear."
+          }
+        />
       ) : (
         byTier.map(([tier, list]) => (
           <section key={tier} className="space-y-3">
             <div>
-              <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">{TIER_LABEL[tier] ?? tier}</h2>
+              <h2 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{TIER_LABEL[tier] ?? tier}</h2>
               {TIER_BLURB[tier] && <p className="mt-0.5 text-xs text-muted">{TIER_BLURB[tier]}</p>}
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {list.map((agent) => (
-                <div key={agent.key} className="relative">
-                  {/* Beside the card rather than inside it: the card is itself a
-                      button, and a checkbox nested in one is neither clickable
-                      nor valid. */}
-                  <label
-                    className="absolute right-3 top-3 z-10 flex cursor-pointer items-center gap-1 rounded-xl border border-line bg-white/90 px-1.5 py-0.5"
-                    title="Pick for a batch change"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={picked.has(agent.key)}
-                      onChange={() =>
-                        setPicked((current) => {
-                          const next = new Set(current);
-                          if (next.has(agent.key)) next.delete(agent.key);
-                          else next.add(agent.key);
-                          return next;
-                        })
-                      }
-                    />
-                  </label>
-                <button type="button" onClick={() => setOpenKey(agent.key)} className="w-full text-left">
-                  <Card className="h-full transition hover:border-blue/40">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
+                <div
+                  key={agent.key}
+                  className="os-agent-card group relative flex min-w-0 flex-col justify-between rounded-2xl border border-line bg-white p-5  transition-all duration-200  hover:border-ink/20 hover:border-line-strong"
+                >
+                  <div>
+                    {/* Top Row: status + avatar + name + level + batch pick */}
+                    <div className="os-agent-card-heading flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <StatusDot tone={toneFor(agent)} />
-                          {agent.avatar && <span aria-hidden className="text-muted">{agent.avatar}</span>}
-                          <span className="font-display text-lg tracking-[-.02em]">{agent.name}</span>
+
+                          <button
+                            type="button"
+                            onClick={() => setOpenKey(agent.key)}
+                            className="min-w-0 truncate text-left font-display text-lg font-medium tracking-tight text-ink transition-colors hover:text-blue"
+                          >
+                            {agent.name}
+                          </button>
                           {agent.custom && <Badge tone="muted">yours</Badge>}
                         </div>
-                        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+                        <p className="mt-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                           {DEPARTMENTS[agent.department] ?? agent.department}
                           {agent.managerName ? ` · reports to ${agent.managerName}` : ""}
                         </p>
                       </div>
-                      <Badge tone={agent.autonomyLevel > 2 || !agent.dryRun ? "default" : "muted"}>
-                        L{agent.autonomyLevel} {LEVELS[agent.autonomyLevel]?.name}
-                      </Badge>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Badge tone={agent.autonomyLevel > 2 || !agent.dryRun ? "default" : "muted"}>
+                          L{agent.autonomyLevel} {LEVELS[agent.autonomyLevel]?.name}
+                        </Badge>
+                        <label
+                          className="flex cursor-pointer items-center rounded-[10px] border border-line bg-cream/80 p-1 transition hover:bg-cream"
+                          title="Pick for a batch change"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={picked.has(agent.key)}
+                            onChange={() =>
+                              setPicked((current) => {
+                                const next = new Set(current);
+                                if (next.has(agent.key)) next.delete(agent.key);
+                                else next.add(agent.key);
+                                return next;
+                              })
+                            }
+                            className="rounded"
+                          />
+                        </label>
+                      </div>
                     </div>
-                    <p className="mt-3 text-sm text-muted">{agent.mission}</p>
+
+                    {/* Mission */}
+                    <p className="mt-3 text-sm leading-relaxed text-ink/80">{agent.mission}</p>
+
+                    {/* Skills */}
                     {agent.skills.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1">
                         {agent.skills.slice(0, 4).map((skill) => (
-                          <span key={skill} className="rounded-xl border border-line bg-cream px-1.5 py-0.5 text-[11px] text-muted">
+                          <span
+                            key={skill}
+                            className="rounded-full border border-line bg-cream px-2 py-0.5 font-mono text-[11px] text-muted"
+                          >
                             {skill}
                           </span>
                         ))}
-                        {agent.skills.length > 4 && <span className="px-1 py-0.5 text-[11px] text-muted">+{agent.skills.length - 4}</span>}
+                        {agent.skills.length > 4 && (
+                          <span className="rounded-full border border-line bg-cream px-1.5 py-0.5 font-mono text-[11px] text-muted">
+                            +{agent.skills.length - 4}
+                          </span>
+                        )}
                       </div>
                     )}
-                    {(agent.work?.running || agent.work?.queued || agent.work?.waiting) ? (
-                      <p className="mt-3 flex flex-wrap items-center gap-x-3 font-mono text-[10px] uppercase tracking-[.12em]">
-                        {agent.work.running > 0 && <span className="text-blue">working on {agent.work.running}</span>}
-                        {agent.work.queued > 0 && <span className="text-muted">{agent.work.queued} queued</span>}
-                        {agent.work.waiting > 0 && <span className="text-warn-text">{agent.work.waiting} waiting on you</span>}
-                      </p>
-                    ) : agent.dryRun ? (
-                      <p className="mt-3 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Dry run · nothing takes effect</p>
-                    ) : null}
-                  </Card>
-                </button>
+                  </div>
+
+                  {/* Bottom: telemetry & actions */}
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                    <div>
+                      {agent.work?.running || agent.work?.queued || agent.work?.waiting ? (
+                        <div className="flex flex-wrap items-center gap-x-2.5 font-sans text-[11px] uppercase tracking-[.06em]">
+                          {agent.work.running > 0 && (
+                            <span className="inline-flex items-center gap-1 font-bold text-blue">
+                              <span className="h-1.5 w-1.5 animate-ping rounded-full bg-blue" />
+                              {agent.work.running} working
+                            </span>
+                          )}
+                          {agent.work.queued > 0 && <span className="text-muted">{agent.work.queued} queued</span>}
+                          {agent.work.waiting > 0 && <span className="text-warn-text">{agent.work.waiting} waiting</span>}
+                        </div>
+                      ) : agent.dryRun ? (
+                        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Dry run</span>
+                      ) : (
+                        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{agent.status.toLowerCase()}</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setStatus.mutate({
+                            keys: [agent.key],
+                            status: agent.status === "ACTIVE" ? "PAUSED" : "ACTIVE",
+                          })
+                        }
+                        disabled={setStatus.isPending}
+                        className="rounded-full border border-line px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:border-ink/40 hover:text-ink disabled:opacity-50 active:scale-[0.96]"
+                      >
+                        {agent.status === "ACTIVE" ? "Pause" : "Activate"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOpenKey(agent.key)}
+                        className="rounded-full bg-ink px-3 py-1 font-sans text-[11px] font-semibold uppercase tracking-[.06em] text-cream transition hover:bg-ink/85 hover:shadow-sm active:scale-[0.96]"
+                      >
+                        Details
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -338,7 +436,6 @@ function HireDrawer({
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [key, setKey] = useState("");
-  const [avatar, setAvatar] = useState("");
   const [managerKey, setManagerKey] = useState("");
   const [department, setDepartment] = useState("TECHNOLOGY");
   const [mission, setMission] = useState("");
@@ -355,7 +452,6 @@ function HireDrawer({
     setName("");
     setTitle("");
     setKey("");
-    setAvatar("");
     setManagerKey(managers.find((agent) => agent.key === "cto")?.key ?? managers[0]?.key ?? "");
     setDepartment("TECHNOLOGY");
     setMission("");
@@ -387,7 +483,7 @@ function HireDrawer({
           .split(/[\n,]/)
           .map((skill) => skill.trim())
           .filter(Boolean),
-        avatar: avatar.trim() || null,
+        avatar: null,
         toolkit: [],
       }),
     onSuccess: (agent) => {
@@ -462,9 +558,6 @@ function HireDrawer({
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Glyph" hint="One character for the roster. Optional.">
-            <input className="input" maxLength={4} value={avatar} onChange={(event) => setAvatar(event.target.value)} placeholder="◆" />
-          </Field>
           <Field label="Key" hint="Appears in every audit row. Derived from the name unless you set one.">
             <input className="input font-mono text-xs" value={key} onChange={(event) => setKey(event.target.value)} placeholder={derivedKey} />
           </Field>
@@ -553,7 +646,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
             may it do while working".
           */}
           <section className="space-y-3">
-            <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Whether it works</h3>
+            <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Whether it works</h3>
             <div className="flex flex-wrap gap-1.5">
               {STATUSES.map((option) => (
                 <Button
@@ -579,7 +672,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
           <AgentPace agent={agent} onSave={save.mutate} saving={save.isPending} />
 
           <section className="space-y-3">
-            <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it may do unasked</h3>
+            <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it may do unasked</h3>
             <div className="flex flex-wrap gap-1.5">
               {LEVELS.map((level) => (
                 <Button
@@ -612,7 +705,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
 
           {agent.skills.length > 0 && (
             <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">What it knows</h3>
+              <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">What it knows</h3>
               <div className="flex flex-wrap gap-1.5">
                 {agent.skills.map((skill) => (
                   <span key={skill} className="rounded-xl border border-line bg-cream px-2 py-0.5 text-xs text-muted">
@@ -632,7 +725,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
 
           {agent.kpis.length > 0 && (
             <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Judged on</h3>
+              <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Judged on</h3>
               <ul className="space-y-1 text-sm text-ink">
                 {agent.kpis.map((k) => <li key={k}>· {k}</li>)}
               </ul>
@@ -641,7 +734,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
 
           {agent.reports.length > 0 && (
             <section className="space-y-2">
-              <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Reports to it</h3>
+              <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Reports to it</h3>
               <p className="text-sm text-ink">{agent.reports.map((r) => r.name).join(", ")}</p>
             </section>
           )}
@@ -705,13 +798,13 @@ function AgentPace({
 
   return (
     <section className="space-y-3">
-      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">How often it may work</h3>
+      <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">How often it may work</h3>
       <div className="grid gap-3 sm:grid-cols-3">
         {FIELDS.map((field) => {
           const usage = agent.pace?.find((row) => row.period === field.period);
           return (
             <div key={field.key} className="space-y-1">
-              <label className="block font-mono text-[10px] uppercase tracking-[.1em] text-muted">
+              <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 Tasks in {field.label}
               </label>
               <input
@@ -776,7 +869,7 @@ function ToolGrants({
   return (
     <section className="space-y-3">
       <div>
-        <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Tools it may use</h3>
+        <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Tools it may use</h3>
         <p className="mt-1 text-sm text-muted">
           {granted.length} of {tools.length} granted
           {granted.some((tool) => !tool.ready) && " · some need a key before they will do anything"}
@@ -786,7 +879,7 @@ function ToolGrants({
       <div className="space-y-4">
         {groups.map((group) => (
           <div key={group}>
-            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-muted">{group}</p>
+            <p className="mb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{group}</p>
             <div className="space-y-1">
               {tools
                 .filter((tool) => tool.group === group)

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type { FieldEdit } from "../lib/types";
 import { Button } from "./ui";
@@ -7,6 +8,7 @@ type Proposal = {
   explanation: string;
   values: Record<string, FieldEdit>;
   changes: Array<{ fieldId: string; label: string; property: string; before: string; after: string }>;
+  structuralActions?: Array<{ kind: "duplicate" | "remove"; fieldId: string; label: string }>;
   costUsd: number;
   model: string;
   note: string | null;
@@ -20,7 +22,7 @@ export function WebsiteAssistant({ pageId, selectedFieldId, fieldLabel, values, 
   selectedFieldId: string | null;
   fieldLabel?: string | null;
   values: Record<string, FieldEdit>;
-  onApply: (changes: Record<string, FieldEdit>) => void;
+  onApply: (changes: Record<string, FieldEdit>, structuralActions?: Array<{ kind: "duplicate" | "remove"; fieldId: string; label: string }>) => void;
   onClose: () => void;
 }) {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
@@ -111,17 +113,20 @@ export function WebsiteAssistant({ pageId, selectedFieldId, fieldLabel, values, 
   }
 
   function apply() {
-    if (!proposal || stale || !included.size) return;
-    onApply(Object.fromEntries(Object.entries(proposal.values).filter(([id]) => included.has(id))));
+    if (!proposal || stale || (!included.size && !proposal.structuralActions?.length)) return;
+    onApply(
+      Object.fromEntries(Object.entries(proposal.values).filter(([id]) => included.has(id))),
+      proposal.structuralActions,
+    );
     onClose();
   }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-ink/30" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="website-assistant-title" className="flex h-full w-full max-w-lg flex-col overflow-hidden border-l border-line bg-white shadow-2xl">
+      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="website-assistant-title" className="os-drawer flex h-full w-full max-w-lg flex-col overflow-hidden">
         <div className="flex flex-none items-start justify-between gap-4 border-b border-line px-5 py-4">
           <div>
-            <h2 id="website-assistant-title" className="font-display text-lg tracking-[-.02em]">Design assistant</h2>
+            <h2 id="website-assistant-title" className="os-overlay-title">Design assistant</h2>
             <p className="mt-1 text-xs text-muted">Describe a change, review it, then add it to your draft.</p>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
@@ -140,7 +145,13 @@ export function WebsiteAssistant({ pageId, selectedFieldId, fieldLabel, values, 
                 <span>Only change <strong>{fieldLabel || "the selected element"}</strong><span className="mt-0.5 block text-xs text-muted">Uncheck to include the whole page.</span></span>
               </label>
             ) : <p className="mt-4 text-xs text-muted">Suggestions can use any editable element on this page.</p>}
-            <div className="mt-4"><Button type="submit" disabled={pending || prompt.trim().length < 3}>{pending ? "Preparing suggestions…" : proposal ? "Suggest again" : "Suggest changes"}</Button></div>
+            <div className="mt-4 flex items-center justify-between gap-2"><Button type="submit" disabled={pending || prompt.trim().length < 3}>{pending ? "Preparing suggestions…" : proposal ? "Suggest again" : "Suggest changes"}</Button></div>
+            <div className="mt-3 flex items-center justify-between rounded-xl border border-line bg-cream p-2.5 text-xs">
+              <span className="text-muted">Need to update fonts, colors, or numbers across all pages?</span>
+              <Link to="/website/ai" className="font-semibold text-blue hover:underline shrink-0" onClick={onClose}>
+                Site Builder Agent →
+              </Link>
+            </div>
           </form>
 
           <div aria-live="polite" className="mt-5">
@@ -150,8 +161,20 @@ export function WebsiteAssistant({ pageId, selectedFieldId, fieldLabel, values, 
             {stale && <p role="alert" className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-4 py-3 text-sm text-warn-text">Your draft changed while these suggestions were being prepared. Ask again to use the latest changes.</p>}
           </div>
 
+          {proposal?.structuralActions && proposal.structuralActions.length > 0 && (
+            <div className="mt-5 space-y-2">
+              <h3 className="font-display text-base">Structural changes</h3>
+              {proposal.structuralActions.map((action, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-xl border border-line bg-sunken p-3 text-xs">
+                  <span className="font-semibold text-blue uppercase">{action.kind}</span>
+                  <span className="text-ink font-medium">{action.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {groups.length > 0 && <div className="mt-5 space-y-3">
-            <h3 className="font-display text-base">Review changes</h3>
+            <h3 className="font-display text-base">Review content changes</h3>
             {groups.map(([id, changes]) => <section key={id} className={`overflow-hidden rounded-xl border ${included.has(id) ? "border-line" : "border-dashed border-line opacity-60"}`}>
               <label className="flex items-center gap-2.5 border-b border-line bg-cream px-3 py-2.5 text-sm font-semibold">
                 <input type="checkbox" className="accent-ink" checked={included.has(id)} onChange={event => setIncluded(current => { const next = new Set(current); if (event.target.checked) next.add(id); else next.delete(id); return next; })} />
@@ -160,20 +183,22 @@ export function WebsiteAssistant({ pageId, selectedFieldId, fieldLabel, values, 
               {changes.map(change => <div key={change.property} className="px-3 py-3">
                 <div className="mb-2 text-xs font-semibold text-muted">{LABELS[change.property] ?? change.property}</div>
                 <div className="space-y-2 text-xs">
-                  <div><span className="font-semibold text-muted">Before</span><p className="mt-1 whitespace-pre-wrap break-words rounded-lg bg-sunken p-2 text-muted">{change.before || "Not set"}</p></div>
-                  <div><span className="font-semibold text-positive-text">After</span><p className="mt-1 whitespace-pre-wrap break-words rounded-lg bg-positive-surface p-2 text-ink">{change.after || "Not set"}</p></div>
+                  <div><span className="font-semibold text-muted">Before</span><p className="mt-1 whitespace-pre-wrap break-words rounded-[10px] bg-sunken p-2 text-muted">{change.before || "Not set"}</p></div>
+                  <div><span className="font-semibold text-positive-text">After</span><p className="mt-1 whitespace-pre-wrap break-words rounded-[10px] bg-positive-surface p-2 text-ink">{change.after || "Not set"}</p></div>
                 </div>
               </div>)}
             </section>)}
           </div>}
-          {proposal && groups.length > 0 && <section className="mt-4"><Button disabled={stale || previewPending || !included.size} onClick={() => void previewProposal()}>{previewPending ? "Loading preview?" : "Preview selected changes"}</Button>{previewHtml && <><p className="my-2 text-xs text-muted">Static preview. Interactive scripts are paused. Nothing has been saved.</p><iframe title="Proposed page preview" sandbox="" srcDoc={previewHtml} className="mt-3 h-96 w-full border border-line bg-white" /></>}</section>}
-          {proposal && !groups.length && <p className="mt-3 text-sm text-muted">No changes were proposed. Refine your request or adjust the page with the visual controls.</p>}
+          {proposal && groups.length > 0 && <section className="mt-4"><Button disabled={stale || previewPending || !included.size} onClick={() => void previewProposal()}>{previewPending ? "Loading preview…" : "Preview selected changes"}</Button>{previewHtml && <><p className="my-2 text-xs text-muted">Static preview. Interactive scripts are paused. Nothing has been saved.</p><iframe title="Proposed page preview" sandbox="" srcDoc={previewHtml} className="mt-3 h-96 w-full border border-line bg-white" /></>}</section>}
+          {proposal && !groups.length && !proposal.structuralActions?.length && <p className="mt-3 text-sm text-muted">No changes were proposed. Refine your request or adjust the page with the visual controls.</p>}
           {proposal?.note && <p className="mt-4 text-xs text-muted">{proposal.note}</p>}
           {proposal && <p className="mt-4 text-[11px] text-muted">Suggestion cost: {proposal.costUsd > 0 ? `$${proposal.costUsd.toFixed(4)}` : "$0.00"}</p>}
         </div>
         <div className="flex flex-none items-center justify-between gap-4 border-t border-line bg-white px-5 py-4">
           <p className="max-w-[230px] text-xs text-muted">Applied changes appear on your canvas. You can undo them before publishing.</p>
-          <Button variant="accent" disabled={!proposal || stale || !included.size || pending} onClick={apply}>Apply {included.size || ""}{included.size === 1 ? " change" : " changes"}</Button>
+          <Button variant="accent" disabled={!proposal || stale || (!included.size && !proposal.structuralActions?.length) || pending} onClick={apply}>
+            Apply {included.size + (proposal?.structuralActions?.length ?? 0) || ""}{included.size + (proposal?.structuralActions?.length ?? 0) === 1 ? " change" : " changes"}
+          </Button>
         </div>
       </div>
     </div>

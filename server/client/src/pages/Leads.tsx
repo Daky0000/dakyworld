@@ -1,3 +1,4 @@
+import { Dropdown } from "../components/ui";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
@@ -19,7 +20,7 @@ import {
   useLeadFields,
   visibleFields,
 } from "../components/LeadColumns";
-import { Button, Card, EmptyState, Field, Modal, Money, PageHeader, RelativeTime, StatTile } from "../components/ui";
+import { Button, Card, EmptyState, Field, Modal, Money, PageHeader, RelativeTime, StatGrid, StatTile } from "../components/ui";
 import { TagChip, TagManager, TagPicker, useLeadTags, useTagLookup } from "../components/LeadTags";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
@@ -479,7 +480,7 @@ export function Leads() {
             {can("leads.import") && (
               <Link
                 to="/leads/import"
-                className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+                className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-sans text-xs uppercase tracking-[.06em] transition hover:border-ink"
               >
                 Import sheet
               </Link>
@@ -487,7 +488,7 @@ export function Leads() {
             {can("leads.sources") && (
               <Link
                 to="/lead-sources"
-                className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+                className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-sans text-xs uppercase tracking-[.06em] transition hover:border-ink"
               >
                 Capture leads
               </Link>
@@ -500,20 +501,22 @@ export function Leads() {
       />
 
       {stats && (
-        <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <StatTile label="Leads" value={stats.total} sub={`${stats.newThisWeek} added this week`} />
-          <StatTile
-            label="Reachable"
-            value={stats.reachable}
-            sub={stats.total ? `${Math.round((stats.reachable / stats.total) * 100)}% have an email or phone` : "—"}
-          />
-          <StatTile label="Average score" value={stats.averageScore} sub="0–100, weighted on reachability" />
-          <StatTile
-            label="Qualified"
-            value={stats.byStatus.find((row) => row.status === "QUALIFIED")?._count ?? 0}
-            sub={`${stats.byStatus.find((row) => row.status === "QUALIFYING")?._count ?? 0} being qualified`}
-          />
-          <StatTile label="Estimated value" value={<Money amount={stats.pipelineValue} />} sub="Sum of deal sizes" />
+        <div className="mb-8">
+          <StatGrid columns={5}>
+            <StatTile label="Leads" value={stats.total} sub={`${stats.newThisWeek} added this week`} />
+            <StatTile
+              label="Reachable"
+              value={stats.reachable}
+              sub={stats.total ? `${Math.round((stats.reachable / stats.total) * 100)}% have an email or phone` : "—"}
+            />
+            <StatTile label="Average score" value={stats.averageScore} sub="0–100, weighted on reachability" />
+            <StatTile
+              label="Qualified"
+              value={stats.byStatus.find((row) => row.status === "QUALIFIED")?._count ?? 0}
+              sub={`${stats.byStatus.find((row) => row.status === "QUALIFYING")?._count ?? 0} being qualified`}
+            />
+            <StatTile label="Estimated value" value={<Money amount={stats.pipelineValue} />} sub="Sum of deal sizes" />
+          </StatGrid>
         </div>
       )}
 
@@ -598,7 +601,7 @@ export function Leads() {
 
       {pickedLists.size > 0 && (
         <div className="overflow-hidden rounded-2xl mb-4 flex flex-wrap items-center gap-3 border border-ink bg-ink px-4 py-3 text-cream">
-          <span className="font-mono text-[11px] uppercase tracking-[.14em]">
+          <span className="font-sans text-[11px] uppercase tracking-[.06em]">
             {pickedLists.size} list{pickedLists.size === 1 ? "" : "s"} picked
           </span>
           {/* Emptying is the default and stays it: a list is a way of
@@ -607,7 +610,7 @@ export function Leads() {
             type="button"
             disabled={deleteLists.isPending}
             onClick={() => deleteLists.mutate({ ids: [...pickedLists], withLeads: false })}
-            className="rounded-full border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10 disabled:text-cream/40"
+            className="rounded-full border border-cream/40 px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-cream hover:bg-cream/10 disabled:text-cream/40"
           >
             Remove, keep the leads
           </button>
@@ -624,14 +627,14 @@ export function Leads() {
               );
               if (answer?.trim() === String(count)) deleteLists.mutate({ ids: [...pickedLists], withLeads: true, expect: count });
             }}
-            className="rounded-full border border-danger-light/50 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-danger-light hover:bg-danger-light/10 disabled:text-cream/40"
+            className="rounded-full border border-danger-light/50 px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-danger-light hover:bg-danger-light/10 disabled:text-cream/40"
           >
             Remove and delete their leads
           </button>
           <button
             type="button"
             onClick={() => setPickedLists(new Set())}
-            className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60 hover:text-cream"
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-cream/60 hover:text-cream"
           >
             Clear
           </button>
@@ -675,7 +678,7 @@ export function Leads() {
             ) : (
               <Link
                 to="/lead-sources"
-                className="inline-flex items-center gap-2 bg-ink px-4 py-2 font-mono text-xs uppercase tracking-[.12em] text-cream"
+                className="inline-flex items-center gap-2 bg-ink px-4 py-2 font-sans text-xs uppercase tracking-[.06em] text-cream"
               >
                 Set up lead capture
               </Link>
@@ -778,7 +781,7 @@ export function Leads() {
         footer={
           openBlock && (
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+              <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 {openBlock.leads.length < (openBlock.total ?? 0)
                   ? `Showing the first ${openBlock.leads.length} of ${openBlock.total}`
                   : `All ${openBlock.leads.length} shown`}
@@ -870,29 +873,12 @@ function ExportMenu({ query, count }: { query: string; count: number }) {
   const href = (format: string) => `${base}/leads/export?format=${format}${query ? `&${query}` : ""}`;
 
   return (
-    <span className="flex items-center gap-1">
-      <a
-        href={href("xlsx")}
-        title={`Export ${count} lead${count === 1 ? "" : "s"} to Excel, with every column`}
-        className="rounded-full inline-flex items-center gap-2 border border-line-strong px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition hover:border-ink"
-      >
-        Excel
-      </a>
-      <a
-        href={href("csv")}
-        title={`Export ${count} lead${count === 1 ? "" : "s"} to a plain CSV file`}
-        className="rounded-full inline-flex items-center gap-2 border border-line-strong px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition hover:border-ink"
-      >
-        CSV
-      </a>
-      <a
-        href={href("pdf")}
-        title={`Export ${count} lead${count === 1 ? "" : "s"} to a printable PDF`}
-        className="rounded-full inline-flex items-center gap-2 border border-line-strong px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] transition hover:border-ink"
-      >
-        PDF
-      </a>
-    </span>
+    <Dropdown label="Export leads">
+      <div className="os-dropdown-caption">{count.toLocaleString()} matching leads</div>
+      <a href={href("xlsx")}>Excel workbook<small>All columns</small></a>
+      <a href={href("csv")}>CSV spreadsheet<small>Plain data</small></a>
+      <a href={href("pdf")}>PDF document<small>Print ready</small></a>
+    </Dropdown>
   );
 }
 
@@ -1003,14 +989,14 @@ function LeadListCards({
         <section key={section.label}>
           <div className="mb-3 flex items-baseline gap-3">
             <h3 className="font-display text-lg tracking-[-.02em]">{section.label}</h3>
-            <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+            <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               {section.blocks.length} {section.blocks.length === 1 ? "list" : "lists"} ·{" "}
               {section.blocks.reduce((sum, block) => sum + (block.total ?? block.leads.length), 0).toLocaleString()} leads
             </span>
             <span className="h-px flex-1 bg-line" />
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-line bg-white">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {section.blocks.map((block) => {
               const total = block.total ?? block.leads.length;
               const withEmail = block.list?.withEmail ?? block.leads.filter((lead) => lead.contactEmail).length;
@@ -1022,108 +1008,120 @@ function LeadListCards({
               return (
                 <div
                   key={block.key}
-                  className="group flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-line px-4 py-4 transition last:border-0 hover:bg-cream/60 sm:flex-nowrap"
+                  className="group relative flex flex-col justify-between rounded-2xl border border-line bg-white p-5  transition-all duration-200  hover:border-ink/20 hover:border-line-strong"
                 >
-                  {block.list && (
-                    <label className="shrink-0 cursor-pointer" title="Pick this list for removal">
-                      <input type="checkbox" checked={pickedLists.has(block.key)} onChange={() => onPickList(block.key)} />
-                    </label>
-                  )}
-
-                  {/* Size first, the way the reference puts the document first:
-                      it is the thing you scan down the column for. */}
-                  <button
-                    type="button"
-                    onClick={() => onOpenList(block)}
-                    className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center rounded-xl border border-line py-2 transition group-hover:border-line-strong"
-                  >
-                    <span className="font-display text-lg leading-none tracking-[-.02em]">{total.toLocaleString()}</span>
-                    <span className="mt-0.5 font-mono text-[9px] uppercase tracking-[.12em] text-muted">leads</span>
-                  </button>
-
-                  <button type="button" onClick={() => onOpenList(block)} className="min-w-0 flex-1 text-left">
-                    <span className="block truncate font-medium">{block.label}</span>
-                    <span className="mt-0.5 block truncate font-mono text-[10px] uppercase tracking-[.1em] text-muted">
-                      {block.list?.sourceLabel ?? (block.key === "none" ? "not in a list" : "added by hand")}
-                      {block.list?.createdAt && <> · {new Date(block.list.createdAt).toLocaleDateString()}</>}
-                    </span>
-                  </button>
-
-                  {block.list && block.list.tags.length > 0 && (
-                    <div className="hidden shrink-0 lg:block">
-                      <GroupTags group={block.list} />
+                  <div>
+                    <div className="flex items-center justify-between gap-3 border-b border-line pb-3">
+                      <div className="flex items-center gap-2">
+                        {block.list && (
+                          <label className="shrink-0 cursor-pointer" title="Pick this list for removal">
+                            <input
+                              type="checkbox"
+                              checked={pickedLists.has(block.key)}
+                              onChange={() => onPickList(block.key)}
+                              className="rounded"
+                            />
+                          </label>
+                        )}
+                        <span className="rounded-full border border-line bg-cream px-2.5 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+                          {block.list?.sourceLabel ?? (block.key === "none" ? "not in a list" : "added by hand")}
+                        </span>
+                      </div>
+                      <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+                        {block.list?.createdAt ? <RelativeTime value={block.list.createdAt} /> : "—"}
+                      </span>
                     </div>
-                  )}
 
-                  <div className="hidden w-28 shrink-0 text-right md:block">
-                    <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">
-                      {block.list?.createdAt ? <RelativeTime value={block.list.createdAt} /> : "—"}
-                    </span>
-                  </div>
+                    <div className="mt-4 flex items-start justify-between gap-3">
+                      <button type="button" onClick={() => onOpenList(block)} className="min-w-0 flex-1 text-left">
+                        <span className="block truncate font-display text-lg font-medium tracking-tight text-ink transition-colors group-hover:text-blue">
+                          {block.label}
+                        </span>
+                        {block.list?.createdAt && (
+                          <span className="mt-0.5 block font-mono text-[11px] text-muted">
+                            Created {new Date(block.list.createdAt).toLocaleDateString()}
+                          </span>
+                        )}
+                      </button>
 
-                  {/* Lime is the positive-status colour and nothing else, so it
-                      appears here only when a list really is ready to work. */}
-                  {/* Lime is the positive-status colour and is meant to be
-                      1–5% of a surface, so it is a 3rem bar and only at the top
-                      band — a page of lists all reading "good" in full lime is
-                      the rule broken fifteen times over. */}
-                  <div className="w-32 shrink-0 text-right">
-                    <span className="block font-mono text-[11px] tracking-[.06em] text-ink">
-                      {withEmail.toLocaleString()} with email
-                    </span>
-                    <span className="mt-1 flex items-center justify-end gap-1.5">
-                      <span className="h-1 w-12 overflow-hidden rounded-full bg-line">
-                        <span
-                          className={`block h-full ${reachable >= 80 ? "bg-lime" : reachable >= 25 ? "bg-blue" : "bg-line-strong"}`}
-                          style={{ width: `${Math.max(2, reachable)}%` }}
-                        />
-                      </span>
-                      <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted">{reachable}%</span>
-                    </span>
-                  </div>
+                      <div className="flex shrink-0 flex-col items-end">
+                        <span className="font-display text-xl font-medium leading-none tracking-tight text-ink">
+                          {total.toLocaleString()}
+                        </span>
+                        <span className="mt-0.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">leads</span>
+                      </div>
+                    </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
-                    {chosen > 0 && (
-                      <span className="rounded-full bg-blue/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-blue">
-                        {chosen} picked
-                      </span>
+                    {block.list && block.list.tags.length > 0 && (
+                      <div className="mt-3">
+                        <GroupTags group={block.list} />
+                      </div>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => onOpenList(block)}
-                      className="rounded-full bg-ink px-4 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-cream transition hover:bg-ink/85"
-                    >
-                      Open
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onToggleAll(block.leads.map((lead) => lead.id), true)}
-                      title={`Select the ${block.leads.length} shown from this list`}
-                      aria-label={`Select leads from ${block.label}`}
-                      className="rounded-full border border-line px-2.5 py-2 font-mono text-[10px] text-muted transition hover:border-ink/30 hover:text-ink"
-                    >
-                      ✓
-                    </button>
-                    {block.key !== "none" && (
+
+                    <div className="mt-4 rounded-xl border border-line/60 bg-cream/50 p-2.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-mono text-[11px] text-muted">
+                          <strong className="font-semibold text-ink">{withEmail.toLocaleString()}</strong> with email
+                        </span>
+                        <span className="font-mono text-[11px] font-bold text-ink">{reachable}% reachable</span>
+                      </div>
+                      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-line">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            reachable >= 80 ? "bg-lime" : reachable >= 25 ? "bg-blue" : "bg-line-strong"
+                          }`}
+                          style={{ width: `${Math.max(3, reachable)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
+                    <div className="flex items-center gap-2">
+                      {chosen > 0 && (
+                        <span className="rounded-full bg-blue/10 px-2 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] text-blue">
+                          {chosen} picked
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => onFilterToList(block.key)}
-                        title="Filter the whole screen to this list"
-                        aria-label={`Filter to ${block.label}`}
-                        className="rounded-full border border-line px-2.5 py-2 font-mono text-[10px] text-muted transition hover:border-ink/30 hover:text-ink"
+                        onClick={() => onToggleAll(block.leads.map((lead) => lead.id), true)}
+                        title={`Select the ${block.leads.length} shown from this list`}
+                        aria-label={`Select leads from ${block.label}`}
+                        className="rounded-full border border-line px-2.5 py-1 font-mono text-xs text-muted transition hover:border-ink/40 hover:text-ink active:scale-[0.96]"
                       >
-                        ⌖
+                        Selected
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onEditColumns(block.key === "none" ? null : block.key)}
-                      title="Edit this list's columns"
-                      aria-label={`Edit columns for ${block.label}`}
-                      className="rounded-full border border-line px-2.5 py-2 font-mono text-[10px] text-muted transition hover:border-ink/30 hover:text-ink"
-                    >
-                      ⚙
-                    </button>
+                      {block.key !== "none" && (
+                        <button
+                          type="button"
+                          onClick={() => onFilterToList(block.key)}
+                          title="Filter the whole screen to this list"
+                          aria-label={`Filter to ${block.label}`}
+                          className="rounded-full border border-line px-2.5 py-1 font-mono text-xs text-muted transition hover:border-ink/40 hover:text-ink active:scale-[0.96]"
+                        >
+                          ⌖
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onEditColumns(block.key === "none" ? null : block.key)}
+                        title="Edit this list's columns"
+                        aria-label={`Edit columns for ${block.label}`}
+                        className="rounded-full border border-line px-2.5 py-1 font-mono text-xs text-muted transition hover:border-ink/40 hover:text-ink active:scale-[0.96]"
+                      >
+                        Columns
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onOpenList(block)}
+                        className="rounded-full bg-ink px-3.5 py-1 font-sans text-[11px] font-semibold uppercase tracking-[.06em] text-cream transition hover:bg-ink/85 hover:shadow-sm active:scale-[0.96]"
+                      >
+                        Open
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -1261,19 +1259,19 @@ function LeadListBlock({
           <button
             type="button"
             onClick={() => setCollapsed((open) => !open)}
-            className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+            className="flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
           >
-            <span className={`text-[9px] transition ${collapsed ? "" : "rotate-90"}`}>▶</span>
+            <span className="text-[11px] text-muted">{collapsed ? "Show" : "Hide"}</span>
             {label}
           </button>
-          <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             {total} · {withEmail} with email
             {previewing && ` · showing ${leads.length}`}
           </span>
           {list && <GroupTags group={list} />}
           <span className="h-px flex-1 bg-line" />
           {previewing && onOpenList && (
-            <button type="button" onClick={onOpenList} className="font-mono text-[10px] uppercase tracking-[.14em] text-blue">
+            <button type="button" onClick={onOpenList} className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">
               Open this list
             </button>
           )}
@@ -1281,7 +1279,7 @@ function LeadListBlock({
             type="button"
             onClick={() => onToggleAll(ids, !allSelected)}
             title={previewing ? "Selects the rows shown here — open the list to select the rest" : undefined}
-            className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
           >
             {allSelected ? "Deselect" : previewing ? `Select these ${leads.length}` : "Select all"}
           </button>
@@ -1295,7 +1293,7 @@ function LeadListBlock({
           )}
           <table className="w-full text-left text-sm" style={{ minWidth: `${Math.max(640, columns.length * 150)}px` }}>
             <thead>
-              <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+              <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 <th className="w-8 px-3 py-3" />
                 {columns.map((column) => (
                   <th key={column.key} className="px-4 py-3 whitespace-nowrap" style={column.width ? { width: column.width } : undefined}>
@@ -1309,7 +1307,7 @@ function LeadListBlock({
                       className="group flex items-center gap-1 uppercase tracking-[.12em] transition hover:text-ink"
                     >
                       {column.label}
-                      <span className="opacity-0 transition group-hover:opacity-60">✎</span>
+
                     </button>
                   </th>
                 ))}
@@ -1367,7 +1365,7 @@ function LeadListBlock({
                     ))}
                     <td className="px-3 py-3 text-right" onClick={(event) => event.stopPropagation()}>
                       {editing ? (
-                        <span className="flex justify-end gap-2 font-mono text-[10px] uppercase tracking-[.1em]">
+                        <span className="flex justify-end gap-2 font-sans text-[11px] uppercase tracking-[.06em]">
                           <button type="button" onClick={() => commit(lead)} className="text-blue hover:underline">
                             {savingId === lead.id ? "Saving…" : "Save"}
                           </button>
@@ -1383,7 +1381,7 @@ function LeadListBlock({
                           aria-label={`Edit ${lead.contactName}`}
                           className="font-mono text-xs text-muted opacity-0 transition hover:text-ink group-hover:opacity-100"
                         >
-                          ✎
+                          Edit
                         </button>
                       )}
                     </td>
@@ -1446,7 +1444,7 @@ function GroupTags({ group }: { group: { id: string; tags: string[] } }) {
             setDraft(group.tags ?? []);
             setEditing(true);
           }}
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-blue"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-blue"
           title="Tag this list"
         >
           {(group.tags ?? []).length > 0 ? "edit" : "+ tag list"}
@@ -1466,7 +1464,7 @@ function GroupTags({ group }: { group: { id: string; tags: string[] } }) {
       <button
         type="button"
         onClick={() => setEditing(false)}
-        className="font-mono text-[10px] uppercase tracking-[.14em] text-muted"
+        className="font-sans text-[11px] uppercase tracking-[.06em] text-muted"
       >
         Cancel
       </button>
@@ -1597,8 +1595,8 @@ function FilterBar({
         </FilterChip>
 
         <span className="flex-1" />
-        <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">{resultCount} matching</span>
-        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{resultCount} matching</span>
+        <label className="flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Group by
           <select value={groupBy} onChange={(event) => onGroupBy(event.target.value as GroupBy)} className="filter-select">
             {GROUP_BY.map((option) => (
@@ -1612,7 +1610,7 @@ function FilterBar({
           <button
             type="button"
             onClick={() => onChange(EMPTY_FILTERS)}
-            className="font-mono text-[10px] uppercase tracking-[.14em] text-blue"
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-blue"
           >
             Clear ({activeFilterCount})
           </button>
@@ -1653,7 +1651,7 @@ function TagFilterRow({ filters, onChange }: { filters: Filters; onChange: (filt
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
-      <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Tags</span>
+      <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Tags</span>
       {shown.map((tag) => (
         <TagChip
           key={tag.slug}
@@ -1667,7 +1665,7 @@ function TagFilterRow({ filters, onChange }: { filters: Filters; onChange: (filt
         <button
           type="button"
           onClick={() => setShowAll(true)}
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
         >
           + {ranked.length - shown.length} more
         </button>
@@ -1676,14 +1674,14 @@ function TagFilterRow({ filters, onChange }: { filters: Filters; onChange: (filt
         <button
           type="button"
           onClick={() => setShowAll(false)}
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
         >
           Fewer
         </button>
       )}
 
       {filters.tags.length > 1 && (
-        <label className="ml-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+        <label className="ml-2 flex items-center gap-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Match
           <select
             value={filters.tagMatch}
@@ -1699,7 +1697,7 @@ function TagFilterRow({ filters, onChange }: { filters: Filters; onChange: (filt
         <button
           type="button"
           onClick={() => onChange({ ...filters, tags: [] })}
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-muted transition hover:text-ink"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
         >
           Clear tags
         </button>
@@ -1713,7 +1711,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
     <button
       type="button"
       onClick={onClick}
-      className={`px-2 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+      className={`px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition ${
         active ? "bg-ink text-cream" : "bg-sunken text-muted hover:text-ink"
       }`}
     >
@@ -1764,7 +1762,7 @@ function BulkBar({
   return (
     <div className="overflow-hidden rounded-2xl mb-4 border border-ink bg-ink px-4 py-3 text-cream">
       <div className="flex flex-wrap items-center gap-3">
-      <span className="font-mono text-[11px] uppercase tracking-[.14em]">
+      <span className="font-sans text-[11px] uppercase tracking-[.06em]">
         {count.toLocaleString()} selected{allMatching ? " — everything matching" : ""}
       </span>
       {/*
@@ -1778,7 +1776,7 @@ function BulkBar({
         <button
           type="button"
           onClick={onSelectAllMatching}
-          className="rounded-full border border-cream/40 px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-cream hover:bg-cream/10"
+          className="rounded-full border border-cream/40 px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-cream hover:bg-cream/10"
         >
           Select all {total.toLocaleString()} matching
         </button>
@@ -1787,7 +1785,7 @@ function BulkBar({
         defaultValue=""
         disabled={pending}
         onChange={(event) => event.target.value && onStatus(event.target.value)}
-        className="bg-cream px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-ink"
+        className="bg-cream px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-ink"
       >
         <option value="">Set status…</option>
         {STATUSES.map((status) => (
@@ -1800,7 +1798,7 @@ function BulkBar({
         defaultValue=""
         disabled={pending}
         onChange={(event) => event.target.value && onGroup(event.target.value === "none" ? null : event.target.value)}
-        className="bg-cream px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-ink"
+        className="bg-cream px-2 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-ink"
       >
         <option value="">Move to batch…</option>
         <option value="none">Ungrouped</option>
@@ -1814,7 +1812,7 @@ function BulkBar({
         type="button"
         onClick={() => setTagging((open) => !open)}
         disabled={pending}
-        className={`font-mono text-[10px] uppercase tracking-[.14em] transition ${tagging ? "text-lime" : "text-cream/70 hover:text-cream"}`}
+        className={`font-sans text-[11px] uppercase tracking-[.06em] transition ${tagging ? "text-lime" : "text-cream/70 hover:text-cream"}`}
       >
         Tags…
       </button>
@@ -1827,7 +1825,7 @@ function BulkBar({
         // the ones you mean.
         disabled={pending || looking || allMatching}
         title={allMatching ? "Tick the leads you want looked at — this one spends money per business." : undefined}
-        className="font-mono text-[10px] uppercase tracking-[.14em] text-lime transition hover:text-lime/80 disabled:text-cream/40"
+        className="font-sans text-[11px] uppercase tracking-[.06em] text-lime transition hover:text-lime/80 disabled:text-cream/40"
       >
         {looking ? "Looking…" : "Look at them"}
       </button>
@@ -1835,13 +1833,13 @@ function BulkBar({
         type="button"
         onClick={onDelete}
         disabled={pending}
-        className="font-mono text-[10px] uppercase tracking-[.14em] text-danger-light transition hover:text-danger-light"
+        className="font-sans text-[11px] uppercase tracking-[.06em] text-danger-light transition hover:text-danger-light"
       >
         Delete
       </button>
       {error instanceof Error && <span className="text-xs text-danger-light">{error.message}</span>}
       <span className="flex-1" />
-      <button type="button" onClick={onClear} className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60">
+      <button type="button" onClick={onClear} className="font-sans text-[11px] uppercase tracking-[.06em] text-cream/60">
         Clear
       </button>
       </div>
@@ -1851,11 +1849,11 @@ function BulkBar({
       {tagging && (
         <div className="mt-3 grid gap-4 border-t border-cream/15 pt-3 sm:grid-cols-2">
           <div className="rounded-xl bg-cream p-3 text-ink">
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">Add to all {count}</p>
+            <p className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Add to all {count}</p>
             <TagPicker value={add} onChange={setAdd} placeholder="Type a tag, or pick one…" />
           </div>
           <div className="rounded-xl bg-cream p-3 text-ink">
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-[.14em] text-muted">Take off all {count}</p>
+            <p className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Take off all {count}</p>
             <TagPicker value={strip} onChange={setStrip} placeholder="Tags to remove…" />
           </div>
           <div className="sm:col-span-2 flex items-center gap-3">
@@ -1874,7 +1872,7 @@ function BulkBar({
             <button
               type="button"
               onClick={() => setTagging(false)}
-              className="font-mono text-[10px] uppercase tracking-[.14em] text-cream/60"
+              className="font-sans text-[11px] uppercase tracking-[.06em] text-cream/60"
             >
               Cancel
             </button>

@@ -267,13 +267,44 @@ export function clipToolResult(content: string, max = TOOL_RESULT_MAX_CHARS): st
  * vendor's window, and well past the point where old tool output is earning its
  * place.
  */
-const CONVERSATION_MAX_CHARS = 120_000;
-const TRIM_DOWN_TO = 70_000;
+const CONVERSATION_MAX_CHARS = 48_000;
+const TRIM_DOWN_TO = 24_000;
 
 /** What an oldest answer says once it has been let go of. */
 const RELEASED =
   "[This answer has been let go of to keep the conversation affordable. You read it at the time and acted on it; " +
   "what you concluded is in your own replies above. If you need the detail again, call the tool again.]";
+
+const COMPACT_TOOL_RESULT_THRESHOLD = 350;
+
+/**
+ * Compacts older tool results (from turns earlier than the last 2 turns)
+ * down to a concise excerpt and summary notice. This drastically cuts down
+ * redundant token accumulation on multi-turn loops while preserving model coherence.
+ */
+export function compactOldToolResults(messages: Anthropic.Beta.BetaMessageParam[]): number {
+  if (messages.length <= 4) return 0;
+  // Protect the last 4 messages (the most recent turn and the one immediately prior)
+  const cutoffIndex = messages.length - 4;
+  let compacted = 0;
+
+  for (let i = 0; i < cutoffIndex; i++) {
+    const message = messages[i];
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content as { type?: string; content?: unknown }[]) {
+      if (block?.type !== "tool_result") continue;
+      if (typeof block.content !== "string") continue;
+      if (block.content === RELEASED) continue;
+      if (block.content.length <= COMPACT_TOOL_RESULT_THRESHOLD) continue;
+      if (block.content.startsWith("[Compacted tool output")) continue;
+
+      const preview = block.content.slice(0, 260).trim();
+      block.content = `[Compacted tool output (${block.content.length.toLocaleString("en-GB")} chars) — essential data was extracted in assistant turn above]:\n${preview}…`;
+      compacted += 1;
+    }
+  }
+  return compacted;
+}
 
 /**
  * Lets go of the oldest tool results once the conversation is too big to keep
@@ -1359,9 +1390,9 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     await easeOffIfAsked();
 
     // Before the turn is built, so what is sent and what is checkpointed are
-    // the same conversation. Silent in the ordinary case; announced when it
-    // fires, because an agent that can no longer see what a tool told it on
-    // turn three should have that said out loud somewhere a person can read.
+    // the same conversation. Compact older tool results first (saving 50-75% tokens),
+    // and let go of oldest answers entirely if still exceeding ceiling.
+    const compacted = compactOldToolResults(messages);
     const released = releaseOldAnswers(messages);
     if (released > 0) {
       await saying(`Let go of ${released} older tool answer(s) to keep this conversation affordable — what was concluded from them is still in the replies.`);

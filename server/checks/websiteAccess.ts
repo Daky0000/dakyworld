@@ -39,6 +39,8 @@ check("unknown writes fail closed", () => assert.equal(websiteRequestAction("POS
 check("version rollback requires publish", () => assert.equal(websiteRequestAction("POST", "/pages/one/versions/two/publish"), "publish"));
 check("version restoration requires edit", () => assert.equal(websiteRequestAction("POST", "/pages/one/versions/two/restore"), "edit"));
 check("AI assistance requires edit", () => assert.equal(websiteRequestAction("POST", "/pages/one/assistant"), "edit"));
+check("builder agent planning requires edit", () => assert.equal(websiteRequestAction("POST", "/sites/one/agent/plan"), "edit"));
+check("builder agent apply requires edit", () => assert.equal(websiteRequestAction("POST", "/sites/one/agent/apply"), "edit"));
 check("design settings are visible without repository settings access", () => assert.equal(websiteRequestAction("GET", "/sites/one/design"), "view"));
 
 async function httpGateChecks() {

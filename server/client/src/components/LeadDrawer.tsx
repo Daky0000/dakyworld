@@ -93,7 +93,7 @@ export function LeadDrawer({
             <select
               value={lead.status}
               onChange={(event) => update.mutate({ status: event.target.value })}
-              className="rounded-xl border border-line-strong bg-white px-2 py-2 font-mono text-xs uppercase tracking-[.08em]"
+              className="rounded-xl border border-line-strong bg-white px-2 py-2 font-sans text-xs uppercase tracking-[.06em]"
             >
               {STATUSES.map((status) => (
                 <option key={status} value={status}>
@@ -129,8 +129,8 @@ export function LeadDrawer({
               Draft proposal
             </Button>
             {lead.client ? (
-              <Link to={`/clients/${lead.client.id}`} className="font-mono text-xs uppercase tracking-[.12em] text-blue">
-                View client →
+              <Link to={`/clients/${lead.client.id}`} className="font-sans text-xs uppercase tracking-[.06em] text-blue">
+                View client
               </Link>
             ) : (
               <Button variant="secondary" onClick={() => convert.mutate()} disabled={convert.isPending}>
@@ -215,7 +215,7 @@ export function LeadDrawer({
                       target="_blank"
                       rel="noreferrer"
                     >
-                      map ↗
+                      map
                     </a>
                   )}
                 </span>
@@ -229,7 +229,7 @@ export function LeadDrawer({
             <DetailRow label="Reputation">
               {lead.rating ? (
                 <span>
-                  {Number(lead.rating).toFixed(1)} ★ · {lead.reviewsCount ?? 0} reviews
+                  {Number(lead.rating).toFixed(1)} / 5 · {lead.reviewsCount ?? 0} reviews
                 </span>
               ) : (
                 <Missing />
@@ -297,7 +297,7 @@ export function LeadDrawer({
 
           {lead.enrichment && (
             <details className="rounded-2xl border border-line bg-white">
-              <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+              <summary className="cursor-pointer px-4 py-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                 Raw scraped record
               </summary>
               <pre className="max-h-72 overflow-auto border-t border-line bg-sunken p-4 text-[11px] leading-relaxed text-ink">
@@ -660,8 +660,8 @@ function DemoSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
             {build.isPending ? "Building…" : demos.length > 0 ? "Build it again" : "Build a demo"}
           </Button>
           {demos.length > 0 && (
-            <Link to="/demos" className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline">
-              All demos →
+            <Link to="/demos" className="font-sans text-[11px] uppercase tracking-[.06em] text-blue hover:underline">
+              All demos
             </Link>
           )}
           <span className="text-[11px] text-muted">
@@ -746,7 +746,7 @@ function HomepageShots({ leadId, research }: { leadId: string; research: LeadRes
             className="max-h-72 w-full object-cover object-top"
             loading="lazy"
           />
-          <span className="block border-t border-line px-3 py-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+          <span className="block border-t border-line px-3 py-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             {entry.view === "mobile" ? "On a phone" : "On a laptop"} · {entry.shot.width}×{entry.shot.height}
             {entry.shot.cropped ? " · top of page, click for all of it" : ""}
           </span>
@@ -806,7 +806,7 @@ function ResearchDetail({
           {/* The business case first. Everything below it is the evidence. */}
           {research.look.worthFixing && (
             <div className="mb-3 rounded-xl border border-blue/25 bg-blue/[.05] p-3">
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-blue">Worth paying to fix</div>
+              <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-blue">Worth paying to fix</div>
               <p className="text-sm leading-relaxed text-ink">{research.look.worthFixing.problem}</p>
               <p className="mt-1 text-xs leading-relaxed text-muted">{research.look.worthFixing.costsThem}</p>
               <p className="mt-1 text-xs leading-relaxed text-muted">{research.look.worthFixing.whyWorthPaying}</p>
@@ -830,15 +830,15 @@ function ResearchDetail({
           {/* Its own line, because it is the view most of their customers get. */}
           {research.look.onAPhone && (
             <p className="mt-2 text-xs leading-relaxed text-muted">
-              <span className="font-mono text-[10px] uppercase tracking-[.1em] text-blue">On a phone</span> {research.look.onAPhone}
+              <span className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">On a phone</span> {research.look.onAPhone}
             </p>
           )}
           <ul className="mt-3 space-y-2 border-t border-line pt-3 text-xs text-ink">
             {research.look.observations.map((observation, index) => (
               <li key={index} className="leading-relaxed">
-                <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">{observation.severity}</span>{" "}
+                <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{observation.severity}</span>{" "}
                 {observation.on && observation.on !== "desktop" && (
-                  <span className="font-mono text-[10px] uppercase tracking-[.1em] text-blue">
+                  <span className="font-sans text-[11px] uppercase tracking-[.06em] text-blue">
                     {observation.on === "phone" ? "PHONE" : "BOTH"}{" "}
                   </span>
                 )}
@@ -854,13 +854,13 @@ function ResearchDetail({
 
       {(findings.length > 0 || good.length > 0) && (
         <details className="rounded-2xl border border-line bg-white">
-          <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+          <summary className="cursor-pointer px-4 py-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             Checked on their site and domain ({findings.length} to fix{good.length ? `, ${good.length} already fine` : ""})
           </summary>
           <ul className="space-y-3 border-t border-line px-4 py-3 text-xs text-ink">
             {[...findings, ...good].map((finding) => (
               <li key={finding.id} className="leading-relaxed">
-                <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">{finding.severity}</span>{" "}
+                <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{finding.severity}</span>{" "}
                 {finding.observed}
                 <span className="block text-[11px] text-muted">Evidence: {finding.evidence}</span>
               </li>
@@ -871,14 +871,14 @@ function ResearchDetail({
 
       {filled.length > 0 && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Filled in by the scan</div>
+          <div className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Filled in by the scan</div>
           <ul className="space-y-1 text-xs text-ink">
             {filled.map(([field, entry]) => (
               <li key={field} className="leading-relaxed">
                 <span className="text-muted">{field}:</span> {entry.value.slice(0, 160)}
                 {entry.source.startsWith("http") && (
                   <a href={entry.source} target="_blank" rel="noreferrer" className="ml-2 text-blue hover:underline">
-                    source ↗
+                    source
                   </a>
                 )}
               </li>
@@ -889,7 +889,7 @@ function ResearchDetail({
 
       {research.research?.proposedContact && (
         <div className="rounded-2xl border border-blue/30 bg-blue/[.05] p-4 text-xs text-ink">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-blue">Contact details found — not applied</div>
+          <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-blue">Contact details found — not applied</div>
           {research.research.proposedContact.email && <div>Email: {research.research.proposedContact.email}</div>}
           {research.research.proposedContact.phone && <div>Phone: {research.research.proposedContact.phone}</div>}
           <p className="mt-1 text-[11px] text-muted">
@@ -913,7 +913,7 @@ function ResearchDetail({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
-      <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">{title}</h3>
+      <h3 className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{title}</h3>
       {children}
     </section>
   );
@@ -953,7 +953,7 @@ function LeadTagsField({ lead, onSave, pending }: { lead: Lead; onSave: (tags: s
             setDraft(lead.tags ?? []);
             setEditing(true);
           }}
-          className="ml-1 font-mono text-[10px] uppercase tracking-[.14em] text-blue transition hover:underline"
+          className="ml-1 font-sans text-[11px] uppercase tracking-[.06em] text-blue transition hover:underline"
         >
           Edit
         </button>
@@ -978,7 +978,7 @@ function LeadTagsField({ lead, onSave, pending }: { lead: Lead; onSave: (tags: s
         <button
           type="button"
           onClick={() => setEditing(false)}
-          className="font-mono text-[10px] uppercase tracking-[.14em] text-muted"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-muted"
         >
           Cancel
         </button>
@@ -990,7 +990,7 @@ function LeadTagsField({ lead, onSave, pending }: { lead: Lead; onSave: (tags: s
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[7rem_1fr] gap-3 border-b border-line py-2 text-sm last:border-0">
-      <span className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</span>
+      <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{label}</span>
       <span className="min-w-0">{children}</span>
     </div>
   );

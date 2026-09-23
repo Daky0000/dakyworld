@@ -116,7 +116,7 @@ export function WebsiteCompatibility() {
                 { label: "Pictures", value: report.data.totals.image },
               ].map((entry) => (
                 <div key={entry.label} className="rounded-xl bg-sunken px-3 py-2">
-                  <dt className="text-[10px] uppercase tracking-[.08em] text-muted">{entry.label}</dt>
+                  <dt className="text-[11px] uppercase tracking-[.08em] text-muted">{entry.label}</dt>
                   <dd className="font-display text-lg tracking-[-.02em]">{entry.value}</dd>
                 </div>
               ))}
@@ -217,7 +217,7 @@ function Line({ ok, text }: { ok: boolean; text: string }) {
   return (
     <p className={`flex items-start gap-2 ${ok ? "text-ink" : "text-warn-text"}`}>
       <span aria-hidden className="mt-0.5 shrink-0 font-mono text-xs">
-        {ok ? "✓" : "⚠"}
+        {ok ? "Pass" : "Review"}
       </span>
       <span>{text}</span>
     </p>

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
-import { Badge } from "../components/ui";
+import { Badge, Button } from "../components/ui";
 import { useWebsiteSites } from "../components/WebsiteGuard";
+import { createPresetsFromSurvey, type BrandPreset } from "../lib/websiteBrandPresets";
 
 /**
  * What a website is made of, read from every page at once.
@@ -92,6 +93,36 @@ export function WebsiteSurvey() {
     queryKey: ["website", "survey", siteId],
     enabled: Boolean(siteId),
     queryFn: () => api.get<Survey>(`/website/sites/${siteId}/survey`),
+  });
+
+  const qc = useQueryClient();
+  const [adoptedMessage, setAdoptedMessage] = useState<string | null>(null);
+  const adopt = useMutation({
+    mutationFn: async () => {
+      if (!survey.data || !siteId) return;
+      const presets = createPresetsFromSurvey(survey.data);
+      const existing = await api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${siteId}/design`);
+      const mergedPresets = [
+        ...existing.options.presets.filter(p => !p.id.startsWith("survey-")),
+        ...presets,
+      ];
+      const newColours = Array.from(new Set([...existing.options.colours, ...survey.data.palette.colours.map(c => c.value)])).slice(0, 16);
+      const newFonts = Array.from(new Set([...existing.options.fonts, ...survey.data.palette.typefaces.map(t => t.family)])).slice(0, 8);
+      await api.put(`/website/sites/${siteId}/design`, {
+        colours: newColours,
+        fonts: newFonts,
+        aiEnabled: existing.options.aiEnabled,
+        presets: mergedPresets,
+      });
+      return { count: presets.length };
+    },
+    onSuccess: res => {
+      setAdoptedMessage(`Adopted ${res?.count ?? 3} brand presets and added discovered colors/fonts to this site.`);
+      void qc.invalidateQueries({ queryKey: ["website", "design", siteId] });
+    },
+    onError: err => {
+      setAdoptedMessage(err instanceof Error ? err.message : "Failed to adopt presets.");
+    },
   });
 
   const [showAllRegions, setShowAllRegions] = useState(false);
@@ -303,7 +334,7 @@ export function WebsiteSurvey() {
               <ul className="flex flex-wrap gap-3">
                 {data.palette.colours.slice(0, 24).map((colour) => (
                   <li key={colour.value} className="flex items-center gap-3 rounded-xl border border-line p-3">
-                    <span aria-hidden className="h-9 w-9 shrink-0 rounded-lg border border-line" style={{ background: colour.value }} />
+                    <span aria-hidden className="h-9 w-9 shrink-0 rounded-[10px] border border-line" style={{ background: colour.value }} />
                     <span className="text-sm">
                       <span className="block font-mono text-ink">{colour.value}</span>
                       <span className="block text-xs text-muted">
@@ -346,6 +377,30 @@ export function WebsiteSurvey() {
                 )}
               </div>
             )}
+          </Section>
+
+          <Section
+            title="Adopt into Brand Presets"
+            note="Convert the colors, typography, and button styles discovered in this survey into ready-to-use brand presets in the page editor."
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-ink">
+                  Generates <strong>Site Headings</strong>, <strong>Primary Button</strong>, and <strong>Card Container</strong> presets from this site's CSS tokens and saves them to this website's design settings.
+                </p>
+                {adoptedMessage && (
+                  <p className="mt-2 text-xs font-semibold text-blue">{adoptedMessage}</p>
+                )}
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={adopt.isPending || !siteId}
+                onClick={() => adopt.mutate()}
+              >
+                {adopt.isPending ? "Adopting…" : "Adopt as Brand Presets"}
+              </Button>
+            </div>
           </Section>
         </>
       )}

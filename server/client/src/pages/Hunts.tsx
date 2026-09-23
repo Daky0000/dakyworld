@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { Badge, Button, Card, EmptyState, Eyebrow, PageHeader, RelativeTime, StatTile, StatusDot } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Eyebrow, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot } from "../components/ui";
 
 /**
  * The hunts — why Dakyworld goes looking for anybody.
@@ -105,10 +105,60 @@ const VERDICT_TONE: Record<Verdict["verdict"], "ok" | "warn" | "bad" | "idle"> =
   UNDECIDED: "warn",
 };
 
+export type HuntRegion = "all" | "africa" | "middle-east" | "asia" | "europe" | "oceania" | "north-america";
+
+export function getThesisRegion(thesis: Thesis): { id: HuntRegion; label: string } {
+  const text = `${thesis.key} ${thesis.name} ${thesis.target} ${thesis.timezone}`.toLowerCase();
+  if (text.includes("dubai") || text.includes("uae") || text.includes("middle east") || text.includes("asia/dubai")) {
+    return { id: "middle-east", label: "Middle East" };
+  }
+  if (text.includes("singapore") || text.includes("tokyo") || text.includes("asia") || text.includes("asia/singapore")) {
+    return { id: "asia", label: "Asia / APAC" };
+  }
+  if (
+    text.includes("amsterdam") ||
+    text.includes("berlin") ||
+    text.includes("zurich") ||
+    text.includes("europe") ||
+    text.includes("london") ||
+    text.includes("paris")
+  ) {
+    return { id: "europe", label: "Europe" };
+  }
+  if (text.includes("sydney") || text.includes("melbourne") || text.includes("australia") || text.includes("oceania")) {
+    return { id: "oceania", label: "Oceania" };
+  }
+  if (
+    text.includes("losangeles") ||
+    text.includes("los angeles") ||
+    text.includes("newyork") ||
+    text.includes("new york") ||
+    text.includes("america") ||
+    text.includes("usa") ||
+    text.includes("canada") ||
+    text.includes("toronto") ||
+    text.includes("houston")
+  ) {
+    return { id: "north-america", label: "North America" };
+  }
+  return { id: "africa", label: "Africa" };
+}
+
+const REGION_TABS: { id: HuntRegion; label: string }[] = [
+  { id: "all", label: "All Regions" },
+  { id: "africa", label: "Africa" },
+  { id: "middle-east", label: "Middle East" },
+  { id: "asia", label: "Asia / APAC" },
+  { id: "europe", label: "Europe" },
+  { id: "oceania", label: "Oceania" },
+  { id: "north-america", label: "North America" },
+];
+
 export function Hunts() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [selectedRegion, setSelectedRegion] = useState<HuntRegion>("all");
 
   const list = useQuery({ queryKey: ["hunts"], refetchInterval: 20_000, queryFn: () => api.get<HuntList>("/hunts") });
   const detail = useQuery({
@@ -145,12 +195,16 @@ export function Hunts() {
   const theses = list.data?.theses ?? [];
   const summary = list.data?.summary;
 
+  const regionTheses = theses.map((t) => ({ thesis: t, region: getThesisRegion(t) }));
+  const filteredTheses =
+    selectedRegion === "all" ? regionTheses : regionTheses.filter((r) => r.region.id === selectedRegion);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
-        eyebrow="Leads"
+        eyebrow="Agents"
         title="Hunts"
-        subtitle="The reasons Dakyworld goes looking for anybody. Each hunt searches, looks properly at what it finds, and keeps or drops each business against tests written down in advance."
+        subtitle="The theses that decide who is worth emailing. Switch one on and it searches, qualifies against what the audits find, and deletes what fails."
       />
 
       {note && (
@@ -165,7 +219,7 @@ export function Hunts() {
       )}
 
       {summary && (
-        <div className="grid gap-3 sm:grid-cols-3">
+        <StatGrid columns={3}>
           <StatTile label="Hunts written" value={summary.total} sub={`${summary.running} running`} />
           <StatTile
             label="Businesses looked at a day"
@@ -177,7 +231,7 @@ export function Hunts() {
             value={theses.reduce((sum, thesis) => sum + thesis.judged, 0)}
             sub={`${theses.reduce((sum, thesis) => sum + thesis.qualified, 0)} kept`}
           />
-        </div>
+        </StatGrid>
       )}
 
       {list.isLoading && <Card>Loading…</Card>}
@@ -185,14 +239,46 @@ export function Hunts() {
         <EmptyState message="No hunts are written yet. The shipped ones arrive on the next deploy, switched off." />
       )}
 
+      {theses.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line pb-3">
+          {REGION_TABS.map((tab) => {
+            const count = tab.id === "all" ? theses.length : regionTheses.filter((r) => r.region.id === tab.id).length;
+            if (count === 0 && tab.id !== "all") return null;
+            const active = selectedRegion === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setSelectedRegion(tab.id)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-xs transition ${
+                  active
+                    ? "bg-ink font-semibold text-cream shadow-sm"
+                    : "border border-line bg-white text-muted hover:border-ink/30 hover:text-ink"
+                }`}
+              >
+
+                <span>{tab.label}</span>
+                <span className={`rounded-full px-1.5 py-0.5 text-[11px] ${active ? "bg-cream/20 text-cream" : "bg-cream text-muted"}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="space-y-4">
-        {theses.map((thesis) => (
-          <Card key={thesis.id}>
+        {filteredTheses.map(({ thesis, region }) => (
+          <Card key={thesis.id} className="transition-all hover:border-line-strong hover:border-line-strong">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <StatusDot tone={thesis.enabled ? "live" : "idle"} />
-                  <h3 className="text-base font-medium">{thesis.name}</h3>
+                  <h3 className="text-base font-semibold text-ink">{thesis.name}</h3>
+                  <span className="inline-flex items-center gap-1 rounded-full border border-line bg-cream px-2 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+
+                    <span>{region.label}</span>
+                  </span>
                   {thesis.custom && <Badge tone="muted">yours</Badge>}
                   {thesis.edited && <Badge tone="muted">edited</Badge>}
                 </div>

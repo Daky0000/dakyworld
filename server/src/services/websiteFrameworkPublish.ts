@@ -42,6 +42,7 @@ export type FrameworkPublishInput = {
   html: string;
   author: string;
   changed: number;
+  branchOverride?: string;
   /**
    * The manifest hash the draft was prepared against.
    *
@@ -150,7 +151,7 @@ export async function publishFrameworkPage(
   try {
     const commit = await deps.commit({
       repo,
-      branch: input.site.repoBranch,
+      branch: input.branchOverride ?? input.site.repoBranch,
       message: names.length > 1 ? `${message}\n\nFiles: ${names.join(", ")}` : message,
       expectedFiles: expected,
       files: writes.map((write) => ({ path: context.repoPathFor(write.filePath), content: write.source })),

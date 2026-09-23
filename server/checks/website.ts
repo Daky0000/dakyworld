@@ -28,7 +28,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyValues, checkLink, discoverFields, sanitizePlain, sanitizeRich } from "../src/services/website/index.js";
+import { applyValues, checkLink, discoverFields, sanitizePlain, sanitizeRich, structureControls, changeStructure, draftDocument } from "../src/services/website/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** The website lives at the repository root, beside `server/`. See CLAUDE.md. */
@@ -293,6 +293,33 @@ for (const [name, html] of MALFORMED) {
 check("malformed corpus actually produced fields to test", malformedFields >= 12, `only ${malformedFields}`);
 check("malformed corpus actually wrote to most cases", malformedWrites >= MALFORMED.length - 4, `only ${malformedWrites} of ${MALFORMED.length}`);
 console.log(`  malformed corpus: ${MALFORMED.length} documents, ${malformedFields} fields, ${malformedWrites} written to`);
+
+// 8. Repeatable container engine and structure duplication.
+const repeatableHtml = `<!doctype html><html><body>
+<main>
+  <div data-dw-repeatable class="cards-list">
+    <div class="card" id="card-sample">
+      <h3>Card Title</h3>
+      <p>Card description text</p>
+    </div>
+  </div>
+</main>
+</body></html>`;
+const repPage = discoverFields(repeatableHtml);
+const repCard = repPage.fields.find((f) => f.tag === "div" && f.kind === "container" && f.label.includes("Container"));
+check("repeatable: card item has repeatable flag set", Boolean(repCard?.repeatable));
+
+const repControls = structureControls(repeatableHtml);
+if (repCard) {
+  check("repeatable: card item in structureControls has repeatable flag", Boolean(repControls[repCard.id]?.repeatable));
+  check("repeatable: card item is marked duplicable despite child having id", repControls[repCard.id]?.duplicate === true);
+  const duplicated = changeStructure(repeatableHtml, {}, { kind: "duplicate", fieldId: repCard.id });
+  const duplicatedHtml = draftDocument(duplicated.values)!.html;
+  const duplicatedFields = discoverFields(duplicatedHtml);
+  const containerCount = duplicatedFields.fields.filter((f) => f.kind === "container" && f.tag === "div").length;
+  check("repeatable: duplication increases container count in document", containerCount >= 2);
+  check("repeatable: child id attribute received fresh suffix on duplicate", duplicatedHtml.includes("card-sample-"));
+}
 
 
 console.log(`\n${pages.length} page(s), ${totalFields} editable fields`);

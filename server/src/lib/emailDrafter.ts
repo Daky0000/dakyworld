@@ -131,11 +131,11 @@ const PURPOSE_BRIEF: Record<EmailPurpose, string> = {
   THANK_YOU: "A short genuine thank-you. Three sentences at most. No upsell of any kind — that is what makes it worth sending.",
   ANNOUNCEMENT:
     "Telling existing contacts about something new. Lead with what it means for them, not with the news itself. One sentence on what to do if they want it.",
-  DEMO_READY: `The demo page is built and this email carries the link. They asked for it, so the selling is done — this email's only job is to get them to open it.
+  DEMO_READY: `The demo page or custom website project is built and this email carries the link. Whether they requested it or you built it proactively to pitch what is possible, this email's primary job is to get them to open it.
 
-Three or four sentences. Say it is ready, give the link on its own line, and say one specific thing you would point at when they look — a section, a decision, something taken from their own site or listing. Then ask what they think.
+Three or four sentences. State plainly that you put together a live working preview/prototype of their website. Give the link on its own line. Name one or two specific elements tailored to their business (e.g. mobile-optimized layout, instant inquiry route, fast loading, or sections reflecting their exact services).
 
-Say plainly that it is a working page they can open on their phone, and that nothing is final. Do not re-pitch, do not list what a website does, do not mention price unless the brief does. If the facts include what the demo actually contains, use one detail from it rather than describing it in general.`,
+Say plainly that it is a working page they can open immediately on their phone or computer, that it carries zero obligation, and that nothing is final. Do not re-pitch generic web design and do not list what a website does. If proposed project pricing or package information is present in the facts or brief, anchor the value with context. End with a low-friction question asking what they think or if they would like adjustments made.`,
   CUSTOM: "Follow the sender's brief exactly. If the brief is thin, keep the email short rather than padding it.",
 };
 

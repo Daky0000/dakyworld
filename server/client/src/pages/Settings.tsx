@@ -67,7 +67,11 @@ const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
 export function Settings() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [section, setSection] = useState<SectionId>((searchParams.get("tab") as SectionId) || "system");
+  const requestedSection = searchParams.get("tab");
+  const [section, setSection] = useState<SectionId>(SECTIONS.some(entry => entry.id === requestedSection) ? requestedSection as SectionId : "system");
+  useEffect(() => {
+    if (SECTIONS.some(entry => entry.id === requestedSection)) setSection(requestedSection as SectionId);
+  }, [requestedSection]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["settings"],
@@ -158,30 +162,18 @@ export function Settings() {
         subtitle="Keys and configuration for the whole system. Everything here is saved to the database — no redeploy needed."
       />
 
-      <div className="grid gap-8 lg:grid-cols-[16rem_1fr]">
-        <nav className="h-fit rounded-2xl border border-line bg-white">
-          {SECTIONS.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              onClick={() => choose(entry.id)}
-              className={`flex w-full items-start gap-3 border-b border-line px-4 py-3 text-left transition last:border-0 ${
-                section === entry.id ? "bg-ink text-cream" : "hover:bg-cream"
-              }`}
-            >
-              <span className="mt-1.5">
-                <StatusDot tone={status(entry.id)} />
-              </span>
-              <span className="min-w-0">
-                <span className="block font-mono text-[11px] uppercase tracking-[.12em]">{entry.label}</span>
-                <span className={`mt-0.5 block text-xs ${section === entry.id ? "text-cream/60" : "text-muted"}`}>
-                  {entry.blurb}
-                </span>
-              </span>
-            </button>
-          ))}
+      <div className="os-settings-layout">
+        <nav className="os-settings-nav" aria-label="Settings categories">
+          <label className="os-settings-select"><span>Settings category</span><select className="input" value={section} onChange={event => choose(event.target.value as SectionId)}>{SECTIONS.map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select></label>
+          <div className="os-settings-links">
+          {[{label:"Workspace", ids:["system", "general", "security"]}, {label:"Connections", ids:["email", "messaging", "google", "payments", "storage", "alerts"]}, {label:"Automation & development", ids:["analyst", "models", "capture", "developer", "webhooks"]}].map(group => <section key={group.label}>
+            <h2>{group.label}</h2>
+            {SECTIONS.filter(entry => group.ids.includes(entry.id)).map(entry => <button key={entry.id} type="button" aria-current={section === entry.id ? "page" : undefined} onClick={() => choose(entry.id)} title={entry.blurb}>
+              <span>{entry.label}</span><span className={`os-connection-state state-${status(entry.id)}`} aria-label={status(entry.id) === "warn" ? "Needs attention" : status(entry.id) === "idle" ? "Not connected" : "Available"} />
+            </button>)}
+          </section>)}
+          </div>
         </nav>
-
         <div>
           {isLoading || !data ? (
             <p className="text-sm text-muted">Loading…</p>
@@ -448,7 +440,7 @@ function BusinessContextPanel() {
       {data && (
         <div className="mt-5 space-y-4">
           <div className="rounded-xl border border-line bg-cream/40 p-4">
-            <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">What is on offer</div>
+            <div className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What is on offer</div>
             <ul className="space-y-1 text-sm text-ink">
               {data.offer.services.map((service) => (
                 <li key={service.id}>
@@ -467,7 +459,7 @@ function BusinessContextPanel() {
           </div>
           {data.offer.doesNotDo.length > 0 && (
             <div className="rounded-xl border border-line p-4">
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Never offered</div>
+              <div className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Never offered</div>
               <p className="text-sm text-ink">{data.offer.doesNotDo.join(" ")}</p>
             </div>
           )}
@@ -501,7 +493,7 @@ function BusinessContextPanel() {
 function Band({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h3 className="mb-3 border-b border-line pb-1.5 font-mono text-[10px] uppercase tracking-[.14em] text-muted">{title}</h3>
+      <h3 className="mb-3 border-b border-line pb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{title}</h3>
       {children}
     </section>
   );
@@ -577,7 +569,7 @@ function BrandPanel({ settings }: { settings: AppSettings }) {
             <div key={entry.slot} className="rounded-2xl border border-line bg-white p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{entry.label}</p>
+                  <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{entry.label}</p>
                   <p className="mt-1 text-xs leading-relaxed text-muted">{entry.what}</p>
                 </div>
                 {entry.uploaded ? <Badge tone="positive">uploaded</Badge> : <Badge tone="muted">shipped</Badge>}
@@ -591,14 +583,14 @@ function BrandPanel({ settings }: { settings: AppSettings }) {
                 {image ? (
                   <img src={image} alt={entry.label} className="max-h-16 max-w-full object-contain" />
                 ) : (
-                  <span className={`font-mono text-[10px] uppercase tracking-[.12em] ${onDark ? "text-cream/40" : "text-muted"}`}>
+                  <span className={`font-sans text-[11px] uppercase tracking-[.06em] ${onDark ? "text-cream/40" : "text-muted"}`}>
                     nothing uploaded
                   </span>
                 )}
               </div>
 
               <div className="mt-3 flex items-center gap-2">
-                <label className="rounded-full cursor-pointer border border-line-strong px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:border-ink hover:text-ink">
+                <label className="rounded-full cursor-pointer border border-line-strong px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:border-ink hover:text-ink">
                   {busy === entry.slot ? "Uploading…" : entry.uploaded ? "Replace" : "Upload"}
                   <input
                     type="file"
@@ -618,7 +610,7 @@ function BrandPanel({ settings }: { settings: AppSettings }) {
                       setBusy(entry.slot);
                       remove.mutate(entry.slot);
                     }}
-                    className="font-mono text-[10px] uppercase tracking-[.1em] text-muted transition hover:text-ink"
+                    className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
                   >
                     Remove
                   </button>
@@ -847,7 +839,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
 
       {email.configured && (
         <div className="mt-6 border-t border-line pt-4">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Send a test</div>
+          <div className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Send a test</div>
           <div className="flex flex-wrap gap-2">
             <input
               className="input max-w-xs"
@@ -1207,7 +1199,7 @@ function Chip({
       type="button"
       title={title}
       onClick={onClick}
-      className={`border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+      className={`border px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition ${
         selected ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink hover:text-ink"
       }`}
     >
@@ -1671,7 +1663,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
                 key={entry.key}
                 className={`border-b border-line last:border-b-0 ${entry.key === job ? "bg-blue/[.06]" : ""}`}
               >
-                <th scope="row" className="whitespace-nowrap px-3 py-2 text-left align-top font-mono text-[11px] uppercase tracking-[.12em] text-muted">
+                <th scope="row" className="whitespace-nowrap px-3 py-2 text-left align-top font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                   <button type="button" onClick={() => pickJob(entry.key)} className="hover:text-ink">
                     {entry.name}
                   </button>
@@ -1698,7 +1690,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
       </div>
 
       <div className="mt-5 border-t border-line pt-5">
-        <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted" htmlFor="free-models-job">
+        <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted" htmlFor="free-models-job">
           Free AI models for
         </label>
         <select id="free-models-job" value={job} onChange={(event) => pickJob(event.target.value)} className="input mt-1 w-full sm:w-80">
@@ -1731,7 +1723,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
             const model = byId.get(id);
             return (
               <li key={id} className="rounded-xl flex items-center gap-3 border border-line bg-white px-3 py-2">
-                <span className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">{index + 1}</span>
+                <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{index + 1}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm text-ink">{model?.name ?? id}</span>
                   <span className="block truncate font-mono text-[11px] text-muted">{id}</span>
@@ -1758,7 +1750,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
 
       {servable && models.length > 0 && (
         <div className="mt-4">
-          <p className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+          <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             Free on your account ({models.length}) — pick up to {max} for {current?.phrase}
           </p>
           <div className="mt-2 max-h-80 overflow-y-auto border border-line">
@@ -1870,14 +1862,14 @@ function RouteRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <StatusDot tone={route.ready ? "ok" : "warn"} />
-            <span className="font-mono text-[11px] uppercase tracking-[.12em]">{info?.name ?? route.job}</span>
+            <span className="font-sans text-[11px] uppercase tracking-[.06em]">{info?.name ?? route.job}</span>
           </div>
           <p className="mt-1 text-sm text-muted">{info?.blurb}</p>
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-3">
           <div>
-            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">Handled by</label>
+            <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">Handled by</label>
             <select
               value={route.chosen}
               onChange={(event) => choose.mutate(event.target.value)}
@@ -1898,7 +1890,7 @@ function RouteRow({
               that is, so choosing nothing is an informed choice rather than a
               blank box. */}
           <div>
-            <label className="block font-mono text-[10px] uppercase tracking-[.12em] text-muted">On model</label>
+            <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">On model</label>
             <select
               value={route.modelOverride ?? ""}
               onChange={(event) => setModel.mutate(event.target.value)}
@@ -2262,7 +2254,7 @@ function GooglePanel({
           </form>
 
           <details className="mt-5 rounded-2xl border border-line bg-cream">
-            <summary className="cursor-pointer px-4 py-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">
+            <summary className="cursor-pointer px-4 py-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               How to create the OAuth client
             </summary>
             <ol className="list-decimal space-y-2 px-8 py-4 text-sm text-muted">
@@ -2323,7 +2315,7 @@ function CalendarSection({ settings, onReconnect }: { settings: AppSettings; onR
 
   return (
     <div className="mt-6 border-t border-line pt-5">
-      <h3 className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Calendar</h3>
+      <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Calendar</h3>
 
       {!calendar.scoped ? (
         <div className="mt-2 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5">
@@ -2520,7 +2512,7 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
 
   return (
     <div className="mt-8 border-t border-line pt-5">
-      <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">What runs what</div>
+      <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What runs what</div>
       <p className="mb-4 max-w-2xl text-sm text-muted">
         Type a link or a phrase into Quick capture and it works out which of these it is, then runs the actor paired with it. The
         pairings below are the ones the app ships with — change one only to move a task onto a different actor.
@@ -2535,7 +2527,7 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
                 {task.overridden && <Badge>changed</Badge>}
               </div>
               <p className="mt-0.5 text-xs text-muted">{task.takes}</p>
-              <p className="mt-1 font-mono text-[10px] text-muted">e.g. {task.example}</p>
+              <p className="mt-1 font-mono text-[11px] text-muted">e.g. {task.example}</p>
             </div>
 
             {editing === task.kind ? (
@@ -2569,7 +2561,7 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
                     setEditing(task.kind);
                     setActorId(task.actorId);
                   }}
-                  className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline"
+                  className="font-sans text-[11px] uppercase tracking-[.06em] text-blue hover:underline"
                 >
                   Change
                 </button>
@@ -2578,7 +2570,7 @@ function CaptureTasks({ settings }: { settings: AppSettings }) {
                     type="button"
                     onClick={() => reset.mutate(task.kind)}
                     disabled={reset.isPending}
-                    className="font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink hover:underline"
+                    className="font-sans text-[11px] uppercase tracking-[.06em] text-muted hover:text-ink hover:underline"
                   >
                     Put back
                   </button>
@@ -2627,7 +2619,7 @@ function CaptureCapabilities({ settings }: { settings: AppSettings }) {
 
   return (
     <div className="mt-8 border-t border-line pt-5">
-      <div className="mb-1 font-mono text-[10px] uppercase tracking-[.12em] text-muted">What the agents may run</div>
+      <div className="mb-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What the agents may run</div>
       <p className="mb-4 max-w-2xl text-sm text-muted">
         An agent can start these itself when a job needs businesses nobody here has heard of. Each one has a ceiling on how much a
         single call may ask for, because the numbers an agent passes are generated rather than typed. Switching one off stops the
@@ -2645,7 +2637,7 @@ function CaptureCapabilities({ settings }: { settings: AppSettings }) {
                   {!capability.enabled && <Badge>off</Badge>}
                 </div>
                 <p className="mt-0.5 max-w-xl text-xs text-muted">{capability.purpose}</p>
-                <p className="mt-1 font-mono text-[10px] text-muted">
+                <p className="mt-1 font-mono text-[11px] text-muted">
                   up to {capability.maxTargets} target(s) · {capability.maxResults} result(s) · waits {capability.waitSecs}s
                   {capability.cacheable && capability.cacheHours > 0 ? ` · reuses a capture under ${capability.cacheHours}h old` : ""}
                 </p>
@@ -2659,7 +2651,7 @@ function CaptureCapabilities({ settings }: { settings: AppSettings }) {
                 <button
                   type="button"
                   onClick={() => setOpen(open === capability.kind ? null : capability.kind)}
-                  className="font-mono text-[10px] uppercase tracking-[.12em] text-blue hover:underline"
+                  className="font-sans text-[11px] uppercase tracking-[.06em] text-blue hover:underline"
                 >
                   {open === capability.kind ? "Done" : "Limits"}
                 </button>
@@ -2715,7 +2707,7 @@ function CaptureCapabilities({ settings }: { settings: AppSettings }) {
                       type="button"
                       onClick={() => reset.mutate(capability.kind)}
                       disabled={reset.isPending}
-                      className="font-mono text-[10px] uppercase tracking-[.12em] text-muted hover:text-ink hover:underline"
+                      className="font-sans text-[11px] uppercase tracking-[.06em] text-muted hover:text-ink hover:underline"
                     >
                       Put back
                     </button>
@@ -2806,7 +2798,26 @@ function SpendMeter({ settings }: { settings: AppSettings }) {
 
 // --- Capture behaviour -----------------------------------------------------
 
-const CAPTURE_TIMEZONES = ["Africa/Accra", "Africa/Lagos", "Africa/Nairobi", "Africa/Johannesburg", "Europe/London", "UTC"];
+const CAPTURE_TIMEZONES = [
+  "Africa/Accra",
+  "Africa/Lagos",
+  "Africa/Nairobi",
+  "Africa/Johannesburg",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Europe/Zurich",
+  "Europe/Amsterdam",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "Australia/Melbourne",
+  "America/New_York",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "UTC",
+];
 
 const PROXY_LABELS: Record<CaptureConfig["proxyMode"], string> = {
   NONE: "No proxy — cheapest, blocked most often",
@@ -2874,6 +2885,43 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
           <Field label="Search location" hint="Exactly as you'd type it into Google Maps.">
             <input value={form.location} onChange={(event) => set("location", event.target.value)} className="input" />
           </Field>
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <span className="mr-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Presets:</span>
+            {[
+              { label: "Accra", location: "Accra, Ghana", countryCode: "gh", language: "en" },
+              { label: "Lagos", location: "Lagos, Nigeria", countryCode: "ng", language: "en" },
+              { label: "London", location: "London, United Kingdom", countryCode: "gb", language: "en" },
+              { label: "New York", location: "New York, NY, United States", countryCode: "us", language: "en" },
+              { label: "Los Angeles", location: "Los Angeles, CA, United States", countryCode: "us", language: "en" },
+              { label: "Toronto", location: "Toronto, Canada", countryCode: "ca", language: "en" },
+              { label: "Sydney", location: "Sydney, Australia", countryCode: "au", language: "en" },
+              { label: "Dubai", location: "Dubai, United Arab Emirates", countryCode: "ae", language: "en" },
+              { label: "Singapore", location: "Singapore", countryCode: "sg", language: "en" },
+              { label: "Zurich", location: "Zurich, Switzerland", countryCode: "ch", language: "de" },
+              { label: "Paris", location: "Paris, France", countryCode: "fr", language: "fr" },
+              { label: "Tokyo", location: "Tokyo, Japan", countryCode: "jp", language: "ja" },
+            ].map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() =>
+                  setForm({
+                    ...form,
+                    location: preset.location,
+                    countryCode: preset.countryCode,
+                    language: preset.language,
+                  })
+                }
+                className={`rounded-full border px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition active:scale-[0.96] ${
+                  form.location === preset.location
+                    ? "border-ink bg-ink text-cream shadow-xs"
+                    : "border-line bg-white text-muted hover:border-ink/30 hover:text-ink"
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           <Field label="Country code" hint="Two letters, e.g. gh.">
             <input
               value={form.countryCode}
@@ -3087,7 +3135,7 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
           {update.isPending ? "Saving…" : dirty ? "Save capture settings" : "Saved"}
         </Button>
         {dirty && (
-          <button type="button" onClick={() => setForm(saved)} className="font-mono text-[11px] uppercase tracking-[.12em] text-muted">
+          <button type="button" onClick={() => setForm(saved)} className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             Discard
           </button>
         )}
@@ -3095,7 +3143,7 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
           <button
             type="button"
             onClick={() => setForm(settings.capture.defaults)}
-            className="font-mono text-[11px] uppercase tracking-[.12em] text-muted"
+            className="font-sans text-[11px] uppercase tracking-[.06em] text-muted"
           >
             Reset to defaults
           </button>
@@ -3109,7 +3157,7 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
 function Group({ title, blurb, children }: { title: string; blurb: ReactNode; children: ReactNode }) {
   return (
     <section className="rounded-2xl border border-line bg-cream/40 p-4">
-      <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">{title}</h3>
+      <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{title}</h3>
       <p className="mt-1 max-w-2xl text-xs text-muted">{blurb}</p>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">{children}</div>
     </section>
@@ -3143,7 +3191,7 @@ function ActorHealthList() {
     <div className="mt-8 border-t border-line pt-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Actors in use</h3>
+          <h3 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Actors in use</h3>
           <p className="mt-1 max-w-2xl text-xs text-muted">
             Every actor the templates and your sources point at, checked against Apify.
           </p>
@@ -3166,7 +3214,7 @@ function ActorHealthList() {
                   rel="noreferrer"
                   className="font-mono text-xs hover:text-blue hover:underline"
                 >
-                  {actor.actorId} ↗
+                  {actor.actorId}
                 </a>
                 {actor.pricingModel && <Badge tone="muted">{PRICING_LABELS[actor.pricingModel] ?? actor.pricingModel}</Badge>}
                 {actor.proxyRequired && <Badge tone="muted">needs a proxy</Badge>}
@@ -3816,7 +3864,7 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
               "can we post to Slack" and everything below is "can Slack decide
               something here", which is a much bigger permission. */}
           <div className="sm:col-span-2 border-t border-line pt-4">
-            <p className="font-mono text-[10px] uppercase tracking-[.14em] text-muted">Letting Slack answer back</p>
+            <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Letting Slack answer back</p>
             <p className="mt-1 text-sm text-muted">
               Needed for the Approve and Decline buttons on a hiring card, and for <code className="font-mono">/dakyworld</code>. Create a
               Slack app, switch on Interactivity with the request URL{" "}
@@ -4001,11 +4049,11 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
       state={
         <div className="space-y-3 text-sm">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Contact form posts to</p>
+            <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Contact form posts to</p>
             <code className="mt-1 block break-all font-mono text-xs text-ink">{webhooks.formUrl}</code>
           </div>
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Anything else</p>
+            <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Anything else</p>
             <code className="mt-1 block break-all font-mono text-xs text-ink">{webhooks.baseUrl}&lt;source&gt;</code>
           </div>
         </div>
@@ -4013,7 +4061,7 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
     >
       <div className="mt-4 space-y-4">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Signing secret</p>
+          <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Signing secret</p>
           <p className="mt-1 text-sm text-muted">
             Senders other than the website form must sign: an{" "}
             <code className="font-mono">x-dakyworld-signature</code> header holding the HMAC-SHA256 of{" "}
@@ -4060,7 +4108,26 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
 
 // --- General ---------------------------------------------------------------
 
-const TIMEZONES = ["Africa/Accra", "Africa/Lagos", "Europe/London", "America/New_York", "UTC"];
+const TIMEZONES = [
+  "Africa/Accra",
+  "Africa/Lagos",
+  "Africa/Nairobi",
+  "Africa/Johannesburg",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Europe/Zurich",
+  "Europe/Amsterdam",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "Australia/Melbourne",
+  "America/New_York",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "UTC",
+];
 
 function GeneralPanel({ settings }: { settings: AppSettings }) {
   const save = useSaveSettings();
@@ -4260,7 +4327,7 @@ function SecurityPanel() {
           }}
         >
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Setup key</p>
+            <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Setup key</p>
             <p className="mt-1 text-sm text-muted">
               In your authenticator app, add an account by entering a setup key, and paste this.
             </p>
@@ -4304,7 +4371,7 @@ function SecurityPanel() {
               regenerate.mutate();
             }}
           >
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">New recovery codes</p>
+            <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">New recovery codes</p>
             <p className="text-sm text-muted">
               Issues a fresh set and voids the old sheet. Worth doing if you cannot account for where the last one ended up.
             </p>
@@ -4330,7 +4397,7 @@ function SecurityPanel() {
               disable.mutate();
             }}
           >
-            <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">Turn it off</p>
+            <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Turn it off</p>
             <p className="text-sm text-muted">
               Both factors are required, so a stolen session cannot strip the protection it has just run into. Fill in the
               password above as well.

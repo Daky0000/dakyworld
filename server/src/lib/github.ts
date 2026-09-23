@@ -636,3 +636,62 @@ export async function createRepo(input: { name: string; description?: string; pr
 
   return { fullName: repo.full_name, url: repo.html_url, cloneUrl: repo.clone_url };
 }
+
+export interface RepoMetadata {
+  fullName: string;
+  description: string;
+  homepage: string;
+  topics: string[];
+}
+
+export async function readRepoMetadata(repo: string): Promise<RepoMetadata> {
+  const full = await fullName(repo);
+  const [info, topicsRes] = await Promise.all([
+    request<{ full_name: string; description: string | null; homepage: string | null; topics?: string[] }>(`/repos/${full}`),
+    request<{ names: string[] }>(`/repos/${full}/topics`).catch(() => ({ names: [] as string[] })),
+  ]);
+  const topics = Array.from(new Set([...(info.topics ?? []), ...(topicsRes.names ?? [])]));
+  return {
+    fullName: info.full_name,
+    description: info.description ?? "",
+    homepage: info.homepage ?? "",
+    topics,
+  };
+}
+
+export async function updateRepoMetadata(
+  repo: string,
+  input: { description?: string; homepage?: string; topics?: string[] },
+): Promise<RepoMetadata> {
+  const full = await assertWritable(repo);
+  if (input.description !== undefined || input.homepage !== undefined) {
+    await request(`/repos/${full}`, {
+      method: "PATCH",
+      body: {
+        ...(input.description !== undefined ? { description: input.description.trim().slice(0, 350) } : {}),
+        ...(input.homepage !== undefined ? { homepage: input.homepage.trim().slice(0, 255) } : {}),
+      },
+    });
+  }
+  if (input.topics !== undefined) {
+    const normalizedTopics = Array.from(
+      new Set(
+        input.topics
+          .map((t) =>
+            t
+              .toLowerCase()
+              .trim()
+              .replace(/[^a-z0-9-]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .slice(0, 50),
+          )
+          .filter((t) => t.length >= 2),
+      ),
+    ).slice(0, 20);
+    await request(`/repos/${full}/topics`, {
+      method: "PUT",
+      body: { names: normalizedTopics },
+    });
+  }
+  return readRepoMetadata(repo);
+}

@@ -93,7 +93,7 @@ export function LeadSources() {
           <div className="flex items-center gap-3">
             <Link
               to="/leads"
-              className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+              className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-sans text-xs uppercase tracking-[.06em] transition hover:border-ink"
             >
               View leads
             </Link>
@@ -133,7 +133,7 @@ export function LeadSources() {
         </div>
       )}
 
-      <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Sources</h2>
+      <h2 className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Sources</h2>
       {isLoading ? (
         <div className="text-sm text-muted">Loading…</div>
       ) : !sources || sources.length === 0 ? (
@@ -161,7 +161,7 @@ export function LeadSources() {
         </div>
       )}
 
-      <h2 className="mb-3 mt-10 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Recent runs</h2>
+      <h2 className="mb-3 mt-10 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Recent runs</h2>
       <RunsTable runs={runs ?? []} onStop={(id) => stop.mutate(id)} />
 
       <SourcePicker
@@ -221,7 +221,7 @@ function ApifyConnection({ settings, overview }: { settings?: AppSettings; overv
         </p>
         <Link
           to="/settings?tab=capture"
-          className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-mono text-xs uppercase tracking-[.12em] transition hover:border-ink"
+          className="rounded-full inline-flex items-center gap-2 border border-line-strong px-4 py-2 font-sans text-xs uppercase tracking-[.06em] transition hover:border-ink"
         >
           {apify?.connected ? "Manage in Settings" : "Add a token"}
         </Link>
@@ -265,14 +265,20 @@ function SourceCard({
   const unknownKeys = health?.usedBy.find((entry) => entry.id === source.id)?.unknownKeys ?? [];
 
   return (
-    <div className={`rounded-2xl border border-line bg-white p-5 ${source.enabled ? "" : "opacity-60"}`}>
+    <div
+      className={`rounded-2xl border border-line bg-white p-5  transition-all duration-200 hover:border-line-strong hover:border-line-strong ${
+        source.enabled ? "" : "opacity-60"
+      }`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <StatusDot tone={isLive ? "live" : source.enabled ? (source.scheduleEnabled ? "ok" : "idle") : "idle"} />
-            <h3 className="font-display text-lg">{source.name}</h3>
-            <Badge tone="muted">{source.leadSource.replace(/_/g, " ")}</Badge>
-            {!source.enabled && <Badge>paused</Badge>}
+            <h3 className="font-display text-lg font-medium tracking-tight text-ink">{source.name}</h3>
+            <span className="rounded-full border border-line bg-cream px-2.5 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+              {source.leadSource.replace(/_/g, " ")}
+            </span>
+            {!source.enabled && <Badge tone="muted">paused</Badge>}
           </div>
           <p className="mt-1 text-sm text-muted">{source.description || "No description"}</p>
           <p className="mt-1 font-mono text-[11px] text-muted">
@@ -282,7 +288,7 @@ function SourceCard({
               rel="noreferrer"
               className="hover:text-blue hover:underline"
             >
-              {source.actorId} ↗
+              {source.actorId}
             </a>
           </p>
         </div>
@@ -303,7 +309,7 @@ function SourceCard({
         </div>
       </div>
 
-      <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 text-sm sm:grid-cols-4">
+      <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-line pt-4 sm:grid-cols-4">
         <Stat label="Schedule">
           {source.scheduleEnabled && source.scheduleTimes.length > 0 ? (
             <span>
@@ -328,7 +334,7 @@ function SourceCard({
           )}
         </Stat>
         <Stat label="Leads captured">
-          <Link to={`/leads?scraperSourceId=${source.id}`} className="hover:text-blue hover:underline">
+          <Link to={`/leads?scraperSourceId=${source.id}`} className="font-semibold hover:text-blue hover:underline">
             {source._count?.leads ?? 0}
           </Link>
         </Stat>
@@ -364,9 +370,9 @@ function SourceCard({
 
 function Stat({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <dt className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</dt>
-      <dd className="mt-0.5">{children}</dd>
+    <div className="rounded-xl border border-line/60 bg-cream/40 p-3">
+      <dt className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{label}</dt>
+      <dd className="mt-1 text-sm font-medium text-ink">{children}</dd>
     </div>
   );
 }
@@ -385,7 +391,7 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
     <div className="overflow-x-auto rounded-2xl border border-line bg-white">
       <table className="w-full min-w-[820px] text-left text-sm">
         <thead>
-          <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+          <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             <th className="px-4 py-3">Source</th>
             <th className="px-4 py-3">Started</th>
             <th className="px-4 py-3">Trigger</th>
@@ -448,7 +454,7 @@ function RunsTable({ runs, onStop }: { runs: ScraperRun[]; onStop: (id: string) 
                 {run.status === "SUCCEEDED" && run.leadsCreated > 0 && (
                   <Link
                     to={`/leads?scraperRunId=${run.id}`}
-                    className="font-mono text-[10px] uppercase tracking-[.12em] text-blue"
+                    className="font-sans text-[11px] uppercase tracking-[.06em] text-blue"
                   >
                     View
                   </Link>
@@ -480,7 +486,7 @@ function WhyDropped({ diagnostics }: { diagnostics: NonNullable<ScraperRun["diag
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="font-mono text-[10px] uppercase tracking-[.1em] text-blue hover:underline"
+        className="font-sans text-[11px] uppercase tracking-[.06em] text-blue hover:underline"
       >
         {open ? "hide" : "why?"}
       </button>
@@ -566,7 +572,7 @@ function SourcePicker({
     <Drawer open={open} onClose={onClose} wide title="Add a lead source" subtitle="Start from a template, or use any actor on Apify">
       <div className="space-y-8">
         <section>
-          <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Templates</h3>
+          <h3 className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Templates</h3>
           <div className="grid gap-3">
             {templates?.map((template) => (
               <button
@@ -587,7 +593,7 @@ function SourcePicker({
         </section>
 
         <section>
-          <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Any actor on Apify</h3>
+          <h3 className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Any actor on Apify</h3>
           <form
             className="mb-3 flex gap-2"
             onSubmit={(event) => {
@@ -608,7 +614,7 @@ function SourcePicker({
 
           {catalog?.mine && catalog.mine.length > 0 && (
             <>
-              <p className="mb-2 font-mono text-[10px] uppercase tracking-[.12em] text-muted">Your own actors</p>
+              <p className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Your own actors</p>
               <ActorList actors={catalog.mine} onPick={(actor) => onPick(fromActor(actor))} />
             </>
           )}
@@ -618,9 +624,9 @@ function SourcePicker({
           <button
             type="button"
             onClick={() => onPick(blank)}
-            className="mt-4 font-mono text-[11px] uppercase tracking-[.12em] text-blue"
+            className="mt-4 font-sans text-[11px] uppercase tracking-[.06em] text-blue"
           >
-            Or enter an actor id by hand →
+            Or enter an actor id by hand
           </button>
         </section>
       </div>
@@ -643,7 +649,7 @@ function ActorList({ actors, onPick }: { actors: ApifyActorSummary[]; onPick: (a
           <span className="min-w-0">
             <span className="block font-medium">{actor.title ?? actor.name}</span>
             <span className="mt-0.5 block truncate text-xs text-muted">{actor.description}</span>
-            <span className="mt-0.5 block font-mono text-[10px] text-muted">
+            <span className="mt-0.5 block font-mono text-[11px] text-muted">
               {actor.fullName}
               {actor.stats?.totalRuns ? ` · ${Intl.NumberFormat().format(actor.stats.totalRuns)} runs` : ""}
               {actor.pricingModel && actor.pricingModel !== "FREE" ? ` · ${actor.pricingModel.replace(/_/g, " ").toLowerCase()}` : ""}
@@ -699,7 +705,7 @@ function WhyNothingRuns() {
     <Card className="mb-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-mono text-[10px] uppercase tracking-[.16em] text-muted">Nothing capturing?</h2>
+          <h2 className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Nothing capturing?</h2>
           <p className="mt-1 text-sm text-muted">
             Checks the token, the credit, our own spending ceiling, the schedules, the last runs and the agents that
             would start one — and says which of them is the reason.

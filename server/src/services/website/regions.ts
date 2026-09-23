@@ -59,6 +59,8 @@ export type SiteField = {
   parentId?: string;
   /** Document order, without exposing source byte offsets. */
   order?: number;
+  /** True when the element or its parent carries data-dw-repeatable. */
+  repeatable?: boolean;
   srcsetSpan?: Span;
   markerSpan?: Span;
   structure?: string;
@@ -825,6 +827,7 @@ export function readPage(source: string): PageContent {
     const node = field.attrInsert === undefined ? undefined : byOffset.get(field.attrInsert);
     const marker = node && attrNode(node, "data-dw-field");
     if (node && attrNode(node, "data-dw-responsive")) field.responsive = responsiveOf(node);
+    if (node && (attrNode(node, "data-dw-repeatable") || (node.parent && attrNode(node.parent, "data-dw-repeatable")))) field.repeatable = true;
     field.confidence = "discovered";
     if (marker) {
       field.markerSpan = { start: marker.start, end: marker.end };
@@ -921,6 +924,7 @@ function attrEscape(value: string): string {
  */
 const STYLE_PROPERTY = /^[a-z-]{2,40}$/;
 const STYLE_FORBIDDEN = /url\s*\(|expression\s*\(|javascript:|[<>"'`\\]/i;
+const SAFE_SITE_ASSET_BG = /^url\(\s*['"]?(?:\/[a-zA-Z0-9/_-]*\/)?assets\/dw\/[a-zA-Z0-9._-]+['"]?\s*\)$/i;
 
 export function safeStyle(style: string, originalStyle = ""): string {
   const original = new Set(originalStyle.split(";").map(part => part.trim()).filter(Boolean));
@@ -933,9 +937,11 @@ export function safeStyle(style: string, originalStyle = ""): string {
       if (colon < 1) return false;
       const property = declaration.slice(0, colon).trim().toLowerCase();
       const value = declaration.slice(colon + 1).trim();
+      const isSafeAssetBg = (property === "background-image" || property === "background") && SAFE_SITE_ASSET_BG.test(value);
       // Preserve a developer's existing background URL or quoted CSS exactly
-      // while editing other controls. Newly supplied fetching CSS stays forbidden.
-      return original.has(declaration) || (validFramingDeclaration(property, value) && STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= 120 && (!STYLE_FORBIDDEN.test(declaration) || (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value))));
+      // while editing other controls. Newly supplied fetching CSS stays forbidden
+      // except for uploaded site assets in /assets/dw/.
+      return original.has(declaration) || (validFramingDeclaration(property, value) && STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= (isSafeAssetBg ? 240 : 120) && (!STYLE_FORBIDDEN.test(declaration) || (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value)) || isSafeAssetBg));
     })
     .join("; ");
 }

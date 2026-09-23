@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { EmailMessage, EmailStatusSummary, EmailSuppression, EmailTemplate } from "../lib/types";
-import { Badge, Button, Card, Drawer, EmptyState, PageHeader, RelativeTime, StatTile, StatusDot } from "../components/ui";
+import { Badge, Button, Card, Drawer, EmptyState, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot } from "../components/ui";
 import { EmailComposer, EmailPreviewPane, PURPOSES, type ComposerTarget } from "../components/EmailComposer";
 import { Sequences } from "../components/Sequences";
 
@@ -31,9 +31,13 @@ export function Emails() {
   return (
     <div>
       <PageHeader
-        title="Email"
-        subtitle="Write to a lead or a client, send the deliverable, and let the follow-ups send themselves."
-        action={<Button onClick={() => openComposer({})}>New email</Button>}
+        title="Email Outreach"
+        subtitle="Write to a lead or a client, send the deliverable, and let automated sequences handle follow-ups."
+        action={
+          <Button variant="accent" onClick={() => openComposer({})}>
+            New email
+          </Button>
+        }
       />
 
       {status && !status.connected && (
@@ -53,20 +57,22 @@ export function Emails() {
       )}
 
       {status && (
-        <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <StatTile label="Sent" value={status.sent} sub="All time" />
-          <StatTile label="Waiting to send" value={status.scheduled} sub={status.scheduled > 0 ? "Queued for later" : "Nothing queued"} />
-          <StatTile label="Drafts" value={status.drafts} sub={status.drafts > 0 ? "Written, not sent" : "None open"} />
-          <StatTile label="In a sequence" value={status.activeEnrollments} sub={`${status.activeSequences} sequence${status.activeSequences === 1 ? "" : "s"} running`} />
-          <StatTile
-            label="Failed"
-            value={status.failed}
-            sub={status.failed > 0 ? "Look at these" : status.drafterReady ? "AI drafting ready" : "No AI key set"}
-          />
+        <div className="mb-8">
+          <StatGrid columns={5}>
+            <StatTile label="Sent" value={status.sent} sub="All time outbox" />
+            <StatTile label="Waiting to send" value={status.scheduled} sub={status.scheduled > 0 ? "Queued for delivery" : "Nothing queued"} />
+            <StatTile label="Drafts" value={status.drafts} sub={status.drafts > 0 ? "Written, not sent" : "None open"} />
+            <StatTile label="In sequence" value={status.activeEnrollments} sub={`${status.activeSequences} active campaign${status.activeSequences === 1 ? "" : "s"}`} />
+            <StatTile
+              label="Failed / Errors"
+              value={status.failed}
+              sub={status.failed > 0 ? "Requires review" : status.drafterReady ? "AI drafter ready" : "No AI key set"}
+            />
+          </StatGrid>
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap gap-1 border-b border-line">
+      <div className="mb-6 flex flex-wrap gap-1.5 border-b border-line pb-3">
         {(
           [
             ["outbox", "Outbox"],
@@ -79,8 +85,10 @@ export function Emails() {
             key={value}
             type="button"
             onClick={() => setTab(value)}
-            className={`-mb-px border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-[.14em] transition ${
-              tab === value ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition  ${
+              tab === value
+                ? "bg-ink text-white shadow-sm"
+                : "border border-line bg-white text-muted hover:border-ink/40 hover:text-ink"
             }`}
           >
             {label}
@@ -140,7 +148,7 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
             key={value || "all"}
             type="button"
             onClick={() => setFilter(value)}
-            className={`border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[.1em] transition ${
+            className={`border px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition ${
               filter === value ? "border-ink bg-ink text-cream" : "border-line-strong text-muted hover:border-ink/40"
             }`}
           >
@@ -212,12 +220,6 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
                   {/* Every message can be looked at, including the sent ones —
                       "what exactly did we send them" is the question an
                       outbox is for. */}
-                  <Button variant="ghost" size="sm" onClick={() => setPreviewing(message.id)}>
-                    Preview
-                  </Button>
-                  {/* Every message can be looked at, including the sent ones —
-                      "what exactly did we send them" is the question an outbox
-                      exists to answer. */}
                   <Button variant="ghost" size="sm" onClick={() => setPreviewing(message.id)}>
                     Preview
                   </Button>

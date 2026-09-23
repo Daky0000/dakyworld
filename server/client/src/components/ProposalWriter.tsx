@@ -214,7 +214,7 @@ export function ProposalWriter({
                         {entry.website ?? "no website"} · {entry.city ?? "no city"}
                       </span>
                     </span>
-                    <span className={`shrink-0 font-mono text-[10px] ${leadId === entry.id ? "text-cream/60" : "text-muted"}`}>
+                    <span className={`shrink-0 font-mono text-[11px] ${leadId === entry.id ? "text-cream/60" : "text-muted"}`}>
                       {entry.leadScore}
                     </span>
                   </button>
@@ -265,11 +265,11 @@ function AuditPanel({ audit }: { audit: CompanyAudit }) {
         {audit.findings.map((finding) => (
           <div key={finding.id} className={`border px-3 py-2 text-sm ${SEVERITY_TONE[finding.severity]}`}>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-[9px] uppercase tracking-[.12em]">{finding.severity}</span>
-              <span className="font-mono text-[9px] uppercase tracking-[.12em] opacity-60">{finding.area}</span>
+              <span className="font-sans text-[11px] uppercase tracking-[.06em]">{finding.severity}</span>
+              <span className="font-sans text-[11px] uppercase tracking-[.06em] opacity-60">{finding.area}</span>
             </div>
             <p className="mt-1">{finding.observed}</p>
-            <p className="mt-1 font-mono text-[10px] opacity-70">{finding.evidence}</p>
+            <p className="mt-1 font-mono text-[11px] opacity-70">{finding.evidence}</p>
           </div>
         ))}
         {audit.findings.length === 0 && (
@@ -282,7 +282,7 @@ function AuditPanel({ audit }: { audit: CompanyAudit }) {
         <p className="mt-3 rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">{audit.notes.join(" ")}</p>
       )}
       <details className="mt-3">
-        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <summary className="cursor-pointer font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           What was checked ({audit.checked.length})
         </summary>
         <ul className="mt-2 space-y-1 text-xs text-muted">
@@ -336,13 +336,13 @@ function Review({
           <h3 className="font-display text-xl leading-snug">{draft.headline}</h3>
           <p className="mt-3 whitespace-pre-wrap text-sm text-ink">{draft.situation}</p>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">What we found</h4>
+          <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What we found</h4>
           <div className="mt-2 space-y-4">
             {draft.findings.map((finding, index) => (
               <div key={index} className="border-l-2 border-blue pl-3">
                 <p className="font-medium">{finding.observed}</p>
                 <p className="mt-1 text-sm text-ink">{finding.costsThem}</p>
-                <p className="mt-1 font-mono text-[10px] text-muted">Checked: {finding.evidence}</p>
+                <p className="mt-1 font-mono text-[11px] text-muted">Checked: {finding.evidence}</p>
                 <p className="mt-1 text-sm">
                   <span className="text-muted">What we would do: </span>
                   {finding.fix}
@@ -351,7 +351,7 @@ function Review({
             ))}
           </div>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">What they get</h4>
+          <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What they get</h4>
           <div className="mt-2 space-y-3">
             {draft.scope.map((phase, index) => (
               <div key={index}>
@@ -366,7 +366,7 @@ function Review({
             ))}
           </div>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Investment</h4>
+          <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Investment</h4>
           <table className="mt-2 w-full text-sm">
             <tbody>
               {draft.investment.lineItems.map((item, index) => (
@@ -389,15 +389,15 @@ function Review({
           </table>
           <p className="mt-2 text-xs text-muted">{draft.investment.basis}</p>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Timeline</h4>
+          <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Timeline</h4>
           <p className="mt-1 text-sm text-ink">{draft.timeline}</p>
 
-          <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">Why Dakyworld</h4>
+          <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Why Dakyworld</h4>
           <p className="mt-1 text-sm text-ink">{draft.whyUs}</p>
 
           {draft.assumptions.length > 0 && (
             <>
-              <h4 className="mt-6 font-mono text-[10px] uppercase tracking-[.16em] text-muted">What this assumes</h4>
+              <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">What this assumes</h4>
               <ul className="mt-1 space-y-0.5 text-sm text-muted">
                 {draft.assumptions.map((entry) => (
                   <li key={entry}>· {entry}</li>
@@ -447,7 +447,7 @@ function Review({
       <AuditPanel audit={result.audit} />
 
       <details>
-        <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <summary className="cursor-pointer font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           Everything the writer was told ({result.facts.length} facts)
         </summary>
         <ul className="mt-2 space-y-1 text-xs text-muted">
@@ -470,5 +470,5 @@ function Review({
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[.16em] text-muted">{children}</h3>;
+  return <h3 className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{children}</h3>;
 }

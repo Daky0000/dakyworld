@@ -1,6 +1,8 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Dropdown } from "./ui";
 import { useAuth } from "../lib/auth";
 import { useWebsiteSites, type WebsiteAction } from "./WebsiteGuard";
+import { useWorkspaceMode } from "../lib/clientWorkspace";
 
 /**
  * The Website Builder's own navigation, one level below the OS menu.
@@ -75,10 +77,11 @@ export function WebsiteLayout() {
     ? can("website.manage") || sites.data?.some(site => site.capabilities?.[tab.siteAction!])
     : !tab.needs || can(tab.needs));
 
+  const [workspaceMode] = useWorkspaceMode(user?.external);
   // A client already has these four in the header above. Repeating them as a
   // second strip is two navigations for one product, which reads as a system
   // somebody has been let into rather than a thing they own.
-  if (user?.external) return <Outlet />;
+  if (user?.external || workspaceMode === "client") return <Outlet />;
 
   // A site's own pages live under /website/sites/:id, so the Sites tab stays lit
   // while somebody is inside one. Without this, opening a site makes the strip
@@ -87,24 +90,18 @@ export function WebsiteLayout() {
 
   return (
     <div>
-      <div className="mb-8 flex flex-wrap items-center gap-1 border-b border-line">
-        {tabs.map((tab) => (
-          <NavLink
-            key={tab.to}
-            to={tab.to}
-            end={tab.end}
-            className={`-mb-px border-b-2 px-3 py-2.5 text-[12px] font-semibold transition ${
-              isActive(tab) ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"
-            }`}
-          >
-            {tab.label}
-            {/* A dot rather than the word "planned": the label is what somebody
-                aims at, and three extra words on six of nine tabs would make the
-                two working ones harder to find. The screen itself says the rest. */}
-            {tab.unbuilt && <span aria-label=" (planned)" title="Planned — not built yet" className="ml-1.5 text-muted">•</span>}
-          </NavLink>
-        ))}
-      </div>
+      <nav className="os-product-nav" aria-label="Website navigation">
+        {tabs.filter(tab => ["/website", "/website/sites", "/website/assets"].includes(tab.to)).map(tab => <NavLink key={tab.to} to={tab.to} end={tab.end} className={`os-product-tab ${isActive(tab) ? "is-active" : ""}`}>{tab.label}</NavLink>)}
+        {[{ label: "Design & delivery", paths: ["compatibility", "survey", "onboarding", "ai", "updates", "source"] }, { label: "Manage website", paths: ["team", "audit", "settings", "billing"] }].map(group => {
+          const entries = tabs.filter(tab => group.paths.some(path => tab.to === `/website/${path}`));
+          if (!entries.length) return null;
+          const current = entries.find(isActive);
+          return <Dropdown key={group.label} label={current?.label || group.label} active={Boolean(current)}>
+            <div className="os-dropdown-caption">{group.label}</div>
+            {entries.map(tab => <NavLink key={tab.to} to={tab.to} end={tab.end} className={isActive(tab) ? "is-active" : ""}>{tab.label}{tab.unbuilt && <small>Planned</small>}</NavLink>)}
+          </Dropdown>;
+        })}
+      </nav>
       <Outlet />
     </div>
   );

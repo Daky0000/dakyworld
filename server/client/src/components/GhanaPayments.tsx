@@ -42,12 +42,12 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint: R
   const [copied, setCopied] = useState(false);
   return (
     <div className="mt-4">
-      <p className="font-mono text-[10px] uppercase tracking-[.12em] text-muted">{label}</p>
+      <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">{label}</p>
       <div className="mt-1 flex flex-wrap items-center gap-2">
         <code className="rounded-[10px] break-all border border-line bg-cream px-2 py-1 font-mono text-xs">{value}</code>
         <button
           type="button"
-          className="font-mono text-[10px] uppercase tracking-[.12em] text-blue transition hover:underline"
+          className="font-sans text-[11px] uppercase tracking-[.06em] text-blue transition hover:underline"
           onClick={() => {
             void navigator.clipboard?.writeText(value);
             setCopied(true);
@@ -107,7 +107,7 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
             {!paystack.envManaged && (
               <button
                 type="button"
-                className="font-mono text-[10px] uppercase tracking-[.12em] text-danger-text/70 transition hover:text-danger-text"
+                className="font-sans text-[11px] uppercase tracking-[.06em] text-danger-text/70 transition hover:text-danger-text"
                 onClick={() => remove.mutate()}
               >
                 disconnect
@@ -204,7 +204,7 @@ export function HubtelPanel({ settings }: { settings: AppSettings }) {
             {!hubtel.envManaged && (
               <button
                 type="button"
-                className="font-mono text-[10px] uppercase tracking-[.12em] text-danger-text/70 transition hover:text-danger-text"
+                className="font-sans text-[11px] uppercase tracking-[.06em] text-danger-text/70 transition hover:text-danger-text"
                 onClick={() => remove.mutate()}
               >
                 disconnect

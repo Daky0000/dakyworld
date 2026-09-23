@@ -253,7 +253,7 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
                     selected ? "border-ink bg-ink text-cream" : "border-line-strong hover:border-ink/40"
                   }`}
                 >
-                  <span className="block font-mono text-[10px] uppercase tracking-[.12em]">{option.label}</span>
+                  <span className="block font-sans text-[11px] uppercase tracking-[.06em]">{option.label}</span>
                   <span className={`mt-1 block text-xs ${selected ? "text-cream/60" : "text-muted"}`}>
                     {fee === null ? "No published price" : `${option.fromPrice ? "from " : ""}GHS ${money(fee)}/mo`}
                   </span>
@@ -287,7 +287,7 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
                     selected ? "border-ink bg-ink text-cream" : "border-line-strong hover:border-ink/40"
                   }`}
                 >
-                  <span className="block font-mono text-[10px] uppercase tracking-[.12em]">
+                  <span className="block font-sans text-[11px] uppercase tracking-[.06em]">
                     {option === "FOUNDING" ? "Founding Partner" : "Standard"}
                   </span>
                   <span className={`mt-1 block text-xs ${selected ? "text-cream/60" : "text-muted"}`}>
@@ -321,7 +321,7 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
                 setForm({ ...form, ...replaced });
                 setReplaced(null);
               }}
-              className="font-mono text-[10px] uppercase tracking-[.12em] underline underline-offset-2"
+              className="font-sans text-[11px] uppercase tracking-[.06em] underline underline-offset-2"
             >
               Keep {form.currency} {money(replaced.monthlyFee)}
             </button>

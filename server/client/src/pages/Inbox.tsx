@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import type { AgentList, InboxMessageDetail, InboxMessageRow, InboxStatus, InboxSyncResult, MailIntent, MailThreadDetail, MailThreadRow } from "../lib/types";
-import { Badge, Button, Card, Drawer, EmptyState, PageHeader, RelativeTime, StatTile, StatusDot, Table } from "../components/ui";
+import { Badge, Button, Card, Drawer, EmptyState, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot, Table } from "../components/ui";
 
 type Tab = "open" | "conversations" | "all";
 
@@ -112,32 +112,34 @@ export function Inbox() {
       )}
 
       {status && (
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatTile label="Owed a reply" value={status.open} sub={status.mailbox ?? "not connected"} />
-          <StatTile label="Handed to an agent" value={status.counts.ROUTED ?? 0} sub={status.autoRoute ? "routing is on" : "routing is off"} />
-          <StatTile label="Read but unrouted" value={status.waiting} sub="waiting for you" />
-          <StatTile
-            label="Live connection"
-            value={
-              <span className="flex items-center gap-2">
-                <StatusDot tone={watcher?.connected ? "live" : status.connected ? "warn" : "idle"} />
-                {watcher?.connected ? "Connected" : status.connected ? "Polling" : "Off"}
-              </span>
-            }
-            sub={
-              watcher?.connected ? (
-                <>
-                  last push <RelativeTime value={watcher.lastPushAt} />
-                </>
-              ) : (
-                (watcher?.lastError ?? "reads on the minute")
-              )
-            }
-          />
+        <div className="mb-6">
+          <StatGrid columns={4}>
+            <StatTile label="Owed a reply" value={status.open} sub={status.mailbox ?? "not connected"} />
+            <StatTile label="Handed to an agent" value={status.counts.ROUTED ?? 0} sub={status.autoRoute ? "routing is on" : "routing is off"} />
+            <StatTile label="Read but unrouted" value={status.waiting} sub="waiting for you" />
+            <StatTile
+              label="Live connection"
+              value={
+                <span className="flex items-center gap-2">
+                  <StatusDot tone={watcher?.connected ? "live" : status.connected ? "warn" : "idle"} />
+                  {watcher?.connected ? "Connected" : status.connected ? "Polling" : "Off"}
+                </span>
+              }
+              sub={
+                watcher?.connected ? (
+                  <>
+                    last push <RelativeTime value={watcher.lastPushAt} />
+                  </>
+                ) : (
+                  (watcher?.lastError ?? "reads on the minute")
+                )
+              }
+            />
+          </StatGrid>
         </div>
       )}
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-6 flex flex-wrap gap-2">
         {(
           [
             ["open", "Owed a reply"],
@@ -147,9 +149,12 @@ export function Inbox() {
         ).map(([key, label]) => (
           <button
             key={key}
+            type="button"
             onClick={() => setTab(key)}
-            className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-              tab === key ? "bg-ink text-cream" : "bg-white text-muted hover:text-ink"
+            className={`rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wider transition ${
+              tab === key
+                ? "bg-ink text-cream shadow-sm"
+                : "border border-line bg-white text-muted hover:border-ink/20 hover:text-ink"
             }`}
           >
             {label}

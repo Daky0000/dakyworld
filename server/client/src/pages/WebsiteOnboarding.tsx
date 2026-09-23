@@ -115,9 +115,7 @@ export function WebsiteOnboarding() {
           <ol className="space-y-2">
             {onboarding.data.steps.map((step, index) => (
               <li key={step.key} className="flex gap-3 rounded-2xl border border-line bg-white p-4">
-                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${MARK[step.state].className}`} aria-hidden>
-                  {MARK[step.state].glyph}
-                </span>
+
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-ink">

@@ -5,6 +5,7 @@ import { api, apiUrl } from "../lib/api";
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { SourceFileEditor } from "../components/WebsiteSourceEditor";
 import { useWebsiteAccess } from "../components/WebsiteMembers";
+import { WebsiteAgentChat } from "../components/WebsiteAgentChat";
 
 /**
  * A framework page, open beside the page itself.
@@ -151,7 +152,7 @@ export function WebsiteFrameworkEditor() {
             src={apiUrl(`/website/pages/${encodeURIComponent(pageId)}/framework/preview?v=${frameToken}`)}
           />
           <p className="px-2 py-2 text-xs text-muted">
-            {unmatched && <span className="mb-1 block rounded-lg bg-sunken px-2 py-1 text-xs text-muted">That part of the page is not a piece of text in {data.page.filePath} — it comes from a component, a loop or a layout, so it cannot be changed from here.</span>}
+            {unmatched && <span className="mb-1 block rounded-[10px] bg-sunken px-2 py-1 text-xs text-muted">That part of the page is not a piece of text in {data.page.filePath} — it comes from a component, a loop or a layout, so it cannot be changed from here.</span>}
             This is the published page. {shown} of {data.fields.length} {data.fields.length === 1 ? "field" : "fields"} could be matched to something on it: click one to jump to its box, or double click to type on the page itself. The rest of the page — its layout, its styling and anything built by code — stays with the code.
           </p>
         </> : <div className="p-5">
@@ -175,5 +176,20 @@ export function WebsiteFrameworkEditor() {
             />}
       </section>
     </div>
+
+    {data?.page && data?.site && (
+      <WebsiteAgentChat
+        pageId={pageId}
+        pageTitle={data.page.title}
+        siteId={data.site.id}
+        siteName={data.site.repo ?? data.page.title}
+        selectedFieldId={selected}
+        canEdit={access.data?.capabilities.source !== false}
+        edits={{}}
+        onApplyLocalEdits={() => {
+          setFrameToken((token) => token + 1);
+        }}
+      />
+    )}
   </div>;
 }

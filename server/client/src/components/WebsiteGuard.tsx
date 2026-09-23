@@ -25,7 +25,7 @@ export function WebsiteGuard({ needs = "view", children }: { needs?: WebsiteActi
   if (allowed) return <>{children}</>;
   if (sites.isLoading) return <p role="status" className="text-sm text-muted">Loading website access…</p>;
   return <Card className="mx-auto max-w-lg p-8 text-center">
-    <h1 className="font-display text-xl font-bold">Website access is not available</h1>
+    <h1 className="font-display text-xl font-medium">Website access is not available</h1>
     <p className="mt-3 text-sm leading-relaxed text-muted">{sites.error ? (sites.error as Error).message : "A website manager can assign the access needed for this screen."}</p>
   </Card>;
 }

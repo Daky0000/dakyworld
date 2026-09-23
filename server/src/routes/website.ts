@@ -3,8 +3,10 @@ import { rateLimit } from "../middleware/security.js";
 import type { Request } from "express";
 import { Router, json } from "express";
 import { createHash } from "node:crypto";
+import { createBranch, openPullRequest } from "../lib/github.js";
 import { withWebsitePublishLock } from "../services/websitePublishing.js";
 import { registerWebsiteAssistant } from "../services/websiteAssistant.js";
+import { registerWebsiteBuilderAgent } from "../services/websiteBuilderAgent.js";
 import { registerWebsiteSource } from "../services/websiteSource.js";
 import { registerWebsiteFrameworkView, sourceManagedFields } from "../services/websiteFrameworkView.js";
 import { nameFieldsOnPage, publishFrameworkPage } from "../services/websiteFrameworkPublish.js";
@@ -22,6 +24,7 @@ import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { assertWebsiteConnectionChange, getWebsiteCapabilities, assertWebsiteSiteAccess, registerWebsiteMembership, websiteAccessGate, websiteCapabilities, websitePrincipal, websiteSiteFilter } from "../services/websiteAccess.js";
+import { recordPresence, removePresence } from "../services/websitePresence.js";
 // The engine comes through its one door — see services/website/index.ts for why.
 // `site.js` is the other half and stays separate on purpose: it is the part that
 // talks to GitHub and the network, and nothing in the core does.
@@ -65,7 +68,7 @@ websiteRouter.use(websiteAccessGate);
 // per-user budget so preview reads and ordinary typing never consume it.
 const expensiveWebsiteWrite = rateLimit({ windowMs: 60_000, max: 20, message: "Too many publishing or assistant requests. Try again in {minutes}.", key: req => req.dbUser?.id ?? req.ip ?? "local" });
 websiteRouter.use((req, res, next) => {
-  if (req.method === "POST" && /\/(publish|structure|assistant|rollback)$/.test(req.path)) return expensiveWebsiteWrite(req, res, next);
+  if (req.method === "POST" && /\/(publish|structure|assistant|agent|rollback)(?:\/|$)/.test(req.path)) return expensiveWebsiteWrite(req, res, next);
   next();
 });
 
@@ -73,6 +76,7 @@ websiteRouter.use(json({ limit: "8mb" }));
 registerWebsiteMembership(websiteRouter);
 registerWebsiteManagement(websiteRouter, { loadSite, loadPage });
 registerWebsiteAssistant(websiteRouter, { loadPage });
+registerWebsiteBuilderAgent(websiteRouter, { loadSite, loadPage });
 registerWebsiteSource(websiteRouter, { loadSite });
 registerWebsiteFrameworkView(websiteRouter, { loadPage });
 registerWebsiteShared(websiteRouter, { loadSite, loadPage });
@@ -125,6 +129,7 @@ function publicField(field: SiteField) {
     ...(field.variantStem !== undefined ? { variantStem: field.variantStem } : {}),
     ...(field.variantsOnPage !== undefined ? { variants: field.variantsOnPage } : {}),
     ...(field.newTab !== undefined ? { newTab: field.newTab } : {}),
+    ...(field.repeatable !== undefined ? { repeatable: field.repeatable } : {}),
   };
 }
 
@@ -488,6 +493,27 @@ const draftBody = z.object({
   ),
 });
 
+websiteRouter.post("/pages/:pageId/presence", async (req, res, next) => {
+  try {
+    const { page } = await loadPage(req, req.params.pageId);
+    const user = req.dbUser ? { id: req.dbUser.id, name: req.dbUser.name, email: req.dbUser.email } : { id: `anon-${req.ip || "user"}`, name: "Visitor" };
+    const editors = recordPresence(page.id, user);
+    res.json({ editors });
+  } catch (err) {
+    next(err);
+  }
+});
+
+websiteRouter.delete("/pages/:pageId/presence", async (req, res, next) => {
+  try {
+    const userId = req.dbUser?.id || `anon-${req.ip || "user"}`;
+    removePresence(req.params.pageId, userId);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * Saves a draft.
  *
@@ -829,36 +855,49 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       await advancePublishJob(job.id, "COMMITTING", {
         detail: { path: page.path, filePath: page.filePath, draftRevision: page.draftRevision, expectedHtmlHash: createHash("sha256").update(plan.html).digest("hex") },
       });
+      const isPR = req.body?.mode === "pull_request";
+      const prTitle = (typeof req.body?.prTitle === "string" && req.body.prTitle.trim()) || `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`;
+      let branchOverride: string | undefined = undefined;
+      const repo = siteRepo(site);
+      if (isPR) {
+        if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository before opening a pull request.");
+        const slug = page.path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "content";
+        branchOverride = `content/${slug}-${Date.now().toString(36)}`;
+        await createBranch(repo, branchOverride);
+      }
+
       let commit: { sha: string; url: string };
       try {
         commit = source.sourceFile
-          // A framework page: the HTML this draft was made against was built
-          // from a file, so what gets committed is that file with the edited
-          // literals in it — never the rendered page, which is output and would
-          // be overwritten by the next build anyway. Anything the edit cannot be
-          // traced back to refuses the whole publish rather than landing a
-          // partial one.
-          //
-          // Which of the two paths depends on how many files the page is made
-          // of. A JSX-family page goes through the whole-page publish, because
-          // its heading is in a component and its cards are in a data module and
-          // all of them have to land in one commit. An `.astro` or `.vue` page
-          // has no import graph this editor can walk, so it keeps the
-          // single-file path it has always had.
           ? hasSourceManifest(page.filePath)
-            ? await publishFrameworkPage({ site, page, values, html: source.html, author, changed: plan.changed.length })
-            : await publishSourcePage({ site, page, values, html: source.html, author, changed: plan.changed.length })
+            ? await publishFrameworkPage({ site, page, values, html: source.html, author, changed: plan.changed.length, branchOverride })
+            : await publishSourcePage({ site, page, values, html: source.html, author, changed: plan.changed.length, branchOverride })
           : await publishPage({
               site,
               page,
               html: plan.html,
               expectedSource: source.html,
-              message: `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`,
+              message: prTitle,
+              branchOverride,
             });
       } catch (error) {
         await failPublishJob(job.id, "COMMIT_FAILED", error instanceof Error ? error.message : "The commit did not happen.");
         throw error;
       }
+
+      let prResult: { prUrl: string; prNumber: number; branch: string } | null = null;
+      if (isPR && repo && branchOverride) {
+        const prBody = `### Website Content Updates\n\n- **Page**: \`${page.path}\`\n- **Target Branch**: \`${site.repoBranch}\`\n- **Author**: ${author}\n\n### Summary of Changes\n${summary.map(s => `- **${s.label}** (${s.part}): \`${s.from}\` → \`${s.to}\``).join("\n")}\n\nSubmitted via Dakyworld Website Editor.`;
+        const pr = await openPullRequest({
+          repo,
+          branch: branchOverride,
+          title: prTitle,
+          body: prBody,
+          base: site.repoBranch,
+        });
+        prResult = { prUrl: pr.url, prNumber: pr.number, branch: branchOverride };
+      }
+
       // From here the change is in the repository whatever else happens. The
       // job carries what to look for on the live page, because by the time
       // anybody looks the draft this came from will have been cleared.
@@ -900,7 +939,7 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
         // Someone saved during the network commit. Their draft must survive.
         await tx.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date(), sourceHtml: page.sourceHtml === null ? undefined : plan.html } });
       }
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH", summary: `Published ${page.title} · version ${version.number}`, actorName: author, actorId: req.dbUser?.id, detail: summary } });
+      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH", summary: `${isPR ? "Submitted PR for" : "Published"} ${page.title} · version ${version.number}`, actorName: author, actorId: req.dbUser?.id, detail: summary } });
 
       return {
         job: publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })),
@@ -911,10 +950,8 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
         touched: categoriseChanges(summary),
         commit: { sha: commit.sha, url: commit.url },
         url: pageUrl(site, page),
-        // Said plainly because the alternative is somebody refreshing the live page
-        // for a minute and concluding the publish failed. The job above then
-        // settles it either way rather than leaving them to guess.
-        note: "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two, and this screen will say when it is.",
+        ...(prResult ? { mode: "pull_request", ...prResult } : { mode: "commit" }),
+        note: prResult ? `Created Pull Request #${prResult.prNumber} on GitHub.` : "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two, and this screen will say when it is.",
       };
     });
     res.json(result);

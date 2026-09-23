@@ -13,7 +13,7 @@ import type {
   StarterTemplate,
   WhatsAppTemplateRow,
 } from "../lib/types";
-import { Badge, Button, Card, Drawer, EmptyState, PageHeader, RelativeTime, StatTile, StatusDot, Table } from "../components/ui";
+import { Badge, Button, Card, Drawer, EmptyState, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot, Table } from "../components/ui";
 import { MessageComposer, type MessageTarget } from "../components/MessageComposer";
 
 type Tab = "reach" | "conversations" | "outbox" | "templates" | "suppression";
@@ -51,8 +51,12 @@ export function Messages() {
     <div>
       <PageHeader
         title="WhatsApp & SMS"
-        subtitle="For the leads with a number and no email — which is most of them."
-        action={<Button onClick={() => compose({})}>New message</Button>}
+        subtitle="For the leads with a phone number and no email — which represents the majority of local businesses."
+        action={
+          <Button variant="accent" onClick={() => compose({})}>
+            New message
+          </Button>
+        }
       />
 
       {nothingConnected && (
@@ -84,20 +88,22 @@ export function Messages() {
       )}
 
       {status && (
-        <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <StatTile label="Unanswered replies" value={status.unread} sub={status.unread > 0 ? "Someone is waiting" : "Nothing waiting"} />
-          <StatTile label="Sent" value={status.sent} sub="All time" />
-          <StatTile label="Waiting to send" value={status.scheduled + status.ready} sub={status.ready > 0 ? `${status.ready} to send by hand` : "Nothing queued"} />
-          <StatTile label="Conversations" value={status.threads} sub={`${status.suppressed} opted out`} />
-          <StatTile
-            label="Failed"
-            value={status.failed}
-            sub={status.failed > 0 ? "Look at these" : status.whatsapp ? "WhatsApp connected" : status.sms ? "SMS only" : "Nothing connected"}
-          />
+        <div className="mb-8">
+          <StatGrid columns={5}>
+            <StatTile label="Unanswered replies" value={status.unread} sub={status.unread > 0 ? "Someone is waiting" : "Nothing waiting"} />
+            <StatTile label="Sent" value={status.sent} sub="All time dispatched" />
+            <StatTile label="Waiting to send" value={status.scheduled + status.ready} sub={status.ready > 0 ? `${status.ready} to send by hand` : "Nothing queued"} />
+            <StatTile label="Conversations" value={status.threads} sub={`${status.suppressed} opted out`} />
+            <StatTile
+              label="Failed / Errors"
+              value={status.failed}
+              sub={status.failed > 0 ? "Look at these" : status.whatsapp ? "WhatsApp connected" : status.sms ? "SMS only" : "Nothing connected"}
+            />
+          </StatGrid>
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap gap-1 border-b border-line">
+      <div className="mb-6 flex flex-wrap gap-1.5 border-b border-line pb-3">
         {(
           [
             ["reach", "Who to reach"],
@@ -111,8 +117,10 @@ export function Messages() {
             key={value}
             type="button"
             onClick={() => setTab(value)}
-            className={`-mb-px border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-[.14em] transition ${
-              tab === value ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition  ${
+              tab === value
+                ? "bg-ink text-white shadow-sm"
+                : "border border-line bg-white text-muted hover:border-ink/40 hover:text-ink"
             }`}
           >
             {label}
@@ -174,7 +182,7 @@ function Reach({ onCompose }: { onCompose: (target: MessageTarget) => void }) {
 
       <Table>
         <thead>
-          <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+          <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
             <th className="px-4 py-3 font-normal">Business</th>
             <th className="px-4 py-3 font-normal">Number</th>
             <th className="px-4 py-3 font-normal">Score</th>
@@ -256,7 +264,7 @@ function Conversations({ onCompose }: { onCompose: (target: MessageTarget) => vo
                 <Badge tone="muted">{thread.channel === "WHATSAPP" ? "WhatsApp" : "SMS"}</Badge>
                 {thread.unreadCount > 0 && <Badge tone="positive">{thread.unreadCount} new</Badge>}
                 {thread.windowOpen && thread.channel === "WHATSAPP" && (
-                  <span className="font-mono text-[10px] uppercase tracking-[.1em] text-positive-text">
+                  <span className="font-sans text-[11px] uppercase tracking-[.06em] text-positive-text">
                     open · {thread.windowMinutesLeft}m
                   </span>
                 )}
@@ -345,7 +353,7 @@ function ThreadDrawer({ id, onClose, onCompose }: { id: string | null; onClose: 
                 }`}
               >
                 <div className="whitespace-pre-wrap">{message.body}</div>
-                <div className={`mt-1.5 font-mono text-[10px] uppercase tracking-[.1em] ${message.direction === "INBOUND" ? "text-muted" : "text-white/45"}`}>
+                <div className={`mt-1.5 font-sans text-[11px] uppercase tracking-[.06em] ${message.direction === "INBOUND" ? "text-muted" : "text-white/45"}`}>
                   {message.direction === "INBOUND" ? "Them" : STATUS_LABEL[message.status] ?? message.status.toLowerCase()}
                   {" · "}
                   <RelativeTime value={message.sentAt ?? message.createdAt} />
@@ -438,7 +446,7 @@ function Outbox() {
                   {message.error && <p className="mt-1 text-xs text-danger-text">{message.error}</p>}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-[.1em] text-muted">
+                  <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
                     {STATUS_LABEL[message.status] ?? message.status.toLowerCase()}
                   </span>
                   {message.status === "READY" && (
@@ -559,7 +567,7 @@ function Templates() {
       )}
 
       <div>
-        <div className="mb-3 font-mono text-[10px] uppercase tracking-[.14em] text-muted">Ready to submit</div>
+        <div className="mb-3 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Ready to submit</div>
         <div className="grid gap-3 md:grid-cols-2">
           {(data?.starters ?? []).map((starter) => (
             <div key={starter.name} className="rounded-2xl border border-line bg-white p-4">
@@ -607,7 +615,7 @@ function Suppression() {
   return (
     <Table>
       <thead>
-        <tr className="border-b border-line font-mono text-[10px] uppercase tracking-[.12em] text-muted">
+        <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
           <th className="px-4 py-3 font-normal">Number</th>
           <th className="px-4 py-3 font-normal">Why</th>
           <th className="px-4 py-3 font-normal">When</th>

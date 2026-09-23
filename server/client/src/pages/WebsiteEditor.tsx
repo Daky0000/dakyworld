@@ -10,10 +10,11 @@ import { useAuth } from "../lib/auth";
 import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { WebsiteQuickStart } from "../components/WebsiteQuickStart";
+import { WebsiteGuideModal } from "../components/WebsiteGuideModal";
 import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
 import { WebsitePresetPicker } from "../components/WebsiteBrandPresets";
 import type { BrandPreset } from "../lib/websiteBrandPresets";
-import { WebsiteAssetLibrary } from "../components/WebsiteAssetLibrary";
+import { WebsiteAssetLibrary, WebsiteAssetPickerModal } from "../components/WebsiteAssetLibrary";
 import { MakeSharedPanel, SharedElementPanel, SharedPublishReview } from "../components/WebsiteShared";
 import { PublishStatus } from "../components/PublishStatus";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
@@ -22,6 +23,54 @@ import { INSPECTED_PROPERTIES, type ElementFacts } from "../lib/elementInspector
 import { WebsiteLayers, WebsiteBreadcrumbs } from "../components/WebsiteLayers";
 import { WebsiteVersions } from "../components/WebsiteVersions";
 import { WebsiteAssistant } from "../components/WebsiteAssistant";
+import { WebsiteAgentChat } from "../components/WebsiteAgentChat";
+import { WebsitePageSeoInspector } from "../components/WebsitePageSeoInspector";
+import {
+  WebsiteClientReportModal,
+  WebsiteCommandPaletteModal,
+  WebsiteRevisionCommentsModal,
+  WebsiteSectionLibraryModal,
+} from "../components/WebsiteCommandAndSections";
+import {
+  IconArrowLeft,
+  IconBookOpen,
+  IconBrush,
+  IconCheck,
+  IconChevronDown,
+  IconCopy,
+  IconDesktop,
+  IconDownload,
+  IconEdit,
+  IconEye,
+  IconEyeOff,
+  IconFileText,
+  IconHistory,
+  IconLayers,
+  IconLayout,
+  IconList,
+  IconMessageSquare,
+  IconMoon,
+  IconMoreHorizontal,
+  IconPalette,
+  IconPaste,
+  IconPhoneDevice,
+  IconPlusSquare,
+  IconRedo,
+  IconRefresh,
+  IconSave,
+  IconSearch,
+  IconSidebar,
+  IconSliders,
+  IconSparkles,
+  IconSun,
+  IconTablet,
+  IconTag,
+  IconTarget,
+  IconTrash,
+  IconUndo,
+  IconUploadCloud,
+  IconXCircle,
+} from "../components/WebsiteIcons";
 import { useWebsiteAccess } from "../components/WebsiteMembers";
 import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
 
@@ -346,10 +395,10 @@ function FieldRow({
       )}
 
       {field.sourceManaged && (
-        <div className="mt-2 rounded-lg bg-sunken px-2 py-1 text-xs text-muted">
+        <div className="mt-2 rounded-[10px] bg-sunken px-2 py-1 text-xs text-muted">
           <p>{field.sourceNote ?? "This is written by the code that builds this page, so it cannot be changed here."}</p>
           {field.sourceNameable && onNameFields && (
-            <button type="button" className="mt-1.5 rounded-lg bg-ink px-2 py-1 text-[11px] font-semibold text-cream disabled:opacity-60" disabled={naming} onClick={onNameFields}>
+            <button type="button" className="mt-1.5 rounded-[10px] bg-ink px-2 py-1 text-[11px] font-semibold text-cream disabled:opacity-60" disabled={naming} onClick={onNameFields}>
               {naming ? "Naming…" : "Name these fields"}
             </button>
           )}
@@ -496,11 +545,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const qc = useQueryClient();
   const { user } = useAuth();
   const [designerMode, setDesignerMode] = useState(false);
-  const [inspectorTab, setInspectorTab] = useState<"content" | "style" | "interactions">("content");
+  const [inspectorTab, setInspectorTab] = useState<"content" | "seo" | "style" | "interactions">("content");
   const [showLayers, setShowLayers] = useState(false);
   const [showPanel, setShowPanel] = useState(() => typeof window === "undefined" || window.innerWidth > 600);
   const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
   const [showGuide, setShowGuide] = useState(false);
+  const [guideModalOpen, setGuideModalOpen] = useState(false);
+  const [sectionLibraryOpen, setSectionLibraryOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commentsModalOpen, setCommentsModalOpen] = useState(false);
+  const [clientReportOpen, setClientReportOpen] = useState(false);
+  useEffect(() => {
+    const onGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => window.removeEventListener("keydown", onGlobalKeyDown);
+  }, []);
   useEffect(() => {
     if (!user?.id) return;
     try { setDesignerMode(localStorage.getItem(`website-designer:${user.id}`) === "yes"); setShowGuide(localStorage.getItem(`website-guide:${user.id}`) !== "done"); } catch { setShowGuide(true); }
@@ -519,11 +583,47 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   /** What the frame says the selected element is, as opposed to what it holds. */
   const [domFacts, setDomFacts] = useState<Omit<ElementFacts, "kind"> | null>(null);
   const [styleClipboard, setStyleClipboard] = useState<string | null>(null);
+  const [textClipboard, setTextClipboard] = useState<string | null>(null);
+  const [contextToast, setContextToast] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    fieldId: string | null;
+    tag: string | null;
+    kind: string | null;
+    text: string;
+  } | null>(null);
+  const showQuickToast = useCallback((msg: string) => {
+    setContextToast(msg);
+    window.setTimeout(() => {
+      setContextToast((prev) => (prev === msg ? null : prev));
+    }, 2600);
+  }, []);
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [contextMenu]);
   const [zoom, setZoom] = useState(1);
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("visual");
   /** The field the person clicked in the preview. */
   const [pickedId, setPickedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (pickedId && inspectorTab === "seo") {
+      setInspectorTab("content");
+    } else if (!pickedId && (inspectorTab === "style" || inspectorTab === "interactions")) {
+      setInspectorTab("content");
+    }
+  }, [pickedId, inspectorTab]);
   /** The same, readable from listeners that must not be re-registered. */
   const pickedRef = useRef<string | null>(null);
   pickedRef.current = pickedId;
@@ -592,6 +692,29 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [showVersions, setShowVersions] = useState(false);
   /** Optional assistant proposals join the same local draft and undo history. */
   const [showAI, setShowAI] = useState(false);
+  const [assetModalOpen, setAssetModalOpen] = useState(false);
+  type PeerEditor = { userId: string; name: string; email?: string; color: string };
+  const [peers, setPeers] = useState<PeerEditor[]>([]);
+
+  useEffect(() => {
+    if (!pageId) return;
+    let mounted = true;
+    const ping = async () => {
+      try {
+        const res = await api.post<{ editors: PeerEditor[] }>(`/website/pages/${pageId}/presence`, {});
+        if (mounted) setPeers(res.editors ?? []);
+      } catch {
+        /* Presence is non-blocking */
+      }
+    };
+    void ping();
+    const interval = window.setInterval(ping, 15_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+      void api.delete(`/website/pages/${pageId}/presence`).catch(() => {});
+    };
+  }, [pageId]);
 
   /**
    * What the page is really doing with the selected element, at this width.
@@ -652,19 +775,32 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   /* ------------------------------------------------------------- history */
 
-  // Undo is over the whole draft, not per field: one Ctrl+Z should take back
-  // the thing that just happened, and "the thing that just happened" is as
-  // likely to be a colour as a word. Snapshots are cheap — a draft is a handful
-  // of short strings — so the simple version is the right one.
-  const history = useRef<{ list: string[]; index: number }>({ list: ["{}"], index: 0 });
+  // Unified undo/redo across both content changes and structural mutations.
+  // One Ctrl+Z smoothly takes back the last action regardless of whether it
+  // was typing, styling, or duplicating/reordering a block.
+  type HistoryItem = {
+    kind: "content" | "structure";
+    values: Record<string, FieldEdit>;
+    action?: string;
+    fieldId?: string;
+    targetId?: string;
+  };
+
+  const history = useRef<{ list: HistoryItem[]; index: number }>({
+    list: [{ kind: "content", values: {} }],
+    index: 0,
+  });
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const restoring = useRef(false);
   const commitTimer = useRef<number | null>(null);
 
-  const syncHistoryButtons = () => {
+  const syncHistoryButtons = useCallback(() => {
     const { list, index } = history.current;
-    setHistoryState({ canUndo: index > 0, canRedo: index < list.length - 1 });
-  };
+    setHistoryState({
+      canUndo: index > 0 || Boolean(page.data?.structure?.canUndo),
+      canRedo: index < list.length - 1 || Boolean(page.data?.structure?.canRedo),
+    });
+  }, [page.data?.structure]);
 
   const commitHistory = useCallback((values: Record<string, FieldEdit>) => {
     if (restoring.current) return;
@@ -672,15 +808,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       window.clearTimeout(commitTimer.current);
       commitTimer.current = null;
     }
-    const snapshot = JSON.stringify(values);
     const state = history.current;
-    if (state.list[state.index] === snapshot) return;
+    const current = state.list[state.index];
+    const snapshot = JSON.stringify(values);
+    if (current && current.kind === "content" && JSON.stringify(current.values) === snapshot) return;
     state.list = state.list.slice(0, state.index + 1);
-    state.list.push(snapshot);
+    state.list.push({ kind: "content", values: { ...values } });
     if (state.list.length > 60) state.list.shift();
     state.index = state.list.length - 1;
     syncHistoryButtons();
-  }, []);
+  }, [syncHistoryButtons]);
 
   // Typing is continuous; a keystroke is not a step. Discrete actions call
   // `commitHistory` directly and this only catches what nothing else did.
@@ -852,12 +989,41 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   // served from the site's own origin, which is where this is heading.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      const data = event.data as { source?: string; type?: string; id?: string | null; html?: string; final?: boolean; key?: string; shiftKey?: boolean };
+      const data = event.data as {
+        source?: string;
+        type?: string;
+        id?: string | null;
+        html?: string;
+        final?: boolean;
+        key?: string;
+        shiftKey?: boolean;
+        clientX?: number;
+        clientY?: number;
+        tag?: string | null;
+        kind?: string | null;
+        text?: string;
+      };
       if (event.source !== frame.current?.contentWindow || event.origin !== window.location.origin || data?.source !== "dakyworld-preview") return;
       if (data.type === "shortcut" && data.key && ["s", "z", "Z", "y", "Y", "Enter"].includes(data.key)) {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: data.key, ctrlKey: true, shiftKey: !!data.shiftKey, cancelable: true }));
       } else if (data.type === "select") {
+        setContextMenu(null);
         setPickedId(data.id ?? null);
+      } else if (data.type === "contextmenu") {
+        const rect = frame.current?.getBoundingClientRect();
+        const rawX = (rect?.left ?? 0) + (data.clientX ?? 0);
+        const rawY = (rect?.top ?? 0) + (data.clientY ?? 0);
+        const x = Math.max(12, Math.min(rawX, window.innerWidth - 280));
+        const y = Math.max(12, Math.min(rawY, window.innerHeight - 420));
+        setPickedId(data.id ?? null);
+        setContextMenu({
+          x,
+          y,
+          fieldId: data.id ?? null,
+          tag: data.tag ?? null,
+          kind: data.kind ?? null,
+          text: data.text ?? "",
+        });
       } else if (data.type === "applied") {
         // The channel is alive after all.
         awaiting.current = 0;
@@ -948,7 +1114,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           documentHash.current = local.documentHash ?? null;
           dirty.current = true;
           needsReload.current = true;
-          history.current = { list: [JSON.stringify(page.data.draft.values), JSON.stringify(local.values)], index: 1 };
+          history.current = {
+            list: [
+              { kind: "content", values: page.data.draft.values },
+              { kind: "content", values: local.values },
+            ],
+            index: 1,
+          };
           syncHistoryButtons();
           setFailure("Recovered unsaved changes from this tab. They will be saved when your editing access is confirmed.");
           return;
@@ -960,12 +1132,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     documentHash.current = page.data.draft.documentHash ?? null;
     setLoadToken((token) => token + 1);
     dirty.current = false;
-    history.current = { list: [JSON.stringify(page.data.draft.values)], index: 0 };
+    history.current = { list: [{ kind: "content", values: page.data.draft.values }], index: 0 };
     syncHistoryButtons();
     setSectionId((current) => current ?? page.data.sections[0]?.id ?? null);
   }, [page.data]);
 
   const save = useMutation({
+    // Saving can beat the typing debounce. Preserve that edit as an undo step first.
+    onMutate: (values: Record<string, FieldEdit>) => { commitHistory(values); },
     mutationFn: (values: Record<string, FieldEdit>) =>
       api.put<DraftSaveResult>(`/website/pages/${pageId}/draft`, {
         ifRevision: revision.current,
@@ -1090,19 +1264,45 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   }, [previewToken]);
 
   const restore = useCallback(
-    (step: number) => {
+    async (step: number) => {
       if (!canEdit || reviewOpen || showVersions || publishPending.current || structurePending.current) return;
-      if (step < 0) commitHistory(latestEdits.current);
+      if (step < 0 && dirty.current) commitHistory(latestEdits.current);
       const state = history.current;
-      const index = state.index + step;
-      if (index < 0 || index >= state.list.length) { structuralHistory.current(step); return; }
+      const targetIndex = state.index + step;
+
+      if (targetIndex < 0) {
+        structuralHistory.current(-1);
+        return;
+      }
+      if (targetIndex >= state.list.length) {
+        structuralHistory.current(1);
+        return;
+      }
+
+      const currentEntry = state.list[state.index];
+      const targetEntry = state.list[targetIndex];
+
+      if (step < 0 && currentEntry?.kind === "structure") {
+        state.index = targetIndex;
+        syncHistoryButtons();
+        await runStructure("undo");
+        return;
+      }
+
+      if (step > 0 && targetEntry?.kind === "structure") {
+        state.index = targetIndex;
+        syncHistoryButtons();
+        await runStructure("redo");
+        return;
+      }
+
       restoring.current = true;
-      state.index = index;
-      const values = JSON.parse(state.list[index]!) as Record<string, FieldEdit>;
+      state.index = targetIndex;
+      const values = targetEntry ? targetEntry.values : {};
       setEdits(values);
+      latestEdits.current = values;
       dirty.current = true;
       setLoadToken((token) => token + 1);
-      // Everything is back to a state the frame has not been told about.
       needsReload.current = true;
       setPreviewToken((token) => token + 1);
       syncHistoryButtons();
@@ -1110,7 +1310,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         restoring.current = false;
       }, 0);
     },
-    [canEdit, reviewOpen, showVersions, commitHistory],
+    [canEdit, reviewOpen, showVersions, commitHistory, syncHistoryButtons],
   );
 
   useEffect(() => {
@@ -1160,7 +1360,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       setEdits({});
       dirty.current = false;
       try { sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
-      history.current = { list: ["{}"], index: 0 };
+      history.current = { list: [{ kind: "content", values: {} }], index: 0 };
       syncHistoryButtons();
       setPreviewToken((token) => token + 1);
       void qc.invalidateQueries({ queryKey: ["website"] });
@@ -1168,7 +1368,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   });
 
   const publish = useMutation({
-    mutationFn: (review: WebsiteReview) => api.post<PublishResult>(`/website/pages/${pageId}/publish`, { ifRevision: review.revision, sourceHash: review.sourceHash }),
+    mutationFn: (review: WebsiteReview) =>
+      api.post<PublishResult>(`/website/pages/${pageId}/publish`, {
+        ifRevision: review.revision,
+        sourceHash: review.sourceHash,
+        mode: review.mode,
+        prTitle: review.prTitle,
+      }),
     onMutate: () => { publishPending.current = true; },
     onSettled: () => { publishPending.current = false; },
     onSuccess: (result) => {
@@ -1179,7 +1385,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       dirty.current = false;
       try { sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
       if (result.draftRetained) setFailure("Published the reviewed version. A newer saved draft was preserved and is being reloaded.");
-      history.current = { list: ["{}"], index: 0 };
+      history.current = { list: [{ kind: "content", values: {} }], index: 0 };
       syncHistoryButtons();
       setPreviewToken((token) => token + 1);
       void qc.invalidateQueries({ queryKey: ["website"] });
@@ -1222,7 +1428,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       const refreshed = await qc.fetchQuery({ queryKey: ["website", "page", pageId], queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`), staleTime: 0 });
       revision.current = refreshed.draft.revision; documentHash.current = refreshed.draft.documentHash ?? null;
       latestEdits.current = refreshed.draft.values; setEdits(refreshed.draft.values);
-      history.current = { list: [JSON.stringify(refreshed.draft.values)], index: 0 }; syncHistoryButtons();
+      if (kind !== "undo" && kind !== "redo") {
+        const state = history.current;
+        state.list = state.list.slice(0, state.index + 1);
+        state.list.push({ kind: "structure", action: kind, values: refreshed.draft.values, fieldId, targetId });
+        if (state.list.length > 60) state.list.shift();
+        state.index = state.list.length - 1;
+      }
+      syncHistoryButtons();
       setPublished(null); setPickedId(result.selectedId); setLoadToken(token => token + 1); setPreviewToken(token => token + 1);
       void qc.invalidateQueries({ queryKey: ["website", "sites"] });
     } catch (error) { setFailure(error instanceof Error ? error.message : "The layout action could not be completed."); }
@@ -1263,7 +1476,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         {page.error instanceof ApiError ? page.error.message : "That page could not be opened."}
         {noBuild && (
           <Link className="mt-4 block font-semibold text-blue hover:underline" to={`/website/pages/${pageId}/source`}>
-            Edit this page&rsquo;s text in its source file →
+            Edit this page&rsquo;s text in its source file
           </Link>
         )}
       </div>
@@ -1311,13 +1524,85 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   const frameWidth = DEVICES.find((option) => option.key === device)!.width;
 
+  const openEditorContextMenuFromEvent = (
+    clientX: number,
+    clientY: number,
+    el: HTMLElement | null,
+    fallbackTarget?: HTMLElement | null,
+    fromIframe = false,
+  ) => {
+    const id = el ? el.getAttribute("data-dw-field") : null;
+    const rect = fromIframe ? frame.current?.getBoundingClientRect() : undefined;
+    const rawX = (rect ? rect.left : 0) + clientX * (fromIframe ? zoom : 1);
+    const rawY = (rect ? rect.top : 0) + clientY * (fromIframe ? zoom : 1);
+    const x = Math.max(12, Math.min(rawX, window.innerWidth - 280));
+    const y = Math.max(12, Math.min(rawY, window.innerHeight - 420));
+    setPickedId(id ?? null);
+    if (id) writeInFrame("select", id);
+    const tag = el
+      ? el.tagName.toLowerCase()
+      : fallbackTarget?.tagName
+        ? fallbackTarget.tagName.toLowerCase()
+        : null;
+    const text = (
+      (el ? el.innerText || el.textContent : fallbackTarget ? fallbackTarget.innerText || fallbackTarget.textContent : "") ||
+      ""
+    ).trim();
+    setContextMenu({
+      x,
+      y,
+      fieldId: id ?? null,
+      tag,
+      kind: el ? el.getAttribute("data-dw-kind") : null,
+      text,
+    });
+  };
+
+  const bindIframeContextMenu = () => {
+    try {
+      const doc = frame.current?.contentDocument;
+      if (!doc) return;
+      const docAny = doc as Document & { __dwCtxBound?: boolean };
+      if (docAny.__dwCtxBound) return;
+      docAny.__dwCtxBound = true;
+      doc.addEventListener(
+        "contextmenu",
+        (event: MouseEvent) => {
+          const target = event.target as HTMLElement | null;
+          const el = target?.closest ? (target.closest("[data-dw-field]") as HTMLElement | null) : null;
+          if (el?.hasAttribute("data-dw-editing")) return;
+          event.preventDefault();
+          event.stopPropagation();
+          openEditorContextMenuFromEvent(event.clientX, event.clientY, el, target, true);
+        },
+        true,
+      );
+      doc.addEventListener(
+        "click",
+        () => {
+          setContextMenu(null);
+        },
+        true,
+      );
+    } catch {
+      /* Cross-origin fallback relies on postMessage from site.ts */
+    }
+  };
+
   const canvas = (
-    <div className="editor-canvas min-h-0 flex-1 overflow-auto bg-cream p-4">
+    <div
+      className="editor-canvas min-h-0 flex-1 overflow-auto bg-cream p-4"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        openEditorContextMenuFromEvent(event.clientX, event.clientY, null, null, false);
+      }}
+    >
       <div className="mx-auto h-full" style={{ width: frameWidth, minWidth: frameWidth, zoom }}>
         <iframe
           ref={mode === "visual" ? frame : undefined}
           key={`${mode}-${previewToken}`}
           title="Page"
+          onLoad={bindIframeContextMenu}
           src={apiUrl(`/website/pages/${pageId}/preview?${mode === "visual" ? "pick=1&" : ""}v=${previewToken}`)}
           className="h-full min-h-[400px] w-full border border-line bg-white shadow-sm shadow-ink/5"
         />
@@ -1328,7 +1613,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   return (
     <div className={`website-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
       {reviewOpen && <PublishReview pageId={pageId} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
-      {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={values => {
+      {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={async (values, structuralActions) => {
+        if (structuralActions && structuralActions.length > 0) {
+          for (const action of structuralActions) {
+            await runStructure(action.kind, action.fieldId);
+          }
+        }
         const merged = { ...latestEdits.current };
         for (const [id, value] of Object.entries(values)) { merged[id] = { ...merged[id], ...value }; change(id, merged[id]); }
         commitHistory(merged);
@@ -1370,171 +1660,603 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       {conflict && (
         <ConflictDialog
           conflict={conflict}
-          onKeep={resolveConflict}
           // "Leave it for now" keeps the words in the browser and the draft
           // unsaved, which is honest — the alternative is a dialog that can only
           // be escaped by making a decision, and somebody who wants to go and
           // ask a colleague first has nowhere to go.
+          onKeep={resolveConflict}
           onCancel={() => setConflict(null)}
         />
       )}
       {showGuide && <WebsiteQuickStart onClose={closeGuide} />}
+      <WebsiteGuideModal open={guideModalOpen} onClose={() => setGuideModalOpen(false)} />
+      {site && (
+        <>
+          <WebsiteSectionLibraryModal
+            open={sectionLibraryOpen}
+            onClose={() => setSectionLibraryOpen(false)}
+            siteId={site.id}
+            pageId={pageId}
+            onInserted={(label) => {
+              dirty.current = false;
+              setPreviewToken((token) => token + 1);
+              showQuickToast(`Inserted section: ${label}`);
+            }}
+          />
+          <WebsiteRevisionCommentsModal
+            open={commentsModalOpen}
+            onClose={() => setCommentsModalOpen(false)}
+            siteId={site.id}
+            pageId={pageId}
+            selectedFieldId={picked ? picked.id : null}
+            selectedFieldLabel={picked ? picked.label : null}
+            onSelectField={(fieldId: string) => {
+              setShowPanel(true);
+              setMode("visual");
+              pick(fieldId);
+            }}
+          />
+          <WebsiteClientReportModal
+            open={clientReportOpen}
+            onClose={() => setClientReportOpen(false)}
+            siteId={site.id}
+            pageId={pageId}
+          />
+        </>
+      )}
+      <WebsiteCommandPaletteModal
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        fields={allFields.map((f) => ({
+          id: f.id,
+          label: f.label,
+          kind: f.kind,
+          value: edits[f.id]?.value ?? f.value ?? "",
+        }))}
+        onSelectField={(fieldId) => {
+          setShowPanel(true);
+          setMode("visual");
+          pick(fieldId);
+        }}
+        onOpenSeoTab={() => {
+          pick(null);
+          setShowPanel(true);
+          setMode("visual");
+          setInspectorTab("seo");
+        }}
+        onOpenSectionLibrary={() => setSectionLibraryOpen(true)}
+        onOpenAiAssistant={() => setShowAI(true)}
+        onSetDevice={(dev) => setDevice(dev)}
+        onToggleTheme={() => {
+          const next = editorTheme === "dark" ? "light" : "dark";
+          setEditorTheme(next);
+          try {
+            localStorage.setItem("website-editor-theme", next);
+          } catch {}
+        }}
+        onOpenPublishReview={() => setReviewOpen(true)}
+      />
+      {assetModalOpen && site && picked && (
+        <WebsiteAssetPickerModal
+          siteId={site.id}
+          onSelect={asset => {
+            change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt }, { commit: true });
+            setAssetModalOpen(false);
+          }}
+          onClose={() => setAssetModalOpen(false)}
+        />
+      )}
       {/* ------------------------------------------------------------ bar */}
-      <div className="editor-toolbar flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-white px-4 py-2.5">
-        <Link to="/website/sites" className="shrink-0 text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
-          ← All pages
-        </Link>
-        <div className="min-w-0">
-          <div className="truncate font-display text-sm tracking-[-.02em]">{page.data.page.title}</div>
-          <div className="truncate text-xs text-muted">
-            <span className="font-mono">{page.data.page.path}</span>
-            {/* A built page is not its own file, and a person editing has to know
-                both halves: their words go into the source file, and what they
-                are looking at is a build of it that may be a deploy behind. */}
-            {page.data.builtFrom && (
-              <>
-                {" · "}
-                <span title={`Built from ${page.data.builtFrom.filePath}${page.data.builtFrom.detail ? ` — showing ${page.data.builtFrom.detail}` : ""}`}>
-                  built from <span className="font-mono">{page.data.builtFrom.filePath}</span>
-                  {page.data.readFrom === "live site" ? " · showing the published page" : ""}
-                </span>
-              </>
-            )}
+      <div className="editor-toolbar flex flex-none flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line bg-white px-3.5 py-2">
+        {/* Left zone: Back button + Page identity + Status pill */}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Link
+            to="/website/sites"
+            title="Back to all pages"
+            aria-label="All pages"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
+          >
+            <IconArrowLeft size={14} />
+            <span>Pages</span>
+          </Link>
+
+          <div className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
+
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="truncate font-display text-sm font-semibold tracking-[-.02em] text-ink">
+                {page.data.page.title}
+              </div>
+              <span className="shrink-0 rounded-md border border-line bg-sunken/60 px-1.5 py-0.5 font-mono text-[11px] text-muted">
+                {page.data.page.path}
+              </span>
+              <span
+                className={`hidden sm:inline-flex items-center gap-1.5 rounded-full border border-line bg-sunken/40 px-2 py-0.5 text-[11px] font-medium ${
+                  dirty.current || changedCount > 0 ? "text-ink" : "text-muted"
+                }`}
+                title={
+                  page.data.builtFrom
+                    ? `Built from ${page.data.builtFrom.filePath}${page.data.builtFrom.detail ? ` — ${page.data.builtFrom.detail}` : ""}`
+                    : status
+                }
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    dirty.current || changedCount > 0 ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                />
+                <span className="truncate max-w-[180px]">{status}</span>
+                {page.data.draft.savedAt && (
+                  <span className="text-muted">
+                    · <RelativeTime value={page.data.draft.savedAt} />
+                  </span>
+                )}
+              </span>
+              {peers.length > 0 && (
+                <div
+                  className="flex items-center gap-1.5 border-l border-line pl-2"
+                  title={`${peers.map((p) => p.name).join(", ")} currently viewing this page`}
+                >
+                  <div className="flex -space-x-1.5 overflow-hidden">
+                    {peers.map((peer) => (
+                      <div
+                        key={peer.userId}
+                        style={{ backgroundColor: peer.color }}
+                        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-xs ring-1 ring-white"
+                        title={peer.name}
+                      >
+                        {peer.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             {page.data.builtFrom?.problem && (
-              <>
-                {" · "}
-                <span className="text-warn-text">{page.data.builtFrom.writableFields === 0 ? "nothing on this page is editable here" : "some of this page is not editable here"}</span>
-              </>
-            )}
-            {page.data.draft.savedAt && (
-              <>
-                {" · saved "}
-                <RelativeTime value={page.data.draft.savedAt} />
-              </>
+              <div className="truncate text-[11px] text-warn-text">
+                {page.data.builtFrom.writableFields === 0
+                  ? "Nothing on this page is editable here"
+                  : "Some of this page is not editable here"}
+              </div>
             )}
           </div>
         </div>
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <span className={`text-xs ${dirty.current || changedCount > 0 ? "text-ink" : "text-muted"}`}>{status}</span>
+        {/* Right / Center Controls: Icon groups + Dropdowns + Publish CTA */}
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {/* Quick Command Palette (Ctrl+K) & Insert Section Buttons */}
+          <button
+            type="button"
+            title="Search page elements & commands (Ctrl+K / Cmd+K)"
+            aria-label="Command palette"
+            onClick={() => setCommandPaletteOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
+          >
+            <IconSearch size={13} />
+            <span className="hidden md:inline">Search</span>
+            <kbd className="rounded border border-line bg-white px-1 py-0.2 font-mono text-[10px] text-muted">
+              ⌘K
+            </kbd>
+          </button>
 
-          <div className="flex items-center gap-0.5">
+          {canEdit && !readOnly && (
+            <button
+              type="button"
+              title="Insert a pre-built section (Hero, Features, Pricing, FAQ, CTA…)"
+              aria-label="Insert section"
+              onClick={() => setSectionLibraryOpen(true)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
+            >
+              <IconPlusSquare size={14} className="text-blue" />
+              <span className="hidden sm:inline">Section</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            title="Client Pin-Comments & Revision Checklist"
+            aria-label="Revision comments"
+            onClick={() => setCommentsModalOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
+          >
+            <IconMessageSquare size={14} className="text-blue" />
+            <span className="hidden lg:inline">Notes</span>
+          </button>
+
+          <button
+            type="button"
+            title="Generate Printable Client SEO & Website Optimization Report"
+            aria-label="Client SEO report"
+            onClick={() => setClientReportOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
+          >
+            <IconFileText size={14} className="text-blue" />
+            <span className="hidden xl:inline">Report</span>
+          </button>
+
+          {/* History & Refresh Icon Group */}
+          <div className="inline-flex items-center rounded-xl border border-line bg-sunken/30 p-0.5">
             <button
               type="button"
               title="Undo (Ctrl+Z)"
+              aria-label="Undo"
               disabled={readOnly || save.isPending || (!historyState.canUndo && !page.data.structure?.canUndo)}
               onClick={() => restore(-1)}
-              className="flex h-7 w-7 items-center justify-center rounded-xl text-muted transition enabled:hover:bg-sunken enabled:hover:text-ink disabled:opacity-30"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition enabled:hover:bg-white enabled:hover:text-ink disabled:opacity-30"
             >
-              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-                <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4.4 2.9L1.8 5.5l2.6 2.6" />
-                  <path d="M1.8 5.5h5.9a3.8 3.8 0 0 1 0 7.6H5.4" />
-                </g>
-              </svg>
+              <IconUndo size={14} />
             </button>
             <button
               type="button"
               title="Redo (Ctrl+Shift+Z)"
+              aria-label="Redo"
               disabled={readOnly || save.isPending || (!historyState.canRedo && !page.data.structure?.canRedo)}
               onClick={() => restore(1)}
-              className="flex h-7 w-7 items-center justify-center rounded-xl text-muted transition enabled:hover:bg-sunken enabled:hover:text-ink disabled:opacity-30"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition enabled:hover:bg-white enabled:hover:text-ink disabled:opacity-30"
             >
-              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-                <g stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9.6 2.9l2.6 2.6-2.6 2.6" />
-                  <path d="M12.2 5.5H6.3a3.8 3.8 0 0 0 0 7.6h2.3" />
-                </g>
-              </svg>
+              <IconRedo size={14} />
+            </button>
+            <div className="mx-0.5 h-4 w-px bg-line" aria-hidden="true" />
+            <button
+              type="button"
+              title="Reload page from site"
+              aria-label="Reload"
+              onClick={() => {
+                if (dirty.current) saveNow(edits);
+                void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+                setPreviewToken((token) => token + 1);
+              }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-ink"
+            >
+              <IconRefresh size={14} />
             </button>
           </div>
 
-          <button
-            type="button"
-            title="Read the page again from the site"
-            onClick={() => {
-              if (dirty.current) saveNow(edits);
-              void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
-              setPreviewToken((token) => token + 1);
-            }}
-            className="flex h-7 w-7 items-center justify-center rounded-xl text-muted transition hover:bg-sunken hover:text-ink"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-              <g stroke="currentColor" strokeWidth="1.25" fill="none" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11.6 7a4.6 4.6 0 1 1-1.4-3.3" />
-                <path d="M11.9 1.7v2.9H9" />
-              </g>
-            </svg>
-          </button>
-
-          {mode !== "edit" && <select aria-label="Canvas zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))} className="rounded-xl border border-line px-2 py-1 text-xs">{[0.5, 0.75, 1, 1.25, 1.5].map(value => <option key={value} value={value}>{value * 100}%</option>)}</select>}
+          {/* Viewport Device Switcher (Icons) + Zoom Dropdown */}
           {mode !== "edit" && (
-            <div className="flex overflow-hidden rounded-xl border border-line">
-              {DEVICES.map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => setDevice(option.key)}
-                  className={`px-2.5 py-1 font-mono text-xs uppercase tracking-[.12em] ${
-                    device === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
+            <div className="inline-flex items-center gap-1 rounded-xl border border-line bg-sunken/30 p-0.5">
+              {DEVICES.map((option) => {
+                const active = device === option.key;
+                const DeviceIcon =
+                  option.key === "desktop"
+                    ? IconDesktop
+                    : option.key === "tablet"
+                      ? IconTablet
+                      : IconPhoneDevice;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    title={`${option.label} viewport`}
+                    aria-label={option.label}
+                    aria-pressed={active}
+                    onClick={() => setDevice(option.key)}
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${
+                      active
+                        ? "bg-ink text-cream shadow-xs"
+                        : "text-muted hover:bg-white hover:text-ink"
+                    }`}
+                  >
+                    <DeviceIcon size={14} />
+                  </button>
+                );
+              })}
+              <div className="mx-0.5 h-4 w-px bg-line" aria-hidden="true" />
+              <select
+                aria-label="Canvas zoom"
+                title="Canvas zoom level"
+                value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                className="h-7 cursor-pointer rounded-lg border-0 bg-transparent px-1.5 font-mono text-[11px] font-medium text-ink outline-none hover:bg-white"
+              >
+                {[0.5, 0.75, 1, 1.25, 1.5].map((value) => (
+                  <option key={value} value={value}>
+                    {value * 100}%
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
-          <div className="flex overflow-hidden rounded-full border border-line">
-            {MODES.map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                onClick={() => {
-                  // The frame renders the *saved* draft, so anything typed has
-                  // to be written before switching to a view that shows it.
-                  if (option.key !== "edit" && dirty.current) saveNow(edits);
-                  setPreviewToken((token) => token + 1);
-                  setMode(option.key);
-                }}
-                className={`px-3 py-1.5 text-xs font-semibold ${mode === option.key ? "bg-ink text-cream" : "text-muted hover:text-ink"}`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-
-          <button className="editor-tool" type="button" aria-pressed={showPanel} onClick={() => setShowPanel(value => !value)}>Inspector</button>
-          <button className="editor-tool" type="button" aria-pressed={showLayers} onClick={() => { setShowLayers(value => !value); setShowPanel(true); setMode("visual"); }}>Layers</button>
-          {canEdit && <button className="editor-tool" type="button" disabled={save.isPending || readOnly} onClick={() => saveNow(latestEdits.current)} title="Save draft (Ctrl/Cmd+S)">Save</button>}
-          {canEdit && design.data?.options.aiEnabled && <button className="editor-tool" type="button" onClick={() => setShowAI(true)}>Assistant</button>}
-          <details className="relative" data-editor-menu onKeyDown={event => { if (event.key === "Escape") { event.currentTarget.open = false; event.stopPropagation(); } }}>
-            <summary className="cursor-pointer rounded-xl border border-line px-3 py-2 text-sm">More</summary>
-            <div className="absolute right-0 top-full z-50 mt-2 flex w-64 flex-col items-start gap-3 rounded-xl border border-line bg-white p-4 shadow-xl">
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={designerMode} onChange={event => { setDesignerMode(event.target.checked); try { localStorage.setItem(`website-designer:${user?.id}`, event.target.checked ? "yes" : "no"); } catch { /* Optional preference. */ } }} />Designer controls</label>
-              <button type="button" className="text-sm text-blue" onClick={() => { const next = editorTheme === "dark" ? "light" : "dark"; setEditorTheme(next); try { localStorage.setItem("website-editor-theme", next); } catch {} }}>Use {editorTheme === "dark" ? "light" : "dark"} editor</button>
-              <p className="text-xs text-muted">Shortcuts: Ctrl/Cmd+S save, Z undo, Shift+Z redo, Enter review publish.</p>
-              <button type="button" className="text-sm text-blue" onClick={() => setShowGuide(true)}>First edit walkthrough</button>
-          <a className="text-xs text-blue" href={apiUrl(`/website/pages/${pageId}/export`)} download onClick={event => { if (dirty.current || save.isPending) { event.preventDefault(); setFailure("Wait for the current changes to save before downloading."); } }}>Download HTML</a>
-          <Button variant="ghost" size="sm" disabled={save.isPending || publish.isPending || structureBusy} onClick={async () => {
-            try { if (dirty.current) await save.mutateAsync(latestEdits.current); if (!dirty.current) setShowVersions(true); }
-            catch { /* Saving reports the failure and preserves local edits. */ }
-          }}>
-            Versions
-          </Button>
-          {/* Site settings enable optional, reviewed AI suggestions. */}
-          {canEdit && design.data?.options.aiEnabled && (
-            <Button variant="ghost" size="sm" onClick={() => setShowAI(true)}>
-              AI
-            </Button>
-          )}
-          {changedCount > 0 && !readOnly && (
-            <Button variant="ghost" size="sm" onClick={() => { if (window.confirm("Discard all unpublished changes on this page? The live website stays unchanged.")) discard.mutate(); }} disabled={discard.isPending || save.isPending || publish.isPending}>
-              Discard
-            </Button>
-          )}
+          {/* Editor View Mode Dropdown (Visual / List / Preview) */}
+          <details
+            className="relative"
+            data-editor-menu
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.currentTarget.open = false;
+                event.stopPropagation();
+              }
+            }}
+          >
+            <summary
+              title="Switch editor view mode"
+              aria-label="Editor view mode"
+              className="inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-line-strong hover:bg-sunken"
+            >
+              {mode === "visual" ? (
+                <IconLayout size={14} />
+              ) : mode === "edit" ? (
+                <IconList size={14} />
+              ) : (
+                <IconEye size={14} />
+              )}
+              <span>{MODES.find((m) => m.key === mode)?.label ?? "Visual"}</span>
+              <IconChevronDown size={12} className="text-muted" />
+            </summary>
+            <div className="absolute right-0 top-full z-50 mt-1.5 flex w-48 flex-col gap-0.5 rounded-xl border border-line bg-white p-1.5 shadow-xl">
+              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+                Editor Mode
+              </div>
+              {MODES.map((option) => {
+                const active = mode === option.key;
+                const ModeIcon =
+                  option.key === "visual"
+                    ? IconLayout
+                    : option.key === "edit"
+                      ? IconList
+                      : IconEye;
+                const subtitle =
+                  option.key === "visual"
+                    ? "Interactive canvas"
+                    : option.key === "edit"
+                      ? "Structured fields"
+                      : "Live page preview";
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={(event) => {
+                      if (option.key !== "edit" && dirty.current) saveNow(edits);
+                      setPreviewToken((token) => token + 1);
+                      setMode(option.key);
+                      const details = event.currentTarget.closest("details");
+                      if (details) details.open = false;
+                    }}
+                    className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition ${
+                      active
+                        ? "bg-sunken font-semibold text-ink"
+                        : "text-muted hover:bg-sunken/60 hover:text-ink"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <ModeIcon size={14} />
+                      <span>
+                        <span className="block leading-tight text-ink">{option.label}</span>
+                        <span className="block text-[10px] font-normal text-muted">{subtitle}</span>
+                      </span>
+                    </span>
+                    {active && <IconCheck size={13} className="text-blue" />}
+                  </button>
+                );
+              })}
             </div>
           </details>
+
+          {/* Workspace Panels & Quick Actions Icon Group */}
+          <div className="inline-flex items-center rounded-xl border border-line bg-sunken/30 p-0.5">
+            <button
+              type="button"
+              title="Toggle Inspector panel"
+              aria-label="Inspector"
+              aria-pressed={showPanel}
+              onClick={() => setShowPanel((value) => !value)}
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${
+                showPanel
+                  ? "bg-ink text-cream shadow-xs"
+                  : "text-muted hover:bg-white hover:text-ink"
+              }`}
+            >
+              <IconSidebar size={14} />
+            </button>
+            <button
+              type="button"
+              title="Toggle Layers tree"
+              aria-label="Layers"
+              aria-pressed={showLayers}
+              onClick={() => {
+                setShowLayers((value) => !value);
+                setShowPanel(true);
+                setMode("visual");
+              }}
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${
+                showLayers
+                  ? "bg-ink text-cream shadow-xs"
+                  : "text-muted hover:bg-white hover:text-ink"
+              }`}
+            >
+              <IconLayers size={14} />
+            </button>
+            {canEdit && design.data?.options.aiEnabled && (
+              <button
+                type="button"
+                title="Open AI Assistant"
+                aria-label="Assistant"
+                onClick={() => setShowAI(true)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-ink"
+              >
+                <IconSparkles size={14} />
+              </button>
+            )}
+            {canEdit && (
+              <>
+                <div className="mx-0.5 h-4 w-px bg-line" aria-hidden="true" />
+                <button
+                  type="button"
+                  title="Save draft (Ctrl/Cmd+S)"
+                  aria-label="Save"
+                  disabled={save.isPending || readOnly}
+                  onClick={() => saveNow(latestEdits.current)}
+                  className={`inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium transition disabled:opacity-40 ${
+                    dirty.current || changedCount > 0
+                      ? "bg-white text-ink shadow-2xs hover:text-blue"
+                      : "text-muted hover:bg-white hover:text-ink"
+                  }`}
+                >
+                  <IconSave size={13} />
+                  <span className="hidden xl:inline">Save</span>
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* More Tools & Settings Dropdown */}
+          <details
+            className="relative"
+            data-editor-menu
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.currentTarget.open = false;
+                event.stopPropagation();
+              }
+            }}
+          >
+            <summary
+              title="More tools, Guide, Version history & settings"
+              aria-label="More"
+              className="inline-flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-xl border border-line bg-sunken/40 text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
+            >
+              <IconMoreHorizontal size={15} />
+            </summary>
+            <div className="absolute right-0 top-full z-50 mt-1.5 flex w-60 flex-col gap-1 rounded-xl border border-line bg-white p-2 shadow-xl">
+              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+                Tools & Documentation
+              </div>
+              <button
+                type="button"
+                onClick={(event) => {
+                  setGuideModalOpen(true);
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+              >
+                <IconBookOpen size={14} className="text-muted" />
+                <span>Interactive Guide & Docs</span>
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  setShowGuide(true);
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+              >
+                <IconSparkles size={14} className="text-muted" />
+                <span>First edit walkthrough</span>
+              </button>
+              <button
+                type="button"
+                disabled={save.isPending || publish.isPending || structureBusy}
+                onClick={async (event) => {
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                  try {
+                    if (dirty.current) await save.mutateAsync(latestEdits.current);
+                    if (!dirty.current) setShowVersions(true);
+                  } catch {
+                    /* Saving reports the failure and preserves local edits. */
+                  }
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken disabled:opacity-40"
+              >
+                <IconHistory size={14} className="text-muted" />
+                <span>Version history</span>
+              </button>
+              <a
+                href={apiUrl(`/website/pages/${pageId}/export`)}
+                download
+                onClick={(event) => {
+                  if (dirty.current || save.isPending) {
+                    event.preventDefault();
+                    setFailure("Wait for the current changes to save before downloading.");
+                  }
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+              >
+                <IconDownload size={14} className="text-muted" />
+                <span>Download HTML</span>
+              </a>
+
+              <div className="my-1 h-px bg-line" />
+              <div className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+                Preferences
+              </div>
+
+              <label className="flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-lg px-2.5 py-1.5 text-xs text-ink transition hover:bg-sunken">
+                <span className="flex items-center gap-2.5">
+                  <IconSliders size={14} className="text-muted" />
+                  <span>Designer controls</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={designerMode}
+                  onChange={(event) => {
+                    setDesignerMode(event.target.checked);
+                    try {
+                      localStorage.setItem(
+                        `website-designer:${user?.id}`,
+                        event.target.checked ? "yes" : "no"
+                      );
+                    } catch {
+                      /* Optional preference. */
+                    }
+                  }}
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const next = editorTheme === "dark" ? "light" : "dark";
+                  setEditorTheme(next);
+                  try {
+                    localStorage.setItem("website-editor-theme", next);
+                  } catch {}
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+              >
+                {editorTheme === "dark" ? (
+                  <IconSun size={14} className="text-muted" />
+                ) : (
+                  <IconMoon size={14} className="text-muted" />
+                )}
+                <span>Use {editorTheme === "dark" ? "light" : "dark"} editor theme</span>
+              </button>
+
+              {changedCount > 0 && !readOnly && (
+                <>
+                  <div className="my-1 h-px bg-line" />
+                  <button
+                    type="button"
+                    disabled={discard.isPending || save.isPending || publish.isPending}
+                    onClick={(event) => {
+                      const details = event.currentTarget.closest("details");
+                      if (details) details.open = false;
+                      if (
+                        window.confirm(
+                          "Discard all unpublished changes on this page? The live website stays unchanged."
+                        )
+                      ) {
+                        discard.mutate();
+                      }
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-red-600 transition hover:bg-red-50 disabled:opacity-40"
+                  >
+                    <IconTrash size={14} />
+                    <span>Discard unpublished changes</span>
+                  </button>
+                </>
+              )}
+
+              <div className="mt-1 rounded-lg bg-sunken/60 px-2.5 py-1.5 text-[10px] leading-relaxed text-muted">
+                Shortcuts: Ctrl/Cmd+S save · Z undo · Shift+Z redo · Enter publish
+              </div>
+            </div>
+          </details>
+
+          {/* Primary Publish CTA */}
           {canPublish && (
             <Button
               variant="accent"
@@ -1542,14 +2264,27 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               onClick={async () => {
                 try {
                   if (dirty.current) await save.mutateAsync(latestEdits.current);
-                  if (dirty.current) { setFailure("Your latest edit is still saving. Review once it has saved."); return; }
+                  if (dirty.current) {
+                    setFailure("Your latest edit is still saving. Review once it has saved.");
+                    return;
+                  }
                   setReviewOpen(true);
+                } catch {
+                  /* The save error is displayed by its mutation. */
                 }
-                catch { /* The save error is displayed by its mutation. */ }
               }}
               disabled={publish.isPending || save.isPending || changedCount === 0 || !site.repo}
             >
-              {publish.isPending ? "Publishing…" : "Publish"}
+              <span className="inline-flex items-center gap-1.5">
+                <IconUploadCloud size={14} />
+                <span>
+                  {publish.isPending
+                    ? "Publishing…"
+                    : changedCount > 0
+                      ? `Publish (${changedCount})`
+                      : "Publish"}
+                </span>
+              </span>
             </Button>
           )}
         </div>
@@ -1589,12 +2324,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 This screen reads the page back from the published site, so it goes on showing the old words until that rebuild
                 finishes. It will catch up on its own; the circular arrow in the bar looks again now.
               </p>
-              <div className="mt-2 flex flex-wrap gap-4 text-xs">
-                <a href={published.url} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
-                  Open the live page
-                </a>
+              <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">
+                {published.prUrl ? (
+                  <a href={published.prUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-blue underline-offset-2 hover:underline">
+                     View Pull Request #{published.prNumber} on GitHub
+                  </a>
+                ) : (
+                  <a href={published.url} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
+                    Open the live page
+                  </a>
+                )}
                 <a href={published.commit.url} target="_blank" rel="noreferrer" className="text-muted underline-offset-2 hover:underline">
-                  See the commit
+                  {published.mode === "pull_request" ? "See PR commit" : "See the commit"}
                 </a>
               </div>
             </div>
@@ -1612,7 +2353,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 panel and it should look like a label on a thing, not like a
                 heading with the same weight as the thing's name. */}
             <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2.5">
-              <span className="shrink-0 rounded-md bg-sunken px-1.5 py-0.5 font-mono text-xs uppercase tracking-[.1em] text-muted">
+              <span className="shrink-0 rounded-[10px] bg-sunken px-1.5 py-0.5 font-sans text-xs uppercase tracking-[.06em] text-muted">
                 {picked ? picked.tag : "—"}
               </span>
               <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink">{picked ? picked.label : "Nothing selected"}</span>
@@ -1622,11 +2363,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   onClick={() => pick(null)}
                   aria-label="Clear the selection"
                   title="Clear the selection"
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-sunken hover:text-ink"
-                >
-                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-                    <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                  </svg>
+                  className="flex min-h-8 px-2.5 shrink-0 items-center justify-center rounded-[10px] text-muted transition hover:bg-sunken hover:text-ink"
+                >Clear
                 </button>
               )}
             </div>
@@ -1656,23 +2394,106 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.previousId} onClick={() => void runStructure("before", picked.id, picked.structure?.previousId)}>Move up</button>
                 <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.nextId} onClick={() => void runStructure("after", picked.id, picked.structure?.nextId)}>Move down</button>
                 <button type="button" className="text-blue disabled:text-faint" title={picked.structure?.duplicateReason} disabled={readOnly || save.isPending || !picked.structure?.duplicate} onClick={() => void runStructure("duplicate", picked.id)}>Duplicate</button>
+                {(picked.repeatable || picked.structure?.repeatable) && (
+                  <button type="button" className="font-semibold text-blue disabled:text-faint" title={picked.structure?.duplicateReason ?? "Add a new item to this repeatable list"} disabled={readOnly || save.isPending || !picked.structure?.duplicate} onClick={() => void runStructure("duplicate", picked.id)}>+ Add Item</button>
+                )}
                 <button type="button" className="text-danger-text disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.remove} onClick={() => void runStructure("remove", picked.id)}>Remove</button>
               </div>
               <p className="mt-2 text-xs text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
 
-            <div role="tablist" aria-label="Element settings" className="editor-tabs">{(["content", "style", "interactions"] as const).map(tab => <button type="button" role="tab" aria-selected={inspectorTab === tab} key={tab} onClick={() => setInspectorTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>)}</div>
+            <div role="tablist" aria-label="Element settings" className="editor-tabs">
+              {(!picked ? (["content", "seo"] as const) : (["content", "style", "interactions"] as const)).map(tab => (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === tab}
+                  key={tab}
+                  onClick={() => setInspectorTab(tab)}
+                >
+                  {tab === "seo" ? "SEO" : tab[0].toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
             <div className="editor-controls min-h-0 flex-1 overflow-y-auto">
               {!picked ? (
-                <div className="px-4 py-6 text-center">
-                  <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
-                  <p className="mt-1 text-xs leading-relaxed text-muted">
-                    Its words and its look appear here. Double click to type straight into the page.
-                  </p>
-                  <p className="mt-3 text-xs text-muted">
-                    {allFields.length} editable {allFields.length === 1 ? "thing" : "things"} on this page.
-                  </p>
-                </div>
+                inspectorTab === "seo" ? (
+                  <WebsitePageSeoInspector
+                    siteId={site.id}
+                    pageId={pageId}
+                    pageTitle={page.data.page.title}
+                    pagePath={page.data.page.path}
+                    readOnly={readOnly}
+                    imageFields={allFields
+                      .filter((f) => f.kind === "image")
+                      .map((f) => ({
+                        id: f.id,
+                        label: f.label,
+                        src: edits[f.id]?.value ?? f.value ?? "",
+                        alt: edits[f.id]?.alt ?? f.alt ?? "",
+                      }))}
+                    onApplyAltFixes={(fixes) => {
+                      setEdits((prev) => {
+                        const next = { ...prev };
+                        for (const fix of fixes) {
+                          const existing = next[fix.id] ?? {};
+                          const field = allFields.find((f) => f.id === fix.id);
+                          next[fix.id] = {
+                            ...existing,
+                            value: existing.value ?? field?.value ?? "",
+                            alt: fix.alt,
+                          };
+                        }
+                        saveNow(next);
+                        return next;
+                      });
+                      showQuickToast(`Applied SEO alt text to ${fixes.length} image${fixes.length === 1 ? "" : "s"}.`);
+                    }}
+                    onDraftUpdated={() => {
+                      dirty.current = false;
+                      setPreviewToken((token) => token + 1);
+                    }}
+                    onOpenClientReport={() => setClientReportOpen(true)}
+                  />
+                ) : (
+                  <div className="px-4 py-6 text-center">
+                    <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted">
+                      Its words, style, and interactions appear here. Double click to type straight into the page.
+                    </p>
+                    <p className="mt-3 text-xs text-muted">
+                      {allFields.length} editable {allFields.length === 1 ? "thing" : "things"} on this page.
+                    </p>
+                    <div className="mt-5 flex flex-col gap-2 border-t border-line pt-4">
+                      {canEdit && !readOnly && (
+                        <button
+                          type="button"
+                          onClick={() => setSectionLibraryOpen(true)}
+                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-ink px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90"
+                        >
+                          <IconPlusSquare size={14} />
+                          <span>Insert Pre-Built Section</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setInspectorTab("seo")}
+                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-line bg-cream px-3 py-2 text-xs font-semibold text-ink transition hover:border-blue hover:text-blue"
+                      >
+                        <IconSearch size={14} />
+                        <span>Edit Page SEO, Schema &amp; Previews</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCommandPaletteOpen(true)}
+                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-medium text-muted transition hover:border-line-strong hover:text-ink"
+                      >
+                        <IconSearch size={13} />
+                        <span>Command Search (Ctrl+K)</span>
+                      </button>
+                    </div>
+                  </div>
+                )
               ) : (
                 <>
                   {/* Before the controls, not beside them: somebody about to
@@ -1712,9 +2533,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       three actions that belong to the whole element rather than
                       to any one property. One line each: this bar sits above
                       every panel and is not what somebody came to read. */}
-                  <div hidden={inspectorTab !== "style"} className="border-b border-line bg-sunken/60 px-3 py-2">
+                  <div hidden={inspectorTab !== "style"} className="editor-scope-strip border-b border-line px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
-                      <span className={`rounded-md px-1.5 py-0.5 text-xs font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
+                      <span className={`rounded-[10px] px-1.5 py-0.5 text-xs font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
                         {device === "desktop" ? "All sizes" : device === "tablet" ? "Tablet and below" : "Phone only"}
                       </span>
                       <span className="font-mono text-xs text-muted">
@@ -1733,9 +2554,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       </p>
                     )}
                     {designerMode && <div className="mt-2 flex flex-wrap gap-1">
-                      <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue">Copy style</button>
-                      <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue disabled:text-faint">Paste</button>
-                      {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue disabled:text-faint">Clear overrides</button>}
+                      <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="rounded-[10px] bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue">Copy style</button>
+                      <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="rounded-[10px] bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue disabled:text-faint">Paste</button>
+                      {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="rounded-[10px] bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue disabled:text-faint">Clear overrides</button>}
                       <span className="ml-auto self-center text-xs text-faint">{picked.confidence === "annotated" ? "Stable field" : "Discovered"}</span>
                     </div>}
                   </div>
@@ -1800,7 +2621,49 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                               : "This one cannot be shown while you type. It appears in the page once the draft saves."}
                           </p>
                         )}
-                        {picked.kind === "image" && !readOnly && <div className="mb-4"><WebsiteAssetLibrary siteId={site.id} onSelect={asset => change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt })} /></div>}
+                        {picked.kind === "image" && !readOnly && (
+                          <div className="mb-4">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => setAssetModalOpen(true)}
+                              className="w-full flex items-center justify-center gap-2"
+                            >
+                               Choose from Asset Library
+                            </Button>
+                          </div>
+                        )}
+                        {(() => {
+                          const repeatableTarget = (picked.repeatable || picked.structure?.repeatable)
+                            ? picked
+                            : allFields.find((f) => f.id === picked.parentId && (f.repeatable || f.structure?.repeatable));
+                          if (!repeatableTarget || readOnly) return null;
+                          return (
+                            <div className="mb-4 rounded-[10px] border border-blue/20 bg-blue/5 p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  <div className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                                     Repeatable Collection
+                                  </div>
+                                  <div className="text-[11px] text-muted">
+                                    {repeatableTarget.id === picked.id ? "Add another item to this collection." : `Add another item to this list.`}
+                                  </div>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={save.isPending || !repeatableTarget.structure?.duplicate}
+                                  title={repeatableTarget.structure?.duplicateReason ?? "Add a new item to this repeatable list"}
+                                  onClick={() => void runStructure("duplicate", repeatableTarget.id)}
+                                  className="flex items-center gap-1 shrink-0"
+                                >
+                                  <span>+</span> Add Item
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })()}
                         <FieldRow
                           key={`${loadToken}:${frameEdit}:${picked.id}`}
                           field={picked}
@@ -1826,7 +2689,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         {mode === "edit" ? (
           <>
             <aside className="w-[240px] flex-none overflow-y-auto border-r border-line bg-white p-3">
-              <div className="mb-2 px-1 font-mono text-xs font-bold uppercase tracking-[.14em] text-muted">Sections</div>
+              <div className="mb-2 px-1 font-sans text-xs font-bold uppercase tracking-[.06em] text-muted">Sections</div>
               <ul className="space-y-0.5">
                 {sections.map((candidate) => {
                   const edited = candidate.fields.some((field) => edits[field.id]);
@@ -1880,6 +2743,427 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           canvas
         )}
       </div>
+
+      {contextToast && (
+        <div className="fixed bottom-6 left-1/2 z-[120] -translate-x-1/2 rounded-xl border border-line bg-ink px-4 py-2 text-xs font-semibold text-white shadow-lg">
+          {contextToast}
+        </div>
+      )}
+
+      {contextMenu && (() => {
+        const ctxField = contextMenu.fieldId ? allFields.find((f) => f.id === contextMenu.fieldId) ?? null : null;
+        const rawTag = (ctxField?.tag || contextMenu.tag || "page").toLowerCase();
+        const isHeading = /^h[1-6]$/.test(rawTag);
+        const currentText = (
+          (ctxField ? (edits[ctxField.id]?.value ?? ctxField.value) : contextMenu.text) ||
+          contextMenu.text ||
+          ""
+        )
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        const currentStyle = ctxField ? (edits[ctxField.id]?.style ?? ctxField.style ?? "") : "";
+        const isCurrentlyHidden = /(?:^|;)\s*display\s*:\s*none\b/i.test(currentStyle);
+        const hiddenCount = Object.values(edits).filter((e) => /(?:^|;)\s*display\s*:\s*none\b/i.test(e.style ?? "")).length;
+
+        const toggleHideField = (targetField: SiteFieldRow) => {
+          const base = edits[targetField.id]?.style ?? targetField.style ?? "";
+          let nextStyle: string;
+          if (/(?:^|;)\s*display\s*:\s*none\b/i.test(base)) {
+            nextStyle = base
+              .split(";")
+              .map((s) => s.trim())
+              .filter((s) => s && !/^display\s*:\s*none$/i.test(s))
+              .join("; ");
+            showQuickToast(`Restored ${isHeading ? "heading" : targetField.label}`);
+          } else {
+            nextStyle = [base.trim().replace(/;$/, ""), "display: none"].filter(Boolean).join("; ");
+            showQuickToast(`Hidden ${isHeading ? "heading" : targetField.label} to preview layout (Right-click or Ctrl+Z to restore)`);
+          }
+          change(targetField.id, { ...edits[targetField.id], style: nextStyle }, { commit: true });
+          setContextMenu(null);
+        };
+
+        const applyQuickSeoFromText = async (modeType: "title" | "description" | "tags") => {
+          if (!currentText || !site?.id) return;
+          setContextMenu(null);
+          try {
+            if (modeType === "title") {
+              await api.post(`/website/sites/${site.id}/seo/page`, {
+                pageId,
+                title: currentText.slice(0, 70),
+                publishNow: false,
+              });
+              showQuickToast(`Set "${currentText.slice(0, 42)}" as Page SEO Title`);
+            } else if (modeType === "description") {
+              await api.post(`/website/sites/${site.id}/seo/page`, {
+                pageId,
+                description: currentText.slice(0, 160),
+                publishNow: false,
+              });
+              showQuickToast("Set text as Page Meta Description");
+            } else {
+              const extractedTags = currentText
+                .toLowerCase()
+                .replace(/[^a-z0-9\s-]/g, " ")
+                .split(/\s+/)
+                .filter((w) => w.length >= 3)
+                .slice(0, 8);
+              await api.post(`/website/sites/${site.id}/seo/page`, {
+                pageId,
+                keywords: extractedTags.join(", "),
+                tags: extractedTags,
+                publishNow: false,
+              });
+              showQuickToast(`Added "${extractedTags.join(", ")}" to Page SEO Tags`);
+            }
+            void qc.invalidateQueries({ queryKey: ["website", "seo", site.id] });
+            void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+            pick(null);
+            setShowPanel(true);
+            setInspectorTab("seo");
+          } catch {
+            showQuickToast("Could not update SEO property.");
+          }
+        };
+
+        return (
+          <div
+            role="menu"
+            aria-label="Visual editor context menu"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onClick={(e) => e.stopPropagation()}
+            className="fixed z-[110] w-64 rounded-2xl border border-line bg-white p-1.5 text-xs shadow-2xl"
+          >
+            {/* Header Badge */}
+            <div className="flex items-center gap-2 border-b border-line px-2.5 py-2">
+              <span className="rounded-md bg-ink px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-white">
+                {rawTag}
+              </span>
+              <span className="truncate font-semibold text-ink">
+                {ctxField ? ctxField.label : "Page Canvas"}
+              </span>
+            </div>
+
+            {ctxField && (
+              <div className="py-1">
+                {/* 1. Edit Heading / Element */}
+                {!readOnly && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowPanel(true);
+                      setInspectorTab("content");
+                      if (ctxField.kind !== "image" && ctxField.kind !== "container") {
+                        tell({ type: "edit", id: ctxField.id });
+                      }
+                      setContextMenu(null);
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <IconEdit />
+                      <span>{isHeading ? "Edit Heading" : `Edit ${ctxField.label}`}</span>
+                    </span>
+                    <span className="text-[10px] text-muted">Dbl-Click</span>
+                  </button>
+                )}
+
+                {/* 2. Copy Heading / Text */}
+                {currentText && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setTextClipboard(currentText);
+                      void navigator.clipboard?.writeText(currentText).catch(() => {});
+                      showQuickToast(`Copied ${isHeading ? "heading" : "text"}: "${currentText.slice(0, 32)}${currentText.length > 32 ? "…" : ""}"`);
+                      setContextMenu(null);
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <IconCopy />
+                      <span>{isHeading ? "Copy Heading" : "Copy Text"}</span>
+                    </span>
+                    <span className="text-[10px] text-muted">Ctrl+C</span>
+                  </button>
+                )}
+
+                {/* 3. Paste Text into Heading / Element */}
+                {!readOnly && ctxField.kind !== "image" && ctxField.kind !== "container" && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={async () => {
+                      let clip = textClipboard;
+                      if (!clip && navigator.clipboard?.readText) {
+                        try {
+                          clip = await navigator.clipboard.readText();
+                        } catch {
+                          clip = null;
+                        }
+                      }
+                      if (clip && clip.trim()) {
+                        change(ctxField.id, { ...edits[ctxField.id], value: clip.trim() }, { commit: true });
+                        showQuickToast(`Pasted into ${isHeading ? "heading" : ctxField.label}`);
+                      } else {
+                        showQuickToast("Copy a heading or text first to paste.");
+                      }
+                      setContextMenu(null);
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <IconPaste />
+                      <span>{isHeading ? "Paste into Heading" : "Paste Text"}</span>
+                    </span>
+                    <span className="text-[10px] text-muted">Ctrl+V</span>
+                  </button>
+                )}
+
+                {/* 4. Hide / Show Heading or Element to preview page layout */}
+                {!readOnly && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => toggleHideField(ctxField)}
+                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      {isCurrentlyHidden ? <IconEye /> : <IconEyeOff />}
+                      <span>
+                        {isCurrentlyHidden
+                          ? `Show ${isHeading ? "Heading" : "Element"}`
+                          : `Hide ${isHeading ? "Heading" : "Element"} (Preview Page)`}
+                      </span>
+                    </span>
+                  </button>
+                )}
+
+                {/* 5. Copy Style & Paste Style */}
+                <div className="my-1 border-t border-line/70" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setStyleClipboard(currentStyle);
+                    showQuickToast(`Copied style from ${ctxField.label}`);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <IconPalette />
+                    <span>Copy Style</span>
+                  </span>
+                </button>
+                {!readOnly && styleClipboard !== null && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      change(ctxField.id, { ...edits[ctxField.id], style: styleClipboard }, { commit: true });
+                      showQuickToast(`Pasted style onto ${ctxField.label}`);
+                      setContextMenu(null);
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <IconBrush />
+                      <span>Paste Style</span>
+                    </span>
+                  </button>
+                )}
+
+                {/* 6. SEO Power Shortcuts (Right-click Heading -> Use for SEO!) */}
+                {!readOnly && currentText && (
+                  <>
+                    <div className="my-1 border-t border-line/70" />
+                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+                      SEO Power Actions
+                    </div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => void applyQuickSeoFromText("title")}
+                      className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left font-medium text-blue hover:bg-blue/10"
+                    >
+                      <IconTarget />
+                      <span>{isHeading ? "Use Heading as SEO Title" : "Use as Page SEO Title"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => void applyQuickSeoFromText("description")}
+                      className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
+                    >
+                      <IconFileText />
+                      <span>Use as Meta Description</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => void applyQuickSeoFromText("tags")}
+                      className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
+                    >
+                      <IconTag />
+                      <span>Extract Words to SEO Tags</span>
+                    </button>
+                  </>
+                )}
+
+                {/* 7. Duplicate / Remove Structure Actions */}
+                {!readOnly && (ctxField.structure?.duplicate || ctxField.structure?.remove) && (
+                  <>
+                    <div className="my-1 border-t border-line/70" />
+                    {ctxField.structure?.duplicate && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          void runStructure("duplicate", ctxField.id);
+                          setContextMenu(null);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
+                      >
+                        <IconPlusSquare />
+                        <span>Duplicate {isHeading ? "Heading" : "Element"}</span>
+                      </button>
+                    )}
+                    {ctxField.structure?.remove && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          void runStructure("remove", ctxField.id);
+                          setContextMenu(null);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-danger-text hover:bg-danger-surface"
+                      >
+                        <IconTrash />
+                        <span>Remove {isHeading ? "Heading" : "Element"}</span>
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Footer Page-Level Actions */}
+            <div className="border-t border-line/70 pt-1">
+              {hiddenCount > 0 && !readOnly && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    for (const [id, edit] of Object.entries(edits)) {
+                      if (/(?:^|;)\s*display\s*:\s*none\b/i.test(edit.style ?? "")) {
+                        const restored = (edit.style ?? "")
+                          .split(";")
+                          .map((s) => s.trim())
+                          .filter((s) => s && !/^display\s*:\s*none$/i.test(s))
+                          .join("; ");
+                        change(id, { ...edit, style: restored }, { commit: true });
+                      }
+                    }
+                    showQuickToast(`Restored ${hiddenCount} hidden element${hiddenCount > 1 ? "s" : ""}`);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-semibold text-emerald-700 hover:bg-emerald-500/10"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <IconEye />
+                    <span>Show All Hidden ({hiddenCount})</span>
+                  </span>
+                </button>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setCommentsModalOpen(true);
+                  setContextMenu(null);
+                }}
+                className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <IconMessageSquare />
+                  <span>{ctxField ? "Pin Revision Note to Element" : "Open Revision Checklist"}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  pick(null);
+                  setShowPanel(true);
+                  setInspectorTab("seo");
+                  setContextMenu(null);
+                }}
+                className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <IconSearch />
+                  <span>Open Page SEO &amp; Repo Tags</span>
+                </span>
+              </button>
+              {picked && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    pick(null);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-muted hover:bg-cream hover:text-ink"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <IconXCircle />
+                    <span>Clear Selection</span>
+                  </span>
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {page.data && (
+        <WebsiteAgentChat
+          pageId={pageId}
+          pageTitle={page.data.page?.title || "Page"}
+          siteId={page.data.site?.id || ""}
+          siteName={page.data.site?.name || "Website"}
+          selectedFieldId={pickedId}
+          fieldLabel={picked?.label}
+          edits={edits}
+          canEdit={canEdit}
+          canUndo={historyState.canUndo}
+          canRedo={historyState.canRedo}
+          onUndo={() => void restore(-1)}
+          onRedo={() => void restore(1)}
+          onStructureAction={(kind, fieldId, targetId) => {
+            void runStructure(kind, fieldId, targetId);
+          }}
+          onDiscardDraft={() => discard.mutate()}
+          onReloadPreview={() => {
+            dirty.current = false;
+            void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+            setPreviewToken((token) => token + 1);
+          }}
+          onApplyLocalEdits={(values) => {
+            const merged = { ...latestEdits.current };
+            for (const [id, value] of Object.entries(values)) {
+              merged[id] = { ...merged[id], ...value };
+              change(id, merged[id]);
+            }
+            commitHistory(merged);
+            setLoadToken(token => token + 1);
+          }}
+        />
+      )}
     </div>
   );
 }
