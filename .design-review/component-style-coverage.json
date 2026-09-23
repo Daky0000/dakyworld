@@ -1,0 +1,270 @@
+[
+  {
+    "file": "Agents.tsx",
+    "styles": 26
+  },
+  {
+    "file": "Approvals.tsx",
+    "styles": 8
+  },
+  {
+    "file": "CarePlans.tsx",
+    "styles": 3
+  },
+  {
+    "file": "ClientDetail.tsx",
+    "styles": 12
+  },
+  {
+    "file": "Clients.tsx",
+    "styles": 6
+  },
+  {
+    "file": "Concepts.tsx",
+    "styles": 7
+  },
+  {
+    "file": "Costs.tsx",
+    "styles": 12
+  },
+  {
+    "file": "Demos.tsx",
+    "styles": 4
+  },
+  {
+    "file": "Emails.tsx",
+    "styles": 2
+  },
+  {
+    "file": "Hunts.tsx",
+    "styles": 2
+  },
+  {
+    "file": "Invoices.tsx",
+    "styles": 5
+  },
+  {
+    "file": "LeadImport.tsx",
+    "styles": 31
+  },
+  {
+    "file": "Leads.tsx",
+    "styles": 48
+  },
+  {
+    "file": "LeadSources.tsx",
+    "styles": 17
+  },
+  {
+    "file": "Login.tsx",
+    "styles": 2
+  },
+  {
+    "file": "Messages.tsx",
+    "styles": 7
+  },
+  {
+    "file": "ProductPricing.tsx",
+    "styles": 1
+  },
+  {
+    "file": "ProjectDetail.tsx",
+    "styles": 5
+  },
+  {
+    "file": "Projects.tsx",
+    "styles": 7
+  },
+  {
+    "file": "Proposals.tsx",
+    "styles": 4
+  },
+  {
+    "file": "Rehearsals.tsx",
+    "styles": 16
+  },
+  {
+    "file": "Settings.tsx",
+    "styles": 39
+  },
+  {
+    "file": "Team.tsx",
+    "styles": 5
+  },
+  {
+    "file": "Tools.tsx",
+    "styles": 17
+  },
+  {
+    "file": "Website.tsx",
+    "styles": 2
+  },
+  {
+    "file": "WebsiteCompatibility.tsx",
+    "styles": 1
+  },
+  {
+    "file": "WebsiteEditor.tsx",
+    "styles": 12
+  },
+  {
+    "file": "WebsiteFrameworkEditor.tsx",
+    "styles": 1
+  },
+  {
+    "file": "WebsiteSurvey.tsx",
+    "styles": 1
+  },
+  {
+    "file": "AgentHiring.tsx",
+    "styles": 2
+  },
+  {
+    "file": "AgentPrompt.tsx",
+    "styles": 20
+  },
+  {
+    "file": "AgentWork.tsx",
+    "styles": 18
+  },
+  {
+    "file": "CarePlanEditor.tsx",
+    "styles": 3
+  },
+  {
+    "file": "CssValueField.tsx",
+    "styles": 2
+  },
+  {
+    "file": "ElementInspector.tsx",
+    "styles": 7
+  },
+  {
+    "file": "EmailComposer.tsx",
+    "styles": 29
+  },
+  {
+    "file": "GhanaPayments.tsx",
+    "styles": 4
+  },
+  {
+    "file": "Guard.tsx",
+    "styles": 3
+  },
+  {
+    "file": "InspectorControls.tsx",
+    "styles": 15
+  },
+  {
+    "file": "LeadAudit.tsx",
+    "styles": 30
+  },
+  {
+    "file": "LeadColumns.tsx",
+    "styles": 8
+  },
+  {
+    "file": "LeadDrawer.tsx",
+    "styles": 17
+  },
+  {
+    "file": "LeadTags.tsx",
+    "styles": 8
+  },
+  {
+    "file": "MessageComposer.tsx",
+    "styles": 1
+  },
+  {
+    "file": "MessagingSettings.tsx",
+    "styles": 3
+  },
+  {
+    "file": "PlannedScreen.tsx",
+    "styles": 1
+  },
+  {
+    "file": "ProposalPreview.tsx",
+    "styles": 3
+  },
+  {
+    "file": "ProposalWriter.tsx",
+    "styles": 14
+  },
+  {
+    "file": "PublishReview.tsx",
+    "styles": 6
+  },
+  {
+    "file": "QuickCapture.tsx",
+    "styles": 9
+  },
+  {
+    "file": "Sequences.tsx",
+    "styles": 2
+  },
+  {
+    "file": "SharedMemory.tsx",
+    "styles": 7
+  },
+  {
+    "file": "SourceEditor.tsx",
+    "styles": 3
+  },
+  {
+    "file": "ui.tsx",
+    "styles": 2
+  },
+  {
+    "file": "WebsiteAssetLibrary.tsx",
+    "styles": 3
+  },
+  {
+    "file": "WebsiteAssistant.tsx",
+    "styles": 2
+  },
+  {
+    "file": "WebsiteBrandPresets.tsx",
+    "styles": 3
+  },
+  {
+    "file": "WebsiteClientOnboarding.tsx",
+    "styles": 6
+  },
+  {
+    "file": "WebsiteGuard.tsx",
+    "styles": 1
+  },
+  {
+    "file": "WebsiteGuideModal.tsx",
+    "styles": 23
+  },
+  {
+    "file": "WebsiteImageFraming.tsx",
+    "styles": 3
+  },
+  {
+    "file": "WebsiteInteractionStyles.tsx",
+    "styles": 3
+  },
+  {
+    "file": "WebsiteLayers.tsx",
+    "styles": 11
+  },
+  {
+    "file": "WebsiteQuickStart.tsx",
+    "styles": 4
+  },
+  {
+    "file": "WebsiteShared.tsx",
+    "styles": 7
+  },
+  {
+    "file": "WebsiteSourceEditor.tsx",
+    "styles": 2
+  },
+  {
+    "file": "WebsiteTextFormatting.tsx",
+    "styles": 2
+  }
+]

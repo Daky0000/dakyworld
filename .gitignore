@@ -36,3 +36,9 @@ server/docs/agent-system-front.pdf
 # Screenshots and pages written by the browser checks — regenerate by running them.
 checks/artifacts/
 server/checks/artifacts/
+
+# Design-review run output: screenshots, logs and audit JSON are regenerated
+# by the .mjs auditors next to them and are not worth 11 MB of history.
+.design-review/**/*.png
+.design-review/**/*.log
+.design-review/live/*.json

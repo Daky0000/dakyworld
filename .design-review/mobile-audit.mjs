@@ -1,0 +1,9 @@
+import { chromium } from 'file:///C:/Users/ASUS/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs';
+import {writeFileSync} from 'node:fs';
+const browser=await chromium.launch();const page=await browser.newPage({viewport:{width:390,height:844}});let errors=[];page.on('pageerror',e=>errors.push(e.message));const results=[];
+for(const route of ['/','/leads','/hunts','/lead-sources','/leads/import','/clients','/proposals','/demos','/concepts','/projects','/invoices','/care-plans','/emails','/inbox','/messages','/agents','/approvals','/rehearsals','/agents/tools','/costs','/website','/products/pricing','/team','/settings','/website/sites','/website/assets','/website/compatibility','/website/survey','/website/onboarding','/website/ai','/website/updates','/website/team','/website/audit','/website/settings','/website/source','/website/billing']){
+ errors=[];await page.goto('http://localhost:5199'+route,{waitUntil:'domcontentloaded'});await page.waitForTimeout(650);
+ const result=await page.evaluate(()=>{const main=document.querySelector('main');return {overflow:main?.scrollWidth>main?.clientWidth+1,empty:!main?.textContent?.trim(),emptyButtons:[...main?.querySelectorAll('button')||[]].filter(b=>b.getClientRects().length&&!b.innerText.trim()&&!b.querySelector('input')).map(b=>b.getAttribute('aria-label')||b.title||'unnamed'),offscreen:[...main?.querySelectorAll('input,button,select')||[]].filter(el=>{const r=el.getBoundingClientRect();return r.width&&r.right>innerWidth+5&&!el.closest('table')}).map(e=>e.textContent?.trim().slice(0,30)||e.getAttribute('placeholder')).slice(0,10)}});
+ results.push({route,...result,errors:[...errors]});console.log(JSON.stringify(results.at(-1)));await page.screenshot({path:'.design-review/live/'+(route.slice(1).replaceAll('/','-')||'dashboard')+'-mobile.png'});
+}
+writeFileSync('.design-review/live/mobile-audit.json',JSON.stringify(results,null,2));await browser.close();
