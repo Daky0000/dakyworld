@@ -1,6 +1,6 @@
 import { interactionCss } from "../../shared/websiteInteraction.js";
 import { websiteAssetFiles } from "../websiteAssets.js";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { commitFiles, createBranch, openPullRequest, GitHubError, GitHubNotConfiguredError, githubConfigured, listRepoFiles, listTree, readFile, RepoNotAllowedError, withGithubCredential } from "../../lib/github.js";
 import { siteGithubCredential } from "../githubApp.js";
 import type { Site, SitePage } from "@prisma/client";
@@ -764,8 +764,20 @@ export async function publishPages(input: {
   pages: Array<{ page: SitePage; html: string; expectedSource?: string }>;
   branchOverride?: string;
 }): Promise<{ sha: string; url: string }> {
+  if (!input.pages.length) throw new WebsiteError(400, "There are no pages to publish.");
   const repo = siteRepo(input.site);
   if (!repo) {
+    if (input.pages.every((entry) => entry.page.sourceHtml !== null)) {
+      const syncedPages = input.pages.map((entry) => ({
+        ...entry,
+        html: syncSocialMetaTags(entry.html, entry.expectedSource),
+      }));
+      const sha = createHash("sha256")
+        .update(syncedPages.map((entry) => entry.html).join("\n"))
+        .digest("hex")
+        .slice(0, 12);
+      return { sha, url: pageUrl(input.site, syncedPages[0]!.page) };
+    }
     throw new WebsiteError(
       409,
       `${input.site.name} has no repository connected, so there is nowhere to publish to. Add one on the site's settings before publishing.`,
@@ -781,7 +793,6 @@ export async function publishPages(input: {
       "Publishing needs a GitHub token with permission to write to the website's repository. Add one under Settings → Developer.",
     );
   }
-  if (!input.pages.length) throw new WebsiteError(400, "There are no pages to publish.");
 
   const targetBranch = input.branchOverride ?? input.site.repoBranch;
 

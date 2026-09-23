@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import type { Client, Demo, DemoStatus, Lead } from "../lib/types";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
@@ -75,6 +75,7 @@ function parseHtmlClientMetadata(html: string, fileName?: string) {
 
 export function Demos() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<DemoStatus | "">("");
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -83,6 +84,19 @@ export function Demos() {
   const [editingSlugId, setEditingSlugId] = useState<string | null>(null);
   const [slugDraft, setSlugDraft] = useState("");
   const [slugError, setSlugError] = useState<string | null>(null);
+  const [openingBuilderId, setOpeningBuilderId] = useState<string | null>(null);
+
+  const openInWebsiteBuilder = async (demo: Demo, mode: "visual" | "edit" = "visual") => {
+    try {
+      setOpeningBuilderId(demo.id);
+      const res = await api.post<{ pageId: string; siteId: string; editorUrl: string }>(`/demos/${demo.id}/open-editor`);
+      navigate(`/website/pages/${res.pageId}?demoId=${demo.id}&mode=${mode}`);
+    } catch (err) {
+      alert((err as Error).message || "Could not open Website Builder for this demo.");
+    } finally {
+      setOpeningBuilderId(null);
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ["demos", filter],
@@ -401,9 +415,32 @@ export function Demos() {
                     ))}
                   </select>
 
+                  <Button
+                    size="sm"
+                    disabled={openingBuilderId === demo.id}
+                    onClick={() => void openInWebsiteBuilder(demo, "visual")}
+                  >
+                    {openingBuilderId === demo.id ? "Opening Builder…" : "Edit in Website Builder"}
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={openingBuilderId === demo.id}
+                    onClick={() => void openInWebsiteBuilder(demo, "edit")}
+                  >
+                    Edit Form Fields
+                  </Button>
+
                   <a href={demo.url} target="_blank" rel="noreferrer">
                     <Button size="sm" variant="secondary">
                       Open Preview
+                    </Button>
+                  </a>
+
+                  <a href={`/api/demos/${demo.id}/download`} download={`${demo.slug}.html`}>
+                    <Button size="sm" variant="secondary">
+                      Download .html
                     </Button>
                   </a>
 
@@ -423,14 +460,8 @@ export function Demos() {
                       setDrawerOpen(true);
                     }}
                   >
-                    Update HTML
+                    Replace .html / Settings
                   </Button>
-
-                  <a href={`/api/demos/${demo.id}/download`} download={`${demo.slug}.html`}>
-                    <Button size="sm" variant="ghost">
-                      Download .html
-                    </Button>
-                  </a>
 
                   <span className="flex-1" />
 
@@ -460,6 +491,11 @@ export function Demos() {
           setDrawerOpen(false);
           setEditingDemo(null);
         }}
+        onOpenBuilder={(demo) => {
+          setDrawerOpen(false);
+          setEditingDemo(null);
+          void openInWebsiteBuilder(demo, "visual");
+        }}
         onShareEmail={(demo, attachHtml) => {
           setDrawerOpen(false);
           setEditingDemo(null);
@@ -481,12 +517,14 @@ function ImportDemoDrawer({
   editingDemo,
   baseUrl,
   onClose,
+  onOpenBuilder,
   onShareEmail,
 }: {
   open: boolean;
   editingDemo: Demo | null;
   baseUrl: string;
   onClose: () => void;
+  onOpenBuilder: (demo: Demo) => void;
   onShareEmail: (demo: Demo, attachHtml: boolean) => void;
 }) {
   const qc = useQueryClient();
@@ -556,6 +594,12 @@ function ImportDemoDrawer({
       }
       setIncludeBanner(Boolean(editingDemo.brief?.includeBanner));
       setNotes(editingDemo.brief?.notes ?? "");
+      void api
+        .get<{ html?: string }>(`/demos/${editingDemo.id}`)
+        .then((res) => {
+          if (res.html) setRawHtml(res.html);
+        })
+        .catch(() => undefined);
     } else {
       setBusinessName("");
       setTitle("");
@@ -696,10 +740,16 @@ function ImportDemoDrawer({
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
+              <Button onClick={() => onOpenBuilder(savedDemo)}>Edit in Website Builder</Button>
               <a href={savedDemo.url} target="_blank" rel="noreferrer">
                 <Button variant="secondary">Open Live Preview</Button>
               </a>
-              <Button onClick={() => onShareEmail(savedDemo, false)}>Send URL via Email</Button>
+              <a href={`/api/demos/${savedDemo.id}/download`} download={`${savedDemo.slug}.html`}>
+                <Button variant="secondary">Download .html</Button>
+              </a>
+              <Button variant="secondary" onClick={() => onShareEmail(savedDemo, false)}>
+                Send URL via Email
+              </Button>
               <Button variant="secondary" onClick={() => onShareEmail(savedDemo, true)}>
                 Attach .html File to Email
               </Button>

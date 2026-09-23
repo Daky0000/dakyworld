@@ -652,6 +652,7 @@ export function prepareImportedDemoHtml(
   rawHtml: string,
   options: {
     businessName: string;
+    title?: string;
     senderName: string;
     senderSite: string;
     includeBanner?: boolean;
@@ -663,6 +664,17 @@ export function prepareImportedDemoHtml(
 
   // Strip an existing injected bar if re-importing so we can apply `includeBanner` cleanly.
   html = html.replace(/<div id="dw-demo-bar"[\s\S]*?<\/div>\s*/i, "");
+
+  if (options.title && options.title.trim()) {
+    const safeTitle = options.title
+      .trim()
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    if (/<title[^>]*>[\s\S]*?<\/title>/i.test(html)) {
+      html = html.replace(/<title[^>]*>[\s\S]*?<\/title>/i, `<title>${safeTitle}</title>`);
+    }
+  }
 
   if (options.makeInert !== false) {
     const inert = makeFormsInert(html);
@@ -801,6 +813,7 @@ export async function importDemo(input: ImportDemoInput) {
   const includeBanner = input.includeBanner ?? true;
   const prepared = prepareImportedDemoHtml(rawHtml, {
     businessName,
+    title,
     senderName: profile.displayName,
     senderSite: profile.web ?? "dakyworld.com",
     includeBanner,
@@ -810,9 +823,11 @@ export async function importDemo(input: ImportDemoInput) {
   const recipientEmail = input.recipientEmail?.trim() || lead?.contactEmail || client?.email || null;
   const recipientName = input.recipientName?.trim() || lead?.contactName || client?.name || null;
 
+  const existingBrief = existing?.brief && typeof existing.brief === "object" ? (existing.brief as Record<string, unknown>) : {};
   const brief = {
+    ...existingBrief,
     imported: true,
-    filename: input.filename ?? null,
+    filename: input.filename ?? existingBrief.filename ?? null,
     headline: meta.headline,
     includeBanner,
     makeInert: input.makeInert ?? true,

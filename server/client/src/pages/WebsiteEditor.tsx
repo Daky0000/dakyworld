@@ -614,7 +614,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   }, [contextMenu]);
   const [zoom, setZoom] = useState(1);
   const [sectionId, setSectionId] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>("visual");
+  const demoIdFromUrl = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("demoId");
+  }, []);
+  const [mode, setMode] = useState<Mode>(() => {
+    if (typeof window === "undefined") return "visual";
+    const m = new URLSearchParams(window.location.search).get("mode");
+    return m === "edit" || m === "preview" || m === "visual" ? m : "visual";
+  });
   /** The field the person clicked in the preview. */
   const [pickedId, setPickedId] = useState<string | null>(null);
   useEffect(() => {
@@ -1389,6 +1397,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       syncHistoryButtons();
       setPreviewToken((token) => token + 1);
       void qc.invalidateQueries({ queryKey: ["website"] });
+      void qc.invalidateQueries({ queryKey: ["demos"] });
       // The commit lands at once; the site it is read back from does not. Until
       // Pages has rebuilt, the editor is showing the page as it was, which
       // looks exactly like a publish that did nothing. Keep looking.
@@ -1751,13 +1760,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         {/* Left zone: Back button + Page identity + Status pill */}
         <div className="flex min-w-0 items-center gap-2.5">
           <Link
-            to="/website/sites"
-            title="Back to all pages"
-            aria-label="All pages"
+            to={demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl) ? "/demos" : "/website/sites"}
+            title={demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl) ? "Back to Demos list" : "Back to all pages"}
+            aria-label="Back"
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
           >
             <IconArrowLeft size={14} />
-            <span>Pages</span>
+            <span>{demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl) ? "Demos" : "Pages"}</span>
           </Link>
 
           <div className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
@@ -2256,16 +2265,55 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             </div>
           </details>
 
+          {(demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) && (
+            <>
+              <a
+                href={site.publicUrl}
+                target="_blank"
+                rel="noreferrer"
+                title="Open the live public demo URL in a new tab"
+                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
+              >
+                <IconEye size={13} className="text-blue" />
+                <span className="hidden sm:inline">Live Demo</span>
+              </a>
+              {demoIdFromUrl && (
+                <a
+                  href={`/api/demos/${demoIdFromUrl}/download`}
+                  download={`${page.data.page.filePath || "demo.html"}`}
+                  title="Download updated .html file"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
+                >
+                  <IconDownload size={13} className="text-blue" />
+                  <span>Download .html</span>
+                </a>
+              )}
+            </>
+          )}
+
           {/* Primary Publish CTA */}
           {canPublish && (
             <Button
               variant="accent"
               size="sm"
               onClick={async () => {
+                const isDemoPage =
+                  Boolean(demoIdFromUrl) ||
+                  page.data.readFrom === "imported file" ||
+                  /\/demos\/[^/?#]+/i.test(site.publicUrl);
                 try {
                   if (dirty.current) await save.mutateAsync(latestEdits.current);
                   if (dirty.current) {
                     setFailure("Your latest edit is still saving. Review once it has saved.");
+                    return;
+                  }
+                  if (isDemoPage) {
+                    publish.mutate({
+                      revision: revision.current,
+                      sourceHash: "",
+                      mode: "direct",
+                      prTitle: "",
+                    } as unknown as WebsiteReview);
                     return;
                   }
                   setReviewOpen(true);
@@ -2273,16 +2321,25 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   /* The save error is displayed by its mutation. */
                 }
               }}
-              disabled={publish.isPending || save.isPending || changedCount === 0 || !site.repo}
+              disabled={
+                publish.isPending ||
+                save.isPending ||
+                (!(Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) &&
+                  (changedCount === 0 || !site.repo))
+              }
             >
               <span className="inline-flex items-center gap-1.5">
                 <IconUploadCloud size={14} />
                 <span>
                   {publish.isPending
                     ? "Publishing…"
-                    : changedCount > 0
-                      ? `Publish (${changedCount})`
-                      : "Publish"}
+                    : Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)
+                      ? changedCount > 0
+                        ? `Publish & Update Demo (${changedCount})`
+                        : "Publish & Update Demo"
+                      : changedCount > 0
+                        ? `Publish (${changedCount})`
+                        : "Publish"}
                 </span>
               </span>
             </Button>
@@ -2294,9 +2351,36 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         <div className="flex-none border-b border-line px-4 py-3">
           {published && (
             <div className="rounded-xl border border-line bg-white p-3 text-sm">
-              <p className="font-semibold text-ink">
-                Changes sent — version {published.version}, {published.changed} change{published.changed === 1 ? "" : "s"}.
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold text-ink">
+                  {Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)
+                    ? `Demo HTML updated (version ${published.version}) — refresh the live demo URL to see your new changes!`
+                    : `Changes sent — version ${published.version}, ${published.changed} change${published.changed === 1 ? "" : "s"}.`}
+                </p>
+                {(Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={site.publicUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 rounded-lg border border-blue/30 bg-blue/10 px-2.5 py-1 text-xs font-semibold text-blue hover:bg-blue/15"
+                    >
+                      <IconEye size={12} />
+                      <span>Open Live Demo</span>
+                    </a>
+                    {demoIdFromUrl && (
+                      <a
+                        href={`/api/demos/${demoIdFromUrl}/download`}
+                        download={`${page.data.page.filePath || "demo.html"}`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-line bg-sunken px-2.5 py-1 text-xs font-semibold text-ink hover:bg-line/50"
+                      >
+                        <IconDownload size={12} />
+                        <span>Download .html</span>
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
               {/* What went out, in words. A count on its own is not something
                   anybody can check, and this is the last moment before it is
                   only recoverable from the version list. */}

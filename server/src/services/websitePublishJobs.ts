@@ -101,17 +101,21 @@ export async function publishJobCommitted(input: {
   html: string;
   summary: FieldChangeSummary[];
 }): Promise<void> {
+  const isLocalHosted = !siteRepo(input.site);
+  const now = new Date();
   await prisma.publishJob.update({
     where: { id: input.id },
     data: {
-      state: "DEPLOYING",
+      state: isLocalHosted ? "COMPLETED" : "DEPLOYING",
       commitSha: input.commit.sha,
       commitUrl: input.commit.url,
       verifyUrl: pageUrl(input.site, input.page),
       verifyText: verificationText(input.summary),
       expectedHash: hash(input.html),
-      nextCheckAt: new Date(Date.now() + VERIFY_BACKOFF_MS[0]!),
-      attempts: 0,
+      nextCheckAt: isLocalHosted ? null : new Date(Date.now() + VERIFY_BACKOFF_MS[0]!),
+      verifiedAt: isLocalHosted ? now : undefined,
+      finishedAt: isLocalHosted ? now : undefined,
+      attempts: isLocalHosted ? 1 : 0,
     },
   });
 }

@@ -646,6 +646,9 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
 
     const saved = await prisma.sitePage.findUnique({ where: { id: page.id }, select: { draftSavedAt: true, draftRevision: true } });
 
+    const renderedDraftHtml = applyValues(editingSource(source.html, values), fieldValues(values)).html;
+    await syncDemoFromSitePage(site, page.id, renderedDraftHtml, false);
+
     res.json({
       savedAt: saved?.draftSavedAt ?? null,
       revision: body.ifRevision + 1,
@@ -662,7 +665,7 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
 
 websiteRouter.delete("/pages/:pageId/draft", async (req, res, next) => {
   try {
-    const { page } = await loadPage(req, req.params.pageId);
+    const { page, site } = await loadPage(req, req.params.pageId);
     const expected = req.query.ifRevision === undefined ? page.draftRevision : z.coerce.number().int().nonnegative().parse(req.query.ifRevision);
     const removed = await prisma.sitePage.updateMany({
       where: { id: page.id, draftRevision: expected },
@@ -672,6 +675,8 @@ websiteRouter.delete("/pages/:pageId/draft", async (req, res, next) => {
       data: { draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, draftRevision: { increment: 1 } },
     });
     if (!removed.count) throw new WebsiteError(409, "The draft changed before it could be discarded. Reopen it before discarding.");
+    const source = await pageSource(site, page);
+    await syncDemoFromSitePage(site, page.id, source.html, false);
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -694,6 +699,8 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
       if (!changed.count) throw new WebsiteError(409, "Another editor saved first. Nothing was moved or removed. Reload the page and try again.");
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "LAYOUT_EDIT", summary: `${body.kind} · ${page.title}`, actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id, detail: { pageId: page.id, fieldId: body.fieldId, targetId: body.targetId, revision: body.ifRevision + 1 } } });
     });
+    const renderedStructureHtml = applyValues(editingSource(source.html, result.values), fieldValues(result.values)).html;
+    await syncDemoFromSitePage(site, page.id, renderedStructureHtml, false);
     res.json({ revision: body.ifRevision + 1, selectedId: result.selectedId });
   } catch (error) { next(error); }
 });
@@ -792,6 +799,22 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       if (req.body?.ifRevision !== undefined && req.body.ifRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed after your review. Review it again before publishing.");
       const values = draftValues(page);
       if (Object.keys(values).length === 0) {
+        if (page.sourceHtml !== null && !siteRepo(site)) {
+          await syncDemoFromSitePage(site, page.id, page.sourceHtml, false);
+          const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
+          return {
+            version: last?.number ?? 1,
+            changed: 0,
+            summary: [],
+            commitSha: "local",
+            commitUrl: pageUrl(site, page),
+            url: pageUrl(site, page),
+            revision: page.draftRevision,
+            draftRetained: false,
+            publishJob: null,
+            pullRequest: null,
+          };
+        }
         // A page whose only pending change is a shared one is not a page with
         // nothing on it. Publishing it here would write this page and leave the
         // other six saying something else, so it is refused — and the refusal
@@ -939,6 +962,8 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
         // Someone saved during the network commit. Their draft must survive.
         await tx.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date(), sourceHtml: page.sourceHtml === null ? undefined : plan.html } });
       }
+
+      await syncDemoFromSitePage(site, page.id, plan.html, true);
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH", summary: `${isPR ? "Submitted PR for" : "Published"} ${page.title} · version ${version.number}`, actorName: author, actorId: req.dbUser?.id, detail: summary } });
 
       return {
@@ -1294,3 +1319,45 @@ websiteRouter.get("/overview", async (req, res, next) => {
     next(err);
   }
 });
+
+async function syncDemoFromSitePage(
+  site: { id: string; publicUrl: string },
+  pageId: string,
+  html: string,
+  incrementVersion: boolean,
+): Promise<void> {
+  try {
+    const slugMatch = site.publicUrl.match(/\/demos\/([^/?#]+)/i);
+    const slugFromUrl = slugMatch?.[1] ? decodeURIComponent(slugMatch[1]) : null;
+
+    let demo = slugFromUrl
+      ? await prisma.demo.findUnique({ where: { slug: slugFromUrl }, select: { id: true } })
+      : null;
+
+    if (!demo) {
+      const candidates = await prisma.demo.findMany({
+        where: {
+          OR: [
+            { brief: { path: ["sitePageId"], equals: pageId } },
+            { brief: { path: ["siteId"], equals: site.id } },
+          ],
+        },
+        select: { id: true },
+        take: 1,
+      });
+      demo = candidates[0] ?? null;
+    }
+
+    if (demo) {
+      await prisma.demo.update({
+        where: { id: demo.id },
+        data: {
+          html,
+          ...(incrementVersion ? { version: { increment: 1 } } : {}),
+        },
+      });
+    }
+  } catch {
+    /* Never block editor saves if demo synchronization encounters an unexpected error. */
+  }
+}

@@ -1,4 +1,5 @@
 import express, { Router } from "express";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { FileTypeError } from "../lib/fileType.js";
@@ -8,9 +9,11 @@ import {
   demoSlug,
   demoUrl,
   importDemo,
+  prepareImportedDemoHtml,
   recordImportedConcept,
   subjectFromLead,
 } from "../services/demoBuilder.js";
+import { applyValues, editingSource, fieldValues, type FieldValue } from "../services/website/index.js";
 import { appUrl } from "../services/emailSender.js";
 import { MAX_UPLOAD_BODY } from "../services/fileStore.js";
 import { companyProfile } from "../services/systemProfile.js";
@@ -55,15 +58,177 @@ interface DemoBriefMeta {
   filename?: string | null;
   headline?: string | null;
   includeBanner?: boolean;
+  makeInert?: boolean;
   clientId?: string | null;
   clientName?: string | null;
   recipientEmail?: string | null;
   recipientName?: string | null;
+  siteId?: string | null;
+  sitePageId?: string | null;
 }
 
 function readBriefMeta(brief: unknown): DemoBriefMeta {
   if (!brief || typeof brief !== "object") return {};
   return brief as DemoBriefMeta;
+}
+
+function readSitePageDraft(draft: unknown): Record<string, FieldValue> {
+  if (!draft || typeof draft !== "object" || Array.isArray(draft)) return {};
+  return draft as Record<string, FieldValue>;
+}
+
+async function ensureDemoSitePage(
+  demo: { id: string; slug: string; title: string; businessName: string; html: string; brief: unknown },
+  options: { overwriteSourceHtml?: boolean } = {},
+): Promise<{ siteId: string; pageId: string }> {
+  const base = await appUrl();
+  const publicUrl = demoUrl(demo.slug, base);
+  const meta = readBriefMeta(demo.brief);
+  const siteName = `${demo.businessName} (Demo)`;
+  const pageTitle = demo.title || demo.businessName;
+
+  if (meta.sitePageId) {
+    const existingPage = await prisma.sitePage.findUnique({
+      where: { id: meta.sitePageId },
+      include: { site: true },
+    });
+    if (existingPage) {
+      await prisma.site.update({
+        where: { id: existingPage.siteId },
+        data: { name: siteName, publicUrl },
+      });
+      await prisma.sitePage.update({
+        where: { id: existingPage.id },
+        data: {
+          title: pageTitle,
+          filePath: `${demo.slug}.html`,
+          ...(options.overwriteSourceHtml
+            ? {
+                sourceHtml: demo.html,
+                draft: Prisma.DbNull,
+                draftSavedAt: null,
+                draftRevision: { increment: 1 },
+              }
+            : existingPage.sourceHtml === null
+              ? { sourceHtml: demo.html }
+              : {}),
+        },
+      });
+      return { siteId: existingPage.siteId, pageId: existingPage.id };
+    }
+  }
+
+  let site = await prisma.site.findFirst({
+    where: { publicUrl },
+    include: { pages: true },
+  });
+
+  let pageId: string;
+  let siteId: string;
+
+  if (!site) {
+    const uniqueSiteSlug = `demo-${demo.slug}-${demo.id.slice(-6)}`.slice(0, 60);
+    const createdSite = await prisma.site.create({
+      data: {
+        name: siteName,
+        slug: uniqueSiteSlug,
+        publicUrl,
+        pages: {
+          create: {
+            path: "/",
+            filePath: `${demo.slug}.html`,
+            title: pageTitle,
+            sourceHtml: demo.html,
+          },
+        },
+      },
+      include: { pages: true },
+    });
+    siteId = createdSite.id;
+    pageId = createdSite.pages[0]!.id;
+  } else if (site.pages.length === 0) {
+    const createdPage = await prisma.sitePage.create({
+      data: {
+        siteId: site.id,
+        path: "/",
+        filePath: `${demo.slug}.html`,
+        title: pageTitle,
+        sourceHtml: demo.html,
+      },
+    });
+    siteId = site.id;
+    pageId = createdPage.id;
+  } else {
+    siteId = site.id;
+    pageId = site.pages[0]!.id;
+    if (options.overwriteSourceHtml) {
+      await prisma.sitePage.update({
+        where: { id: pageId },
+        data: {
+          title: pageTitle,
+          filePath: `${demo.slug}.html`,
+          sourceHtml: demo.html,
+          draft: Prisma.DbNull,
+          draftSavedAt: null,
+          draftRevision: { increment: 1 },
+        },
+      });
+    }
+  }
+
+  const nextBrief = { ...meta, siteId, sitePageId: pageId };
+  await prisma.demo.update({
+    where: { id: demo.id },
+    data: { brief: nextBrief as never },
+  });
+
+  return { siteId, pageId };
+}
+
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+let dakyworldSeedChecked = false;
+async function ensureDefaultDakyworldDemo(): Promise<void> {
+  if (dakyworldSeedChecked) return;
+  try {
+    const existing = await prisma.demo.findFirst({
+      where: {
+        OR: [{ slug: "dakyworld" }, { businessName: { equals: "Dakyworld", mode: "insensitive" } }],
+      },
+      select: { id: true, slug: true, title: true, businessName: true, html: true, brief: true },
+    });
+    if (existing) {
+      await ensureDemoSitePage(existing, { overwriteSourceHtml: false });
+      dakyworldSeedChecked = true;
+      return;
+    }
+
+    const candidates = [
+      path.resolve(process.cwd(), "docs", "dakyworld.html"),
+      path.resolve(process.cwd(), "server", "docs", "dakyworld.html"),
+    ];
+    let htmlContent: string | null = null;
+    for (const candidate of candidates) {
+      htmlContent = await readFile(candidate, "utf8").catch(() => null);
+      if (htmlContent) break;
+    }
+    if (htmlContent) {
+      const result = await importDemo({
+        html: htmlContent,
+        filename: "dakyworld.html",
+        businessName: "Dakyworld",
+        title: "Dakyworld® — Your IT Department, Without the Overhead",
+        slug: "dakyworld",
+        includeBanner: false,
+        makeInert: true,
+      });
+      await ensureDemoSitePage(result.demo, { overwriteSourceHtml: true });
+    }
+    dakyworldSeedChecked = true;
+  } catch {
+    /* Optional default seed — never fail the request if unavailable. */
+  }
 }
 
 const listQuery = z.object({
@@ -74,6 +239,7 @@ const listQuery = z.object({
 
 demosRouter.get("/", async (req, res, next) => {
   try {
+    await ensureDefaultDakyworldDemo();
     const query = listQuery.parse(req.query);
     const [demos, base] = await Promise.all([
       prisma.demo.findMany({
@@ -186,6 +352,36 @@ demosRouter.get("/:id/download", async (req, res, next) => {
   }
 });
 
+demosRouter.get("/:id/open-editor", async (req, res, next) => {
+  try {
+    const demo = await prisma.demo.findUnique({ where: { id: req.params.id } });
+    if (!demo) return res.status(404).json({ error: "No such demo" });
+    const editor = await ensureDemoSitePage(demo, { overwriteSourceHtml: false });
+    res.json({
+      pageId: editor.pageId,
+      siteId: editor.siteId,
+      editorUrl: `/website/pages/${editor.pageId}?demoId=${demo.id}&mode=edit`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+demosRouter.post("/:id/open-editor", async (req, res, next) => {
+  try {
+    const demo = await prisma.demo.findUnique({ where: { id: req.params.id } });
+    if (!demo) return res.status(404).json({ error: "No such demo" });
+    const editor = await ensureDemoSitePage(demo, { overwriteSourceHtml: false });
+    res.json({
+      pageId: editor.pageId,
+      siteId: editor.siteId,
+      editorUrl: `/website/pages/${editor.pageId}?demoId=${demo.id}&mode=edit`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const importInput = z.object({
   html: z.string().nullish(),
   dataBase64: z.string().nullish(),
@@ -213,7 +409,13 @@ demosRouter.post("/import", async (req, res, next) => {
       ...input,
       userId: req.dbUser?.id ?? null,
     });
-    res.status(201).json(result);
+    const editor = await ensureDemoSitePage(result.demo, { overwriteSourceHtml: true });
+    res.status(201).json({
+      ...result.demo,
+      siteId: editor.siteId,
+      sitePageId: editor.pageId,
+      notes: result.notes,
+    });
   } catch (err) {
     if (err instanceof DemoImportError || err instanceof FileTypeError) {
       return res.status(err.status).json({ error: err.message });
@@ -286,9 +488,12 @@ const updateInput = z.object({
   recipientEmail: z.string().max(200).nullish(),
   recipientName: z.string().max(200).nullish(),
   includeBanner: z.boolean().optional(),
+  makeFormsInert: z.boolean().optional(),
+  notes: z.string().max(1000).nullish(),
   html: z.string().nullish(),
   dataBase64: z.string().nullish(),
   filename: z.string().max(240).nullish(),
+  fileName: z.string().max(240).nullish(),
 });
 
 demosRouter.patch("/:id", async (req, res, next) => {
@@ -297,14 +502,14 @@ demosRouter.patch("/:id", async (req, res, next) => {
     const existing = await prisma.demo.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: "No such demo" });
 
-    // If new HTML was uploaded, run the full import update path.
+    // If new HTML was uploaded or pasted, run the full import update path.
     if ((input.html && input.html.trim()) || (input.dataBase64 && input.dataBase64.trim())) {
       const prevMeta = readBriefMeta(existing.brief);
       const updated = await importDemo({
         demoId: existing.id,
         html: input.html,
         dataBase64: input.dataBase64,
-        filename: input.filename,
+        filename: input.filename ?? input.fileName,
         businessName: input.businessName ?? existing.businessName,
         title: input.title ?? existing.title,
         slug: input.slug ?? existing.slug,
@@ -313,9 +518,15 @@ demosRouter.patch("/:id", async (req, res, next) => {
         recipientEmail: input.recipientEmail === undefined ? prevMeta.recipientEmail : input.recipientEmail,
         recipientName: input.recipientName === undefined ? prevMeta.recipientName : input.recipientName,
         includeBanner: input.includeBanner ?? prevMeta.includeBanner ?? true,
+        makeInert: input.makeFormsInert ?? prevMeta.makeInert ?? true,
         userId: req.dbUser?.id ?? null,
       });
-      return res.json(updated.demo);
+      const editor = await ensureDemoSitePage(updated.demo, { overwriteSourceHtml: true });
+      return res.json({
+        ...updated.demo,
+        siteId: editor.siteId,
+        sitePageId: editor.pageId,
+      });
     }
 
     let nextSlug: string | undefined;
@@ -331,12 +542,38 @@ demosRouter.patch("/:id", async (req, res, next) => {
     }
 
     const prevMeta = readBriefMeta(existing.brief);
+    const nextBusinessName = input.businessName ?? existing.businessName;
+    const nextTitle = input.title ?? existing.title;
+    const nextIncludeBanner = input.includeBanner ?? prevMeta.includeBanner ?? true;
+    const nextMakeInert = input.makeFormsInert ?? prevMeta.makeInert ?? true;
+
+    let nextHtml: string | undefined;
+    const metadataAffectsHtml =
+      input.businessName !== undefined ||
+      input.title !== undefined ||
+      input.includeBanner !== undefined ||
+      input.makeFormsInert !== undefined;
+
+    if (metadataAffectsHtml) {
+      const profile = await companyProfile();
+      const prepared = prepareImportedDemoHtml(existing.html, {
+        businessName: nextBusinessName,
+        title: nextTitle,
+        senderName: profile.displayName,
+        senderSite: profile.web ?? "dakyworld.com",
+        includeBanner: nextIncludeBanner,
+        makeInert: nextMakeInert,
+      });
+      nextHtml = prepared.html;
+    }
+
     const nextMeta: DemoBriefMeta = {
       ...prevMeta,
       ...(input.clientId !== undefined ? { clientId: input.clientId } : {}),
       ...(input.recipientEmail !== undefined ? { recipientEmail: input.recipientEmail } : {}),
       ...(input.recipientName !== undefined ? { recipientName: input.recipientName } : {}),
       ...(input.includeBanner !== undefined ? { includeBanner: input.includeBanner } : {}),
+      ...(input.makeFormsInert !== undefined ? { makeInert: input.makeFormsInert } : {}),
     };
 
     const demo = await prisma.demo.update({
@@ -345,6 +582,7 @@ demosRouter.patch("/:id", async (req, res, next) => {
         ...(input.title ? { title: input.title } : {}),
         ...(input.businessName ? { businessName: input.businessName } : {}),
         ...(nextSlug ? { slug: nextSlug } : {}),
+        ...(nextHtml ? { html: nextHtml, version: { increment: 1 } } : {}),
         ...(input.leadId !== undefined ? { leadId: input.leadId } : {}),
         ...(input.status ? { status: input.status, ...(input.status === "SENT" ? { sentAt: new Date() } : {}) } : {}),
         brief: nextMeta as never,
@@ -353,6 +591,8 @@ demosRouter.patch("/:id", async (req, res, next) => {
         lead: { select: { id: true, contactName: true, companyName: true, contactEmail: true, website: true, status: true } },
       },
     });
+
+    const editor = await ensureDemoSitePage(demo, { overwriteSourceHtml: Boolean(nextHtml) });
 
     if (demo.leadId && (demo.builtBy === "Imported HTML" || input.status === "READY" || input.status === "SENT")) {
       await recordImportedConcept(demo.leadId, demo, req.dbUser?.id ?? null);
@@ -367,6 +607,8 @@ demosRouter.patch("/:id", async (req, res, next) => {
 
     res.json({
       ...demo,
+      siteId: editor.siteId,
+      sitePageId: editor.pageId,
       url: demoUrl(demo.slug, await appUrl()),
       client,
       recipientEmail: nextMeta.recipientEmail ?? demo.lead?.contactEmail ?? client?.email ?? null,
@@ -430,6 +672,9 @@ const IMPORTED_CSP = [
 
 demoPagesRouter.get("/:slug", async (req, res, next) => {
   try {
+    if (req.params.slug.toLowerCase() === "dakyworld") {
+      await ensureDefaultDakyworldDemo();
+    }
     const demo = await prisma.demo.findUnique({ where: { slug: req.params.slug } });
     if (!demo || demo.status === "ARCHIVED") {
       const profile = await companyProfile();
@@ -444,7 +689,23 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       .update({ where: { id: demo.id }, data: { views: { increment: 1 }, lastViewedAt: new Date() } })
       .catch(() => undefined);
 
-    const isImported = demo.builtBy === "Imported HTML" || readBriefMeta(demo.brief).imported === true;
+    const meta = readBriefMeta(demo.brief);
+    const isImported = demo.builtBy === "Imported HTML" || meta.imported === true;
+
+    let renderedHtml = demo.html;
+    if (meta.sitePageId) {
+      const sitePage = await prisma.sitePage.findUnique({
+        where: { id: meta.sitePageId },
+        select: { sourceHtml: true, draft: true },
+      });
+      if (sitePage?.sourceHtml) {
+        const draft = readSitePageDraft(sitePage.draft);
+        renderedHtml =
+          Object.keys(draft).length > 0
+            ? applyValues(editingSource(sitePage.sourceHtml, draft), fieldValues(draft)).html
+            : sitePage.sourceHtml;
+      }
+    }
 
     res
       .status(200)
@@ -456,9 +717,11 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
         // A concept page for somebody else's business has no business in a
         // search index under their name.
         "X-Robots-Tag": "noindex, nofollow",
-        "Cache-Control": "no-store",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        Pragma: "no-cache",
+        Expires: "0",
       })
-      .send(demo.html);
+      .send(renderedHtml);
   } catch (err) {
     next(err);
   }
