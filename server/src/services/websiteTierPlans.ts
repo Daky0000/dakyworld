@@ -17,6 +17,7 @@ import {
 } from "./websiteEntitlement.js";
 import { priceFor, type PlanCurrency } from "./websitePricing.js";
 import { moveSubscriptionToPlan } from "../lib/paystack.js";
+import { editingLockedForNonPayment } from "./websiteDunning.js";
 
 /**
  * Website Builder Three-Tier Plan, Storage Quota, 3-Month Promo Pricing Reversion,
@@ -560,6 +561,17 @@ export async function recordImportUsed(req: Request): Promise<void> {
 export async function assertEditAllowance(req: Request, siteId?: string): Promise<void> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, usage } = status;
+
+  // Three declined renewals pause editing. The published website is untouched
+  // and stays online — see services/websiteDunning.ts for why that line is
+  // where it is.
+  const identity = await resolveEntitlement(req);
+  if (await editingLockedForNonPayment(identity.purchaseId)) {
+    throw new WebsiteError(
+      402,
+      "Editing is paused because the last three payment attempts were declined. Your website is still online and nothing has been deleted — update your card and editing comes back straight away.",
+    );
+  }
   if (usage.editsUsed >= plan.editsLimit) {
     throw new WebsiteError(
       403,

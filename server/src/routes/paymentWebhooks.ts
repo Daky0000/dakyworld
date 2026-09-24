@@ -2,6 +2,8 @@ import type { Request, Response } from "express";
 import { prisma } from "../lib/prisma.js";
 import { verifyPaystackSignature } from "../lib/paystack.js";
 import { settleFromProvider } from "../services/payments.js";
+import { recordFailedRenewal } from "../services/websiteCommerce.js";
+import { sendDunningNotice } from "../services/websiteDunning.js";
 
 /**
  * "Somebody paid."
@@ -56,7 +58,7 @@ export async function paystackWebhook(req: Request, res: Response) {
   const signature = req.headers["x-paystack-signature"] as string | undefined;
   const verified = await verifyPaystackSignature(raw, signature);
 
-  let payload: { event?: string; data?: { reference?: string } } = {};
+  let payload: { event?: string; data?: { reference?: string; subscription_code?: string; subscription?: { subscription_code?: string } } } = {};
   try {
     payload = JSON.parse(raw.toString("utf8")) as typeof payload;
   } catch {
@@ -71,6 +73,22 @@ export async function paystackWebhook(req: Request, res: Response) {
   // verification call against their API is not something to hold it open for.
   res.status(200).json({ received: true });
 
+  // A renewal that did not go through. Paystack sends this when it retries a
+  // subscription charge and the card refuses; without it a customer simply
+  // stops paying and nothing here ever knows, which is how a subscription
+  // business loses money quietly.
+  if (payload.event === "invoice.payment_failed" || payload.event === "subscription.not_renew") {
+    const subscriptionCode = payload.data?.subscription?.subscription_code ?? payload.data?.subscription_code;
+    if (subscriptionCode) {
+      try {
+        await noteFailedRenewal(subscriptionCode);
+      } catch (err) {
+        console.error("[webhooks] could not record the failed renewal:", (err as Error).message);
+      }
+    }
+    return;
+  }
+
   const reference = payload.data?.reference;
   if (payload.event !== "charge.success" || !reference) return;
 
@@ -80,6 +98,18 @@ export async function paystackWebhook(req: Request, res: Response) {
   } catch (err) {
     console.error("[webhooks] paystack settlement failed:", (err as Error).message);
   }
+}
+
+/** Finds the subscription the processor is talking about, and counts the miss. */
+async function noteFailedRenewal(subscriptionCode: string): Promise<void> {
+  const purchase = await prisma.websitePurchase.findFirst({
+    where: { providerSubscriptionCode: subscriptionCode },
+    select: { id: true, email: true, failedPaymentCount: true },
+  });
+  if (!purchase) return;
+  const updated = await recordFailedRenewal(purchase.id);
+  await sendDunningNotice(updated.id);
+  console.warn(`[webhooks] renewal failed for ${purchase.email} (attempt ${updated.failedPaymentCount})`);
 }
 
 /**

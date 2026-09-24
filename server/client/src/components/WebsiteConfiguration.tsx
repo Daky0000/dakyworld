@@ -7,6 +7,8 @@ import { Button, PageHeader } from "./ui";
 import { WebsitePresetSettings, WebsitePresetRollout } from "./WebsiteBrandPresets";
 import type { BrandPreset } from "../lib/websiteBrandPresets";
 import { ConnectWebsite } from "./ConnectWebsite";
+import { WebsiteHostingPanel } from "./WebsiteHostingPanel";
+import { WebsiteSubscriptionPanel } from "./WebsiteSubscriptionPanel";
 import { ConnectGithubApp } from "./ConnectGithubApp";
 import { ColorCodeInput } from "./InspectorControls";
 
@@ -136,6 +138,13 @@ export function WebsiteSettings() {
         <div className="flex items-center gap-4"><Button type="submit" disabled={!dirty || save.isPending || Boolean(paletteError || fontsError || presetError)}>{save.isPending ? "Saving…" : "Save settings"}</Button>{save.isSuccess && !dirty && <span role="status" className="text-sm text-muted">Settings saved.</span>}{save.error && <span role="alert" className="text-sm text-danger-text">{(save.error as Error).message}</span>}</div>
       </fieldset>
     </form>}
+    {/* Where the website is served, and what the customer is paying. Both are
+        questions people ask about their own site rather than about its design,
+        so they sit above the design system rather than being filed under it. */}
+    {id && <div className="mb-8 grid max-w-3xl gap-6">
+      <WebsiteHostingPanel siteId={id} />
+      <WebsiteSubscriptionPanel />
+    </div>}
     {id && config.data && <WebsitePresetRollout key={`${id}:${config.data.options.presets?.map(p => JSON.stringify(p)).join("")}`} siteId={id} presets={config.data.options.presets ?? []} disabled={dirty || save.isPending} />}
     {/* Beside the repository fields rather than inside the form: this is not a
         value somebody types and saves, it is a connection the customer makes. */}

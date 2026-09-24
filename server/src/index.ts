@@ -213,6 +213,27 @@ app.use((req, res, next) =>
 // Public: Railway's healthcheck runs before anyone has logged in.
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
+/**
+ * Readiness, for an uptime monitor to watch.
+ *
+ * `/api/health` answers as long as the process is alive, which is the wrong
+ * question: the process is alive in exactly the outage where the database has
+ * gone and every page is broken. This one asks the database a question and
+ * fails with a 503 when it cannot answer, so an external monitor pointed here
+ * finds out before a customer does. It says nothing about versions, hosts or
+ * configuration — it is a public URL.
+ */
+app.get("/api/ready", async (_req, res) => {
+  const started = Date.now();
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true, database: "up", ms: Date.now() - started });
+  } catch (error) {
+    console.error("[ready] database unreachable:", (error as Error).message);
+    res.status(503).json({ ok: false, database: "down", ms: Date.now() - started });
+  }
+});
+
 // Also public, and deliberately so: an unsubscribe link that needs a login is
 // not an unsubscribe link. Every cold email this app sends carries one.
 app.use("/api/emails", unsubscribeRouter);
