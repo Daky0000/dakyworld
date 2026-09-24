@@ -36,13 +36,13 @@ export function registerSubscriberSelfService(router: Router) {
               status: true,
               currency: true,
               monthlyPrice: true,
-              standardMonthlyPrice: true,
-              standardPriceAppliedAt: true,
+              standardRecurringPrice: true,
+              billingPriceUpdatedAt: true,
+              billingState: true,
+              billingCycle: true,
+              promoEndsAt: true,
               activatedAt: true,
               nextBillingAt: true,
-              cancelRequestedAt: true,
-              endsAt: true,
-              failedPaymentCount: true,
               invoice: { select: { invoiceNumber: true, status: true } },
             },
           })
@@ -55,9 +55,10 @@ export function registerSubscriberSelfService(router: Router) {
         /** What it would take to stop, said plainly rather than hidden. */
         cancellation: purchase
           ? {
-              cancellable: !purchase.cancelRequestedAt,
-              alreadyRequestedAt: purchase.cancelRequestedAt,
-              servesUntil: purchase.endsAt,
+              cancellable: purchase.status !== "CANCELLED" && purchase.billingState !== "CANCELLING",
+              alreadyCancelled: purchase.status === "CANCELLED",
+              // What they keep: the period Paystack last billed them to.
+              servesUntil: purchase.nextBillingAt,
             }
           : null,
       });
@@ -73,8 +74,8 @@ export function registerSubscriberSelfService(router: Router) {
       const cancelled = await cancelWebsiteSubscription({ purchaseId: entitlement.purchaseId, reason });
       res.json({
         ok: true,
-        servesUntil: cancelled.endsAt,
-        message: `Your subscription is cancelled. You keep the editor and your website stays online until ${cancelled.endsAt?.toISOString().slice(0, 10) ?? "the end of the paid period"}, and you will not be charged again.`,
+        servesUntil: cancelled.servesUntil,
+        message: `Your subscription is cancelled. You keep the editor and your website stays online until ${cancelled.servesUntil?.toISOString().slice(0, 10) ?? "the end of the paid period"}, and you will not be charged again.`,
       });
     }),
   );
@@ -159,7 +160,7 @@ export function registerSubscriberSelfService(router: Router) {
       const entitlement = await resolveEntitlement(req);
       if (entitlement.purchaseId) {
         const live = await prisma.websitePurchase.findFirst({
-          where: { id: entitlement.purchaseId, cancelRequestedAt: null, status: { in: ["ACTIVE", "READY"] } },
+          where: { id: entitlement.purchaseId, status: { in: ["ACTIVE", "READY"] } },
           select: { id: true },
         });
         if (live) {

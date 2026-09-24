@@ -16,6 +16,9 @@
   var closeBtn = document.getElementById('builderCloseBtn');
   var successCloseBtn = document.getElementById('builderSuccessClose');
 
+  var acceptedQuote = null;
+  var quoteSelection = '';
+  var submitting = false;
   var activeBillingCycle = 'monthly';
   var activePlanKey = 'website-builder';
   var lastScannedWebsiteUrl = '';
@@ -23,12 +26,13 @@
   var PLAN_META = {
     'website-builder': {
       title: 'Website Builder',
-      monthly: 300,
+      monthly: 3,
     },
     'website-care': {
       title: 'Website Care + Builder',
-      monthly: 750,
-    }
+      monthly: 10,
+    },
+    'managed-website': { title: 'Business Website', monthly: 25 }
   };
 
   function getPlanBaseMonthly(planKey) {
@@ -37,7 +41,7 @@
     if (slot) {
       var baseAttr = slot.getAttribute('data-base-monthly');
       if (baseAttr && !isNaN(parseFloat(baseAttr))) {
-        return { currency: 'GHS', monthly: parseFloat(baseAttr) };
+        return { currency: slot.getAttribute('data-currency') || 'USD', monthly: parseFloat(baseAttr) };
       }
       var raw = slot.textContent.trim();
       var m = raw.match(/([A-Z]{3})\s*([\d,]+(?:\.\d{2})?)/i);
@@ -46,7 +50,7 @@
       }
     }
     var fallback = PLAN_META[planKey] || PLAN_META['website-builder'];
-    return { currency: 'GHS', monthly: fallback.monthly };
+    return { currency: 'USD', monthly: fallback.monthly };
   }
 
   function updatePricingCardsDisplay() {
@@ -245,24 +249,30 @@
   // Handle post-purchase return from Paystack
   var searchParams = new URLSearchParams(window.location.search);
   if (searchParams.get('payment') === 'returned') {
-    if (successDialog && typeof successDialog.showModal === 'function') {
-      successDialog.showModal();
-    } else {
-      var priceSection = document.getElementById('price');
-      if (priceSection) {
-        var note = document.createElement('p');
-        note.className = 'builder-payment-return';
-        note.setAttribute('role', 'status');
-        note.textContent = '🎉 Payment received! Paystack returned you to Dakyworld. We are confirming your setup and will email your next steps.';
-        var wrap = priceSection.querySelector('.wrap') || priceSection;
-        wrap.insertBefore(note, wrap.firstChild);
-      }
+    var priceSection = document.getElementById('price');
+    var note = document.createElement('p');
+    note.className = 'builder-payment-return';
+    note.setAttribute('role', 'status');
+    note.textContent = 'Payment confirmation pending. Do not pay again while confirmation is pending.';
+    if (priceSection) priceSection.prepend(note);
+    var savedKey;
+    try { savedKey = sessionStorage.getItem('dakyworld.checkoutKey'); } catch (_) {}
+    var polls = 0;
+    function checkReturnedPayment() {
+      if (!savedKey) { note.textContent = 'Payment must be verified by Dakyworld. Contact support with your Paystack reference before paying again.'; return; }
+      fetch(API + '/website-payment-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checkoutKey: savedKey }), signal: AbortSignal.timeout(15000) })
+        .then(function (response) { if (!response.ok) throw new Error('pending'); return response.json(); })
+        .then(function (body) {
+          if (body.paid) {
+            note.textContent = 'Payment verified. Website setup is pending; subscription status will be confirmed separately.';
+            return;
+          }
+          if (++polls < 12) setTimeout(checkReturnedPayment, 5000);
+          else note.textContent = 'Payment is still pending. Contact support before paying again if your card was debited.';
+        }).catch(function () { note.textContent = 'Confirmation is temporarily unavailable. Contact support before paying again if your card was debited.'; });
     }
-    // Clean URL query parameter without refreshing
-    if (window.history && window.history.replaceState) {
-      var cleanUrl = window.location.pathname + (window.location.hash || '');
-      window.history.replaceState(null, '', cleanUrl);
-    }
+    checkReturnedPayment();
+    if (window.history && window.history.replaceState) window.history.replaceState(null, '', window.location.pathname + (window.location.hash || ''));
   }
 
   if (successCloseBtn && successDialog) {
@@ -358,8 +368,9 @@
 
   // Form submission handler
   if (form) {
-    form.addEventListener('submit', function (event) {
+    form.addEventListener('submit', async function (event) {
       event.preventDefault();
+      if (submitting) return;
 
       // Normalize website URL if user typed 'example.com' without protocol
       var urlInput = form.elements.websiteUrl;
@@ -398,6 +409,44 @@
         payload[key] = typeof value === 'string' ? value.trim() : value;
       });
 
+      var selection = payload.productKey + ':' + payload.billingCycle;
+      var consent = form.elements.recurringConsent;
+      if (!acceptedQuote || quoteSelection !== selection) {
+        submitting = true;
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+          var quoteResponse = await fetch(API + '/website-payment-quote?productKey=' + encodeURIComponent(payload.productKey) + '&billingCycle=' + encodeURIComponent(payload.billingCycle), { signal: AbortSignal.timeout(15000) });
+          var quoteBody = await quoteResponse.json();
+          if (!quoteResponse.ok) throw new Error(quoteBody.error || 'Could not load the payment quote.');
+          acceptedQuote = quoteBody;
+          var quoteAmount = document.getElementById("builderBtnAmount");
+          if (quoteAmount) quoteAmount.textContent = "GHS " + quoteBody.upfront.toFixed(2);
+          quoteSelection = selection;
+          if (consent) consent.checked = false;
+          var terms = document.getElementById('builderBillingTerms');
+          var renewal = quoteBody.billingCycle === 'annual'
+            ? 'Then GHS ' + quoteBody.standard.toFixed(2) + ' every year.'
+            : 'GHS ' + quoteBody.recurring.toFixed(2) + ' per month for the first 3 months, then GHS ' + quoteBody.standard.toFixed(2) + ' per month.';
+          if (terms) terms.textContent = 'Pay GHS ' + quoteBody.upfront.toFixed(2) + ' now. ' + renewal + ' USD 1 = GHS ' + quoteBody.usdToGhs + '. Your card issuer may apply conversion fees. Recurring billing uses a reusable card. Cancel through your Paystack subscription email or contact support.';
+          setStatus('Review the GHS price below, accept recurring billing, then continue to Paystack.', 'info');
+        } catch (error) { setStatus(error.message || 'Could not load the payment quote.', 'error'); }
+        submitting = false;
+        if (submitBtn) submitBtn.disabled = false;
+        return;
+      }
+      if (!consent || !consent.checked) { setStatus('Accept the displayed recurring billing terms to continue.', 'error'); return; }
+      payload.recurringConsent = true;
+      payload.quoteId = acceptedQuote.quoteId;
+      var details = JSON.stringify(payload);
+      try {
+        if (sessionStorage.getItem('dakyworld.checkoutDetails') !== details) {
+          sessionStorage.setItem('dakyworld.checkoutKey', crypto.randomUUID());
+          sessionStorage.setItem('dakyworld.checkoutDetails', details);
+        }
+        payload.checkoutKey = sessionStorage.getItem('dakyworld.checkoutKey');
+      } catch (_) { setStatus('Allow session storage to keep payment retries safe, then try again.', 'error'); return; }
+      submitting = true;
+
       if (submitBtn) {
         submitBtn.disabled = true;
         submitBtn.classList.add('loading');
@@ -416,7 +465,8 @@
       fetch(API + '/website-purchases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45000)
       })
         .then(function (response) {
           clearTimeout(progressTimer);
@@ -429,7 +479,8 @@
           });
         })
         .then(function (body) {
-          if (body.paymentUrl) {
+          var paymentUrl = new URL(body.paymentUrl);
+          if (paymentUrl.protocol === 'https:' && paymentUrl.hostname === 'checkout.paystack.com' && !paymentUrl.username && !paymentUrl.password) {
             setStatus('Redirecting to Paystack secure checkout…', 'info');
             window.location.assign(body.paymentUrl);
           } else {
@@ -439,6 +490,9 @@
         .catch(function (error) {
           clearTimeout(progressTimer);
           clearTimeout(redirectTimer);
+          submitting = false;
+          acceptedQuote = null;
+          if (consent) consent.checked = false;
           var msg = error.message || 'An unexpected error occurred.';
           var unavailable = /unauthor|not found|answered 404|answered 401|offline|fetch/i.test(msg);
           if (unavailable) {

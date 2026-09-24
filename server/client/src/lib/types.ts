@@ -1019,6 +1019,7 @@ export interface InvoiceLineItem {
 }
 
 export interface Invoice {
+  paymentUrl?: string | null;
   id: string;
   invoiceNumber: string;
   currency: string;

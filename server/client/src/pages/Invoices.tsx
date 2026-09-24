@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import type { Invoice } from "../lib/types";
 import { Badge, Button, Card, CopyButton, EmptyState, Loading, Money, PageHeader, StatGrid, StatTile, Table, Thead, Th, Tr, Td } from "../components/ui";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
@@ -34,6 +34,21 @@ export function Invoices() {
     mutationFn: (id: string) => api.post(`/invoices/${id}/send`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
   });
+
+  const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
+  const createPayment = useMutation({
+    mutationFn: (id: string) => api.post<{ url: string }>(`/invoices/${id}/create-payment-link`, { provider: "paystack" }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["invoices"] }); setPaymentNotice("Paystack checkout is ready. Open the payment link on the invoice."); },
+  });
+  const checkPayment = useMutation({
+    mutationFn: (id: string) => api.post<{ paid: boolean }>(`/invoices/${id}/check-payment`),
+    onSuccess: ({ paid }) => { qc.invalidateQueries({ queryKey: ["invoices"] }); setPaymentNotice(paid ? "Payment verified." : "Payment is still pending. Do not pay again if your card was debited."); },
+  });
+  const paymentError = createPayment.error || checkPayment.error || markPaid.error;
+  const paymentActions = (inv: Invoice) => inv.status !== "PAID" && <>
+    {inv.paymentUrl ? <a href={inv.paymentUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">Open payment</Button></a> : <Button size="sm" variant="secondary" disabled={createPayment.isPending || inv.currency !== "GHS"} onClick={() => createPayment.mutate(inv.id)}>Create Paystack checkout</Button>}
+    <Button size="sm" variant="secondary" disabled={checkPayment.isPending} onClick={() => checkPayment.mutate(inv.id)}>Check payment</Button>
+  </>;
 
   const allInvoices = invoices ?? [];
 
@@ -77,6 +92,8 @@ export function Invoices() {
         subtitle="Generate invoices, track receivables, send reminders, and reconcile payments across clients."
       />
 
+      {paymentError && <p role="alert" className="text-sm text-danger-text">{paymentError instanceof ApiError ? paymentError.message : "Payment could not be checked. Try again later."}</p>}
+      {paymentNotice && <p role="status" className="text-sm text-muted">{paymentNotice}</p>}
       {/* Metrics Seam Grid */}
       <StatGrid columns={4}>
         <StatTile
@@ -197,6 +214,7 @@ export function Invoices() {
                   >
                     Email
                   </Button>
+                  {paymentActions(inv)}
                   {inv.status === "DRAFT" && (
                     <Button variant="secondary" size="sm" onClick={() => send.mutate(inv.id)}>
                       Mark sent
@@ -277,7 +295,8 @@ export function Invoices() {
                         >
                           Email
                         </Button>
-                        {inv.status === "DRAFT" && (
+                        {paymentActions(inv)}
+                  {inv.status === "DRAFT" && (
                           <Button variant="secondary" size="sm" onClick={() => send.mutate(inv.id)}>
                             Mark sent
                           </Button>

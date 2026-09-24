@@ -21,15 +21,14 @@ type Subscription = {
     status: string;
     currency: string;
     monthlyPrice: string;
-    standardMonthlyPrice: string | null;
-    standardPriceAppliedAt: string | null;
+    standardRecurringPrice: string | null;
+    billingPriceUpdatedAt: string | null;
+    billingState: string;
     activatedAt: string | null;
     nextBillingAt: string | null;
-    cancelRequestedAt: string | null;
-    endsAt: string | null;
-    failedPaymentCount: number;
+    promoEndsAt: string | null;
   } | null;
-  cancellation: { cancellable: boolean; alreadyRequestedAt: string | null; servesUntil: string | null } | null;
+  cancellation: { cancellable: boolean; alreadyCancelled: boolean; servesUntil: string | null } | null;
 };
 
 const money = (amount: string, currency: string) =>
@@ -82,29 +81,29 @@ export function WebsiteSubscriptionPanel() {
         <h2 className="font-display text-lg font-medium text-ink">Your plan</h2>
         <p className="mt-1 text-sm text-muted">
           {money(row.monthlyPrice, row.currency)} a month
-          {row.standardMonthlyPrice && !row.standardPriceAppliedAt && (
-            <> · goes to {money(row.standardMonthlyPrice, row.currency)} when the introductory period ends</>
+          {row.standardRecurringPrice && !row.billingPriceUpdatedAt && (
+            <> · goes to {money(row.standardRecurringPrice, row.currency)} when the introductory period ends</>
           )}
         </p>
       </div>
 
       <div className="space-y-1 text-sm text-muted">
         {row.activatedAt && <p>Started {day(row.activatedAt)}.</p>}
-        {row.nextBillingAt && !row.cancelRequestedAt && <p>Next payment {day(row.nextBillingAt)}.</p>}
-        {row.failedPaymentCount > 0 && (
+        {row.nextBillingAt && row.status !== "CANCELLED" && <p>Next payment {day(row.nextBillingAt)}.</p>}
+        {row.billingState === "PAST_DUE" && (
           <Notice tone="warn">
-            {row.failedPaymentCount} payment attempt{row.failedPaymentCount === 1 ? " has" : "s have"} been declined.
-            Your website is still online. After three, editing pauses until a payment goes through.
+            Your last payment was declined. Your website is still online and stays online. If it is not paid within two
+            weeks, editing pauses until a payment goes through.
           </Notice>
         )}
       </div>
 
       {done && <Notice tone="positive">{done}</Notice>}
 
-      {row.cancelRequestedAt ? (
+      {row.status === "CANCELLED" ? (
         <Notice>
-          Cancelled on {day(row.cancelRequestedAt)}. You will not be charged again, and your website stays online until{" "}
-          {day(row.endsAt) ?? "the end of the paid period"}.
+          Cancelled. You will not be charged again, and your website stays online until{" "}
+          {day(row.nextBillingAt) ?? "the end of the paid period"}.
         </Notice>
       ) : confirming ? (
         <div className="space-y-3 rounded-xl border border-line p-4">

@@ -95,7 +95,7 @@ export function ConnectWebsite() {
     setHelpNotes("");
   }
 
-  const price = assistance.data?.display ?? "$10";
+  const price = assistance.data?.display ?? "GHS 120";
 
   return (
     <>

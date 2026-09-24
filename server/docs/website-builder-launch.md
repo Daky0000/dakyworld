@@ -32,13 +32,22 @@ custom domain you add to the service. Adding it is currently manual: when a
 customer verifies a domain, add it in the Railway dashboard. Automating that
 needs the Railway API and is not built.
 
-### 2. Paystack must be able to take both currencies
+### 2. Set the merchant exchange rate
 
-Ghana is billed in GHS, everywhere else in USD. A Paystack account that is not
-enabled for USD will fail at checkout for every customer outside Ghana, and the
-failure will look like a bug in the product. Confirm with Paystack support
-before advertising outside Ghana, or restrict sales to GHS until they do.
+Everything is charged in cedis. The catalogue holds dollar prices and
+`PAYSTACK_USD_GHS_RATE` converts them at checkout — it defaults to 12, and it
+is the number the customer is billed on, so set it deliberately on the Railway
+service rather than leaving it to a default.
 
+One settlement currency is not a limitation here, it is what makes the billing
+safe: `paystackEvents.ts` compares the amount Paystack reports against the
+amount it expects before it accepts a subscription state, and that comparison
+is impossible across two currencies. A customer's accepted GHS prices are
+fixed on their purchase, so a later rate change never re-prices somebody who
+has already bought.
+
+An earlier pass billed Ghana in cedis and everyone else in dollars. That was
+reversed on 24 September 2026 in favour of the above.
 ### 3. Email must be configured
 
 Every self-serve flow — the first password after a purchase, a forgotten
@@ -56,15 +65,19 @@ watching that URL will tell you before a customer does.
 
 ## Decisions taken that you may want to change
 
-**The dollar prices are a placeholder.** The tiers were written as $3/$10/$25
-while the site advertised GHS 300 — about $25 — for the same product, so
-everybody outside Ghana would have paid roughly an eighth of the Ghanaian
-price. The dollar column is now set near parity (\$25/\$75/\$195 promotional).
-Whether that is what this is worth in Lagos or London is a commercial judgement
-that has not been made; `src/services/websitePricing.ts` is the one file to
-change.
+**The prices are $25 / $75 / $195 promotional, $40 / $120 / $320 standard**,
+held in dollars in the catalogue and charged in cedis at the merchant rate —
+GHS 300, 900 and 2,340 at a rate of 12, which keeps the GHS 300 the site has
+always advertised. They were briefly $3 / $10 / $25, which at the same rate
+would have been GHS 36 for a product advertised at GHS 300.
 
-**Three declined payments pause editing, and never take a site offline.** A
+**Watch the pair.** The promotional price comes from the catalogue and the
+standard price from the tier table. When those two moved currency separately,
+the standard charge came out below the promotional one — a customer's bill
+would have *fallen* after their introductory period. `checks/products.ts`
+asserts the relationship now.
+
+**Two weeks past due pauses editing, and never takes a site offline.** A
 published website keeps being served whatever happens to the card. What a
 customer loses is the ability to change it. Taking a business's website off the
 internet over an expired card is the most expensive mistake available here.
@@ -94,7 +107,9 @@ you want it.
 | Concern | File |
 | --- | --- |
 | Who is entitled to what | `src/services/websiteEntitlement.ts` |
-| Prices, both currencies | `src/services/websitePricing.ts` |
+| Prices for the screens | `src/services/websitePricing.ts` |
+| The price a customer is actually charged | `src/services/paymentQuote.ts` |
+| Billing state, reconciliation, price rises | `src/services/paystackEvents.ts` |
 | Tier features and quotas | `src/services/websiteTierPlans.ts` |
 | Buying, cancelling, dunning counters | `src/services/websiteCommerce.ts` |
 | Declined payments and what they do | `src/services/websiteDunning.ts` |

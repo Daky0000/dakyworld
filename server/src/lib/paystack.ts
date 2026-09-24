@@ -23,7 +23,8 @@ import { SETTING, getSetting } from "./settings.js";
  * `fromMinor` here rather than at the call sites.
  */
 
-const BASE = process.env.PAYSTACK_BASE_URL ?? "https://api.paystack.co";
+// Never send merchant credentials to a configurable host or follow redirects.
+const BASE = "https://api.paystack.co";
 
 export class PaystackError extends Error {
   constructor(message: string, readonly status = 502) {
@@ -44,7 +45,11 @@ async function secretKey(): Promise<string> {
 
 /** GHS 45.50 → 4550. Paystack works entirely in the minor unit. */
 export function toMinor(amount: number): number {
-  return Math.round(amount * 100);
+  const minor = Math.round(amount * 100);
+  if (!Number.isFinite(amount) || !Number.isSafeInteger(minor) || minor <= 0 || Math.abs(amount * 100 - minor) > 0.00001) {
+    throw new PaystackError("Enter a positive amount with at most two decimal places.", 400);
+  }
+  return minor;
 }
 
 /** 4550 → 45.50, for anything read back off Paystack. */
@@ -64,6 +69,8 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
   try {
     response = await fetch(`${BASE}${path}`, {
       method: init.method ?? "GET",
+      signal: AbortSignal.timeout(12_000),
+      redirect: "error",
       headers: {
         authorization: `Bearer ${key}`,
         "content-type": "application/json",
@@ -71,10 +78,11 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
   } catch (err) {
-    throw new PaystackError(`Could not reach Paystack: ${(err as Error).message}`);
+    throw new PaystackError("Paystack could not be reached. Payment status may be pending; check before trying again.", 503);
   }
 
-  const text = await response.text();
+  let text: string;
+  try { text = await response.text(); } catch { throw new PaystackError("Paystack response timed out. Check payment status before retrying.", 503); }
   let payload: PaystackEnvelope<T> | null = null;
   try {
     payload = JSON.parse(text) as PaystackEnvelope<T>;
@@ -85,8 +93,10 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
     throw new PaystackError(`Paystack answered ${response.status} with something that wasn't JSON.`);
   }
 
-  if (!response.ok || !payload.status) {
-    throw new PaystackError(payload.message || `Paystack refused that (${response.status}).`, response.status === 401 ? 401 : 502);
+  if (!response.ok || !payload || payload.status !== true) {
+    if (response.status === 401 || response.status === 403) throw new PaystackError("Paystack credentials or payment permissions need attention. Contact support.", 503);
+    if (response.status === 429) throw new PaystackError("Paystack is busy. Wait before checking the payment again.", 503);
+    throw new PaystackError("Paystack could not complete this request. Check payment status before retrying; contact support if it persists.", 502);
   }
   return payload.data;
 }
@@ -99,16 +109,9 @@ export interface PaystackLink {
   accessCode: string;
 }
 
-/**
- * Opens a transaction and returns the link to pay it.
- *
- * `reference` is ours to choose and is what ties a webhook back to an invoice,
- * so it carries the invoice number. Paystack requires it to be unique across
- * the account for ever, which is why the timestamp is on the end: a second
- * attempt at the same invoice — after the first link expired, or was abandoned
- * — is a second transaction, and re-using the reference is rejected rather
- * than replacing anything.
- */
+/** Opens hosted checkout for a reference already durably claimed by Dakyworld.
+ * Paystack rejects a reused reference; callers must never issue a new reference
+ * merely because initialization timed out. */
 export async function createPaymentLink(input: {
   email: string;
   amount: number;
@@ -116,7 +119,11 @@ export async function createPaymentLink(input: {
   reference: string;
   callbackUrl?: string;
   metadata?: Record<string, unknown>;
+  recurring?: boolean;
 }): Promise<PaystackLink> {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) throw new PaystackError("A valid billing email is required.", 400);
+  if (!/^[A-Za-z0-9.=\-]{1,100}$/.test(input.reference)) throw new PaystackError("Invalid payment reference.", 400);
+  if (input.callbackUrl && new URL(input.callbackUrl).protocol !== "https:" && process.env.NODE_ENV === "production") throw new PaystackError("Payment return URLs must use HTTPS.", 400);
   const data = await call<{ authorization_url: string; access_code: string; reference: string }>("/transaction/initialize", {
     method: "POST",
     body: {
@@ -126,9 +133,18 @@ export async function createPaymentLink(input: {
       reference: input.reference,
       callback_url: input.callbackUrl,
       metadata: input.metadata ?? {},
+      ...(input.recurring ? { channels: ["card"] } : {}),
     },
   });
+  if (data?.reference !== input.reference || !isPaystackUrl(data.authorization_url) || typeof data.access_code !== "string") throw new PaystackError("Paystack returned an invalid checkout. Contact support.");
   return { url: data.authorization_url, reference: data.reference, accessCode: data.access_code };
+}
+
+export function isPaystackUrl(value: unknown): value is string {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === "https:" && !url.username && !url.password && !url.port && ["checkout.paystack.com", "paystack.com"].includes(url.hostname);
+  } catch { return false; }
 }
 
 export interface PaystackStatus {
@@ -141,6 +157,7 @@ export interface PaystackStatus {
   paidAt: Date | null;
   customerEmail: string | null;
   authorizationCode: string | null;
+  domain: string;
 }
 
 export async function verifyTransaction(reference: string): Promise<PaystackStatus> {
@@ -152,71 +169,42 @@ export async function verifyTransaction(reference: string): Promise<PaystackStat
     channel: string | null;
     paid_at: string | null;
     customer?: { email?: string };
-    authorization?: { authorization_code?: string };
+    authorization?: { authorization_code?: string; reusable?: boolean; channel?: string };
+    domain: string;
   }>(`/transaction/verify/${encodeURIComponent(reference)}`);
 
+  if (data?.reference !== reference || !Number.isSafeInteger(data.amount) || data.amount < 0 || typeof data.currency !== "string") throw new PaystackError("Paystack returned an invalid verification response.");
+  const expectedDomain = (await secretKey()).startsWith("sk_live_") ? "live" : "test";
+  if (data.domain !== expectedDomain) throw new PaystackError("Payment mode does not match the configured Paystack account.", 409);
   return {
+    domain: data.domain,
     reference: data.reference,
     paid: data.status === "success",
     amount: fromMinor(data.amount),
     currency: data.currency,
     channel: data.channel ?? null,
-    paidAt: data.paid_at ? new Date(data.paid_at) : null,
+    paidAt: data.paid_at && Number.isFinite(Date.parse(data.paid_at)) ? new Date(data.paid_at) : null,
     customerEmail: data.customer?.email ?? null,
-    authorizationCode: data.authorization?.authorization_code ?? null,
+    authorizationCode: data.authorization?.reusable === true && data.authorization.channel === "card" ? data.authorization.authorization_code ?? null : null,
   };
 }
 
-export async function createSubscriptionPlan(input: { name: string; amount: number; currency: string }) {
-  const data = await call<{ plan_code: string }>("/plan", { method: "POST", body: { name: input.name, amount: toMinor(input.amount), interval: "monthly", currency: input.currency } });
+export async function createSubscriptionPlan(input: { name: string; amount: number; currency: string; interval?: "monthly" | "annually" }) {
+  const data = await call<{ plan_code: string }>("/plan", { method: "POST", body: { name: input.name, amount: toMinor(input.amount), interval: input.interval ?? "monthly", currency: input.currency } });
+  if (!data?.plan_code?.startsWith("PLN_")) throw new PaystackError("Paystack returned an invalid plan.");
   return data.plan_code;
 }
 
-/**
- * Moves a subscription onto a new price.
- *
- * Paystack's plan amount is fixed once customers are on it, so raising a price
- * means a second plan and moving the subscriber across: the old subscription is
- * disabled and a new one is created against the new plan, using the card
- * authorisation the customer has already given. Doing it any other way — only
- * writing the new number into our own database — leaves the processor charging
- * the old amount forever, which is exactly the fault this function exists for.
- *
- * `emailToken` is required to disable a subscription and comes back when it is
- * fetched, so the fetch is part of the operation rather than a caller's job.
- */
-export async function moveSubscriptionToPlan(input: {
-  subscriptionCode: string;
-  email: string;
-  authorizationCode: string;
-  newPlanName: string;
-  newAmount: number;
-  currency: string;
-}): Promise<{ planCode: string; subscriptionCode: string; nextPaymentAt: Date | null }> {
-  const existing = await call<{ email_token: string }>(`/subscription/${encodeURIComponent(input.subscriptionCode)}`, { method: "GET" });
-  await call("/subscription/disable", {
-    method: "POST",
-    body: { code: input.subscriptionCode, token: existing.email_token },
-  });
-  const planCode = await createSubscriptionPlan({ name: input.newPlanName, amount: input.newAmount, currency: input.currency });
-  const created = await createSubscription({ email: input.email, planCode, authorizationCode: input.authorizationCode });
-  return { planCode, subscriptionCode: created.code, nextPaymentAt: created.nextPaymentAt };
-}
-
-/** Ends a subscription at the processor. The customer keeps what they paid for. */
-export async function cancelSubscription(subscriptionCode: string): Promise<void> {
-  const existing = await call<{ email_token: string }>(`/subscription/${encodeURIComponent(subscriptionCode)}`, { method: "GET" });
-  await call("/subscription/disable", { method: "POST", body: { code: subscriptionCode, token: existing.email_token } });
-}
-
-export async function createSubscription(input: { email: string; planCode: string; authorizationCode: string }) {
-  const data = await call<{ subscription_code: string; next_payment_date?: string }>("/subscription", { method: "POST", body: { customer: input.email, plan: input.planCode, authorization: input.authorizationCode } });
+export async function createSubscription(input: { email: string; planCode: string; authorizationCode: string; startDate: Date }) {
+  const data = await call<{ subscription_code: string; next_payment_date?: string }>("/subscription", { method: "POST", body: { customer: input.email, plan: input.planCode, authorization: input.authorizationCode, start_date: input.startDate.toISOString() } });
+  if (!data?.subscription_code?.startsWith("SUB_")) throw new PaystackError("Paystack returned an invalid subscription. Reconcile before retrying.");
   return { code: data.subscription_code, nextPaymentAt: data.next_payment_date ? new Date(data.next_payment_date) : null };
 }
 
 /** Confirms a key works, and says which mode it is in, before it is stored. */
 export async function verifyPaystackKey(key: string): Promise<{ livemode: boolean; business: string | null }> {
-  const response = await fetch(`${BASE}/balance`, { headers: { authorization: `Bearer ${key}` } });
+  if (!/^sk_(test|live)_[A-Za-z0-9]+$/.test(key)) throw new PaystackError("Enter a valid Paystack secret key.", 400);
+  const response = await fetch(`${BASE}/balance`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(12_000), redirect: "error" });
   if (response.status === 401) throw new PaystackError("Paystack rejected that key.", 401);
   if (!response.ok) throw new PaystackError(`Paystack answered ${response.status}.`);
   const payload = (await response.json()) as PaystackEnvelope<Array<{ currency: string }>>;
@@ -238,11 +226,44 @@ export async function verifyPaystackKey(key: string): Promise<{ livemode: boolea
  * read as a bug rather than as a rejected forgery.
  */
 export async function verifyPaystackSignature(rawBody: Buffer, signature: string | undefined): Promise<boolean> {
-  if (!signature) return false;
+  if (typeof signature !== "string" || !/^[a-f0-9]{128}$/i.test(signature)) return false;
   const key = await getSetting(SETTING.PAYSTACK_SECRET_KEY);
   if (!key) return false;
 
   const expected = crypto.createHmac("sha512", key).update(rawBody).digest("hex");
   if (expected.length !== signature.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"));
+}
+
+export interface PaystackSubscription {
+  domain: string;
+  subscription_code: string;
+  status: string;
+  email_token: string;
+  next_payment_date: string | null;
+  customer: { email: string };
+  plan: { plan_code: string; amount: number; currency: string; interval: string };
+}
+
+export async function fetchSubscription(code: string): Promise<PaystackSubscription> {
+  const data = await call<PaystackSubscription>(`/subscription/${encodeURIComponent(code)}`);
+  if (data?.subscription_code !== code || !data.customer?.email || !data.plan?.plan_code) throw new PaystackError("Invalid subscription response.");
+  if (data.domain !== ((await secretKey()).startsWith("sk_live_") ? "live" : "test")) throw new PaystackError("Subscription payment mode mismatch.", 409);
+  return data;
+}
+
+export async function cancelSubscription(code: string) {
+  const subscription = await fetchSubscription(code);
+  if (["cancelled", "completed", "complete", "non-renewing"].includes(subscription.status)) return;
+  await call("/subscription/disable", { method: "POST", body: { code, token: subscription.email_token } });
+}
+
+export async function subscriptionManagementLink(code: string) {
+  const data = await call<{ link: string }>(`/subscription/${encodeURIComponent(code)}/manage/link`);
+  if (!isPaystackUrl(data?.link)) throw new PaystackError("Invalid subscription management URL.");
+  return data.link;
+}
+
+export async function updatePlanAmount(code: string, amount: number) {
+  await call(`/plan/${encodeURIComponent(code)}`, { method: "PUT", body: { amount: toMinor(amount), update_existing_subscriptions: true } });
 }

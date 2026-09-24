@@ -7,6 +7,8 @@ import { MessagingError } from "../services/messageSender.js";
 import { BudgetExceeded } from "../services/budgets.js";
 import { WebsiteError } from "../services/website/site.js";
 import { GitHubError } from "../lib/github.js";
+import { PaystackError } from "../lib/paystack.js";
+import { PaymentRefused } from "../services/payments.js";
 
 /**
  * The one place an unhandled error becomes a response.
@@ -31,6 +33,9 @@ import { GitHubError } from "../lib/github.js";
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   const reference = Math.random().toString(36).slice(2, 10);
   console.error(`[${reference}]`, err);
+  if (err instanceof PaystackError || err instanceof PaymentRefused) {
+    return res.status(err.status).json({ error: err.message, reference });
+  }
 
   // An upstream credential failure is not an expired Dakyworld session.
   // Use a fixed message rather than exposing GitHub's arbitrary response body.

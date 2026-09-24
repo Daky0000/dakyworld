@@ -1,9 +1,12 @@
+import crypto from "node:crypto";
+import { decryptSecret } from "../lib/secrets.js";
+import { websitePaymentQuote } from "./paymentQuote.js";
+import { PaystackError, cancelSubscription } from "../lib/paystack.js";
 import type { ManagedBookingStatus, WebsitePurchaseStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { createNumberedInvoice } from "./invoiceNumber.js";
 import { raisePayment } from "./payments.js";
-import { cancelSubscription, createSubscription, createSubscriptionPlan } from "../lib/paystack.js";
-import { priceFor, resolveCurrency, type PlanCurrency } from "./websitePricing.js";
+import { createSubscription, createSubscriptionPlan } from "../lib/paystack.js";
 import { ensureCustomerAccount, sendSetPasswordLink } from "./accountAccess.js";
 import { fetchWebsiteText } from "../lib/websiteFetch.js";
 import { discoverFields } from "./website/index.js";
@@ -99,6 +102,9 @@ export const PLAN_ENTITLEMENTS = WEBSITE_TIER_PLANS;
 type PurchaseInput = {
   productKey: keyof typeof WEBSITE_TIERS;
   billingCycle?: "monthly" | "annual";
+  recurringConsent: true;
+  quoteId: string;
+  checkoutKey: string;
   businessName: string;
   contactName: string;
   email: string;
@@ -113,77 +119,77 @@ type PurchaseInput = {
 
 export async function startWebsitePurchase(input: PurchaseInput) {
   const tierKey = WEBSITE_TIERS[input.productKey];
+  const tierPlan = WEBSITE_TIER_PLANS[tierKey];
   const product = await prisma.product.findFirst({ where: { key: input.productKey, active: true } });
   if (!product) throw new Error("That website plan is not available.");
+  const quote = await websitePaymentQuote(input.productKey, input.billingCycle ?? "monthly");
+  if (!input.recurringConsent || quote.quoteId !== input.quoteId) throw new PaystackError("Review the current GHS price and accept recurring billing before continuing.", 409);
+  const fingerprint = crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex");
+  const prior = await prisma.websitePurchase.findUnique({ where: { checkoutKey: input.checkoutKey }, include: { invoice: true } });
+  if (prior) {
+    if (prior.checkoutFingerprint !== fingerprint) throw new PaystackError("Checkout details changed. Review the quote and start again.", 409);
+    if (!prior.invoiceId || prior.invoice?.status === "PAID") throw new PaystackError("This purchase is already paid or needs support. Do not pay again.", 409);
+    const payment = await raisePayment(prior.invoiceId, "paystack", { recurring: true });
+    return { purchaseId: prior.id, status: prior.status, paymentUrl: payment.url, quote };
+  }
   const compatibility = await assessPurchaseCompatibility(input.websiteUrl);
   if (compatibility.status === "NOT_SUPPORTED") throw new WebsiteError(422, `This website is not supported by the editor. ${compatibility.notes}`);
-
-  // Ghana pays in cedis, everybody else in dollars, and the price comes from
-  // the table for that currency rather than from a conversion. The catalogue's
-  // own price is used only where it matches the currency the customer is being
-  // billed in — otherwise it is a number in the wrong money.
-  const currency: PlanCurrency = resolveCurrency({ currency: input.currency, country: input.country });
-  const price = priceFor(tierKey, currency);
-  const setupPrice = product.currency === currency ? Number(product.setupPrice ?? 0) : 0;
-  const monthlyPrice = price.promoMonthlyPrice;
+  const setupPrice = quote.setup;
+  const monthlyPrice = quote.monthly;
   const isAnnual = input.billingCycle === "annual";
-  const recurringAmount = isAnnual ? monthlyPrice * 10 : monthlyPrice;
-  const upfrontAmount = setupPrice > 0 ? setupPrice : recurringAmount;
-  if (!(upfrontAmount > 0)) throw new Error("This plan has no payment amount configured.");
-  const promoEndsAt = addMonthsUtc(new Date(), WEBSITE_TIER_PLANS[tierKey].promoMonths);
+  const upfrontAmount = quote.upfront;
+  const promoEndsAt = addMonthsUtc(new Date(), tierPlan.promoMonths);
 
   const email = input.email.toLowerCase();
+  // The account exists from here, with no password on it. The link sent below
+  // is what makes it usable, so nothing has to be told to a customer by a
+  // person and no password ever travels by email.
+  const account = await ensureCustomerAccount({ email, name: input.contactName, businessName: input.businessName });
   const existing = await prisma.client.findFirst({ where: { email } });
   const client = existing
-    ? await prisma.client.update({ where: { id: existing.id }, data: { name: input.contactName, company: input.businessName, phone: input.phone || undefined } })
+    ? existing
     : await prisma.client.create({ data: { name: input.contactName, company: input.businessName, email, phone: input.phone } });
 
   const lineItemDescription = setupPrice > 0
     ? `${product.name} website setup`
     : isAnnual
       ? `${product.name} annual subscription (12 months — 2 months free)`
-      : `${product.name} subscription (${price.promoDisplay}/mo for first 3 months, then reverts to ${price.standardDisplay}/mo standard)`;
+      : `${product.name} subscription (GHS ${quote.monthly}/mo for the first ${quote.promoMonths} months, then GHS ${quote.standard}/mo standard)`;
 
-  const invoice = await createNumberedInvoice((invoiceNumber) => prisma.invoice.create({ data: {
-    clientId: client.id, invoiceNumber, currency, amountTotal: upfrontAmount,
-    dueDate: new Date(Date.now() + 7 * 86_400_000),
-    lineItems: { create: [{ description: lineItemDescription, quantity: 1, unitPrice: upfrontAmount, amount: upfrontAmount }] },
-  } }));
-
-  // The account exists from this moment, with no password on it. What makes it
-  // usable is the link sent once the payment is raised: nothing is emailed to
-  // somebody who abandoned the checkout page, and nobody has to be told a
-  // password by a human.
-  const account = await ensureCustomerAccount({ email, name: input.contactName, businessName: input.businessName });
-
-  const promoNote = `3-Month Promo (${price.promoDisplay}/mo -> reverts to ${price.standardDisplay}/mo standard after ${promoEndsAt.toISOString().slice(0, 10)})`;
-  const purchase = await prisma.websitePurchase.create({ data: {
-    clientId: client.id, invoiceId: invoice.id, productId: product.id, tier: WEBSITE_TIERS[input.productKey],
-    businessName: input.businessName, contactName: input.contactName, email: input.email.toLowerCase(), phone: input.phone,
-    websiteUrl: input.websiteUrl, notes: input.notes ? `${input.notes} | ${promoNote}` : promoNote, compatibilityStatus: compatibility.status, compatibilityNotes: compatibility.notes,
-    monthlyPrice: monthlyPrice.toFixed(2), standardMonthlyPrice: price.standardMonthlyPrice.toFixed(2), setupPrice, currency,
-    userId: account.user.id,
-  } });
-  const payment = await raisePayment(invoice.id, "paystack", { callbackUrl: "https://dakyworld.com/website-builder?payment=returned#price" });
+  const terms = `USD 1 = GHS ${quote.usdToGhs}; upfront GHS ${quote.upfront}; ${quote.billingCycle} recurring GHS ${quote.recurring}; standard recurring GHS ${quote.standard}; accepted quote ${quote.quoteId}`;
+  let records;
+  try {
+    records = await createNumberedInvoice(invoiceNumber => prisma.$transaction(async tx => {
+      const invoice = await tx.invoice.create({ data: {
+        clientId: client.id, invoiceNumber, currency: quote.currency, amountTotal: upfrontAmount,
+        dueDate: new Date(Date.now() + 7 * 86_400_000),
+        lineItems: { create: [{ description: lineItemDescription, quantity: 1, unitPrice: upfrontAmount, amount: upfrontAmount }] },
+      } });
+      const purchase = await tx.websitePurchase.create({ data: {
+        clientId: client.id, invoiceId: invoice.id, productId: product.id, tier: WEBSITE_TIERS[input.productKey],
+        businessName: input.businessName, contactName: input.contactName, email: input.email.toLowerCase(), phone: input.phone,
+        websiteUrl: input.websiteUrl, notes: input.notes ? `${input.notes} | ${terms}` : terms,
+        compatibilityStatus: compatibility.status, compatibilityNotes: compatibility.notes, monthlyPrice, setupPrice, currency: quote.currency,
+        billingCycle: input.billingCycle ?? "monthly", recurringConsentAt: new Date(), standardRecurringPrice: quote.standard,
+        checkoutKey: input.checkoutKey, checkoutFingerprint: fingerprint, userId: account.user.id,
+      } });
+      return { invoice, purchase };
+    }));
+  } catch (error) {
+    if ((error as { code?: string }).code === "P2002") throw new PaystackError("This checkout is already being prepared. Retry with the same checkout details.", 409);
+    throw error;
+  }
+  const { invoice, purchase } = records;
+  const payment = await raisePayment(invoice.id, "paystack", { recurring: true, callbackUrl: "https://dakyworld.com/website-builder?payment=returned#price" });
   if (account.created) {
-    // A failure here must not lose the purchase: the customer has a payment
-    // link in front of them, and a missing welcome email is recoverable from
-    // the Purchases screen. It is logged rather than thrown.
+    // Logged rather than thrown: the customer has a payment link in front of
+    // them, and a missing welcome email is recoverable from the Purchases
+    // screen. Losing the purchase over it would not be.
     await sendSetPasswordLink(account.user, "purchase").catch((error) =>
       console.error(`[commerce] could not send the set-password link to ${account.user.email}:`, (error as Error).message),
     );
   }
-  return {
-    purchaseId: purchase.id,
-    status: purchase.status,
-    compatibility,
-    paymentUrl: payment.url,
-    currency,
-    promoEndsAt: promoEndsAt.toISOString(),
-    promoMonthlyPrice: price.promoMonthlyPrice,
-    standardMonthlyPrice: price.standardMonthlyPrice,
-    priceDisplay: price.display,
-  };
+  return { purchaseId: purchase.id, status: purchase.status, compatibility, paymentUrl: payment.url, quote, promoEndsAt: promoEndsAt.toISOString(), promoMonthlyPrice: quote.monthly, standardMonthlyPrice: quote.standard };
 }
 
 export async function createManagedBooking(input: { businessName: string; contactName: string; email: string; phone: string; websiteUrl: string; reason: string; goals: string; notes?: string; requestedAt: Date }) {
@@ -191,23 +197,67 @@ export async function createManagedBooking(input: { businessName: string; contac
 }
 
 export async function listWebsiteCommerce() {
-  const [purchases, bookings] = await Promise.all([
+  const [purchases, bookings, paymentAlerts] = await Promise.all([
     prisma.websitePurchase.findMany({ orderBy: { createdAt: "desc" }, include: { product: { select: { name: true } }, invoice: { select: { invoiceNumber: true, status: true, paymentUrl: true } } } }),
     prisma.managedBooking.findMany({ orderBy: { requestedAt: "asc" } }),
+    prisma.paystackEvent.findMany({ where: { OR: [{ error: { not: null } }, { reviewRequired: true }] }, select: { id: true, event: true, error: true, createdAt: true, reviewRequired: true }, take: 50, orderBy: { createdAt: "desc" } }),
   ]);
-  return { purchases, bookings };
+  return { purchases: purchases.map(publicPurchase), bookings, paymentAlerts };
+}
+
+/** Billing credentials are never returned through commerce APIs. */
+export function publicPurchase<T extends { paymentAuthorization: string | null; checkoutKey: string | null; checkoutFingerprint: string | null; billingEmail: string | null }>(purchase: T) {
+  const { paymentAuthorization, checkoutKey, checkoutFingerprint, billingEmail, ...safe } = purchase;
+  return { ...safe, hasReusableCard: Boolean(paymentAuthorization) };
 }
 
 export async function updatePurchaseStatus(id: string, status: WebsitePurchaseStatus) {
-  if (status !== "READY" && status !== "ACTIVE") return prisma.websitePurchase.update({ where: { id }, data: { status } });
   const purchase = await prisma.websitePurchase.findUnique({ where: { id }, include: { product: true } });
-  if (!purchase) throw new Error("That website purchase no longer exists.");
-  if (purchase.status === "ACTIVE") return purchase;
-  if (!purchase.setupPaidAt || !purchase.paymentAuthorization) throw new Error("The setup payment must be confirmed before recurring billing can start.");
-  const planCode = purchase.providerPlanCode ?? await createSubscriptionPlan({ name: `${purchase.product.name} Website Builder`, amount: Number(purchase.monthlyPrice), currency: purchase.currency });
-  if (!purchase.providerPlanCode) await prisma.websitePurchase.update({ where: { id }, data: { providerPlanCode: planCode, status: "READY" } });
-  const subscription = await createSubscription({ email: purchase.email, planCode, authorizationCode: purchase.paymentAuthorization });
-  return prisma.websitePurchase.update({ where: { id }, data: { status: "ACTIVE", providerSubscriptionCode: subscription.code, activatedAt: new Date(), nextBillingAt: subscription.nextPaymentAt } });
+  if (!purchase) throw new PaystackError("That website purchase no longer exists.", 404);
+  if (status === "CANCELLED") {
+    if (purchase.billingState === "CREATING" || purchase.billingState === "UNCERTAIN") throw new PaystackError("Subscription creation needs reconciliation before cancellation.", 409);
+    if (!purchase.setupPaidAt && purchase.invoiceId && await prisma.paymentAttempt.findUnique({ where: { invoiceId: purchase.invoiceId } })) throw new PaystackError("The hosted checkout may still be payable. Reconcile it before cancelling this purchase.", 409);
+    const claim = await prisma.websitePurchase.updateMany({ where: { id, billingState: purchase.billingState }, data: { billingState: "CANCELLING" } });
+    if (!claim.count) throw new PaystackError("Billing changed while cancellation was requested. Refresh and try again.", 409);
+    try {
+      if (purchase.providerSubscriptionCode) await cancelSubscription(purchase.providerSubscriptionCode);
+    } catch (error) {
+      await prisma.websitePurchase.updateMany({ where: { id, billingState: "CANCELLING" }, data: { billingState: "CANCEL_UNCERTAIN" } });
+      throw error;
+    }
+    return publicPurchase(await prisma.websitePurchase.update({ where: { id }, data: { status: "CANCELLED", billingState: "CANCELLED", nextBillingAt: null } }));
+  }
+  if (purchase.status === "CANCELLED") throw new PaystackError("A cancelled purchase cannot be restarted without a new checkout.", 409);
+  if (status !== "READY" && status !== "ACTIVE") {
+    if (purchase.providerSubscriptionCode) throw new PaystackError("Use subscription cancellation or reconciliation before changing an active billing status.", 409);
+    if (["SETUP_PAID", "SETUP_IN_PROGRESS"].includes(status) && !purchase.setupPaidAt) throw new PaystackError("Verify the setup payment first.", 409);
+    return publicPurchase(await prisma.websitePurchase.update({ where: { id }, data: { status } }));
+  }
+  if (purchase.providerSubscriptionCode) return publicPurchase(purchase);
+  if (!purchase.setupPaidAt || !purchase.paymentAuthorization || !purchase.recurringConsentAt || !purchase.billingEmail) throw new PaystackError("A verified reusable card payment and recurring billing consent are required.", 409);
+  const authorizationCode = decryptSecret(purchase.paymentAuthorization);
+  if (!authorizationCode) throw new PaystackError("The billing authorization needs to be collected again securely.", 409);
+  const claimed = await prisma.websitePurchase.updateMany({ where: { id, status: { not: "CANCELLED" }, billingState: "NONE", providerSubscriptionCode: null }, data: { billingState: "CREATING", promoEndsAt: purchase.billingCycle === "annual" ? null : addMonthsUtc(purchase.setupPaidAt, 3) } });
+  if (!claimed.count) throw new PaystackError("Subscription creation is pending reconciliation. Do not retry with another subscription.", 409);
+  let subscriptionRequested = false;
+  try {
+    const annual = purchase.billingCycle === "annual";
+    const amount = annual ? Number(purchase.standardRecurringPrice) : Number(purchase.monthlyPrice);
+    const planCode = purchase.providerPlanCode ?? await createSubscriptionPlan({ name: `${purchase.product.name} ${purchase.id}`, amount, currency: purchase.currency, interval: annual ? "annually" : "monthly" });
+    await prisma.websitePurchase.update({ where: { id }, data: { providerPlanCode: planCode } });
+    // An upfront period is already paid when there is no separate setup fee.
+    const prepaidUntil = Number(purchase.setupPrice) > 0 ? new Date(Date.now() + 5 * 60_000) : addMonthsUtc(purchase.setupPaidAt, annual ? 12 : 1);
+    const startDate = new Date(Math.max(prepaidUntil.getTime(), Date.now() + 5 * 60_000));
+    subscriptionRequested = true;
+    const subscription = await createSubscription({ email: purchase.billingEmail, planCode, authorizationCode, startDate });
+    await prisma.websitePurchase.updateMany({ where: { id, billingState: { in: ["CREATING", "UNCERTAIN"] }, status: { not: "CANCELLED" } }, data: { status: "ACTIVE", billingState: "ACTIVE", providerSubscriptionCode: subscription.code, activatedAt: new Date(), promoEndsAt: annual ? null : addMonthsUtc(purchase.setupPaidAt, 3), nextBillingAt: subscription.nextPaymentAt ?? startDate } });
+    return publicPurchase(await prisma.websitePurchase.findUniqueOrThrow({ where: { id } }));
+  } catch (error) {
+    // A timeout can mean the subscription was created. Only a verified provider
+    // event or explicit reconciliation may recover this state, never a blind POST retry.
+    await prisma.websitePurchase.updateMany({ where: { id, billingState: "CREATING" }, data: { billingState: subscriptionRequested ? "UNCERTAIN" : "NONE" } });
+    throw error;
+  }
 }
 
 export async function updateBooking(id: string, data: { status?: ManagedBookingStatus; requestedAt?: Date; adminNotes?: string }) {
@@ -215,54 +265,33 @@ export async function updateBooking(id: string, data: { status?: ManagedBookingS
 }
 
 /**
- * Ends a subscription at the end of what the customer has paid for.
+ * The customer's own cancel button.
  *
- * Not immediately: they bought the month, their website is running on it, and
- * taking the editor away the moment they click cancel would be taking back
- * something already paid for. The processor is told straight away so no
- * further charge is raised; `endsAt` is what the entitlement layer reads.
+ * A thin wrapper over `updatePurchaseStatus`, which is where cancellation
+ * actually lives: it claims the billing state before calling Paystack, parks
+ * the row in CANCEL_UNCERTAIN when the call fails rather than assuming it
+ * worked, and refuses while a checkout may still be payable. This adds only
+ * what a customer needs — a reason, and words that say what they keep.
+ *
+ * Their subscription ends at the processor immediately, so nothing is charged
+ * again. The website itself keeps being served: they paid for the period.
  */
 export async function cancelWebsiteSubscription(input: { purchaseId: string; reason?: string | null; now?: Date }) {
-  const now = input.now ?? new Date();
-  const purchase = await prisma.websitePurchase.findUnique({ where: { id: input.purchaseId } });
+  const purchase = await prisma.websitePurchase.findUnique({ where: { id: input.purchaseId }, select: { id: true, status: true, notes: true, nextBillingAt: true } });
   if (!purchase) throw new WebsiteError(404, "That subscription no longer exists.");
-  if (purchase.cancelRequestedAt) return purchase;
+  if (purchase.status === "CANCELLED") return { ...purchase, servesUntil: purchase.nextBillingAt };
 
-  if (purchase.providerSubscriptionCode) {
-    await cancelSubscription(purchase.providerSubscriptionCode).catch((error) => {
-      // Worth failing loudly: a cancellation that did not reach Paystack means
-      // the customer is still being charged for something we have told them is
-      // over, which is the worst of the two directions this can fail in.
-      throw new WebsiteError(502, `The payment processor refused the cancellation: ${(error as Error).message}. Nothing has been changed — try again.`);
-    });
-  }
+  const servesUntil = purchase.nextBillingAt;
+  await updatePurchaseStatus(input.purchaseId, "CANCELLED");
 
-  const endsAt = purchase.nextBillingAt && purchase.nextBillingAt.getTime() > now.getTime()
-    ? purchase.nextBillingAt
-    : addMonthsUtc(now, 1);
-
-  return prisma.websitePurchase.update({
-    where: { id: purchase.id },
+  // The reason is worth keeping and belongs with the purchase rather than in
+  // a column of its own — churn is read by a person, not queried.
+  const updated = await prisma.websitePurchase.update({
+    where: { id: input.purchaseId },
     data: {
-      cancelRequestedAt: now,
-      cancelReason: input.reason?.slice(0, 500) ?? null,
-      endsAt,
-      status: "CANCELLED",
-      providerSubscriptionCode: null,
+      notes: `${purchase.notes ? purchase.notes + " | " : ""}Cancelled by the customer on ${new Date().toISOString().slice(0, 10)}${input.reason ? `: ${input.reason.slice(0, 400)}` : ""}`,
     },
   });
+  return { ...updated, servesUntil };
 }
 
-/**
- * A renewal the processor could not take.
- *
- * Counted rather than acted on immediately: a card declined once is usually a
- * card declined once. The count is what a dunning email and, eventually, a
- * suspension read.
- */
-export async function recordFailedRenewal(purchaseId: string, now = new Date()) {
-  return prisma.websitePurchase.update({
-    where: { id: purchaseId },
-    data: { failedPaymentCount: { increment: 1 }, lastPaymentFailedAt: now },
-  });
-}

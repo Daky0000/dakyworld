@@ -1527,37 +1527,74 @@ model WebsitePurchase {
   paymentAuthorization     String?
   providerPlanCode         String?
   providerSubscriptionCode String?
-  /// The account that owns this subscription. Entitlement is read from here and
-  /// nowhere else: what somebody is allowed to do must follow from who they are
+  billingCycle             String                @default("monthly")
+  recurringConsentAt       DateTime?
+  billingEmail             String?
+  billingState             String                @default("NONE")
+  standardRecurringPrice   Decimal?              @db.Decimal(12, 2)
+  promoEndsAt              DateTime?
+  billingPriceUpdatedAt    DateTime?
+  /// The account that owns this subscription. Entitlement is read from here
+  /// and nowhere else: what somebody may do must follow from who they are
   /// signed in as, never from an address they typed or a header they sent.
+  ///
+  /// The only field kept from the earlier billing pass. Everything else it
+  /// added — a second standard price, its own cancellation dates, its own
+  /// failed-payment counter — is superseded by the billing state machine
+  /// above, and two sources of truth about what somebody is charged is worse
+  /// than either one of them.
   user                     User?                 @relation("WebsiteSubscriber", fields: [userId], references: [id], onDelete: SetNull)
   userId                   String?
 
-  /// The standard price this customer's promotional one reverts to, fixed at
-  /// purchase. A later change to the price list must not silently re-price
-  /// somebody who already bought.
-  standardMonthlyPrice   Decimal?  @db.Decimal(12, 2)
-  /// Set when the promotional period ended and the standard price was applied
-  /// at the processor as well as here.
-  standardPriceAppliedAt DateTime?
-
-  /// Cancellation. A cancelled subscription keeps serving until `endsAt` — the
-  /// customer paid for the period, and taking their website down early would
-  /// be taking something they paid for.
-  cancelRequestedAt DateTime?
-  cancelReason      String?
-  endsAt            DateTime?
-
-  /// Failed renewals, for dunning. Reset to zero by a payment that succeeds.
-  failedPaymentCount  Int       @default(0)
-  lastPaymentFailedAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  checkoutKey         String?  @unique
+  checkoutFingerprint String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   @@index([status, createdAt])
   @@index([clientId, tier])
   @@index([userId, status])
+}
+
+// One checkout reference per invoice. Persisted before contacting the provider.
+model PaymentAttempt {
+  id        String   @id @default(cuid())
+  invoiceId String   @unique
+  reference String   @unique
+  provider  String
+  amount    Decimal  @db.Decimal(12, 2)
+  currency  String
+  email     String?
+  url       String?
+  state     String   @default("INITIALIZING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Only authenticated, redacted events are stored here. Acknowledged after durable insertion.
+model PaystackEvent {
+  id             String    @id
+  event          String
+  payload        Json
+  attempts       Int       @default(0)
+  handledAt      DateTime?
+  nextTryAt      DateTime  @default(now())
+  error          String?
+  reviewRequired Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  @@index([handledAt, nextTryAt])
+}
+
+model PaymentReceipt {
+  reference  String   @id
+  purchaseId String
+  amount     Decimal  @db.Decimal(12, 2)
+  currency   String
+  paidAt     DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([purchaseId])
 }
 
 model ManagedBooking {

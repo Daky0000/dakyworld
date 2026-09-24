@@ -16,7 +16,6 @@ import {
   type Entitlement,
 } from "./websiteEntitlement.js";
 import { priceFor, type PlanCurrency } from "./websitePricing.js";
-import { moveSubscriptionToPlan } from "../lib/paystack.js";
 import { editingLockedForNonPayment } from "./websiteDunning.js";
 
 /**
@@ -59,6 +58,7 @@ export type TierPlanDefinition = {
   name: string;
   badge: string;
   tagline: string;
+  /** Prices below are USD. paymentQuote.ts converts them to the charged GHS. */
   currency: PlanCurrency;
   promoMonthlyPrice: number;
   standardMonthlyPrice: number;
@@ -97,9 +97,9 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     name: "Starter",
     badge: "$3 ($5)",
     tagline: "Essential visual page editing & media storage for solo creators. $3/mo for first 3 months, then $5/mo standard.",
-    currency: "USD",
-    promoMonthlyPrice: 3,
-    standardMonthlyPrice: 5,
+    currency: "GHS",
+    promoMonthlyPrice: 25,
+    standardMonthlyPrice: 40,
     promoMonths: 3,
     priceDisplay: "$3 ($5)",
     storageQuotaBytes: 50 * MB,
@@ -152,9 +152,9 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     name: "Pro",
     badge: "$10 ($16)",
     tagline: "Expanded storage, Global Theme tokens, SEO Inspector & AI Assistant. $10/mo for first 3 months, then $16/mo standard.",
-    currency: "USD",
-    promoMonthlyPrice: 10,
-    standardMonthlyPrice: 16,
+    currency: "GHS",
+    promoMonthlyPrice: 75,
+    standardMonthlyPrice: 120,
     promoMonths: 3,
     priceDisplay: "$10 ($16)",
     storageQuotaBytes: 500 * MB,
@@ -206,9 +206,9 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     name: "Business",
     badge: "$25 ($45)",
     tagline: "5 GB media storage, unlimited imports & edits, AI Builder Agent & Source Code access. $25/mo for first 3 months, then $45/mo standard.",
-    currency: "USD",
-    promoMonthlyPrice: 25,
-    standardMonthlyPrice: 45,
+    currency: "GHS",
+    promoMonthlyPrice: 195,
+    standardMonthlyPrice: 320,
     promoMonths: 3,
     priceDisplay: "$25 ($45)",
     storageQuotaBytes: 5 * GB,
@@ -418,7 +418,6 @@ export async function computeUserStorageAndUsage(req: Request, siteId?: string) 
     tier: identity.tier,
     subscribedAt: identity.subscribedAt,
     simulateAfter3Months,
-    currency: (identity.currency === "USD" ? "USD" : "GHS"),
   });
 
   let dbAssetBytes = 0;
@@ -631,92 +630,8 @@ export async function recordAiPromptUsed(req: Request): Promise<void> {
   await bumpUsage(identity.userId, "aiPrompts");
 }
 
-/**
- * Moves a subscription off its introductory price once the three months are up —
- * at the payment processor as well as here, in whichever currency it was sold.
- */
-export async function revertExpiredWebsitePurchasePrices(now = new Date()): Promise<number> {
-  const activePurchases = await prisma.websitePurchase
-    .findMany({
-      where: { status: "ACTIVE", standardPriceAppliedAt: null },
-      select: {
-        id: true,
-        tier: true,
-        email: true,
-        currency: true,
-        monthlyPrice: true,
-        standardMonthlyPrice: true,
-        activatedAt: true,
-        createdAt: true,
-        notes: true,
-        paymentAuthorization: true,
-        providerSubscriptionCode: true,
-        product: { select: { name: true } },
-      },
-    })
-    .catch(() => []);
 
-  let revertedCount = 0;
-  for (const purchase of activePurchases) {
-    const plan = WEBSITE_TIER_PLANS[purchase.tier];
-    if (!plan) continue;
-    const currency = purchase.currency === "USD" ? "USD" : "GHS";
-    const price = priceFor(purchase.tier, currency);
-    // The price fixed at purchase wins over today's price list: somebody who
-    // bought at one standard rate does not get moved onto a new one by an
-    // edit to this file.
-    const standard = Number(purchase.standardMonthlyPrice ?? price.standardMonthlyPrice);
-    const startDate = purchase.activatedAt ?? purchase.createdAt;
-    const promoEndsAt = addMonthsUtc(startDate, plan.promoMonths);
-    if (now.getTime() < promoEndsAt.getTime()) continue;
-    if (!(Number(purchase.monthlyPrice) < standard)) continue;
 
-    // The processor first. Writing the new price here while Paystack goes on
-    // charging the old one is what this function used to do, and it is the
-    // shape of the fault: every screen says the standard rate, every charge is
-    // the promotional one, and nothing ever disagrees loudly enough to notice.
-    let moved: { planCode: string; subscriptionCode: string; nextPaymentAt: Date | null } | null = null;
-    if (purchase.providerSubscriptionCode && purchase.paymentAuthorization) {
-      try {
-        moved = await moveSubscriptionToPlan({
-          subscriptionCode: purchase.providerSubscriptionCode,
-          email: purchase.email,
-          authorizationCode: purchase.paymentAuthorization,
-          newPlanName: `${purchase.product.name} — standard rate`,
-          newAmount: standard,
-          currency,
-        });
-      } catch (error) {
-        // Leave `standardPriceAppliedAt` unset so the next tick tries again,
-        // and say so: an unbilled month is a thing somebody has to act on.
-        console.error(
-          `[tiers] could not move ${purchase.email} onto the standard rate — still being charged the promotional price:`,
-          (error as Error).message,
-        );
-        continue;
-      }
-    }
-
-    await prisma.websitePurchase.update({
-      where: { id: purchase.id },
-      data: {
-        monthlyPrice: standard.toFixed(2),
-        standardMonthlyPrice: standard.toFixed(2),
-        standardPriceAppliedAt: now,
-        ...(moved
-          ? {
-              providerPlanCode: moved.planCode,
-              providerSubscriptionCode: moved.subscriptionCode,
-              nextBillingAt: moved.nextPaymentAt ?? undefined,
-            }
-          : {}),
-        notes: `${purchase.notes ? purchase.notes + " | " : ""}Reverted from ${price.promoDisplay}/mo intro rate to ${price.standardDisplay}/mo standard on ${now.toISOString().slice(0, 10)}${moved ? "" : " (no processor subscription — invoice manually)"}.`,
-      },
-    });
-    revertedCount += 1;
-  }
-  return revertedCount;
-}
 
 /**
  * Seeds the 3 tier plans ($3/$5, $10/$16, $25/$45) and the 3 subscribed test users
@@ -809,7 +724,7 @@ export async function ensureWebsiteTierUsersAndPlans(): Promise<{
               compatibilityNotes: `Subscribed to ${plan.name} (${plan.priceDisplay}/mo). First 3 months at $${plan.promoMonthlyPrice}/mo until ${promoEndsAt.toISOString().slice(0, 10)}, then reverts to $${plan.standardMonthlyPrice}/mo standard price.`,
               monthlyPrice: plan.promoMonthlyPrice.toFixed(2),
               setupPrice: "0.00",
-              currency: "USD",
+              currency: "GHS",
               setupPaidAt: subscribedAt,
               activatedAt: subscribedAt,
               nextBillingAt,

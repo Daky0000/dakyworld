@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { createNumberedInvoice } from "./invoiceNumber.js";
 import { raisePayment } from "./payments.js";
 import { appUrl } from "./emailSender.js";
-import { SETUP_ASSISTANCE, resolveCurrency, type PlanCurrency } from "./websitePricing.js";
+import { setupAssistancePrice, type PlanCurrency } from "./websitePricing.js";
 import { resolveEntitlement } from "./websiteEntitlement.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
@@ -48,12 +48,10 @@ export function registerWebsiteSetupAssistance(router: Router) {
   router.get(
     "/setup-assistance",
     handler(async (req, res) => {
-      const entitlement = await resolveEntitlement(req);
-      const currency: PlanCurrency = entitlement.currency === "USD" ? "USD" : "GHS";
-      const price = SETUP_ASSISTANCE[currency];
+      const price = setupAssistancePrice();
       const base = (await appUrl()).replace(/\/$/, "");
       res.json({
-        currency,
+        currency: price.currency,
         amount: price.amount,
         display: price.display,
         guides: {
@@ -86,11 +84,8 @@ export function registerWebsiteSetupAssistance(router: Router) {
       });
       if (!user) throw new WebsiteError(401, "Sign in to ask for setup help.");
 
-      const currency: PlanCurrency = resolveCurrency({
-        currency: input.currency ?? (entitlement.currency === "USD" ? "USD" : "GHS"),
-        country: input.country,
-      });
-      const price = SETUP_ASSISTANCE[currency];
+      const price = setupAssistancePrice();
+      const currency: PlanCurrency = price.currency;
 
       const client =
         (await prisma.client.findFirst({ where: { email: user.email } })) ??

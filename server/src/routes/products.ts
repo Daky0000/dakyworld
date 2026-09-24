@@ -6,6 +6,9 @@ import { listProducts, publicCatalogue, updateProduct } from "../services/produc
 import { createManagedBooking, inspectPublicWebsite, listWebsiteCommerce, startWebsitePurchase, updateBooking, updatePurchaseStatus } from "../services/websiteCommerce.js";
 import { WEBSITE_TIER_PLANS, SUBSCRIBED_TEST_USERS } from "../services/websiteTierPlans.js";
 import { rateLimit } from "../middleware/security.js";
+import { websitePaymentQuote } from "../services/paymentQuote.js";
+import { subscriptionManagementLink } from "../lib/paystack.js";
+import { reconcilePurchaseSubscription } from "../services/paystackEvents.js";
 
 /**
  * The product catalogue: one door for the public website, one for the office.
@@ -33,6 +36,9 @@ publicProductsRouter.options("/products", (_req, res) => {
 const purchaseInput = z.object({
   productKey: z.enum(["website-builder", "website-care", "managed-website"]),
   billingCycle: z.enum(["monthly", "annual"]).optional().default("monthly"),
+  recurringConsent: z.literal(true),
+  quoteId: z.string().regex(/^[a-f0-9]{64}$/),
+  checkoutKey: z.string().uuid(),
   businessName: z.string().trim().min(2).max(160),
   contactName: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(200),
@@ -53,6 +59,25 @@ const bookingInput = z.object({
 });
 const commerceRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 10, message: "Too many purchase or booking attempts. Try again in {minutes}." });
 const websiteCheckRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 25, message: "Too many website scan requests. Try again in {minutes}." });
+const paymentStatusRateLimit = rateLimit({ windowMs: 60_000, max: 30, message: "Too many payment checks. Try again in {minutes}." });
+
+publicProductsRouter.get("/website-payment-quote", paymentStatusRateLimit, async (req, res, next) => {
+  try {
+    publicCors(req, res); res.set("Cache-Control", "no-store");
+    const input = z.object({ productKey: z.enum(["website-builder", "website-care", "managed-website"]), billingCycle: z.enum(["monthly", "annual"]) }).parse(req.query);
+    res.json(await websitePaymentQuote(input.productKey, input.billingCycle));
+  } catch (error) { next(error); }
+});
+
+publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, async (req, res, next) => {
+  try {
+    publicCors(req, res); res.set("Cache-Control", "no-store");
+    const { checkoutKey } = z.object({ checkoutKey: z.string().uuid() }).parse(req.body);
+    const purchase = await prisma.websitePurchase.findUnique({ where: { checkoutKey }, select: { setupPaidAt: true, status: true, billingState: true } });
+    if (!purchase) return res.status(404).json({ error: "Checkout not found." });
+    res.json({ paid: Boolean(purchase.setupPaidAt), status: purchase.status, billingState: purchase.billingState });
+  } catch (error) { next(error); }
+});
 
 function publicCors(req: { headers: { origin?: string } }, res: { set: (field: string, value: string) => unknown }) {
   const origin = req.headers.origin;
@@ -82,7 +107,7 @@ publicProductsRouter.post("/managed-bookings", commerceRateLimit, async (req, re
   catch (err) { next(err); }
 });
 
-publicProductsRouter.options(["/website-check", "/website-purchases", "/managed-bookings"], (req, res) => {
+publicProductsRouter.options(["/website-check", "/website-purchases", "/website-payment-status", "/managed-bookings"], (req, res) => {
   publicCors(req, res); res.set("Access-Control-Allow-Methods", "POST, OPTIONS").set("Access-Control-Allow-Headers", "Content-Type").status(204).end();
 });
 
@@ -135,6 +160,22 @@ productsRouter.get("/", requirePermission("website.view"), async (_req, res, nex
 
 productsRouter.get("/website-commerce", requirePermission("website.manage"), async (_req, res, next) => {
   try { res.json(await listWebsiteCommerce()); } catch (err) { next(err); }
+});
+
+productsRouter.post("/website-commerce/purchases/:id/manage-billing", requirePermission("website.manage"), async (req, res, next) => {
+  try {
+    const purchase = await prisma.websitePurchase.findUnique({ where: { id: req.params.id } });
+    if (!purchase?.providerSubscriptionCode) return res.status(409).json({ error: "No subscription is available to manage." });
+    res.set("Cache-Control", "no-store").json({ url: await subscriptionManagementLink(purchase.providerSubscriptionCode) });
+  } catch (error) { next(error); }
+});
+
+productsRouter.post("/website-commerce/purchases/:id/reconcile-billing", requirePermission("website.manage"), async (req, res, next) => {
+  try {
+    const { subscriptionCode } = z.object({ subscriptionCode: z.string().regex(/^SUB_[a-zA-Z0-9]+$/) }).parse(req.body);
+    await reconcilePurchaseSubscription(req.params.id, subscriptionCode);
+    res.json({ reconciled: true });
+  } catch (error) { next(error); }
 });
 
 productsRouter.patch("/website-commerce/purchases/:id", requirePermission("website.manage"), async (req, res, next) => {

@@ -105,14 +105,21 @@ async function liveSubscription(userId: string, email: string) {
       currency: true,
       activatedAt: true,
       createdAt: true,
-      endsAt: true,
-      cancelRequestedAt: true,
+      nextBillingAt: true,
+      billingState: true,
     },
   });
-  // A cancelled subscription keeps its tier until the period it was paid for
-  // runs out. Taking the product away the moment somebody clicks cancel would
-  // be taking back something they have already paid for.
-  return rows.find((row) => !row.endsAt || row.endsAt.getTime() > now.getTime()) ?? null;
+  // A cancelled subscription keeps its tier until the date it was paid up to.
+  // Taking the product away the moment somebody clicks cancel would be taking
+  // back something they have already paid for, so the date Paystack last
+  // billed them to is what decides — and a row with no such date has not
+  // started billing yet, which is its own reason to keep serving.
+  return (
+    rows.find((row) => {
+      if (row.billingState !== "CANCELLED" && row.billingState !== "NON_RENEWING") return true;
+      return !row.nextBillingAt || row.nextBillingAt.getTime() > now.getTime();
+    }) ?? null
+  );
 }
 
 export async function resolveEntitlement(req: Request): Promise<Entitlement> {

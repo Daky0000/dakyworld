@@ -1,124 +1,88 @@
 import type { WebsitePlanTier } from "@prisma/client";
+import { usdToGhsRate } from "./paymentQuote.js";
 
 /**
- * What each tier costs, in the currency the customer is actually billed in.
+ * What a tier costs, for anything that needs to *say* a price.
  *
- * Two currencies, because the product is sold in two places. Ghana pays in
- * cedis: it is the market Dakyworld sells in, the Paystack account settles GHS,
- * and quoting a Ghanaian business in dollars asks them to do arithmetic before
- * they can decide. Everybody else pays in dollars.
+ * Everything is charged in cedis. The Paystack account settles GHS, and one
+ * settlement currency is what lets the billing state machine in
+ * `paystackEvents.ts` compare an amount it is shown against an amount it
+ * expects — a subscription priced in one currency and verified in another
+ * cannot be checked at all.
  *
- * The prices are not conversions of each other and should not be kept in step
- * by a rate. A cedi price is what the Ghanaian market pays for this; a dollar
- * price is what the rest of the world pays. Moving one is a commercial decision
- * about that market, not an exchange-rate update.
+ * The catalogue's own prices are held in USD and converted at the merchant
+ * rate (`PAYSTACK_USD_GHS_RATE`), which is what `paymentQuote.ts` does and is
+ * the only place a customer's actual charge is decided. This file exists for
+ * the screens and the emails: a plan's price on a panel, a figure in a
+ * dunning notice, the fee for setting somebody up. It must never be used to
+ * raise a payment — take a quote for that, so the number the customer accepted
+ * and the number they are charged are the same object.
  *
- * A customer's currency is fixed at purchase and stored on their subscription,
- * so a change here never re-prices somebody who has already bought.
+ * An earlier pass had two independent price lists, one in cedis and one in
+ * dollars, and billed each customer in their own. That was reversed on
+ * 24 September 2026 in favour of the safety this buys.
  */
 
-export type PlanCurrency = "GHS" | "USD";
+export type PlanCurrency = "GHS";
 
 export type TierPrice = {
   currency: PlanCurrency;
-  /** Charged for the first `promoMonths`. */
+  /** Charged for the first `promoMonths`, in cedis. */
   promoMonthlyPrice: number;
-  /** What it becomes afterwards. */
   standardMonthlyPrice: number;
-  /** "GHS 300 (GHS 500)" or "$3 ($5)" — the promotional price with the standard one after it. */
+  /** "GHS 300 (GHS 500)" — the promotional price with the standard one after it. */
   display: string;
-  /** Just the promotional amount, for a price tag. */
   promoDisplay: string;
   standardDisplay: string;
 };
 
-const ghs = (promo: number, standard: number): TierPrice => ({
-  currency: "GHS",
-  promoMonthlyPrice: promo,
-  standardMonthlyPrice: standard,
-  display: `GHS ${promo.toLocaleString("en-GB")} (GHS ${standard.toLocaleString("en-GB")})`,
-  promoDisplay: `GHS ${promo.toLocaleString("en-GB")}`,
-  standardDisplay: `GHS ${standard.toLocaleString("en-GB")}`,
-});
-
-const usd = (promo: number, standard: number): TierPrice => ({
-  currency: "USD",
-  promoMonthlyPrice: promo,
-  standardMonthlyPrice: standard,
-  display: `$${promo} ($${standard})`,
-  promoDisplay: `$${promo}`,
-  standardDisplay: `$${standard}`,
-});
-
-/**
- * GHS 300 is the price the public site has advertised for the Website Builder
- * all along, so it stays the entry price and the other two are set around it.
- */
-/**
- * A note on the dollar column, which needs a decision.
- *
- * The tiers were written as $3 / $10 / $25 while the public site advertised
- * GHS 300 — roughly $25 — for the same product. Those are not two prices for
- * two markets; they are one price and a tenth of it. Left alone, every customer
- * outside Ghana would have paid about an eighth of what a Ghanaian business
- * pays for the same thing.
- *
- * The dollar figures here are therefore set near parity with the cedi ones at
- * roughly GHS 12 to the dollar, rounded to numbers a price list can show. They
- * are a defensible placeholder, not a considered position on what this is worth
- * to a business in Lagos or London — that is a commercial decision, and this is
- * the one file to change when it is made.
- */
-export const TIER_PRICES: Record<WebsitePlanTier, Record<PlanCurrency, TierPrice>> = {
-  EDITOR: { GHS: ghs(300, 500), USD: usd(25, 40) },
-  CARE: { GHS: ghs(900, 1500), USD: usd(75, 120) },
-  MANAGED: { GHS: ghs(2400, 4000), USD: usd(195, 320) },
+/** The catalogue's dollar prices, which the rate turns into what is charged. */
+const USD_PRICES: Record<WebsitePlanTier, { promo: number; standard: number }> = {
+  EDITOR: { promo: 25, standard: 40 },
+  CARE: { promo: 75, standard: 120 },
+  MANAGED: { promo: 195, standard: 320 },
 };
+
+const cedis = (amount: number) => `GHS ${Math.round(amount).toLocaleString("en-GB")}`;
+
+export function priceFor(tier: WebsitePlanTier, _currency: PlanCurrency = "GHS"): TierPrice {
+  const rate = usdToGhsRate();
+  const promo = Math.round(USD_PRICES[tier].promo * rate);
+  const standard = Math.round(USD_PRICES[tier].standard * rate);
+  return {
+    currency: "GHS",
+    promoMonthlyPrice: promo,
+    standardMonthlyPrice: standard,
+    display: `${cedis(promo)} (${cedis(standard)})`,
+    promoDisplay: cedis(promo),
+    standardDisplay: cedis(standard),
+  };
+}
 
 /**
  * Setting it up for them, once, for a fee.
  *
- * Connecting a website is two DNS records or one GitHub install, and for most
- * people that is twenty minutes with the guide open. For the rest it is the
- * thing that stops them ever starting, and "ask us and we will do it" is worth
- * more than another paragraph of documentation. Priced to be obviously cheaper
- * than a support conversation about whether to pay for a support conversation.
+ * Connecting a website is two DNS records or one GitHub installation, and for
+ * most people that is twenty minutes with the guide open. For the rest it is
+ * the thing that stops them ever starting, and "ask us and we will do it" is
+ * worth more than another paragraph of documentation.
+ *
+ * Quoted at $10, charged in cedis at the same merchant rate as everything else.
  */
-export const SETUP_ASSISTANCE: Record<PlanCurrency, { amount: number; display: string }> = {
-  GHS: { amount: 120, display: "GHS 120" },
-  USD: { amount: 10, display: "$10" },
-};
+export const SETUP_ASSISTANCE_USD = 10;
 
-/** Ghana pays in cedis. Everywhere else pays in dollars. */
-export function currencyForCountry(country: string | null | undefined): PlanCurrency {
-  const code = (country ?? "").trim().toUpperCase();
-  if (code === "GH" || code === "GHA" || code === "GHANA") return "GHS";
-  return code ? "USD" : "GHS";
+export function setupAssistancePrice(): { amount: number; display: string; currency: PlanCurrency } {
+  const amount = Math.round(SETUP_ASSISTANCE_USD * usdToGhsRate());
+  return { amount, display: cedis(amount), currency: "GHS" };
 }
 
 /**
- * The currency a request should be quoted in.
+ * There is one billing currency, so this answers "GHS" whatever it is asked.
  *
- * An explicit choice wins, because somebody who has picked a currency on the
- * pricing page has told us more than any header can. Otherwise the country
- * Cloudflare or the browser reports, and failing both, cedis — this is a
- * Ghanaian company, and defaulting a Ghanaian visitor to dollars would be the
- * worse mistake of the two.
+ * Kept as a function rather than deleted because the callers read better for
+ * it, and because the question it answers is a real one — it simply has one
+ * answer while the merchant account has one settlement currency.
  */
-export function resolveCurrency(input: {
-  currency?: string | null;
-  country?: string | null;
-}): PlanCurrency {
-  const explicit = (input.currency ?? "").trim().toUpperCase();
-  if (explicit === "GHS" || explicit === "USD") return explicit;
-  return currencyForCountry(input.country);
-}
-
-export function priceFor(tier: WebsitePlanTier, currency: PlanCurrency): TierPrice {
-  return TIER_PRICES[tier][currency];
-}
-
-/** Minor units — pesewas or cents — which is what a processor wants. */
-export function toMinorUnits(amount: number): number {
-  return Math.round(amount * 100);
+export function resolveCurrency(_input?: { currency?: string | null; country?: string | null }): PlanCurrency {
+  return "GHS";
 }

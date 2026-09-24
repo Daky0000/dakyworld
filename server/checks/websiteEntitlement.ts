@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { WEBSITE_TIER_PLANS } from "../src/services/websiteTierPlans.js";
 
 let checks = 0;
 function check(name: string, condition: unknown) {
@@ -55,7 +56,7 @@ check(
 );
 check(
   "a cancelled subscription keeps serving until the paid period ends",
-  /row\.endsAt \|\| row\.endsAt\.getTime\(\) > now\.getTime\(\)/.test(entitlement),
+  /row\.nextBillingAt\.getTime\(\) > now\.getTime\(\)/.test(entitlement),
 );
 
 /* -------------------------------------------- usage survives a restart --- */
@@ -68,6 +69,7 @@ check(
 );
 
 const tiers = source("../src/services/websiteTierPlans.ts");
+const commerceEarly = source("../src/services/websiteCommerce.ts");
 check(
   "no counter is kept in a module-level Map any more",
   !/const runtimeSubscriptions = new Map/.test(tiers),
@@ -83,25 +85,33 @@ check(
 
 /* --------------------------------------- the price rises at the processor - */
 
+const events = source("../src/services/paystackEvents.ts");
 check(
-  "the reversion moves the subscription onto a new plan at Paystack",
-  /moveSubscriptionToPlan\(\{/.test(tiers),
+  "the standard price is applied at the processor, not just recorded here",
+  /updatePlanAmount\(purchase\.providerPlanCode!/.test(events),
 );
 check(
-  "a reversion that could not reach the processor is not recorded as done",
-  /continue;[\s\S]{0,80}\}\s*\}\s*\n\s*await prisma\.websitePurchase\.update/.test(tiers) ||
-    tiers.includes("// Leave `standardPriceAppliedAt` unset so the next tick tries again,"),
+  "it is recorded only once the processor has accepted it",
+  events.indexOf("await updatePlanAmount") < events.indexOf("billingPriceUpdatedAt: now"),
 );
 check(
-  "the price a customer was sold at wins over today's price list",
-  /purchase\.standardMonthlyPrice \?\? price\.standardMonthlyPrice/.test(tiers),
+  "the price a customer accepted is the one stored on their purchase",
+  /standardRecurringPrice: quote\.standard/.test(commerceEarly),
 );
-
-const paystack = source("../src/lib/paystack.ts");
 check(
-  "moving a plan disables the old subscription before creating the new one",
-  paystack.indexOf("/subscription/disable") < paystack.indexOf("const planCode = await createSubscriptionPlan"),
+  "a past-due subscription is what writes to the customer, not a counter of our own",
+  /state === "PAST_DUE"/.test(events) && /sendDunningNotice/.test(events),
 );
+// Read from the table rather than from its source: this is the pair that
+// silently inverted when the catalogue moved currency and the tier table did
+// not, which would have charged every customer less after their promotion
+// than during it.
+for (const tier of ["EDITOR", "CARE", "MANAGED"] as const) {
+  check(
+    `${tier}: the standard price is above the promotional one`,
+    WEBSITE_TIER_PLANS[tier].standardMonthlyPrice > WEBSITE_TIER_PLANS[tier].promoMonthlyPrice,
+  );
+}
 
 /* ------------------------------------------------ buying, without a human - */
 
@@ -110,6 +120,10 @@ check("a purchase creates the buyer's account", /ensureCustomerAccount\(\{/.test
 check("the purchase row is linked to that account", /userId: account\.user\.id/.test(commerce));
 check("the set-password link is sent after the payment is raised", commerce.indexOf("raisePayment") < commerce.indexOf("sendSetPasswordLink"));
 check("a subscription can be cancelled", /export async function cancelWebsiteSubscription/.test(commerce));
+check(
+  "cancellation goes through the billing state machine rather than around it",
+  /updatePurchaseStatus\(input\.purchaseId, "CANCELLED"\)/.test(commerce),
+);
 
 const payments = source("../src/services/payments.ts");
 check(
@@ -160,7 +174,7 @@ check(
 );
 
 const dunning = source("../src/services/websiteDunning.ts");
-equal("editing pauses after three declined payments", /DUNNING_ATTEMPTS_BEFORE_LOCK = (\d)/.exec(dunning)?.[1], "3");
+equal("editing pauses after two weeks past due", /DUNNING_DAYS_BEFORE_LOCK = (\d+)/.exec(dunning)?.[1], "14");
 check(
   "a declined payment never takes the published website down",
   /Your website stays online exactly as it is/.test(dunning),
@@ -174,7 +188,7 @@ check("each route links to its own half of the guide", /#hosted/.test(connect) &
 check("a repository is only asked for on the repository route", /route === "github" && repository\.trim\(\)/.test(connect));
 
 const setup = source("../src/services/websiteSetupAssistance.ts");
-check("setup help is charged in the customer's own currency", /SETUP_ASSISTANCE\[currency\]/.test(setup));
+check("setup help is priced from one place", /setupAssistancePrice\(\)/.test(setup));
 check(
   "a request stands even when no payment link could be raised",
   /could not raise a payment link/.test(setup),
@@ -182,13 +196,13 @@ check(
 check("the request says which route the customer was on", /ROUTE_LABEL\[input\.route\]/.test(setup));
 
 const pricing = source("../src/services/websitePricing.ts");
-check("setup help is GHS 120 in Ghana", /GHS: \{ amount: 120/.test(pricing));
-check("setup help is $10 elsewhere", /USD: \{ amount: 10/.test(pricing));
+check("setup help is quoted at $10 and charged in cedis", /SETUP_ASSISTANCE_USD = 10/.test(pricing) && /cedis\(amount\)/.test(pricing));
+check("there is one settlement currency", /export type PlanCurrency = "GHS"/.test(pricing));
 
 const guide = readFileSync(new URL("../../website-builder-setup.html", import.meta.url), "utf8");
 check("the guide has a section for the hosted route", /id="hosted"/.test(guide));
 check("the guide has a section for the repository route", /id="github"/.test(guide));
-check("the guide prices the setup help the same as the code does", /GHS 120/.test(guide) && /\$10/.test(guide));
+check("the guide prices the setup help the same as the code does", /GHS 120/.test(guide));
 
 /* ------------------------------------------------------- the boundary ----- */
 

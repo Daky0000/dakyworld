@@ -19,29 +19,38 @@ import { WEBSITE_TIER_PLANS } from "./websiteTierPlans.js";
  * your business off the web".
  */
 
-/** How many failed attempts before editing is closed. */
-export const DUNNING_ATTEMPTS_BEFORE_LOCK = 3;
+/**
+ * How long a subscription may sit past due before editing closes.
+ *
+ * Counted in days rather than in failed attempts, because the attempts belong
+ * to Paystack now: it retries on its own schedule and tells us the state of
+ * the subscription, not how many times it has tried. Fourteen days is long
+ * enough for an expired card to be replaced by somebody who only reads email
+ * weekly, and short enough that a subscription nobody intends to pay does not
+ * run indefinitely.
+ */
+export const DUNNING_DAYS_BEFORE_LOCK = 14;
 
 type Notice = { subject: string; body: string; closing: string };
 
-function noticeFor(attempt: number, planName: string, priceLabel: string, updateUrl: string): Notice {
-  if (attempt <= 1) {
+function noticeFor(stage: number, planName: string, priceLabel: string, updateUrl: string): Notice {
+  if (stage <= 1) {
     return {
       subject: "We could not take this month's payment",
       body: `This month's ${planName} payment (${priceLabel}) was declined. This is usually an expired card or a bank blocking the charge, and it is normally fixed in a minute.`,
       closing: "We will try again in a few days. Your website is unaffected.",
     };
   }
-  if (attempt === 2) {
+  if (stage === 2) {
     return {
-      subject: "Second attempt declined — please update your card",
-      body: `We tried this month's ${planName} payment (${priceLabel}) again and it was declined a second time.`,
-      closing: "Your website is still online and will stay online. If the next attempt fails, editing will pause until a payment goes through.",
+      subject: "Still declined — please update your card",
+      body: `This month's ${planName} payment (${priceLabel}) is still being declined.`,
+      closing: "Your website is still online and will stay online. If it stays unpaid for two weeks, editing pauses until a payment goes through.",
     };
   }
   return {
     subject: "Editing paused — payment still outstanding",
-    body: `Three attempts at this month's ${planName} payment (${priceLabel}) have now been declined, so editing is paused on your account.`,
+    body: `This month's ${planName} payment (${priceLabel}) is still outstanding after two weeks, so editing is paused on your account.`,
     closing:
       "Your website stays online exactly as it is — nothing has been taken down and nothing has been deleted. Update your card and editing comes back immediately.",
   };
@@ -65,19 +74,27 @@ export async function sendDunningNotice(purchaseId: string): Promise<void> {
       contactName: true,
       tier: true,
       currency: true,
-      failedPaymentCount: true,
+      billingState: true,
+      nextBillingAt: true,
       invoice: { select: { paymentUrl: true } },
     },
   });
   if (!purchase) return;
 
   const plan = WEBSITE_TIER_PLANS[purchase.tier];
-  const price = priceFor(purchase.tier, purchase.currency === "USD" ? "USD" : "GHS");
+  const price = priceFor(purchase.tier);
   const updateUrl = purchase.invoice?.paymentUrl ?? "https://dakyworld.com/website-builder";
-  const notice = noticeFor(purchase.failedPaymentCount, plan.name, `${price.standardDisplay}/mo`, updateUrl);
+  // How far past due, in whole days, decides which of the three notices this
+  // is — the first the day it fails, the second a few days in, the third once
+  // editing is about to close.
+  const overdueDays = purchase.nextBillingAt
+    ? Math.max(0, Math.floor((Date.now() - purchase.nextBillingAt.getTime()) / 86_400_000))
+    : 0;
+  const stage = overdueDays >= DUNNING_DAYS_BEFORE_LOCK ? 3 : overdueDays >= 4 ? 2 : 1;
+  const notice = noticeFor(stage, plan.name, `${price.standardDisplay}/mo`, updateUrl);
 
   if (!(await mailerConfigured())) {
-    console.warn(`[dunning] no mailer configured — attempt ${purchase.failedPaymentCount} notice for ${purchase.email} not sent`);
+    console.warn(`[dunning] no mailer configured — past-due notice for ${purchase.email} not sent`);
     return;
   }
 
@@ -106,7 +123,9 @@ export async function editingLockedForNonPayment(purchaseId: string | null): Pro
   if (!purchaseId) return false;
   const purchase = await prisma.websitePurchase.findUnique({
     where: { id: purchaseId },
-    select: { failedPaymentCount: true },
+    select: { billingState: true, nextBillingAt: true },
   });
-  return (purchase?.failedPaymentCount ?? 0) >= DUNNING_ATTEMPTS_BEFORE_LOCK;
+  if (purchase?.billingState !== "PAST_DUE") return false;
+  if (!purchase.nextBillingAt) return false;
+  return Date.now() - purchase.nextBillingAt.getTime() >= DUNNING_DAYS_BEFORE_LOCK * 86_400_000;
 }

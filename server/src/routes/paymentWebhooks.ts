@@ -1,32 +1,11 @@
 import type { Request, Response } from "express";
 import { prisma } from "../lib/prisma.js";
 import { verifyPaystackSignature } from "../lib/paystack.js";
+import { enqueuePaystackEvent, processPaystackEvents } from "../services/paystackEvents.js";
 import { settleFromProvider } from "../services/payments.js";
-import { recordFailedRenewal } from "../services/websiteCommerce.js";
-import { sendDunningNotice } from "../services/websiteDunning.js";
 
-/**
- * "Somebody paid."
- *
- * Both handlers are mounted **above the global JSON parser** and given raw
- * bytes, for the reason the Stripe and Slack routes are: a signature covers the
- * exact bytes that were sent, and a body that has been parsed and re-serialised
- * differs from those by a space. The failure mode of getting this wrong is a
- * signature check that fails every time with a message saying nothing about
- * body parsing, which is a genuinely expensive afternoon.
- *
- * **Neither handler believes what it is told.** Both do the same thing: work
- * out which reference is being talked about, then go and ask the provider
- * whether that reference is actually paid (`settleFromProvider`). Paystack
- * signs its webhooks and Hubtel does not sign anything at all, so trusting the
- * payload would make a Hubtel callback a free invoice to anybody who guesses
- * the URL. Verifying costs one API call on a path that fires a handful of times
- * a day.
- *
- * **Both answer 200 quickly and are idempotent.** A provider retries anything
- * it does not get a 200 from, and a retried "paid" must not add a second
- * payment to a client's lifetime value.
- */
+/** Provider callbacks use raw bodies. Paystack signatures are checked before
+ * parsing, and accepted Paystack events enter a durable queue before HTTP 200. */
 
 /** Every payload lands here before it is acted on, verified or not. */
 async function record(source: string, event: string, payload: unknown, headers: Request["headers"], verified: boolean) {
@@ -45,72 +24,26 @@ async function record(source: string, event: string, payload: unknown, headers: 
   }
 }
 
-/**
- * Paystack.
- *
- * Signed with HMAC-SHA512 over the raw body, keyed by the *secret key* itself —
- * there is no separate webhook secret as there is with Stripe. An unverified
- * payload is recorded and refused: it is either a forgery or a key mismatch,
- * and both are worth being able to see afterwards.
- */
+/** HMAC-SHA512 authentication and durable, redacted Paystack ingestion. */
 export async function paystackWebhook(req: Request, res: Response) {
-  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body ?? ""));
-  const signature = req.headers["x-paystack-signature"] as string | undefined;
-  const verified = await verifyPaystackSignature(raw, signature);
-
-  let payload: { event?: string; data?: { reference?: string; subscription_code?: string; subscription?: { subscription_code?: string } } } = {};
   try {
-    payload = JSON.parse(raw.toString("utf8")) as typeof payload;
+    if (!Buffer.isBuffer(req.body)) return res.status(400).send("raw body required");
+    const signature = req.headers["x-paystack-signature"];
+    if (typeof signature !== "string" || !await verifyPaystackSignature(req.body, signature)) return res.status(401).send("bad signature");
+    let payload;
+    try { payload = JSON.parse(req.body.toString("utf8")); }
+    catch { return res.status(400).send("not json"); }
+    if (!payload || typeof payload.event !== "string" || payload.event.length > 100 || !payload.data || typeof payload.data !== "object") return res.status(400).send("invalid event");
+    await enqueuePaystackEvent(req.body, payload.event, payload.data);
+    res.status(200).json({ received: true });
+    void processPaystackEvents().catch(() => console.error("[paystack] Queue worker failed; scheduler will retry"));
   } catch {
-    await record("paystack", "unparseable", { body: raw.toString("utf8").slice(0, 500) }, req.headers, verified);
-    return res.status(400).send("not json");
-  }
-
-  await record("paystack", payload.event ?? "unknown", payload, req.headers, verified);
-  if (!verified) return res.status(401).send("bad signature");
-
-  // Answered before the work. Paystack retries after a few seconds, and a
-  // verification call against their API is not something to hold it open for.
-  res.status(200).json({ received: true });
-
-  // A renewal that did not go through. Paystack sends this when it retries a
-  // subscription charge and the card refuses; without it a customer simply
-  // stops paying and nothing here ever knows, which is how a subscription
-  // business loses money quietly.
-  if (payload.event === "invoice.payment_failed" || payload.event === "subscription.not_renew") {
-    const subscriptionCode = payload.data?.subscription?.subscription_code ?? payload.data?.subscription_code;
-    if (subscriptionCode) {
-      try {
-        await noteFailedRenewal(subscriptionCode);
-      } catch (err) {
-        console.error("[webhooks] could not record the failed renewal:", (err as Error).message);
-      }
-    }
-    return;
-  }
-
-  const reference = payload.data?.reference;
-  if (payload.event !== "charge.success" || !reference) return;
-
-  try {
-    const settled = await settleFromProvider(reference);
-    if (settled?.changed) console.log(`[webhooks] paystack settled ${settled.invoice.invoiceNumber}`);
-  } catch (err) {
-    console.error("[webhooks] paystack settlement failed:", (err as Error).message);
+    // Never acknowledge an event which has not reached durable storage.
+    return res.status(503).json({ error: "Please retry delivery" });
   }
 }
 
-/** Finds the subscription the processor is talking about, and counts the miss. */
-async function noteFailedRenewal(subscriptionCode: string): Promise<void> {
-  const purchase = await prisma.websitePurchase.findFirst({
-    where: { providerSubscriptionCode: subscriptionCode },
-    select: { id: true, email: true, failedPaymentCount: true },
-  });
-  if (!purchase) return;
-  const updated = await recordFailedRenewal(purchase.id);
-  await sendDunningNotice(updated.id);
-  console.warn(`[webhooks] renewal failed for ${purchase.email} (attempt ${updated.failedPaymentCount})`);
-}
+
 
 /**
  * Hubtel.
@@ -140,7 +73,7 @@ export async function hubtelWebhook(req: Request, res: Response) {
   if (!reference) return;
 
   try {
-    const settled = await settleFromProvider(reference);
+    const settled = await settleFromProvider(reference, "hubtel");
     if (settled?.changed) console.log(`[webhooks] hubtel settled ${settled.invoice.invoiceNumber}`);
   } catch (err) {
     console.error("[webhooks] hubtel settlement failed:", (err as Error).message);

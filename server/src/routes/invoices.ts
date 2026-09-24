@@ -6,6 +6,8 @@ import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
 import { getStripe } from "../lib/stripe.js";
 import { createNumberedInvoice } from "../services/invoiceNumber.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import { settleManually, raisePayment, settleFromProvider } from "../services/payments.js";
+import { appUrl } from "../services/emailSender.js";
 
 export const invoicesRouter = Router();
 
@@ -22,6 +24,7 @@ invoicesRouter.use(
       { path: /^\/[^/]+\/create-payment-link$/, permission: "invoices.send" },
       { path: /^\/[^/]+\/generate-pdf$/, permission: "invoices.view" },
       { path: /^\/[^/]+\/mark-paid$/, permission: "invoices.edit" },
+      { path: /^\/[^/]+\/check-payment$/, permission: "invoices.edit" },
     ],
   }),
 );
@@ -127,11 +130,11 @@ invoicesRouter.post("/:id/generate-pdf", async (req, res, next) => {
 
 invoicesRouter.post("/:id/send", async (req, res, next) => {
   try {
-    const invoice = await prisma.invoice.update({
-      where: { id: req.params.id },
+    await prisma.invoice.updateMany({
+      where: { id: req.params.id, status: { not: "PAID" } },
       data: { status: "SENT", sentAt: new Date() },
     });
-    res.json(invoice);
+    res.json(await prisma.invoice.findUniqueOrThrow({ where: { id: req.params.id } }));
   } catch (err) {
     next(err);
   }
@@ -142,6 +145,8 @@ invoicesRouter.post("/:id/send", async (req, res, next) => {
 // Stripe keys are added; the route itself is fully implemented.
 invoicesRouter.post("/:id/create-payment-link", async (req, res, next) => {
   try {
+    const { provider } = z.object({ provider: z.enum(["paystack", "hubtel", "stripe"]).default("paystack") }).parse(req.body ?? {});
+    if (provider !== "stripe") return res.json(await raisePayment(req.params.id, provider));
     const stripe = await getStripe();
     if (!stripe) {
       return res.status(503).json({
@@ -150,7 +155,10 @@ invoicesRouter.post("/:id/create-payment-link", async (req, res, next) => {
     }
     const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: { client: true } });
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+    if (invoice.status === "PAID") return res.status(409).json({ error: `${invoice.invoiceNumber} has already been paid.` });
 
+    if (invoice.paymentRef || await prisma.paymentAttempt.findUnique({ where: { invoiceId: invoice.id } })) return res.status(409).json({ error: "Reconcile the existing checkout before creating a Stripe payment." });
+    const base = await appUrl();
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: [
@@ -164,27 +172,47 @@ invoicesRouter.post("/:id/create-payment-link", async (req, res, next) => {
         },
       ],
       customer_email: invoice.client.email ?? undefined,
-      success_url: `${process.env.CLIENT_ORIGIN}/invoices/${invoice.id}?paid=1`,
-      cancel_url: `${process.env.CLIENT_ORIGIN}/invoices/${invoice.id}`,
+      success_url: `${base}/invoices/${invoice.id}?paid=1`,
+      cancel_url: `${base}/invoices/${invoice.id}`,
       metadata: { invoiceId: invoice.id },
     });
 
-    await prisma.invoice.update({ where: { id: invoice.id }, data: { stripePaymentIntentId: session.id } });
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        stripePaymentIntentId: session.id,
+        paymentProvider: "stripe",
+        paymentRef: session.id,
+        paymentUrl: session.url,
+      },
+    });
     res.json({ url: session.url });
   } catch (err) {
     next(err);
   }
 });
 
-// Marks an invoice paid manually (bank transfer, etc). Stripe webhook (see
-// index.ts) does this automatically for card payments.
+invoicesRouter.post("/:id/check-payment", async (req, res, next) => {
+  try {
+    const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
+    const attempt = await prisma.paymentAttempt.findUnique({ where: { invoiceId: req.params.id } });
+    if (!invoice) return res.status(404).json({ error: "Invoice not found." });
+    const reference = attempt?.reference ?? invoice.paymentRef;
+    if (!reference) return res.status(409).json({ error: "No payment attempt exists." });
+    const result = await settleFromProvider(reference);
+    res.json({ paid: result?.invoice.status === "PAID", changed: result?.changed ?? false });
+  } catch (error) { next(error); }
+});
+
+// Marks an invoice paid manually (bank transfer, etc). Uses settleManually so
+// the same side-effects fire as for a Stripe/Paystack/Hubtel payment:
+// lifetime value, WebsitePurchase promotion, and a context note.
 invoicesRouter.post("/:id/mark-paid", async (req, res, next) => {
   try {
-    const invoice = await prisma.invoice.update({
-      where: { id: req.params.id },
-      data: { status: "PAID", paidAt: new Date() },
-    });
-    res.json(invoice);
+    const paidVia = typeof req.body?.paidVia === "string" ? req.body.paidVia : "manual";
+    const result = await settleManually(req.params.id, { paidVia });
+    if (!result) return res.status(404).json({ error: "Invoice not found" });
+    res.json(result.invoice);
   } catch (err) {
     next(err);
   }

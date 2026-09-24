@@ -28,7 +28,7 @@ import { restoreOrphanedWakes } from "./rehearsals/wake.js";
 import { settleIdleRehearsals } from "./rehearsals/run.js";
 import { purgeExpiredSessions } from "../lib/session.js";
 import { reconcileInterruptedPublishJobs, verifyDuePublishJobs } from "./websitePublishJobs.js";
-import { revertExpiredWebsitePurchasePrices } from "./websiteTierPlans.js";
+import { processPaystackEvents, reconcilePaystackPayments, updateDuePaystackPrices } from "./paystackEvents.js";
 
 /**
  * The app's clock. Three things run on it:
@@ -117,7 +117,9 @@ export async function tick(now = new Date()) {
   const results = await Promise.allSettled([
     captureTick(now),
     billDuePlans(now),
-    revertExpiredWebsitePurchasePrices(now),
+    processPaystackEvents(now),
+    reconcilePaystackPayments(),
+    updateDuePaystackPrices(now),
     dispatchDueEmails(now),
     // WhatsApp and SMS, on the same tick and settled separately for the same
     // reason: a WhatsApp token that has expired must not stop an invoice email.

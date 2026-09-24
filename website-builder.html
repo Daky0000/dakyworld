@@ -749,16 +749,15 @@
                 </div>
               </div>
 
+              <p id="builderBillingTerms" role="status">Review your exact GHS price before continuing. USD prices convert at the merchant rate shown at checkout.</p>
+              <label><input type="checkbox" name="recurringConsent" required> I agree to the displayed recurring charges and cancellation terms.</label>
+
               <!-- Payment Method Summary -->
               <div class="builder-payment-methods">
                 <div class="builder-payment-label">Accepted payment methods</div>
                 <div class="builder-payment-badges">
                   <span class="builder-pay-pill">Visa</span>
                   <span class="builder-pay-pill">Mastercard</span>
-                  <span class="builder-pay-pill">MTN MoMo</span>
-                  <span class="builder-pay-pill">Telecel Cash</span>
-                  <span class="builder-pay-pill">AT Money</span>
-                  <span class="builder-pay-pill">Bank Transfer</span>
                 </div>
               </div>
 
@@ -768,7 +767,7 @@
               <!-- Purchase Button -->
               <button class="btn btn-primary builder-submit-btn" id="builderSubmitBtn" type="submit">
                 <span class="builder-btn-spinner" aria-hidden="true"></span>
-                <span class="builder-btn-text">Purchase Website Builder &middot; <span id="builderBtnAmount">GHS 300</span></span>
+                <span class="builder-btn-text">Review payment &middot; <span id="builderBtnAmount">USD 3</span></span>
                 <span class="builder-btn-lock" aria-hidden="true">&#128274;</span>
               </button>
 
@@ -786,16 +785,16 @@
         <div class="builder-success-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
         </div>
-        <span class="builder-success-badge">Payment Confirmed</span>
+        <span class="builder-success-badge">Payment confirmation</span>
         <h2 id="builderSuccessTitle">Welcome to Website Builder!</h2>
-        <p class="builder-success-blurb">Your subscription has been activated. We are linking your website repository and setting up your workspace.</p>
+        <p class="builder-success-blurb">Payment and subscription activation require server verification. Contact support if confirmation is pending.</p>
         
         <div class="builder-steps-box">
           <div class="builder-step-item done">
             <span class="builder-step-dot">&#10003;</span>
             <div>
-              <strong>Payment &amp; Subscription Active</strong>
-              <span>Your payment was processed securely. Receipt and invoice have been emailed.</span>
+              <strong>Payment verification</strong>
+              <span>Paystack confirms successful payments. A return redirect alone does not confirm a charge.</span>
             </div>
           </div>
           <div class="builder-step-item active">

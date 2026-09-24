@@ -52,6 +52,7 @@ import { ensureStandingWork } from "./services/agents/standingWork.js";
 import { SETTING } from "./lib/settings.js";
 import { pruneFreeLadders } from "./lib/models/call.js";
 import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
+import { settleManually } from "./services/payments.js";
 import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { conceptsRouter } from "./routes/concepts.js";
@@ -131,15 +132,42 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
     return res.status(400).send(`Webhook signature verification failed: ${(err as Error).message}`);
   }
 
+  // Record every Stripe event for audit trail, matching Paystack/Hubtel.
+  try {
+    await prisma.webhookEvent.create({
+      data: {
+        source: "stripe",
+        event: event.type,
+        payload: event.data.object as never,
+        headers: JSON.parse(JSON.stringify({ "stripe-signature": req.headers["stripe-signature"] })) as never,
+        verified: true,
+      },
+    });
+  } catch (err) {
+    console.error("[webhooks] could not record a stripe event:", (err as Error).message);
+  }
+
+  // Answer immediately — Stripe retries on timeout.
+  res.json({ received: true });
+
   if (event.type === "checkout.session.completed") {
-    const session = event.data.object as { metadata?: { invoiceId?: string } };
+    const session = event.data.object as {
+      metadata?: { invoiceId?: string };
+      payment_method_types?: string[];
+    };
     const invoiceId = session.metadata?.invoiceId;
     if (invoiceId) {
-      await prisma.invoice.update({ where: { id: invoiceId }, data: { status: "PAID", paidAt: new Date() } });
+      try {
+        const paidVia = session.payment_method_types?.[0] ?? "card";
+        const settled = await settleManually(invoiceId, { paidVia: `Stripe ${paidVia}` });
+        if (settled?.changed) console.log(`[webhooks] stripe settled ${settled.invoice.invoiceNumber}`);
+      } catch (err) {
+        console.error("[webhooks] stripe settlement failed:", (err as Error).message);
+      }
     }
   }
-  res.json({ received: true });
 });
+
 
 // Paystack and Hubtel, above the generic handler below because each verifies
 // its own way — Paystack signs with HMAC-SHA512 over the raw body keyed by the
