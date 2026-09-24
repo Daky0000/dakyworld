@@ -2688,40 +2688,38 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             <WebsiteBreadcrumbs fields={allFields} selectedId={pickedId} onSelect={pick} />
             {page.data.structure?.stale && <p role="alert" className="bg-warn-surface px-3 py-2 text-xs text-warn-text">The source changed after these layout edits. Your draft is preserved. Discard it to work from the latest source; publishing is blocked.</p>}
             {showLayers && (
-              <div className="editor-layers">
-                <WebsiteLayers
-                  fields={allFields}
-                  edits={edits}
-                  problems={problems}
-                  shared={page.data.shared?.scope}
-                  selectedId={pickedId}
-                  onSelect={pick}
-                  onClose={() => setShowLayers(false)}
-                  onToggleVisibility={
-                    readOnly
-                      ? undefined
-                      : (targetId) => {
-                          const targetField = allFields.find((f) => f.id === targetId);
-                          if (!targetField) return;
-                          const rawStyle = edits[targetId]?.style ?? targetField.style ?? "";
-                          const map = parseStyle(rawStyle);
-                          if (map.display === "none") {
-                            delete map.display;
-                          } else {
-                            map.display = "none";
-                          }
-                          change(targetId, { ...edits[targetId], style: writeStyle(map) }, { commit: true });
+              <WebsiteLayers
+                fields={allFields}
+                edits={edits}
+                problems={problems}
+                shared={page.data.shared?.scope}
+                selectedId={pickedId}
+                onSelect={pick}
+                onClose={() => setShowLayers(false)}
+                onToggleVisibility={
+                  readOnly
+                    ? undefined
+                    : (targetId) => {
+                        const targetField = allFields.find((f) => f.id === targetId);
+                        if (!targetField) return;
+                        const rawStyle = edits[targetId]?.style ?? targetField.style ?? "";
+                        const map = parseStyle(rawStyle);
+                        if (map.display === "none") {
+                          delete map.display;
+                        } else {
+                          map.display = "none";
                         }
-                  }
-                  onMove={
-                    !designerMode || readOnly || save.isPending
-                      ? undefined
-                      : (id, target, position) => {
-                          void runStructure(position, id, target);
-                        }
-                  }
-                />
-              </div>
+                        change(targetId, { ...edits[targetId], style: writeStyle(map) }, { commit: true });
+                      }
+                }
+                onMove={
+                  !designerMode || readOnly || save.isPending
+                    ? undefined
+                    : (id, target, position) => {
+                        void runStructure(position, id, target);
+                      }
+                }
+              />
             )}
             {designerMode && picked && <div className="border-b border-line px-3 py-2">
               <div className="flex flex-wrap gap-2 text-xs">

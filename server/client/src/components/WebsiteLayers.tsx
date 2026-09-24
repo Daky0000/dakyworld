@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { FieldEdit, SharedFieldScope, SiteFieldRow } from "../lib/types";
 import { layerAncestors, visibleWebsiteLayers, websiteLayerNavigation, websiteLayerTabStop, websiteLayerTree } from "../lib/websiteLayers";
 
@@ -236,11 +237,161 @@ export function WebsiteLayers({
   const visibleSlice = rows.slice(startIndex, endIndex);
   const offsetY = startIndex * ROW_HEIGHT;
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col border-b border-[#2C2F36] bg-[#1E2024] text-[#E2E4E9]">
-      {/* Elementor-style "Structure" Header Bar */}
-      <div className="flex items-center justify-between border-b border-[#2C2F36] bg-[#191B1F] px-3 py-2.5">
-        <div className="flex items-center gap-2">
+  // Floating & Draggable Structure Window State (Elementor style — floats by default)
+  const [isFloating, setIsFloating] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("dw-structure-floating");
+      return saved ? saved !== "docked" : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const [winBounds, setWinBounds] = useState<{ x: number; y: number; w: number; h: number }>(() => {
+    const defaultW = 284;
+    const defaultH = 470;
+    const defaultX = typeof window !== "undefined" ? Math.max(24, window.innerWidth - defaultW - 28) : 900;
+    const defaultY = 74;
+    try {
+      const saved = JSON.parse(localStorage.getItem("dw-structure-bounds") || "null");
+      if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
+        const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+        const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+        return {
+          x: Math.max(12, Math.min(vw - 220, saved.x)),
+          y: Math.max(12, Math.min(vh - 140, saved.y)),
+          w: Math.max(240, Math.min(480, saved.w || defaultW)),
+          h: Math.max(240, Math.min(vh - 40, saved.h || defaultH)),
+        };
+      }
+    } catch {}
+    return { x: defaultX, y: defaultY, w: defaultW, h: defaultH };
+  });
+
+  const [interactingWindow, setInteractingWindow] = useState<"drag" | "resize" | null>(null);
+
+  useEffect(() => {
+    const clampOnResize = () => {
+      setWinBounds((prev) => ({
+        x: Math.max(8, Math.min(window.innerWidth - 220, prev.x)),
+        y: Math.max(8, Math.min(window.innerHeight - 120, prev.y)),
+        w: Math.max(240, Math.min(480, prev.w)),
+        h: Math.max(220, Math.min(window.innerHeight - 32, prev.h)),
+      }));
+    };
+    window.addEventListener("resize", clampOnResize);
+    return () => window.removeEventListener("resize", clampOnResize);
+  }, []);
+
+  const toggleFloatingMode = (nextVal?: boolean) => {
+    const next = nextVal ?? !isFloating;
+    setIsFloating(next);
+    try {
+      localStorage.setItem("dw-structure-floating", next ? "floating" : "docked");
+    } catch {}
+  };
+
+  const startHeaderDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    // Ignore clicks on buttons/inputs inside the header bar
+    const target = event.target as HTMLElement;
+    if (target.closest("button") || target.closest("input")) return;
+    event.preventDefault();
+
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    const initialX = isFloating ? winBounds.x : Math.max(16, event.clientX - Math.round(winBounds.w / 2));
+    const initialY = isFloating ? winBounds.y : Math.max(16, event.clientY - 18);
+    let moved = false;
+
+    setInteractingWindow("drag");
+
+    const onMove = (moveEvt: PointerEvent) => {
+      const dx = moveEvt.clientX - startClientX;
+      const dy = moveEvt.clientY - startClientY;
+      if (!moved && Math.hypot(dx, dy) > 4) {
+        moved = true;
+        if (!isFloating) toggleFloatingMode(true);
+      }
+      if (!moved && !isFloating) return;
+      const nextX = Math.max(8, Math.min(window.innerWidth - winBounds.w - 8, initialX + dx));
+      const nextY = Math.max(8, Math.min(window.innerHeight - 80, initialY + dy));
+      setWinBounds((prev) => {
+        const updated = { ...prev, x: nextX, y: nextY };
+        try {
+          localStorage.setItem("dw-structure-bounds", JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+    };
+
+    const onUp = () => {
+      setInteractingWindow(null);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const startResizeDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isFloating) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const initialW = winBounds.w;
+    const initialH = winBounds.h;
+
+    setInteractingWindow("resize");
+
+    const onMove = (moveEvt: PointerEvent) => {
+      const nextW = Math.max(240, Math.min(480, initialW + (moveEvt.clientX - startX)));
+      const nextH = Math.max(220, Math.min(window.innerHeight - winBounds.y - 16, initialH + (moveEvt.clientY - startY)));
+      setWinBounds((prev) => {
+        const updated = { ...prev, w: nextW, h: nextH };
+        try {
+          localStorage.setItem("dw-structure-bounds", JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+    };
+
+    const onUp = () => {
+      setInteractingWindow(null);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const panelBody = (
+    <div
+      style={
+        isFloating
+          ? {
+              top: `${winBounds.y}px`,
+              left: `${winBounds.x}px`,
+              width: `${winBounds.w}px`,
+              height: `${winBounds.h}px`,
+            }
+          : undefined
+      }
+      className={
+        isFloating
+          ? "fixed z-[9980] flex flex-col overflow-hidden rounded-xl border border-[#2C2F36] bg-[#1E2024] text-[#E2E4E9] shadow-[0_24px_64px_rgba(0,0,0,0.65)] ring-1 ring-white/10"
+          : "editor-layers flex min-h-0 flex-1 flex-col border-b border-[#2C2F36] bg-[#1E2024] text-[#E2E4E9]"
+      }
+    >
+      {/* Elementor-style Draggable "Structure" Header Bar */}
+      <div
+        onPointerDown={startHeaderDrag}
+        title="Drag to move Structure window anywhere on screen"
+        className="flex cursor-grab select-none items-center justify-between border-b border-[#2C2F36] bg-[#191B1F] px-3 py-2.5 active:cursor-grabbing"
+      >
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             disabled={filtering}
@@ -274,7 +425,9 @@ export function WebsiteLayers({
           </button>
         </div>
 
-        <span className="text-[13px] font-medium tracking-wide text-white">Structure</span>
+        <span className="pointer-events-none flex items-center gap-1.5 text-[13px] font-medium tracking-wide text-white">
+          <span>Structure</span>
+        </span>
 
         <div className="flex items-center gap-1">
           {!allCollapsed ? (
@@ -287,11 +440,31 @@ export function WebsiteLayers({
               Expand
             </button>
           ) : null}
+          <button
+            type="button"
+            onClick={() => toggleFloatingMode()}
+            aria-label={isFloating ? "Dock Structure to sidebar" : "Float Structure window"}
+            title={isFloating ? "Dock Structure to sidebar" : "Float Structure window (drag anywhere)"}
+            className="flex h-6 w-6 items-center justify-center rounded text-[#A4A8B3] transition hover:bg-white/10 hover:text-white"
+          >
+            {isFloating ? (
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <rect x="2" y="2.5" width="12" height="11" rx="1.5" />
+                <path d="M6 2.5v11" />
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <rect x="4.5" y="2.5" width="9" height="8.5" rx="1.2" />
+                <path d="M2.5 5.5v6.8a1.2 1.2 0 0 0 1.2 1.2h6.8" strokeLinecap="round" />
+              </svg>
+            )}
+          </button>
           {onClose ? (
             <button
               type="button"
               onClick={onClose}
               aria-label="Close structure panel"
+              title="Close Structure"
               className="flex h-6 w-6 items-center justify-center rounded text-[#A4A8B3] transition hover:bg-white/10 hover:text-white"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
@@ -524,12 +697,47 @@ export function WebsiteLayers({
         )}
       </div>
 
-      {/* Bottom Handle Bar (matching Elementor Structure footer) */}
-      <div className="flex h-4 items-center justify-center border-t border-[#2C2F36] bg-[#191B1F] text-[#787D8A]">
-        <span className="tracking-widest text-[10px] leading-none">•••</span>
+      {/* Bottom Resize Handle Bar (matching Elementor Structure footer) */}
+      <div
+        onPointerDown={startResizeDrag}
+        title={isFloating ? "Drag to resize Structure window" : undefined}
+        className={`relative flex h-4 select-none items-center justify-center border-t border-[#2C2F36] bg-[#191B1F] text-[#787D8A] ${
+          isFloating ? "cursor-ns-resize hover:text-white" : ""
+        }`}
+      >
+        <span className="text-[10px] leading-none tracking-widest">•••</span>
+        {isFloating && (
+          <span
+            onPointerDown={startResizeDrag}
+            title="Drag to resize width & height"
+            className="absolute right-1 bottom-0.5 h-3 w-3 cursor-nwse-resize text-[#787D8A] hover:text-white"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <path d="M9 3 3 9M9 6.5 6.5 9" strokeLinecap="round" />
+            </svg>
+          </span>
+        )}
       </div>
     </div>
   );
+
+  const fullContent = (
+    <>
+      {interactingWindow && (
+        <div
+          className={`fixed inset-0 z-[9979] ${
+            interactingWindow === "drag" ? "cursor-grabbing" : "cursor-nwse-resize"
+          }`}
+        />
+      )}
+      {panelBody}
+    </>
+  );
+
+  if (isFloating && typeof document !== "undefined") {
+    return createPortal(fullContent, document.body);
+  }
+  return fullContent;
 }
 
 export function WebsiteBreadcrumbs({ fields, selectedId, onSelect }: { fields: SiteFieldRow[]; selectedId: string | null; onSelect: (id: string) => void }) {
