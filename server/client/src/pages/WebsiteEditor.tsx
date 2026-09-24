@@ -632,8 +632,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     } else if (!pickedId && (inspectorTab === "style" || inspectorTab === "interactions")) {
       setInspectorTab("content");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickedId]);
+  }, [pickedId, inspectorTab]);
   /** The same, readable from listeners that must not be re-registered. */
   const pickedRef = useRef<string | null>(null);
   pickedRef.current = pickedId;
@@ -2737,7 +2736,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             <div role="tablist" aria-label="Element settings" className="editor-tabs">
               {(!picked
                 ? (["content", "theme", "seo"] as const)
-                : (["content", "style", "interactions", "theme", "seo"] as const)
+                : (["content", "style", "interactions"] as const)
               ).map((tab) => (
                 <button
                   type="button"
