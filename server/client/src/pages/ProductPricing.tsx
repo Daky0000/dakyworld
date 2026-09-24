@@ -3,20 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Badge, Button, RelativeTime } from "../components/ui";
-
-/**
- * What a product costs somebody who is not on a retainer.
- *
- * The rule above the table is the product, not a note about it: a client on an
- * active retainer gets everything here at no charge, and these numbers are for
- * everyone else. Stating it on the screen where the prices are edited is the
- * cheapest way to stop somebody quoting a retainer client for a product they
- * already have.
- *
- * What is edited here is what dakyworld.com shows. The public pages read the
- * same rows through `/api/public/products`, so a change reaches the website on
- * its next load — no deploy, and no second copy of the number to forget.
- */
+import { WebsiteTierStatusBanner } from "../components/WebsiteTierStatusBanner";
 
 type Product = {
   key: string;
@@ -24,6 +11,19 @@ type Product = {
   tagline: string;
   currency: string;
   monthlyPrice: string;
+  standardMonthlyPrice?: string;
+  priceDisplay?: string;
+  promoMonths?: number;
+  storageLabel?: string;
+  limits?: {
+    sites: number;
+    users: number;
+    monthlyImports: number | null;
+    monthlyEdits: number | null;
+    monthlyAiPrompts: number | null;
+  } | null;
+  featureSummary?: string[];
+  lockedFeatures?: string[];
   setupPrice: string | null;
   publicPath: string;
   active: boolean;
@@ -46,12 +46,13 @@ export function ProductPricing() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="font-display text-xl tracking-[-.02em]">Product pricing</h1>
+        <h1 className="font-display text-xl tracking-[-.02em]">Website Tier Plans &amp; Product Pricing</h1>
         <p className="mt-1 max-w-2xl text-sm text-muted">
-          What dakyworld.com asks for each product. The website reads these rows directly, so a change here is on the public page the
-          next time somebody loads it.
+          Three tier plans: <strong>$3 ($5)</strong> Starter, <strong>$10 ($16)</strong> Pro, and <strong>$25 ($45)</strong> Business. Promotional rates apply for the first 3 months of subscription and automatically revert to the standard price in brackets after 3 months.
         </p>
       </div>
+
+      <WebsiteTierStatusBanner />
 
       {catalogue.data && (
         <p className="rounded-2xl border border-positive-line bg-positive-surface px-4 py-3 text-sm text-positive-text">
@@ -120,10 +121,25 @@ function ProductRow({ product, mayEdit, onSaved }: { product: Product; mayEdit: 
     <section className="rounded-2xl border border-line bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="font-display text-base tracking-[-.02em]">{product.name}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-display text-base tracking-[-.02em]">{product.name}</h2>
+            {product.priceDisplay && (
+              <span className="rounded-md border border-blue/30 bg-blue/10 px-2 py-0.5 font-mono text-xs font-bold text-blue">
+                {product.priceDisplay}/mo
+              </span>
+            )}
+          </div>
           <p className="mt-0.5 font-mono text-[11px] text-muted">
             {product.key} · <a href={`https://dakyworld.com${product.publicPath}`} target="_blank" rel="noreferrer" className="underline-offset-2 hover:text-ink hover:underline">dakyworld.com{product.publicPath}</a>
+            {product.standardMonthlyPrice && (
+              <span> · Reverts to ${product.standardMonthlyPrice}/mo standard after {product.promoMonths ?? 3} months</span>
+            )}
           </p>
+          {product.limits && (
+            <p className="mt-1.5 text-xs text-ink">
+              <strong>Media Storage:</strong> {product.storageLabel} · <strong>HTML Imports:</strong> {product.limits.monthlyImports ?? "Unlimited"}/mo · <strong>Edits:</strong> {product.limits.monthlyEdits ?? "Unlimited"}/mo · <strong>Websites:</strong> {product.limits.sites} · <strong>Users:</strong> {product.limits.users}
+            </p>
+          )}
         </div>
         {active ? <Badge tone="positive">On the website</Badge> : <Badge tone="muted">Hidden</Badge>}
       </div>

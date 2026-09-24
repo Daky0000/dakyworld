@@ -339,39 +339,53 @@ export function NumberField({
   };
 
   return (
-    <div className={FIELD}>
-      {!bare && (
-        <span className={`${LABEL} cursor-ew-resize select-none`} title={`${label} — drag to change`} onPointerDown={scrub}>
-          {label}
-        </span>
-      )}
-      <input
-        aria-label={label}
-        className={NUM}
-        value={text}
-        placeholder={placeholder}
-        disabled={disabled}
-        inputMode="decimal"
-        onFocus={() => (editing.current = true)}
-        onBlur={() => {
-          editing.current = false;
-          onCommit?.();
-        }}
-        onChange={(event) => {
-          const raw = event.target.value;
-          setText(raw);
-          if (raw.trim() === "") return onChange(null);
-          const parsed = Number(raw);
-          if (Number.isFinite(parsed)) onChange(clamp(parsed));
-        }}
-      />
-      <span
-        className={`shrink-0 cursor-ew-resize select-none font-mono text-[11px] ${unit ? "text-muted" : "text-faint"}`}
-        title={`${label} — drag to change`}
-        onPointerDown={scrub}
-      >
-        {unit || "⇔"}
-      </span>
+    <div className="min-w-0 flex-1 space-y-1">
+      <div className="flex items-center justify-between gap-1">
+        {!bare ? (
+          <span
+            className="cursor-ew-resize select-none text-[11px] font-medium text-ink-2"
+            title={`${label} — drag to change`}
+            onPointerDown={scrub}
+          >
+            {label}
+          </span>
+        ) : (
+          <span />
+        )}
+        {unit && (
+          <span
+            className="cursor-ew-resize select-none rounded-md bg-blue/15 px-1.5 py-0.5 font-sans text-[10px] font-bold uppercase tracking-wider text-blue"
+            title={`${label} (${unit})`}
+            onPointerDown={scrub}
+          >
+            {unit}
+          </span>
+        )}
+      </div>
+      <div className={FIELD}>
+        <input
+          aria-label={label}
+          type="number"
+          step="any"
+          className={`${NUM} w-full text-center`}
+          value={text}
+          placeholder={placeholder}
+          disabled={disabled}
+          inputMode="decimal"
+          onFocus={() => (editing.current = true)}
+          onBlur={() => {
+            editing.current = false;
+            onCommit?.();
+          }}
+          onChange={(event) => {
+            const raw = event.target.value;
+            setText(raw);
+            if (raw.trim() === "") return onChange(null);
+            const parsed = Number(raw);
+            if (Number.isFinite(parsed)) onChange(clamp(parsed));
+          }}
+        />
+      </div>
     </div>
   );
 }

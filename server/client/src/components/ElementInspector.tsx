@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CssValueField } from "./CssValueField";
+import { CssValueField, UnitPillSelector } from "./CssValueField";
 import {
   ALIGN_ICONS, BORDER_STYLES, CASES, COLOURS, ColourField, DIRECTION_ICONS, DISPLAY_ICONS, EXTRA_LABEL, EXTRA_SEED,
   FONTS, IconChoice, IconToggle, JUSTIFY_ICONS, NumberField, PaletteContext, Row, SIDES, Section, Segmented,
@@ -97,6 +97,9 @@ export function ElementInspector({
   const [gapsLinked, setGapsLinked] = useState(true);
   const [widthUnit, setWidthUnit] = useState<"px" | "%" | "vw">("px");
   const [minHeightUnit, setMinHeightUnit] = useState<"px" | "vh">("px");
+  const [gapUnit, setGapUnit] = useState<"px" | "%" | "rem">("px");
+  const [paddingUnit, setPaddingUnit] = useState<"px" | "%" | "em" | "rem">("px");
+  const [marginUnit, setMarginUnit] = useState<"px" | "%" | "em" | "rem">("px");
   /**
    * Which groups are open, and only where somebody has said otherwise.
    *
@@ -130,8 +133,6 @@ export function ElementInspector({
     "flexChild",
     "gridChild",
     "size",
-    "spacing",
-    "position",
   ];
 
   const shown = new Set(
@@ -149,17 +150,13 @@ export function ElementInspector({
     })
   );
   if (tab === "content" && content) shown.add("content");
-  if (tab === "layout") {
-    shown.add("spacing");
-    shown.add("position");
-  }
   if (tab === "style") {
     shown.add("background");
     shown.add("border");
+    shown.add("spacing");
+    shown.add("position");
     if (facts.kind !== "container") {
-      shown.add("position");
       shown.add("size");
-      shown.add("spacing");
     }
   }
 
@@ -355,7 +352,7 @@ export function ElementInspector({
   const decoration = value("text-decoration").effective;
   const fontOptions = [...FONTS.filter((font) => font.value), ...(fonts ?? []).filter((face) => !FONTS.some((font) => font.value === face)).map((face) => ({ label: face, value: face }))];
 
-  const SideField = ({ property, side }: { property: "padding" | "margin"; side: (typeof SIDES)[number] }) => {
+  const SideField = ({ property, side, unitOverride }: { property: "padding" | "margin"; side: (typeof SIDES)[number]; unitOverride: string }) => {
     const current = value(`${property}-${side}`);
     return (
       <div className="relative min-w-0">
@@ -363,6 +360,8 @@ export function ElementInspector({
           property={`${property}-${side}`}
           label={`${property} ${side}`}
           bare
+          unitOverride={unitOverride}
+          hideUnitSelector
           value={current.effective}
           disabled={disabled}
           onChange={(next) => set(`${property}-${side}`, next)}
@@ -381,30 +380,56 @@ export function ElementInspector({
   };
 
   /**
-   * Padding and margin, drawn as the box they are.
-   *
-   * Four fields in a row labelled top, right, bottom and left are a list of four
-   * numbers somebody has to read; the same four arranged around a centre are the
-   * thing itself. The dashed square in the middle stands for the element, and a
-   * side that has been changed carries a dot rather than a word — there is no
-   * room for four origin labels, and the tooltip carries what the word would say.
+   * Padding and margin, drawn as the box they are, with the unit selector (PX, %, EM, REM) at the top.
    */
-  const box = (property: "padding" | "margin") => (
-    <div className="pt-0.5">
-      <div className="mb-1 text-[11px] uppercase tracking-[.06em] text-muted">{property}</div>
-      <div className="grid grid-cols-[1fr_28px_1fr] items-center gap-1">
-        <div />
-        <SideField property={property} side="top" />
-        <div />
-        <SideField property={property} side="left" />
-        <span aria-hidden className="mx-auto h-4 w-5 rounded border border-dashed border-line-strong" />
-        <SideField property={property} side="right" />
-        <div />
-        <SideField property={property} side="bottom" />
-        <div />
+  const box = (property: "padding" | "margin") => {
+    const activeUnit = property === "padding" ? paddingUnit : marginUnit;
+    const setActiveUnit = property === "padding" ? setPaddingUnit : setMarginUnit;
+    return (
+      <div className="pt-1">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-[.06em] text-muted">{property}</span>
+          <UnitPillSelector
+            units={["px", "%", "em", "rem"]}
+            value={activeUnit}
+            disabled={disabled}
+            onChange={(nextU) => {
+              const u = nextU as "px" | "%" | "em" | "rem";
+              setActiveUnit(u);
+              const updated = { ...declarations };
+              let changed = false;
+              for (const s of SIDES) {
+                const key = `${property}-${s}`;
+                const existing = updated[key];
+                if (existing) {
+                  const num = toNumber(existing);
+                  if (num !== null) {
+                    updated[key] = `${num}${u}`;
+                    changed = true;
+                  }
+                }
+              }
+              if (changed) {
+                onChange(writeStyle(updated));
+                onCommit?.();
+              }
+            }}
+          />
+        </div>
+        <div className="grid grid-cols-[1fr_28px_1fr] items-center gap-1">
+          <div />
+          <SideField property={property} side="top" unitOverride={activeUnit} />
+          <div />
+          <SideField property={property} side="left" unitOverride={activeUnit} />
+          <span aria-hidden className="mx-auto h-4 w-5 rounded border border-dashed border-line-strong" />
+          <SideField property={property} side="right" unitOverride={activeUnit} />
+          <div />
+          <SideField property={property} side="bottom" unitOverride={activeUnit} />
+          <div />
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const position = (declarations.position ?? source.computed.position ?? "static").trim();
   const { offsets, zIndex } = positionControls(position);
@@ -710,7 +735,20 @@ export function ElementInspector({
                     <div className="mb-3 space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-medium text-ink-2">Gaps</span>
-                        <span className="text-[10px] font-semibold uppercase text-muted">px</span>
+                        <UnitPillSelector
+                          units={["px", "%", "rem"]}
+                          value={gapUnit}
+                          disabled={disabled}
+                          onChange={(nextU) => {
+                            const u = nextU as "px" | "%" | "rem";
+                            setGapUnit(u);
+                            const updated = { ...declarations };
+                            if (colGapNum !== null) updated["column-gap"] = `${colGapNum}${u}`;
+                            if (rowGapNum !== null) updated["row-gap"] = `${rowGapNum}${u}`;
+                            onChange(writeStyle(updated));
+                            onCommit?.();
+                          }}
+                        />
                       </div>
                       <div className="flex items-start gap-1.5">
                         <div className="flex-1">
@@ -722,7 +760,7 @@ export function ElementInspector({
                             placeholder="0"
                             onChange={(e) => {
                               const raw = e.target.value.trim();
-                              const val = raw ? `${raw}px` : "";
+                              const val = raw ? `${raw}${gapUnit}` : "";
                               const updated = { ...declarations };
                               if (val) updated["column-gap"] = val;
                               else delete updated["column-gap"];
@@ -746,7 +784,7 @@ export function ElementInspector({
                             placeholder="0"
                             onChange={(e) => {
                               const raw = e.target.value.trim();
-                              const val = raw ? `${raw}px` : "";
+                              const val = raw ? `${raw}${gapUnit}` : "";
                               const updated = { ...declarations };
                               if (val) updated["row-gap"] = val;
                               else delete updated["row-gap"];

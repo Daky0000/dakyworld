@@ -10,6 +10,14 @@ import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets.js";
 import { assertWebsiteConnectionChange, canManageWebsiteConnection } from "./websiteAccess.js";
+import {
+  assertImportAllowance,
+  assertMediaStorageAllowance,
+  assertTierFeatureAccess,
+  captureHtmlImagesIntoMediaLibrary,
+  recordImportUsed,
+  recordMediaStorageAdded,
+} from "./websiteTierPlans.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -84,20 +92,23 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   }));
   router.post("/sites/:siteId/assets", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(7_000_000), alt: z.string().max(500).default("") }).parse(req.body);
+    const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(15_000_000), alt: z.string().max(500).default("") }).parse(req.body);
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)) throw new WebsiteError(400, "The image data is not valid base64.");
     const content = Buffer.from(input.data, "base64");
     const mime = sniff(content);
     const formats: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
     if (!mime || !formats[mime]) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP or GIF image. SVG and executable formats are not supported.");
-    if (content.length > 5_000_000 || !content.length) throw new WebsiteError(400, "Choose an image smaller than 5 MB.");
+    if (!content.length) throw new WebsiteError(400, "Choose a non-empty image file.");
+    await assertMediaStorageAllowance(req, content.length, site.id);
     const optimized = await optimizeImageBuffer(content);
+    await assertMediaStorageAllowance(req, optimized.content.length, site.id);
     const asset = await prisma.$transaction(async tx => {
       const uploaded = await tx.siteAsset.create({ data: { siteId: site.id, filename: input.filename, repoPath: `assets/dw/${randomUUID()}.${optimized.extension}`, contentType: optimized.contentType, content: optimized.content, size: optimized.content.length, alt: input.alt } });
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${input.filename}`, ...actor(req), detail: { assetId: uploaded.id, contentType: optimized.contentType, bytes: optimized.content.length, strippedExif: optimized.strippedExif } } });
       return uploaded;
     });
-    res.status(201).json({ id: asset.id, url: assetUrl(site, asset.repoPath), alt: asset.alt });
+    recordMediaStorageAdded(req, optimized.content.length);
+    res.status(201).json({ id: asset.id, url: assetUrl(site, asset.repoPath), alt: asset.alt, size: optimized.content.length });
   }));
   /**
    * Removing an uploaded image.
@@ -132,6 +143,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       await tx.siteAsset.delete({ where: { id: asset.id } });
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_DELETED", summary: `Deleted ${asset.filename}`, ...actor(req), detail: { assetId: asset.id, repoPath: asset.repoPath, bytes: asset.size } } });
     });
+    recordMediaStorageAdded(req, -asset.size);
     res.status(204).end();
   }));
 
@@ -145,12 +157,19 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const input = siteInput.extend({ html: z.string().min(1).max(2_000_000).optional() }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
     const { html, ...data } = input;
-    if (html) importedWebsiteFields(html);
+    if (html) {
+      await assertImportAllowance(req);
+      importedWebsiteFields(html);
+    }
     const site = await prisma.site.create({ data: {
       ...data, slug: `${data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`,
       ...(html ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: html } } } : {}),
       auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${html ? " with an imported page" : ""}`, ...actor(req), detail: { importedPage: Boolean(html) } } },
     }, include: { pages: { select: { id: true } } } });
+    if (html) {
+      await captureHtmlImagesIntoMediaLibrary(req, site.id, html);
+      recordImportUsed(req);
+    }
     res.status(201).json({ id: site.id, pageId: site.pages[0]?.id ?? null });
   }));
 
@@ -187,9 +206,13 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       throw new WebsiteError(400, "That client is not in the system.");
     }
     const previousOptions = websiteDesignOptions.parse(site.settings ?? {});
+    const optionsChanged = Object.keys(options).filter(key => JSON.stringify(options[key as keyof typeof options]) !== JSON.stringify(previousOptions[key as keyof typeof previousOptions]));
+    if (optionsChanged.length > 0) {
+      await assertTierFeatureAccess(req, "themeSettings", site.id);
+    }
     const changed = [
       ...Object.keys(data).filter(key => data[key as keyof typeof data] !== site[key as keyof Site]),
-      ...Object.keys(options).filter(key => JSON.stringify(options[key as keyof typeof options]) !== JSON.stringify(previousOptions[key as keyof typeof previousOptions])).map(key => `options.${key}`),
+      ...optionsChanged.map(key => `options.${key}`),
     ];
     if (changed.length) await prisma.$transaction([
       prisma.site.update({ where: { id: site.id }, data: { ...data, settings: options } }),
@@ -200,18 +223,21 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 
   router.post("/sites/:siteId/import", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
+    await assertImportAllowance(req, site.id);
     const body = z.object({ title: z.string().trim().min(1).max(120), filePath: z.string().regex(/^[a-zA-Z0-9_/-]+\.html$/).max(200), path: z.string().regex(/^\/[a-zA-Z0-9_/-]*$/).max(200), html: z.string().min(1).max(2_000_000) }).parse(req.body);
     const count = importedWebsiteFields(body.html);
+    const capturedMedia = await captureHtmlImagesIntoMediaLibrary(req, site.id, body.html);
     const page = await prisma.$transaction(async tx => {
       if (await tx.sitePage.findFirst({ where: { siteId: site.id, OR: [{ filePath: body.filePath }, { path: body.path }] }, select: { id: true } })) throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
       const imported = await tx.sitePage.create({ data: { siteId: site.id, title: body.title, filePath: body.filePath, path: body.path, sourceHtml: body.html } });
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PAGE_IMPORTED", summary: `Imported ${body.title}`, ...actor(req), detail: { pageId: imported.id, filePath: body.filePath, path: body.path, fields: count } } });
+      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PAGE_IMPORTED", summary: `Imported ${body.title}`, ...actor(req), detail: { pageId: imported.id, filePath: body.filePath, path: body.path, fields: count, capturedMediaCount: capturedMedia.capturedCount, capturedMediaBytes: capturedMedia.totalBytesAdded } } });
       return imported;
     }).catch(error => {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
       throw error;
     });
-    res.status(201).json({ id: page.id, fields: count });
+    recordImportUsed(req);
+    res.status(201).json({ id: page.id, fields: count, capturedMedia });
   }));
 
   router.get("/pages/:pageId/review", handler(async (req, res) => {

@@ -127,6 +127,18 @@ export async function bootstrapOwner() {
  */
 export async function attachUser(req: Request, _res: Response, next: NextFunction) {
   try {
+    const token = readSessionCookie(req);
+    if (token) {
+      const session = await resolveSession(token);
+      if (session?.user.active) {
+        req.dbUser =
+          (await prisma.user.findUnique({ where: { id: session.user.id }, include: WITH_ACCESS })) ?? undefined;
+        req.sessionToken = token;
+        attachPermissions(req);
+        return next();
+      }
+    }
+
     if (DEV_NO_AUTH) {
       const accessRoleId = await ownerRoleId();
       req.dbUser = await prisma.user.upsert({
@@ -138,21 +150,6 @@ export async function attachUser(req: Request, _res: Response, next: NextFunctio
       return attachPermissions(req), next();
     }
 
-    const token = readSessionCookie(req);
-    if (!token) return next();
-
-    const session = await resolveSession(token);
-    if (session?.user.active) {
-      // The session's own join carries the bare user row. The role has to come
-      // with it or every permission check on this request would answer "no" —
-      // and it is read fresh on each request rather than cached in the session,
-      // so a role edited on the Access screen takes effect on the next click
-      // rather than at the person's next sign-in.
-      req.dbUser =
-        (await prisma.user.findUnique({ where: { id: session.user.id }, include: WITH_ACCESS })) ?? undefined;
-      req.sessionToken = token;
-      attachPermissions(req);
-    }
     next();
   } catch (err) {
     next(err);

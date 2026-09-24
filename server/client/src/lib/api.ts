@@ -104,6 +104,14 @@ export function setUnauthorizedHandler(handler: () => void) {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
+  try {
+    const testUser = window.localStorage.getItem("dw:test-tier-user");
+    if (testUser) headers.set("x-dw-test-user", testUser);
+    const simMonths = window.localStorage.getItem("dw:test-simulate-months");
+    if (simMonths) headers.set("x-dw-simulate-months", simMonths);
+  } catch {
+    // ignore storage errors
+  }
 
   // The session lives in an HTTP-only cookie, so there's no token to attach —
   // it just has to be sent, including on the Vite dev server's proxied origin.

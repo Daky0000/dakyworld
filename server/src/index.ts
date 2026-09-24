@@ -65,6 +65,7 @@ import { backfillTags } from "./services/leadTags.js";
 import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
 import { WebsiteError } from "./services/website/site.js";
 import { ensureDakyworldSite } from "./services/website/ensureSite.js";
+import { ensureWebsiteTierUsersAndPlans } from "./services/websiteTierPlans.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -308,6 +309,8 @@ ensureSystemRoles()
       // discovered rather than seeded — see services/website/ensureSite.ts.
       void ensureDakyworldSite()
         .then((created) => created && console.log("  → Added dakyworld.com to the website editor"))
+        .then(() => ensureWebsiteTierUsersAndPlans())
+        .then((seeded) => console.log(`  → Website tiers ready (${seeded.users.map((u) => `${u.email} [${u.priceDisplay}]`).join(", ")})`))
         .catch((err) => console.error("Website seed failed:", err));
       // A writable-repository entry that names no owner used to match any
       // repository with that name, belonging to anybody. It now matches

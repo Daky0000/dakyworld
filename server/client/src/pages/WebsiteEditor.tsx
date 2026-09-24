@@ -26,6 +26,7 @@ import { WebsiteVersions } from "../components/WebsiteVersions";
 import { WebsiteAssistant } from "../components/WebsiteAssistant";
 import { WebsiteAgentChat } from "../components/WebsiteAgentChat";
 import { WebsitePageSeoInspector } from "../components/WebsitePageSeoInspector";
+import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "../components/WebsiteTierStatusBanner";
 import {
   WebsiteClientReportModal,
   WebsiteCommandPaletteModal,
@@ -1199,6 +1200,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     },
     onSuccess: (result, submitted) => {
       setFailure(null);
+      notifyTierStatusChanged();
       dirty.current = Boolean(result.unknown?.length) || JSON.stringify(latestEdits.current) !== JSON.stringify(submitted);
       failedSave.current = result.unknown?.length ? JSON.stringify(submitted) : null;
       revision.current = result.revision;
@@ -1472,6 +1474,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         state.index = state.list.length - 1;
       }
       syncHistoryButtons();
+      notifyTierStatusChanged();
       setPublished(null); setPickedId(result.selectedId); setLoadToken(token => token + 1); setPreviewToken(token => token + 1);
       void qc.invalidateQueries({ queryKey: ["website", "sites"] });
     } catch (error) { setFailure(error instanceof Error ? error.message : "The layout action could not be completed."); }
@@ -1499,6 +1502,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   }
 
   structuralHistory.current = step => { if (step < 0 ? page.data?.structure?.canUndo : page.data?.structure?.canRedo) void runStructure(step < 0 ? "undo" : "redo"); };
+
+  const { status: tierStatus, switchTestUser } = useWebsiteTierStatus(page.data?.site?.id);
 
   /**
    * These hooks sit above the early returns below on purpose. React counts
@@ -2718,6 +2723,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         </div>
       </div>
 
+      <div className="flex-none border-b border-line bg-ink px-3.5 pt-2">
+        <WebsiteTierStatusBanner
+          siteId={site.id}
+          compact
+          onUserSwitched={() => {
+            void qc.invalidateQueries({ queryKey: ["website"] });
+          }}
+        />
+      </div>
+
       {(published || failure) && (
         <div className="flex-none border-b border-line px-4 py-3">
           {published && (
@@ -2896,28 +2911,78 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 : picked.kind === "container"
                   ? (["layout", "style"] as const)
                   : (["content", "style", "interactions"] as const)
-              ).map((tab) => (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={inspectorTab === tab}
-                  key={tab}
-                  onClick={() => setInspectorTab(tab)}
-                >
-                  {tab === "seo"
-                    ? "SEO"
-                    : tab === "theme"
-                      ? "Theme"
-                      : tab === "layout"
-                        ? "◫ Layout"
-                        : tab === "style" && picked?.kind === "container"
-                          ? "◐ Style"
-                          : tab[0].toUpperCase() + tab.slice(1)}
-                </button>
-              ))}
+              ).map((tab) => {
+                const locked =
+                  (tab === "theme" && tierStatus && !tierStatus.features.themeSettings) ||
+                  (tab === "seo" && tierStatus && !tierStatus.features.seoInspector);
+                return (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={inspectorTab === tab}
+                    key={tab}
+                    onClick={() => setInspectorTab(tab)}
+                    title={locked ? `Requires Pro ($10 ($16)/mo) or Business ($25 ($45)/mo) tier` : undefined}
+                  >
+                    {tab === "seo"
+                      ? locked
+                        ? "🔒 SEO"
+                        : "SEO"
+                      : tab === "theme"
+                        ? locked
+                          ? "🔒 Theme"
+                          : "Theme"
+                        : tab === "layout"
+                          ? "◫ Layout"
+                          : tab === "style" && picked?.kind === "container"
+                            ? "◐ Style"
+                            : tab[0].toUpperCase() + tab.slice(1)}
+                  </button>
+                );
+              })}
             </div>
             <div className="editor-controls min-h-0 flex-1 overflow-y-auto">
-              {inspectorTab === "seo" ? (
+              {inspectorTab === "seo" && tierStatus && !tierStatus.features.seoInspector ? (
+                <div className="space-y-3 p-4 text-left">
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+                    <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                      🔒 Feature Locked on {tierStatus.tierName} ({tierStatus.pricing.priceDisplay}/mo)
+                    </div>
+                    <p className="mt-1.5 text-xs leading-relaxed text-ink">
+                      The <strong>SEO Inspector &amp; Alt-Text Auto-Fixer</strong> is available starting on the{" "}
+                      <strong>Pro ($10 ($16)/mo)</strong> and <strong>Business ($25 ($45)/mo)</strong> plans.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => void switchTestUser("pro@dakyworld.test")}>
+                        Test as Pro User ($10 ($16)/mo)
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => void switchTestUser("business@dakyworld.test")}>
+                        Test as Business User ($25 ($45)/mo)
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : inspectorTab === "theme" && tierStatus && !tierStatus.features.themeSettings ? (
+                <div className="space-y-3 p-4 text-left">
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+                    <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                      🔒 Feature Locked on {tierStatus.tierName} ({tierStatus.pricing.priceDisplay}/mo)
+                    </div>
+                    <p className="mt-1.5 text-xs leading-relaxed text-ink">
+                      The <strong>Global Theme Color Palette &amp; Page Surface Controls</strong> are unlocked on{" "}
+                      <strong>Pro ($10 ($16)/mo)</strong> and <strong>Business ($25 ($45)/mo)</strong>.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => void switchTestUser("pro@dakyworld.test")}>
+                        Test as Pro User ($10 ($16)/mo)
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => void switchTestUser("business@dakyworld.test")}>
+                        Test as Business User ($25 ($45)/mo)
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : inspectorTab === "seo" ? (
                 <WebsitePageSeoInspector
                   siteId={site.id}
                   pageId={pageId}

@@ -128,6 +128,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/(?:sites|pages)\/[^/]+\/?$/.test(path)) return "manage";
   // AI suggestions, SEO actions, comments, and agent plans produce draft/site changes.
   if (/\/(?:ai|suggest|assistant|agent|seo|insert-section|comments|health-monitor)(?:\/|$)/.test(path)) return "edit";
+  if (/^\/tier-status(?:\/|$)/.test(path)) return "view";
   return null;
 }
 
@@ -135,6 +136,9 @@ export function createWebsiteAccessGate(reader = accessReader) {
   return (req: Request, _res: Response, next: NextFunction) => {
     void (async () => {
       const principal = websitePrincipal(req);
+      if (/^\/tier-status(?:\/|$)/.test(req.path)) {
+        return;
+      }
       if (/^\/(?:sites|overview)\/?$/.test(req.path) && ["GET", "HEAD"].includes(req.method)) {
         if (!websiteCapabilities(principal, null).view && !(await reader.hasMembership(principal.id))) {
           // Empty collections are useful for unassigned customers and reveal no site data.

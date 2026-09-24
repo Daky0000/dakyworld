@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
 import { useWebsiteAccess } from "./WebsiteMembers";
+import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "./WebsiteTierStatusBanner";
 
 export type CapturedHtmlImage = {
   url: string;
@@ -11,7 +12,7 @@ export type CapturedHtmlImage = {
   source?: string;
 };
 
-type Asset = { id: string; filename: string; alt: string; url: string; preview: string };
+type Asset = { id: string; filename: string; alt: string; url: string; preview: string; byteSize?: number };
 
 export function WebsiteAssetLibrary({
   siteId,
@@ -23,6 +24,7 @@ export function WebsiteAssetLibrary({
   capturedImages?: CapturedHtmlImage[];
 }) {
   const access = useWebsiteAccess(siteId);
+  const { status: tierStatus } = useWebsiteTierStatus(siteId);
   const [activeTab, setActiveTab] = useState<"page" | "library">(capturedImages.length > 0 ? "page" : "library");
   const [candidate, setCandidate] = useState<{ url: string; alt: string; preview: string } | null>(null);
   const [uploadKey, setUploadKey] = useState(0);
@@ -32,14 +34,21 @@ export function WebsiteAssetLibrary({
   const [savingUrl, setSavingUrl] = useState<string | null>(null);
   const qc = useQueryClient();
   const assets = useQuery({
-    queryKey: ["website", "assets", siteId],
+    queryKey: ["website", "assets", siteId, tierStatus?.userEmail ?? "default"],
     queryFn: () => api.get<Asset[]>(`/website/sites/${siteId}/assets`),
   });
+
+  const maxUploadBytes = tierStatus?.storage.maxSingleAssetBytes ?? 5_000_000;
+  const maxUploadLabel = tierStatus?.storage.maxSingleAssetFormatted ?? "5 MB";
 
   const upload = useMutation({
     mutationFn: async () => {
       if (!file) throw new Error("Choose an image first.");
-      if (file.size > 5_000_000) throw new Error("Choose an image smaller than 5 MB.");
+      if (file.size > maxUploadBytes) {
+        throw new Error(
+          `File size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds your ${tierStatus?.tierName ?? "current"} plan's ${maxUploadLabel} per-file limit.`,
+        );
+      }
       const bitmap = await createImageBitmap(file).catch(() => {
         throw new Error("That file could not be opened as an image.");
       });
@@ -62,12 +71,23 @@ export function WebsiteAssetLibrary({
     },
     onSuccess: async (asset) => {
       await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+      notifyTierStatusChanged();
       setFile(null);
       setUploadKey((key) => key + 1);
       setPreviewFailed(false);
       if (onSelect) {
         setCandidate({ ...asset, preview: `/api/website/sites/${siteId}/assets/${asset.id}/content` });
       }
+    },
+  });
+
+  const deleteAsset = useMutation({
+    mutationFn: async (assetId: string) => {
+      await api.delete(`/website/sites/${siteId}/assets/${assetId}`);
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+      notifyTierStatusChanged();
     },
   });
 
@@ -90,6 +110,7 @@ export function WebsiteAssetLibrary({
         data,
       });
       await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+      notifyTierStatusChanged();
     } catch {
       // Ignore CORS fetch errors on external images; user can still select directly by URL
     } finally {
@@ -99,6 +120,11 @@ export function WebsiteAssetLibrary({
 
   return (
     <div className="space-y-4">
+      <WebsiteTierStatusBanner
+        siteId={siteId}
+        compact
+        onUserSwitched={() => void qc.invalidateQueries({ queryKey: ["website", "assets", siteId] })}
+      />
       {capturedImages.length > 0 && (
         <div className="flex items-center gap-1 rounded-xl border border-line bg-sunken p-1">
           <button
@@ -238,8 +264,19 @@ export function WebsiteAssetLibrary({
         <div className="space-y-4">
           {access.data?.capabilities.edit && (
             <div className="space-y-3 rounded-xl border border-line bg-sunken p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-ink">
+                  Upload to Media Library ({tierStatus?.tierName ?? "Starter"} • Max {maxUploadLabel} per file)
+                </span>
+                {tierStatus && (
+                  <span className="font-mono text-[11px] text-muted">
+                    Storage remaining: <strong className="text-ink">{tierStatus.storage.remainingFormatted}</strong> of{" "}
+                    {tierStatus.storage.quotaFormatted}
+                  </span>
+                )}
+              </div>
               <label className="block text-xs text-muted">
-                PNG, JPEG, WebP or GIF · up to 5 MB
+                PNG, JPEG, WebP or GIF · up to {maxUploadLabel}
                 <input
                   className="mt-2 block w-full text-xs"
                   key={uploadKey}
@@ -281,32 +318,48 @@ export function WebsiteAssetLibrary({
           )}
           <div className="grid grid-cols-3 gap-2.5">
             {assets.data?.map((asset) => (
-              <button
-                type="button"
+              <div
                 key={asset.id}
-                disabled={!onSelect}
-                onClick={() => {
-                  if (onSelect) {
-                    onSelect({ url: asset.url, alt: asset.alt });
-                  }
-                }}
-                className="group overflow-hidden rounded-xl border border-line bg-white text-left transition enabled:hover:border-blue enabled:hover:shadow-sm"
-                title={`Use ${asset.filename}`}
+                className="group flex flex-col overflow-hidden rounded-xl border border-line bg-white text-left transition hover:border-blue hover:shadow-sm"
               >
-                <div className="relative h-28 w-full overflow-hidden bg-sunken">
+                <button
+                  type="button"
+                  disabled={!onSelect}
+                  onClick={() => {
+                    if (onSelect) {
+                      onSelect({ url: asset.url, alt: asset.alt });
+                    }
+                  }}
+                  className="relative h-28 w-full overflow-hidden bg-sunken text-left"
+                  title={`Use ${asset.filename}`}
+                >
                   <img
                     src={asset.preview}
                     alt={asset.alt}
                     className="h-full w-full object-contain transition duration-200 group-hover:scale-105"
                   />
-                  <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/80 via-ink/40 to-transparent px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
-                    Use Image
+                  {onSelect && (
+                    <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/80 via-ink/40 to-transparent px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
+                      Use Image
+                    </span>
+                  )}
+                </button>
+                <div className="flex items-center justify-between gap-1 border-t border-line px-2 py-1.5">
+                  <span className="truncate text-[11px] font-medium text-ink" title={asset.filename}>
+                    {asset.filename}
                   </span>
+                  {access.data?.capabilities.edit && (
+                    <button
+                      type="button"
+                      onClick={() => deleteAsset.mutate(asset.id)}
+                      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-muted hover:bg-danger/10 hover:text-danger-text"
+                      title="Delete from Media Library and free storage"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
-                <span className="block truncate border-t border-line px-2 py-1.5 text-[11px] font-medium text-ink">
-                  {asset.filename}
-                </span>
-              </button>
+              </div>
             ))}
           </div>
           {assets.data?.length === 0 && <p className="text-xs text-muted">Upload your first image to this website.</p>}

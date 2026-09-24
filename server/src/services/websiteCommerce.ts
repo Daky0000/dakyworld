@@ -90,11 +90,9 @@ export async function inspectPublicWebsite(rawUrl: string) {
   };
 }
 
-export const PLAN_ENTITLEMENTS = {
-  EDITOR: { websiteLimit: 1, userLimit: 2, monitoring: false, technicalOversight: false, monthlyReview: false, supportPriority: "STANDARD", includedTechnicalMinutes: 0, improvementRecommendations: "NONE" },
-  CARE: { websiteLimit: 1, userLimit: 5, monitoring: true, technicalOversight: true, monthlyReview: true, supportPriority: "PRIORITY", includedTechnicalMinutes: 60, improvementRecommendations: "BASIC" },
-  MANAGED: { websiteLimit: 1, userLimit: 10, monitoring: true, technicalOversight: true, monthlyReview: true, supportPriority: "HIGHEST", includedTechnicalMinutes: 240, improvementRecommendations: "PROACTIVE" },
-} as const;
+import { WEBSITE_TIER_PLANS, addMonthsUtc } from "./websiteTierPlans.js";
+
+export const PLAN_ENTITLEMENTS = WEBSITE_TIER_PLANS;
 
 type PurchaseInput = {
   productKey: keyof typeof WEBSITE_TIERS;
@@ -108,17 +106,19 @@ type PurchaseInput = {
 };
 
 export async function startWebsitePurchase(input: PurchaseInput) {
-  if (input.productKey === "managed-website") throw new Error("Managed Website starts with a consultation booking.");
+  const tierKey = WEBSITE_TIERS[input.productKey];
+  const tierPlan = WEBSITE_TIER_PLANS[tierKey];
   const product = await prisma.product.findFirst({ where: { key: input.productKey, active: true } });
   if (!product) throw new Error("That website plan is not available.");
   const compatibility = await assessPurchaseCompatibility(input.websiteUrl);
   if (compatibility.status === "NOT_SUPPORTED") throw new WebsiteError(422, `This website is not supported by the editor. ${compatibility.notes}`);
   const setupPrice = Number(product.setupPrice ?? 0);
-  const monthlyPrice = Number(product.monthlyPrice ?? 0);
+  const monthlyPrice = Number(product.monthlyPrice ?? tierPlan.promoMonthlyPrice);
   const isAnnual = input.billingCycle === "annual";
   const recurringAmount = isAnnual ? monthlyPrice * 10 : monthlyPrice;
   const upfrontAmount = setupPrice > 0 ? setupPrice : recurringAmount;
   if (!(upfrontAmount > 0)) throw new Error("This plan has no payment amount configured.");
+  const promoEndsAt = addMonthsUtc(new Date(), tierPlan.promoMonths);
 
   const email = input.email.toLowerCase();
   const existing = await prisma.client.findFirst({ where: { email } });
@@ -130,7 +130,7 @@ export async function startWebsitePurchase(input: PurchaseInput) {
     ? `${product.name} website setup`
     : isAnnual
       ? `${product.name} annual subscription (12 months — 2 months free)`
-      : `${product.name} subscription (first month)`;
+      : `${product.name} subscription ($${tierPlan.promoMonthlyPrice}/mo for first 3 months, then reverts to $${tierPlan.standardMonthlyPrice}/mo standard)`;
 
   const invoice = await createNumberedInvoice((invoiceNumber) => prisma.invoice.create({ data: {
     clientId: client.id, invoiceNumber, currency: product.currency, amountTotal: upfrontAmount,
@@ -138,13 +138,14 @@ export async function startWebsitePurchase(input: PurchaseInput) {
     lineItems: { create: [{ description: lineItemDescription, quantity: 1, unitPrice: upfrontAmount, amount: upfrontAmount }] },
   } }));
 
+  const promoNote = `3-Month Promo ($${tierPlan.promoMonthlyPrice}/mo -> reverts to $${tierPlan.standardMonthlyPrice}/mo standard after ${promoEndsAt.toISOString().slice(0, 10)})`;
   const purchase = await prisma.websitePurchase.create({ data: {
     clientId: client.id, invoiceId: invoice.id, productId: product.id, tier: WEBSITE_TIERS[input.productKey],
     businessName: input.businessName, contactName: input.contactName, email: input.email.toLowerCase(), phone: input.phone,
-    websiteUrl: input.websiteUrl, notes: input.notes, compatibilityStatus: compatibility.status, compatibilityNotes: compatibility.notes, monthlyPrice: product.monthlyPrice, setupPrice, currency: product.currency,
+    websiteUrl: input.websiteUrl, notes: input.notes ? `${input.notes} | ${promoNote}` : promoNote, compatibilityStatus: compatibility.status, compatibilityNotes: compatibility.notes, monthlyPrice: product.monthlyPrice, setupPrice, currency: product.currency,
   } });
   const payment = await raisePayment(invoice.id, "paystack", { callbackUrl: "https://dakyworld.com/website-builder?payment=returned#price" });
-  return { purchaseId: purchase.id, status: purchase.status, compatibility, paymentUrl: payment.url };
+  return { purchaseId: purchase.id, status: purchase.status, compatibility, paymentUrl: payment.url, promoEndsAt: promoEndsAt.toISOString(), promoMonthlyPrice: tierPlan.promoMonthlyPrice, standardMonthlyPrice: tierPlan.standardMonthlyPrice };
 }
 
 export async function createManagedBooking(input: { businessName: string; contactName: string; email: string; phone: string; websiteUrl: string; reason: string; goals: string; notes?: string; requestedAt: Date }) {

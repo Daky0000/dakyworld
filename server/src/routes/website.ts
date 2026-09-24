@@ -18,6 +18,13 @@ import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
 import { registerWebsiteSurvey } from "../services/websiteSiteSurvey.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { registerGithubAppRoutes } from "../services/githubAppRoutes.js";
+import {
+  assertEditAllowance,
+  assertTierFeatureAccess,
+  recordAiPromptUsed,
+  recordEditUsed,
+  registerWebsiteTierRoutes,
+} from "../services/websiteTierPlans.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, registerWebsitePublishJobs, startPublishJob } from "../services/websitePublishJobs.js";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
@@ -73,6 +80,25 @@ websiteRouter.use((req, res, next) => {
 });
 
 websiteRouter.use(json({ limit: "8mb" }));
+registerWebsiteTierRoutes(websiteRouter);
+
+// Tier feature enforcement across SEO, AI Assistant, AI Builder Agent, and Source Editor routes
+websiteRouter.use((req, _res, next) => {
+  void (async () => {
+    if (/\/(?:source|source-project)(?:\/|$)/.test(req.path)) {
+      await assertTierFeatureAccess(req, "sourceCodeEditor");
+    } else if (/\/agent(?:\/|$)/.test(req.path)) {
+      await assertTierFeatureAccess(req, "aiBuilderAgent");
+      if (req.method === "POST") recordAiPromptUsed(req);
+    } else if (/\/(?:assistant|suggest|ai)(?:\/|$)/.test(req.path)) {
+      await assertTierFeatureAccess(req, "aiAssistant");
+      if (req.method === "POST") recordAiPromptUsed(req);
+    } else if (/\/seo(?:\/|$)/.test(req.path)) {
+      await assertTierFeatureAccess(req, "seoInspector");
+    }
+  })().then(() => next(), next);
+});
+
 registerWebsiteMembership(websiteRouter);
 registerWebsiteManagement(websiteRouter, { loadSite, loadPage });
 registerWebsiteAssistant(websiteRouter, { loadPage });
@@ -535,6 +561,7 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
       );
     }
     const { page, site } = await loadPage(req, req.params.pageId);
+    await assertEditAllowance(req, site.id);
     const source = await pageSource(site, page);
     const existing = draftValues(page);
     const document = draftDocument(existing);
@@ -648,6 +675,7 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
 
     const renderedDraftHtml = applyValues(editingSource(source.html, values), fieldValues(values)).html;
     await syncDemoFromSitePage(site, page.id, renderedDraftHtml, false);
+    recordEditUsed(req);
 
     res.json({
       savedAt: saved?.draftSavedAt ?? null,
@@ -688,6 +716,7 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
     const body = z.object({ ifRevision: z.number().int().nonnegative(), kind: z.enum(["remove", "duplicate", "before", "after", "undo", "redo"]), fieldId: z.string().min(1).max(200).optional(), targetId: z.string().min(1).max(200).optional() }).strict().parse(req.body);
     if (!["undo", "redo"].includes(body.kind) && !body.fieldId) throw new WebsiteError(400, "Select an element first.");
     const { page, site } = await loadPage(req, req.params.pageId);
+    await assertEditAllowance(req, site.id);
     if (body.ifRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed in another session. Reload the page before changing its layout.");
     const source = await pageSource(site, page, { fresh: true });
     const values = draftValues(page);
@@ -701,6 +730,7 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
     });
     const renderedStructureHtml = applyValues(editingSource(source.html, result.values), fieldValues(result.values)).html;
     await syncDemoFromSitePage(site, page.id, renderedStructureHtml, false);
+    recordEditUsed(req);
     res.json({ revision: body.ifRevision + 1, selectedId: result.selectedId });
   } catch (error) { next(error); }
 });
@@ -883,6 +913,7 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       let branchOverride: string | undefined = undefined;
       const repo = siteRepo(site);
       if (isPR) {
+        await assertTierFeatureAccess(req, "pullRequestPublish", site.id);
         if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository before opening a pull request.");
         const slug = page.path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "content";
         branchOverride = `content/${slug}-${Date.now().toString(36)}`;

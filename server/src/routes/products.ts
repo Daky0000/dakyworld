@@ -4,29 +4,15 @@ import { prisma } from "../lib/prisma.js";
 import { requirePermission } from "../middleware/auth.js";
 import { listProducts, publicCatalogue, updateProduct } from "../services/products.js";
 import { createManagedBooking, inspectPublicWebsite, listWebsiteCommerce, startWebsitePurchase, updateBooking, updatePurchaseStatus } from "../services/websiteCommerce.js";
+import { WEBSITE_TIER_PLANS, SUBSCRIBED_TEST_USERS } from "../services/websiteTierPlans.js";
 import { rateLimit } from "../middleware/security.js";
 
 /**
  * The product catalogue: one door for the public website, one for the office.
- *
- * The public one is deliberately unauthenticated. It serves prices, which are
- * the least secret thing this company owns — they are printed on a page anybody
- * can read — and it exists so that the number on dakyworld.com comes from the
- * same row the office edits rather than from markup somebody has to remember to
- * change too.
  */
 
 export const publicProductsRouter = Router();
 
-/**
- * Read by dakyworld.com on every page load of a pricing block.
- *
- * Cached at the edge for a few minutes: a price change should reach the public
- * quickly, and nothing here is worth a database query per visitor. CORS is
- * open because the response is public information and carries no credentials —
- * the browser sends none, and this route is mounted above the session
- * middleware, so it could not read one if it did.
- */
 publicProductsRouter.get("/products", async (_req, res, next) => {
   try {
     const catalogue = await publicCatalogue();
@@ -45,7 +31,7 @@ publicProductsRouter.options("/products", (_req, res) => {
 });
 
 const purchaseInput = z.object({
-  productKey: z.enum(["website-builder", "website-care"]),
+  productKey: z.enum(["website-builder", "website-care", "managed-website"]),
   billingCycle: z.enum(["monthly", "annual"]).optional().default("monthly"),
   businessName: z.string().trim().min(2).max(160),
   contactName: z.string().trim().min(2).max(120),
@@ -102,24 +88,45 @@ publicProductsRouter.options(["/website-check", "/website-purchases", "/managed-
 
 export const productsRouter = Router();
 
+const TIER_MAP: Record<string, "EDITOR" | "CARE" | "MANAGED"> = {
+  "website-builder": "EDITOR",
+  "website-care": "CARE",
+  "managed-website": "MANAGED",
+};
+
 productsRouter.get("/", requirePermission("website.view"), async (_req, res, next) => {
   try {
     const products = await listProducts();
     res.json({
-      products: products.map((product) => ({
-        key: product.key,
-        name: product.name,
-        tagline: product.tagline,
-        currency: product.currency,
-        monthlyPrice: product.monthlyPrice.toFixed(2),
-        setupPrice: product.setupPrice ? product.setupPrice.toFixed(2) : null,
-        publicPath: product.publicPath,
-        active: product.active,
-        updatedAt: product.updatedAt,
-        updatedBy: product.updatedBy,
-      })),
+      products: products.map((product) => {
+        const tierKey = TIER_MAP[product.key] ?? "EDITOR";
+        const tierDef = WEBSITE_TIER_PLANS[tierKey];
+        return {
+          key: product.key,
+          name: product.name,
+          tagline: product.tagline,
+          currency: product.currency,
+          monthlyPrice: product.monthlyPrice.toFixed(2),
+          standardMonthlyPrice: tierDef.standardMonthlyPrice.toFixed(2),
+          priceDisplay: tierDef.priceDisplay,
+          promoMonths: tierDef.promoMonths,
+          storageQuotaLabel: tierDef.storageQuotaLabel,
+          maxUploadLabel: tierDef.maxUploadLabel,
+          importsLimitLabel: tierDef.importsLimitLabel,
+          editsLimitLabel: tierDef.editsLimitLabel,
+          aiPromptsLimitLabel: tierDef.aiPromptsLimitLabel,
+          featureHighlights: tierDef.featureHighlights,
+          restrictedFeatures: tierDef.restrictedFeatures,
+          setupPrice: product.setupPrice ? product.setupPrice.toFixed(2) : null,
+          publicPath: product.publicPath,
+          active: product.active,
+          updatedAt: product.updatedAt,
+          updatedBy: product.updatedBy,
+        };
+      }),
+      testUsers: SUBSCRIBED_TEST_USERS,
       /** Said here so the screen states the rule rather than inventing wording. */
-      includedWithRetainer: "Every client on an active retainer gets all products at no charge. These prices apply to everyone else.",
+      includedWithRetainer: "Every client on an active retainer gets all products at no charge. 3-month promotional prices ($3, $10, $25) automatically revert to standard prices ($5, $16, $45) after month 3.",
     });
   } catch (err) {
     next(err);
@@ -147,29 +154,13 @@ productsRouter.patch("/website-commerce/bookings/:id", requirePermission("websit
 const priceInput = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   tagline: z.string().trim().max(300).optional(),
-  // A string, not a number: a price is decimal and JSON numbers are binary
-  // floating point. 0.1 + 0.2 is not a price anybody quoted.
-  monthlyPrice: z.string().regex(/^\d{1,10}(\.\d{1,2})?$/, "Enter an amount like 750 or 750.50").optional(),
+  monthlyPrice: z.string().regex(/^\d{1,10}(\.\d{1,2})?$/, "Enter an amount like 3 or 3.00").optional(),
   setupPrice: z.string().regex(/^\d{1,10}(\.\d{1,2})?$/).nullable().optional(),
   currency: z.string().trim().length(3).regex(/^[A-Z]{3}$/).optional(),
   publicPath: z.string().trim().max(200).regex(/^\/[a-z0-9/-]*$/i, "Use a path like /website-builder").optional(),
   active: z.boolean().optional(),
 });
 
-/**
- * Moving a price.
- *
- * Gated on `website.manage` rather than on an editing permission: this changes
- * what the public is asked to pay, which is a commercial decision and not a
- * content one.
- *
- * The row records who moved it last and when, and the response says whether the
- * money actually changed — which is what the screen reports back. It does **not**
- * keep a price history: there is no general audit table in this system, and
- * inventing one for a catalogue of a single product would be building the
- * cathedral before the congregation. If "what were we charging in March" is ever
- * asked, that is a small table and an easy addition.
- */
 productsRouter.patch("/:key", requirePermission("website.manage"), async (req, res, next) => {
   try {
     const body = priceInput.parse(req.body);

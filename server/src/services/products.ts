@@ -1,56 +1,61 @@
 import type { Prisma, Product } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { WEBSITE_TIER_PLANS, ensureWebsiteTierUsersAndPlans } from "./websiteTierPlans.js";
 
 /**
  * What Dakyworld sells that is not capacity, and who has to pay for it.
  *
- * The company's ordinary work is a retainer: a defined monthly capacity, sold by
- * the month. A product is the other shape — built once, used by many — and the
- * Website Builder is the first.
- *
- * **The rule, in one line: a client on an active retainer gets every product at
- * no charge.** Everyone else pays the product's own price.
- *
- * That is deliberately not a discount applied when an invoice is raised. It is
- * what the retainer includes, so it has to be answerable *before* anybody is
- * charged — on the site's screens, during onboarding, and on the public pricing
- * block. `productAccess()` is the only place that decides it, so those three
- * cannot drift apart and tell a client different things.
- *
- * Prices live in the database rather than in the website's markup, and the site
- * reads them from `/api/public/products`. Changing a price in the OS changes the
- * public page on its next load — no deploy, and no number retyped in two places.
- * The reverse arrangement, where the site owns the price and the OS syncs it, is
- * what care plans do (see `carePlanCatalogue.ts`) and is right for those: a
- * retainer's price is a published offer with a page of conditions around it. A
- * product's price is a single number on a card.
+ * Three Website Builder Tiers:
+ * - Starter (`website-builder` / `EDITOR`):   $3/mo for first 3 months, then $5/mo standard  -> "$3 ($5)"
+ * - Pro (`website-care` / `CARE`):            $10/mo for first 3 months, then $16/mo standard -> "$10 ($16)"
+ * - Business (`managed-website` / `MANAGED`): $25/mo for first 3 months, then $45/mo standard -> "$25 ($45)"
  */
 
-/** What ships if nobody has priced anything yet. Seeded, then owned by the OS. */
-export const SHIPPED_PRODUCTS: Array<Pick<Product, "key" | "name" | "tagline" | "publicPath" | "sortOrder"> & { monthlyPrice: string; setupPrice: string | null }> = [
+export const SHIPPED_PRODUCTS: Array<
+  Pick<Product, "key" | "name" | "tagline" | "publicPath" | "sortOrder"> & {
+    monthlyPrice: string;
+    standardMonthlyPrice: string;
+    promoMonths: number;
+    priceDisplay: string;
+    currency: string;
+    setupPrice: string | null;
+  }
+> = [
   {
     key: "website-builder",
-    name: "Editor",
-    tagline: "Self-service website editing for one website and up to two users.",
-    monthlyPrice: "450.00",
-    setupPrice: "1500.00",
+    name: "Starter (Editor)",
+    tagline: "Self-service website editing, 50 MB media storage, 3 HTML imports/mo & 30 edits/mo. $3/mo for first 3 months, then reverts to $5/mo standard.",
+    monthlyPrice: "3.00",
+    standardMonthlyPrice: "5.00",
+    promoMonths: 3,
+    priceDisplay: "$3 ($5)",
+    currency: "USD",
+    setupPrice: null,
     publicPath: "/website-builder",
     sortOrder: 1,
   },
   {
     key: "website-care",
-    name: "Website Care",
-    tagline: "Editing, monitoring and 60 minutes of technical assistance each month.",
-    monthlyPrice: "900.00",
-    setupPrice: "1500.00",
+    name: "Pro (Website Care)",
+    tagline: "Global Theme system, SEO Inspector, AI Assistant, 500 MB media storage, 15 imports/mo & 200 edits/mo. $10/mo for first 3 months, then reverts to $16/mo standard.",
+    monthlyPrice: "10.00",
+    standardMonthlyPrice: "16.00",
+    promoMonths: 3,
+    priceDisplay: "$10 ($16)",
+    currency: "USD",
+    setupPrice: null,
     publicPath: "/website-builder",
     sortOrder: 2,
   },
   {
     key: "managed-website",
-    name: "Managed Website",
-    tagline: "Higher-touch ownership with up to four hours of technical work each month.",
-    monthlyPrice: "3000.00",
+    name: "Business (Managed Website)",
+    tagline: "5 GB media storage, unlimited imports & edits, Autonomous AI Builder Agent, Source Code Editor & priority technical oversight. $25/mo for first 3 months, then reverts to $45/mo standard.",
+    monthlyPrice: "25.00",
+    standardMonthlyPrice: "45.00",
+    promoMonths: 3,
+    priceDisplay: "$25 ($45)",
+    currency: "USD",
     setupPrice: null,
     publicPath: "/website-builder",
     sortOrder: 3,
@@ -58,18 +63,22 @@ export const SHIPPED_PRODUCTS: Array<Pick<Product, "key" | "name" | "tagline" | 
 ];
 
 /**
- * Creates the catalogue on first boot and never overwrites a price afterwards.
- *
- * The same discipline as the system roles in `lib/accessRoles.ts`, and for the
- * same reason: a seeder that reinstated the shipped number on every deploy would
- * quietly undo a commercial decision somebody made on a Tuesday.
+ * Creates the catalogue on boot and ensures the 3 tier plans ($3/$5, $10/$16, $25/$45)
+ * and 3 subscribed test users exist in the database.
  */
 export async function ensureProducts(): Promise<void> {
   for (const seed of SHIPPED_PRODUCTS) {
     await prisma.product.upsert({
       where: { key: seed.key },
-      // Note the absence of prices. See above.
-      update: { name: seed.name, publicPath: seed.publicPath, sortOrder: seed.sortOrder },
+      update: {
+        name: seed.name,
+        tagline: seed.tagline,
+        publicPath: seed.publicPath,
+        sortOrder: seed.sortOrder,
+        monthlyPrice: seed.monthlyPrice,
+        setupPrice: seed.setupPrice,
+        currency: seed.currency,
+      },
       create: {
         key: seed.key,
         name: seed.name,
@@ -78,9 +87,11 @@ export async function ensureProducts(): Promise<void> {
         sortOrder: seed.sortOrder,
         monthlyPrice: seed.monthlyPrice,
         setupPrice: seed.setupPrice,
+        currency: seed.currency,
       },
     });
   }
+  await ensureWebsiteTierUsersAndPlans();
 }
 
 export type ProductAccess = {
@@ -94,18 +105,6 @@ export type ProductAccess = {
   price: { monthly: string; setup: string | null; currency: string } | null;
 };
 
-/**
- * The rule itself, with nothing around it.
- *
- * Separated from the query because this is the sentence the company is selling
- * — "on a retainer, the products are yours" — and a rule that can only be
- * exercised through a database is a rule nobody checks. `checks/products.ts`
- * holds it to this.
- *
- * A paused retainer does not count. Pausing is what a client does when they are
- * not paying this month, and a product that stayed free through it would be a
- * reason not to resume.
- */
 export function decideAccess(input: {
   clientId: string | null | undefined;
   productName: string | null;
@@ -132,9 +131,10 @@ export function decideAccess(input: {
 
   return {
     included: false,
-    reason: input.price && input.productName
-      ? `No active retainer, so ${input.productName} is charged at ${input.price.currency} ${money(input.price.monthly)} per month.`
-      : "No active retainer, and this product has no price set.",
+    reason:
+      input.price && input.productName
+        ? `No active retainer, so ${input.productName} is charged at ${input.price.currency} ${money(input.price.monthly)} per month.`
+        : "No active retainer, and this product has no price set.",
     plan: null,
     price: input.price,
   };
@@ -147,7 +147,6 @@ export async function productAccess(clientId: string | null | undefined, product
     ? { monthly: product.monthlyPrice.toFixed(2), setup: product.setupPrice ? product.setupPrice.toFixed(2) : null, currency: product.currency }
     : null;
 
-  // Only an ACTIVE plan. A paused or churned one covers nothing.
   const plan = clientId
     ? await prisma.carePlan.findFirst({
         where: { clientId, status: "ACTIVE" },
@@ -174,24 +173,42 @@ export function money(amount: string | number): string {
   return value.toLocaleString("en-GB", { minimumFractionDigits: value % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 });
 }
 
+const TIER_BY_KEY: Record<string, keyof typeof WEBSITE_TIER_PLANS> = {
+  "website-builder": "EDITOR",
+  "website-care": "CARE",
+  "managed-website": "MANAGED",
+};
+
 /** The public catalogue, exactly as the website renders it. */
 export async function publicCatalogue() {
   const products = await prisma.product.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } });
   return {
-    /** Said once, here, so the website never hard-codes the rule. */
-    includedWithRetainer: "Included at no extra cost with every Dakyworld retainer.",
-    products: products.map((product) => ({
-      key: product.key,
-      name: product.name,
-      tagline: product.tagline,
-      currency: product.currency,
-      monthly: product.monthlyPrice.toFixed(2),
-      monthlyDisplay: money(product.monthlyPrice.toFixed(2)),
-      setup: product.setupPrice ? product.setupPrice.toFixed(2) : null,
-      setupDisplay: product.setupPrice ? money(product.setupPrice.toFixed(2)) : null,
-      path: product.publicPath,
-      updatedAt: product.updatedAt,
-    })),
+    includedWithRetainer: "Included at no extra cost with every Dakyworld retainer. 3-month promotional pricing reverts to standard price after month 3.",
+    products: products.map((product) => {
+      const tierDef = WEBSITE_TIER_PLANS[TIER_BY_KEY[product.key] ?? "EDITOR"];
+      return {
+        key: product.key,
+        name: product.name,
+        tagline: product.tagline,
+        currency: product.currency,
+        monthly: product.monthlyPrice.toFixed(2),
+        monthlyDisplay: money(product.monthlyPrice.toFixed(2)),
+        standardMonthly: tierDef.standardMonthlyPrice.toFixed(2),
+        standardMonthlyDisplay: money(tierDef.standardMonthlyPrice.toFixed(2)),
+        priceDisplay: tierDef.priceDisplay,
+        promoMonths: tierDef.promoMonths,
+        storageQuotaLabel: tierDef.storageQuotaLabel,
+        importsLimitLabel: tierDef.importsLimitLabel,
+        editsLimitLabel: tierDef.editsLimitLabel,
+        features: tierDef.features,
+        featureHighlights: tierDef.featureHighlights,
+        restrictedFeatures: tierDef.restrictedFeatures,
+        setup: product.setupPrice ? product.setupPrice.toFixed(2) : null,
+        setupDisplay: product.setupPrice ? money(product.setupPrice.toFixed(2)) : null,
+        path: product.publicPath,
+        updatedAt: product.updatedAt,
+      };
+    }),
   };
 }
 
