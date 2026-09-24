@@ -166,6 +166,30 @@ check(
   /Your website stays online exactly as it is/.test(dunning),
 );
 
+/* --------------------------------------------- connecting, either way ---- */
+
+const connect = source("../client/src/components/ConnectWebsite.tsx");
+check("the connect dialog offers both routes before asking for anything", /setRoute\("hosted"\)/.test(connect) && /setRoute\("github"\)/.test(connect));
+check("each route links to its own half of the guide", /#hosted/.test(connect) && /#github/.test(connect));
+check("a repository is only asked for on the repository route", /route === "github" && repository\.trim\(\)/.test(connect));
+
+const setup = source("../src/services/websiteSetupAssistance.ts");
+check("setup help is charged in the customer's own currency", /SETUP_ASSISTANCE\[currency\]/.test(setup));
+check(
+  "a request stands even when no payment link could be raised",
+  /could not raise a payment link/.test(setup),
+);
+check("the request says which route the customer was on", /ROUTE_LABEL\[input\.route\]/.test(setup));
+
+const pricing = source("../src/services/websitePricing.ts");
+check("setup help is GHS 120 in Ghana", /GHS: \{ amount: 120/.test(pricing));
+check("setup help is $10 elsewhere", /USD: \{ amount: 10/.test(pricing));
+
+const guide = readFileSync(new URL("../../website-builder-setup.html", import.meta.url), "utf8");
+check("the guide has a section for the hosted route", /id="hosted"/.test(guide));
+check("the guide has a section for the repository route", /id="github"/.test(guide));
+check("the guide prices the setup help the same as the code does", /GHS 120/.test(guide) && /\$10/.test(guide));
+
 /* ------------------------------------------------------- the boundary ----- */
 
 const boundary = source("../client/src/components/ErrorBoundary.tsx");

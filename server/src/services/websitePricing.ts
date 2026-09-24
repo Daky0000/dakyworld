@@ -75,6 +75,20 @@ export const TIER_PRICES: Record<WebsitePlanTier, Record<PlanCurrency, TierPrice
   MANAGED: { GHS: ghs(2400, 4000), USD: usd(195, 320) },
 };
 
+/**
+ * Setting it up for them, once, for a fee.
+ *
+ * Connecting a website is two DNS records or one GitHub install, and for most
+ * people that is twenty minutes with the guide open. For the rest it is the
+ * thing that stops them ever starting, and "ask us and we will do it" is worth
+ * more than another paragraph of documentation. Priced to be obviously cheaper
+ * than a support conversation about whether to pay for a support conversation.
+ */
+export const SETUP_ASSISTANCE: Record<PlanCurrency, { amount: number; display: string }> = {
+  GHS: { amount: 120, display: "GHS 120" },
+  USD: { amount: 10, display: "$10" },
+};
+
 /** Ghana pays in cedis. Everywhere else pays in dollars. */
 export function currencyForCountry(country: string | null | undefined): PlanCurrency {
   const code = (country ?? "").trim().toUpperCase();

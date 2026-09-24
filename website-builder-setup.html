@@ -230,6 +230,65 @@
   </div>
 </section>
 
+<section class="section bg-white reveal" id="two-ways">
+  <div class="wrap">
+    <div class="section-head">
+      <div>
+        <div class="eyebrow">Before anything else</div>
+        <h2 class="display">Two ways in. <span style="color:var(--blue)">Pick one.</span></h2>
+      </div>
+      <p>Most websites take one route or the other. You can change your mind later; nothing here is permanent.</p>
+    </div>
+
+    <div class="spec-list">
+      <article class="spec-row spec-row--step" id="hosted">
+        <div class="step-head"><span class="step-n">A</span><h3>We host it for you</h3></div>
+        <div class="spec-body">
+          <p class="spec-lead">For: anybody without a developer, or whose site is not in a repository. Nothing to install. About twenty minutes, most of which is waiting for DNS.</p>
+          <p>Your website gets an address here the moment its first page is published, and it is live at that address straight away &mdash; there is no deployment to wait for and nothing to connect.</p>
+          <ol>
+            <li><strong>Connect the website.</strong> In the Builder, press <em>Connect a website</em>, choose <em>We host it for you</em>, and give it a name and the address it has now (or will have). If you already have an HTML file, upload it here.</li>
+            <li><strong>Edit and publish once.</strong> Change anything and press Publish. That first publish is what creates your address.</li>
+            <li><strong>Find your address.</strong> Open <em>Website &rarr; Settings</em>. The Hosting panel shows it, and it works immediately.</li>
+            <li><strong>Point your own domain at it.</strong> Type your domain into the same panel. It shows two records to add wherever your domain is managed &mdash; Namecheap, GoDaddy, Cloudflare, your host&rsquo;s control panel:
+              <ul>
+                <li>a <strong>TXT</strong> record at <code>_dakyworld.yourdomain.com</code>, carrying the value shown. This proves the domain is yours &mdash; without it, anybody could claim any domain.</li>
+                <li>a <strong>CNAME</strong> record pointing your domain at the address the panel gives you.</li>
+              </ul>
+            </li>
+            <li><strong>Press Verify.</strong> We read the TXT record and start serving your domain. DNS can take up to an hour to spread, so if it says the record is not visible yet, wait and press it again &mdash; nothing is wrong.</li>
+          </ol>
+          <p class="spec-deliverable"><strong>What you keep:</strong> the domain stays registered to you, and you can point it somewhere else at any time. You can export every page, every version and every image as a file from Settings, whenever you like and without asking us.</p>
+        </div>
+      </article>
+
+      <article class="spec-row spec-row--step" id="github">
+        <div class="step-head"><span class="step-n">B</span><h3>You have a GitHub repository</h3></div>
+        <div class="spec-body">
+          <p class="spec-lead">For: a website already deployed from GitHub &mdash; Pages, Netlify, Vercel, Cloudflare Pages. Needs somebody who can install an app on the repository.</p>
+          <p>Publishing commits to your repository, on your branch, exactly as a developer would. Your existing deployment then does what it always does. Nothing about how your site is hosted changes, and every edit is an ordinary commit in your history.</p>
+          <ol>
+            <li><strong>Connect the website</strong> with <em>I have a GitHub repository</em>, and enter it as <code>owner/name</code> with the branch your live site is built from.</li>
+            <li><strong>Install the GitHub app</strong> &mdash; the six steps below cover this, and step 3 explains exactly what it is granting and how to take it back.</li>
+            <li><strong>Publish once</strong> and watch the commit appear in your repository.</li>
+          </ol>
+          <p>The rest of this page &mdash; the six steps, the first edit, and what to check before going live &mdash; is written for this route. If we are hosting for you, skip step 3 and step 4; everything else is the same.</p>
+        </div>
+      </article>
+
+      <article class="spec-row spec-row--step" id="setup-help">
+        <div class="step-head"><span class="step-n">&mdash;</span><h3>Or we do it for you, for GHS 120 / $10</h3></div>
+        <div class="spec-body">
+          <p class="spec-lead">One payment. Usually done the same working day.</p>
+          <p>If DNS records or GitHub permissions are not something you want to spend an afternoon on, ask and somebody here will do it. In the Builder, press <em>Connect a website</em> and use <em>Set it up for me</em> &mdash; tell us who manages your domain and what you have already tried, and we take it from there.</p>
+          <p>For the hosted route that means the domain, both DNS records and confirming it is live. For the repository route it means installing the app, connecting the repository and making the first publish with you on the call.</p>
+          <p class="spec-deliverable">It is a one-off, not a subscription, and it is charged in whichever currency your plan is in &mdash; GHS 120 in Ghana, $10 elsewhere.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
 <section class="section bg-cream reveal">
   <div class="wrap">
     <div class="section-head">
