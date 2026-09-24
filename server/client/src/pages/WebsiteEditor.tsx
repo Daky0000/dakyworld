@@ -1474,99 +1474,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   structuralHistory.current = step => { if (step < 0 ? page.data?.structure?.canUndo : page.data?.structure?.canRedo) void runStructure(step < 0 ? "undo" : "redo"); };
 
-  if (page.isLoading) return <div className="p-10 text-sm text-muted">Opening the page…</div>;
-  if (page.isError) {
-    // 409 here has one cause: a page whose file is source, with no built copy of
-    // it anywhere — no export in the repository, no render service, nothing
-    // published yet. Its words are still editable, so the way there is offered
-    // rather than left for somebody to find.
-    const noBuild = page.error instanceof ApiError && page.error.status === 409;
-    return (
-      <div className="m-10 rounded-2xl border border-warn-line bg-warn-surface p-6 text-sm text-warn-text">
-        {page.error instanceof ApiError ? page.error.message : "That page could not be opened."}
-        {noBuild && (
-          <Link className="mt-4 block font-semibold text-blue hover:underline" to={`/website/pages/${pageId}/source`}>
-            Edit this page&rsquo;s text in its source file
-          </Link>
-        )}
-      </div>
-    );
-  }
-  if (!page.data) return null;
-
-  const { sections, site, links } = page.data;
-  const section = sections.find((candidate) => candidate.id === sectionId) ?? sections[0] ?? null;
-  const allFields = sections.flatMap((candidate) => candidate.fields);
-  const picked = pickedId ? (allFields.find((field) => field.id === pickedId) ?? null) : null;
-  const changedCount = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length + (page.data.structure?.changed ? 1 : 0);
-  const canPublish = access.data?.capabilities.publish === true;
-  const readOnly = !canEdit || publish.isPending || reviewOpen || showVersions || structureBusy;
-  const pickedScope = pickedId ? page.data.shared?.scope[pickedId] : undefined;
-  const pickedShared = pickedScope ? page.data.shared?.elements.find((element) => element.instanceId === pickedScope.instanceId) : undefined;
-  let pickedElement: HTMLElement | null = null;
-  try { pickedElement = pickedId ? frame.current?.contentDocument?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(pickedId)}"]`) ?? null : null; } catch { /* Preview reconnects after load. */ }
-  const pickedResponsive = pickedId ? (edits[pickedId]?.responsive ?? picked?.responsive ?? {}) : {};
-  const pickedStyle = device === "desktop"
-    ? pickedId ? (edits[pickedId]?.style ?? picked?.style ?? "") : ""
-    : pickedResponsive[device] ?? "";
-  const changePickedStyle = (style: string, commit = false) => {
-    if (!picked) return;
-    if (device === "desktop") change(picked.id, { ...edits[picked.id], style }, { commit });
-    else {
-      if (style.split(";").some(declaration => declaration.trim() && !safeResponsiveStyle(declaration))) {
-        setFailure("That screen-size style contains a value the editor cannot save. Use layout, colour, typography or gradient values; image URLs belong in the image control.");
-        return;
-      }
-      const responsive = { ...pickedResponsive };
-      if (style.trim()) responsive[device] = safeResponsiveStyle(style);
-      else delete responsive[device];
-      change(picked.id, { ...edits[picked.id], responsive }, { commit });
-    }
-  };
-
-  const status = structureBusy ? "Updating layout…" : save.isPending
-    ? "Saving…"
-    : dirty.current
-      ? "Unsaved changes"
-      : changedCount > 0
-        ? `Draft saved · ${changedCount} unpublished change${changedCount === 1 ? "" : "s"}`
-        : "No unpublished changes";
-
-  const frameWidth = DEVICES.find((option) => option.key === device)!.width;
-
-  const openEditorContextMenuFromEvent = (
-    clientX: number,
-    clientY: number,
-    el: HTMLElement | null,
-    fallbackTarget?: HTMLElement | null,
-    fromIframe = false,
-  ) => {
-    const id = el ? el.getAttribute("data-dw-field") : null;
-    const rect = fromIframe ? frame.current?.getBoundingClientRect() : undefined;
-    const rawX = (rect ? rect.left : 0) + clientX * (fromIframe ? zoom : 1);
-    const rawY = (rect ? rect.top : 0) + clientY * (fromIframe ? zoom : 1);
-    const x = Math.max(12, Math.min(rawX, window.innerWidth - 280));
-    const y = Math.max(12, Math.min(rawY, window.innerHeight - 420));
-    setPickedId(id ?? null);
-    if (id) writeInFrame("select", id);
-    const tag = el
-      ? el.tagName.toLowerCase()
-      : fallbackTarget?.tagName
-        ? fallbackTarget.tagName.toLowerCase()
-        : null;
-    const text = (
-      (el ? el.innerText || el.textContent : fallbackTarget ? fallbackTarget.innerText || fallbackTarget.textContent : "") ||
-      ""
-    ).trim();
-    setContextMenu({
-      x,
-      y,
-      fieldId: id ?? null,
-      tag,
-      kind: el ? el.getAttribute("data-dw-kind") : null,
-      text,
-    });
-  };
+  /**
+   * These hooks sit above the early returns below on purpose. React counts
+   * hooks per render: the first render of this page is a loading one that
+   * returns early, so a hook declared after that return does not exist yet,
+   * and appears only once the data arrives -- which throws, and leaves the
+   * editor a blank screen. The fields they read are derived from optional
+   * data here for the same reason.
+   */
+  const allFields = (page.data?.sections ?? []).flatMap((candidate) => candidate.fields);
 
   const [pageColorTokens, setPageColorTokens] = useState<Array<{ key: string; label: string; value: string; isVar: boolean }>>([]);
   const [assetTargetMode, setAssetTargetMode] = useState<"image" | "background">("image");
@@ -1683,6 +1599,99 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     },
     [allFields, change, edits, tell],
   );
+  if (page.isLoading) return <div className="p-10 text-sm text-muted">Opening the page…</div>;
+  if (page.isError) {
+    // 409 here has one cause: a page whose file is source, with no built copy of
+    // it anywhere — no export in the repository, no render service, nothing
+    // published yet. Its words are still editable, so the way there is offered
+    // rather than left for somebody to find.
+    const noBuild = page.error instanceof ApiError && page.error.status === 409;
+    return (
+      <div className="m-10 rounded-2xl border border-warn-line bg-warn-surface p-6 text-sm text-warn-text">
+        {page.error instanceof ApiError ? page.error.message : "That page could not be opened."}
+        {noBuild && (
+          <Link className="mt-4 block font-semibold text-blue hover:underline" to={`/website/pages/${pageId}/source`}>
+            Edit this page&rsquo;s text in its source file
+          </Link>
+        )}
+      </div>
+    );
+  }
+  if (!page.data) return null;
+
+  const { sections, site, links } = page.data;
+  const section = sections.find((candidate) => candidate.id === sectionId) ?? sections[0] ?? null;
+  const picked = pickedId ? (allFields.find((field) => field.id === pickedId) ?? null) : null;
+  const changedCount = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length + (page.data.structure?.changed ? 1 : 0);
+  const canPublish = access.data?.capabilities.publish === true;
+  const readOnly = !canEdit || publish.isPending || reviewOpen || showVersions || structureBusy;
+  const pickedScope = pickedId ? page.data.shared?.scope[pickedId] : undefined;
+  const pickedShared = pickedScope ? page.data.shared?.elements.find((element) => element.instanceId === pickedScope.instanceId) : undefined;
+  let pickedElement: HTMLElement | null = null;
+  try { pickedElement = pickedId ? frame.current?.contentDocument?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(pickedId)}"]`) ?? null : null; } catch { /* Preview reconnects after load. */ }
+  const pickedResponsive = pickedId ? (edits[pickedId]?.responsive ?? picked?.responsive ?? {}) : {};
+  const pickedStyle = device === "desktop"
+    ? pickedId ? (edits[pickedId]?.style ?? picked?.style ?? "") : ""
+    : pickedResponsive[device] ?? "";
+  const changePickedStyle = (style: string, commit = false) => {
+    if (!picked) return;
+    if (device === "desktop") change(picked.id, { ...edits[picked.id], style }, { commit });
+    else {
+      if (style.split(";").some(declaration => declaration.trim() && !safeResponsiveStyle(declaration))) {
+        setFailure("That screen-size style contains a value the editor cannot save. Use layout, colour, typography or gradient values; image URLs belong in the image control.");
+        return;
+      }
+      const responsive = { ...pickedResponsive };
+      if (style.trim()) responsive[device] = safeResponsiveStyle(style);
+      else delete responsive[device];
+      change(picked.id, { ...edits[picked.id], responsive }, { commit });
+    }
+  };
+
+  const status = structureBusy ? "Updating layout…" : save.isPending
+    ? "Saving…"
+    : dirty.current
+      ? "Unsaved changes"
+      : changedCount > 0
+        ? `Draft saved · ${changedCount} unpublished change${changedCount === 1 ? "" : "s"}`
+        : "No unpublished changes";
+
+  const frameWidth = DEVICES.find((option) => option.key === device)!.width;
+
+  const openEditorContextMenuFromEvent = (
+    clientX: number,
+    clientY: number,
+    el: HTMLElement | null,
+    fallbackTarget?: HTMLElement | null,
+    fromIframe = false,
+  ) => {
+    const id = el ? el.getAttribute("data-dw-field") : null;
+    const rect = fromIframe ? frame.current?.getBoundingClientRect() : undefined;
+    const rawX = (rect ? rect.left : 0) + clientX * (fromIframe ? zoom : 1);
+    const rawY = (rect ? rect.top : 0) + clientY * (fromIframe ? zoom : 1);
+    const x = Math.max(12, Math.min(rawX, window.innerWidth - 280));
+    const y = Math.max(12, Math.min(rawY, window.innerHeight - 420));
+    setPickedId(id ?? null);
+    if (id) writeInFrame("select", id);
+    const tag = el
+      ? el.tagName.toLowerCase()
+      : fallbackTarget?.tagName
+        ? fallbackTarget.tagName.toLowerCase()
+        : null;
+    const text = (
+      (el ? el.innerText || el.textContent : fallbackTarget ? fallbackTarget.innerText || fallbackTarget.textContent : "") ||
+      ""
+    ).trim();
+    setContextMenu({
+      x,
+      y,
+      fieldId: id ?? null,
+      tag,
+      kind: el ? el.getAttribute("data-dw-kind") : null,
+      text,
+    });
+  };
+
 
   const bindIframeContextMenu = () => {
     syncPageColorsFromFrame();
