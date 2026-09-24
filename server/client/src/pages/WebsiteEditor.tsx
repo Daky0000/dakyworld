@@ -546,7 +546,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const qc = useQueryClient();
   const { user } = useAuth();
   const [designerMode, setDesignerMode] = useState(false);
-  const [inspectorTab, setInspectorTab] = useState<"content" | "seo" | "style" | "interactions">("content");
+  const [inspectorTab, setInspectorTab] = useState<"content" | "theme" | "seo" | "style" | "interactions">("content");
   const [showLayers, setShowLayers] = useState(false);
   const [showPanel, setShowPanel] = useState(() => typeof window === "undefined" || window.innerWidth > 600);
   const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
@@ -627,12 +627,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   /** The field the person clicked in the preview. */
   const [pickedId, setPickedId] = useState<string | null>(null);
   useEffect(() => {
-    if (pickedId && inspectorTab === "seo") {
+    if (pickedId && (inspectorTab === "seo" || inspectorTab === "theme")) {
       setInspectorTab("content");
     } else if (!pickedId && (inspectorTab === "style" || inspectorTab === "interactions")) {
       setInspectorTab("content");
     }
-  }, [pickedId, inspectorTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedId]);
   /** The same, readable from listeners that must not be re-registered. */
   const pickedRef = useRef<string | null>(null);
   pickedRef.current = pickedId;
@@ -1550,26 +1551,92 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const updatePageColorToken = useCallback(
     (tokenKey: string, nextHex: string, isVar: boolean, previousHex: string) => {
       const formatted = nextHex.startsWith("#") ? nextHex.toUpperCase() : `#${nextHex.toUpperCase()}`;
+      const oldUpper = (previousHex || "").toUpperCase();
+
       setPageColorTokens((prev) =>
-        prev.map((item) => (item.key === tokenKey ? { ...item, value: formatted } : item)),
+        prev.map((item) => {
+          if (item.key === tokenKey) return { ...item, value: formatted };
+          if (!item.isVar && oldUpper && item.value.toUpperCase() === oldUpper) {
+            return { ...item, key: formatted, label: `Page Color ${formatted}`, value: formatted };
+          }
+          return item;
+        }),
       );
 
-      // 1. Update live in the preview iframe immediately
+      // Compute RGB string equivalent of previousHex so we can match computed styles & rgb() rules
+      const hexClean = oldUpper.replace(/^#/, "");
+      const oldRgbTuple =
+        hexClean.length === 6
+          ? [
+              parseInt(hexClean.slice(0, 2), 16),
+              parseInt(hexClean.slice(2, 4), 16),
+              parseInt(hexClean.slice(4, 6), 16),
+            ]
+          : null;
+      const oldRgbPattern = oldRgbTuple
+        ? new RegExp(`rgba?\\(\\s*${oldRgbTuple[0]}\\s*,\\s*${oldRgbTuple[1]}\\s*,\\s*${oldRgbTuple[2]}(?:\\s*,\\s*1(?:\\.0+)?)?\\s*\\)`, "gi")
+        : null;
+
+      // 1. Update live in the preview iframe immediately (CSS variables, <style> tags, [style] attrs, SVG fill/stroke)
+      const matchedFieldStyleUpdates = new Map<string, Record<string, string>>();
       try {
         const doc = frame.current?.contentDocument;
+        const win = frame.current?.contentWindow;
         if (doc) {
           if (isVar) {
             doc.documentElement?.style?.setProperty(tokenKey, formatted);
             doc.body?.style?.setProperty(tokenKey, formatted);
           }
-          if (previousHex && previousHex.toUpperCase() !== formatted) {
+          if (oldUpper && oldUpper !== formatted) {
             const escapedOld = previousHex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const re = new RegExp(escapedOld, "gi");
+            const hexRe = new RegExp(escapedOld, "gi");
+
             doc.querySelectorAll("style:not([data-dw-interaction-preview])").forEach((styleEl) => {
-              if (styleEl.textContent && re.test(styleEl.textContent)) {
-                styleEl.textContent = styleEl.textContent.replace(re, formatted);
+              if (!styleEl.textContent) return;
+              let updatedCss = styleEl.textContent;
+              if (hexRe.test(updatedCss)) {
+                updatedCss = updatedCss.replace(hexRe, formatted);
+              }
+              if (oldRgbPattern && oldRgbPattern.test(updatedCss)) {
+                updatedCss = updatedCss.replace(oldRgbPattern, formatted);
+              }
+              if (updatedCss !== styleEl.textContent) {
+                styleEl.textContent = updatedCss;
               }
             });
+
+            doc.querySelectorAll<HTMLElement>("[style]").forEach((el) => {
+              const rawStyle = el.getAttribute("style") || "";
+              let nextStyle = rawStyle;
+              if (hexRe.test(nextStyle)) nextStyle = nextStyle.replace(hexRe, formatted);
+              if (oldRgbPattern && oldRgbPattern.test(nextStyle)) nextStyle = nextStyle.replace(oldRgbPattern, formatted);
+              if (nextStyle !== rawStyle) el.setAttribute("style", nextStyle);
+            });
+
+            doc.querySelectorAll<SVGElement>("[fill], [stroke]").forEach((svgEl) => {
+              const fill = svgEl.getAttribute("fill");
+              if (fill && fill.toUpperCase() === oldUpper) svgEl.setAttribute("fill", formatted);
+              const stroke = svgEl.getAttribute("stroke");
+              if (stroke && stroke.toUpperCase() === oldUpper) svgEl.setAttribute("stroke", formatted);
+            });
+
+            // Also check [data-dw-field] elements whose computed color/background/border matched oldRgbTuple
+            if (!isVar && oldRgbTuple && win) {
+              const targetRgbStr = `rgb(${oldRgbTuple[0]}, ${oldRgbTuple[1]}, ${oldRgbTuple[2]})`;
+              doc.querySelectorAll<HTMLElement>("[data-dw-field]").forEach((el) => {
+                const fId = el.getAttribute("data-dw-field");
+                if (!fId) return;
+                const cs = win.getComputedStyle(el);
+                const patch: Record<string, string> = {};
+                if (cs.backgroundColor === targetRgbStr) patch["background-color"] = formatted;
+                if (cs.color === targetRgbStr) patch["color"] = formatted;
+                if (cs.borderTopColor === targetRgbStr && parseFloat(cs.borderTopWidth) > 0) patch["border-color"] = formatted;
+                if (Object.keys(patch).length > 0) {
+                  matchedFieldStyleUpdates.set(fId, patch);
+                  for (const [k, v] of Object.entries(patch)) el.style.setProperty(k, v);
+                }
+              });
+            }
           }
         }
       } catch {}
@@ -1578,7 +1645,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         tell({ type: "cssVar", name: tokenKey, value: formatted });
       }
 
-      // 2. Persist on the body container field (and any element with matching inline hex)
+      // 2. Persist on the body container field and any element with matching color code
       const bodyField = allFields.find((f) => f.tag === "body") ?? allFields.find((f) => f.kind === "container");
       if (bodyField && isVar) {
         const currentStyle = edits[bodyField.id]?.style ?? bodyField.style ?? "";
@@ -1586,13 +1653,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         map[tokenKey] = formatted;
         change(bodyField.id, { ...edits[bodyField.id], style: writeStyle(map) }, { commit: true });
       }
-      if (previousHex) {
-        const oldUpper = previousHex.toUpperCase();
+      if (oldUpper) {
+        const escapedOld = previousHex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const hexRe = new RegExp(escapedOld, "gi");
         for (const field of allFields) {
           const st = edits[field.id]?.style ?? field.style ?? "";
-          if (st && st.toUpperCase().includes(oldUpper)) {
-            const replaced = st.replace(new RegExp(previousHex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), formatted);
-            change(field.id, { ...edits[field.id], style: replaced }, { commit: true });
+          const computedPatch = matchedFieldStyleUpdates.get(field.id);
+          let nextStyle = st;
+          if (nextStyle && hexRe.test(nextStyle)) {
+            nextStyle = nextStyle.replace(hexRe, formatted);
+          }
+          if (nextStyle && oldRgbPattern && oldRgbPattern.test(nextStyle)) {
+            nextStyle = nextStyle.replace(oldRgbPattern, formatted);
+          }
+          if (computedPatch) {
+            const map = parseStyle(nextStyle);
+            for (const [k, v] of Object.entries(computedPatch)) map[k] = v;
+            nextStyle = writeStyle(map);
+          }
+          if (nextStyle !== st) {
+            change(field.id, { ...edits[field.id], style: nextStyle }, { commit: true });
           }
         }
       }
@@ -2607,7 +2687,42 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
             <WebsiteBreadcrumbs fields={allFields} selectedId={pickedId} onSelect={pick} />
             {page.data.structure?.stale && <p role="alert" className="bg-warn-surface px-3 py-2 text-xs text-warn-text">The source changed after these layout edits. Your draft is preserved. Discard it to work from the latest source; publishing is blocked.</p>}
-            {showLayers && <div className="editor-layers"><WebsiteLayers fields={allFields} edits={edits} problems={problems} shared={page.data.shared?.scope} selectedId={pickedId} onSelect={pick} onMove={!designerMode || readOnly || save.isPending ? undefined : (id, target, position) => { void runStructure(position, id, target); }} /></div>}
+            {showLayers && (
+              <div className="editor-layers">
+                <WebsiteLayers
+                  fields={allFields}
+                  edits={edits}
+                  problems={problems}
+                  shared={page.data.shared?.scope}
+                  selectedId={pickedId}
+                  onSelect={pick}
+                  onClose={() => setShowLayers(false)}
+                  onToggleVisibility={
+                    readOnly
+                      ? undefined
+                      : (targetId) => {
+                          const targetField = allFields.find((f) => f.id === targetId);
+                          if (!targetField) return;
+                          const rawStyle = edits[targetId]?.style ?? targetField.style ?? "";
+                          const map = parseStyle(rawStyle);
+                          if (map.display === "none") {
+                            delete map.display;
+                          } else {
+                            map.display = "none";
+                          }
+                          change(targetId, { ...edits[targetId], style: writeStyle(map) }, { commit: true });
+                        }
+                  }
+                  onMove={
+                    !designerMode || readOnly || save.isPending
+                      ? undefined
+                      : (id, target, position) => {
+                          void runStructure(position, id, target);
+                        }
+                  }
+                />
+              </div>
+            )}
             {designerMode && picked && <div className="border-b border-line px-3 py-2">
               <div className="flex flex-wrap gap-2 text-xs">
                 <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.previousId} onClick={() => void runStructure("before", picked.id, picked.structure?.previousId)}>Move up</button>
@@ -2622,7 +2737,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             </div>}
 
             <div role="tablist" aria-label="Element settings" className="editor-tabs">
-              {(!picked ? (["content", "seo"] as const) : (["content", "style", "interactions"] as const)).map(tab => (
+              {(!picked
+                ? (["content", "theme", "seo"] as const)
+                : (["content", "style", "interactions", "theme", "seo"] as const)
+              ).map((tab) => (
                 <button
                   type="button"
                   role="tab"
@@ -2630,119 +2748,144 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   key={tab}
                   onClick={() => setInspectorTab(tab)}
                 >
-                  {tab === "seo" ? "SEO" : tab[0].toUpperCase() + tab.slice(1)}
+                  {tab === "seo" ? "SEO" : tab === "theme" ? "Theme" : tab[0].toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
             <div className="editor-controls min-h-0 flex-1 overflow-y-auto">
-              {!picked ? (
-                inspectorTab === "seo" ? (
-                  <WebsitePageSeoInspector
-                    siteId={site.id}
-                    pageId={pageId}
-                    pageTitle={page.data.page.title}
-                    pagePath={page.data.page.path}
-                    readOnly={readOnly}
-                    imageFields={allFields
-                      .filter((f) => f.kind === "image")
-                      .map((f) => ({
-                        id: f.id,
-                        label: f.label,
-                        src: edits[f.id]?.value ?? f.value ?? "",
-                        alt: edits[f.id]?.alt ?? f.alt ?? "",
-                      }))}
-                    onApplyAltFixes={(fixes) => {
-                      setEdits((prev) => {
-                        const next = { ...prev };
-                        for (const fix of fixes) {
-                          const existing = next[fix.id] ?? {};
-                          const field = allFields.find((f) => f.id === fix.id);
-                          next[fix.id] = {
-                            ...existing,
-                            value: existing.value ?? field?.value ?? "",
-                            alt: fix.alt,
-                          };
-                        }
-                        saveNow(next);
-                        return next;
-                      });
-                      showQuickToast(`Applied SEO alt text to ${fixes.length} image${fixes.length === 1 ? "" : "s"}.`);
-                    }}
-                    onDraftUpdated={() => {
-                      dirty.current = false;
-                      setPreviewToken((token) => token + 1);
-                    }}
-                    onOpenClientReport={() => setClientReportOpen(true)}
-                  />
-                ) : (
-                  <div className="px-4 py-5 text-center">
-                    <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">
-                      Its words, style, and interactions appear here. Double click to type straight into the page.
+              {inspectorTab === "seo" ? (
+                <WebsitePageSeoInspector
+                  siteId={site.id}
+                  pageId={pageId}
+                  pageTitle={page.data.page.title}
+                  pagePath={page.data.page.path}
+                  readOnly={readOnly}
+                  imageFields={allFields
+                    .filter((f) => f.kind === "image")
+                    .map((f) => ({
+                      id: f.id,
+                      label: f.label,
+                      src: edits[f.id]?.value ?? f.value ?? "",
+                      alt: edits[f.id]?.alt ?? f.alt ?? "",
+                    }))}
+                  onApplyAltFixes={(fixes) => {
+                    setEdits((prev) => {
+                      const next = { ...prev };
+                      for (const fix of fixes) {
+                        const existing = next[fix.id] ?? {};
+                        const field = allFields.find((f) => f.id === fix.id);
+                        next[fix.id] = {
+                          ...existing,
+                          value: existing.value ?? field?.value ?? "",
+                          alt: fix.alt,
+                        };
+                      }
+                      saveNow(next);
+                      return next;
+                    });
+                    showQuickToast(`Applied SEO alt text to ${fixes.length} image${fixes.length === 1 ? "" : "s"}.`);
+                  }}
+                  onDraftUpdated={() => {
+                    dirty.current = false;
+                    setPreviewToken((token) => token + 1);
+                  }}
+                  onOpenClientReport={() => setClientReportOpen(true)}
+                />
+              ) : inspectorTab === "theme" ? (
+                <div className="space-y-4 p-3.5">
+                  <div className="rounded-xl border border-line bg-surface-2/60 p-3.5 text-left">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-[.06em] text-ink">
+                        Page Colors &amp; Theme
+                      </span>
+                      <span className="text-[11px] text-muted">{pageColorTokens.length} colors</span>
+                    </div>
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
+                      Click any color picker or edit its #HEX code to update that color across the entire page live.
                     </p>
-                    <p className="mt-2 text-xs text-muted">
-                      {allFields.length} editable {allFields.length === 1 ? "thing" : "things"} on this page.
-                    </p>
-
-                    {pageColorTokens.length > 0 && (
-                      <div className="mt-4 rounded-xl border border-line bg-surface-2/60 p-3 text-left">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-bold uppercase tracking-[.06em] text-ink">
-                            Page Colors &amp; Theme
-                          </span>
-                          <span className="text-[10px] text-muted">{pageColorTokens.length} colors</span>
-                        </div>
-                        <p className="mt-0.5 text-[11px] text-muted">
-                          Click any color picker or edit its #HEX code to update that color across the page live.
-                        </p>
-                        <div className="mt-2.5 space-y-1.5 max-h-[280px] overflow-y-auto pr-0.5">
-                          {pageColorTokens.map((token) => (
-                            <div key={token.key} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-white px-2.5 py-1.5">
-                              <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-ink" title={token.label}>
-                                {token.label}
-                              </span>
-                              <ColorCodeInput
-                                label={token.label}
-                                value={token.value}
-                                disabled={readOnly}
-                                onChange={(nextHex) => updatePageColorToken(token.key, nextHex, token.isVar, token.value)}
-                              />
-                            </div>
-                          ))}
-                        </div>
+                    {pageColorTokens.length === 0 ? (
+                      <p className="mt-3 rounded-lg border border-line bg-white p-3 text-xs text-muted">
+                        No theme tokens or hex colors detected on this page yet.
+                      </p>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        {pageColorTokens.map((token) => (
+                          <div
+                            key={token.key}
+                            className="flex items-center justify-between gap-2.5 rounded-xl border border-line bg-white px-3 py-2 shadow-2xs"
+                          >
+                            <span
+                              className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-semibold text-ink"
+                              title={token.label}
+                            >
+                              {token.label}
+                            </span>
+                            <ColorCodeInput
+                              label={token.label}
+                              value={token.value}
+                              disabled={readOnly}
+                              onChange={(nextHex) => updatePageColorToken(token.key, nextHex, token.isVar, token.value)}
+                            />
+                          </div>
+                        ))}
                       </div>
                     )}
-
-                    <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4">
-                      {canEdit && !readOnly && (
-                        <button
-                          type="button"
-                          onClick={() => setSectionLibraryOpen(true)}
-                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-ink px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90"
-                        >
-                          <IconPlusSquare size={14} />
-                          <span>Insert Pre-Built Section</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setInspectorTab("seo")}
-                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-line bg-cream px-3 py-2 text-xs font-semibold text-ink transition hover:border-blue hover:text-blue"
-                      >
-                        <IconSearch size={14} />
-                        <span>Edit Page SEO, Schema &amp; Previews</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCommandPaletteOpen(true)}
-                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-medium text-muted transition hover:border-line-strong hover:text-ink"
-                      >
-                        <IconSearch size={13} />
-                        <span>Command Search (Ctrl+K)</span>
-                      </button>
-                    </div>
                   </div>
-                )
+
+                  {/* Global Page Surface & Typography Overrides */}
+                  {(() => {
+                    const bodyField = allFields.find((f) => f.tag === "body") ?? allFields.find((f) => f.kind === "container");
+                    if (!bodyField) return null;
+                    const bodyStyle = edits[bodyField.id]?.style ?? bodyField.style ?? "";
+                    const bodyMap = parseStyle(bodyStyle);
+                    return (
+                      <div className="rounded-xl border border-line bg-surface-2/60 p-3.5 text-left">
+                        <span className="block text-[11px] font-bold uppercase tracking-[.06em] text-ink">
+                          Global Page Surface &amp; Typography
+                        </span>
+                        <p className="mt-0.5 text-[11px] text-muted">
+                          Default background, text color, and font family inherited across the page.
+                        </p>
+                        <div className="mt-3 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2">
+                            <span className="text-xs font-medium text-ink">Page Background</span>
+                            <ColorCodeInput
+                              label="Page Background"
+                              value={bodyMap["background-color"] ?? "#F2EADC"}
+                              disabled={readOnly}
+                              onChange={(nextHex) => {
+                                const nextMap = { ...bodyMap, "background-color": nextHex };
+                                change(bodyField.id, { ...edits[bodyField.id], style: writeStyle(nextMap) }, { commit: true });
+                              }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2">
+                            <span className="text-xs font-medium text-ink">Default Text Color</span>
+                            <ColorCodeInput
+                              label="Default Text Color"
+                              value={bodyMap.color ?? "#12110F"}
+                              disabled={readOnly}
+                              onChange={(nextHex) => {
+                                const nextMap = { ...bodyMap, color: nextHex };
+                                change(bodyField.id, { ...edits[bodyField.id], style: writeStyle(nextMap) }, { commit: true });
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : !picked ? (
+                <div className="px-4 py-6 text-center">
+                  <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted">
+                    Its words, style, and interactions appear here. Double click to type straight into the page.
+                  </p>
+                  <p className="mt-2 text-xs text-muted">
+                    {allFields.length} editable {allFields.length === 1 ? "thing" : "things"} on this page.
+                  </p>
+                </div>
               ) : (
                 <>
                   {/* Before the controls, not beside them: somebody about to

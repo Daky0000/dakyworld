@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * The controls the inspector is built from, and the style string they write.
@@ -408,12 +409,511 @@ export function SelectField({
 const CHECKER =
   "repeating-conic-gradient(#0000 0% 25%, rgba(8,16,31,.14) 0% 50%) 50% / 8px 8px";
 
+const DEFAULT_SAVED_COLORS = [
+  "#5E6472",
+  "#3B6EF6",
+  "#1CB955",
+  "#E85D2A",
+  "#E03E52",
+  "#F2C911",
+  "#0FA37F",
+  "#6DD3EA",
+  "#6C4CE0",
+];
+
+function hexToRgbTuple(hex: string): [number, number, number] {
+  const cleaned = hex.replace(/^#/, "").trim();
+  if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+    return [
+      parseInt(cleaned[0] + cleaned[0], 16),
+      parseInt(cleaned[1] + cleaned[1], 16),
+      parseInt(cleaned[2] + cleaned[2], 16),
+    ];
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+    return [
+      parseInt(cleaned.slice(0, 2), 16),
+      parseInt(cleaned.slice(2, 4), 16),
+      parseInt(cleaned.slice(4, 6), 16),
+    ];
+  }
+  return [18, 17, 15];
+}
+
+function rgbTupleToHex(r: number, g: number, b: number): string {
+  const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
+  return (
+    "#" +
+    [clamp(r), clamp(g), clamp(b)]
+      .map((n) => n.toString(16).padStart(2, "0"))
+      .join("")
+      .toUpperCase()
+  );
+}
+
+function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: number } {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+  let h = 0;
+  const s = max === 0 ? 0 : (d / max) * 100;
+  const v = max * 100;
+  if (max !== min) {
+    switch (max) {
+      case rn:
+        h = ((gn - bn) / d + (gn < bn ? 6 : 0)) * 60;
+        break;
+      case gn:
+        h = ((bn - rn) / d + 2) * 60;
+        break;
+      case bn:
+        h = ((rn - gn) / d + 4) * 60;
+        break;
+    }
+  }
+  return { h: Math.round(h), s: Math.round(s), v: Math.round(v) };
+}
+
+function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const sn = Math.max(0, Math.min(100, s)) / 100;
+  const vn = Math.max(0, Math.min(100, v)) / 100;
+  const c = vn * sn;
+  const hh = ((h % 360) + 360) % 360;
+  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = vn - c;
+  let r1 = 0,
+    g1 = 0,
+    b1 = 0;
+  if (hh < 60) [r1, g1, b1] = [c, x, 0];
+  else if (hh < 120) [r1, g1, b1] = [x, c, 0];
+  else if (hh < 180) [r1, g1, b1] = [0, c, x];
+  else if (hh < 240) [r1, g1, b1] = [0, x, c];
+  else if (hh < 300) [r1, g1, b1] = [x, 0, c];
+  else [r1, g1, b1] = [c, 0, x];
+  return [
+    Math.round((r1 + m) * 255),
+    Math.round((g1 + m) * 255),
+    Math.round((b1 + m) * 255),
+  ];
+}
+
+function ModernColorPickerPopover({
+  anchorRef,
+  colour,
+  palette,
+  allowNone,
+  onChangeColour,
+  onClear,
+  onCommit,
+  onClose,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>;
+  colour: Colour;
+  palette: { label: string; value: string }[];
+  allowNone?: boolean;
+  onChangeColour: (next: Partial<Colour>) => void;
+  onClear?: () => void;
+  onCommit?: () => void;
+  onClose: () => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const svCanvasRef = useRef<HTMLDivElement>(null);
+  const hueTrackRef = useRef<HTMLDivElement>(null);
+  const alphaTrackRef = useRef<HTMLDivElement>(null);
+
+  const [rgb, setRgb] = useState<[number, number, number]>(() => hexToRgbTuple(colour.hex));
+  const [hsv, setHsv] = useState<{ h: number; s: number; v: number }>(() => {
+    const [r, g, b] = hexToRgbTuple(colour.hex);
+    return rgbToHsv(r, g, b);
+  });
+  const [colorMode, setColorMode] = useState<"RGB" | "HEX">("RGB");
+  const [savedColors, setSavedColors] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("dw-saved-colors");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      }
+    } catch {}
+    const fromPalette = palette.map((p) => p.value.toUpperCase()).filter((v) => /^#[0-9A-F]{6}$/.test(v));
+    return Array.from(new Set([...DEFAULT_SAVED_COLORS, ...fromPalette])).slice(0, 14);
+  });
+
+  useEffect(() => {
+    const [r, g, b] = hexToRgbTuple(colour.hex);
+    setRgb([r, g, b]);
+    const nextHsv = rgbToHsv(r, g, b);
+    setHsv((prev) => ({
+      h: nextHsv.s === 0 ? prev.h : nextHsv.h,
+      s: nextHsv.s,
+      v: nextHsv.v,
+    }));
+  }, [colour.hex]);
+
+  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 120, left: 120 });
+  useEffect(() => {
+    const updatePosition = () => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const width = 268;
+      const height = 385;
+      let left = rect.right - width;
+      if (left < 12) left = Math.min(window.innerWidth - width - 12, Math.max(12, rect.left));
+      let top = rect.bottom + 8;
+      if (top + height > window.innerHeight - 12) {
+        top = Math.max(12, rect.top - height - 8);
+      }
+      setCoords({ top, left });
+    };
+    updatePosition();
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [anchorRef]);
+
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (popoverRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      onClose();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [anchorRef, onClose]);
+
+  const applyHsv = (nextH: number, nextS: number, nextV: number) => {
+    const clampedH = Math.max(0, Math.min(360, Math.round(nextH)));
+    const clampedS = Math.max(0, Math.min(100, Math.round(nextS)));
+    const clampedV = Math.max(0, Math.min(100, Math.round(nextV)));
+    setHsv({ h: clampedH, s: clampedS, v: clampedV });
+    const [r, g, b] = hsvToRgb(clampedH, clampedS, clampedV);
+    setRgb([r, g, b]);
+    const nextHex = rgbTupleToHex(r, g, b);
+    onChangeColour({ hex: nextHex });
+  };
+
+  const startSvDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const canvas = svCanvasRef.current;
+    if (!canvas) return;
+    const updateFromPointer = (clientX: number, clientY: number) => {
+      const rect = canvas.getBoundingClientRect();
+      const s = ((clientX - rect.left) / rect.width) * 100;
+      const v = 100 - ((clientY - rect.top) / rect.height) * 100;
+      applyHsv(hsv.h, s, v);
+    };
+    updateFromPointer(event.clientX, event.clientY);
+    const onMove = (moveEvt: PointerEvent) => updateFromPointer(moveEvt.clientX, moveEvt.clientY);
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      onCommit?.();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const startHueDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const track = hueTrackRef.current;
+    if (!track) return;
+    const updateFromPointer = (clientX: number) => {
+      const rect = track.getBoundingClientRect();
+      const h = ((clientX - rect.left) / rect.width) * 360;
+      applyHsv(h, hsv.s, hsv.v);
+    };
+    updateFromPointer(event.clientX);
+    const onMove = (moveEvt: PointerEvent) => updateFromPointer(moveEvt.clientX);
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      onCommit?.();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const startAlphaDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const track = alphaTrackRef.current;
+    if (!track) return;
+    const updateFromPointer = (clientX: number) => {
+      const rect = track.getBoundingClientRect();
+      const alpha = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      onChangeColour({ alpha: Number(alpha.toFixed(2)) });
+    };
+    updateFromPointer(event.clientX);
+    const onMove = (moveEvt: PointerEvent) => updateFromPointer(moveEvt.clientX);
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      onCommit?.();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const pickWithEyeDropper = async () => {
+    const EyeDropperCtor = (window as unknown as { EyeDropper?: new () => { open: () => Promise<{ sRGBHex: string }> } }).EyeDropper;
+    if (!EyeDropperCtor) return;
+    try {
+      const dropper = new EyeDropperCtor();
+      const res = await dropper.open();
+      if (res?.sRGBHex) {
+        onChangeColour({ hex: res.sRGBHex.toUpperCase() });
+        onCommit?.();
+      }
+    } catch {}
+  };
+
+  const addSavedColor = () => {
+    const current = colour.hex.toUpperCase();
+    const next = Array.from(new Set([current, ...savedColors])).slice(0, 16);
+    setSavedColors(next);
+    try {
+      localStorage.setItem("dw-saved-colors", JSON.stringify(next));
+    } catch {}
+  };
+
+  const card = (
+    <div
+      ref={popoverRef}
+      style={{ top: `${coords.top}px`, left: `${coords.left}px` }}
+      className="fixed z-[9999] w-[268px] select-none rounded-[18px] border border-[#2C2E36] bg-[#18191D] p-4 text-white shadow-[0_24px_60px_rgba(0,0,0,0.65)]"
+    >
+      {/* Header */}
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-[13px] font-medium tracking-tight text-white/95">Color Picker</span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close color picker"
+          className="flex h-6 w-6 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+            <path d="M2 2l8 8M10 2L2 10" />
+          </svg>
+        </button>
+      </div>
+
+      {/* 2D Saturation / Brightness Canvas */}
+      <div
+        ref={svCanvasRef}
+        onPointerDown={startSvDrag}
+        style={{
+          backgroundColor: `hsl(${hsv.h}, 100%, 50%)`,
+          backgroundImage:
+            "linear-gradient(to top, #000000, transparent), linear-gradient(to right, #ffffff, transparent)",
+        }}
+        className="relative h-[154px] w-full cursor-crosshair overflow-hidden rounded-[12px] border border-white/10"
+      >
+        <span
+          style={{
+            left: `${hsv.s}%`,
+            top: `${100 - hsv.v}%`,
+            backgroundColor: colour.hex,
+          }}
+          className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-[2.5px] border-white shadow-[0_2px_6px_rgba(0,0,0,0.7)]"
+        />
+      </div>
+
+      {/* Eyedropper + Hue & Alpha Sliders */}
+      <div className="mt-3.5 flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={() => void pickWithEyeDropper()}
+          title="Pick color from screen (Eyedropper)"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white/75 transition hover:bg-white/10 hover:text-white"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m2 22 1-1h3l9-9" />
+            <path d="M3 21v-3l9-9" />
+            <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" />
+          </svg>
+        </button>
+
+        <div className="flex flex-1 flex-col gap-2.5">
+          {/* Hue Slider */}
+          <div
+            ref={hueTrackRef}
+            onPointerDown={startHueDrag}
+            style={{
+              background:
+                "linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)",
+            }}
+            className="relative h-2.5 w-full cursor-pointer rounded-full"
+          >
+            <span
+              style={{
+                left: `${(hsv.h / 360) * 100}%`,
+                backgroundColor: `hsl(${hsv.h}, 100%, 50%)`,
+              }}
+              className="pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[2.5px] border-white shadow-[0_1px_4px_rgba(0,0,0,0.65)]"
+            />
+          </div>
+
+          {/* Alpha Slider */}
+          <div
+            ref={alphaTrackRef}
+            onPointerDown={startAlphaDrag}
+            style={{ background: CHECKER }}
+            className="relative h-2.5 w-full cursor-pointer overflow-visible rounded-full"
+          >
+            <div
+              style={{
+                background: `linear-gradient(to right, transparent, ${colour.hex})`,
+              }}
+              className="h-full w-full rounded-full"
+            />
+            <span
+              style={{
+                left: `${Math.round(colour.alpha * 100)}%`,
+                backgroundColor: colour.hex,
+              }}
+              className="pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[2.5px] border-white shadow-[0_1px_4px_rgba(0,0,0,0.65)]"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Mode Selector (RGB / HEX) + Segmented Inputs */}
+      <div className="mt-3.5 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setColorMode((m) => (m === "RGB" ? "HEX" : "RGB"))}
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-[#323540] bg-[#22242C] px-2.5 text-[11px] font-semibold text-white transition hover:border-white/30"
+        >
+          <span>{colorMode}</span>
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.75">
+            <path d="M3 4.5 6 7.5 9 4.5" />
+          </svg>
+        </button>
+
+        {colorMode === "RGB" ? (
+          <div className="grid h-8 flex-1 grid-cols-4 overflow-hidden rounded-lg border border-[#323540] bg-[#131418] font-mono text-[11px] text-white">
+            {([0, 1, 2] as const).map((idx) => (
+              <input
+                key={idx}
+                type="number"
+                min={0}
+                max={255}
+                aria-label={idx === 0 ? "Red" : idx === 1 ? "Green" : "Blue"}
+                value={rgb[idx]}
+                onChange={(e) => {
+                  const val = Math.max(0, Math.min(255, Number(e.target.value) || 0));
+                  const nextRgb: [number, number, number] = [...rgb] as [number, number, number];
+                  nextRgb[idx] = val;
+                  setRgb(nextRgb);
+                  const nextHex = rgbTupleToHex(nextRgb[0], nextRgb[1], nextRgb[2]);
+                  setHsv(rgbToHsv(nextRgb[0], nextRgb[1], nextRgb[2]));
+                  onChangeColour({ hex: nextHex });
+                }}
+                onBlur={() => onCommit?.()}
+                className="w-full border-r border-[#2C2E36] bg-transparent text-center text-[11px] text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+            ))}
+            <div className="flex items-center justify-center px-1 text-[10px] text-white/90">
+              <span>{Math.round(colour.alpha * 100)}</span>
+              <span className="ml-0.5 text-white/50">%</span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-8 flex-1 items-center overflow-hidden rounded-lg border border-[#323540] bg-[#131418] font-mono text-[11px] text-white">
+            <input
+              type="text"
+              value={colour.hex.toUpperCase()}
+              onChange={(e) => {
+                const raw = e.target.value.trim().replace(/^#/, "");
+                if (/^[0-9a-fA-F]{6}$/.test(raw)) {
+                  onChangeColour({ hex: `#${raw.toUpperCase()}` });
+                }
+              }}
+              onBlur={() => onCommit?.()}
+              className="min-w-0 flex-1 border-r border-[#2C2E36] bg-transparent px-2 text-center uppercase text-white outline-none"
+            />
+            <div className="flex w-12 items-center justify-center px-1 text-[10px] text-white/90">
+              <span>{Math.round(colour.alpha * 100)}</span>
+              <span className="ml-0.5 text-white/50">%</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Saved Colors */}
+      <div className="mt-3.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-medium text-white/80">Saved Colors</span>
+          <button
+            type="button"
+            onClick={addSavedColor}
+            title="Save current color"
+            className="flex h-5 w-5 items-center justify-center rounded text-sm text-white/75 transition hover:bg-white/10 hover:text-white"
+          >
+            +
+          </button>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {savedColors.slice(0, 9).map((swatch) => {
+            const active = colour.hex.toUpperCase() === swatch.toUpperCase();
+            return (
+              <button
+                key={swatch}
+                type="button"
+                title={swatch}
+                onClick={() => {
+                  onChangeColour({ hex: swatch.toUpperCase() });
+                  onCommit?.();
+                }}
+                style={{ backgroundColor: swatch }}
+                className={`h-5 w-5 rounded-full transition ${
+                  active
+                    ? "ring-2 ring-[#4C82FB] ring-offset-2 ring-offset-[#18191D]"
+                    : "border border-white/15 hover:scale-110"
+                }`}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {allowNone && onClear && (
+        <button
+          type="button"
+          onClick={() => {
+            onClear();
+            onCommit?.();
+            onClose();
+          }}
+          className="mt-3 w-full rounded-lg border border-[#323540] bg-[#22242C] py-1.5 text-[11px] font-medium text-white/75 transition hover:border-white/30 hover:text-white"
+        >
+          Reset to default
+        </button>
+      )}
+    </div>
+  );
+
+  return typeof document !== "undefined" ? createPortal(card, document.body) : card;
+}
+
 /**
  * One popover for every colour on the panel.
  *
- * The brand swatches are first because they are the right answer nearly every
- * time; the picker, the hex box and the alpha slider are underneath for the
- * times they are not.
+ * Clicking the swatch opens the modern Minima-UI Color Picker popover right
+ * beside the inline editable `#HEXCODE` input.
  */
 export function ColourField({
   label,
@@ -437,22 +937,6 @@ export function ColourField({
   const colour = readColour(value);
   const palette = useContext(PaletteContext) ?? COLOURS;
 
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: MouseEvent) => {
-      if (box.current && !box.current.contains(event.target as Node)) setOpen(false);
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", key);
-    };
-  }, [open]);
-
   const set = (next: Partial<Colour>) => onChange(writeColour({ ...colour, ...next }));
 
   const [hexDraft, setHexDraft] = useState(value ? colour.hex : "");
@@ -465,26 +949,29 @@ export function ColourField({
       <div className={FIELD}>
         {!bare && <span className={LABEL}>{label}</span>}
         <div className={`flex items-center gap-1.5 ${bare ? "w-full" : "ml-auto"}`}>
-          <label
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setOpen((was) => !was)}
             className="relative flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border border-line-strong shadow-2xs transition hover:border-blue"
             style={{ background: CHECKER }}
             title={`${label} color picker (${value ? colour.hex : "auto"})`}
           >
             <span className="block h-full w-full rounded-[3px]" style={{ backgroundColor: value || "transparent" }} />
-            <input
-              type="color"
-              aria-label={label}
-              disabled={disabled}
-              value={colour.hex}
-              onChange={(event) => {
-                const nextHex = event.target.value.toUpperCase();
-                setHexDraft(nextHex);
-                set({ hex: nextHex });
-              }}
-              onBlur={() => onCommit?.()}
-              className="sr-only"
-            />
-          </label>
+          </button>
+          <input
+            type="color"
+            aria-label={label}
+            disabled={disabled}
+            value={colour.hex}
+            onChange={(event) => {
+              const nextHex = event.target.value.toUpperCase();
+              setHexDraft(nextHex);
+              set({ hex: nextHex });
+            }}
+            onBlur={() => onCommit?.()}
+            className="sr-only"
+          />
           <input
             type="text"
             disabled={disabled}
@@ -517,7 +1004,7 @@ export function ColourField({
             disabled={disabled}
             onClick={() => setOpen((was) => !was)}
             className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9px] text-muted transition hover:bg-surface-2 hover:text-ink"
-            title="Open color swatches & opacity"
+            title="Open modern color picker"
           >
             ▾
           </button>
@@ -525,76 +1012,16 @@ export function ColourField({
       </div>
 
       {open && !disabled && (
-        <div className="absolute right-0 z-30 mt-1.5 w-[228px] rounded-xl border border-line bg-white p-3 shadow-lg shadow-ink/10">
-          <div className="grid grid-cols-8 gap-1">
-            {palette.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                title={option.label}
-                onClick={() => {
-                  onChange(option.value);
-                  onCommit?.();
-                }}
-                className={`h-5 w-full rounded border ${
-                  colour.hex.toUpperCase() === option.value.toUpperCase() ? "border-blue ring-2 ring-blue/25" : "border-line-strong"
-                }`}
-                style={{ backgroundColor: option.value }}
-              />
-            ))}
-          </div>
-
-          <div className="mt-2.5 flex items-center gap-2">
-            <input
-              type="color"
-              className="h-7 w-9 cursor-pointer rounded border border-line bg-white p-0.5"
-              value={colour.hex}
-              onChange={(event) => set({ hex: event.target.value.toUpperCase() })}
-              onBlur={() => onCommit?.()}
-            />
-            <div className="flex h-7 flex-1 items-center gap-1 rounded-xl border border-line px-2">
-              <span className="text-[11px] text-muted">#</span>
-              <input
-                className="w-full bg-transparent font-mono text-[11px] uppercase text-ink outline-none"
-                maxLength={6}
-                value={colour.hex.replace("#", "")}
-                onChange={(event) => {
-                  const next = event.target.value.replace(/[^0-9a-f]/gi, "");
-                  if (next.length === 6) set({ hex: `#${next.toUpperCase()}` });
-                }}
-                onBlur={() => onCommit?.()}
-              />
-            </div>
-          </div>
-
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-[11px] uppercase tracking-[.08em] text-muted">Alpha</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round(colour.alpha * 100)}
-              onChange={(event) => set({ alpha: Number(event.target.value) / 100 })}
-              onPointerUp={() => onCommit?.()}
-              className="h-1.5 flex-1 accent-blue"
-            />
-            <span className="w-8 text-right font-mono text-[11px] text-muted">{Math.round(colour.alpha * 100)}%</span>
-          </div>
-
-          {allowNone && (
-            <button
-              type="button"
-              onClick={() => {
-                onChange("");
-                onCommit?.();
-                setOpen(false);
-              }}
-              className="mt-2.5 w-full rounded-xl border border-line py-1.5 text-[11px] font-semibold text-muted transition hover:border-ink/30 hover:text-ink"
-            >
-              As designed
-            </button>
-          )}
-        </div>
+        <ModernColorPickerPopover
+          anchorRef={box}
+          colour={colour}
+          palette={palette}
+          allowNone={allowNone}
+          onChangeColour={(patch) => set(patch)}
+          onClear={allowNone ? () => onChange("") : undefined}
+          onCommit={onCommit}
+          onClose={() => setOpen(false)}
+        />
       )}
     </div>
   );
@@ -602,7 +1029,8 @@ export function ColourField({
 
 /**
  * Compact side-by-side `[Color Picker] #HEXCODE` control used everywhere a color code
- * is displayed or edited across the website builder.
+ * is displayed or edited across the website builder. Clicking the swatch opens the
+ * modernized Minima-UI Color Picker popover.
  */
 export function ColorCodeInput({
   value,
@@ -625,33 +1053,42 @@ export function ColorCodeInput({
 }) {
   const effectiveLabel = ariaLabel ?? label;
   const parsed = useMemo(() => readColour(value || placeholder), [value, placeholder]);
+  const palette = useContext(PaletteContext) ?? COLOURS;
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState(value || "");
   useEffect(() => {
     setDraft(value ? (value.startsWith("#") ? value.toUpperCase() : value) : "");
   }, [value]);
 
   return (
-    <div className={`inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-2 px-2 py-1 focus-within:border-blue ${className}`}>
-      <label
+    <div
+      ref={anchorRef}
+      className={`inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-2 px-2 py-1 focus-within:border-blue ${className}`}
+    >
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((was) => !was)}
         className="relative flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-line-strong shadow-2xs transition hover:border-blue"
         style={{ background: CHECKER }}
         title={effectiveLabel ? `${effectiveLabel} (${parsed.hex})` : `Pick color (${parsed.hex})`}
       >
         <span className="block h-full w-full rounded-[3px]" style={{ backgroundColor: value || parsed.hex }} />
-        <input
-          type="color"
-          aria-label={effectiveLabel ? `${effectiveLabel} picker` : "Color picker"}
-          disabled={disabled}
-          value={parsed.hex}
-          onChange={(event) => {
-            const nextHex = event.target.value.toUpperCase();
-            setDraft(nextHex);
-            onChange(nextHex);
-          }}
-          onBlur={() => onCommit?.()}
-          className="sr-only"
-        />
-      </label>
+      </button>
+      <input
+        type="color"
+        aria-label={effectiveLabel ? `${effectiveLabel} picker` : "Color picker"}
+        disabled={disabled}
+        value={parsed.hex}
+        onChange={(event) => {
+          const nextHex = event.target.value.toUpperCase();
+          setDraft(nextHex);
+          onChange(nextHex);
+        }}
+        onBlur={() => onCommit?.()}
+        className="sr-only"
+      />
       <input
         type="text"
         disabled={disabled}
@@ -673,6 +1110,21 @@ export function ColorCodeInput({
         onBlur={() => onCommit?.()}
         className="w-[74px] bg-transparent font-mono text-[11px] font-semibold uppercase text-ink outline-none placeholder:text-muted"
       />
+      {open && !disabled && (
+        <ModernColorPickerPopover
+          anchorRef={anchorRef}
+          colour={parsed}
+          palette={palette}
+          onChangeColour={(patch) => {
+            const nextColour = { ...parsed, ...patch };
+            const formatted = nextColour.alpha < 1 ? writeColour(nextColour) : nextColour.hex.toUpperCase();
+            setDraft(formatted);
+            onChange(formatted);
+          }}
+          onCommit={onCommit}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </div>
   );
 }

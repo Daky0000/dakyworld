@@ -903,7 +903,7 @@ export function readPage(source: string): PageContent {
       field.id = nodeKey;
       field.confidence = "annotated";
     }
-    if (node) fieldAt.set(node.attrInsert, field);
+    if (node && field.tag !== "body") fieldAt.set(node.attrInsert, field);
   }
   for (const field of all) {
     let parent = field.attrInsert === undefined ? undefined : byOffset.get(field.attrInsert)?.parent;
