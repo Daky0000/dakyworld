@@ -60,6 +60,7 @@ export function ElementInspector({
   onCommit,
   onReset,
   onTextColour,
+  onPickBackgroundImage,
   content,
 }: {
   simple?: boolean;
@@ -79,6 +80,8 @@ export function ElementInspector({
   onReset: () => void;
   /** A selected text range owns its colour before the element does. */
   onTextColour?: (colour: string) => boolean;
+  /** Opens the asset library / upload dialog to set `background-image` on the selected element. */
+  onPickBackgroundImage?: () => void;
   /** The content editor, which the page owns; drawn as the first section. */
   content?: React.ReactNode;
 }) {
@@ -110,6 +113,14 @@ export function ElementInspector({
     position: declarations.position ?? facts.position,
   });
   const shown = new Set(inspectorSections(capabilities).filter(section => tab ? (tab === "content" ? section === "content" : section !== "content") : (!simple || section === "content")));
+  if (tab === "content" && content) shown.add("content");
+  if (tab === "style") {
+    shown.add("background");
+    shown.add("position");
+    shown.add("size");
+    shown.add("spacing");
+    shown.add("border");
+  }
 
   const value = (property: string): InspectorValue =>
     inspectorValue(property, {
@@ -153,8 +164,8 @@ export function ElementInspector({
    * only for an element that is positioned, so opening it shut would be hiding
    * the answer to the question that produced it.
    */
-  const ALWAYS_OPEN: SectionKey[] = ["content", "image", "layout", "flexContainer", "gridContainer", "flexChild", "gridChild", "position", "typography"];
-  const isOpen = (section: SectionKey) => openSections[section] ?? (tab ? section === "typography" : (ALWAYS_OPEN.includes(section) || sectionHasValue(section)));
+  const ALWAYS_OPEN: SectionKey[] = ["content", "image", "layout", "flexContainer", "gridContainer", "flexChild", "gridChild", "position", "typography", "background", "size", "spacing", "border"];
+  const isOpen = (section: SectionKey) => openSections[section] ?? (ALWAYS_OPEN.includes(section) || sectionHasValue(section));
 
   /** The rail on the right of every row: where the value came from, and back. */
   const rail = (property: string) => (
@@ -524,6 +535,104 @@ export function ElementInspector({
         {shown.has("background") && (
           <Section name="background" title={SECTION_TITLE.background} open={isOpen("background")} changed={sectionChanged("background")} onToggle={() => toggleSection("background")}>
             <Colour property="background-color" label="Background" />
+            {(() => {
+              const rawBgImg = (declarations["background-image"] ?? declarations.background ?? source.computed["background-image"] ?? "").trim();
+              const urlMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(rawBgImg);
+              const bgUrl = urlMatch?.[1] ?? "";
+              return (
+                <div className="mt-2 space-y-2 rounded-xl border border-line bg-surface-2/60 p-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-ink-2">Background Image</span>
+                    <div className="flex items-center gap-1.5">
+                      {onPickBackgroundImage && (
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={onPickBackgroundImage}
+                          className="rounded-lg border border-line bg-white px-2 py-0.5 text-[10px] font-semibold text-blue transition hover:border-blue hover:bg-blue/5"
+                        >
+                          Choose / Upload
+                        </button>
+                      )}
+                      {bgUrl && (
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            set("background-image", "none");
+                            onCommit?.();
+                          }}
+                          className="rounded-lg border border-line bg-white px-1.5 py-0.5 text-[10px] font-semibold text-muted transition hover:border-red/30 hover:text-red"
+                          title="Remove background image"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {bgUrl && (
+                    <div
+                      className="h-20 w-full rounded-lg border border-line bg-cover bg-center"
+                      style={{ backgroundImage: `url("${bgUrl.replace(/"/g, "")}")` }}
+                    />
+                  )}
+                  <input
+                    type="text"
+                    disabled={disabled}
+                    placeholder="Paste image URL (/assets/... or https://...)"
+                    value={bgUrl}
+                    onChange={(event) => {
+                      const nextUrl = event.target.value.trim();
+                      if (!nextUrl) {
+                        set("background-image", "");
+                      } else {
+                        const updated = {
+                          ...declarations,
+                          "background-image": `url('${nextUrl.replace(/['"\\]/g, "")}')`,
+                          "background-size": declarations["background-size"] || "cover",
+                          "background-position": declarations["background-position"] || "center",
+                        };
+                        onChange(writeStyle(updated));
+                      }
+                    }}
+                    onBlur={() => onCommit?.()}
+                    className="w-full rounded-lg border border-line bg-white px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-blue"
+                  />
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <SelectField
+                      label="Fit"
+                      value={declarations["background-size"] ?? source.computed["background-size"] ?? "cover"}
+                      disabled={disabled}
+                      options={[
+                        { value: "cover", label: "Cover" },
+                        { value: "contain", label: "Contain" },
+                        { value: "auto", label: "Original (Auto)" },
+                      ]}
+                      onChange={(next) => {
+                        set("background-size", next);
+                        onCommit?.();
+                      }}
+                    />
+                    <SelectField
+                      label="Position"
+                      value={declarations["background-position"] ?? source.computed["background-position"] ?? "center"}
+                      disabled={disabled}
+                      options={[
+                        { value: "center", label: "Center" },
+                        { value: "top", label: "Top" },
+                        { value: "bottom", label: "Bottom" },
+                        { value: "left", label: "Left" },
+                        { value: "right", label: "Right" },
+                      ]}
+                      onChange={(next) => {
+                        set("background-position", next);
+                        onCommit?.();
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
           </Section>
         )}
 

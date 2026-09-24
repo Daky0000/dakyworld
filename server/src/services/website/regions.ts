@@ -442,6 +442,24 @@ function isField(source: string, element: ElementNode): boolean {
   // hand somebody to type in. It gets its own field instead, so descend.
   if (hasDescendant(element, (child) => child.tag === "img")) return false;
   if (PROSE.has(element.tag)) return true;
+  // When a non-prose container (such as <div class="brand-type"> or a pill list)
+  // wraps 2+ element children with no bare text outside those children, descend
+  // so each child (e.g. <strong>NEVERMIND</strong> and <span>awesome bar & eatery</span>)
+  // is individually selectable and editable, while the wrapper becomes a layout container.
+  if (element.tag === "div" && element.children.length >= 2) {
+    let cursor = element.innerStart;
+    let hasBareWords = false;
+    for (const child of element.children) {
+      if (source.slice(cursor, child.start).replace(/<!--[\s\S]*?-->/g, "").trim() !== "") {
+        hasBareWords = true;
+        break;
+      }
+      cursor = child.end;
+    }
+    if (!hasBareWords && source.slice(cursor, element.innerEnd).replace(/<!--[\s\S]*?-->/g, "").trim() === "") {
+      return false;
+    }
+  }
   return !hasDescendant(element, (child) => BLOCK.has(child.tag) || child.tag === "a");
 }
 
@@ -468,7 +486,11 @@ function textField(source: string, element: ElementNode, id: string): SiteField 
   const span = contentSpan(source, element);
   if (!span) return null;
   const value = source.slice(span.start, span.end);
-  const label = LABELS[element.tag] ?? (BUTTONISH.test(classOf(element)) ? "Button label" : "Text");
+  const cls = `${classOf(element)} ${element.parent ? classOf(element.parent) : ""}`;
+  const isCarousel = /\b(?:ticker|carousel|marquee|slider|slides)\b/i.test(cls);
+  const label = isCarousel
+    ? "Carousel / Ticker"
+    : (LABELS[element.tag] ?? (BUTTONISH.test(classOf(element)) ? "Button label" : "Text"));
   return {
     id,
     kind: value.includes("<") ? "richtext" : "text",
@@ -566,8 +588,16 @@ function imageField(element: ElementNode, id: string): SiteField | null {
 function collect(source: string, element: ElementNode, out: SiteField[], sectionId: string): void {
   for (const child of element.children) {
     if (SKIP.has(child.tag)) continue;
-    if (child.attrs.some((candidate) => candidate.name === "aria-hidden" && candidate.value === "true")) continue;
     if (child.attrs.some((candidate) => candidate.name === "hidden")) continue;
+    // Only skip aria-hidden on empty scroll-progress indicators; visible carousels,
+    // tickers (`<div class="ticker" aria-hidden="true">`), and logo icons
+    // (`<div class="brand-face" aria-hidden="true">`) must remain selectable and editable.
+    if (
+      child.attrs.some((candidate) => candidate.name === "aria-hidden" && candidate.value === "true") &&
+      /\bpage-progress\b/i.test(classOf(child))
+    ) {
+      continue;
+    }
 
     const id = `${sectionId}.${out.length}`;
     if (child.tag === "img") {
@@ -584,15 +614,18 @@ function collect(source: string, element: ElementNode, out: SiteField[], section
       if (hasDescendant(child, (node) => node.tag === "img" || BLOCK.has(node.tag))) {
         const href = attrNode(child, "href");
         if (href) {
+          const cls = classOf(child);
+          const isBrand = /\b(?:brand|logo)\b/i.test(cls);
           out.push({
             id,
             kind: "link",
-            label: "Link",
+            label: isBrand ? "Brand Link" : "Link",
             tag: "a",
             value: "",
-            preview: href.value || "Link",
+            preview: firstLine(textOf(source, child), 36) || href.value || "Link",
             href: href.value,
             hrefSpan: { start: href.valueStart, end: href.valueEnd },
+            ...styleOf(child),
           });
         }
         collect(source, child, out, sectionId);
@@ -788,7 +821,10 @@ export function readPage(source: string): PageContent {
   const byOffset = new Map(nodes.map((node) => [node.attrInsert, node]));
   const hiddenNode = (node: ElementNode | undefined): boolean => {
     for (let at = node; at; at = at.parent ?? undefined) {
-      if (SKIP.has(at.tag) || at.attrs.some(a => a.name === "hidden" || (a.name === "aria-hidden" && a.value.trim().toLowerCase() === "true"))) return true;
+      if (SKIP.has(at.tag) || at.attrs.some(a => a.name === "hidden")) return true;
+      if (at.attrs.some(a => a.name === "aria-hidden" && a.value.trim().toLowerCase() === "true") && /\bpage-progress\b/i.test(classOf(at))) {
+        return true;
+      }
     }
     return false;
   };
@@ -801,13 +837,37 @@ export function readPage(source: string): PageContent {
   // namespace, so opening an older saved draft cannot retarget its edits.
   const represented = new Set(all.map((field) => field.attrInsert));
   const layout: SiteField[] = [];
-  const layoutTags = new Set(["main", "header", "footer", "section", "article", "div", "nav", "aside", "ul", "ol", "figure"]);
+  const layoutTags = new Set(["main", "header", "footer", "section", "article", "div", "nav", "aside", "ul", "ol", "figure", "svg"]);
   for (const node of nodes) {
-    if (!layoutTags.has(node.tag)) continue;
+    const cls = classOf(node);
+    const isIconElement = (node.tag === "i" || node.tag === "span") && /\b(?:brand-face|logo|icon|badge|avatar|mark|emblem)\b/i.test(cls);
+    if (!layoutTags.has(node.tag) && !isIconElement) continue;
     if (represented.has(node.attrInsert)) continue;
     if (hiddenNode(node) || generated.some((range) => node.start >= range.start && node.end <= range.end)) continue;
-    const label = attrNode(node, "aria-label")?.value || attrNode(node, "id")?.value || `${node.tag === "div" ? "Container" : node.tag} ${layout.length + 1}`;
+    const isCarousel = /\b(?:ticker|carousel|marquee|slider|slides)\b/i.test(cls);
+    const isLogoIcon = node.tag === "svg" || /\b(?:brand-face|logo|brand-icon|icon|avatar|emblem)\b/i.test(cls);
+    const isStickyHeader = node.tag === "header" || /\b(?:sticky|navbar|site-header|announcement)\b/i.test(cls);
+    const defaultLabel = isCarousel
+      ? `Carousel / Ticker`
+      : isLogoIcon
+        ? `Logo / Icon (${cls.split(/\s+/)[0] || node.tag})`
+        : isStickyHeader
+          ? `Header (${attrNode(node, "id")?.value || cls.split(/\s+/)[0] || node.tag})`
+          : `${node.tag === "div" ? "Container" : node.tag} ${layout.length + 1}`;
+    const label = attrNode(node, "aria-label")?.value || attrNode(node, "id")?.value || defaultLabel;
     layout.push({ id: `layout.${layout.length}`, kind: "container", tag: node.tag, label, value: "", structure: createHash("sha256").update(source.slice(node.start, node.end)).digest("hex"), preview: label, ...styleOf(node) });
+  }
+  if (body !== root && body.tag === "body" && !represented.has(body.attrInsert)) {
+    layout.push({
+      id: `layout.${layout.length}`,
+      kind: "container",
+      tag: "body",
+      label: "Page Body & Theme",
+      value: "",
+      structure: createHash("sha256").update(source.slice(body.start, body.end)).digest("hex"),
+      preview: "Page Body & Theme",
+      ...styleOf(body),
+    });
   }
   if (layout.length) {
     kept.push({ id: "layout", label: "Layout and containers", kind: "section", fields: layout });
@@ -922,9 +982,9 @@ function attrEscape(value: string): string {
  * `expression(` because old IE ran it, and anything with a quote, angle bracket
  * or semicolon-escape in it because that is how you leave the attribute.
  */
-const STYLE_PROPERTY = /^[a-z-]{2,40}$/;
+const STYLE_PROPERTY = /^(?:--[a-z0-9_-]{1,48}|[a-z-]{2,40})$/i;
 const STYLE_FORBIDDEN = /url\s*\(|expression\s*\(|javascript:|[<>"'`\\]/i;
-const SAFE_SITE_ASSET_BG = /^url\(\s*['"]?(?:\/[a-zA-Z0-9/_-]*\/)?assets\/dw\/[a-zA-Z0-9._-]+['"]?\s*\)$/i;
+const SAFE_SITE_ASSET_BG = /^url\(\s*['"]?(?:\/[a-zA-Z0-9/._%-]+|data:image\/(?:png|jpeg|jpg|webp|gif|avif|svg\+xml);base64,[a-zA-Z0-9+/=]+|https?:\/\/(?:images\.unsplash\.com\/[a-zA-Z0-9/._?=&%-]+|[a-zA-Z0-9/._:-]+\.(?:jpg|jpeg|png|webp|gif|avif|svg)(?:\?[a-zA-Z0-9=&_%-]*)?))['"]?\s*\)$/i;
 
 export function safeStyle(style: string, originalStyle = ""): string {
   const original = new Set(originalStyle.split(";").map(part => part.trim()).filter(Boolean));
@@ -940,8 +1000,8 @@ export function safeStyle(style: string, originalStyle = ""): string {
       const isSafeAssetBg = (property === "background-image" || property === "background") && SAFE_SITE_ASSET_BG.test(value);
       // Preserve a developer's existing background URL or quoted CSS exactly
       // while editing other controls. Newly supplied fetching CSS stays forbidden
-      // except for uploaded site assets in /assets/dw/.
-      return original.has(declaration) || (validFramingDeclaration(property, value) && STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= (isSafeAssetBg ? 240 : 120) && (!STYLE_FORBIDDEN.test(declaration) || (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value)) || isSafeAssetBg));
+      // except for safe image assets (/assets/dw/, local / paths, data:image, or image extensions).
+      return original.has(declaration) || (validFramingDeclaration(property, value) && STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= (isSafeAssetBg ? 2048 : 120) && (!STYLE_FORBIDDEN.test(declaration) || (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value)) || isSafeAssetBg));
     })
     .join("; ");
 }

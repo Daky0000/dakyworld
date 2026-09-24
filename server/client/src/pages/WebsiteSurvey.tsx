@@ -5,6 +5,7 @@ import { api, ApiError } from "../lib/api";
 import { Badge, Button } from "../components/ui";
 import { useWebsiteSites } from "../components/WebsiteGuard";
 import { createPresetsFromSurvey, type BrandPreset } from "../lib/websiteBrandPresets";
+import { ColorCodeInput } from "../components/InspectorControls";
 
 /**
  * What a website is made of, read from every page at once.
@@ -97,6 +98,28 @@ export function WebsiteSurvey() {
 
   const qc = useQueryClient();
   const [adoptedMessage, setAdoptedMessage] = useState<string | null>(null);
+  const [colorOverrides, setColorOverrides] = useState<Record<string, string>>({});
+  const updateSiteColor = async (oldColor: string, nextColor: string) => {
+    setColorOverrides(prev => ({ ...prev, [oldColor]: nextColor }));
+    if (!siteId || !/^#[\da-f]{6}$/i.test(nextColor)) return;
+    try {
+      const existing = await api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${siteId}/design`);
+      const baseColours = existing.options.colours.length
+        ? existing.options.colours
+        : (survey.data?.palette.colours.map(c => c.value) ?? []);
+      const replaced = baseColours.map(c => c.toLowerCase() === oldColor.toLowerCase() ? nextColor : c);
+      if (!replaced.some(c => c.toLowerCase() === nextColor.toLowerCase())) replaced.unshift(nextColor);
+      await api.put(`/website/sites/${siteId}/design`, {
+        colours: Array.from(new Set(replaced)).slice(0, 16),
+        fonts: existing.options.fonts,
+        aiEnabled: existing.options.aiEnabled,
+        presets: existing.options.presets,
+      });
+      void qc.invalidateQueries({ queryKey: ["website", "design", siteId] });
+    } catch {
+      // Keep local state updated even if background save fails
+    }
+  };
   const adopt = useMutation({
     mutationFn: async () => {
       if (!survey.data || !siteId) return;
@@ -106,7 +129,7 @@ export function WebsiteSurvey() {
         ...existing.options.presets.filter(p => !p.id.startsWith("survey-")),
         ...presets,
       ];
-      const newColours = Array.from(new Set([...existing.options.colours, ...survey.data.palette.colours.map(c => c.value)])).slice(0, 16);
+      const newColours = Array.from(new Set([...existing.options.colours, ...survey.data.palette.colours.map(c => colorOverrides[c.value] ?? c.value)])).slice(0, 16);
       const newFonts = Array.from(new Set([...existing.options.fonts, ...survey.data.palette.typefaces.map(t => t.family)])).slice(0, 8);
       await api.put(`/website/sites/${siteId}/design`, {
         colours: newColours,
@@ -306,23 +329,32 @@ export function WebsiteSurvey() {
               note="Colours and sizes the stylesheet names once and reuses. Where a site has these, they are its design system — changing one changes everywhere it is used."
             >
               <ul className="flex flex-wrap gap-2">
-                {data.palette.tokens.slice(0, 40).map((token) => (
-                  <li key={token.name} className="flex items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm">
-                    {token.isColour && <span aria-hidden className="h-5 w-5 shrink-0 rounded border border-line" style={{ background: token.value }} />}
-                    <span>
-                      <span className="block font-mono text-ink">{token.name}</span>
-                      <span className="block font-mono text-xs text-muted">{token.value}</span>
-                    </span>
-                    <span className="ml-1 text-xs text-muted">{token.uses}&times;</span>
-                  </li>
-                ))}
+                {data.palette.tokens.slice(0, 40).map((token) => {
+                  const currentVal = colorOverrides[token.name] ?? token.value;
+                  return (
+                    <li key={token.name} className="flex items-center gap-2.5 rounded-xl border border-line px-3 py-2 text-sm">
+                      {token.isColour ? (
+                        <ColorCodeInput
+                          value={currentVal}
+                          ariaLabel={`Token ${token.name} color`}
+                          onChange={(next) => void updateSiteColor(token.name, next)}
+                        />
+                      ) : null}
+                      <span>
+                        <span className="block font-mono text-ink">{token.name}</span>
+                        {!token.isColour && <span className="block font-mono text-xs text-muted">{token.value}</span>}
+                      </span>
+                      <span className="ml-1 text-xs text-muted">{token.uses}&times;</span>
+                    </li>
+                  );
+                })}
               </ul>
             </Section>
           )}
 
           <Section
             title="Colours"
-            note="Every colour the pages declare, ordered by how much the site leans on it, with what it is doing. A colour used through a token is counted every time it is used, not once where it is defined."
+            note="Every colour the pages declare, ordered by how much the site leans on it, with what it is doing. Click any colour picker or hex code to change it."
           >
             {data.palette.colours.length === 0 ? (
               <p className="text-sm text-muted">
@@ -332,18 +364,24 @@ export function WebsiteSurvey() {
               </p>
             ) : (
               <ul className="flex flex-wrap gap-3">
-                {data.palette.colours.slice(0, 24).map((colour) => (
-                  <li key={colour.value} className="flex items-center gap-3 rounded-xl border border-line p-3">
-                    <span aria-hidden className="h-9 w-9 shrink-0 rounded-[10px] border border-line" style={{ background: colour.value }} />
-                    <span className="text-sm">
-                      <span className="block font-mono text-ink">{colour.value}</span>
-                      <span className="block text-xs text-muted">
-                        {colour.roles.join(", ")} · {colour.uses} use{colour.uses === 1 ? "" : "s"} on {colour.pageIds.length} page
-                        {colour.pageIds.length === 1 ? "" : "s"}
+                {data.palette.colours.slice(0, 24).map((colour) => {
+                  const currentVal = colorOverrides[colour.value] ?? colour.value;
+                  return (
+                    <li key={colour.value} className="flex items-center gap-3 rounded-xl border border-line p-3">
+                      <ColorCodeInput
+                        value={currentVal}
+                        ariaLabel={`Colour ${colour.value}`}
+                        onChange={(next) => void updateSiteColor(colour.value, next)}
+                      />
+                      <span className="text-sm">
+                        <span className="block text-xs text-muted">
+                          {colour.roles.join(", ")} · {colour.uses} use{colour.uses === 1 ? "" : "s"} on {colour.pageIds.length} page
+                          {colour.pageIds.length === 1 ? "" : "s"}
+                        </span>
                       </span>
-                    </span>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Section>

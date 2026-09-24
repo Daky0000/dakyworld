@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { ColorCodeInput } from "./InspectorControls";
 import {
   IconCheck,
   IconDesktop,
@@ -622,7 +623,7 @@ export function WebsitePageSeoInspector({
             <option value="outfit-work">Outfit + Work Sans (Bold Startup)</option>
             <option value="reset">Reset to Original Template Fonts</option>
           </select>
-          <div className="flex items-center justify-between gap-2">
+          <div className="space-y-2">
             <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted">
               <input
                 type="checkbox"
@@ -631,28 +632,31 @@ export function WebsitePageSeoInspector({
               />
               <span>Override page colors</span>
             </label>
-            <div className="flex items-center gap-1.5">
-              <input
-                type="color"
-                value={brandPrimary}
-                onChange={(e) => setBrandPrimary(e.target.value)}
-                title="Brand Primary Accent"
-                className="h-6 w-7 cursor-pointer rounded border border-line bg-white"
-              />
-              <input
-                type="color"
-                value={brandSurface}
-                onChange={(e) => setBrandSurface(e.target.value)}
-                title="Page Background Surface"
-                className="h-6 w-7 cursor-pointer rounded border border-line bg-white"
-              />
-              <input
-                type="color"
-                value={brandInk}
-                onChange={(e) => setBrandInk(e.target.value)}
-                title="Body Text Color"
-                className="h-6 w-7 cursor-pointer rounded border border-line bg-white"
-              />
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
+                <span>Primary Accent</span>
+                <ColorCodeInput
+                  label="Brand Primary Accent"
+                  value={brandPrimary}
+                  onChange={(val) => setBrandPrimary(val)}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
+                <span>Surface / Background</span>
+                <ColorCodeInput
+                  label="Page Background Surface"
+                  value={brandSurface}
+                  onChange={(val) => setBrandSurface(val)}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
+                <span>Body Text / Ink</span>
+                <ColorCodeInput
+                  label="Body Text Color"
+                  value={brandInk}
+                  onChange={(val) => setBrandInk(val)}
+                />
+              </div>
             </div>
           </div>
           <button
@@ -947,7 +951,7 @@ export function WebsitePageSeoInspector({
               />
             </div>
           </div>
-          <div className="grid grid-cols-[1fr_auto] gap-2">
+          <div className="grid grid-cols-[1fr_auto] items-center gap-2">
             <input
               type="text"
               value={ctaLabel}
@@ -955,12 +959,10 @@ export function WebsitePageSeoInspector({
               placeholder="Chat with us on WhatsApp"
               className="w-full rounded-lg border border-line bg-cream px-2.5 py-1.5 text-xs text-ink outline-none"
             />
-            <input
-              type="color"
+            <ColorCodeInput
+              label="Button Accent Color"
               value={accentColor}
-              onChange={(e) => setAccentColor(e.target.value)}
-              title="Button Accent Color"
-              className="h-8 w-10 cursor-pointer rounded-lg border border-line bg-cream"
+              onChange={(val) => setAccentColor(val)}
             />
           </div>
           <div className="flex items-center gap-2">

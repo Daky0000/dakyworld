@@ -972,6 +972,11 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   [data-dw-editing] { cursor: text !important; outline: 2px solid #3157FF !important; outline-offset: 2px; background: rgba(49,87,255,.10); }
   [data-dw-editing]:hover { outline-style: solid !important; }
   [data-dw-shown] { opacity: 1 !important; transform: none !important; filter: none !important; }
+  [data-dw-field]:hover, [data-dw-field]:hover *,
+  [data-dw-selected], [data-dw-selected] *,
+  [data-dw-editing], [data-dw-editing] * {
+    animation-play-state: paused !important;
+  }
 </style>
 <script nonce="${nonce}">
 (function () {
@@ -1164,7 +1169,18 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
       var el = find(data.id);
       if (!el && data.id) post({ type: "absent", id: data.id, want: "select" });
       mark(el);
-      if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (el && el.scrollIntoView) {
+        var pos = window.getComputedStyle ? window.getComputedStyle(el).position : "static";
+        if (pos !== "sticky" && pos !== "fixed") el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    } else if (data.type === "cssVar") {
+      if (data.name && document.documentElement && document.documentElement.style) {
+        document.documentElement.style.setProperty(String(data.name), String(data.value || ""));
+      }
+      if (data.name && document.body && document.body.style) {
+        document.body.style.setProperty(String(data.name), String(data.value || ""));
+      }
+      post({ type: "applied", id: data.name, want: "cssVar" });
     } else if (data.type === "edit") {
       var target = find(data.id);
       if (target) { mark(target); startEdit(target); }

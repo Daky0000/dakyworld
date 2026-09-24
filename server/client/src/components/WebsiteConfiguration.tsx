@@ -8,6 +8,7 @@ import { WebsitePresetSettings, WebsitePresetRollout } from "./WebsiteBrandPrese
 import type { BrandPreset } from "../lib/websiteBrandPresets";
 import { ConnectWebsite } from "./ConnectWebsite";
 import { ConnectGithubApp } from "./ConnectGithubApp";
+import { ColorCodeInput } from "./InspectorControls";
 
 type Config = { id?: string; clientId?: string | null; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { presets: BrandPreset[]; colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
 type ManagedSite = SiteSummary & { capabilities?: { manage: boolean } };
@@ -89,7 +90,36 @@ export function WebsiteSettings() {
         <section className="rounded-2xl border border-line bg-white p-5">
           <h2 className="mb-4 font-display text-lg">Design system</h2>
           <label className="block text-xs text-muted">Colour palette<input className={INPUT} placeholder="#3157FF, #08101F, #FFFFFF" value={colourText} aria-invalid={Boolean(paletteError)} onChange={event => { setColourText(event.target.value); changed(); }} /></label>
-          <div className="my-3 flex flex-wrap gap-2">{colours.filter(colour => /^#[\da-f]{6}$/i.test(colour)).map((colour, index) => <span key={index} title={colour} className="h-7 w-7 rounded-xl border border-line" style={{ background: colour }} />)}</div>
+          <div className="my-3 flex flex-wrap items-center gap-2">
+            {colours.map((colour, index) => (
+              <div key={index} className="flex items-center gap-1">
+                <ColorCodeInput
+                  value={colour}
+                  ariaLabel={`Palette colour ${index + 1}`}
+                  onChange={next => {
+                    const nextColours = [...colours];
+                    if (next) nextColours[index] = next;
+                    else nextColours.splice(index, 1);
+                    setColourText(nextColours.join(", "));
+                    changed();
+                  }}
+                />
+              </div>
+            ))}
+            {colours.length < 16 && (
+              <button
+                type="button"
+                className="h-8 rounded-lg border border-dashed border-line px-2.5 text-xs text-muted hover:border-ink hover:text-ink"
+                onClick={() => {
+                  const nextColours = [...colours, "#3157FF"];
+                  setColourText(nextColours.join(", "));
+                  changed();
+                }}
+              >
+                + Add colour
+              </button>
+            )}
+          </div>
           {paletteError && <p className="mb-3 text-xs text-danger-text">{paletteError}</p>}
           <label className="block text-xs text-muted">Fonts (one family per line)<textarea className={`${INPUT} h-24`} placeholder={"Space Grotesk\nDM Sans"} value={fontText} aria-invalid={Boolean(fontsError)} onChange={event => { setFontText(event.target.value); changed(); }} /></label>
           {fontsError && <p className="mt-2 text-xs text-danger-text">{fontsError}</p>}

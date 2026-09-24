@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * The controls the inspector is built from, and the style string they write.
@@ -455,24 +455,73 @@ export function ColourField({
 
   const set = (next: Partial<Colour>) => onChange(writeColour({ ...colour, ...next }));
 
+  const [hexDraft, setHexDraft] = useState(value ? colour.hex : "");
+  useEffect(() => {
+    setHexDraft(value ? colour.hex.toUpperCase() : "");
+  }, [value, colour.hex]);
+
   return (
     <div className="relative" ref={box}>
       <div className={FIELD}>
         {!bare && <span className={LABEL}>{label}</span>}
-        <button
-          type="button"
-          aria-label={label}
-          aria-expanded={open}
-          disabled={disabled}
-          onClick={() => setOpen((was) => !was)}
-          className={`flex items-center gap-1.5 ${bare ? "w-full" : "ml-auto"}`}
-          title={value || "As designed"}
-        >
-          <span className="h-3.5 w-3.5 shrink-0 rounded border border-line-strong" style={{ background: CHECKER }}>
-            <span className="block h-full w-full rounded" style={{ backgroundColor: value || "transparent" }} />
-          </span>
-          <span className="font-sans text-[11px] uppercase text-ink">{value ? colour.hex.replace("#", "") : "auto"}</span>
-        </button>
+        <div className={`flex items-center gap-1.5 ${bare ? "w-full" : "ml-auto"}`}>
+          <label
+            className="relative flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border border-line-strong shadow-2xs transition hover:border-blue"
+            style={{ background: CHECKER }}
+            title={`${label} color picker (${value ? colour.hex : "auto"})`}
+          >
+            <span className="block h-full w-full rounded-[3px]" style={{ backgroundColor: value || "transparent" }} />
+            <input
+              type="color"
+              aria-label={label}
+              disabled={disabled}
+              value={colour.hex}
+              onChange={(event) => {
+                const nextHex = event.target.value.toUpperCase();
+                setHexDraft(nextHex);
+                set({ hex: nextHex });
+              }}
+              onBlur={() => onCommit?.()}
+              className="sr-only"
+            />
+          </label>
+          <input
+            type="text"
+            disabled={disabled}
+            placeholder="auto"
+            value={hexDraft}
+            onChange={(event) => {
+              const raw = event.target.value;
+              setHexDraft(raw);
+              const cleaned = raw.trim().replace(/^#/, "");
+              if (/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+                set({ hex: `#${cleaned.toUpperCase()}` });
+              } else if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+                const expanded = cleaned.split("").map((ch) => ch + ch).join("").toUpperCase();
+                set({ hex: `#${expanded}` });
+              } else if (raw.trim() === "" && allowNone) {
+                onChange("");
+              }
+            }}
+            onBlur={() => {
+              setHexDraft(value ? colour.hex.toUpperCase() : "");
+              onCommit?.();
+            }}
+            className="w-[62px] bg-transparent font-mono text-[11px] font-semibold uppercase text-ink outline-none placeholder:text-muted focus:text-blue"
+            title="Click to type a #HEX color code"
+          />
+          <button
+            type="button"
+            aria-label={`${label} palette and opacity`}
+            aria-expanded={open}
+            disabled={disabled}
+            onClick={() => setOpen((was) => !was)}
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9px] text-muted transition hover:bg-surface-2 hover:text-ink"
+            title="Open color swatches & opacity"
+          >
+            ▾
+          </button>
+        </div>
       </div>
 
       {open && !disabled && (
@@ -506,7 +555,7 @@ export function ColourField({
             <div className="flex h-7 flex-1 items-center gap-1 rounded-xl border border-line px-2">
               <span className="text-[11px] text-muted">#</span>
               <input
-                className="w-full bg-transparent font-sans text-[11px] uppercase text-ink outline-none"
+                className="w-full bg-transparent font-mono text-[11px] uppercase text-ink outline-none"
                 maxLength={6}
                 value={colour.hex.replace("#", "")}
                 onChange={(event) => {
@@ -547,6 +596,83 @@ export function ColourField({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Compact side-by-side `[Color Picker] #HEXCODE` control used everywhere a color code
+ * is displayed or edited across the website builder.
+ */
+export function ColorCodeInput({
+  value,
+  onChange,
+  onCommit,
+  disabled,
+  placeholder = "#12110F",
+  label,
+  ariaLabel,
+  className = "",
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  onCommit?: () => void;
+  disabled?: boolean;
+  placeholder?: string;
+  label?: string;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  const effectiveLabel = ariaLabel ?? label;
+  const parsed = useMemo(() => readColour(value || placeholder), [value, placeholder]);
+  const [draft, setDraft] = useState(value || "");
+  useEffect(() => {
+    setDraft(value ? (value.startsWith("#") ? value.toUpperCase() : value) : "");
+  }, [value]);
+
+  return (
+    <div className={`inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-2 px-2 py-1 focus-within:border-blue ${className}`}>
+      <label
+        className="relative flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-line-strong shadow-2xs transition hover:border-blue"
+        style={{ background: CHECKER }}
+        title={effectiveLabel ? `${effectiveLabel} (${parsed.hex})` : `Pick color (${parsed.hex})`}
+      >
+        <span className="block h-full w-full rounded-[3px]" style={{ backgroundColor: value || parsed.hex }} />
+        <input
+          type="color"
+          aria-label={effectiveLabel ? `${effectiveLabel} picker` : "Color picker"}
+          disabled={disabled}
+          value={parsed.hex}
+          onChange={(event) => {
+            const nextHex = event.target.value.toUpperCase();
+            setDraft(nextHex);
+            onChange(nextHex);
+          }}
+          onBlur={() => onCommit?.()}
+          className="sr-only"
+        />
+      </label>
+      <input
+        type="text"
+        disabled={disabled}
+        placeholder={placeholder}
+        value={draft}
+        onChange={(event) => {
+          const raw = event.target.value;
+          setDraft(raw);
+          const cleaned = raw.trim().replace(/^#/, "");
+          if (/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+            onChange(`#${cleaned.toUpperCase()}`);
+          } else if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+            const expanded = cleaned.split("").map((ch) => ch + ch).join("").toUpperCase();
+            onChange(`#${expanded}`);
+          } else if (raw.trim().startsWith("rgb") || raw.trim().startsWith("var(") || raw.trim() === "") {
+            onChange(raw.trim());
+          }
+        }}
+        onBlur={() => onCommit?.()}
+        className="w-[74px] bg-transparent font-mono text-[11px] font-semibold uppercase text-ink outline-none placeholder:text-muted"
+      />
     </div>
   );
 }

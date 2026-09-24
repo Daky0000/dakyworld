@@ -19,7 +19,8 @@ import { MakeSharedPanel, SharedElementPanel, SharedPublishReview } from "../com
 import { PublishStatus } from "../components/PublishStatus";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
 import { ElementInspector } from "../components/ElementInspector";
-import { INSPECTED_PROPERTIES, type ElementFacts } from "../lib/elementInspector";
+import { ColorCodeInput, parseStyle, writeStyle } from "../components/InspectorControls";
+import { INSPECTED_PROPERTIES, toHex, type ElementFacts } from "../lib/elementInspector";
 import { WebsiteLayers, WebsiteBreadcrumbs } from "../components/WebsiteLayers";
 import { WebsiteVersions } from "../components/WebsiteVersions";
 import { WebsiteAssistant } from "../components/WebsiteAssistant";
@@ -1567,7 +1568,124 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     });
   };
 
+  const [pageColorTokens, setPageColorTokens] = useState<Array<{ key: string; label: string; value: string; isVar: boolean }>>([]);
+  const [assetTargetMode, setAssetTargetMode] = useState<"image" | "background">("image");
+
+  const syncPageColorsFromFrame = useCallback(() => {
+    try {
+      const doc = frame.current?.contentDocument;
+      if (!doc) return;
+      const bodyField = allFields.find((f) => f.tag === "body");
+      const bodyStyleMap = parseStyle(bodyField ? (edits[bodyField.id]?.style ?? bodyField.style ?? "") : "");
+      const tokens: Array<{ key: string; label: string; value: string; isVar: boolean }> = [];
+      const seenVars = new Set<string>();
+      const seenHexes = new Set<string>();
+
+      const styles = Array.from(doc.querySelectorAll("style:not([data-dw-interaction-preview]):not([data-dw-responsive-preview])"));
+      const cssText = styles.map((s) => s.textContent || "").join("\n");
+
+      const varRegex = /(--[a-zA-Z0-9_-]+)\s*:\s*(#[0-9a-fA-F]{3,8}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,\s*[\d.]+)?\s*\))/g;
+      let match: RegExpExecArray | null;
+      while ((match = varRegex.exec(cssText)) !== null) {
+        const varName = match[1]!.trim();
+        if (varName.startsWith("--dw-")) continue;
+        if (seenVars.has(varName)) continue;
+        const rawVal = bodyStyleMap[varName] ?? match[2]!.trim();
+        const hex = toHex(rawVal) ?? (rawVal.startsWith("#") ? rawVal.toUpperCase() : null);
+        if (!hex) continue;
+        seenVars.add(varName);
+        seenHexes.add(hex.toUpperCase());
+        const cleanLabel = varName.replace(/^--/, "").replace(/[-_]+/g, " ");
+        tokens.push({
+          key: varName,
+          label: `${cleanLabel.charAt(0).toUpperCase() + cleanLabel.slice(1)} (${varName})`,
+          value: hex.toUpperCase(),
+          isVar: true,
+        });
+      }
+
+      const hexRegex = /#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/g;
+      while ((match = hexRegex.exec(cssText)) !== null && tokens.length < 18) {
+        const hex = (toHex(match[0]) ?? match[0]).toUpperCase();
+        if (seenHexes.has(hex)) continue;
+        seenHexes.add(hex);
+        tokens.push({
+          key: hex,
+          label: `Page Color ${hex}`,
+          value: hex,
+          isVar: false,
+        });
+      }
+
+      // Re-apply any saved body CSS variables into the iframe's root & body
+      for (const [prop, val] of Object.entries(bodyStyleMap)) {
+        if (prop.startsWith("--") && val) {
+          doc.documentElement?.style?.setProperty(prop, val);
+          doc.body?.style?.setProperty(prop, val);
+        }
+      }
+
+      if (tokens.length > 0) setPageColorTokens(tokens);
+    } catch {
+      /* Cross-origin fallback */
+    }
+  }, [allFields, edits]);
+
+  const updatePageColorToken = useCallback(
+    (tokenKey: string, nextHex: string, isVar: boolean, previousHex: string) => {
+      const formatted = nextHex.startsWith("#") ? nextHex.toUpperCase() : `#${nextHex.toUpperCase()}`;
+      setPageColorTokens((prev) =>
+        prev.map((item) => (item.key === tokenKey ? { ...item, value: formatted } : item)),
+      );
+
+      // 1. Update live in the preview iframe immediately
+      try {
+        const doc = frame.current?.contentDocument;
+        if (doc) {
+          if (isVar) {
+            doc.documentElement?.style?.setProperty(tokenKey, formatted);
+            doc.body?.style?.setProperty(tokenKey, formatted);
+          }
+          if (previousHex && previousHex.toUpperCase() !== formatted) {
+            const escapedOld = previousHex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const re = new RegExp(escapedOld, "gi");
+            doc.querySelectorAll("style:not([data-dw-interaction-preview])").forEach((styleEl) => {
+              if (styleEl.textContent && re.test(styleEl.textContent)) {
+                styleEl.textContent = styleEl.textContent.replace(re, formatted);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      if (isVar) {
+        tell({ type: "cssVar", name: tokenKey, value: formatted });
+      }
+
+      // 2. Persist on the body container field (and any element with matching inline hex)
+      const bodyField = allFields.find((f) => f.tag === "body") ?? allFields.find((f) => f.kind === "container");
+      if (bodyField && isVar) {
+        const currentStyle = edits[bodyField.id]?.style ?? bodyField.style ?? "";
+        const map = parseStyle(currentStyle);
+        map[tokenKey] = formatted;
+        change(bodyField.id, { ...edits[bodyField.id], style: writeStyle(map) }, { commit: true });
+      }
+      if (previousHex) {
+        const oldUpper = previousHex.toUpperCase();
+        for (const field of allFields) {
+          const st = edits[field.id]?.style ?? field.style ?? "";
+          if (st && st.toUpperCase().includes(oldUpper)) {
+            const replaced = st.replace(new RegExp(previousHex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), formatted);
+            change(field.id, { ...edits[field.id], style: replaced }, { commit: true });
+          }
+        }
+      }
+    },
+    [allFields, change, edits, tell],
+  );
+
   const bindIframeContextMenu = () => {
+    syncPageColorsFromFrame();
     try {
       const doc = frame.current?.contentDocument;
       if (!doc) return;
@@ -1749,7 +1867,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         <WebsiteAssetPickerModal
           siteId={site.id}
           onSelect={asset => {
-            change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt }, { commit: true });
+            if (assetTargetMode === "background" || picked.kind !== "image") {
+              const map = parseStyle(pickedStyle ?? "");
+              map["background-image"] = `url('${asset.url.replace(/['"\\]/g, "")}')`;
+              if (!map["background-size"]) map["background-size"] = "cover";
+              if (!map["background-position"]) map["background-position"] = "center";
+              changePickedStyle(writeStyle(map), true);
+            } else {
+              change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt }, { commit: true });
+            }
             setAssetModalOpen(false);
           }}
           onClose={() => setAssetModalOpen(false)}
@@ -2540,15 +2666,45 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     onOpenClientReport={() => setClientReportOpen(true)}
                   />
                 ) : (
-                  <div className="px-4 py-6 text-center">
+                  <div className="px-4 py-5 text-center">
                     <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
                     <p className="mt-1 text-xs leading-relaxed text-muted">
                       Its words, style, and interactions appear here. Double click to type straight into the page.
                     </p>
-                    <p className="mt-3 text-xs text-muted">
+                    <p className="mt-2 text-xs text-muted">
                       {allFields.length} editable {allFields.length === 1 ? "thing" : "things"} on this page.
                     </p>
-                    <div className="mt-5 flex flex-col gap-2 border-t border-line pt-4">
+
+                    {pageColorTokens.length > 0 && (
+                      <div className="mt-4 rounded-xl border border-line bg-surface-2/60 p-3 text-left">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold uppercase tracking-[.06em] text-ink">
+                            Page Colors &amp; Theme
+                          </span>
+                          <span className="text-[10px] text-muted">{pageColorTokens.length} colors</span>
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-muted">
+                          Click any color picker or edit its #HEX code to update that color across the page live.
+                        </p>
+                        <div className="mt-2.5 space-y-1.5 max-h-[280px] overflow-y-auto pr-0.5">
+                          {pageColorTokens.map((token) => (
+                            <div key={token.key} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-white px-2.5 py-1.5">
+                              <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-ink" title={token.label}>
+                                {token.label}
+                              </span>
+                              <ColorCodeInput
+                                label={token.label}
+                                value={token.value}
+                                disabled={readOnly}
+                                onChange={(nextHex) => updatePageColorToken(token.key, nextHex, token.isVar, token.value)}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4">
                       {canEdit && !readOnly && (
                         <button
                           type="button"
@@ -2656,6 +2812,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     tab={inspectorTab === "style" ? "style" : "content"}
                     simple={!designerMode}
                     onTextColour={colour => !readOnly && formatActiveText({ color: colour })}
+                    onPickBackgroundImage={() => {
+                      setAssetTargetMode("background");
+                      setAssetModalOpen(true);
+                    }}
                     key={`${picked.id}:${device}`}
                     facts={{
                       kind: picked.kind,
@@ -2711,13 +2871,234 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                               type="button"
                               size="sm"
                               variant="secondary"
-                              onClick={() => setAssetModalOpen(true)}
+                              onClick={() => {
+                                setAssetTargetMode("image");
+                                setAssetModalOpen(true);
+                              }}
                               className="w-full flex items-center justify-center gap-2"
                             >
                                Choose from Asset Library
                             </Button>
                           </div>
                         )}
+                        {/* Carousel / Ticker Item-by-Item Editor */}
+                        {(() => {
+                          const childCarouselField = picked.kind === "container"
+                            ? allFields.find((f) => f.parentId === picked.id && (/carousel|ticker|marquee/i.test(f.label) || /<span>\s*[✦•★·]\s*<\/span>/i.test(edits[f.id]?.value ?? f.value ?? "")))
+                            : null;
+                          const targetField = childCarouselField ?? ((/carousel|ticker|marquee/i.test(picked.label) || /<span>\s*[✦•★·]\s*<\/span>/i.test(edits[picked.id]?.value ?? picked.value ?? "")) && picked.kind !== "container" ? picked : null);
+                          if (!targetField || readOnly) return null;
+                          const rawVal = edits[targetField.id]?.value ?? targetField.value ?? "";
+                          const sepMatch = /(<span[^>]*>\s*[^<]+\s*<\/span>|\s+[✦•★·]\s+)/i.exec(rawVal);
+                          const separator = sepMatch?.[1] ?? " <span>✦</span> ";
+                          const parts = rawVal
+                            .split(/<span[^>]*>\s*[^<]+\s*<\/span>|\s+[✦•★·]\s+/i)
+                            .map((s) => s.replace(/<[^>]+>/g, "").trim())
+                            .filter(Boolean);
+                          if (parts.length < 2 && !/carousel|ticker|marquee/i.test(targetField.label)) return null;
+                          const updateCarouselItems = (nextItems: string[]) => {
+                            const joined = nextItems.map((item) => item.trim()).filter(Boolean).join(` ${separator.trim()} `);
+                            change(targetField.id, { ...edits[targetField.id], value: joined }, { commit: true });
+                          };
+                          return (
+                            <div className="mb-4 rounded-xl border border-blue/25 bg-blue/5 p-3 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-semibold text-ink">Carousel / Ticker Items ({parts.length})</span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateCarouselItems([...parts, "NEW ITEM"])}
+                                  className="rounded-lg bg-blue px-2 py-0.5 text-[11px] font-semibold text-white transition hover:opacity-90"
+                                >
+                                  + Add Item
+                                </button>
+                              </div>
+                              <div className="max-h-52 space-y-1.5 overflow-y-auto pr-0.5">
+                                {parts.map((item, idx) => (
+                                  <div key={idx} className="flex items-center gap-1.5">
+                                    <span className="w-5 text-right font-mono text-[10px] text-muted">{idx + 1}.</span>
+                                    <input
+                                      type="text"
+                                      value={item}
+                                      onChange={(event) => {
+                                        const next = [...parts];
+                                        next[idx] = event.target.value;
+                                        updateCarouselItems(next);
+                                      }}
+                                      className="flex-1 rounded-lg border border-line bg-white px-2 py-1 text-xs text-ink outline-none focus:border-blue"
+                                    />
+                                    {parts.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => updateCarouselItems(parts.filter((_, i) => i !== idx))}
+                                        className="rounded-lg border border-line bg-white px-2 py-1 text-[11px] text-muted hover:border-red/30 hover:text-red"
+                                        title="Remove item"
+                                      >
+                                        ×
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        {/* Container / Sticky Header / Logo Icon Content & Appearance Quick Editor */}
+                        {picked.kind === "container" && !readOnly && (() => {
+                          const styleMap = parseStyle(pickedStyle ?? "");
+                          const rawBg = styleMap["background-image"] ?? styleMap.background ?? computed["background-image"] ?? "";
+                          const bgUrlMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(rawBg);
+                          const bgUrl = bgUrlMatch?.[1] ?? "";
+                          const posVal = (styleMap.position ?? computed.position ?? "static").trim();
+                          const bgCol = styleMap["background-color"] ?? computed["background-color"] ?? "";
+                          const txtCol = styleMap.color ?? computed.color ?? "";
+                          const childFields = allFields.filter((f) => f.parentId === picked.id);
+                          const updateProp = (prop: string, val: string) => {
+                            const nextMap = { ...styleMap };
+                            if (val) nextMap[prop] = val;
+                            else delete nextMap[prop];
+                            changePickedStyle(writeStyle(nextMap), true);
+                          };
+                          return (
+                            <div className="mb-3 space-y-3">
+                              {/* Sticky Header / Position Quick Switch */}
+                              {(picked.tag === "header" || picked.tag === "nav" || /header|nav|sticky|manifesto/i.test(picked.label) || posVal === "sticky" || posVal === "fixed") && (
+                                <div className="rounded-xl border border-line bg-surface-2/60 p-3 space-y-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-semibold text-ink">Sticky / Fixed Header Behavior</span>
+                                    <span className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted">{posVal}</span>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-1">
+                                    {(["sticky", "fixed", "relative"] as const).map((modePos) => (
+                                      <button
+                                        key={modePos}
+                                        type="button"
+                                        onClick={() => {
+                                          const nextMap: Record<string, string> = { ...styleMap, position: modePos };
+                                          if ((modePos === "sticky" || modePos === "fixed") && !nextMap.top) nextMap.top = "0px";
+                                          if ((modePos === "sticky" || modePos === "fixed") && !nextMap["z-index"]) nextMap["z-index"] = "1000";
+                                          changePickedStyle(writeStyle(nextMap), true);
+                                        }}
+                                        className={`rounded-lg border py-1 text-[11px] font-semibold capitalize transition ${
+                                          posVal === modePos ? "border-blue bg-blue text-white" : "border-line bg-white text-ink hover:border-blue"
+                                        }`}
+                                      >
+                                        {modePos}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  {(posVal === "sticky" || posVal === "fixed") && (
+                                    <div className="flex items-center justify-between gap-2 pt-1">
+                                      <span className="text-[11px] text-muted">Top Offset</span>
+                                      <input
+                                        type="text"
+                                        value={styleMap.top ?? computed.top ?? "0px"}
+                                        onChange={(e) => updateProp("top", e.target.value)}
+                                        className="w-24 rounded-lg border border-line bg-white px-2 py-1 text-right font-mono text-[11px] text-ink"
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Background / Logo Icon Image Quick Control */}
+                              <div className="rounded-xl border border-line bg-surface-2/60 p-3 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-semibold text-ink">
+                                    {/logo|icon|brand-face/i.test(picked.label) ? "Logo Icon / Graphic Image" : "Background Image"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAssetTargetMode("background");
+                                      setAssetModalOpen(true);
+                                    }}
+                                    className="rounded-lg bg-blue px-2.5 py-1 text-[11px] font-semibold text-white transition hover:opacity-90"
+                                  >
+                                    Choose / Upload Image
+                                  </button>
+                                </div>
+                                {bgUrl && (
+                                  <div
+                                    className="h-20 w-full rounded-lg border border-line bg-cover bg-center"
+                                    style={{ backgroundImage: `url("${bgUrl.replace(/"/g, "")}")` }}
+                                  />
+                                )}
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="Paste image URL (/assets/... or https://...)"
+                                    value={bgUrl}
+                                    onChange={(e) => {
+                                      const v = e.target.value.trim();
+                                      const nextMap = { ...styleMap };
+                                      if (!v) {
+                                        delete nextMap["background-image"];
+                                      } else {
+                                        nextMap["background-image"] = `url('${v.replace(/['"\\]/g, "")}')`;
+                                        if (!nextMap["background-size"]) nextMap["background-size"] = "cover";
+                                        if (!nextMap["background-position"]) nextMap["background-position"] = "center";
+                                      }
+                                      changePickedStyle(writeStyle(nextMap), true);
+                                    }}
+                                    className="flex-1 rounded-lg border border-line bg-white px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-blue"
+                                  />
+                                  {bgUrl && (
+                                    <button
+                                      type="button"
+                                      onClick={() => updateProp("background-image", "none")}
+                                      className="rounded-lg border border-line bg-white px-2 py-1 text-[11px] text-muted hover:text-red"
+                                    >
+                                      Clear
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Quick Color Pickers + #HEXCODE */}
+                              <div className="rounded-xl border border-line bg-surface-2/60 p-3 space-y-2">
+                                <span className="block text-xs font-semibold text-ink">Colors (Color Picker + #HEX)</span>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted">Background Color</span>
+                                  <ColorCodeInput
+                                    label="Background color"
+                                    value={toHex(bgCol) ?? bgCol}
+                                    onChange={(nextHex) => updateProp("background-color", nextHex)}
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-muted">Text / Icon Color</span>
+                                  <ColorCodeInput
+                                    label="Text or icon color"
+                                    value={toHex(txtCol) ?? txtCol}
+                                    onChange={(nextHex) => updateProp("color", nextHex)}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Child Elements inside this Container */}
+                              {childFields.length > 0 && (
+                                <div className="rounded-xl border border-line bg-surface-2/60 p-3 space-y-1.5">
+                                  <span className="block text-xs font-semibold text-ink">
+                                    Elements Inside {picked.label} ({childFields.length})
+                                  </span>
+                                  <div className="max-h-40 space-y-1 overflow-y-auto">
+                                    {childFields.map((cf) => (
+                                      <button
+                                        key={cf.id}
+                                        type="button"
+                                        onClick={() => pick(cf.id)}
+                                        className="flex w-full items-center justify-between gap-2 rounded-lg border border-line bg-white px-2.5 py-1.5 text-left text-xs text-ink transition hover:border-blue hover:text-blue"
+                                      >
+                                        <span className="truncate font-medium">{cf.label}: {cf.preview || cf.tag}</span>
+                                        <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted">{cf.tag}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {(() => {
                           const repeatableTarget = (picked.repeatable || picked.structure?.repeatable)
                             ? picked
