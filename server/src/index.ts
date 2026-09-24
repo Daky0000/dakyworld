@@ -66,6 +66,7 @@ import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
 import { WebsiteError } from "./services/website/site.js";
 import { ensureDakyworldSite } from "./services/website/ensureSite.js";
 import { ensureWebsiteTierUsersAndPlans } from "./services/websiteTierPlans.js";
+import { publicSiteHosting } from "./services/websiteHosting.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -99,6 +100,18 @@ app.use(forceHttps);
 // localhost:5173 on the live system would be a standing offer nobody needs.
 const CORS_ORIGIN = process.env.CLIENT_ORIGIN ?? (process.env.NODE_ENV === "production" ? null : "http://localhost:5173");
 if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
+
+// Hosted customer websites, ahead of everything else this app does.
+//
+// Ahead of `securityHeaders` on purpose. Those headers are written for the OS:
+// a content policy naming this app's own sources, `X-Frame-Options: DENY`, and
+// `X-Robots-Tag: noindex` because none of the office belongs in a search index.
+// Applying them to a customer's marketing website would break its scripts,
+// stop it being embedded anywhere, and — worst of the three — ask Google not
+// to index the website they are paying us to host. It answers only for a
+// hostname that belongs to a hosted site; everything else falls straight
+// through to the app below.
+app.use(publicSiteHosting());
 
 app.use(securityHeaders);
 

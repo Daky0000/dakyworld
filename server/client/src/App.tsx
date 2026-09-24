@@ -31,6 +31,7 @@ const WebsiteEditor = lazy(() => import("./pages/WebsiteEditor").then((module) =
 const WebsiteFrameworkEditor = lazy(() => import("./pages/WebsiteFrameworkEditor").then((module) => ({ default: module.WebsiteFrameworkEditor })));
 import { WebsiteLayout } from "./components/WebsiteLayout";
 import { WebsiteGuard } from "./components/WebsiteGuard";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 const WebsiteSource = lazy(() => import("./components/WebsiteSourceEditor").then((module) => ({ default: module.WebsiteSource })));
 const WebsiteOverview = lazy(() => import("./pages/WebsiteOverview").then((module) => ({ default: module.WebsiteOverview })));
 // The plan's remaining screens. Each says what it will hold and is gated on
@@ -113,8 +114,8 @@ export default function App() {
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
         </Route>
         <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
-        <Route path="/website/pages/:pageId" element={<WebsiteGuard><WebsiteEditor /></WebsiteGuard>} />
-        <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><WebsiteFrameworkEditor /></WebsiteGuard>} />
+        <Route path="/website/pages/:pageId" element={<WebsiteGuard><ErrorBoundary label="website editor"><WebsiteEditor /></ErrorBoundary></WebsiteGuard>} />
+        <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><ErrorBoundary label="source editor"><WebsiteFrameworkEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />
         <Route path="/settings" element={<Guard needs="settings.view"><Settings /></Guard>} />
         <Route path="/agents" element={<Guard needs="agents.view"><Agents /></Guard>} />

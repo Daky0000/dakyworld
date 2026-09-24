@@ -121,6 +121,14 @@ export function Login() {
             {submitting ? "Signing in…" : challenge ? "Verify" : "Sign in"}
           </Button>
 
+          {/* Until this existed, a forgotten password meant emailing somebody
+              at Dakyworld and waiting for them to set a new one by hand. */}
+          {!challenge && (
+            <a href="/forgot-password" className="mt-4 block text-center text-sm text-muted hover:underline">
+              Forgotten your password?
+            </a>
+          )}
+
           {challenge && (
             <button
               type="button"

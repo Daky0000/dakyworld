@@ -4,6 +4,7 @@
  *   npx tsx checks/products.ts
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { decideAccess, money, tierName, SHIPPED_PRODUCTS } from "../src/services/products.js";
 import { PLAN_ENTITLEMENTS, WEBSITE_TIERS } from "../src/services/websiteCommerce.js";
 import {
@@ -11,6 +12,7 @@ import {
   SUBSCRIBED_TEST_USERS,
   resolveSubscriptionPricing,
 } from "../src/services/websiteTierPlans.js";
+import { priceFor, resolveCurrency } from "../src/services/websitePricing.js";
 
 let checks = 0;
 function check(name: string, condition: unknown) { assert.ok(condition, name); checks++; }
@@ -67,12 +69,43 @@ check("with a price", Number(builder.monthlyPrice) > 0);
 equal("pointing at its own public page", builder.publicPath, "/website-builder");
 check("every shipped product has a stable key", SHIPPED_PRODUCTS.every((product) => /^[a-z][a-z0-9-]*$/.test(product.key)));
 equal("three website plans ship", SHIPPED_PRODUCTS.map(product => product.key), ["website-builder", "website-care", "managed-website"]);
-equal("Starter (EDITOR) starts at $3 ($5 standard)", SHIPPED_PRODUCTS[0].monthlyPrice, "3.00");
-equal("Starter standard price is $5", SHIPPED_PRODUCTS[0].standardMonthlyPrice, "5.00");
-equal("Pro (CARE) starts at $10 ($16 standard)", SHIPPED_PRODUCTS[1].monthlyPrice, "10.00");
-equal("Pro standard price is $16", SHIPPED_PRODUCTS[1].standardMonthlyPrice, "16.00");
-equal("Business (MANAGED) starts at $25 ($45 standard)", SHIPPED_PRODUCTS[2].monthlyPrice, "25.00");
-equal("Business standard price is $45", SHIPPED_PRODUCTS[2].standardMonthlyPrice, "45.00");
+// The catalogue is in cedis, because the public site quotes cedis. The dollar
+// column lives in services/websitePricing.ts and is asserted below: the two
+// used to disagree by a factor of eight, which is the fault these lines exist
+// to keep out.
+equal("Starter (EDITOR) starts at GHS 300", SHIPPED_PRODUCTS[0].monthlyPrice, "300.00");
+equal("Starter standard price is GHS 500", SHIPPED_PRODUCTS[0].standardMonthlyPrice, "500.00");
+equal("Starter is sold in cedis", SHIPPED_PRODUCTS[0].currency, "GHS");
+equal("Pro (CARE) starts at GHS 900", SHIPPED_PRODUCTS[1].monthlyPrice, "900.00");
+equal("Pro standard price is GHS 1,500", SHIPPED_PRODUCTS[1].standardMonthlyPrice, "1500.00");
+equal("Business (MANAGED) starts at GHS 2,400", SHIPPED_PRODUCTS[2].monthlyPrice, "2400.00");
+equal("Business standard price is GHS 4,000", SHIPPED_PRODUCTS[2].standardMonthlyPrice, "4000.00");
+
+// The advertised price and the charged price are the same number.
+{
+  const advertised = readFileSync(new URL("../../website-builder.html", import.meta.url), "utf8");
+  check(
+    "the Website Builder page advertises the price the catalogue charges",
+    advertised.includes("GHS 300"),
+  );
+}
+
+// Ghana pays cedis, everybody else dollars, and neither column is a tenth of
+// the other.
+equal("Ghana is billed in cedis", resolveCurrency({ country: "GH" }), "GHS");
+equal("a country that is not Ghana is billed in dollars", resolveCurrency({ country: "NG" }), "USD");
+equal("an explicit choice wins over the country", resolveCurrency({ currency: "USD", country: "GH" }), "USD");
+for (const tier of ["EDITOR", "CARE", "MANAGED"] as const) {
+  const cedis = priceFor(tier, "GHS");
+  const dollars = priceFor(tier, "USD");
+  const ratio = cedis.promoMonthlyPrice / dollars.promoMonthlyPrice;
+  check(
+    `${tier} costs roughly the same in both currencies (GHS ${cedis.promoMonthlyPrice} vs $${dollars.promoMonthlyPrice})`,
+    ratio > 6 && ratio < 20,
+  );
+  check(`${tier} standard price is above its promotional one in cedis`, cedis.standardMonthlyPrice > cedis.promoMonthlyPrice);
+  check(`${tier} standard price is above its promotional one in dollars`, dollars.standardMonthlyPrice > dollars.promoMonthlyPrice);
+}
 equal("the public keys resolve to tiers", WEBSITE_TIERS, { "website-builder": "EDITOR", "website-care": "CARE", "managed-website": "MANAGED" });
 equal("Editor allows two users", PLAN_ENTITLEMENTS.EDITOR.userLimit, 2);
 equal("Care includes sixty technical minutes", PLAN_ENTITLEMENTS.CARE.includedTechnicalMinutes, 60);
@@ -83,23 +116,29 @@ const subStart = new Date("2026-06-01T00:00:00Z");
 const month1 = new Date("2026-07-01T00:00:00Z");
 const month4 = new Date("2026-09-05T00:00:00Z");
 
-const starterPromo = resolveSubscriptionPricing({ tier: "EDITOR", subscribedAt: subStart, now: month1 });
-equal("Starter in month 1 bills $3 promo rate", starterPromo.currentMonthlyPrice, 3);
+const starterPromo = resolveSubscriptionPricing({ tier: "EDITOR", subscribedAt: subStart, now: month1, currency: "GHS" });
+equal("Starter in month 1 bills the GHS 300 promo rate", starterPromo.currentMonthlyPrice, 300);
 check("Starter in month 1 has revertedToStandard = false", !starterPromo.revertedToStandard);
 
-const starterReverted = resolveSubscriptionPricing({ tier: "EDITOR", subscribedAt: subStart, now: month4 });
-equal("Starter after 3 months reverts to $5 standard rate", starterReverted.currentMonthlyPrice, 5);
+const starterReverted = resolveSubscriptionPricing({ tier: "EDITOR", subscribedAt: subStart, now: month4, currency: "GHS" });
+equal("Starter after 3 months reverts to GHS 500 standard", starterReverted.currentMonthlyPrice, 500);
 check("Starter after 3 months has revertedToStandard = true", starterReverted.revertedToStandard);
 
-const proPromo = resolveSubscriptionPricing({ tier: "CARE", subscribedAt: subStart, now: month1 });
-equal("Pro in month 1 bills $10 promo rate", proPromo.currentMonthlyPrice, 10);
-const proReverted = resolveSubscriptionPricing({ tier: "CARE", subscribedAt: subStart, now: month4 });
-equal("Pro after 3 months reverts to $16 standard rate", proReverted.currentMonthlyPrice, 16);
+const proPromo = resolveSubscriptionPricing({ tier: "CARE", subscribedAt: subStart, now: month1, currency: "GHS" });
+equal("Pro in month 1 bills the GHS 900 promo rate", proPromo.currentMonthlyPrice, 900);
+const proReverted = resolveSubscriptionPricing({ tier: "CARE", subscribedAt: subStart, now: month4, currency: "GHS" });
+equal("Pro after 3 months reverts to GHS 1,500 standard", proReverted.currentMonthlyPrice, 1500);
 
-const bizPromo = resolveSubscriptionPricing({ tier: "MANAGED", subscribedAt: subStart, now: month1 });
-equal("Business in month 1 bills $25 promo rate", bizPromo.currentMonthlyPrice, 25);
-const bizReverted = resolveSubscriptionPricing({ tier: "MANAGED", subscribedAt: subStart, now: month4 });
-equal("Business after 3 months reverts to $45 standard rate", bizReverted.currentMonthlyPrice, 45);
+const bizPromo = resolveSubscriptionPricing({ tier: "MANAGED", subscribedAt: subStart, now: month1, currency: "GHS" });
+equal("Business in month 1 bills the GHS 2,400 promo rate", bizPromo.currentMonthlyPrice, 2400);
+const bizReverted = resolveSubscriptionPricing({ tier: "MANAGED", subscribedAt: subStart, now: month4, currency: "GHS" });
+equal("Business after 3 months reverts to GHS 4,000 standard", bizReverted.currentMonthlyPrice, 4000);
+
+// The same customer, billed in dollars.
+const usdPromo = resolveSubscriptionPricing({ tier: "EDITOR", subscribedAt: subStart, now: month1, currency: "USD" });
+equal("Starter in month 1 bills $25 outside Ghana", usdPromo.currentMonthlyPrice, 25);
+const usdReverted = resolveSubscriptionPricing({ tier: "EDITOR", subscribedAt: subStart, now: month4, currency: "USD" });
+equal("Starter reverts to $40 outside Ghana", usdReverted.currentMonthlyPrice, 40);
 
 /* --------------------------------- Per-user media storage & feature limits */
 equal("Starter media storage is 50 MB", WEBSITE_TIER_PLANS.EDITOR.storageQuotaBytes, 50 * 1024 * 1024);
@@ -115,4 +154,4 @@ equal("Three subscribed test users are configured", SUBSCRIBED_TEST_USERS.map((u
   "business@dakyworld.test",
 ]);
 
-console.log(`products: ${checks} checks — 3 tier plans ($3 ($5), $10 ($16), $25 ($45)), 3-month standard price reversion, storage quotas, and 3 test users verified`);
+console.log(`products: ${checks} checks — 3 tiers in cedis (GHS 300/900/2,400) and dollars ($25/$75/$195), the advertised price matching the charged one, reversion to the standard rate, storage quotas, and 3 test users verified`);

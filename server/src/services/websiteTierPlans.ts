@@ -5,6 +5,18 @@ import { prisma } from "../lib/prisma.js";
 import { hashPassword } from "../lib/password.js";
 import { WebsiteError } from "./website/site.js";
 import { IS_PRODUCTION } from "../middleware/auth.js";
+import {
+  bumpUsage,
+  readUsage,
+  resolveEntitlement,
+  setSwitchedUserEmail,
+  getSwitchedUserEmail,
+  usagePeriod,
+  TEST_SWITCHING_ALLOWED,
+  type Entitlement,
+} from "./websiteEntitlement.js";
+import { priceFor, type PlanCurrency } from "./websitePricing.js";
+import { moveSubscriptionToPlan } from "../lib/paystack.js";
 
 /**
  * Website Builder Three-Tier Plan, Storage Quota, 3-Month Promo Pricing Reversion,
@@ -46,7 +58,7 @@ export type TierPlanDefinition = {
   name: string;
   badge: string;
   tagline: string;
-  currency: "USD";
+  currency: PlanCurrency;
   promoMonthlyPrice: number;
   standardMonthlyPrice: number;
   promoMonths: number;
@@ -317,7 +329,7 @@ export function addMonthsUtc(date: Date, months: number): Date {
 export type SubscriptionPricingState = {
   tier: WebsitePlanTier;
   planName: string;
-  currency: "USD";
+  currency: PlanCurrency;
   promoMonthlyPrice: number;
   standardMonthlyPrice: number;
   currentMonthlyPrice: number;
@@ -341,145 +353,71 @@ export function resolveSubscriptionPricing(input: {
   subscribedAt: Date;
   now?: Date;
   simulateAfter3Months?: boolean;
+  /** What this customer is billed in. Fixed at purchase; see websitePricing.ts. */
+  currency?: PlanCurrency;
 }): SubscriptionPricingState {
   const plan = WEBSITE_TIER_PLANS[input.tier];
+  const price = priceFor(input.tier, input.currency ?? "GHS");
   const now = input.now ?? new Date();
   const promoEndsAt = addMonthsUtc(input.subscribedAt, plan.promoMonths);
   const revertedToStandard = Boolean(input.simulateAfter3Months) || now.getTime() >= promoEndsAt.getTime();
-  const currentMonthlyPrice = revertedToStandard ? plan.standardMonthlyPrice : plan.promoMonthlyPrice;
+  const currentMonthlyPrice = revertedToStandard ? price.standardMonthlyPrice : price.promoMonthlyPrice;
   const msLeft = Math.max(0, promoEndsAt.getTime() - now.getTime());
   const daysRemainingInPromo = revertedToStandard ? 0 : Math.ceil(msLeft / 86_400_000);
 
   const billingPhaseLabel = revertedToStandard
-    ? `Standard rate active ($${plan.standardMonthlyPrice}/mo — reverted from $${plan.promoMonthlyPrice}/mo after first 3 months)`
-    : `3-Month Intro Promo active ($${plan.promoMonthlyPrice}/mo for ${daysRemainingInPromo} more day${daysRemainingInPromo === 1 ? "" : "s"}, then reverts to $${plan.standardMonthlyPrice}/mo standard)`;
+    ? `Standard rate active (${price.standardDisplay}/mo — reverted from ${price.promoDisplay}/mo after first 3 months)`
+    : `3-Month Intro Promo active (${price.promoDisplay}/mo for ${daysRemainingInPromo} more day${daysRemainingInPromo === 1 ? "" : "s"}, then reverts to ${price.standardDisplay}/mo standard)`;
 
   return {
     tier: plan.tier,
     planName: plan.name,
-    currency: plan.currency,
-    promoMonthlyPrice: plan.promoMonthlyPrice,
-    standardMonthlyPrice: plan.standardMonthlyPrice,
+    currency: price.currency,
+    promoMonthlyPrice: price.promoMonthlyPrice,
+    standardMonthlyPrice: price.standardMonthlyPrice,
     currentMonthlyPrice,
-    priceDisplay: plan.priceDisplay,
+    priceDisplay: price.display,
     promoMonths: plan.promoMonths,
     subscribedAt: input.subscribedAt.toISOString(),
     promoEndsAt: promoEndsAt.toISOString(),
     revertedToStandard,
     daysRemainingInPromo,
     billingPhaseLabel,
-    nextBillingAmount: now.getTime() + 30 * 86_400_000 >= promoEndsAt.getTime() ? plan.standardMonthlyPrice : plan.promoMonthlyPrice,
+    nextBillingAmount: now.getTime() + 30 * 86_400_000 >= promoEndsAt.getTime() ? price.standardMonthlyPrice : price.promoMonthlyPrice,
   };
 }
 
-// Runtime state for test switching & usage tracking (persists across requests and syncs with DB when available)
-type UserRuntimeSubscription = {
-  email: string;
-  tier: WebsitePlanTier;
-  subscribedAt: Date;
-  simulateAfter3Months: boolean;
-  extraStorageBytes: number;
-  importsCount: number;
-  editsCount: number;
-  aiPromptsCount: number;
-};
-
-const runtimeSubscriptions = new Map<string, UserRuntimeSubscription>();
-let activeSwitchedUserEmail: string | null = null;
-
-function initRuntimeSubscriptions() {
-  if (runtimeSubscriptions.size > 0) return;
-  const now = new Date();
-  for (const seed of SUBSCRIBED_TEST_USERS) {
-    const subscribedAt = addMonthsUtc(now, -seed.subscribedMonthsAgo);
-    runtimeSubscriptions.set(seed.email.toLowerCase(), {
-      email: seed.email.toLowerCase(),
-      tier: seed.tier,
-      subscribedAt,
-      simulateAfter3Months: false,
-      extraStorageBytes: seed.initialStorageUsedBytes,
-      importsCount: seed.initialImportsUsed,
-      editsCount: seed.initialEditsUsed,
-      aiPromptsCount: seed.initialAiPromptsUsed,
-    });
-  }
-}
-initRuntimeSubscriptions();
-
+/**
+ * Who this request is for, and what they are entitled to.
+ *
+ * All of it comes from services/websiteEntitlement.ts now: the signed-in user
+ * and their subscription row. What used to be here — a Map of subscriptions in
+ * process memory, a shared "switched user" global, and a tier guessed from
+ * whether an email address contained "dan" or "owner" — decided what paying
+ * customers could do from things a request could carry or a restart could lose.
+ */
 export function getActiveSwitchedUserEmail(): string | null {
-  return activeSwitchedUserEmail;
+  return getSwitchedUserEmail();
 }
 
 export function setActiveSwitchedUserEmail(email: string | null): void {
-  initRuntimeSubscriptions();
-  activeSwitchedUserEmail = email ? email.trim().toLowerCase() : null;
+  setSwitchedUserEmail(email);
 }
 
-export function getUserRuntimeSubscription(email: string): UserRuntimeSubscription {
-  initRuntimeSubscriptions();
-  const normalized = email.trim().toLowerCase();
-  const existing = runtimeSubscriptions.get(normalized);
-  if (existing) return existing;
-
-  // Default for non-seeded accounts: Business (MANAGED) for Owner/internal staff, or Starter (EDITOR) for external
-  const isOwnerOrAdmin = normalized.includes("dan") || normalized.includes("owner") || normalized.endsWith("@dakyworld.local");
-  const created: UserRuntimeSubscription = {
-    email: normalized,
-    tier: isOwnerOrAdmin ? "MANAGED" : "EDITOR",
-    subscribedAt: new Date(Date.now() - 15 * 86_400_000),
-    simulateAfter3Months: false,
-    extraStorageBytes: 0,
-    importsCount: 0,
-    editsCount: 0,
-    aiPromptsCount: 0,
-  };
-  runtimeSubscriptions.set(normalized, created);
-  return created;
-}
-
-export function resolveEffectiveUserIdentity(req: Request): {
-  id: string;
-  email: string;
-  name: string;
-  tier: WebsitePlanTier;
-  isSwitchedTestUser: boolean;
-} {
-  initRuntimeSubscriptions();
-  const headerUser = typeof req.headers["x-dw-test-user"] === "string" ? req.headers["x-dw-test-user"].trim().toLowerCase() : null;
-  const targetEmail = headerUser || activeSwitchedUserEmail || req.dbUser?.email?.toLowerCase() || "dan@dakyworld.local";
-
-  const matchedSeed = SUBSCRIBED_TEST_USERS.find((u) => u.email.toLowerCase() === targetEmail);
-  if (matchedSeed) {
-    const sub = getUserRuntimeSubscription(matchedSeed.email);
-    return {
-      id: matchedSeed.id,
-      email: matchedSeed.email,
-      name: matchedSeed.name,
-      tier: sub.tier,
-      isSwitchedTestUser: true,
-    };
-  }
-
-  const sub = getUserRuntimeSubscription(targetEmail);
-  return {
-    id: req.dbUser?.id ?? "owner-user",
-    email: targetEmail,
-    name: req.dbUser?.name ?? "Dan Kwame Ayipah (Owner)",
-    tier: sub.tier,
-    isSwitchedTestUser: false,
-  };
+export async function resolveEffectiveUserIdentity(req: Request): Promise<Entitlement> {
+  return resolveEntitlement(req);
 }
 
 export async function computeUserStorageAndUsage(req: Request, siteId?: string) {
-  const identity = resolveEffectiveUserIdentity(req);
-  const sub = getUserRuntimeSubscription(identity.email);
-  const plan = WEBSITE_TIER_PLANS[sub.tier];
-  const simHeader = Number(req.headers["x-dw-simulate-months"] ?? req.query?.simulateMonths ?? 0);
-  const simulateAfter3Months = sub.simulateAfter3Months || (Number.isFinite(simHeader) && simHeader >= 3);
+  const identity = await resolveEntitlement(req);
+  const plan = WEBSITE_TIER_PLANS[identity.tier];
+  const simulateAfter3Months = identity.simulateAfter3Months;
+  const counters = await readUsage(identity.userId);
   const pricing = resolveSubscriptionPricing({
-    tier: sub.tier,
-    subscribedAt: sub.subscribedAt,
+    tier: identity.tier,
+    subscribedAt: identity.subscribedAt,
     simulateAfter3Months,
+    currency: (identity.currency === "USD" ? "USD" : "GHS"),
   });
 
   let dbAssetBytes = 0;
@@ -505,14 +443,14 @@ export async function computeUserStorageAndUsage(req: Request, siteId?: string) 
     // Fallback if database is unreachable in offline check mode
   }
 
-  const usedBytes = sub.extraStorageBytes + dbAssetBytes;
+  const usedBytes = dbAssetBytes;
   const quotaBytes = plan.storageQuotaBytes;
   const remainingBytes = Math.max(0, quotaBytes - usedBytes);
   const percentUsed = Math.min(100, Math.round((usedBytes / quotaBytes) * 1000) / 10);
 
   return {
     user: identity,
-    userId: identity.id,
+    userId: identity.userId,
     userEmail: identity.email,
     userName: identity.name,
     planCode: plan.tier,
@@ -539,22 +477,22 @@ export async function computeUserStorageAndUsage(req: Request, siteId?: string) 
       maxUploadFormatted: plan.maxUploadLabel,
       maxSingleAssetBytes: plan.maxUploadBytes,
       maxSingleAssetFormatted: plan.maxUploadLabel,
-      assetCount: dbAssetCount + Math.max(1, Math.round(sub.extraStorageBytes / (3 * MB))),
+      assetCount: dbAssetCount,
     },
     usage: {
       monthKey: new Date().toISOString().slice(0, 7),
-      importsUsed: sub.importsCount,
+      importsUsed: counters.imports,
       importsLimit: plan.importsLimit >= 99999 ? null : plan.importsLimit,
       importsLimitLabel: plan.importsLimitLabel,
-      importsRemaining: plan.importsLimit >= 99999 ? null : Math.max(0, plan.importsLimit - sub.importsCount),
-      editsUsed: sub.editsCount,
+      importsRemaining: plan.importsLimit >= 99999 ? null : Math.max(0, plan.importsLimit - counters.imports),
+      editsUsed: counters.edits,
       editsLimit: plan.editsLimit >= 99999 ? null : plan.editsLimit,
       editsLimitLabel: plan.editsLimitLabel,
-      editsRemaining: plan.editsLimit >= 99999 ? null : Math.max(0, plan.editsLimit - sub.editsCount),
-      aiPromptsUsed: sub.aiPromptsCount,
+      editsRemaining: plan.editsLimit >= 99999 ? null : Math.max(0, plan.editsLimit - counters.edits),
+      aiPromptsUsed: counters.aiPrompts,
       aiPromptsLimit: plan.aiPromptsLimit >= 99999 ? null : plan.aiPromptsLimit,
       aiPromptsLimitLabel: plan.aiPromptsLimitLabel,
-      aiPromptsRemaining: plan.aiPromptsLimit >= 99999 ? null : Math.max(0, plan.aiPromptsLimit - sub.aiPromptsCount),
+      aiPromptsRemaining: plan.aiPromptsLimit >= 99999 ? null : Math.max(0, plan.aiPromptsLimit - counters.aiPrompts),
     },
     features: plan.features,
     featureSummary: plan.featureHighlights,
@@ -586,10 +524,13 @@ export async function assertMediaStorageAllowance(req: Request, incomingBytes: n
   }
 }
 
-export function recordMediaStorageAdded(req: Request, addedBytes: number): void {
-  const identity = resolveEffectiveUserIdentity(req);
-  const sub = getUserRuntimeSubscription(identity.email);
-  sub.extraStorageBytes = Math.max(0, sub.extraStorageBytes + addedBytes);
+/**
+ * Storage needs no counter: what a customer is using is the sum of the asset
+ * rows they own, which the database already knows and which stays true when a
+ * deletion happens somewhere this function never sees.
+ */
+export function recordMediaStorageAdded(_req: Request, _addedBytes: number): void {
+  /* intentionally nothing */
 }
 
 /**
@@ -608,10 +549,9 @@ export async function assertImportAllowance(req: Request, siteId?: string): Prom
   }
 }
 
-export function recordImportUsed(req: Request): void {
-  const identity = resolveEffectiveUserIdentity(req);
-  const sub = getUserRuntimeSubscription(identity.email);
-  sub.importsCount += 1;
+export async function recordImportUsed(req: Request): Promise<void> {
+  const identity = await resolveEntitlement(req);
+  await bumpUsage(identity.userId, "imports");
 }
 
 /**
@@ -630,10 +570,9 @@ export async function assertEditAllowance(req: Request, siteId?: string): Promis
   }
 }
 
-export function recordEditUsed(req: Request): void {
-  const identity = resolveEffectiveUserIdentity(req);
-  const sub = getUserRuntimeSubscription(identity.email);
-  sub.editsCount += 1;
+export async function recordEditUsed(req: Request): Promise<void> {
+  const identity = await resolveEntitlement(req);
+  await bumpUsage(identity.userId, "edits");
 }
 
 /**
@@ -675,46 +614,96 @@ export async function assertTierFeatureAccess(
   }
 }
 
-export function recordAiPromptUsed(req: Request): void {
-  const identity = resolveEffectiveUserIdentity(req);
-  const sub = getUserRuntimeSubscription(identity.email);
-  sub.aiPromptsCount += 1;
+export async function recordAiPromptUsed(req: Request): Promise<void> {
+  const identity = await resolveEntitlement(req);
+  await bumpUsage(identity.userId, "aiPrompts");
 }
 
 /**
- * Automatically reverts any active WebsitePurchase subscriptions that have completed
- * their first 3 months from promotional pricing ($3, $10, $25) to standard pricing ($5, $16, $45).
+ * Moves a subscription off its introductory price once the three months are up —
+ * at the payment processor as well as here, in whichever currency it was sold.
  */
 export async function revertExpiredWebsitePurchasePrices(now = new Date()): Promise<number> {
-  try {
-    const activePurchases = await prisma.websitePurchase.findMany({
-      where: { status: "ACTIVE" },
-      select: { id: true, tier: true, monthlyPrice: true, activatedAt: true, createdAt: true, notes: true },
-    });
+  const activePurchases = await prisma.websitePurchase
+    .findMany({
+      where: { status: "ACTIVE", standardPriceAppliedAt: null },
+      select: {
+        id: true,
+        tier: true,
+        email: true,
+        currency: true,
+        monthlyPrice: true,
+        standardMonthlyPrice: true,
+        activatedAt: true,
+        createdAt: true,
+        notes: true,
+        paymentAuthorization: true,
+        providerSubscriptionCode: true,
+        product: { select: { name: true } },
+      },
+    })
+    .catch(() => []);
 
-    let revertedCount = 0;
-    for (const purchase of activePurchases) {
-      const plan = WEBSITE_TIER_PLANS[purchase.tier];
-      if (!plan) continue;
-      const startDate = purchase.activatedAt ?? purchase.createdAt;
-      const promoEndsAt = addMonthsUtc(startDate, plan.promoMonths);
-      const currentPrice = Number(purchase.monthlyPrice);
+  let revertedCount = 0;
+  for (const purchase of activePurchases) {
+    const plan = WEBSITE_TIER_PLANS[purchase.tier];
+    if (!plan) continue;
+    const currency = purchase.currency === "USD" ? "USD" : "GHS";
+    const price = priceFor(purchase.tier, currency);
+    // The price fixed at purchase wins over today's price list: somebody who
+    // bought at one standard rate does not get moved onto a new one by an
+    // edit to this file.
+    const standard = Number(purchase.standardMonthlyPrice ?? price.standardMonthlyPrice);
+    const startDate = purchase.activatedAt ?? purchase.createdAt;
+    const promoEndsAt = addMonthsUtc(startDate, plan.promoMonths);
+    if (now.getTime() < promoEndsAt.getTime()) continue;
+    if (!(Number(purchase.monthlyPrice) < standard)) continue;
 
-      if (now.getTime() >= promoEndsAt.getTime() && currentPrice < plan.standardMonthlyPrice) {
-        await prisma.websitePurchase.update({
-          where: { id: purchase.id },
-          data: {
-            monthlyPrice: plan.standardMonthlyPrice.toFixed(2),
-            notes: `${purchase.notes ? purchase.notes + " | " : ""}Auto-reverted from $${plan.promoMonthlyPrice}/mo 3-month intro rate to $${plan.standardMonthlyPrice}/mo standard rate on ${now.toISOString().slice(0, 10)}.`,
-          },
+    // The processor first. Writing the new price here while Paystack goes on
+    // charging the old one is what this function used to do, and it is the
+    // shape of the fault: every screen says the standard rate, every charge is
+    // the promotional one, and nothing ever disagrees loudly enough to notice.
+    let moved: { planCode: string; subscriptionCode: string; nextPaymentAt: Date | null } | null = null;
+    if (purchase.providerSubscriptionCode && purchase.paymentAuthorization) {
+      try {
+        moved = await moveSubscriptionToPlan({
+          subscriptionCode: purchase.providerSubscriptionCode,
+          email: purchase.email,
+          authorizationCode: purchase.paymentAuthorization,
+          newPlanName: `${purchase.product.name} — standard rate`,
+          newAmount: standard,
+          currency,
         });
-        revertedCount += 1;
+      } catch (error) {
+        // Leave `standardPriceAppliedAt` unset so the next tick tries again,
+        // and say so: an unbilled month is a thing somebody has to act on.
+        console.error(
+          `[tiers] could not move ${purchase.email} onto the standard rate — still being charged the promotional price:`,
+          (error as Error).message,
+        );
+        continue;
       }
     }
-    return revertedCount;
-  } catch {
-    return 0;
+
+    await prisma.websitePurchase.update({
+      where: { id: purchase.id },
+      data: {
+        monthlyPrice: standard.toFixed(2),
+        standardMonthlyPrice: standard.toFixed(2),
+        standardPriceAppliedAt: now,
+        ...(moved
+          ? {
+              providerPlanCode: moved.planCode,
+              providerSubscriptionCode: moved.subscriptionCode,
+              nextBillingAt: moved.nextPaymentAt ?? undefined,
+            }
+          : {}),
+        notes: `${purchase.notes ? purchase.notes + " | " : ""}Reverted from ${price.promoDisplay}/mo intro rate to ${price.standardDisplay}/mo standard on ${now.toISOString().slice(0, 10)}${moved ? "" : " (no processor subscription — invoice manually)"}.`,
+      },
+    });
+    revertedCount += 1;
   }
+  return revertedCount;
 }
 
 /**
@@ -885,13 +874,15 @@ export function registerWebsiteTierRoutes(router: Router) {
     handler(async (req, res) => {
       const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
       const status = await computeUserStorageAndUsage(req, siteId);
-      const testUsers = SUBSCRIBED_TEST_USERS.map((seed) => {
-        const sub = getUserRuntimeSubscription(seed.email);
-        const plan = WEBSITE_TIER_PLANS[sub.tier];
+      // Only where nothing is deployed. On the live service these accounts are
+      // not seeded at all, and printing their passwords would be worse than
+      // pointless.
+      const testUsers = (TEST_SWITCHING_ALLOWED ? SUBSCRIBED_TEST_USERS : []).map((seed) => {
+        const plan = WEBSITE_TIER_PLANS[seed.tier];
         const pricing = resolveSubscriptionPricing({
-          tier: sub.tier,
-          subscribedAt: sub.subscribedAt,
-          simulateAfter3Months: sub.simulateAfter3Months,
+          tier: seed.tier,
+          subscribedAt: addMonthsUtc(new Date(), -seed.subscribedMonthsAgo),
+          simulateAfter3Months: false,
         });
         return {
           id: seed.id,
@@ -899,8 +890,8 @@ export function registerWebsiteTierRoutes(router: Router) {
           password: seed.password,
           name: seed.name,
           businessName: seed.businessName,
-          tier: sub.tier,
-          planCode: sub.tier,
+          tier: seed.tier,
+          planCode: seed.tier,
           tierLabel: plan.name,
           planName: plan.name,
           priceDisplay: plan.priceDisplay,
@@ -910,11 +901,11 @@ export function registerWebsiteTierRoutes(router: Router) {
           revertedToStandard: pricing.revertedToStandard,
           daysRemainingInPromo: pricing.daysRemainingInPromo,
           storageLabel: plan.storageQuotaLabel,
-          storageUsedFormatted: formatBytes(sub.extraStorageBytes),
+          storageUsedFormatted: formatBytes(seed.initialStorageUsedBytes),
           storageQuotaFormatted: plan.storageQuotaLabel,
-          importsUsed: sub.importsCount,
+          importsUsed: seed.initialImportsUsed,
           importsLimitLabel: plan.importsLimitLabel,
-          editsUsed: sub.editsCount,
+          editsUsed: seed.initialEditsUsed,
           editsLimitLabel: plan.editsLimitLabel,
           isActiveUser: status.user.email.toLowerCase() === seed.email.toLowerCase(),
         };
@@ -951,15 +942,27 @@ export function registerWebsiteTierRoutes(router: Router) {
     }),
   );
 
+  /**
+   * Work on the tiers as somebody else, locally.
+   *
+   * It cannot grant a tier any more, because a tier now follows a subscription
+   * row: to see the product as a Pro customer, switch to an account that has a
+   * Pro subscription. Refused outright wherever anything is deployed — this is
+   * a development convenience, and a convenience that can change what somebody
+   * is entitled to has no business existing on a live service.
+   */
   router.post(
     "/tier-status/switch-user",
     handler(async (req, res) => {
+      if (!TEST_SWITCHING_ALLOWED) {
+        throw new WebsiteError(
+          403,
+          "Switching accounts is a local development tool and is disabled here. A plan follows the subscription on the account you are signed in as.",
+        );
+      }
       const body = z
         .object({
           email: z.string().email().nullable().optional(),
-          tier: z.enum(["EDITOR", "CARE", "MANAGED"]).optional(),
-          simulateAfter3Months: z.boolean().optional(),
-          simulateMonths: z.number().optional(),
           resetUsage: z.boolean().optional(),
         })
         .parse(req.body ?? {});
@@ -968,28 +971,13 @@ export function registerWebsiteTierRoutes(router: Router) {
         setActiveSwitchedUserEmail(body.email);
       }
 
-      const identity = resolveEffectiveUserIdentity(req);
-      const sub = getUserRuntimeSubscription(identity.email);
-
-      if (body.tier !== undefined) {
-        sub.tier = body.tier;
-      }
-      if (body.simulateAfter3Months !== undefined) {
-        sub.simulateAfter3Months = body.simulateAfter3Months;
-      } else if (body.simulateMonths !== undefined) {
-        sub.simulateAfter3Months = body.simulateMonths >= 3;
-      }
-      if (body.resetUsage) {
-        sub.importsCount = 0;
-        sub.editsCount = 0;
-        sub.aiPromptsCount = 0;
+      const identity = await resolveEntitlement(req);
+      if (body.resetUsage && identity.userId) {
+        await prisma.websiteUsage.deleteMany({ where: { userId: identity.userId, period: usagePeriod() } });
       }
 
       const status = await computeUserStorageAndUsage(req);
-      res.json({
-        ok: true,
-        ...status,
-      });
+      res.json({ ok: true, ...status });
     }),
   );
 }

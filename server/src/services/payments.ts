@@ -150,10 +150,26 @@ export async function settleFromProvider(reference: string): Promise<{ invoice: 
     data: { status: "PAID", paidAt: status.paidAt ?? new Date(), paidVia },
   });
 
-  await prisma.websitePurchase.updateMany({
+  const settledPurchases = await prisma.websitePurchase.updateMany({
     where: { invoiceId: invoice.id, status: "PAYMENT_PENDING" },
     data: { status: "SETUP_PAID", setupPaidAt: status.paidAt ?? new Date(), paymentAuthorization },
   });
+
+  // Start the recurring subscription here rather than waiting for somebody to
+  // press a button on the Purchases screen. A customer who has paid at two in
+  // the morning owns the product from that moment; the version of this that
+  // needed a person meant the first month was taken and the second one never
+  // was until somebody noticed. A failure is logged and left for the screen —
+  // the payment itself has settled and must not be rolled back over it.
+  if (settledPurchases.count > 0) {
+    const purchase = await prisma.websitePurchase.findFirst({ where: { invoiceId: invoice.id }, select: { id: true, email: true } });
+    if (purchase) {
+      const { updatePurchaseStatus } = await import("./websiteCommerce.js");
+      await updatePurchaseStatus(purchase.id, "ACTIVE").catch((error) =>
+        console.error(`[payments] recurring billing did not start for ${purchase.email}:`, (error as Error).message),
+      );
+    }
+  }
 
   // Lifetime value is the client's, and it is what the dashboard and the
   // upsell analysis both read. Incremented only on the transition, which is

@@ -2,7 +2,9 @@ import type { ManagedBookingStatus, WebsitePurchaseStatus } from "@prisma/client
 import { prisma } from "../lib/prisma.js";
 import { createNumberedInvoice } from "./invoiceNumber.js";
 import { raisePayment } from "./payments.js";
-import { createSubscription, createSubscriptionPlan } from "../lib/paystack.js";
+import { cancelSubscription, createSubscription, createSubscriptionPlan } from "../lib/paystack.js";
+import { priceFor, resolveCurrency, type PlanCurrency } from "./websitePricing.js";
+import { ensureCustomerAccount, sendSetPasswordLink } from "./accountAccess.js";
 import { fetchWebsiteText } from "../lib/websiteFetch.js";
 import { discoverFields } from "./website/index.js";
 import { WebsiteError } from "./website/site.js";
@@ -103,22 +105,32 @@ type PurchaseInput = {
   phone?: string;
   websiteUrl: string;
   notes?: string;
+  /** ISO country code from the checkout form. Ghana is billed in cedis. */
+  country?: string | null;
+  /** An explicit choice on the pricing page wins over the country. */
+  currency?: string | null;
 };
 
 export async function startWebsitePurchase(input: PurchaseInput) {
   const tierKey = WEBSITE_TIERS[input.productKey];
-  const tierPlan = WEBSITE_TIER_PLANS[tierKey];
   const product = await prisma.product.findFirst({ where: { key: input.productKey, active: true } });
   if (!product) throw new Error("That website plan is not available.");
   const compatibility = await assessPurchaseCompatibility(input.websiteUrl);
   if (compatibility.status === "NOT_SUPPORTED") throw new WebsiteError(422, `This website is not supported by the editor. ${compatibility.notes}`);
-  const setupPrice = Number(product.setupPrice ?? 0);
-  const monthlyPrice = Number(product.monthlyPrice ?? tierPlan.promoMonthlyPrice);
+
+  // Ghana pays in cedis, everybody else in dollars, and the price comes from
+  // the table for that currency rather than from a conversion. The catalogue's
+  // own price is used only where it matches the currency the customer is being
+  // billed in — otherwise it is a number in the wrong money.
+  const currency: PlanCurrency = resolveCurrency({ currency: input.currency, country: input.country });
+  const price = priceFor(tierKey, currency);
+  const setupPrice = product.currency === currency ? Number(product.setupPrice ?? 0) : 0;
+  const monthlyPrice = price.promoMonthlyPrice;
   const isAnnual = input.billingCycle === "annual";
   const recurringAmount = isAnnual ? monthlyPrice * 10 : monthlyPrice;
   const upfrontAmount = setupPrice > 0 ? setupPrice : recurringAmount;
   if (!(upfrontAmount > 0)) throw new Error("This plan has no payment amount configured.");
-  const promoEndsAt = addMonthsUtc(new Date(), tierPlan.promoMonths);
+  const promoEndsAt = addMonthsUtc(new Date(), WEBSITE_TIER_PLANS[tierKey].promoMonths);
 
   const email = input.email.toLowerCase();
   const existing = await prisma.client.findFirst({ where: { email } });
@@ -130,22 +142,48 @@ export async function startWebsitePurchase(input: PurchaseInput) {
     ? `${product.name} website setup`
     : isAnnual
       ? `${product.name} annual subscription (12 months — 2 months free)`
-      : `${product.name} subscription ($${tierPlan.promoMonthlyPrice}/mo for first 3 months, then reverts to $${tierPlan.standardMonthlyPrice}/mo standard)`;
+      : `${product.name} subscription (${price.promoDisplay}/mo for first 3 months, then reverts to ${price.standardDisplay}/mo standard)`;
 
   const invoice = await createNumberedInvoice((invoiceNumber) => prisma.invoice.create({ data: {
-    clientId: client.id, invoiceNumber, currency: product.currency, amountTotal: upfrontAmount,
+    clientId: client.id, invoiceNumber, currency, amountTotal: upfrontAmount,
     dueDate: new Date(Date.now() + 7 * 86_400_000),
     lineItems: { create: [{ description: lineItemDescription, quantity: 1, unitPrice: upfrontAmount, amount: upfrontAmount }] },
   } }));
 
-  const promoNote = `3-Month Promo ($${tierPlan.promoMonthlyPrice}/mo -> reverts to $${tierPlan.standardMonthlyPrice}/mo standard after ${promoEndsAt.toISOString().slice(0, 10)})`;
+  // The account exists from this moment, with no password on it. What makes it
+  // usable is the link sent once the payment is raised: nothing is emailed to
+  // somebody who abandoned the checkout page, and nobody has to be told a
+  // password by a human.
+  const account = await ensureCustomerAccount({ email, name: input.contactName, businessName: input.businessName });
+
+  const promoNote = `3-Month Promo (${price.promoDisplay}/mo -> reverts to ${price.standardDisplay}/mo standard after ${promoEndsAt.toISOString().slice(0, 10)})`;
   const purchase = await prisma.websitePurchase.create({ data: {
     clientId: client.id, invoiceId: invoice.id, productId: product.id, tier: WEBSITE_TIERS[input.productKey],
     businessName: input.businessName, contactName: input.contactName, email: input.email.toLowerCase(), phone: input.phone,
-    websiteUrl: input.websiteUrl, notes: input.notes ? `${input.notes} | ${promoNote}` : promoNote, compatibilityStatus: compatibility.status, compatibilityNotes: compatibility.notes, monthlyPrice: product.monthlyPrice, setupPrice, currency: product.currency,
+    websiteUrl: input.websiteUrl, notes: input.notes ? `${input.notes} | ${promoNote}` : promoNote, compatibilityStatus: compatibility.status, compatibilityNotes: compatibility.notes,
+    monthlyPrice: monthlyPrice.toFixed(2), standardMonthlyPrice: price.standardMonthlyPrice.toFixed(2), setupPrice, currency,
+    userId: account.user.id,
   } });
   const payment = await raisePayment(invoice.id, "paystack", { callbackUrl: "https://dakyworld.com/website-builder?payment=returned#price" });
-  return { purchaseId: purchase.id, status: purchase.status, compatibility, paymentUrl: payment.url, promoEndsAt: promoEndsAt.toISOString(), promoMonthlyPrice: tierPlan.promoMonthlyPrice, standardMonthlyPrice: tierPlan.standardMonthlyPrice };
+  if (account.created) {
+    // A failure here must not lose the purchase: the customer has a payment
+    // link in front of them, and a missing welcome email is recoverable from
+    // the Purchases screen. It is logged rather than thrown.
+    await sendSetPasswordLink(account.user, "purchase").catch((error) =>
+      console.error(`[commerce] could not send the set-password link to ${account.user.email}:`, (error as Error).message),
+    );
+  }
+  return {
+    purchaseId: purchase.id,
+    status: purchase.status,
+    compatibility,
+    paymentUrl: payment.url,
+    currency,
+    promoEndsAt: promoEndsAt.toISOString(),
+    promoMonthlyPrice: price.promoMonthlyPrice,
+    standardMonthlyPrice: price.standardMonthlyPrice,
+    priceDisplay: price.display,
+  };
 }
 
 export async function createManagedBooking(input: { businessName: string; contactName: string; email: string; phone: string; websiteUrl: string; reason: string; goals: string; notes?: string; requestedAt: Date }) {
@@ -174,4 +212,57 @@ export async function updatePurchaseStatus(id: string, status: WebsitePurchaseSt
 
 export async function updateBooking(id: string, data: { status?: ManagedBookingStatus; requestedAt?: Date; adminNotes?: string }) {
   return prisma.managedBooking.update({ where: { id }, data });
+}
+
+/**
+ * Ends a subscription at the end of what the customer has paid for.
+ *
+ * Not immediately: they bought the month, their website is running on it, and
+ * taking the editor away the moment they click cancel would be taking back
+ * something already paid for. The processor is told straight away so no
+ * further charge is raised; `endsAt` is what the entitlement layer reads.
+ */
+export async function cancelWebsiteSubscription(input: { purchaseId: string; reason?: string | null; now?: Date }) {
+  const now = input.now ?? new Date();
+  const purchase = await prisma.websitePurchase.findUnique({ where: { id: input.purchaseId } });
+  if (!purchase) throw new WebsiteError(404, "That subscription no longer exists.");
+  if (purchase.cancelRequestedAt) return purchase;
+
+  if (purchase.providerSubscriptionCode) {
+    await cancelSubscription(purchase.providerSubscriptionCode).catch((error) => {
+      // Worth failing loudly: a cancellation that did not reach Paystack means
+      // the customer is still being charged for something we have told them is
+      // over, which is the worst of the two directions this can fail in.
+      throw new WebsiteError(502, `The payment processor refused the cancellation: ${(error as Error).message}. Nothing has been changed — try again.`);
+    });
+  }
+
+  const endsAt = purchase.nextBillingAt && purchase.nextBillingAt.getTime() > now.getTime()
+    ? purchase.nextBillingAt
+    : addMonthsUtc(now, 1);
+
+  return prisma.websitePurchase.update({
+    where: { id: purchase.id },
+    data: {
+      cancelRequestedAt: now,
+      cancelReason: input.reason?.slice(0, 500) ?? null,
+      endsAt,
+      status: "CANCELLED",
+      providerSubscriptionCode: null,
+    },
+  });
+}
+
+/**
+ * A renewal the processor could not take.
+ *
+ * Counted rather than acted on immediately: a card declined once is usually a
+ * card declined once. The count is what a dunning email and, eventually, a
+ * suspension read.
+ */
+export async function recordFailedRenewal(purchaseId: string, now = new Date()) {
+  return prisma.websitePurchase.update({
+    where: { id: purchaseId },
+    data: { failedPaymentCount: { increment: 1 }, lastPaymentFailedAt: now },
+  });
 }

@@ -26,6 +26,8 @@ import {
   registerWebsiteTierRoutes,
 } from "../services/websiteTierPlans.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, registerWebsitePublishJobs, startPublishJob } from "../services/websitePublishJobs.js";
+import { ensureHostedAddress, registerWebsiteHosting } from "../services/websiteHosting.js";
+import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -74,13 +76,19 @@ websiteRouter.use(websiteAccessGate);
 // The API already has a global ceiling. Expensive mutations get a separate,
 // per-user budget so preview reads and ordinary typing never consume it.
 const expensiveWebsiteWrite = rateLimit({ windowMs: 60_000, max: 20, message: "Too many publishing or assistant requests. Try again in {minutes}.", key: req => req.dbUser?.id ?? req.ip ?? "local" });
+const websiteImportLimit = rateLimit({ windowMs: 10 * 60_000, max: 12, message: "Too many website imports. Try again in {minutes}.", key: req => req.dbUser?.id ?? req.ip ?? "local" });
 websiteRouter.use((req, res, next) => {
   if (req.method === "POST" && /\/(publish|structure|assistant|agent|rollback)(?:\/|$)/.test(req.path)) return expensiveWebsiteWrite(req, res, next);
+  // An import fetches somebody else's website and parses the whole document, so
+  // it costs more than a publish and is worth a tighter bucket of its own.
+  if (req.method === "POST" && /\/(import|pages\/import|fetch)(?:\/|$)/.test(req.path)) return websiteImportLimit(req, res, next);
   next();
 });
 
 websiteRouter.use(json({ limit: "8mb" }));
 registerWebsiteTierRoutes(websiteRouter);
+registerWebsiteHosting(websiteRouter);
+registerSubscriberSelfService(websiteRouter);
 
 // Tier feature enforcement across SEO, AI Assistant, AI Builder Agent, and Source Editor routes
 websiteRouter.use((req, _res, next) => {
@@ -89,10 +97,10 @@ websiteRouter.use((req, _res, next) => {
       await assertTierFeatureAccess(req, "sourceCodeEditor");
     } else if (/\/agent(?:\/|$)/.test(req.path)) {
       await assertTierFeatureAccess(req, "aiBuilderAgent");
-      if (req.method === "POST") recordAiPromptUsed(req);
+      if (req.method === "POST") await recordAiPromptUsed(req);
     } else if (/\/(?:assistant|suggest|ai)(?:\/|$)/.test(req.path)) {
       await assertTierFeatureAccess(req, "aiAssistant");
-      if (req.method === "POST") recordAiPromptUsed(req);
+      if (req.method === "POST") await recordAiPromptUsed(req);
     } else if (/\/seo(?:\/|$)/.test(req.path)) {
       await assertTierFeatureAccess(req, "seoInspector");
     }
@@ -675,7 +683,7 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
 
     const renderedDraftHtml = applyValues(editingSource(source.html, values), fieldValues(values)).html;
     await syncDemoFromSitePage(site, page.id, renderedDraftHtml, false);
-    recordEditUsed(req);
+    await recordEditUsed(req);
 
     res.json({
       savedAt: saved?.draftSavedAt ?? null,
@@ -730,7 +738,7 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
     });
     const renderedStructureHtml = applyValues(editingSource(source.html, result.values), fieldValues(result.values)).html;
     await syncDemoFromSitePage(site, page.id, renderedStructureHtml, false);
-    recordEditUsed(req);
+    await recordEditUsed(req);
     res.json({ revision: body.ifRevision + 1, selectedId: result.selectedId });
   } catch (error) { next(error); }
 });
@@ -955,6 +963,13 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       // From here the change is in the repository whatever else happens. The
       // job carries what to look for on the live page, because by the time
       // anybody looks the draft this came from will have been cleared.
+      // What the OS serves for a hosted site. Written on every publish, for a
+      // site with a repository too: the repository is still the record there,
+      // and having the same bytes here means a customer can be given a working
+      // address while their DNS is still pointing somewhere else.
+      await tx.sitePage.update({ where: { id: page.id }, data: { publishedHtml: plan.html } });
+      await ensureHostedAddress(site.id);
+
       await publishJobCommitted({ id: job.id, commit, site, page, html: plan.html, summary });
 
       // The website is where the workforce reads what this company sells, so a

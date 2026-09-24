@@ -172,6 +172,43 @@ export async function createSubscriptionPlan(input: { name: string; amount: numb
   return data.plan_code;
 }
 
+/**
+ * Moves a subscription onto a new price.
+ *
+ * Paystack's plan amount is fixed once customers are on it, so raising a price
+ * means a second plan and moving the subscriber across: the old subscription is
+ * disabled and a new one is created against the new plan, using the card
+ * authorisation the customer has already given. Doing it any other way — only
+ * writing the new number into our own database — leaves the processor charging
+ * the old amount forever, which is exactly the fault this function exists for.
+ *
+ * `emailToken` is required to disable a subscription and comes back when it is
+ * fetched, so the fetch is part of the operation rather than a caller's job.
+ */
+export async function moveSubscriptionToPlan(input: {
+  subscriptionCode: string;
+  email: string;
+  authorizationCode: string;
+  newPlanName: string;
+  newAmount: number;
+  currency: string;
+}): Promise<{ planCode: string; subscriptionCode: string; nextPaymentAt: Date | null }> {
+  const existing = await call<{ email_token: string }>(`/subscription/${encodeURIComponent(input.subscriptionCode)}`, { method: "GET" });
+  await call("/subscription/disable", {
+    method: "POST",
+    body: { code: input.subscriptionCode, token: existing.email_token },
+  });
+  const planCode = await createSubscriptionPlan({ name: input.newPlanName, amount: input.newAmount, currency: input.currency });
+  const created = await createSubscription({ email: input.email, planCode, authorizationCode: input.authorizationCode });
+  return { planCode, subscriptionCode: created.code, nextPaymentAt: created.nextPaymentAt };
+}
+
+/** Ends a subscription at the processor. The customer keeps what they paid for. */
+export async function cancelSubscription(subscriptionCode: string): Promise<void> {
+  const existing = await call<{ email_token: string }>(`/subscription/${encodeURIComponent(subscriptionCode)}`, { method: "GET" });
+  await call("/subscription/disable", { method: "POST", body: { code: subscriptionCode, token: existing.email_token } });
+}
+
 export async function createSubscription(input: { email: string; planCode: string; authorizationCode: string }) {
   const data = await call<{ subscription_code: string; next_payment_date?: string }>("/subscription", { method: "POST", body: { customer: input.email, plan: input.planCode, authorization: input.authorizationCode } });
   return { code: data.subscription_code, nextPaymentAt: data.next_payment_date ? new Date(data.next_payment_date) : null };

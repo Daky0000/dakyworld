@@ -17,6 +17,12 @@ import { consumeRecoveryCode, generateRecoveryCodes, generateTotpSecret, totpUri
 import { requireAuth } from "../middleware/auth.js";
 import { WITH_ACCESS, effectivePermissions } from "../lib/accessRoles.js";
 import { COMPANY } from "../services/dakyworld.js";
+import {
+  completePasswordFromToken,
+  requestPasswordReset,
+  sendEmailVerification,
+  verifyEmailFromToken,
+} from "../services/accountAccess.js";
 
 export const authRouter = Router();
 
@@ -335,6 +341,85 @@ authRouter.post("/2fa/recovery-codes", requireAuth, async (req, res, next) => {
     const { codes, hashes } = generateRecoveryCodes();
     await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryHashes: hashes } });
     res.json({ recoveryCodes: codes });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------- getting in without an Owner -- */
+
+/**
+ * The three links from services/accountAccess.ts, as routes.
+ *
+ * All four answer the same way whether or not the address is known. A reset
+ * form that says "no such account" is an account-existence oracle, and one
+ * that says "check your inbox" either way costs the honest user nothing.
+ */
+
+const resetRequestLimit = rateLimit({
+  windowMs: 60 * 60_000,
+  max: 5,
+  message: "Too many password reset requests. Try again in {minutes}.",
+});
+const tokenAttemptLimit = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 20,
+  message: "Too many attempts. Try again in {minutes}.",
+});
+
+authRouter.post("/password/forgot", resetRequestLimit, async (req, res, next) => {
+  try {
+    const { email } = z.object({ email: z.string().email().max(200) }).parse(req.body ?? {});
+    await requestPasswordReset(email);
+    res.json({ ok: true, message: "If that address has an account, a reset link is on its way." });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Sets a password from a reset link or from the first-password link a purchase
+ * sends, and signs the person straight in — asking somebody to type the
+ * password they have just chosen into a second form achieves nothing.
+ */
+authRouter.post("/password/token", tokenAttemptLimit, async (req, res, next) => {
+  try {
+    const { token, password, kind } = z
+      .object({
+        token: z.string().min(10).max(500),
+        password: z.string().min(10).max(200),
+        kind: z.enum(["PASSWORD_RESET", "SET_PASSWORD"]).default("SET_PASSWORD"),
+      })
+      .parse(req.body ?? {});
+    await assertPasswordAcceptable(password);
+    const user = await completePasswordFromToken(token, password, kind);
+    const session = await createSession(user.id);
+    setSessionCookie(res, session);
+    const full = await prisma.user.findUnique({ where: { id: user.id }, include: WITH_ACCESS });
+    res.json({ ok: true, user: full ? publicUser(full) : null });
+  } catch (err) {
+    if (err instanceof WeakPasswordError) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+authRouter.post("/email/verify", tokenAttemptLimit, async (req, res, next) => {
+  try {
+    const { token } = z.object({ token: z.string().min(10).max(500) }).parse(req.body ?? {});
+    const user = await verifyEmailFromToken(token);
+    res.json({ ok: true, email: user.email, verifiedAt: user.emailVerifiedAt });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Asks for a new confirmation email, for somebody who never opened the first. */
+authRouter.post("/email/verify/resend", requireAuth, resetRequestLimit, async (req, res, next) => {
+  try {
+    const user = req.dbUser!;
+    if (user.emailVerifiedAt) return res.json({ ok: true, alreadyVerified: true });
+    await sendEmailVerification(user);
+    res.json({ ok: true, alreadyVerified: false });
   } catch (err) {
     next(err);
   }

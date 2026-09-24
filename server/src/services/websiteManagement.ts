@@ -168,7 +168,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     }, include: { pages: { select: { id: true } } } });
     if (html) {
       await captureHtmlImagesIntoMediaLibrary(req, site.id, html);
-      recordImportUsed(req);
+      await recordImportUsed(req);
     }
     res.status(201).json({ id: site.id, pageId: site.pages[0]?.id ?? null });
   }));
@@ -236,7 +236,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
       throw error;
     });
-    recordImportUsed(req);
+    await recordImportUsed(req);
     res.status(201).json({ id: page.id, fields: count, capturedMedia });
   }));
 

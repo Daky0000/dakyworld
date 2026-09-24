@@ -72,7 +72,8 @@ model AccessRole {
   /// Keys from lib/permissions.ts. Unknown keys are ignored on read.
   permissions String[] @default([])
 
-  sortOrder Int      @default(100)
+  sortOrder Int @default(100)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -125,8 +126,16 @@ model User {
   // thirty seconds it stays arithmetically valid.
   totpLastStep       Int?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  /// Set when the address was proved to belong to them. Null means they have
+  /// never followed the link, which is allowed for a colleague an Owner
+  /// invited and is not allowed for somebody who signed themselves up.
+  emailVerifiedAt DateTime?
+
+  authTokens           AuthToken[]
+  websiteSubscriptions WebsitePurchase[] @relation("WebsiteSubscriber")
+  websiteUsage         WebsiteUsage[]
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
 
   assignedProjects    ProjectAssignment[]
   assignedTasks       Task[]
@@ -1518,11 +1527,37 @@ model WebsitePurchase {
   paymentAuthorization     String?
   providerPlanCode         String?
   providerSubscriptionCode String?
-  createdAt                DateTime              @default(now())
-  updatedAt                DateTime              @updatedAt
+  /// The account that owns this subscription. Entitlement is read from here and
+  /// nowhere else: what somebody is allowed to do must follow from who they are
+  /// signed in as, never from an address they typed or a header they sent.
+  user                     User?                 @relation("WebsiteSubscriber", fields: [userId], references: [id], onDelete: SetNull)
+  userId                   String?
+
+  /// The standard price this customer's promotional one reverts to, fixed at
+  /// purchase. A later change to the price list must not silently re-price
+  /// somebody who already bought.
+  standardMonthlyPrice   Decimal?  @db.Decimal(12, 2)
+  /// Set when the promotional period ended and the standard price was applied
+  /// at the processor as well as here.
+  standardPriceAppliedAt DateTime?
+
+  /// Cancellation. A cancelled subscription keeps serving until `endsAt` — the
+  /// customer paid for the period, and taking their website down early would
+  /// be taking something they paid for.
+  cancelRequestedAt DateTime?
+  cancelReason      String?
+  endsAt            DateTime?
+
+  /// Failed renewals, for dunning. Reset to zero by a payment that succeeds.
+  failedPaymentCount  Int       @default(0)
+  lastPaymentFailedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status, createdAt])
   @@index([clientId, tier])
+  @@index([userId, status])
 }
 
 model ManagedBooking {
@@ -4164,6 +4199,23 @@ model Site {
   client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
   clientId String?
 
+  /// --- Hosting on the OS ---------------------------------------------------
+  /// A site with no repository has nowhere for a publish to go. With this set,
+  /// the OS serves the published pages itself, at `<hostedSlug>.<WEBSITE_HOST_DOMAIN>`
+  /// and at `customDomain` once that domain is verified.
+  hostedEnabled Boolean @default(false)
+  /// The subdomain label. Defaults to `slug`, but is separate from it: a slug
+  /// is an identifier people rename, and a hostname is a promise made to the
+  /// public that must not move underneath them.
+  hostedSlug    String? @unique
+
+  /// The customer's own domain. Served only once `customDomainVerifiedAt` is
+  /// set, so nobody can claim a hostname they do not control by typing it in.
+  customDomain           String?   @unique
+  /// The value they publish as a TXT record at `_dakyworld.<domain>`.
+  customDomainToken      String?
+  customDomainVerifiedAt DateTime?
+
   pages          SitePage[]
   sharedElements SharedElement[]
   publishJobs    PublishJob[]
@@ -4219,6 +4271,11 @@ model SitePage {
   versions        SitePageVersion[]
   sharedInstances SharedElementInstance[]
   publishJobs     PublishJob[]
+
+  /// The published HTML, for a hosted site. The repository is the record for a
+  /// site that has one; this is the record for a site that does not, and it is
+  /// what the public hosting route serves. A draft never appears here.
+  publishedHtml String?
 
   lastPublishedAt DateTime?
 
@@ -4731,4 +4788,54 @@ model LeadConcept {
   updatedAt DateTime @updatedAt
 
   @@index([stage])
+}
+
+enum AuthTokenKind {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+  /// The first password, for an account created by a purchase or an invite.
+  SET_PASSWORD
+}
+
+/// A single-use link sent to an email address.
+///
+/// Only the hash is kept, for the same reason a password is only kept hashed:
+/// a database dump must not hand over the ability to take over every account
+/// that has an unexpired link. `usedAt` makes it single-use even inside its
+/// lifetime, and expiry is checked rather than relied on to delete the row.
+model AuthToken {
+  id        String        @id @default(cuid())
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  kind      AuthTokenKind
+  /// SHA-256 of the token in the link.
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  @@index([userId, kind])
+  @@index([expiresAt])
+}
+
+/// What one account used in one calendar month.
+///
+/// These counters decide what a paying customer may do, so they live here
+/// rather than in the process that happens to serve the request: a restart, a
+/// deploy or a second instance must not hand anybody a fresh allowance.
+model WebsiteUsage {
+  id     String @id @default(cuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  /// `2026-09`, in UTC.
+  period String
+
+  imports   Int @default(0)
+  edits     Int @default(0)
+  aiPrompts Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, period])
 }
