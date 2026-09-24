@@ -56,15 +56,18 @@ export function ElementInspector({
   palette,
   fonts,
   readOnly,
+  sitePublicUrl,
+  backgroundImageFallbackUrl,
   onChange,
   onCommit,
   onReset,
   onTextColour,
   onPickBackgroundImage,
+  onSetBackgroundImageUrl,
   content,
 }: {
   simple?: boolean;
-  tab?: "content" | "style";
+  tab?: "content" | "layout" | "style";
   facts: ElementFacts;
   device: Device;
   /** The draft's declarations for the active viewport. */
@@ -73,6 +76,8 @@ export function ElementInspector({
   palette?: string[];
   fonts?: string[];
   readOnly?: boolean;
+  sitePublicUrl?: string;
+  backgroundImageFallbackUrl?: string;
   onChange: (next: string) => void;
   /** Called when a continuous gesture ends, so history records one step. */
   onCommit?: () => void;
@@ -82,11 +87,16 @@ export function ElementInspector({
   onTextColour?: (colour: string) => boolean;
   /** Opens the asset library / upload dialog to set `background-image` on the selected element. */
   onPickBackgroundImage?: () => void;
+  /** Optional callback when background image URL is changed so child/pseudo bg layers also sync. */
+  onSetBackgroundImageUrl?: (url: string) => void;
   /** The content editor, which the page owns; drawn as the first section. */
   content?: React.ReactNode;
 }) {
   const disabled = !!readOnly;
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [gapsLinked, setGapsLinked] = useState(true);
+  const [widthUnit, setWidthUnit] = useState<"px" | "%" | "vw">("px");
+  const [minHeightUnit, setMinHeightUnit] = useState<"px" | "vh">("px");
   /**
    * Which groups are open, and only where somebody has said otherwise.
    *
@@ -112,14 +122,45 @@ export function ElementInspector({
     display: declarations.display ?? facts.display,
     position: declarations.position ?? facts.position,
   });
-  const shown = new Set(inspectorSections(capabilities).filter(section => tab ? (tab === "content" ? section === "content" : section !== "content") : (!simple || section === "content")));
+
+  const LAYOUT_SECTION_KEYS: SectionKey[] = [
+    "layout",
+    "flexContainer",
+    "gridContainer",
+    "flexChild",
+    "gridChild",
+    "size",
+    "spacing",
+    "position",
+  ];
+
+  const shown = new Set(
+    inspectorSections(capabilities).filter((section) => {
+      if (!tab) return !simple || section === "content";
+      if (tab === "content") return section === "content";
+      if (tab === "layout") return LAYOUT_SECTION_KEYS.includes(section);
+      if (tab === "style") {
+        if (facts.kind === "container") {
+          return section !== "content" && !LAYOUT_SECTION_KEYS.includes(section);
+        }
+        return section !== "content";
+      }
+      return true;
+    })
+  );
   if (tab === "content" && content) shown.add("content");
+  if (tab === "layout") {
+    shown.add("spacing");
+    shown.add("position");
+  }
   if (tab === "style") {
     shown.add("background");
-    shown.add("position");
-    shown.add("size");
-    shown.add("spacing");
     shown.add("border");
+    if (facts.kind !== "container") {
+      shown.add("position");
+      shown.add("size");
+      shown.add("spacing");
+    }
   }
 
   const value = (property: string): InspectorValue =>
@@ -395,33 +436,429 @@ export function ElementInspector({
           </Section>
         )}
 
-        {shown.has("layout") && (
-          <Section name="layout" title={SECTION_TITLE.layout} open={isOpen("layout")} changed={sectionChanged("layout")} onToggle={() => toggleSection("layout")}>
-            <Pictures property="display" label="Display" icons={DISPLAY_ICONS} options={["block", "flex", "grid", "inline-block", "none"]} />
-          </Section>
-        )}
+        {tab === "layout" ? (
+          <Section
+            name="layout"
+            title="Container"
+            open={isOpen("layout")}
+            changed={sectionChanged("layout") || sectionChanged("flexContainer") || sectionChanged("size")}
+            onToggle={() => toggleSection("layout")}
+          >
+            {(() => {
+              const effDisplay = (declarations.display ?? source.computed.display ?? facts.display ?? "flex").trim();
+              const layoutType = effDisplay.includes("grid") ? "grid" : effDisplay.includes("flex") ? "flex" : "block";
+              const rawMaxWidth = (declarations["max-width"] ?? source.computed["max-width"] ?? "").trim();
+              const contentWidthMode = rawMaxWidth && rawMaxWidth !== "none" && rawMaxWidth !== "100%" ? "boxed" : "full";
+              const rawWidth = (declarations.width ?? source.computed.width ?? "").trim();
+              const parsedWidthNum = toNumber(rawWidth) ?? (contentWidthMode === "boxed" ? toNumber(rawMaxWidth) ?? 1140 : 100);
+              const rawMinHeight = (declarations["min-height"] ?? source.computed["min-height"] ?? "").trim();
+              const parsedMinHeightNum = toNumber(rawMinHeight);
+              const effDirection = (declarations["flex-direction"] ?? source.computed["flex-direction"] ?? "row").trim();
+              const effJustify = (declarations["justify-content"] ?? source.computed["justify-content"] ?? "flex-start").trim();
+              const effAlign = (declarations["align-items"] ?? source.computed["align-items"] ?? "stretch").trim();
+              const effWrap = (declarations["flex-wrap"] ?? source.computed["flex-wrap"] ?? "nowrap").trim();
+              const colGapNum = toNumber(declarations["column-gap"] ?? declarations.gap ?? source.computed["column-gap"] ?? "");
+              const rowGapNum = toNumber(declarations["row-gap"] ?? declarations.gap ?? source.computed["row-gap"] ?? "");
 
-        {shown.has("flexContainer") && (
-          <Section name="flexContainer" title={SECTION_TITLE.flexContainer} open={isOpen("flexContainer")} changed={sectionChanged("flexContainer")} onToggle={() => toggleSection("flexContainer")}>
-            <Pictures property="flex-direction" label="Direction" icons={DIRECTION_ICONS} options={["row", "column", "row-reverse", "column-reverse"]} />
-            <Choice property="flex-wrap" label="Wrap" options={["nowrap", "wrap", "wrap-reverse"]} />
-            <Pictures property="justify-content" label="Spread" icons={JUSTIFY_ICONS} options={["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"]} />
-            <Pictures property="align-items" label="Align" icons={ALIGN_ICONS} options={["stretch", "flex-start", "center", "flex-end", "baseline"]} />
-            <Pair label="Gap" first={{ property: "row-gap", label: "Row gap", prefix: "R" }} second={{ property: "column-gap", label: "Column gap", prefix: "C" }} />
-          </Section>
-        )}
+              return (
+                <div className="space-y-3.5 py-1">
+                  {/* Container Layout */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium text-ink-2">Container Layout</span>
+                    <select
+                      disabled={disabled}
+                      value={layoutType}
+                      onChange={(e) => {
+                        set("display", e.target.value);
+                        onCommit?.();
+                      }}
+                      className="h-7 w-36 rounded-lg border border-line bg-white px-2 text-[11px] font-medium text-ink outline-none focus:border-blue"
+                    >
+                      <option value="flex">Flexbox</option>
+                      <option value="grid">Grid</option>
+                      <option value="block">Block</option>
+                    </select>
+                  </div>
 
-        {shown.has("gridContainer") && (
-          <Section name="gridContainer" title={SECTION_TITLE.gridContainer} open={isOpen("gridContainer")} changed={sectionChanged("gridContainer")} onToggle={() => toggleSection("gridContainer")}>
-            <Text property="grid-template-columns" label="Columns" />
-            <Text property="grid-template-rows" label="Rows" />
-            <Choice property="justify-content" label="Spread" options={["start", "center", "end", "space-between", "space-around", "space-evenly"]} />
-            <Choice property="align-items" label="Align" options={["stretch", "start", "center", "end", "baseline"]} />
-            <div className="grid grid-cols-2 gap-1.5">
-              <Text property="row-gap" label="Row gap" />
-              <Text property="column-gap" label="Column gap" />
-            </div>
+                  {/* Content Width */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium text-ink-2">Content Width</span>
+                    <select
+                      disabled={disabled}
+                      value={contentWidthMode}
+                      onChange={(e) => {
+                        const updated = { ...declarations };
+                        if (e.target.value === "boxed") {
+                          updated["max-width"] = "1140px";
+                          updated["margin-left"] = "auto";
+                          updated["margin-right"] = "auto";
+                        } else {
+                          updated["max-width"] = "100%";
+                          updated.width = "100%";
+                        }
+                        onChange(writeStyle(updated));
+                        onCommit?.();
+                      }}
+                      className="h-7 w-36 rounded-lg border border-line bg-white px-2 text-[11px] font-medium text-ink outline-none focus:border-blue"
+                    >
+                      <option value="boxed">Boxed</option>
+                      <option value="full">Full Width</option>
+                    </select>
+                  </div>
+
+                  {/* Width slider + input */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-ink-2">Width</span>
+                      <div className="flex items-center gap-1 text-[10px] font-semibold text-muted">
+                        {(["px", "%", "vw"] as const).map((u) => (
+                          <button
+                            key={u}
+                            type="button"
+                            onClick={() => setWidthUnit(u)}
+                            className={`rounded px-1 py-0.5 uppercase transition ${
+                              widthUnit === u ? "bg-blue/10 text-blue" : "hover:text-ink"
+                            }`}
+                          >
+                            {u}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="range"
+                        disabled={disabled}
+                        min={widthUnit === "px" ? 200 : 10}
+                        max={widthUnit === "px" ? 1600 : 100}
+                        value={Math.min(widthUnit === "px" ? 1600 : 100, Math.max(0, Math.round(parsedWidthNum)))}
+                        onChange={(e) => {
+                          const val = `${e.target.value}${widthUnit}`;
+                          if (contentWidthMode === "boxed" && widthUnit === "px") {
+                            set("max-width", val);
+                          } else {
+                            set("width", val);
+                          }
+                        }}
+                        onMouseUp={() => onCommit?.()}
+                        className="h-1 flex-1 cursor-pointer accent-blue"
+                      />
+                      <input
+                        type="number"
+                        disabled={disabled}
+                        value={Math.round(parsedWidthNum) || ""}
+                        placeholder="Auto"
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          if (!raw) {
+                            set("width", "");
+                          } else {
+                            const val = `${raw}${widthUnit}`;
+                            if (contentWidthMode === "boxed" && widthUnit === "px") {
+                              set("max-width", val);
+                            } else {
+                              set("width", val);
+                            }
+                          }
+                        }}
+                        onBlur={() => onCommit?.()}
+                        className="h-7 w-16 rounded-lg border border-line bg-white px-2 text-right font-mono text-[11px] text-ink outline-none focus:border-blue"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Min Height slider + input */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-ink-2">Min Height</span>
+                      <div className="flex items-center gap-1 text-[10px] font-semibold text-muted">
+                        {(["px", "vh"] as const).map((u) => (
+                          <button
+                            key={u}
+                            type="button"
+                            onClick={() => setMinHeightUnit(u)}
+                            className={`rounded px-1 py-0.5 uppercase transition ${
+                              minHeightUnit === u ? "bg-blue/10 text-blue" : "hover:text-ink"
+                            }`}
+                          >
+                            {u}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="range"
+                        disabled={disabled}
+                        min={0}
+                        max={minHeightUnit === "vh" ? 100 : 1000}
+                        value={Math.min(minHeightUnit === "vh" ? 100 : 1000, Math.max(0, Math.round(parsedMinHeightNum ?? 0)))}
+                        onChange={(e) => set("min-height", `${e.target.value}${minHeightUnit}`)}
+                        onMouseUp={() => onCommit?.()}
+                        className="h-1 flex-1 cursor-pointer accent-blue"
+                      />
+                      <input
+                        type="number"
+                        disabled={disabled}
+                        value={parsedMinHeightNum !== null ? Math.round(parsedMinHeightNum) : ""}
+                        placeholder="0"
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          set("min-height", raw ? `${raw}${minHeightUnit}` : "");
+                        }}
+                        onBlur={() => onCommit?.()}
+                        className="h-7 w-16 rounded-lg border border-line bg-white px-2 text-right font-mono text-[11px] text-ink outline-none focus:border-blue"
+                      />
+                    </div>
+                    <p className="text-[10px] italic text-muted">To achieve full height Container use 100vh.</p>
+                  </div>
+
+                  {/* Items section */}
+                  <div className="border-t border-line pt-3">
+                    <div className="mb-2.5 text-[11px] font-bold text-ink">Items</div>
+
+                    {/* Direction */}
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-medium text-ink-2">Direction</span>
+                      <div className="grid grid-cols-4 overflow-hidden rounded-lg border border-line bg-white">
+                        {([
+                          { value: "row", label: "→", title: "Row (horizontal)" },
+                          { value: "column", label: "↓", title: "Column (vertical)" },
+                          { value: "row-reverse", label: "←", title: "Row reversed" },
+                          { value: "column-reverse", label: "↑", title: "Column reversed" },
+                        ] as const).map((item) => {
+                          const active = effDirection === item.value;
+                          return (
+                            <button
+                              key={item.value}
+                              type="button"
+                              disabled={disabled}
+                              title={item.title}
+                              onClick={() => {
+                                const updated = { ...declarations, display: layoutType === "block" ? "flex" : effDisplay, "flex-direction": item.value };
+                                onChange(writeStyle(updated));
+                                onCommit?.();
+                              }}
+                              className={`flex h-7 w-8 items-center justify-center border-r border-line last:border-r-0 text-xs font-semibold transition ${
+                                active ? "bg-ink text-white" : "text-ink-2 hover:bg-sunken"
+                              }`}
+                            >
+                              {item.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Justify Content */}
+                    <div className="mb-3 space-y-1.5">
+                      <span className="block text-[11px] font-medium text-ink-2">Justify Content</span>
+                      <div className="grid grid-cols-6 overflow-hidden rounded-lg border border-line bg-white">
+                        {(["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"] as const).map((val) => {
+                          const active = effJustify === val;
+                          return (
+                            <button
+                              key={val}
+                              type="button"
+                              disabled={disabled}
+                              title={val}
+                              onClick={() => {
+                                const updated = { ...declarations, display: layoutType === "block" ? "flex" : effDisplay, "justify-content": val };
+                                onChange(writeStyle(updated));
+                                onCommit?.();
+                              }}
+                              className={`flex h-7 items-center justify-center border-r border-line last:border-r-0 transition ${
+                                active ? "bg-ink text-white" : "text-ink-2 hover:bg-sunken"
+                              }`}
+                            >
+                              {JUSTIFY_ICONS[val]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Align Items */}
+                    <div className="mb-3 space-y-1.5">
+                      <span className="block text-[11px] font-medium text-ink-2">Align Items</span>
+                      <div className="grid grid-cols-4 overflow-hidden rounded-lg border border-line bg-white">
+                        {(["flex-start", "center", "flex-end", "stretch"] as const).map((val) => {
+                          const active = effAlign === val;
+                          return (
+                            <button
+                              key={val}
+                              type="button"
+                              disabled={disabled}
+                              title={val}
+                              onClick={() => {
+                                const updated = { ...declarations, display: layoutType === "block" ? "flex" : effDisplay, "align-items": val };
+                                onChange(writeStyle(updated));
+                                onCommit?.();
+                              }}
+                              className={`flex h-7 items-center justify-center border-r border-line last:border-r-0 transition ${
+                                active ? "bg-ink text-white" : "text-ink-2 hover:bg-sunken"
+                              }`}
+                            >
+                              {ALIGN_ICONS[val]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Gaps */}
+                    <div className="mb-3 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-ink-2">Gaps</span>
+                        <span className="text-[10px] font-semibold uppercase text-muted">px</span>
+                      </div>
+                      <div className="flex items-start gap-1.5">
+                        <div className="flex-1">
+                          <input
+                            type="number"
+                            disabled={disabled}
+                            min={0}
+                            value={colGapNum !== null ? Math.round(colGapNum) : ""}
+                            placeholder="0"
+                            onChange={(e) => {
+                              const raw = e.target.value.trim();
+                              const val = raw ? `${raw}px` : "";
+                              const updated = { ...declarations };
+                              if (val) updated["column-gap"] = val;
+                              else delete updated["column-gap"];
+                              if (gapsLinked) {
+                                if (val) updated["row-gap"] = val;
+                                else delete updated["row-gap"];
+                              }
+                              onChange(writeStyle(updated));
+                            }}
+                            onBlur={() => onCommit?.()}
+                            className="h-7 w-full rounded-l-lg border border-line bg-white px-2 text-center font-mono text-[11px] text-ink outline-none focus:border-blue"
+                          />
+                          <span className="mt-0.5 block text-center text-[10px] text-muted">Column</span>
+                        </div>
+                        <div className="flex-1">
+                          <input
+                            type="number"
+                            disabled={disabled}
+                            min={0}
+                            value={rowGapNum !== null ? Math.round(rowGapNum) : ""}
+                            placeholder="0"
+                            onChange={(e) => {
+                              const raw = e.target.value.trim();
+                              const val = raw ? `${raw}px` : "";
+                              const updated = { ...declarations };
+                              if (val) updated["row-gap"] = val;
+                              else delete updated["row-gap"];
+                              if (gapsLinked) {
+                                if (val) updated["column-gap"] = val;
+                                else delete updated["column-gap"];
+                              }
+                              onChange(writeStyle(updated));
+                            }}
+                            onBlur={() => onCommit?.()}
+                            className="h-7 w-full border-y border-r border-line bg-white px-2 text-center font-mono text-[11px] text-ink outline-none focus:border-blue"
+                          />
+                          <span className="mt-0.5 block text-center text-[10px] text-muted">Row</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setGapsLinked((prev) => !prev)}
+                          title={gapsLinked ? "Unlink Column & Row gaps" : "Link Column & Row gaps"}
+                          className={`flex h-7 w-8 items-center justify-center rounded-r-lg border border-line text-xs transition ${
+                            gapsLinked ? "bg-ink text-white" : "bg-white text-muted hover:text-ink"
+                          }`}
+                        >
+                          🔗
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Wrap */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-medium text-ink-2">Wrap</span>
+                        <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-line bg-white">
+                          {([
+                            { value: "nowrap", label: "No Wrap", icon: "|→" },
+                            { value: "wrap", label: "Wrap", icon: "|↩" },
+                          ] as const).map((item) => {
+                            const active = effWrap === item.value;
+                            return (
+                              <button
+                                key={item.value}
+                                type="button"
+                                disabled={disabled}
+                                title={item.label}
+                                onClick={() => {
+                                  const updated = { ...declarations, display: layoutType === "block" ? "flex" : effDisplay, "flex-wrap": item.value };
+                                  onChange(writeStyle(updated));
+                                  onCommit?.();
+                                }}
+                                className={`flex h-7 w-12 items-center justify-center border-r border-line last:border-r-0 text-[11px] font-semibold transition ${
+                                  active ? "bg-ink text-white" : "text-ink-2 hover:bg-sunken"
+                                }`}
+                              >
+                                {item.icon}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <p className="text-[10px] italic leading-relaxed text-muted">
+                        Items within the container can stay in a single line (No wrap), or break into multiple lines (Wrap).
+                      </p>
+                    </div>
+
+                    {layoutType === "grid" && (
+                      <div className="mt-3 space-y-2 border-t border-line pt-2.5">
+                        <Text property="grid-template-columns" label="Columns" />
+                        <Text property="grid-template-rows" label="Rows" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </Section>
+        ) : (
+          <>
+            {shown.has("layout") && (
+              <Section name="layout" title={SECTION_TITLE.layout} open={isOpen("layout")} changed={sectionChanged("layout")} onToggle={() => toggleSection("layout")}>
+                <Pictures property="display" label="Display" icons={DISPLAY_ICONS} options={["block", "flex", "grid", "inline-block", "none"]} />
+              </Section>
+            )}
+
+            {shown.has("flexContainer") && (
+              <Section name="flexContainer" title={SECTION_TITLE.flexContainer} open={isOpen("flexContainer")} changed={sectionChanged("flexContainer")} onToggle={() => toggleSection("flexContainer")}>
+                <Pictures property="flex-direction" label="Direction" icons={DIRECTION_ICONS} options={["row", "column", "row-reverse", "column-reverse"]} />
+                <Choice property="flex-wrap" label="Wrap" options={["nowrap", "wrap", "wrap-reverse"]} />
+                <Pictures property="justify-content" label="Spread" icons={JUSTIFY_ICONS} options={["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"]} />
+                <Pictures property="align-items" label="Align" icons={ALIGN_ICONS} options={["stretch", "flex-start", "center", "flex-end", "baseline"]} />
+                <Pair label="Gap" first={{ property: "row-gap", label: "Row gap", prefix: "R" }} second={{ property: "column-gap", label: "Column gap", prefix: "C" }} />
+              </Section>
+            )}
+
+            {shown.has("gridContainer") && (
+              <Section name="gridContainer" title={SECTION_TITLE.gridContainer} open={isOpen("gridContainer")} changed={sectionChanged("gridContainer")} onToggle={() => toggleSection("gridContainer")}>
+                <Text property="grid-template-columns" label="Columns" />
+                <Text property="grid-template-rows" label="Rows" />
+                <Choice property="justify-content" label="Spread" options={["start", "center", "end", "space-between", "space-around", "space-evenly"]} />
+                <Choice property="align-items" label="Align" options={["stretch", "start", "center", "end", "baseline"]} />
+                <div className="grid grid-cols-2 gap-1.5">
+                  <Text property="row-gap" label="Row gap" />
+                  <Text property="column-gap" label="Column gap" />
+                </div>
+              </Section>
+            )}
+
+            {shown.has("size") && (
+              <Section name="size" title={SECTION_TITLE.size} open={isOpen("size")} changed={sectionChanged("size")} onToggle={() => toggleSection("size")}>
+                <Pair label="Size" first={{ property: "width", label: "Width", prefix: "W" }} second={{ property: "height", label: "Height", prefix: "H" }} />
+                <Text property="max-width" label="Max width" />
+              </Section>
+            )}
+          </>
         )}
 
         {shown.has("flexChild") && (
@@ -436,13 +873,6 @@ export function ElementInspector({
             <Text property="grid-column" label="Column" />
             <Text property="grid-row" label="Row" />
             <Choice property="align-self" label="Align self" options={["auto", "stretch", "start", "center", "end", "baseline"]} />
-          </Section>
-        )}
-
-        {shown.has("size") && (
-          <Section name="size" title={SECTION_TITLE.size} open={isOpen("size")} changed={sectionChanged("size")} onToggle={() => toggleSection("size")}>
-            <Pair label="Size" first={{ property: "width", label: "Width", prefix: "W" }} second={{ property: "height", label: "Height", prefix: "H" }} />
-            <Text property="max-width" label="Max width" />
           </Section>
         )}
 
@@ -538,97 +968,143 @@ export function ElementInspector({
             {(() => {
               const rawBgImg = (declarations["background-image"] ?? declarations.background ?? source.computed["background-image"] ?? "").trim();
               const urlMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(rawBgImg);
-              const bgUrl = urlMatch?.[1] ?? "";
+              const bgUrl = (urlMatch?.[1] ?? backgroundImageFallbackUrl ?? "").trim();
+              const resolvedBgUrl = (() => {
+                if (!bgUrl) return "";
+                if (/^(https?:|data:|blob:|\/api\/)/i.test(bgUrl)) return bgUrl;
+                if (sitePublicUrl) {
+                  try {
+                    return new URL(bgUrl, sitePublicUrl).href;
+                  } catch {
+                    return bgUrl;
+                  }
+                }
+                return bgUrl;
+              })();
+
+              const applyBackgroundUrl = (nextUrl: string) => {
+                if (!nextUrl) {
+                  set("background-image", "none");
+                  onSetBackgroundImageUrl?.("");
+                } else {
+                  const updated = {
+                    ...declarations,
+                    "background-image": `url('${nextUrl.replace(/['"\\]/g, "")}')`,
+                    "background-size": declarations["background-size"] || "cover",
+                    "background-position": declarations["background-position"] || "center",
+                  };
+                  onChange(writeStyle(updated));
+                  onSetBackgroundImageUrl?.(nextUrl);
+                }
+              };
+
               return (
-                <div className="mt-2 space-y-2 rounded-xl border border-line bg-surface-2/60 p-2.5">
+                <div className="mt-3 space-y-3 border-t border-line pt-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-ink-2">Background Image</span>
-                    <div className="flex items-center gap-1.5">
-                      {onPickBackgroundImage && (
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={onPickBackgroundImage}
-                          className="rounded-lg border border-line bg-white px-2 py-0.5 text-[10px] font-semibold text-blue transition hover:border-blue hover:bg-blue/5"
-                        >
-                          Choose / Upload
-                        </button>
-                      )}
-                      {bgUrl && (
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => {
-                            set("background-image", "none");
-                            onCommit?.();
-                          }}
-                          className="rounded-lg border border-line bg-white px-1.5 py-0.5 text-[10px] font-semibold text-muted transition hover:border-red/30 hover:text-red"
-                          title="Remove background image"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
+                    <span className="text-[11px] font-semibold text-ink">Choose Image</span>
+                    {bgUrl && (
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => {
+                          applyBackgroundUrl("");
+                          onCommit?.();
+                        }}
+                        className="rounded-md border border-line bg-white px-2 py-0.5 text-[10px] font-semibold text-muted transition hover:border-red/40 hover:text-red"
+                        title="Remove background image"
+                      >
+                        Clear
+                      </button>
+                    )}
                   </div>
-                  {bgUrl && (
-                    <div
-                      className="h-20 w-full rounded-lg border border-line bg-cover bg-center"
-                      style={{ backgroundImage: `url("${bgUrl.replace(/"/g, "")}")` }}
-                    />
-                  )}
-                  <input
-                    type="text"
-                    disabled={disabled}
-                    placeholder="Paste image URL (/assets/... or https://...)"
-                    value={bgUrl}
-                    onChange={(event) => {
-                      const nextUrl = event.target.value.trim();
-                      if (!nextUrl) {
-                        set("background-image", "");
-                      } else {
-                        const updated = {
-                          ...declarations,
-                          "background-image": `url('${nextUrl.replace(/['"\\]/g, "")}')`,
-                          "background-size": declarations["background-size"] || "cover",
-                          "background-position": declarations["background-position"] || "center",
-                        };
-                        onChange(writeStyle(updated));
+
+                  {/* Elementor-style large visual Choose Image preview box */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      if (!disabled && onPickBackgroundImage) onPickBackgroundImage();
+                    }}
+                    onKeyDown={(e) => {
+                      if ((e.key === "Enter" || e.key === " ") && !disabled && onPickBackgroundImage) {
+                        e.preventDefault();
+                        onPickBackgroundImage();
                       }
                     }}
-                    onBlur={() => onCommit?.()}
-                    className="w-full rounded-lg border border-line bg-white px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-blue"
-                  />
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <SelectField
-                      label="Fit"
-                      value={declarations["background-size"] ?? source.computed["background-size"] ?? "cover"}
-                      disabled={disabled}
-                      options={[
-                        { value: "cover", label: "Cover" },
-                        { value: "contain", label: "Contain" },
-                        { value: "auto", label: "Original (Auto)" },
-                      ]}
-                      onChange={(next) => {
-                        set("background-size", next);
-                        onCommit?.();
-                      }}
-                    />
-                    <SelectField
-                      label="Position"
-                      value={declarations["background-position"] ?? source.computed["background-position"] ?? "center"}
-                      disabled={disabled}
-                      options={[
-                        { value: "center", label: "Center" },
-                        { value: "top", label: "Top" },
-                        { value: "bottom", label: "Bottom" },
-                        { value: "left", label: "Left" },
-                        { value: "right", label: "Right" },
-                      ]}
-                      onChange={(next) => {
-                        set("background-position", next);
-                        onCommit?.();
-                      }}
-                    />
+                    className="group relative h-36 w-full cursor-pointer overflow-hidden rounded-xl border border-line bg-sunken shadow-2xs transition hover:border-blue"
+                  >
+                    {resolvedBgUrl ? (
+                      <img
+                        src={resolvedBgUrl}
+                        alt="Container background preview"
+                        className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted">
+                        <span className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-white text-base shadow-2xs">
+                          🖼
+                        </span>
+                        <span className="text-[11px] font-semibold text-ink-2">Click to Choose Image</span>
+                        <span className="text-[10px] text-muted">From HTML Page Media or Upload</span>
+                      </div>
+                    )}
+
+                    <div className=" inset-x-0 bottom-0 absolute bg-ink/75 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
+                      Choose Image
+                    </div>
+                  </div>
+
+                  {/* Image Resolution / Size & Position */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-medium text-ink-2">Image Resolution</span>
+                      <select
+                        disabled={disabled}
+                        value={declarations["background-size"] ?? source.computed["background-size"] ?? "cover"}
+                        onChange={(e) => {
+                          set("background-size", e.target.value);
+                          onCommit?.();
+                        }}
+                        className="h-7 w-36 rounded-lg border border-line bg-white px-2 text-[11px] font-medium text-ink outline-none focus:border-blue"
+                      >
+                        <option value="cover">Full (Cover)</option>
+                        <option value="contain">Contain</option>
+                        <option value="auto">Original (Auto)</option>
+                        <option value="100% 100%">Stretch (100%)</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-medium text-ink-2">Position</span>
+                      <select
+                        disabled={disabled}
+                        value={declarations["background-position"] ?? source.computed["background-position"] ?? "center"}
+                        onChange={(e) => {
+                          set("background-position", e.target.value);
+                          onCommit?.();
+                        }}
+                        className="h-7 w-36 rounded-lg border border-line bg-white px-2 text-[11px] font-medium text-ink outline-none focus:border-blue"
+                      >
+                        <option value="center">Center Center</option>
+                        <option value="top">Top Center</option>
+                        <option value="bottom">Bottom Center</option>
+                        <option value="left">Center Left</option>
+                        <option value="right">Center Right</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="block text-[10px] font-medium text-muted">Image Link / URL</span>
+                      <input
+                        type="text"
+                        disabled={disabled}
+                        placeholder="Paste image URL (/assets/... or https://...)"
+                        value={bgUrl}
+                        onChange={(event) => applyBackgroundUrl(event.target.value.trim())}
+                        onBlur={() => onCommit?.()}
+                        className="w-full rounded-lg border border-line bg-white px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-blue"
+                      />
+                    </div>
                   </div>
                 </div>
               );

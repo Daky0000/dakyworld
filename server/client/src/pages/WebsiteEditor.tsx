@@ -14,7 +14,7 @@ import { WebsiteGuideModal } from "../components/WebsiteGuideModal";
 import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
 import { WebsitePresetPicker } from "../components/WebsiteBrandPresets";
 import type { BrandPreset } from "../lib/websiteBrandPresets";
-import { WebsiteAssetLibrary, WebsiteAssetPickerModal } from "../components/WebsiteAssetLibrary";
+import { WebsiteAssetLibrary, WebsiteAssetPickerModal, type CapturedHtmlImage } from "../components/WebsiteAssetLibrary";
 import { MakeSharedPanel, SharedElementPanel, SharedPublishReview } from "../components/WebsiteShared";
 import { PublishStatus } from "../components/PublishStatus";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
@@ -546,7 +546,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const qc = useQueryClient();
   const { user } = useAuth();
   const [designerMode, setDesignerMode] = useState(false);
-  const [inspectorTab, setInspectorTab] = useState<"content" | "theme" | "seo" | "style" | "interactions">("content");
+  const [inspectorTab, setInspectorTab] = useState<"content" | "layout" | "theme" | "seo" | "style" | "interactions">("content");
   const [showLayers, setShowLayers] = useState(false);
   const [showPanel, setShowPanel] = useState(() => typeof window === "undefined" || window.innerWidth > 600);
   const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
@@ -626,13 +626,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   });
   /** The field the person clicked in the preview. */
   const [pickedId, setPickedId] = useState<string | null>(null);
-  useEffect(() => {
-    if (pickedId && (inspectorTab === "seo" || inspectorTab === "theme")) {
-      setInspectorTab("content");
-    } else if (!pickedId && (inspectorTab === "style" || inspectorTab === "interactions")) {
-      setInspectorTab("content");
-    }
-  }, [pickedId, inspectorTab]);
   /** The same, readable from listeners that must not be re-registered. */
   const pickedRef = useRef<string | null>(null);
   pickedRef.current = pickedId;
@@ -746,7 +739,40 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         if (!element || !doc?.defaultView) { setComputed({}); setDomFacts(null); return; }
         const view = doc.defaultView;
         const style = view.getComputedStyle(element);
-        setComputed(Object.fromEntries(INSPECTED_PROPERTIES.map(key => [key, style.getPropertyValue(key)])));
+        const computedMap = Object.fromEntries(INSPECTED_PROPERTIES.map(key => [key, style.getPropertyValue(key)]));
+
+        // If this container's own background-image is "none", check ::before, ::after,
+        // or a direct/nested background layer or cover <img> inside the container so
+        // the Background Image placeholder always displays the visual image.
+        if (!computedMap["background-image"] || computedMap["background-image"] === "none") {
+          const beforeBg = view.getComputedStyle(element, "::before").getPropertyValue("background-image");
+          const afterBg = view.getComputedStyle(element, "::after").getPropertyValue("background-image");
+          if (beforeBg && beforeBg !== "none" && /url\(/i.test(beforeBg)) {
+            computedMap["background-image"] = beforeBg;
+          } else if (afterBg && afterBg !== "none" && /url\(/i.test(afterBg)) {
+            computedMap["background-image"] = afterBg;
+          } else {
+            const descendants = Array.from(element.querySelectorAll<HTMLElement>("*"));
+            for (const desc of descendants) {
+              const descBg = view.getComputedStyle(desc).getPropertyValue("background-image");
+              if (descBg && descBg !== "none" && /url\(/i.test(descBg)) {
+                computedMap["background-image"] = descBg;
+                break;
+              }
+            }
+            if (!computedMap["background-image"] || computedMap["background-image"] === "none") {
+              const childImg = element.querySelector<HTMLImageElement>("img[src]");
+              if (childImg) {
+                const imgSrc = childImg.getAttribute("src") || childImg.src;
+                if (imgSrc) {
+                  computedMap["background-image"] = `url("${imgSrc}")`;
+                }
+              }
+            }
+          }
+        }
+
+        setComputed(computedMap);
         const parent = element.parentElement;
         setDomFacts({
           tag: element.tagName.toLowerCase(),
@@ -1485,7 +1511,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const allFields = (page.data?.sections ?? []).flatMap((candidate) => candidate.fields);
 
   const [pageColorTokens, setPageColorTokens] = useState<Array<{ key: string; label: string; value: string; isVar: boolean }>>([]);
+  const [frameCapturedImages, setFrameCapturedImages] = useState<CapturedHtmlImage[]>([]);
   const [assetTargetMode, setAssetTargetMode] = useState<"image" | "background">("image");
+
+  // Automatically switch to 'layout' tab when a container is clicked (since containers only have Layout & Style tabs)
+  useEffect(() => {
+    const pickedField = pickedId ? allFields.find((f) => f.id === pickedId) ?? null : null;
+    if (!pickedField) {
+      if (inspectorTab === "layout" || inspectorTab === "style" || inspectorTab === "interactions") {
+        setInspectorTab("content");
+      }
+    } else if (pickedField.kind === "container") {
+      if (inspectorTab !== "layout" && inspectorTab !== "style") {
+        setInspectorTab("layout");
+      }
+    } else {
+      if (inspectorTab === "layout" || inspectorTab === "seo" || inspectorTab === "theme") {
+        setInspectorTab("content");
+      }
+    }
+  }, [pickedId, allFields, inspectorTab]);
 
   const syncPageColorsFromFrame = useCallback(() => {
     try {
@@ -1542,10 +1587,105 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       }
 
       if (tokens.length > 0) setPageColorTokens(tokens);
+
+      // Capture all images (<img> and CSS background-image url(...)) from the live HTML document for the Media Library
+      const baseUrl = page.data?.site?.publicUrl || window.location.origin;
+      const resolveUrl = (raw: string) => {
+        const cleaned = raw.trim().replace(/^['"]|['"]$/g, "");
+        if (!cleaned || cleaned.startsWith("data:font") || /\.(woff2?|ttf|otf|eot)(\?|$)/i.test(cleaned)) return "";
+        if (/^(https?:|data:|blob:|\/api\/)/i.test(cleaned)) return cleaned;
+        try {
+          return new URL(cleaned, baseUrl).href;
+        } catch {
+          return cleaned;
+        }
+      };
+
+      const discovered: CapturedHtmlImage[] = [];
+      const seenUrls = new Set<string>();
+      const pushImg = (rawUrl: string, altText: string, sourceLabel: string) => {
+        const resolved = resolveUrl(rawUrl);
+        if (!resolved || seenUrls.has(resolved)) return;
+        seenUrls.add(resolved);
+        discovered.push({
+          url: resolved,
+          alt: altText.trim() || resolved.split("/").pop()?.split("?")[0] || "Captured image",
+          source: sourceLabel,
+        });
+      };
+
+      doc.querySelectorAll<HTMLImageElement>("img[src]").forEach((imgEl) => {
+        pushImg(imgEl.getAttribute("src") || imgEl.src, imgEl.getAttribute("alt") || "", "HTML <img>");
+      });
+
+      const cssUrlRegex = /url\(\s*['"]?([^'")]+)['"]?\s*\)/gi;
+      let urlMatch: RegExpExecArray | null;
+      while ((urlMatch = cssUrlRegex.exec(cssText)) !== null) {
+        pushImg(urlMatch[1]!, "CSS Background Image", "CSS Background");
+      }
+
+      doc.querySelectorAll<HTMLElement>("[style]").forEach((el) => {
+        const inlineStyle = el.getAttribute("style") || "";
+        let inlineMatch: RegExpExecArray | null;
+        while ((inlineMatch = cssUrlRegex.exec(inlineStyle)) !== null) {
+          pushImg(inlineMatch[1]!, el.getAttribute("aria-label") || "Inline Background", "CSS Background");
+        }
+      });
+
+      if (doc.defaultView) {
+        doc.querySelectorAll<HTMLElement>("section, header, footer, div, main, article, aside, [data-dw-field]").forEach((el) => {
+          const bg = doc.defaultView!.getComputedStyle(el).backgroundImage;
+          let bgMatch: RegExpExecArray | null;
+          while ((bgMatch = cssUrlRegex.exec(bg || "")) !== null) {
+            pushImg(bgMatch[1]!, el.getAttribute("data-dw-field") || "Container Background", "CSS Background");
+          }
+        });
+      }
+
+      if (discovered.length > 0) {
+        setFrameCapturedImages(discovered);
+      }
     } catch {
       /* Cross-origin fallback */
     }
-  }, [allFields, edits]);
+  }, [allFields, edits, page.data?.site?.publicUrl]);
+
+  const capturedHtmlImages = useMemo<CapturedHtmlImage[]>(() => {
+    const baseUrl = page.data?.site?.publicUrl || (typeof window !== "undefined" ? window.location.origin : "");
+    const resolveUrl = (raw: string) => {
+      const cleaned = raw.trim().replace(/^['"]|['"]$/g, "");
+      if (!cleaned || cleaned.startsWith("data:font") || /\.(woff2?|ttf|otf|eot)(\?|$)/i.test(cleaned)) return "";
+      if (/^(https?:|data:|blob:|\/api\/)/i.test(cleaned)) return cleaned;
+      try {
+        return new URL(cleaned, baseUrl).href;
+      } catch {
+        return cleaned;
+      }
+    };
+    const list: CapturedHtmlImage[] = [];
+    const seen = new Set<string>();
+    const add = (rawUrl: string, alt: string, source: string) => {
+      const url = resolveUrl(rawUrl);
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      list.push({ url, alt: alt || url.split("/").pop()?.split("?")[0] || "Page Image", source });
+    };
+    for (const f of allFields) {
+      if (f.kind === "image") {
+        const val = edits[f.id]?.value ?? f.value ?? "";
+        if (val) add(val, edits[f.id]?.alt ?? f.alt ?? f.label, "HTML <img>");
+      }
+      const st = edits[f.id]?.style ?? f.style ?? "";
+      if (st) {
+        const m = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(st);
+        if (m?.[1]) add(m[1], f.label, "CSS Background");
+      }
+    }
+    for (const item of frameCapturedImages) {
+      add(item.url, item.alt, item.source ?? "Page Media");
+    }
+    return list;
+  }, [allFields, edits, frameCapturedImages, page.data?.site?.publicUrl]);
 
   const updatePageColorToken = useCallback(
     (tokenKey: string, nextHex: string, isVar: boolean, previousHex: string) => {
@@ -1954,6 +2094,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       {assetModalOpen && site && picked && (
         <WebsiteAssetPickerModal
           siteId={site.id}
+          capturedImages={capturedHtmlImages}
           onSelect={asset => {
             if (assetTargetMode === "background" || picked.kind !== "image") {
               const map = parseStyle(pickedStyle ?? "");
@@ -1961,6 +2102,22 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               if (!map["background-size"]) map["background-size"] = "cover";
               if (!map["background-position"]) map["background-position"] = "center";
               changePickedStyle(writeStyle(map), true);
+              // Also sync any child background layer or cover <img> inside the container in the live iframe
+              try {
+                const doc = frame.current?.contentDocument;
+                const el = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
+                if (el && doc?.defaultView) {
+                  el.style.backgroundImage = `url('${asset.url.replace(/['"\\]/g, "")}')`;
+                  el.style.backgroundSize = map["background-size"] || "cover";
+                  el.style.backgroundPosition = map["background-position"] || "center";
+                  el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
+                    const bg = doc.defaultView!.getComputedStyle(desc).backgroundImage;
+                    if (bg && bg !== "none" && /url\(/i.test(bg)) {
+                      desc.style.backgroundImage = `url('${asset.url.replace(/['"\\]/g, "")}')`;
+                    }
+                  });
+                }
+              } catch {}
             } else {
               change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt }, { commit: true });
             }
@@ -2736,7 +2893,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             <div role="tablist" aria-label="Element settings" className="editor-tabs">
               {(!picked
                 ? (["content", "theme", "seo"] as const)
-                : (["content", "style", "interactions"] as const)
+                : picked.kind === "container"
+                  ? (["layout", "style"] as const)
+                  : (["content", "style", "interactions"] as const)
               ).map((tab) => (
                 <button
                   type="button"
@@ -2745,7 +2904,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   key={tab}
                   onClick={() => setInspectorTab(tab)}
                 >
-                  {tab === "seo" ? "SEO" : tab === "theme" ? "Theme" : tab[0].toUpperCase() + tab.slice(1)}
+                  {tab === "seo"
+                    ? "SEO"
+                    : tab === "theme"
+                      ? "Theme"
+                      : tab === "layout"
+                        ? "◫ Layout"
+                        : tab === "style" && picked?.kind === "container"
+                          ? "◐ Style"
+                          : tab[0].toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
@@ -2922,7 +3089,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       three actions that belong to the whole element rather than
                       to any one property. One line each: this bar sits above
                       every panel and is not what somebody came to read. */}
-                  <div hidden={inspectorTab !== "style"} className="editor-scope-strip border-b border-line px-3 py-2">
+                  <div hidden={inspectorTab !== "style" && inspectorTab !== "layout"} className="editor-scope-strip border-b border-line px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className={`rounded-[10px] px-1.5 py-0.5 text-xs font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
                         {device === "desktop" ? "All sizes" : device === "tablet" ? "Tablet and below" : "Phone only"}
@@ -2958,12 +3125,28 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   {picked.kind !== "container" && picked.kind !== "image" && !readOnly && <div className="px-3 pt-2"><WebsiteTextFormatting hideWhenEmpty element={pickedElement} onChange={html => { change(picked.id, { ...edits[picked.id], value: html }, { fromFrame: true, commit: true }); setFrameEdit(token => token + 1); }} /></div>}
                   <div hidden={inspectorTab !== "interactions"}><WebsiteInteractionStyles element={pickedElement} style={edits[picked.id]?.style ?? picked.style ?? ""} readOnly={readOnly} onChange={style => change(picked.id, { ...edits[picked.id], style }, { commit: true })} /></div>
                   <div hidden={inspectorTab === "interactions"}><ElementInspector
-                    tab={inspectorTab === "style" ? "style" : "content"}
+                    tab={inspectorTab === "layout" ? "layout" : inspectorTab === "style" ? "style" : "content"}
                     simple={!designerMode}
+                    sitePublicUrl={site.publicUrl}
                     onTextColour={colour => !readOnly && formatActiveText({ color: colour })}
                     onPickBackgroundImage={() => {
                       setAssetTargetMode("background");
                       setAssetModalOpen(true);
+                    }}
+                    onSetBackgroundImageUrl={(nextUrl) => {
+                      try {
+                        const doc = frame.current?.contentDocument;
+                        const el = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
+                        if (el && doc?.defaultView) {
+                          el.style.backgroundImage = nextUrl ? `url('${nextUrl.replace(/['"\\]/g, "")}')` : "none";
+                          el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
+                            const bg = doc.defaultView!.getComputedStyle(desc).backgroundImage;
+                            if (bg && bg !== "none" && /url\(/i.test(bg)) {
+                              desc.style.backgroundImage = nextUrl ? `url('${nextUrl.replace(/['"\\]/g, "")}')` : "none";
+                            }
+                          });
+                        }
+                      } catch {}
                     }}
                     key={`${picked.id}:${device}`}
                     facts={{
@@ -2994,6 +3177,144 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     onReset={() => changePickedStyle(device === "desktop" ? picked.style ?? "" : picked.responsive?.[device] ?? "", true)}
                     content={
                       <>
+                        {/* Elementor-style Image Preview Card & Controls when an <img> is clicked */}
+                        {picked.kind === "image" && (() => {
+                          const rawImgVal = (edits[picked.id]?.value ?? picked.value ?? "").trim();
+                          const resolvedImgUrl = (() => {
+                            if (!rawImgVal) return "";
+                            if (/^(https?:|data:|blob:|\/api\/)/i.test(rawImgVal)) return rawImgVal;
+                            try {
+                              return new URL(rawImgVal, `${site.publicUrl.replace(/\/+$/, "")}/`).toString();
+                            } catch {
+                              return rawImgVal;
+                            }
+                          })();
+                          const styleMap = parseStyle(pickedStyle ?? "");
+                          const currentFit = styleMap["object-fit"] ?? computed["object-fit"] ?? "cover";
+                          const currentAlt = edits[picked.id]?.alt ?? picked.alt ?? "";
+                          const currentHref = edits[picked.id]?.href ?? picked.href ?? "";
+
+                          return (
+                            <div className="mb-4 space-y-3 rounded-xl border border-line bg-surface-2/60 p-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-ink">Choose Image</span>
+                                {rawImgVal && !readOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAssetTargetMode("image");
+                                      setAssetModalOpen(true);
+                                    }}
+                                    className="text-[11px] font-semibold text-blue hover:underline"
+                                  >
+                                    Media Library ({capturedHtmlImages.length})
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Large visual preview box showing the actual image */}
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => {
+                                  if (!readOnly) {
+                                    setAssetTargetMode("image");
+                                    setAssetModalOpen(true);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if ((e.key === "Enter" || e.key === " ") && !readOnly) {
+                                    e.preventDefault();
+                                    setAssetTargetMode("image");
+                                    setAssetModalOpen(true);
+                                  }
+                                }}
+                                className="group relative h-40 w-full cursor-pointer overflow-hidden rounded-xl border border-line bg-sunken shadow-2xs transition hover:border-blue"
+                              >
+                                {resolvedImgUrl ? (
+                                  <img
+                                    src={resolvedImgUrl}
+                                    alt={currentAlt || "Selected image"}
+                                    className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted">
+                                    <span className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-white text-lg shadow-2xs">
+                                      🖼
+                                    </span>
+                                    <span className="text-xs font-semibold text-ink-2">Choose Image</span>
+                                  </div>
+                                )}
+                                <div className="absolute inset-x-0 bottom-0 bg-ink/80 py-1.5 text-center text-xs font-semibold text-white opacity-0 transition group-hover:opacity-100">
+                                  Choose Image
+                                </div>
+                              </div>
+
+                              {/* Image Resolution */}
+                              <div className="flex items-center justify-between gap-2 pt-1">
+                                <span className="text-[11px] font-medium text-ink-2">Image Resolution</span>
+                                <select
+                                  disabled={readOnly}
+                                  value={currentFit}
+                                  onChange={(e) => {
+                                    const nextMap = { ...styleMap, "object-fit": e.target.value };
+                                    changePickedStyle(writeStyle(nextMap), true);
+                                  }}
+                                  className="h-7 w-40 rounded-lg border border-line bg-white px-2 text-[11px] font-medium text-ink outline-none focus:border-blue"
+                                >
+                                  <option value="cover">Full (Cover)</option>
+                                  <option value="contain">Contain (Full Image)</option>
+                                  <option value="fill">Stretch (100% × 100%)</option>
+                                  <option value="scale-down">Scale Down</option>
+                                  <option value="none">Original Size</option>
+                                </select>
+                              </div>
+
+                              {/* Caption / Alt */}
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] font-medium text-ink-2">Caption / Alt</span>
+                                  <input
+                                    type="text"
+                                    disabled={readOnly}
+                                    value={currentAlt}
+                                    placeholder="Enter image caption or alt text"
+                                    onChange={(e) =>
+                                      change(picked.id, {
+                                        ...edits[picked.id],
+                                        value: edits[picked.id]?.value ?? picked.value,
+                                        alt: e.target.value,
+                                      })
+                                    }
+                                    className="h-7 w-40 rounded-lg border border-line bg-white px-2 text-[11px] text-ink outline-none focus:border-blue"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Link */}
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] font-medium text-ink-2">Link</span>
+                                  <input
+                                    type="text"
+                                    disabled={readOnly}
+                                    value={currentHref}
+                                    placeholder="None (or https://...)"
+                                    onChange={(e) =>
+                                      change(picked.id, {
+                                        ...edits[picked.id],
+                                        value: edits[picked.id]?.value ?? picked.value,
+                                        href: e.target.value,
+                                      })
+                                    }
+                                    className="h-7 w-40 rounded-lg border border-line bg-white px-2 font-mono text-[11px] text-ink outline-none focus:border-blue"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         {picked.kind === "image" && !readOnly && <WebsiteImageFraming siteId={site.id} key={`${picked.id}:${device}:${edits[picked.id]?.value ?? picked.value}`} src={(() => { try { return new URL(edits[picked.id]?.value ?? picked.value, `${site.publicUrl.replace(/\/+$/, "")}/`).toString(); } catch { return ""; } })()} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} />}
 
                         {!readOnly && !picked.sourceManaged && picked.tag !== "title" && picked.tag !== "meta" && picked.kind !== "image" && picked.kind !== "container" && (
@@ -3013,22 +3334,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                               ? "This one is not on the page itself — it is what browsers and search results show. Nothing here will change in the preview."
                               : "This one cannot be shown while you type. It appears in the page once the draft saves."}
                           </p>
-                        )}
-                        {picked.kind === "image" && !readOnly && (
-                          <div className="mb-4">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => {
-                                setAssetTargetMode("image");
-                                setAssetModalOpen(true);
-                              }}
-                              className="w-full flex items-center justify-center gap-2"
-                            >
-                               Choose from Asset Library
-                            </Button>
-                          </div>
                         )}
                         {/* Carousel / Ticker Item-by-Item Editor */}
                         {(() => {
