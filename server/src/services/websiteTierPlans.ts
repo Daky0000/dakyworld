@@ -22,10 +22,17 @@ import { editingLockedForNonPayment } from "./websiteDunning.js";
  * Website Builder Three-Tier Plan, Storage Quota, 3-Month Promo Pricing Reversion,
  * Feature Matrix, Usage Limits & Subscribed Test Users.
  *
- * Pricing Structure (USD):
- * - Starter (EDITOR):   $3/mo for the first 3 months, then reverts to $5/mo standard   -> "$3 ($5)"
- * - Pro (CARE):         $10/mo for the first 3 months, then reverts to $16/mo standard -> "$10 ($16)"
- * - Business (MANAGED): $25/mo for the first 3 months, then reverts to $45/mo standard -> "$25 ($45)"
+ * Prices are authored in USD on each tier below and charged in cedis at
+ * `PAYSTACK_USD_GHS_RATE` — `paymentQuote.ts` is the only thing that decides
+ * what a customer actually pays.
+ *
+ * **No price is written as a string in this file.** It used to be: `badge` and
+ * `priceDisplay` said "$3 ($5)" long after the numbers beside them had become
+ * 25 and 40, and long after billing had moved to cedis — so a Starter customer
+ * read "$3 ($5)" on their own plan screen while being charged GHS 300, which is
+ * eight times that and in another currency. A price that depends on a rate read
+ * at call time cannot be a literal. `tierLabels()` below is how a screen asks
+ * for one.
  */
 
 /** The same deployment signals middleware/auth.ts fails closed on. */
@@ -56,14 +63,13 @@ export type TierPlanDefinition = {
   tier: WebsitePlanTier;
   productKey: "website-builder" | "website-care" | "managed-website";
   name: string;
-  badge: string;
+  /** What the plan is for. Deliberately carries no price — see `tierLabels`. */
   tagline: string;
   /** Prices below are USD. paymentQuote.ts converts them to the charged GHS. */
   currency: PlanCurrency;
   promoMonthlyPrice: number;
   standardMonthlyPrice: number;
   promoMonths: number;
-  priceDisplay: string;
   storageQuotaBytes: number;
   storageQuotaLabel: string;
   maxUploadBytes: number;
@@ -87,6 +93,52 @@ export type TierPlanDefinition = {
   restrictedFeatures: string[];
 };
 
+/**
+ * What a tier costs, in words, at today's rate.
+ *
+ * The one place a screen or an error message may get a price from. Every
+ * caller used to hold its own — "Pro ($10/$16)" was written out nine times in
+ * the upgrade messages below, and each copy was a price nobody had been
+ * charged since billing moved to cedis. Naming the tier and asking here means
+ * a rate change reaches all of them at once, and none of them can drift.
+ */
+export function tierLabels(tier: WebsitePlanTier) {
+  const plan = WEBSITE_TIER_PLANS[tier];
+  const price = priceFor(tier);
+  return {
+    name: plan.name,
+    /** "GHS 300 (GHS 500)" — promotional, with the standard price after it. */
+    badge: price.display,
+    priceDisplay: price.display,
+    promoDisplay: price.promoDisplay,
+    standardDisplay: price.standardDisplay,
+    /** "Pro (GHS 900)" — how an upgrade is named to somebody being asked to buy it. */
+    upgrade: `${plan.name} (${price.promoDisplay})`,
+  };
+}
+
+/** The tier above this one, or null at the top. What "upgrade" means, once. */
+export function nextTierUp(tier: WebsitePlanTier): WebsitePlanTier | null {
+  return tier === "EDITOR" ? "CARE" : tier === "CARE" ? "MANAGED" : null;
+}
+
+/**
+ * " Upgrade to Pro (GHS 900) for 500 MB storage." — or nothing at all on the
+ * top tier, which is the case every hand-written version of this got wrong by
+ * telling a Business customer to upgrade to Business.
+ *
+ * `describe` is given the tier being offered, so the sentence quotes that
+ * tier's own limits rather than a number copied beside it.
+ */
+function upgradeSentence(
+  tier: WebsitePlanTier,
+  describe: (plan: TierPlanDefinition) => string,
+): string {
+  const next = nextTierUp(tier);
+  if (!next) return "";
+  return ` Upgrade to ${tierLabels(next).upgrade} for ${describe(WEBSITE_TIER_PLANS[next])}.`;
+}
+
 export const MB = 1024 * 1024;
 export const GB = 1024 * MB;
 
@@ -95,13 +147,11 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     tier: "EDITOR",
     productKey: "website-builder",
     name: "Starter",
-    badge: "$3 ($5)",
-    tagline: "Essential visual page editing & media storage for solo creators. $3/mo for first 3 months, then $5/mo standard.",
+    tagline: "Essential visual page editing and media storage for solo creators.",
     currency: "GHS",
     promoMonthlyPrice: 25,
     standardMonthlyPrice: 40,
     promoMonths: 3,
-    priceDisplay: "$3 ($5)",
     storageQuotaBytes: 50 * MB,
     storageQuotaLabel: "50 MB",
     maxUploadBytes: 2 * MB,
@@ -150,13 +200,11 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     tier: "CARE",
     productKey: "website-care",
     name: "Pro",
-    badge: "$10 ($16)",
-    tagline: "Expanded storage, Global Theme tokens, SEO Inspector & AI Assistant. $10/mo for first 3 months, then $16/mo standard.",
+    tagline: "Expanded storage, global theme tokens, SEO inspector and AI assistant.",
     currency: "GHS",
     promoMonthlyPrice: 75,
     standardMonthlyPrice: 120,
     promoMonths: 3,
-    priceDisplay: "$10 ($16)",
     storageQuotaBytes: 500 * MB,
     storageQuotaLabel: "500 MB",
     maxUploadBytes: 5 * MB,
@@ -204,13 +252,11 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     tier: "MANAGED",
     productKey: "managed-website",
     name: "Business",
-    badge: "$25 ($45)",
-    tagline: "5 GB media storage, unlimited imports & edits, AI Builder Agent & Source Code access. $25/mo for first 3 months, then $45/mo standard.",
+    tagline: "5 GB media storage, unlimited imports and edits, AI Builder Agent and source code access.",
     currency: "GHS",
     promoMonthlyPrice: 195,
     standardMonthlyPrice: 320,
     promoMonths: 3,
-    priceDisplay: "$25 ($45)",
     storageQuotaBytes: 5 * GB,
     storageQuotaLabel: "5 GB",
     maxUploadBytes: 10 * MB,
@@ -272,11 +318,11 @@ export const SUBSCRIBED_TEST_USERS: readonly TestTierUserSeed[] = [
     id: "user-tier-starter",
     email: "starter@dakyworld.test",
     password: "Starter#2026!",
-    name: "Ama Mensah (Starter $3/$5)",
+    name: "Ama Mensah (Starter)",
     tier: "EDITOR",
     businessName: "Mensah Creative Studio",
     websiteUrl: "https://mensahstudio.example.com",
-    subscribedMonthsAgo: 1, // In Month 2 of the 3-month $3 promo (reverts to $5 after Month 3)
+    subscribedMonthsAgo: 1, // In month 2 of the 3-month promotional period
     initialStorageUsedBytes: 12 * MB, // 12 MB of 50 MB used
     initialImportsUsed: 1, // 1 of 3 imports used
     initialEditsUsed: 8, // 8 of 30 edits used
@@ -286,11 +332,11 @@ export const SUBSCRIBED_TEST_USERS: readonly TestTierUserSeed[] = [
     id: "user-tier-pro",
     email: "pro@dakyworld.test",
     password: "ProTier#2026!",
-    name: "Kofi Owusu (Pro $10/$16)",
+    name: "Kofi Owusu (Pro)",
     tier: "CARE",
     businessName: "Owusu Digital Agency",
     websiteUrl: "https://owusudigital.example.com",
-    subscribedMonthsAgo: 2, // In Month 3 of the 3-month $10 promo (reverts to $16 after Month 3)
+    subscribedMonthsAgo: 2, // In month 3 of the 3-month promotional period
     initialStorageUsedBytes: 85 * MB, // 85 MB of 500 MB used
     initialImportsUsed: 4, // 4 of 15 imports used
     initialEditsUsed: 42, // 42 of 200 edits used
@@ -300,11 +346,11 @@ export const SUBSCRIBED_TEST_USERS: readonly TestTierUserSeed[] = [
     id: "user-tier-business",
     email: "business@dakyworld.test",
     password: "Business#2026!",
-    name: "Esi Asante (Business $25/$45)",
+    name: "Esi Asante (Business)",
     tier: "MANAGED",
     businessName: "Asante Enterprise Group",
     websiteUrl: "https://asantegroup.example.com",
-    subscribedMonthsAgo: 0, // Subscribed this month on the $25 promo (reverts to $45 after 3 months)
+    subscribedMonthsAgo: 0, // Subscribed this month, at the start of the promotional period
     initialStorageUsedBytes: 420 * MB, // 420 MB of 5 GB used
     initialImportsUsed: 9, // Unlimited
     initialEditsUsed: 115, // Unlimited
@@ -455,7 +501,7 @@ export async function computeUserStorageAndUsage(req: Request, siteId?: string) 
     userName: identity.name,
     planCode: plan.tier,
     tierName: plan.name,
-    tierBadge: plan.badge,
+    tierBadge: tierLabels(plan.tier).badge,
     tagline: plan.tagline,
     plan,
     pricing: {
@@ -510,16 +556,14 @@ export async function assertMediaStorageAllowance(req: Request, incomingBytes: n
   if (incomingBytes > plan.maxUploadBytes) {
     throw new WebsiteError(
       413,
-      `This file (${formatBytes(incomingBytes)}) exceeds the maximum single-file upload size of ${plan.maxUploadLabel} on your ${plan.name} (${plan.priceDisplay}/mo) plan. Upgrade your tier for larger uploads.`,
+      `This file (${formatBytes(incomingBytes)}) exceeds the maximum single-file upload size of ${plan.maxUploadLabel} on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => `uploads up to ${next.maxUploadLabel}`) || " This is the largest plan."}`,
     );
   }
 
   if (storage.usedBytes + incomingBytes > storage.quotaBytes) {
     throw new WebsiteError(
       403,
-      `Media Library storage quota reached on your ${plan.name} (${plan.priceDisplay}/mo) plan (${storage.usedFormatted} / ${storage.quotaFormatted} used). Delete unused images or upgrade to ${
-        plan.tier === "EDITOR" ? "Pro ($10/$16) for 500 MB" : "Business ($25/$45) for 5 GB"
-      } storage.`,
+      `Media Library storage quota reached on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan (${storage.usedFormatted} / ${storage.quotaFormatted} used). Delete unused images.${upgradeSentence(plan.tier, (next) => `${next.storageQuotaLabel} of storage`)}`,
     );
   }
 }
@@ -542,9 +586,7 @@ export async function assertImportAllowance(req: Request, siteId?: string): Prom
   if (usage.importsUsed >= plan.importsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly HTML import limit reached (${usage.importsUsed}/${plan.importsLimit}) on your ${plan.name} (${plan.priceDisplay}/mo) plan. Upgrade to ${
-        plan.tier === "EDITOR" ? "Pro ($10/$16) for 15 imports/mo" : "Business ($25/$45) for unlimited imports"
-      }.`,
+      `Monthly HTML import limit reached (${usage.importsUsed}/${plan.importsLimit}) on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => next.importsLimitLabel)}`,
     );
   }
 }
@@ -574,9 +616,7 @@ export async function assertEditAllowance(req: Request, siteId?: string): Promis
   if (usage.editsUsed >= plan.editsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly page edit limit reached (${usage.editsUsed}/${plan.editsLimit}) on your ${plan.name} (${plan.priceDisplay}/mo) plan. Upgrade to ${
-        plan.tier === "EDITOR" ? "Pro ($10/$16) for 200 edits/mo" : "Business ($25/$45) for unlimited edits"
-      }.`,
+      `Monthly page edit limit reached (${usage.editsUsed}/${plan.editsLimit}) on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => next.editsLimitLabel)}`,
     );
   }
 }
@@ -598,29 +638,29 @@ export async function assertTierFeatureAccess(
   const { plan, features, usage } = status;
 
   const featureLabels: Record<keyof TierFeatureFlags, { name: string; minPlan: string }> = {
-    visualEditor: { name: "Visual Editor", minPlan: "Starter ($3/$5)" },
-    mediaLibrary: { name: "Media Library", minPlan: "Starter ($3/$5)" },
-    themeSettings: { name: "Global Theme Settings", minPlan: "Pro ($10/$16)" },
-    seoInspector: { name: "SEO Inspector & Auditor", minPlan: "Pro ($10/$16)" },
-    aiAssistant: { name: "AI Copy & Layout Assistant", minPlan: "Pro ($10/$16)" },
-    aiBuilderAgent: { name: "Autonomous AI Builder Agent", minPlan: "Business ($25/$45)" },
-    sourceCodeEditor: { name: "Raw Source Code Editor", minPlan: "Business ($25/$45)" },
-    pullRequestPublish: { name: "GitHub Pull Request Workflow", minPlan: "Business ($25/$45)" },
-    brandPresets: { name: "Brand Style Presets", minPlan: "Pro ($10/$16)" },
+    visualEditor: { name: "Visual Editor", minPlan: tierLabels("EDITOR").upgrade },
+    mediaLibrary: { name: "Media Library", minPlan: tierLabels("EDITOR").upgrade },
+    themeSettings: { name: "Global Theme Settings", minPlan: tierLabels("CARE").upgrade },
+    seoInspector: { name: "SEO Inspector & Auditor", minPlan: tierLabels("CARE").upgrade },
+    aiAssistant: { name: "AI Copy & Layout Assistant", minPlan: tierLabels("CARE").upgrade },
+    aiBuilderAgent: { name: "Autonomous AI Builder Agent", minPlan: tierLabels("MANAGED").upgrade },
+    sourceCodeEditor: { name: "Raw Source Code Editor", minPlan: tierLabels("MANAGED").upgrade },
+    pullRequestPublish: { name: "GitHub Pull Request Workflow", minPlan: tierLabels("MANAGED").upgrade },
+    brandPresets: { name: "Brand Style Presets", minPlan: tierLabels("CARE").upgrade },
   };
 
   if (!features[feature]) {
     const info = featureLabels[feature];
     throw new WebsiteError(
       403,
-      `${info.name} is not available on the ${plan.name} (${plan.priceDisplay}/mo) plan. Upgrade to ${info.minPlan} to unlock this feature.`,
+      `${info.name} is not available on the ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan. Upgrade to ${info.minPlan} to unlock this feature.`,
     );
   }
 
   if (feature === "aiAssistant" && usage.aiPromptsUsed >= plan.aiPromptsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly AI Assistant prompt limit reached (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on your ${plan.name} (${plan.priceDisplay}/mo) plan. Upgrade to Business ($25/$45) for unlimited AI prompts.`,
+      `Monthly AI Assistant prompt limit reached (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => next.aiPromptsLimitLabel)}`,
     );
   }
 }
@@ -649,7 +689,7 @@ export async function ensureWebsiteTierUsersAndPlans(): Promise<{
   }
   const summary = SUBSCRIBED_TEST_USERS.map((u) => ({
     ...u,
-    priceDisplay: WEBSITE_TIER_PLANS[u.tier].priceDisplay,
+    priceDisplay: tierLabels(u.tier).priceDisplay,
   }));
   try {
     const sites = await prisma.site.findMany({ select: { id: true } });
@@ -721,7 +761,7 @@ export async function ensureWebsiteTierUsersAndPlans(): Promise<{
               email: seed.email,
               websiteUrl: seed.websiteUrl,
               compatibilityStatus: "COMPATIBLE",
-              compatibilityNotes: `Subscribed to ${plan.name} (${plan.priceDisplay}/mo). First 3 months at $${plan.promoMonthlyPrice}/mo until ${promoEndsAt.toISOString().slice(0, 10)}, then reverts to $${plan.standardMonthlyPrice}/mo standard price.`,
+              compatibilityNotes: `Subscribed to ${plan.name} (${tierLabels(plan.tier).priceDisplay}/mo). First 3 months at ${tierLabels(plan.tier).promoDisplay}/mo until ${promoEndsAt.toISOString().slice(0, 10)}, then reverts to ${tierLabels(plan.tier).standardDisplay}/mo standard price.`,
               monthlyPrice: plan.promoMonthlyPrice.toFixed(2),
               setupPrice: "0.00",
               currency: "GHS",
@@ -821,7 +861,7 @@ export function registerWebsiteTierRoutes(router: Router) {
           planCode: seed.tier,
           tierLabel: plan.name,
           planName: plan.name,
-          priceDisplay: plan.priceDisplay,
+          priceDisplay: tierLabels(plan.tier).priceDisplay,
           currentMonthlyPrice: pricing.currentMonthlyPrice,
           promoMonthlyPrice: plan.promoMonthlyPrice,
           standardMonthlyPrice: plan.standardMonthlyPrice,
@@ -841,8 +881,8 @@ export function registerWebsiteTierRoutes(router: Router) {
       const availableTiers = Object.values(WEBSITE_TIER_PLANS).map((p) => ({
         planCode: p.tier,
         tierName: p.name,
-        tierBadge: p.badge,
-        priceDisplay: p.priceDisplay,
+        tierBadge: tierLabels(p.tier).badge,
+        priceDisplay: tierLabels(p.tier).priceDisplay,
         promoMonthlyPrice: p.promoMonthlyPrice,
         standardMonthlyPrice: p.standardMonthlyPrice,
         promoMonths: p.promoMonths,

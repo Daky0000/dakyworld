@@ -1,14 +1,14 @@
 import type { Prisma, Product } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { WEBSITE_TIER_PLANS, ensureWebsiteTierUsersAndPlans } from "./websiteTierPlans.js";
+import { WEBSITE_TIER_PLANS, ensureWebsiteTierUsersAndPlans, tierLabels } from "./websiteTierPlans.js";
+import { usdToGhsRate } from "./paymentQuote.js";
 
 /**
  * What Dakyworld sells that is not capacity, and who has to pay for it.
  *
- * Three Website Builder Tiers:
- * - Starter (`website-builder` / `EDITOR`):   $3/mo for first 3 months, then $5/mo standard  -> "$3 ($5)"
- * - Pro (`website-care` / `CARE`):            $10/mo for first 3 months, then $16/mo standard -> "$10 ($16)"
- * - Business (`managed-website` / `MANAGED`): $25/mo for first 3 months, then $45/mo standard -> "$25 ($45)"
+ * Prices on a `Product` row are authored in USD and charged in cedis at
+ * `PAYSTACK_USD_GHS_RATE`. Anything shown to a customer is the cedi figure,
+ * because cedis are what leaves their account — see `publicCatalogue` below.
  */
 
 export const SHIPPED_PRODUCTS: Array<
@@ -16,7 +16,6 @@ export const SHIPPED_PRODUCTS: Array<
     monthlyPrice: string;
     standardMonthlyPrice: string;
     promoMonths: number;
-    priceDisplay: string;
     currency: string;
     setupPrice: string | null;
   }
@@ -24,11 +23,10 @@ export const SHIPPED_PRODUCTS: Array<
   {
     key: "website-builder",
     name: "Starter (Editor)",
-    tagline: "Self-service website editing, 50 MB media storage, 3 HTML imports/mo & 30 edits/mo. $25/mo for the first 3 months, then $40/mo standard — charged in cedis at the merchant rate, about GHS 300 then GHS 480.",
+    tagline: "Self-service website editing, 50 MB media storage, 3 HTML imports and 30 edits a month.",
     monthlyPrice: "25.00",
     standardMonthlyPrice: "40.00",
     promoMonths: 3,
-    priceDisplay: "GHS 300 (GHS 480)",
     currency: "USD",
     setupPrice: null,
     publicPath: "/website-builder",
@@ -37,11 +35,10 @@ export const SHIPPED_PRODUCTS: Array<
   {
     key: "website-care",
     name: "Pro (Website Care)",
-    tagline: "Global Theme system, SEO Inspector, AI Assistant, 500 MB media storage, 15 imports/mo & 200 edits/mo. $75/mo for the first 3 months, then $120/mo standard — charged in cedis, about GHS 900 then GHS 1,440.",
+    tagline: "Global theme system, SEO inspector, AI assistant, 500 MB media storage, 15 imports and 200 edits a month.",
     monthlyPrice: "75.00",
     standardMonthlyPrice: "120.00",
     promoMonths: 3,
-    priceDisplay: "GHS 900 (GHS 1,440)",
     currency: "USD",
     setupPrice: null,
     publicPath: "/website-builder",
@@ -50,11 +47,10 @@ export const SHIPPED_PRODUCTS: Array<
   {
     key: "managed-website",
     name: "Business (Managed Website)",
-    tagline: "5 GB media storage, unlimited imports & edits, Autonomous AI Builder Agent, Source Code Editor & priority technical oversight. $195/mo for the first 3 months, then $320/mo standard — charged in cedis, about GHS 2,340 then GHS 3,840.",
+    tagline: "5 GB media storage, unlimited imports and edits, Autonomous AI Builder Agent, source code editor and priority technical oversight.",
     monthlyPrice: "195.00",
     standardMonthlyPrice: "320.00",
     promoMonths: 3,
-    priceDisplay: "GHS 2,340 (GHS 3,840)",
     currency: "USD",
     setupPrice: null,
     publicPath: "/website-builder",
@@ -62,10 +58,7 @@ export const SHIPPED_PRODUCTS: Array<
   },
 ];
 
-/**
- * Creates the catalogue on boot and ensures the 3 tier plans ($3/$5, $10/$16, $25/$45)
- * and 3 subscribed test users exist in the database.
- */
+/** Creates the catalogue on boot, and the tier plans and test users with it. */
 export async function ensureProducts(): Promise<void> {
   for (const seed of SHIPPED_PRODUCTS) {
     await prisma.product.upsert({
@@ -179,23 +172,43 @@ const TIER_BY_KEY: Record<string, keyof typeof WEBSITE_TIER_PLANS> = {
   "managed-website": "MANAGED",
 };
 
-/** The public catalogue, exactly as the website renders it. */
+/**
+ * The public catalogue, exactly as the website renders it.
+ *
+ * **Every figure here is in cedis**, because cedis are what a customer is
+ * charged. The `Product` row holds dollars — that is where a price is authored
+ * and edited — and this converts at the same rate `paymentQuote.ts` charges at,
+ * using the same arithmetic, so the number on the pricing page and the number
+ * on the card cannot disagree.
+ *
+ * It published the authored dollars for a while, alongside `currency: "USD"`,
+ * and `assets/pricing.js` renders `currency + " " + amount` — so a page whose
+ * markup reads "GHS 300" replaced it with "USD 25" as soon as the catalogue
+ * loaded. The same plan, quoted at an eighth of its price in the wrong money.
+ */
 export async function publicCatalogue() {
   const products = await prisma.product.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } });
+  const rate = usdToGhsRate();
   return {
     includedWithRetainer: "Included at no extra cost with every Dakyworld retainer. 3-month promotional pricing reverts to standard price after month 3.",
     products: products.map((product) => {
       const tierDef = WEBSITE_TIER_PLANS[TIER_BY_KEY[product.key] ?? "EDITOR"];
+      // The same two lines as `websitePaymentQuote`: a USD product price is
+      // multiplied by the rate, a GHS one is already what it will be charged.
+      const multiplier = product.currency === "USD" ? rate : 1;
+      const chargedMonthly = Math.round(Number(product.monthlyPrice) * multiplier);
+      const chargedStandard = Math.round(tierDef.standardMonthlyPrice * rate);
+      const chargedSetup = product.setupPrice ? Math.round(Number(product.setupPrice) * multiplier) : null;
       return {
         key: product.key,
         name: product.name,
         tagline: product.tagline,
-        currency: product.currency,
-        monthly: product.monthlyPrice.toFixed(2),
-        monthlyDisplay: money(product.monthlyPrice.toFixed(2)),
-        standardMonthly: tierDef.standardMonthlyPrice.toFixed(2),
-        standardMonthlyDisplay: money(tierDef.standardMonthlyPrice.toFixed(2)),
-        priceDisplay: tierDef.priceDisplay,
+        currency: "GHS",
+        monthly: chargedMonthly.toFixed(2),
+        monthlyDisplay: money(chargedMonthly),
+        standardMonthly: chargedStandard.toFixed(2),
+        standardMonthlyDisplay: money(chargedStandard),
+        priceDisplay: tierLabels(tierDef.tier).priceDisplay,
         promoMonths: tierDef.promoMonths,
         storageQuotaLabel: tierDef.storageQuotaLabel,
         importsLimitLabel: tierDef.importsLimitLabel,
@@ -203,8 +216,8 @@ export async function publicCatalogue() {
         features: tierDef.features,
         featureHighlights: tierDef.featureHighlights,
         restrictedFeatures: tierDef.restrictedFeatures,
-        setup: product.setupPrice ? product.setupPrice.toFixed(2) : null,
-        setupDisplay: product.setupPrice ? money(product.setupPrice.toFixed(2)) : null,
+        setup: chargedSetup === null ? null : chargedSetup.toFixed(2),
+        setupDisplay: chargedSetup === null ? null : money(chargedSetup),
         path: product.publicPath,
         updatedAt: product.updatedAt,
       };

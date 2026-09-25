@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { requirePermission } from "../middleware/auth.js";
 import { listProducts, publicCatalogue, updateProduct } from "../services/products.js";
 import { createManagedBooking, inspectPublicWebsite, listWebsiteCommerce, startWebsitePurchase, updateBooking, updatePurchaseStatus } from "../services/websiteCommerce.js";
-import { WEBSITE_TIER_PLANS, SUBSCRIBED_TEST_USERS } from "../services/websiteTierPlans.js";
+import { WEBSITE_TIER_PLANS, SUBSCRIBED_TEST_USERS, tierLabels } from "../services/websiteTierPlans.js";
 import { rateLimit } from "../middleware/security.js";
 import { websitePaymentQuote } from "../services/paymentQuote.js";
 import { subscriptionManagementLink } from "../lib/paystack.js";
@@ -133,7 +133,7 @@ productsRouter.get("/", requirePermission("website.view"), async (_req, res, nex
           currency: product.currency,
           monthlyPrice: product.monthlyPrice.toFixed(2),
           standardMonthlyPrice: tierDef.standardMonthlyPrice.toFixed(2),
-          priceDisplay: tierDef.priceDisplay,
+          priceDisplay: tierLabels(tierDef.tier).priceDisplay,
           promoMonths: tierDef.promoMonths,
           storageQuotaLabel: tierDef.storageQuotaLabel,
           maxUploadLabel: tierDef.maxUploadLabel,
@@ -151,7 +151,7 @@ productsRouter.get("/", requirePermission("website.view"), async (_req, res, nex
       }),
       testUsers: SUBSCRIBED_TEST_USERS,
       /** Said here so the screen states the rule rather than inventing wording. */
-      includedWithRetainer: "Every client on an active retainer gets all products at no charge. 3-month promotional prices ($3, $10, $25) automatically revert to standard prices ($5, $16, $45) after month 3.",
+      includedWithRetainer: `Every client on an active retainer gets all products at no charge. Promotional pricing runs for the first 3 months and then reverts to the standard rate: ${["EDITOR", "CARE", "MANAGED"].map((tier) => `${tierLabels(tier as "EDITOR").name} ${tierLabels(tier as "EDITOR").priceDisplay}`).join(", ")}.`,
     });
   } catch (err) {
     next(err);
