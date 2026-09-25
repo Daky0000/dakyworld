@@ -190,11 +190,11 @@
     if (summaryTitle) summaryTitle.textContent = meta.title;
 
     var checkoutTitle = document.getElementById('builderCheckoutTitle');
-    if (checkoutTitle) checkoutTitle.textContent = 'Purchase ' + meta.title;
+    if (checkoutTitle) checkoutTitle.textContent = 'Start ' + meta.title;
 
     var lineLabel = document.getElementById('builderLineLabel');
     if (lineLabel) {
-      lineLabel.textContent = meta.title + (isAnnual ? ' (Annual — 2 Months Free)' : ' (Month 1)');
+      lineLabel.textContent = meta.title + (isAnnual ? ' (yearly, 2 months free)' : ' (Month 1)');
     }
 
     var summaryCycle = document.getElementById('builderSummaryCycle');
@@ -270,7 +270,7 @@
       lastScannedWebsiteUrl = rawUrl;
       if (scanBtn) {
         scanBtn.disabled = true;
-        scanBtn.textContent = 'Scanning live site…';
+        scanBtn.textContent = 'Checking your website…';
       }
       if (previewStatus) {
         previewStatus.textContent = '⏳ Reading ' + rawUrl + '…';
@@ -285,7 +285,7 @@
         .then(function (result) {
           if (scanBtn) {
             scanBtn.disabled = false;
-            scanBtn.innerHTML = 'Scan My Website &rarr;';
+            scanBtn.innerHTML = 'Check my website &rarr;';
           }
           if (!result.ok || !result.data) {
             throw new Error((result.data && result.data.error) || 'Could not inspect website.');
@@ -293,7 +293,7 @@
           var info = result.data;
           if (previewStatus) {
             previewStatus.innerHTML = info.status === 'NOT_SUPPORTED'
-              ? '&#9888; Migration Recommended &middot; ' + info.pageTitle
+              ? '&#9888; Not supported &middot; ' + info.pageTitle
               : '&#10003; Compatible &middot; ' + info.pageTitle;
           }
           if (previewStats && info.stats) {
@@ -306,23 +306,23 @@
             previewNotes.textContent = info.notes;
           }
           if (agentFeedback) {
-            agentFeedback.textContent = '✓ Scanned ' + info.pageTitle + '! Click the heading on the left to type, or test an AI command.';
+            agentFeedback.textContent = '✓ Checked ' + info.pageTitle + '. Click the heading to type, or try a command.';
           }
         })
         .catch(function () {
           if (scanBtn) {
             scanBtn.disabled = false;
-            scanBtn.innerHTML = 'Scan My Website &rarr;';
+            scanBtn.innerHTML = 'Check my website &rarr;';
           }
           var host = rawUrl.replace(/^https?:\/\//i, '').split('/')[0] || 'your site';
           if (previewStatus) {
-            previewStatus.innerHTML = '&#10003; Ready to Connect &middot; ' + host;
+            previewStatus.innerHTML = '&#9888; Could not read ' + host + ' right now';
           }
           if (previewHeading) {
-            previewHeading.textContent = 'Welcome to ' + host + ' — click here to edit this headline live.';
+            previewHeading.textContent = 'Sample heading for ' + host + '. Click to edit.';
           }
           if (agentFeedback) {
-            agentFeedback.textContent = '✓ Interactive preview ready for ' + host + ' — click any AI command above!';
+            agentFeedback.textContent = 'We could not check ' + host + '. You can still try the sample preview.';
           }
         });
     });
@@ -333,16 +333,16 @@
       var action = chip.getAttribute('data-demo-action');
       if (action === 'color-emerald' && previewCta) {
         previewCta.style.background = '#059669';
-        if (agentFeedback) agentFeedback.textContent = '✓ AI Agent updated CTA button background-color to #059669 across all pages!';
+        if (agentFeedback) agentFeedback.textContent = 'Preview: button colour changed to green.';
       } else if (action === 'color-blue' && previewCta) {
         previewCta.style.background = '#3157ff';
-        if (agentFeedback) agentFeedback.textContent = '✓ AI Agent restored CTA button background-color to #3157FF!';
+        if (agentFeedback) agentFeedback.textContent = 'Preview: button colour restored.';
       } else if (action === 'rewrite-headline' && previewHeading) {
-        previewHeading.textContent = 'Edit every word, photo and button on your live website in seconds — zero code required.';
-        if (agentFeedback) agentFeedback.textContent = '✓ AI Agent rewrote the hero headline for clarity and conversion!';
+        previewHeading.textContent = 'Edit the words, photos and buttons on your website yourself. No code required.';
+        if (agentFeedback) agentFeedback.textContent = 'Preview: headline rewritten.';
       } else if (action === 'font-serif' && previewHeading) {
         previewHeading.style.fontFamily = 'Georgia, "Times New Roman", serif';
-        if (agentFeedback) agentFeedback.textContent = '✓ AI Agent switched heading typography to Editorial Serif!';
+        if (agentFeedback) agentFeedback.textContent = 'Preview: heading font changed to a serif.';
       }
     });
   });
