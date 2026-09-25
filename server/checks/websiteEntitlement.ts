@@ -54,9 +54,16 @@ check(
   "an account with no subscription gets the lowest tier, not the highest",
   /const DEFAULT_TIER: WebsitePlanTier = "EDITOR"/.test(entitlement),
 );
+// What a cancelled, non-renewing or past-due subscription is still entitled to
+// is asserted in `checks/websiteGrace.ts`, against the decision function with
+// real dates. It is deliberately not a regex here any more: the version of this
+// assertion that searched the source for the comparison passed for the whole
+// time the behaviour was dead, because the database query above that comparison
+// filtered the row out by `status` before it could ever run. A string being
+// present in a file is not evidence that anything reaches it.
 check(
-  "a cancelled subscription keeps serving until the paid period ends",
-  /row\.nextBillingAt\.getTime\(\) > now\.getTime\(\)/.test(entitlement),
+  "the grace decision is a function something can actually call",
+  /export function stillEntitled/.test(entitlement),
 );
 
 /* -------------------------------------------- usage survives a restart --- */

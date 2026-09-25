@@ -91,11 +91,66 @@ export function setSwitchedUserEmail(email: string | null): void {
  * a customer pays, then gets their login — and is safe because the address
  * compared is the one on the *authenticated* user, never one from the request.
  */
+/**
+ * Whether one paid-for subscription row still entitles its owner, and why.
+ *
+ * Pure, and separate from the query, because this is the decision and the
+ * decision is what was wrong. Three faults met here and two of them cancelled
+ * each other out, which is why nothing looked broken:
+ *
+ * 1. The query filtered `status` to the four healthy values, so a row the
+ *    billing machine had marked `CANCELLED` or `FAILED` was **excluded by the
+ *    database** and the grace logic below it never ran at all. A customer who
+ *    cancelled lost their tier the same second, having paid to the end of the
+ *    period.
+ * 2. Cancelling wrote `nextBillingAt: null` at the same moment, and the grace
+ *    test read a missing date as "has not started billing yet, keep serving".
+ *    So repairing the filter alone would have swapped an instant cut-off for
+ *    free access forever.
+ * 3. `PAST_DUE` was written as `status: FAILED`, so a customer behind on
+ *    payment also vanished from this query — dropping them to the default tier
+ *    with no `purchaseId`, which is the one argument `editingLockedForNonPayment`
+ *    needs. The entire dunning design was unreachable, and instead of the
+ *    honest "editing is paused, your website is still online" they were quietly
+ *    demoted to Starter and allowed to carry on editing at it.
+ *
+ * So `PAST_DUE` keeps its tier on purpose. Losing *editing* with the website
+ * still served is the intended consequence of a declined card, and that is
+ * decided by `editingLockedForNonPayment`, not by taking the plan away.
+ */
+export type EntitlingRow = {
+  billingState: string;
+  /** The date the customer is paid up to. Paystack's next billing date. */
+  nextBillingAt: Date | null;
+};
+
+export function stillEntitled(row: EntitlingRow, now = new Date()): boolean {
+  // Ending, but paid up to a date: serve until it passes. No date to honour
+  // means there is nothing left to serve — never "serve indefinitely".
+  if (row.billingState === "CANCELLED" || row.billingState === "NON_RENEWING") {
+    return Boolean(row.nextBillingAt && row.nextBillingAt.getTime() > now.getTime());
+  }
+  // Mid-cancellation, and the outcome is not known yet. The customer asked to
+  // stop and may still be paid up; refusing them here would take the product
+  // away during our own uncertainty.
+  if (row.billingState === "CANCELLING" || row.billingState === "CANCEL_UNCERTAIN") {
+    return Boolean(row.nextBillingAt && row.nextBillingAt.getTime() > now.getTime());
+  }
+  // NONE, ACTIVE, PAST_DUE, CREATING, UNCERTAIN — the plan stands.
+  return true;
+}
+
 async function liveSubscription(userId: string, email: string) {
   const now = new Date();
   const rows = await prisma.websitePurchase.findMany({
     where: {
-      status: { in: ["ACTIVE", "READY", "SETUP_PAID", "SETUP_IN_PROGRESS"] },
+      // Money has been taken at least once. This replaces a list of healthy
+      // statuses, which is what hid a cancelled or past-due subscription from
+      // its own grace period. `setupPaidAt` is set on the first settlement and
+      // never cleared, so it separates "has paid" from "abandoned the checkout
+      // or the first charge was declined" without naming a single status — and
+      // it cannot fall behind when a status is added.
+      setupPaidAt: { not: null },
       OR: [{ userId }, { userId: null, email: email.toLowerCase() }],
     },
     orderBy: [{ activatedAt: "desc" }, { createdAt: "desc" }],
@@ -109,17 +164,7 @@ async function liveSubscription(userId: string, email: string) {
       billingState: true,
     },
   });
-  // A cancelled subscription keeps its tier until the date it was paid up to.
-  // Taking the product away the moment somebody clicks cancel would be taking
-  // back something they have already paid for, so the date Paystack last
-  // billed them to is what decides — and a row with no such date has not
-  // started billing yet, which is its own reason to keep serving.
-  return (
-    rows.find((row) => {
-      if (row.billingState !== "CANCELLED" && row.billingState !== "NON_RENEWING") return true;
-      return !row.nextBillingAt || row.nextBillingAt.getTime() > now.getTime();
-    }) ?? null
-  );
+  return rows.find((row) => stillEntitled(row, now)) ?? null;
 }
 
 export async function resolveEntitlement(req: Request): Promise<Entitlement> {

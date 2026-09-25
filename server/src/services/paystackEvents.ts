@@ -62,7 +62,15 @@ async function handle(event: string, data: Data) {
   const changed = await prisma.websitePurchase.updateMany({ where: { id: purchase.id, billingState: purchase.billingState, status: purchase.status }, data: {
     providerSubscriptionCode: code, billingState: state,
     ...(state === "CANCELLED" ? { status: "CANCELLED" } : state === "PAST_DUE" ? { status: "FAILED" } : purchase.status !== "CANCELLED" && state === "ACTIVE" ? { status: "ACTIVE" } : {}),
-    nextBillingAt: subscription.next_payment_date && Number.isFinite(Date.parse(subscription.next_payment_date)) ? new Date(subscription.next_payment_date) : null,
+    // Only ever written when the provider offers a real date. It used to be
+    // nulled whenever one was absent, and Paystack stops reporting a next
+    // payment date as soon as a subscription is cancelled — so the first event
+    // after a cancellation erased the date the customer is paid up to, which is
+    // the only thing entitlement can serve a paid-for period from. A stale date
+    // in the past costs nothing, because `stillEntitled` compares it to now.
+    ...(subscription.next_payment_date && Number.isFinite(Date.parse(subscription.next_payment_date))
+      ? { nextBillingAt: new Date(subscription.next_payment_date) }
+      : {}),
   } });
   if (!changed.count) throw new Error("Billing changed during reconciliation; retry with current state");
 

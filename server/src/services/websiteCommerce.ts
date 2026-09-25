@@ -225,7 +225,13 @@ export async function updatePurchaseStatus(id: string, status: WebsitePurchaseSt
       await prisma.websitePurchase.updateMany({ where: { id, billingState: "CANCELLING" }, data: { billingState: "CANCEL_UNCERTAIN" } });
       throw error;
     }
-    return publicPurchase(await prisma.websitePurchase.update({ where: { id }, data: { status: "CANCELLED", billingState: "CANCELLED", nextBillingAt: null } }));
+    // `nextBillingAt` is kept, not cleared. It is the date the customer is paid
+    // up to, and it is the only thing that can tell entitlement how long they
+    // are still owed the product they bought — clearing it here is what made
+    // cancelling take the editor away the same second. Paystack has already
+    // been told to raise no further charge, so a date in the future is a
+    // period served, not a renewal.
+    return publicPurchase(await prisma.websitePurchase.update({ where: { id }, data: { status: "CANCELLED", billingState: "CANCELLED" } }));
   }
   if (purchase.status === "CANCELLED") throw new PaystackError("A cancelled purchase cannot be restarted without a new checkout.", 409);
   if (status !== "READY" && status !== "ACTIVE") {
