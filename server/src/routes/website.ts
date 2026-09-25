@@ -54,6 +54,7 @@ import {
 } from "../services/website/index.js";
 import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, siteStyleClasses, underSiteCredential, WebsiteError } from "../services/website/site.js";
 import { offerPagePublished } from "../services/context/business.js";
+import { tailwindCdnCss } from "../services/website/cdnStyles.js";
 
 /**
  * Editing the websites this company publishes.
@@ -818,7 +819,8 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
     // in the preview and inspector, with an explanation of its source.
     const pickable = picking ? discoverFields(applied.html).fields : undefined;
     const writable = picking && source.sourceFile ? await sourceManagedFields(site, page, source.html) : null;
-    const document = buildPreview(applied.html, pageUrl(site, page), writable ? pickable!.map((field) => ({ ...field, previewReadOnly: !writable.writable.has(field.id) })) : pickable, capabilities.capabilities.edit);
+    const builtCss = await tailwindCdnCss(applied.html);
+    const document = buildPreview(applied.html, pageUrl(site, page), writable ? pickable!.map((field) => ({ ...field, previewReadOnly: !writable.writable.has(field.id) })) : pickable, capabilities.capabilities.edit, builtCss);
     res
       .type("html")
       .set("Cache-Control", "no-store")

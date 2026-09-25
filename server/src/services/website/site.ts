@@ -892,7 +892,11 @@ export async function publishPagesAsPullRequest(input: {
 export type PreviewDocument = { html: string; csp: string };
 
 /** Isolated rendering of the original HTML, with only the editor's picker allowed to run. */
-export function previewDocument(html: string, baseUrl: string, editable?: SiteField[], allowEditing = true): PreviewDocument {
+/**
+ * `builtCss` is a stylesheet the page would have generated in the browser (see
+ * cdnStyles.ts), added at the end of the head where the Play CDN puts its own.
+ */
+export function previewDocument(html: string, baseUrl: string, editable?: SiteField[], allowEditing = true, builtCss?: string | null): PreviewDocument {
   const policy = ["default-src 'none'", "sandbox allow-scripts allow-same-origin", "base-uri http: https:", "img-src 'self' data: blob: http: https:", "style-src 'self' 'unsafe-inline' http: https:", "font-src 'self' data: http: https:", "media-src http: https: data:", "script-src 'none'", "connect-src 'none'", "object-src 'none'", "frame-src 'none'", "frame-ancestors 'self'", "form-action 'none'"].join("; ");
   // Apply the original offsets first, then parse again before removing tags.
   let out = editable?.length ? markEditable(html, editable) : html;
@@ -905,7 +909,7 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   out = head ? out.slice(0, head.innerStart) + base + out.slice(head.innerStart) : base + out;
   const interactionHead = [...walk(parseHtml(out))].find(node => node.tag === "head");
   const interactionAt = interactionHead?.innerEnd ?? out.length;
-  out = out.slice(0, interactionAt) + `<style data-dw-interaction-preview>${interactionCss(true)}</style>` + out.slice(interactionAt);
+  out = out.slice(0, interactionAt) + (builtCss ? `<style data-dw-built-css>${builtCss}</style>` : "") + `<style data-dw-interaction-preview>${interactionCss(true)}</style>` + out.slice(interactionAt);
   if (!editable?.length) return { html: out, csp: policy };
   const nonce = randomBytes(16).toString("base64");
   // Parsed closing offsets avoid matching a fake </body> inside a script/string.

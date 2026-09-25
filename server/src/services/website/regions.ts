@@ -274,7 +274,21 @@ const LABELS: Record<string, string> = {
   div: "Text",
 };
 
-const BUTTONISH = /\b(btn|button|cta|primary|secondary|action)\b/i;
+const BUTTONISH_WORD = /\b(btn|button|cta|primary|secondary|action)\b/i;
+/**
+ * A utility class that names a colour, not a component: `text-primary`,
+ * `hover:bg-secondary`. Tailwind sites put "primary" on every nav link, and
+ * reading that as "this is a button" made the whole menu into buttons.
+ */
+const COLOUR_UTILITY = /^(?:text|bg|border|ring|from|via|to|fill|stroke|outline|decoration|shadow|placeholder|divide|accent|caret)-/;
+const BUTTONISH = {
+  test(cls: string): boolean {
+    return cls.split(/\s+/).some((token) => {
+      const base = token.slice(token.lastIndexOf(":") + 1);
+      return !COLOUR_UTILITY.test(base) && BUTTONISH_WORD.test(base);
+    });
+  },
+};
 
 function classOf(element: ElementNode): string {
   return element.attrs.find((candidate) => candidate.name === "class")?.value ?? "";
@@ -415,6 +429,7 @@ function newTabOf(element: ElementNode): Pick<SiteField, "newTab" | "targetAttr"
 /** An element that is a picture rather than words: what a button's icon is. */
 function iconType(source: string, element: ElementNode): SiteField["iconType"] | null {
   if (element.tag === "svg") return "svg";
+  if (isLigatureIcon(source, element)) return "font";
   if (element.tag === "img") return "img";
   // `<i class="fa fa-phone"></i>`, `<span class="icon-arrow"></span>`: an icon
   // font or a CSS-drawn glyph. Empty is the test, not the class name, because
@@ -469,8 +484,19 @@ function buttonBits(element: ElementNode): Partial<SiteField> {
   };
 }
 
+/**
+ * A ligature icon: `<span class="material-symbols-outlined">arrow_forward</span>`.
+ * Its text is the icon's *name*, which a font draws as a picture. A reader sees
+ * an arrow, not the word, so it is an icon and not part of anybody's words.
+ */
+const LIGATURE_ICON = /\bmaterial-(?:symbols|icons)(?:-[a-z]+)?\b/i;
+function isLigatureIcon(source: string, element: ElementNode): boolean {
+  return (element.tag === "span" || element.tag === "i") && LIGATURE_ICON.test(classOf(element)) && /^[a-z0-9_]{1,60}$/.test(textOf(source, element)) && element.children.length === 0;
+}
+
 /** True when nothing inside this element renders any words. */
 function isEmpty(source: string, element: ElementNode): boolean {
+  if (isLigatureIcon(source, element)) return true;
   return textOf(source, element) === "" && !hasDescendant(element, (child) => child.tag === "img");
 }
 
@@ -539,7 +565,9 @@ function isField(source: string, element: ElementNode): boolean {
       return false;
     }
   }
-  return !hasDescendant(element, (child) => BLOCK.has(child.tag) || child.tag === "a");
+  // A <button> inside is its own field, like a link: otherwise the wrapper's
+  // words would be the button's markup, and typing over them would erase it.
+  return !hasDescendant(element, (child) => BLOCK.has(child.tag) || child.tag === "a" || child.tag === "button");
 }
 
 function firstLine(text: string, max = 90): string {
@@ -660,6 +688,34 @@ function imageField(element: ElementNode, id: string): SiteField | null {
 }
 
 /**
+ * A font icon standing by itself: `<span class="material-symbols-outlined">
+ * local_shipping</span>`, or a box holding only that. It used to be offered as
+ * its name, to be typed over. It is an icon, in the same id slot it had.
+ */
+function fontIconField(source: string, element: ElementNode, id: string): SiteField | null {
+  const only = element.children.length === 1 ? element.children[0]! : null;
+  const ligature = isLigatureIcon(source, element)
+    ? element
+    : only && isLigatureIcon(source, only) && source.slice(element.innerStart, element.innerEnd).trim() === source.slice(only.start, only.end)
+      ? only
+      : null;
+  if (!ligature) return null;
+  return {
+    id,
+    kind: "icon",
+    label: "Icon",
+    tag: ligature.tag,
+    value: "",
+    preview: textOf(source, ligature).replace(/_/g, " "),
+    icon: source.slice(ligature.start, ligature.end),
+    iconSpan: { start: ligature.start, end: ligature.end },
+    iconType: "font",
+    iconFrame: iconFrameOf(ligature),
+    ...styleOf(ligature),
+  };
+}
+
+/**
  * Walks one section and collects its fields.
  *
  * Depth-first, and a hit stops the descent: once a paragraph is a field, the
@@ -719,6 +775,11 @@ function collect(source: string, element: ElementNode, out: SiteField[], section
     if (child.tag === "button" && textOf(source, child) !== "" && !hasDescendant(child, (node) => node.tag === "img")) {
       const field = buttonElementField(source, child, id);
       if (field) out.push(field);
+      continue;
+    }
+    const fontIcon = fontIconField(source, child, id);
+    if (fontIcon) {
+      out.push(fontIcon);
       continue;
     }
     if (isField(source, child)) {
@@ -878,9 +939,41 @@ export function readPage(source: string): PageContent {
         if (field) loose.push(field);
         continue;
       }
+      // A link around a whole card: its destination is a field, and what is in
+      // it is fields of their own. As one field, its words were the card's markup.
+      if (child.tag === "a" && hasDescendant(child, (node) => BLOCK.has(node.tag))) {
+        const href = attrNode(child, "href");
+        if (href) {
+          loose.push({
+            id,
+            kind: "link",
+            label: "Link",
+            tag: "a",
+            value: "",
+            preview: firstLine(textOf(source, child), 36) || href.value || "Link",
+            href: href.value,
+            hrefSpan: { start: href.valueStart, end: href.valueEnd },
+            ...styleOf(child),
+          });
+        }
+        collectLoose(child);
+        continue;
+      }
       if (child.tag === "a" && !hasDescendant(child, (node) => node.tag === "img")) {
         const field = linkField(source, child, id);
         if (field) loose.push(field);
+        continue;
+      }
+      // The same two cases the section walk has: a <button> is a button, and a
+      // font icon is an icon rather than a word to type over.
+      if (child.tag === "button" && textOf(source, child) !== "" && !hasDescendant(child, (node) => node.tag === "img")) {
+        const field = buttonElementField(source, child, id);
+        if (field) loose.push(field);
+        continue;
+      }
+      const fontIcon = fontIconField(source, child, id);
+      if (fontIcon) {
+        loose.push(fontIcon);
         continue;
       }
       if (isField(source, child)) {
@@ -933,7 +1026,10 @@ export function readPage(source: string): PageContent {
       kind: "icon",
       label: "Icon",
       tag: "svg",
-      value: source.slice(node.start, node.end),
+      // The drawing travels as `icon`. `value` is the words a field holds, and
+      // an icon has none: its own markup would change the moment the preview
+      // marks the element, and every draft would read that as a conflict.
+      value: "",
       preview: named || "Icon",
       structure: createHash("sha256").update(source.slice(node.start, node.end)).digest("hex"),
       icon: source.slice(node.start, node.end),

@@ -16,6 +16,7 @@ import { optimizeImageBuffer } from "../src/lib/imageOptimization.js";
 import { applyValues, readPage, type SiteField } from "../src/services/website/regions.js";
 import { sanitizeValue, sanitizeSharedValue } from "../src/services/website/index.js";
 import { ICON_LIBRARY, iconChoiceMarkup, safeIconSrc } from "../src/shared/websiteIcons.js";
+import { readTailwindConfig, tailwindCdnCss, usesTailwindCdn } from "../src/services/website/cdnStyles.js";
 
 let checks = 0;
 function check(name: string, condition: unknown) {
@@ -164,5 +165,40 @@ check("library names are unique", new Set(ICON_LIBRARY.map((icon) => icon.name))
 equal("a site path is a safe icon address", safeIconSrc("/assets/dw/a.svg"), "/assets/dw/a.svg");
 equal("https is a safe icon address", safeIconSrc("https://cdn.example/a.png"), "https://cdn.example/a.png");
 equal("a protocol-relative address is not", safeIconSrc("//evil.example/a.png"), null);
+
+// --- Pages exported from AI builders (Tailwind CDN, Material Symbols) ------
+
+const exported = `<!doctype html><html><head><title>T</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { colors: { "on-secondary-fixed": "#1c1c1a", "primary": "#7a5900" }, spacing: { "gutter": "20px" } } }, plugins: [] }</script>
+</head><body>
+<nav><a class="text-primary border-b-2 border-primary" href="/products">Products</a></nav>
+<div class="flex items-center"><button class="btn-primary px-6 py-2">Request a Quote</button></div>
+<div class="flex"><button class="btn-primary px-8 py-4">Request a Quote <span class="material-symbols-outlined ml-2 text-xl">arrow_forward</span></button></div>
+<a class="card" href="/q"><div class="w-12 h-12"><span class="material-symbols-outlined text-2xl">request_quote</span></div><h3>Request a quotation</h3></a>
+<a class="flex items-center" href="#"><svg class="w-4 h-4 mr-1 fill-current" viewbox="0 0 24 24"><path d="M1 1h2"/></svg> WhatsApp us</a>
+</body></html>`;
+const ex = readPage(exported).fields;
+const quote = ex.filter((f) => f.kind === "button" && f.value === "Request a Quote");
+equal("a button inside a wrapper is a button, not the wrapper's markup", quote.length, 2);
+check("no field's words are a button's markup", !ex.some((f) => /<button/i.test(f.value)));
+check("a Material Symbols arrow after the words is the button's icon", quote.some((f) => f.iconType === "font" && f.iconPosition === "end" && f.icon?.includes("arrow_forward")));
+check("and the words no longer carry its name", !quote.some((f) => f.value.includes("arrow_forward")));
+check("the other quote button may be given one", quote.some((f) => f.iconAddable));
+check("a box holding only a Material icon is an icon, not the word request_quote", ex.some((f) => f.kind === "icon" && f.iconType === "font" && f.preview === "request quote"));
+equal("`text-primary` on a nav link is a colour, not a button", ex.find((f) => f.href === "/products")?.kind, "link");
+const ligatureSwap = applyValues(exported, { [quote.find((f) => f.icon)!.id]: { icon: { library: "arrow-right" } } });
+check("a font icon is swapped for a drawn one, keeping its size class", /<svg[^>]*class="material-symbols-outlined ml-2 text-xl"[^>]*data-dw-icon="arrow-right"/.test(ligatureSwap.html));
+
+check("a Tailwind CDN page is recognised", usesTailwindCdn(exported) && !usesTailwindCdn("<html><script src=\"/app.js\"></script></html>"));
+equal("its config is read as data", (readTailwindConfig(exported)?.theme as { extend: { colors: Record<string, string> } }).extend.colors.primary, "#7a5900");
+check("but only the design parts of it", readTailwindConfig(exported)?.plugins === undefined);
+equal("a config that is code is not run, and not used", readTailwindConfig("<script>tailwind.config = { theme: { extend: require('x') } }</script>"), null);
+const built = await tailwindCdnCss(exported);
+check("the page's utilities are built", /\.w-4\s*\{\s*width:\s*1rem/.test(built ?? "") && /\.h-4\s*\{/.test(built ?? ""));
+check("with its own colours", /\.bg-on-secondary-fixed|\.text-primary\s*\{[^}]*122 89 0|\.text-primary\s*\{[^}]*#7a5900/i.test(built ?? "") || (built ?? "").includes(".text-primary"));
+check("and the plugins its script asked for", (built ?? "").includes("[type='text']"));
+check("nothing in it can close the style element it goes in", !/<\/style/i.test(built ?? ""));
+equal("a page without the CDN gets nothing built", await tailwindCdnCss("<html><body class=\"w-4\">x</body></html>"), null);
 
 console.log(`websiteIcons: ${checks} checks passed`);
