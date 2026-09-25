@@ -132,7 +132,7 @@
           "name": "Is there a limit on edits?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes. Website Builder includes up to 30 saved edits a month and 50 MB of image storage. Website Care + Builder includes up to 200 edits and 500 MB."
+            "text": "Website Builder includes up to 30 saved edits a month and 50 MB of image storage. Website Care + Builder includes up to 200 edits and 500 MB. Business has no edit limit and 5 GB."
           }
         },
         {
@@ -256,7 +256,7 @@
       Edit text, images, links, buttons and approved styles on the website you already have. Review every change before it goes live. No code required.
     </p>
 
-    <p class="portal-price" style="margin:24px auto 0;color:#fff;font-size:18px;line-height:1.5"><strong>From <span data-dw-price="website-builder" data-dw-part="currency">GHS</span> <span data-dw-price="website-builder" data-dw-part="amount">36</span>/month.</strong> No setup fee.</p>
+    <p class="portal-price" style="margin:24px auto 0;color:#fff;font-size:18px;line-height:1.5"><strong>From <span data-dw-price="website-builder" data-dw-part="from">GHS 36</span>/month.</strong> No setup fee.</p>
     <p style="margin:6px auto 0;color:rgba(255,255,255,.55);font-size:13px">We check your website for compatibility before billing starts.</p>
 
     <div class="portal-actions">
@@ -349,7 +349,7 @@
             <div>
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <strong style="font-size:14px;color:#08101f">Preview the AI assistant</strong>
-                <span style="font-size:11px;color:#3157ff;font-weight:600">Website Care plan</span>
+                <span style="font-size:11px;color:#3157ff;font-weight:600">Website Care and Business</span>
               </div>
               <p style="font-size:13px;color:rgba(8,16,31,0.72);margin:0 0 12px">
                 Click a command to see the kind of change it suggests. This demo only changes the preview.
@@ -420,7 +420,7 @@
     <div class="section-head">
       <div>
         <div class="eyebrow">Pricing</div>
-        <h2 class="display">Two plans. <span style="color:var(--blue)">No setup fee.</span></h2>
+        <h2 class="display">Three plans. <span style="color:var(--blue)">No setup fee.</span></h2>
       </div>
       <p>Pay monthly or yearly. Cancel at the end of any paid period. Already on a Dakyworld monthly partnership? Website Builder is included.</p>
     </div>
@@ -439,24 +439,7 @@
       </div>
     </div>
 
-    <!-- Currency.
-         Hidden in the markup and revealed by assets/pricing.js only when the
-         catalogue says more than one currency can actually be charged. Ghana is
-         the home market and cedis are the default; offering dollars while
-         Paystack cannot settle them would quote a price and then refuse the
-         card. -->
-    <div id="dwCurrencyChoice" hidden style="display:flex;align-items:center;justify-content:center;gap:12px;margin:-16px 0 32px">
-      <div role="group" aria-label="Currency" style="display:inline-flex;align-items:center;background:#f4f2ec;padding:5px;border-radius:999px;border:1px solid rgba(8,16,31,0.1)">
-        <button type="button" data-dw-currency-choice="GHS" aria-pressed="true" style="padding:6px 16px;border-radius:999px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:#08101f;color:#ffffff;transition:all 0.2s">
-          Cedis (GHS)
-        </button>
-        <button type="button" data-dw-currency-choice="USD" aria-pressed="false" style="padding:6px 16px;border-radius:999px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:#08101f;transition:all 0.2s">
-          Dollars (USD)
-        </button>
-      </div>
-    </div>
-
-    <div class="builder-plans" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(285px,1fr));gap:24px;align-items:stretch;max-width:920px;margin:0 auto" aria-label="Website Builder plans">
+    <div class="builder-plans" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(285px,1fr));gap:24px;align-items:stretch;max-width:1240px;margin:0 auto" aria-label="Website Builder plans">
       <article class="builder-plan" style="display:flex;flex-direction:column;justify-content:space-between">
         <div>
           <h3>Website Builder</h3>
@@ -504,13 +487,35 @@
           Choose Website Care &rarr;
         </button>
       </article>
+
+      <article class="builder-plan" style="display:flex;flex-direction:column;justify-content:space-between">
+        <div>
+          <h3>Business</h3>
+          <p class="builder-plan-for">For teams running several sites that want AI, code access and more developer time.</p>
+          <p class="builder-price">
+            <span data-dw-price="managed-website" data-dw-part="monthly" data-base-monthly="300" data-dw-currency="GHS">GHS 300</span><small class="dw-cycle-label">/month</small>
+          </p>
+          <p class="builder-plan-setup">No setup fee &middot; introductory price, then <span data-dw-price="managed-website" data-dw-part="standard">GHS 540</span>/month</p>
+          <ul>
+            <li><strong>Everything in Website Care + Builder</strong>, plus:</li>
+            <li><strong>240 minutes a month</strong> of code changes by a Dakyworld developer</li>
+            <li>AI builder agent, and unlimited AI assistant requests</li>
+            <li>Source code editor, and publishing through GitHub pull requests</li>
+            <li>Up to 10 websites, 15 team accounts and first-priority support</li>
+            <li>Unlimited saved edits and 5 GB of image storage</li>
+          </ul>
+        </div>
+        <button class="btn btn-primary" type="button" data-purchase-plan="managed-website" data-plan-title="Business" data-plan-amount="300">
+          Choose Business &rarr;
+        </button>
+      </article>
     </div>
 
-    <div class="callout" style="margin:32px auto 0;max-width:920px">
+    <div class="callout" style="margin:32px auto 0;max-width:1240px">
       <p><strong>Need Dakyworld to manage and improve the website for you?</strong> Our monthly partnerships cover your website, automation and business systems, with Website Builder included. <a href="/pricing#plans" class="link">Explore monthly partnerships &rarr;</a></p>
     </div>
 
-    <p class="body" style="margin:24px auto 0;max-width:920px;font-size:14px">The exact amount is shown before you pay. Larger development work and new integrations are quoted separately.</p>
+    <p class="body" style="margin:24px auto 0;max-width:1240px;font-size:14px">The exact amount is shown before you pay. Larger development work and new integrations are quoted separately.</p>
 
     <!-- The checkout is /checkout, a page of its own. It used to be a
          dialog here, which put this page's plan cards, FAQ and navigation
@@ -670,7 +675,7 @@
       </details>
       <details>
         <summary>Is there a limit on edits?<span>+</span></summary>
-        <p>Yes. Website Builder includes up to 30 saved edits a month and 50 MB of image storage. Website Care + Builder includes up to 200 edits and 500 MB.</p>
+        <p>Website Builder includes up to 30 saved edits a month and 50 MB of image storage. Website Care + Builder includes up to 200 edits and 500 MB. Business has no edit limit and 5 GB.</p>
       </details>
       <details>
         <summary>Can two people edit at once?<span>+</span></summary>
@@ -693,7 +698,7 @@
     <div>
       <div class="eyebrow">Next step</div>
       <h2 class="display">Ready to manage routine website updates <span>yourself?</span></h2>
-      <p class="band-copy" style="display:block"><strong style="color:#fff">From <span data-dw-price="website-builder" data-dw-part="currency">GHS</span> <span data-dw-price="website-builder" data-dw-part="amount">36</span>/month.</strong> No setup fee.</p>
+      <p class="band-copy" style="display:block"><strong style="color:#fff">From <span data-dw-price="website-builder" data-dw-part="from">GHS 36</span>/month.</strong> No setup fee.</p>
     </div>
     <div>
       <a href="/checkout?plan=website-builder" class="btn btn-primary" data-purchase-plan="website-builder">Start Website Builder <span class="pip">&rarr;</span></a>

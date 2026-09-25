@@ -15,6 +15,7 @@
 import assert from "node:assert/strict";
 import { purchaseInput, countryHint } from "../src/routes/products.js";
 import { resolveCurrency, currencyForCountry } from "../src/services/websitePricing.js";
+import { countryForIp } from "../src/lib/geoCountry.js";
 
 let checks = 0;
 function check(name: string, condition: unknown) {
@@ -71,6 +72,27 @@ equal("Vercel's is read too", countryHint({ headers: { "x-vercel-ip-country": "N
 equal("`XX` means Cloudflare does not know, and is not an answer", countryHint({ headers: { "cf-ipcountry": "XX" } }), null);
 equal("`T1` is Tor, and is not a country", countryHint({ headers: { "cf-ipcountry": "T1" } }), null);
 equal("no header is no answer", countryHint({ headers: {} }), null);
+
+// This API is behind Railway, which sends no country header, so the address
+// is what decides. These are real allocations: 102.176.0.0/16 is a Ghanaian
+// carrier and 8.8.8.8 is Google in the United States.
+equal("a Ghanaian address is Ghana", countryForIp("102.176.0.1"), "GH");
+equal("an American address is the United States", countryForIp("8.8.8.8"), "US");
+equal("an IPv4 client on a dual-stack socket is still found", countryForIp("::ffff:102.176.0.1"), "GH");
+equal("a private address has no country", countryForIp("10.0.0.1"), null);
+equal("loopback has no country", countryForIp("127.0.0.1"), null);
+equal("no address is no answer", countryForIp(undefined), null);
+equal("rubbish is no answer, not a crash", countryForIp("not an address"), null);
+equal("with no header the address answers", countryHint({ headers: {}, ip: "102.176.0.1" }), "GH");
+equal("a header still wins over the address", countryHint({ headers: { "cf-ipcountry": "GB" }, ip: "102.176.0.1" }), "GB");
+withUsd(true, () => {
+  equal("a visitor in Ghana is quoted cedis", resolveCurrency({ country: countryHint({ headers: {}, ip: "102.176.0.1" }) }), "GHS");
+  equal("a visitor abroad is quoted dollars", resolveCurrency({ country: countryHint({ headers: {}, ip: "8.8.8.8" }) }), "USD");
+  equal("a visitor we cannot place is quoted cedis", resolveCurrency({ country: countryHint({ headers: {}, ip: "10.0.0.1" }) }), "GHS");
+});
+withUsd(false, () => {
+  equal("abroad, but dollars cannot be charged: cedis", resolveCurrency({ country: countryHint({ headers: {}, ip: "8.8.8.8" }) }), "GHS");
+});
 
 /* ------------------------------------------- which currency each one gets -- */
 

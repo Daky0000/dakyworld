@@ -46,7 +46,7 @@
   var PLAN_META = {
     'website-builder': { title: 'Website Builder', price: { USD: 3, GHS: 36 } },
     'website-care': { title: 'Website Care + Builder', price: { USD: 10, GHS: 120 } },
-    'managed-website': { title: 'Business Website', price: { USD: 25, GHS: 300 } }
+    'managed-website': { title: 'Business', price: { USD: 25, GHS: 300 } }
   };
 
   /** The fallback price for a plan, in the currency being quoted. */
@@ -139,7 +139,7 @@
 
   function updatePricingCardsDisplay() {
     var isAnnual = activeBillingCycle === 'annual';
-    ['website-builder', 'website-care'].forEach(function (key) {
+    ['website-builder', 'website-care', 'managed-website'].forEach(function (key) {
       var info = getPlanBaseMonthly(key);
       var displayAmount = isAnnual ? info.monthly * 10 : info.monthly;
       var formatted = formatMoney(info.currency, displayAmount, false);
@@ -389,7 +389,7 @@
   }
 
   function openCheckout(plan) {
-    activePlanKey = (plan === 'website-care') ? 'website-care' : 'website-builder';
+    activePlanKey = Object.prototype.hasOwnProperty.call(PLAN_META, plan) ? plan : 'website-builder';
 
     // On a product page there is no form to fill: send them to the checkout,
     // carrying the plan they picked. A dialog over the marketing page put the
@@ -485,7 +485,7 @@
   // `/checkout?plan=website-care` selects that plan. On a product page the
   // same parameters still mean "go and buy this", and openCheckout navigates.
   var wanted = searchParams.get('purchase') || searchParams.get('buy') || searchParams.get('plan');
-  if (wanted === 'website-care' || wanted === 'website-builder') {
+  if (wanted && Object.prototype.hasOwnProperty.call(PLAN_META, wanted)) {
     if (form) {
       activePlanKey = wanted;
       var wantedRadio = form.querySelector('input[name="planChoice"][value="' + wanted + '"]');

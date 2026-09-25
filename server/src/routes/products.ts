@@ -9,6 +9,8 @@ import { rateLimit } from "../middleware/security.js";
 import { websitePaymentQuote } from "../services/paymentQuote.js";
 import { subscriptionManagementLink } from "../lib/paystack.js";
 import { reconcilePurchaseSubscription } from "../services/paystackEvents.js";
+import { countryForIp } from "../lib/geoCountry.js";
+import { resolveCurrency } from "../services/websitePricing.js";
 
 /**
  * The product catalogue: one door for the public website, one for the office.
@@ -16,11 +18,16 @@ import { reconcilePurchaseSubscription } from "../services/paystackEvents.js";
 
 export const publicProductsRouter = Router();
 
-publicProductsRouter.get("/products", async (_req, res, next) => {
+publicProductsRouter.get("/products", async (req, res, next) => {
   try {
     const catalogue = await publicCatalogue();
+    // The page quotes whatever this says, with no switch of its own: Ghana in
+    // cedis, everywhere else in dollars, and cedis whenever dollars cannot be
+    // charged. The answer now depends on who is asking, so no shared cache may
+    // keep one visitor's currency for the next.
+    catalogue.defaultCurrency = resolveCurrency({ country: countryHint(req) });
     res
-      .set("Cache-Control", "public, max-age=120, s-maxage=300")
+      .set("Cache-Control", "private, max-age=120")
       .set("Access-Control-Allow-Origin", "*")
       .set("Vary", "Origin")
       .json(catalogue);
@@ -59,12 +66,14 @@ export const purchaseInput = z.object({
 /**
  * Where the request appears to come from, when the form did not say.
  *
- * Cloudflare and Vercel both put a two-letter country on a request. It is a
- * hint: an explicit choice on the pricing page always wins, and
+ * Cloudflare and Vercel both put a two-letter country on a request. This API
+ * is behind neither, so when no header arrives the caller's address is looked
+ * up in the country database this server carries (see lib/geoCountry.ts). It
+ * is a hint: an explicit currency sent by the checkout always wins, and
  * `resolveCurrency` applies that precedence. Somebody behind a VPN gets the
- * wrong default and can change it, which is the right failure.
+ * wrong default, which is the right failure for a price display.
  */
-export function countryHint(req: { headers: Record<string, unknown> }): string | null {
+export function countryHint(req: { headers: Record<string, unknown>; ip?: string }): string | null {
   for (const header of ["cf-ipcountry", "x-vercel-ip-country", "x-country-code"]) {
     const value = req.headers[header];
     if (typeof value !== "string") continue;
@@ -74,7 +83,7 @@ export function countryHint(req: { headers: Record<string, unknown> }): string |
     // where not knowing should fall through to the default.
     if (/^[A-Z]{2}$/.test(code) && code !== "XX") return code;
   }
-  return null;
+  return countryForIp(req.ip);
 }
 
 const websiteCheckInput = z.object({

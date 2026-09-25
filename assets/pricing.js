@@ -6,13 +6,12 @@
    anybody whose network drops this request. What this file adds is that a price
    changed in Dakyworld OS reaches the public page without a deploy.
 
-   It also decides which currency the page quotes in. There is one price list,
-   authored in dollars: Ghana is quoted the cedi conversion, everywhere else the
-   dollars, and a visitor can switch. Cedis are what the markup carries, so a
-   failure here leaves a correct Ghanaian price rather than a blank — and
-   dollars appear only when the catalogue says the processor can settle them,
-   because a page that offers a currency the checkout would refuse quotes a
-   price and then declines the card.
+   The currency is the server's answer, not the visitor's choice. There is one
+   price list, authored in dollars: the API looks up where the request comes
+   from and says Ghana gets the cedi conversion, everywhere else the dollars.
+   There is no switch. Cedis are what the markup carries, so a failure here
+   leaves a correct Ghanaian price rather than a blank, and dollars appear only
+   when the catalogue says the processor can settle them.
 
    Everything here fails silently and leaves the published number alone. A
    pricing block that blanks itself because a fetch failed is worse than one
@@ -22,11 +21,12 @@
   'use strict';
 
   var SOURCE = 'https://os.dakyworld.com/api/public/products';
-  var STORAGE_KEY = 'dw-currency';
 
   var slots = document.querySelectorAll('[data-dw-price]');
-  var choice = document.getElementById('dwCurrencyChoice');
-  if ((!slots.length && !choice) || typeof fetch !== 'function') return;
+  // The checkout has no price slots of its own, but it must still learn the
+  // visitor's currency: it quotes and charges in whatever this file resolves.
+  var checkout = document.getElementById('builderPurchaseForm');
+  if ((!slots.length && !checkout) || typeof fetch !== 'function') return;
 
   /* The catalogue as this page resolved it, for the checkout to read rather
      than keep a second copy of. `currency` is what the page is quoting now. */
@@ -42,13 +42,6 @@
       return product.prices[state.currency] || null;
     }
   });
-
-  function remembered() {
-    try { return localStorage.getItem(STORAGE_KEY); } catch (err) { return null; }
-  }
-  function remember(code) {
-    try { localStorage.setItem(STORAGE_KEY, code); } catch (err) { /* private window */ }
-  }
 
   fetch(SOURCE, { credentials: 'omit', cache: 'no-store' })
     .then(function (response) {
@@ -70,17 +63,16 @@
           ? catalogue.currencies
           : ['GHS'];
 
-      var saved = remembered();
+      // `defaultCurrency` is the visitor's, worked out from their location by
+      // the API. An earlier version let the visitor switch and remembered the
+      // choice; that switch is gone, and so is any trust in a stored answer.
       var preferred =
-        saved && state.currencies.indexOf(saved) !== -1
-          ? saved
-          : catalogue.defaultCurrency && state.currencies.indexOf(catalogue.defaultCurrency) !== -1
-            ? catalogue.defaultCurrency
-            : state.currencies[0];
+        catalogue.defaultCurrency && state.currencies.indexOf(catalogue.defaultCurrency) !== -1
+          ? catalogue.defaultCurrency
+          : state.currencies[0];
 
       state.ready = true;
-      setCurrency(preferred, false);
-      mountCurrencyChoice();
+      setCurrency(preferred);
     })
     .catch(function () {
       /* The published price stands. */
@@ -88,12 +80,10 @@
 
   /* ── Rendering ─────────────────────────────────────────────────────────── */
 
-  function setCurrency(code, persist) {
+  function setCurrency(code) {
     if (state.currencies.indexOf(code) === -1) return;
     state.currency = code;
-    if (persist) remember(code);
     paint();
-    paintChoice();
     updateOfferSchema();
     // The checkout listens for this rather than polling the DOM, so the
     // summary beside the form and the amount charged cannot drift apart.
@@ -147,39 +137,6 @@
 
   function symbolFor(code) {
     return code === 'USD' ? '$' : 'GHS ';
-  }
-
-  /* ── The currency switch ───────────────────────────────────────────────── */
-
-  function mountCurrencyChoice() {
-    if (!choice) return;
-    // One currency is not a choice. Left hidden, the page reads exactly as it
-    // did before dollars were offered at all.
-    if (state.currencies.length < 2) return;
-
-    Array.prototype.forEach.call(choice.querySelectorAll('[data-dw-currency-choice]'), function (button) {
-      var code = button.getAttribute('data-dw-currency-choice');
-      // A button for a currency the processor cannot settle is removed rather
-      // than disabled: there is nothing the visitor could do about it.
-      if (state.currencies.indexOf(code) === -1) {
-        if (button.parentNode) button.parentNode.removeChild(button);
-        return;
-      }
-      button.addEventListener('click', function () { setCurrency(code, true); });
-    });
-
-    choice.hidden = false;
-    paintChoice();
-  }
-
-  function paintChoice() {
-    if (!choice || choice.hidden) return;
-    Array.prototype.forEach.call(choice.querySelectorAll('[data-dw-currency-choice]'), function (button) {
-      var on = button.getAttribute('data-dw-currency-choice') === state.currency;
-      button.setAttribute('aria-pressed', on ? 'true' : 'false');
-      button.style.background = on ? '#08101f' : 'transparent';
-      button.style.color = on ? '#ffffff' : '#08101f';
-    });
   }
 
   /* ── The same number, in the structured data ────────────────────────────
