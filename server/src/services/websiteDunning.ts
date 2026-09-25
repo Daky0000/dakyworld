@@ -2,6 +2,8 @@ import { prisma } from "../lib/prisma.js";
 import { sendMail, mailerConfigured } from "../lib/mailer.js";
 import { priceFor } from "./websitePricing.js";
 import { WEBSITE_TIER_PLANS } from "./websiteTierPlans.js";
+import { subscriptionManagementLink } from "../lib/paystack.js";
+import { appUrl } from "./emailSender.js";
 
 /**
  * What happens when a renewal does not go through.
@@ -76,14 +78,17 @@ export async function sendDunningNotice(purchaseId: string): Promise<void> {
       currency: true,
       billingState: true,
       nextBillingAt: true,
-      invoice: { select: { paymentUrl: true } },
+      providerSubscriptionCode: true,
     },
   });
   if (!purchase) return;
 
   const plan = WEBSITE_TIER_PLANS[purchase.tier];
   const price = priceFor(purchase.tier);
-  const updateUrl = purchase.invoice?.paymentUrl ?? "https://dakyworld.com/website-builder";
+  const fallbackUrl = `${(await appUrl()).replace(/\/$/, "")}/website/settings`;
+  const updateUrl = purchase.providerSubscriptionCode
+    ? await subscriptionManagementLink(purchase.providerSubscriptionCode).catch(() => fallbackUrl)
+    : fallbackUrl;
   // How far past due, in whole days, decides which of the three notices this
   // is — the first the day it fails, the second a few days in, the third once
   // editing is about to close.

@@ -108,6 +108,9 @@ export function websiteSiteFilter(req: Request): Prisma.SiteWhereInput {
 /** Route actions are resolved centrally; a new write endpoint cannot inherit view access. */
 export function websiteRequestAction(method: string, path: string): WebsiteAction | null {
   if (!/^(GET|HEAD|POST|PUT|PATCH|DELETE)$/.test(method)) return null;
+  if (/^\/sites\/[^/]+\/agent\/publish-batch\/?$/.test(path)) return "publish";
+  if (/^\/sites\/[^/]+\/hosting\/(?:domain|verify)\/?$/.test(path)) return "manage";
+  if (/^\/sites\/[^/]+\/erase\/?$/.test(path)) return "manage";
   if (/^\/sites\/[^/]+\/members(?:\/[^/]+)?\/?$/.test(path)) return "members";
   if (/\/(?:source|source-project)(?:\/|$)/.test(path)) return "source";
   if (/^\/sites\/[^/]+\/config\/?$/.test(path)) return "manage";
@@ -136,6 +139,9 @@ export function createWebsiteAccessGate(reader = accessReader) {
   return (req: Request, _res: Response, next: NextFunction) => {
     void (async () => {
       const principal = websitePrincipal(req);
+      // These routes operate on the signed-in customer's own account. Their
+      // handlers check any optional site ID before using it.
+      if (/^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance)\/?$/.test(req.path)) return;
       if (/^\/tier-status(?:\/|$)/.test(req.path)) {
         return;
       }
@@ -157,7 +163,9 @@ export function createWebsiteAccessGate(reader = accessReader) {
         return;
       }
       if (/^\/sites\/?$/.test(req.path) && req.method === "POST") {
-        if (principal.external || !websiteCapabilities(principal, null).manage) throw new WebsiteError(403, "Only staff with Manage sites access can connect a new website.");
+        // The route checks a customer's paid entitlement and site quota before
+        // creating a site; global staff permissions do not apply to customers.
+        if (!principal.external && !websiteCapabilities(principal, null).manage) throw new WebsiteError(403, "Only staff with Manage sites access can connect a new website.");
         return;
       }
       const action = websiteRequestAction(req.method, req.path);
@@ -231,6 +239,21 @@ export function registerWebsiteMembership(router: Router) {
       if (identity && existing) throw new WebsiteError(409, "That account is already a member. Change its role in the list below.");
       const activeManagerCount = await tx.siteMember.count({ where: { siteId: req.params.siteId, role: "MANAGER", user: { active: true } } });
       assertWebsiteMemberChange({ capabilities, previousRole: existing?.role ?? null, nextRole, targetActive: target.active, activeManagerCount });
+      if (nextRole && !existing) {
+        const site = await tx.site.findUnique({ where: { id: req.params.siteId }, select: { clientId: true } });
+        if (site?.clientId) {
+          const purchase = await tx.websitePurchase.findFirst({
+            where: { clientId: site.clientId, status: { in: ["ACTIVE", "READY", "SETUP_PAID", "SETUP_IN_PROGRESS", "FAILED", "CANCELLED"] } },
+            orderBy: [{ activatedAt: "desc" }, { createdAt: "desc" }], select: { tier: true },
+          });
+          if (purchase) {
+            const { WEBSITE_TIER_PLANS } = await import("./websiteTierPlans.js");
+            const limit = WEBSITE_TIER_PLANS[purchase.tier].userLimit;
+            const used = await tx.siteMember.count({ where: { siteId: req.params.siteId } });
+            if (used >= limit) throw new WebsiteError(403, `This plan includes ${limit} team account${limit === 1 ? "" : "s"}. Upgrade before inviting another person.`);
+          }
+        }
+      }
       const member = nextRole === null
         ? await tx.siteMember.delete({ where: { id: existing!.id }, select: memberSelect })
         : existing

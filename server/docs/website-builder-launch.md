@@ -62,6 +62,24 @@ deployment that means a customer pays and never receives a way in.
 outage with a dead database also has. `/api/ready` asks the database a question
 and answers 503 when it cannot. Any free monitor (UptimeRobot, Better Stack)
 watching that URL will tell you before a customer does.
+Railway's deployment health check also uses `/api/ready`. Configure an
+independent monitor and an alert recipient; the Railway check alone cannot
+notify the team about every later outage.
+
+### 5. Prove database backup and restore
+
+Enable scheduled, encrypted Postgres backups with retention outside the live
+database. Restore a backup into an isolated database, run migrations and a
+read-only smoke test, and record the restore time. Repeat this before launch
+and after schema changes. Website pages, version history, media and billing
+state all live in Postgres; a successful backup job without a restore drill is
+not sufficient evidence that customer sites can be recovered.
+
+### 6. Watch application errors
+
+Route server logs and browser errors to an alerting service, with secrets and
+customer page contents redacted. Test an alert end to end. The current browser
+error boundary shows a failure to the user but does not notify the team.
 
 ## Decisions taken that you may want to change
 
@@ -83,8 +101,8 @@ customer loses is the ability to change it. Taking a business's website off the
 internet over an expired card is the most expensive mistake available here.
 
 **Cancelling serves out the paid period.** The processor is told immediately so
-no further charge is raised, and `endsAt` keeps the entitlement alive until the
-period the customer paid for runs out.
+no further charge is raised, and `nextBillingAt` keeps the entitlement alive
+until the period the customer paid for runs out.
 
 ## Deliberately not built
 
@@ -95,10 +113,8 @@ fix is an object-storage adapter (R2/S3/Cloudinary) with a CDN in front, and it
 was left out of this pass by choice. It is the next piece of infrastructure
 work, before volume rather than after it.
 
-**No error reporting.** Render crashes now show a message and a reference
-rather than a white screen, and that reference is in the server log, but nothing
-alerts anybody. Wiring `@sentry/node` behind an env var is an hour's work when
-you want it.
+**No error alerting service.** Render crashes show a message and a reference
+rather than a white screen, but nothing automatically alerts anybody yet.
 
 **Custom domain certificates are manual** — see above.
 

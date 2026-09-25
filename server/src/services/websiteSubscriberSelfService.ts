@@ -5,6 +5,7 @@ import { WebsiteError } from "./website/site.js";
 import { cancelWebsiteSubscription } from "./websiteCommerce.js";
 import { resolveEntitlement } from "./websiteEntitlement.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
+import { subscriptionManagementLink } from "../lib/paystack.js";
 
 /**
  * What a customer can do about their own subscription and their own data,
@@ -80,6 +81,16 @@ export function registerSubscriberSelfService(router: Router) {
     }),
   );
 
+  router.post("/subscription/manage", handler(async (req, res) => {
+    const entitlement = await resolveEntitlement(req);
+    if (!entitlement.purchaseId) throw new WebsiteError(404, "No subscription is available to manage.");
+    const purchase = await prisma.websitePurchase.findUnique({
+      where: { id: entitlement.purchaseId }, select: { providerSubscriptionCode: true, billingState: true },
+    });
+    if (!purchase?.providerSubscriptionCode || purchase.billingState === "CANCELLED") throw new WebsiteError(409, "No active subscription is available to manage.");
+    res.set("Cache-Control", "no-store").json({ url: await subscriptionManagementLink(purchase.providerSubscriptionCode) });
+  }));
+
   /**
    * Everything the OS holds about one website, as a file.
    *
@@ -132,7 +143,7 @@ export function registerSubscriberSelfService(router: Router) {
           exportedAt: new Date().toISOString(),
           site: { id: site.id, name: site.name, slug: site.slug, publicUrl: site.publicUrl, customDomain: site.customDomain, createdAt: site.createdAt },
           pages: site.pages,
-          media: site.assets.map((asset) => ({ ...asset, downloadPath: `/api/website/assets/${asset.id}` })),
+          media: site.assets.map((asset) => ({ ...asset, downloadPath: `/api/website/sites/${site.id}/assets/${asset.id}/content` })),
           members: site.members,
           auditTrail: site.auditEvents,
         });

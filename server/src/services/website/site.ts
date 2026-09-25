@@ -124,7 +124,7 @@ export async function underSiteCredential<T>(site: Site, work: () => Promise<T>)
  */
 export async function pageFile(site: Site, page: SitePage): Promise<string | null> {
   const repo = siteRepo(site);
-  if (!repo || !(await githubConfigured())) return null;
+  if (!repo || !(await underSiteCredential(site, githubConfigured))) return null;
   return underSiteCredential(site, () => readFile(repo, repoFilePath(site, page), site.repoBranch).catch(() => null));
 }
 
@@ -155,7 +155,7 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
     if (cached) return cached;
   }
 
-  if (repo && (await githubConfigured())) {
+  if (repo && (await underSiteCredential(site, githubConfigured))) {
     const html = await readFile(repo, repoFilePath(site, page), site.repoBranch).catch(() => null);
     if (html !== null) {
       const source: PageSource = { html, from: "repository" };
@@ -422,7 +422,7 @@ async function findPages(site: Site): Promise<Discovery> {
   const listed = await sitemapPaths(site);
   const repo = siteRepo(site);
 
-  if (repo && (await githubConfigured())) {
+  if (repo && (await underSiteCredential(site, githubConfigured))) {
     const configured = site.repoPath.replace(/^\/+|\/+$/g, "");
     const fromConfigured = await htmlIn(repo, configured, site.repoBranch);
     if (fromConfigured.length > 0) return { pages: buildPages(fromConfigured, listed), repoPath: configured, sourceKind: null };
@@ -787,7 +787,7 @@ export async function publishPages(input: {
   // list first and would answer "add it to the list" to somebody who has not
   // connected GitHub at all. An error should name the first thing that is
   // missing, not the second.
-  if (!(await githubConfigured())) {
+  if (!(await underSiteCredential(input.site, githubConfigured))) {
     throw new WebsiteError(
       503,
       "Publishing needs a GitHub token with permission to write to the website's repository. Add one under Settings → Developer.",
@@ -848,7 +848,7 @@ export async function publishPagesAsPullRequest(input: {
   if (!repo) {
     throw new WebsiteError(409, `${input.site.name} has no repository connected. Add one on the site's settings before publishing.`);
   }
-  if (!(await githubConfigured())) {
+  if (!(await underSiteCredential(input.site, githubConfigured))) {
     throw new WebsiteError(503, "Publishing needs a GitHub token with permission to write to the website's repository. Add one under Settings → Developer.");
   }
   if (!input.pages.length) throw new WebsiteError(400, "There are no pages to publish.");

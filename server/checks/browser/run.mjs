@@ -34,7 +34,9 @@ function findPlaywright() {
     encoding: "utf8",
   });
   if (resolved.status !== 0 || !resolved.stdout) return null;
-  return new URL(`file:///${resolved.stdout.replace(/\\/g, "/")}`).href;
+  // require.resolve points at the CommonJS entry, whose dynamic import only
+  // exposes a default export. The checks import named browser launchers.
+  return new URL(`file:///${resolved.stdout.trim().replace(/\\/g, "/").replace(/index\.js$/, "index.mjs")}`).href;
 }
 
 const playwright = findPlaywright();
@@ -78,9 +80,15 @@ if (already) {
   }
 }
 
+const selected = new Set(process.argv.slice(2));
 const files = readdirSync(here)
   .filter((name) => name.endsWith(".mjs") && name !== "run.mjs")
+  .filter((name) => selected.size === 0 || selected.has(name))
   .sort();
+if (selected.size && files.length !== selected.size) {
+  console.error("One or more requested browser checks do not exist.");
+  process.exit(2);
+}
 
 let failed = 0;
 try {

@@ -41,6 +41,9 @@ check("version restoration requires edit", () => assert.equal(websiteRequestActi
 check("AI assistance requires edit", () => assert.equal(websiteRequestAction("POST", "/pages/one/assistant"), "edit"));
 check("builder agent planning requires edit", () => assert.equal(websiteRequestAction("POST", "/sites/one/agent/plan"), "edit"));
 check("builder agent apply requires edit", () => assert.equal(websiteRequestAction("POST", "/sites/one/agent/apply"), "edit"));
+check("builder agent batch publish requires publish", () => assert.equal(websiteRequestAction("POST", "/sites/one/agent/publish-batch"), "publish"));
+check("hosted domain changes require manage", () => assert.equal(websiteRequestAction("POST", "/sites/one/hosting/domain"), "manage"));
+check("site erasure requires manage", () => assert.equal(websiteRequestAction("DELETE", "/sites/one/erase"), "manage"));
 check("design settings are visible without repository settings access", () => assert.equal(websiteRequestAction("GET", "/sites/one/design"), "view"));
 
 async function httpGateChecks() {
@@ -73,6 +76,7 @@ async function httpGateChecks() {
     await status("viewer cannot save a draft", "VIEWER", "/pages/ownpage/draft", "PUT", 403);
     await status("viewer cannot delete a draft", "VIEWER", "/pages/ownpage/draft", "DELETE", 403);
     await status("editor cannot publish", "EDITOR", "/pages/ownpage/publish", "POST", 403);
+    await status("editor cannot batch publish", "EDITOR", "/sites/own/agent/publish-batch", "POST", 403);
     await status("publisher cannot edit", "PUBLISHER", "/pages/ownpage/draft", "PUT", 403);
     await status("reviewer cannot publish a rollback", "REVIEWER", "/pages/ownpage/versions/v1/publish", "POST", 403);
     await status("editor cannot read repository configuration", "EDITOR", "/sites/own/config", "GET", 403);
@@ -81,9 +85,10 @@ async function httpGateChecks() {
     await status("viewer cannot list member emails", "VIEWER", "/sites/own/members", "GET", 403);
     await status("developer cannot add members", "DEVELOPER", "/sites/own/members", "POST", 403);
     await status("manager cannot mutate members in another site", "MANAGER", "/sites/foreign/members/someone", "DELETE", 404);
-    await status("customer manager cannot connect a global site", "MANAGER", "/sites", "POST", 403);
     await status("unknown operations fail closed", "MANAGER", "/pages/ownpage/escalate", "POST", 403);
     check("refused operations reach no mutation handler", () => assert.equal(acceptedWrites, 0));
+    await status("customer may reach paid site connection handler", "MANAGER", "/sites", "POST", 200);
+    await status("viewer may reach paid site connection handler", "VIEWER", "/sites", "POST", 200);
     await status("editor can save a draft", "EDITOR", "/pages/ownpage/draft", "PUT", 200);
     await status("editor can request assistance", "EDITOR", "/pages/ownpage/assistant", "POST", 200);
     await status("viewer can read design settings", "VIEWER", "/sites/own/design", "GET", 200);

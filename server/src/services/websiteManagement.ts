@@ -17,7 +17,9 @@ import {
   captureHtmlImagesIntoMediaLibrary,
   recordImportUsed,
   recordMediaStorageAdded,
+  WEBSITE_TIER_PLANS,
 } from "./websiteTierPlans.js";
+import { resolveEntitlement } from "./websiteEntitlement.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -157,17 +159,37 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const input = siteInput.extend({ html: z.string().min(1).max(2_000_000).optional() }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
     const { html, ...data } = input;
+    const external = Boolean(req.dbUser?.accessRole?.external);
+    let owner: { clientId: string; userId: string; siteLimit: number } | null = null;
+    if (external) {
+      const entitlement = await resolveEntitlement(req);
+      if (!entitlement.purchaseId || !entitlement.userId) throw new WebsiteError(402, "Buy a Website Builder plan before connecting a website.");
+      const purchase = await prisma.websitePurchase.findUnique({ where: { id: entitlement.purchaseId }, select: { clientId: true, setupPaidAt: true, status: true } });
+      if (!purchase?.setupPaidAt || !["ACTIVE", "READY", "SETUP_PAID", "SETUP_IN_PROGRESS"].includes(purchase.status)) throw new WebsiteError(402, "Payment must be verified before connecting a website.");
+      if (data.repoOwner || data.repoName || data.clientId) throw new WebsiteError(403, "Connect a hosted website first. Attach your own GitHub installation from its settings.");
+      owner = { clientId: purchase.clientId, userId: entitlement.userId, siteLimit: WEBSITE_TIER_PLANS[entitlement.tier].websiteLimit };
+    }
     if (html) {
       await assertImportAllowance(req);
       importedWebsiteFields(html);
     }
-    const site = await prisma.site.create({ data: {
-      ...data, slug: `${data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`,
-      ...(html ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: html } } } : {}),
-      auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${html ? " with an imported page" : ""}`, ...actor(req), detail: { importedPage: Boolean(html) } } },
-    }, include: { pages: { select: { id: true } } } });
+    const site = await prisma.$transaction(async tx => {
+      if (owner) {
+        await tx.$queryRaw`SELECT "id" FROM "Client" WHERE "id" = ${owner.clientId} FOR UPDATE`;
+        const used = await tx.site.count({ where: { clientId: owner.clientId } });
+        if (used >= owner.siteLimit) throw new WebsiteError(403, `Your plan includes ${owner.siteLimit} website${owner.siteLimit === 1 ? "" : "s"}. Upgrade before connecting another.`);
+      }
+      return tx.site.create({ data: {
+        ...data,
+        ...(owner ? { clientId: owner.clientId, members: { create: { userId: owner.userId, role: "MANAGER" as const } } } : {}),
+        slug: `${data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`,
+        ...(html ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: html } } } : {}),
+        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${html ? " with an imported page" : ""}`, ...actor(req), detail: { importedPage: Boolean(html) } } },
+      }, include: { pages: { select: { id: true } } } });
+    });
     if (html) {
-      await captureHtmlImagesIntoMediaLibrary(req, site.id, html);
+      const capturedMedia = await captureHtmlImagesIntoMediaLibrary(req, site.id, html);
+      if (capturedMedia.html !== html && site.pages[0]) await prisma.sitePage.update({ where: { id: site.pages[0].id }, data: { sourceHtml: capturedMedia.html } });
       await recordImportUsed(req);
     }
     res.status(201).json({ id: site.id, pageId: site.pages[0]?.id ?? null });
@@ -229,7 +251,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const capturedMedia = await captureHtmlImagesIntoMediaLibrary(req, site.id, body.html);
     const page = await prisma.$transaction(async tx => {
       if (await tx.sitePage.findFirst({ where: { siteId: site.id, OR: [{ filePath: body.filePath }, { path: body.path }] }, select: { id: true } })) throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
-      const imported = await tx.sitePage.create({ data: { siteId: site.id, title: body.title, filePath: body.filePath, path: body.path, sourceHtml: body.html } });
+      const imported = await tx.sitePage.create({ data: { siteId: site.id, title: body.title, filePath: body.filePath, path: body.path, sourceHtml: capturedMedia.html } });
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PAGE_IMPORTED", summary: `Imported ${body.title}`, ...actor(req), detail: { pageId: imported.id, filePath: body.filePath, path: body.path, fields: count, capturedMediaCount: capturedMedia.capturedCount, capturedMediaBytes: capturedMedia.totalBytesAdded } } });
       return imported;
     }).catch(error => {
@@ -237,7 +259,8 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       throw error;
     });
     await recordImportUsed(req);
-    res.status(201).json({ id: page.id, fields: count, capturedMedia });
+    const { html: _html, ...captureSummary } = capturedMedia;
+    res.status(201).json({ id: page.id, fields: count, capturedMedia: captureSummary });
   }));
 
   router.get("/pages/:pageId/review", handler(async (req, res) => {

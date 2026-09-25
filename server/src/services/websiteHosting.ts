@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
+import { assetUrl } from "./websiteAssets.js";
 
 /**
  * Serving a customer's published website.
@@ -55,14 +56,14 @@ async function siteForHost(host: string) {
   if (!host) return null;
   const byDomain = await prisma.site.findFirst({
     where: { customDomain: host, customDomainVerifiedAt: { not: null }, hostedEnabled: true },
-    select: { id: true, name: true },
+    select: { id: true, name: true, publicUrl: true },
   });
   if (byDomain) return byDomain;
 
   if (HOST_DOMAIN && host.endsWith(`.${HOST_DOMAIN}`)) {
     const label = host.slice(0, -(HOST_DOMAIN.length + 1));
     if (!label || label.includes(".")) return null;
-    return prisma.site.findFirst({ where: { hostedSlug: label, hostedEnabled: true }, select: { id: true, name: true } });
+    return prisma.site.findFirst({ where: { hostedSlug: label, hostedEnabled: true }, select: { id: true, name: true, publicUrl: true } });
   }
   return null;
 }
@@ -88,7 +89,7 @@ export function publicSiteHosting() {
     const host = hostOf(req);
     if (!host) return next();
 
-    let site: { id: string; name: string } | null = null;
+    let site: { id: string; name: string; publicUrl: string } | null = null;
     try {
       site = await siteForHost(host);
     } catch {
@@ -98,6 +99,28 @@ export function publicSiteHosting() {
 
     const path = (req.path || "/").replace(/\/+$/, "") || "/";
     try {
+      const assetPath = /(?:^|\/)(assets\/dw\/[^/]+)$/.exec(path)?.[1];
+      if (assetPath) {
+        const asset = await prisma.siteAsset.findUnique({
+          where: { siteId_repoPath: { siteId: site.id, repoPath: assetPath } },
+          select: { content: true, contentType: true, repoPath: true },
+        });
+        if (!asset?.content || path !== assetUrl(site, asset.repoPath)) return res.status(404).end();
+        const published = await prisma.sitePage.findFirst({
+          where: { siteId: site.id, status: "LIVE", publishedHtml: { contains: assetUrl(site, asset.repoPath) } },
+          select: { id: true },
+        });
+        if (!published) return res.status(404).end();
+        const bytes = Buffer.from(asset.content);
+        const etag = `W/"${crypto.createHash("sha1").update(bytes).digest("base64url")}"`;
+        if (req.headers["if-none-match"] === etag) return res.status(304).end();
+        return res.status(200)
+          .set("Content-Type", asset.contentType)
+          .set("X-Content-Type-Options", "nosniff")
+          .set("Cache-Control", "public, max-age=60, must-revalidate")
+          .set("ETag", etag)
+          .send(bytes);
+      }
       const page =
         (await prisma.sitePage.findFirst({
           where: { siteId: site.id, path, status: "LIVE" },

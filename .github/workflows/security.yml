@@ -119,6 +119,26 @@ jobs:
         working-directory: server/client
         run: npm run build
 
+  browser:
+    name: Website editor browser checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: server
+      - run: npm ci
+        working-directory: server/client
+      - run: npx playwright install --with-deps chromium
+        working-directory: server/client
+      # These two have current UI expectations. The remaining legacy browser
+      # checks stay runnable locally while their selectors are brought up to date.
+      - run: npm run checks:browser -- builderUsability.mjs paystack-checkout.mjs
+        working-directory: server
+
   website:
     name: Website metadata and links
     runs-on: ubuntu-latest

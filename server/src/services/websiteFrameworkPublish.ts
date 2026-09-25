@@ -27,7 +27,7 @@ import type { Site, SitePage } from "@prisma/client";
 import { commitFiles } from "../lib/github.js";
 import { invalidateSource } from "./website/sourceCache.js";
 import { invalidateRender } from "./website/renderSource.js";
-import { githubFailure, siteRepo, WebsiteError } from "./website/site.js";
+import { githubFailure, siteRepo, underSiteCredential, WebsiteError } from "./website/site.js";
 import { applyPageEdits, matchPageToHtml, type PageWrite } from "./website/pageFields.js";
 import { proposeMarkers, staleMarkers } from "./website/sourceMarkers.js";
 import { pageManifest, type PageManifest } from "./websitePageManifest.js";
@@ -149,13 +149,13 @@ export async function publishFrameworkPage(
   const names = writes.map((write) => write.filePath);
   const message = `Website: ${input.changed} change${input.changed === 1 ? "" : "s"} on ${input.page.path} (${input.author})`;
   try {
-    const commit = await deps.commit({
+    const commit = await underSiteCredential(input.site, () => deps.commit({
       repo,
       branch: input.branchOverride ?? input.site.repoBranch,
       message: names.length > 1 ? `${message}\n\nFiles: ${names.join(", ")}` : message,
       expectedFiles: expected,
       files: writes.map((write) => ({ path: context.repoPathFor(write.filePath), content: write.source })),
-    });
+    }));
     // Every file, not just the page's own. A stale component in the cache is a
     // page that still shows the old heading after a publish that worked, which
     // reads as a publish that did not.
@@ -227,7 +227,7 @@ export async function nameFieldsOnPage(
   const names = writes.map((write) => write.filePath);
   const summary = [named ? `name ${named} field${named === 1 ? "" : "s"}` : null, removed ? `remove ${removed} unused label${removed === 1 ? "" : "s"}` : null].filter(Boolean).join(" and ");
   try {
-    const commit = await deps.commit({
+    const commit = await underSiteCredential(input.site, () => deps.commit({
       repo,
       branch: input.site.repoBranch,
       message: `Website: ${summary} on ${input.page.path} (${input.author})
@@ -235,7 +235,7 @@ export async function nameFieldsOnPage(
 Files: ${names.join(", ")}`,
       expectedFiles: writes.map((write) => ({ path: context.repoPathFor(write.filePath), content: write.before })),
       files: writes.map((write) => ({ path: context.repoPathFor(write.filePath), content: write.source })),
-    });
+    }));
     for (const write of writes) invalidateSource(input.site.id, write.filePath);
     invalidateRender(input.site, input.page);
     return { named, removed, files: names, sha: commit.sha, url: commit.url, refused };

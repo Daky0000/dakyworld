@@ -12,6 +12,7 @@ import { pageSource, publishPages, WebsiteError } from "./website/site.js";
 import { withWebsitePublishLocks } from "./websitePublishing.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, startPublishJob } from "./websitePublishJobs.js";
 import { createHash } from "node:crypto";
+import { ensureHostedAddress } from "./websiteHosting.js";
 
 /**
  * Shared elements, from the database side.
@@ -765,6 +766,7 @@ export function registerWebsiteShared(router: Router, access: Access) {
           where: { id: page.pageId },
           data: {
             lastPublishedAt: published,
+            publishedHtml: page.html!,
             sourceHtml: page.record.sourceHtml === null ? undefined : page.html!,
             // The page's own draft is untouched: this publish never carried it.
             draftRevision: { increment: 1 },
@@ -775,6 +777,7 @@ export function registerWebsiteShared(router: Router, access: Access) {
         where: { id: element.id },
         data: { draft: Prisma.DbNull, draftRevision: { increment: 1 }, draftSavedAt: null, draftSavedById: null },
       });
+      await ensureHostedAddress(site.id);
       await tx.siteAuditEvent.create({
         data: {
           siteId: site.id,

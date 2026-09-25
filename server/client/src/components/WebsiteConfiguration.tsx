@@ -67,7 +67,7 @@ export function WebsiteSettings() {
   const fontsError = fonts.length > 12 ? "Use up to 12 font families." : fonts.some(font => font.length > 80 || !/^[a-zA-Z0-9 ,.-]+$/.test(font)) ? "Use font family names containing letters, numbers, spaces, commas, periods or hyphens." : null;
 
   return <div>
-    <PageHeader title="Website settings" subtitle="Connect your source and use your own design system in the editor." action={!user?.external && can("website.manage") ? <ConnectWebsite /> : undefined} />
+    <PageHeader title="Website settings" subtitle="Connect your source and use your own design system in the editor." action={can("website.manage") ? <ConnectWebsite /> : undefined} />
     {sites.error && <p role="alert" className="text-danger-text">{(sites.error as Error).message}</p>}
     {sites.isLoading && <p className="text-sm text-muted">Loading websites…</p>}
     {sites.isSuccess && !manageable.length && <p className="text-sm text-muted">You do not manage any websites yet. A website manager can give you access to these settings.</p>}

@@ -10,12 +10,18 @@ import { currentRun } from "../lib/runContext.js";
 import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { assetUrl } from "./websiteAssets.js";
+import { ensureHostedAddress } from "./websiteHosting.js";
+import { withWebsitePublishLocks } from "./websitePublishing.js";
+import { assertWebsiteSiteAccess } from "./websiteAccess.js";
+import { assertMediaStorageAllowance } from "./websiteTierPlans.js";
 import { check, scopesForAgent, BudgetExceeded, forgetBudgets } from "./budgets.js";
 import { writerSystem } from "./writers/brief.js";
 import {
   discoverFields,
+  buildPublishPlan,
   editingSource,
   fieldValues,
+  versionValues,
   safeStyle,
   sanitizeValue,
   structureControls,
@@ -2132,6 +2138,7 @@ export function registerWebsiteBuilderAgent(
       if (!content.length || content.length > 10_000_000) {
         throw new WebsiteError(400, "Choose a file smaller than 10 MB.");
       }
+      await assertMediaStorageAllowance(req, content.length, site.id);
 
       const sniffedMime = sniff(content);
       const imageFormats: Record<string, string> = {
@@ -2143,6 +2150,7 @@ export function registerWebsiteBuilderAgent(
 
       if (sniffedMime && imageFormats[sniffedMime]) {
         const optimized = await optimizeImageBuffer(content);
+        await assertMediaStorageAllowance(req, optimized.content.length, site.id);
         const repoPath = `assets/dw/${randomUUID()}.${optimized.extension}`;
         const uploaded = await prisma.siteAsset.create({
           data: {
@@ -2285,12 +2293,15 @@ export function registerWebsiteBuilderAgent(
     try {
       const body = batchPublishAgentSchema.parse(req.body ?? {});
       const site = await access.loadSite(req, req.params.siteId);
+      await assertWebsiteSiteAccess(req, site.id, "publish");
       const pages = await prisma.sitePage.findMany({
         where: { siteId: site.id },
         orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
       });
 
       const requestedIds = body.pageIds?.length ? new Set(body.pageIds) : null;
+      if (requestedIds && requestedIds.size !== body.pageIds?.length) throw new WebsiteError(400, "Choose each page only once.");
+      if (requestedIds && [...requestedIds].some(id => !pages.some(page => page.id === id))) throw new WebsiteError(404, "One selected page is not on this website.");
       const candidates = pages.filter((p) => {
         if (p.status === "HIDDEN") return false;
         if (requestedIds && !requestedIds.has(p.id)) return false;
@@ -2302,64 +2313,52 @@ export function registerWebsiteBuilderAgent(
         throw new WebsiteError(400, "All selected pages are already published with no pending draft changes.");
       }
 
-      const pagesToCommit: Array<{ page: SitePage; html: string; expectedSource?: string }> = [];
-      for (const page of candidates) {
-        const source = await pageSource(site, page, { fresh: true });
-        const draft = (page.draft ?? {}) as Record<string, FieldValue>;
-        const renderedHtml = editingSource(source.html, draft);
-        pagesToCommit.push({
-          page,
-          html: renderedHtml,
-          expectedSource: source.html,
+      const result = await withWebsitePublishLocks(candidates.map(page => page.id), async tx => {
+        const pagesToCommit: Array<{ page: SitePage; html: string; expectedSource: string; values: Record<string, FieldValue> }> = [];
+        for (const selected of candidates) {
+          const page = await tx.sitePage.findUniqueOrThrow({ where: { id: selected.id } });
+          const values = (page.draft ?? {}) as Record<string, FieldValue>;
+          if (!Object.keys(values).length) throw new WebsiteError(409, `${page.title} changed while publishing. Review its draft again.`);
+          const source = await pageSource(site, page, { fresh: true });
+          if (source.sourceFile) throw new WebsiteError(409, `${page.title} uses framework source. Publish it through the page review, which preserves its components.`);
+          const plan = buildPublishPlan({ source: source.html, values });
+          if (!plan.publishable || !plan.html) throw Object.assign(new WebsiteError(409, `${page.title} cannot be published. Review its draft again.`), { problems: plan.problems, conflicts: plan.conflicts, missing: plan.missing });
+          pagesToCommit.push({ page, html: plan.html, expectedSource: source.html, values });
+        }
+
+        const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Agent";
+        const commit = await publishPages({
+          site,
+          message: body.message?.trim() || `Website Agent: published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} (${author})`,
+          pages: pagesToCommit,
         });
-      }
-
-      const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Agent";
-      const commitMessage =
-        body.message?.trim() ||
-        `Website Agent: published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} (${author})`;
-
-      const commit = await publishPages({
-        site,
-        message: commitMessage,
-        pages: pagesToCommit,
+        const publishedAt = new Date();
+        for (const { page, html, values } of pagesToCommit) {
+          const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
+          await tx.sitePageVersion.create({ data: {
+            pageId: page.id, number: (last?.number ?? 0) + 1, html,
+            values: versionValues(values) as unknown as Prisma.InputJsonValue,
+            commitSha: commit.sha, commitUrl: commit.url, publishedById: req.dbUser?.id ?? null,
+          } });
+          await tx.sitePage.update({ where: { id: page.id }, data: {
+            publishedHtml: html, sourceHtml: page.sourceHtml === null ? undefined : html,
+            lastPublishedAt: publishedAt, status: "LIVE",
+          } });
+          // Preserve a draft saved while the network commit was in flight.
+          await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: page.draftRevision }, data: {
+            draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, draftRevision: { increment: 1 },
+          } });
+        }
+        await ensureHostedAddress(site.id);
+        await tx.siteAuditEvent.create({ data: {
+          siteId: site.id, kind: "PUBLISH",
+          summary: `Agent published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} in one commit`,
+          actorName: author, actorId: req.dbUser?.id,
+          detail: { sha: commit.sha, url: commit.url, pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })) },
+        } });
+        return { publishedPages: pagesToCommit.length, commitSha: commit.sha, commitUrl: commit.url, pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })) };
       });
-
-      const now = new Date();
-      await prisma.$transaction([
-        ...pagesToCommit.map(({ page }) =>
-          prisma.sitePage.update({
-            where: { id: page.id },
-            data: {
-              draft: Prisma.DbNull,
-              draftRevision: { increment: 1 },
-              lastPublishedAt: now,
-              status: "LIVE",
-            },
-          })
-        ),
-        prisma.siteAuditEvent.create({
-          data: {
-            siteId: site.id,
-            kind: "PUBLISH",
-            summary: `Agent published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} in one commit`,
-            actorName: author,
-            actorId: req.dbUser?.id,
-            detail: {
-              sha: commit.sha,
-              url: commit.url,
-              pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })),
-            },
-          },
-        }),
-      ]);
-
-      res.json({
-        publishedPages: pagesToCommit.length,
-        commitSha: commit.sha,
-        commitUrl: commit.url,
-        pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })),
-      });
+      res.json(result);
     } catch (err) {
       next(err);
     }

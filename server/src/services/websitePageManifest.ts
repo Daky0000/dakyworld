@@ -23,6 +23,7 @@
  */
 import type { Site, SitePage } from "@prisma/client";
 import { listRepoFiles, readFile } from "../lib/github.js";
+import { underSiteCredential } from "./website/site.js";
 import { buildSourceManifest, type SourceManifest } from "./website/manifest.js";
 import { discoverPageFields, type PageDiscovery } from "./website/pageFields.js";
 import { siteRepo, WebsiteError } from "./website/site.js";
@@ -77,7 +78,7 @@ export async function pageManifest(site: Site, page: SitePage): Promise<PageMani
   const folder = folderOf(site);
   const repoPathFor = (path: string) => (folder ? `${folder}/${path}` : path);
 
-  const tree = await listRepoFiles(repo, site.repoBranch);
+  const tree = await underSiteCredential(site, () => listRepoFiles(repo, site.repoBranch));
   if (tree.truncated) {
     throw new WebsiteError(
       409,
@@ -90,7 +91,7 @@ export async function pageManifest(site: Site, page: SitePage): Promise<PageMani
     .map((file) => file.slice(prefix.length))
     .filter(Boolean);
 
-  const read = cachedReader((path) => readFile(repo, repoPathFor(path), site.repoBranch));
+  const read = cachedReader((path) => underSiteCredential(site, () => readFile(repo, repoPathFor(path), site.repoBranch)));
   const tsconfig = (await read("tsconfig.json")) ?? (await read("jsconfig.json"));
   const manifest = await buildSourceManifest({ entry: page.filePath, files, read, tsconfig });
   const discovery = await discoverPageFields({ manifest, read });

@@ -4,6 +4,7 @@ import type { Request, Response, Router } from "express";
 import { Prisma, type Site, type SitePage } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { probeWebsiteUrl, resolveWebsiteAddress } from "../lib/websiteFetch.js";
 import { commitFiles, readRepoMetadata, updateRepoMetadata, type RepoMetadata } from "../lib/github.js";
 import { discoverFields, editingSource, restoreDocument, type FieldValue } from "./website/index.js";
 import {
@@ -1290,14 +1291,16 @@ export function registerWebsiteSeoRoutes(
     validTo: string | null;
     daysRemaining: number | null;
   }> {
+    const pinned = await resolveWebsiteAddress(new URL(`https://${hostname}/`));
     return new Promise((resolve) => {
       const socket = tls.connect(
         {
           host: hostname,
           port: 443,
           servername: hostname,
-          rejectUnauthorized: false,
+          rejectUnauthorized: true,
           timeout: 6000,
+          lookup: (_hostname, _options, done) => done(null, pinned.address, pinned.family),
         },
         () => {
           try {
@@ -1316,7 +1319,7 @@ export function registerWebsiteSeoRoutes(
                   ? cert.issuer.CN
                   : "TLS Authority";
             resolve({
-              valid: daysRemaining > 0,
+              valid: socket.authorized && daysRemaining > 0,
               issuer: issuerOrg,
               validTo: expiryDate.toISOString(),
               daysRemaining,
@@ -1358,16 +1361,9 @@ export function registerWebsiteSeoRoutes(
     let responseTimeMs: number | null = null;
 
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
-      const resp = await fetch(targetUrl, {
-        method: "GET",
-        signal: controller.signal,
-        headers: { "User-Agent": "Dakyworld-OS-UptimeMonitor/1.0" },
-      });
-      clearTimeout(timer);
-      statusCode = resp.status;
-      online = resp.status >= 200 && resp.status < 400;
+      const probe = await probeWebsiteUrl(targetUrl);
+      statusCode = probe.statusCode;
+      online = probe.statusCode >= 200 && probe.statusCode < 400;
       responseTimeMs = Date.now() - start;
     } catch {
       online = false;
@@ -1435,5 +1431,4 @@ export function registerWebsiteSeoRoutes(
     }
   });
 }
-
 

@@ -10,7 +10,8 @@ const { chromium } = await import(process.env.PLAYWRIGHT_URL || require.resolve(
 const root = resolve(fileURLToPath(new URL("../../../", import.meta.url)));
 const server = createServer(async (req, res) => {
   const pathname = new URL(req.url, "http://localhost").pathname;
-  const file = resolve(root, `.${pathname === "/website-builder" ? "/website-builder.html" : pathname}`);
+  // Pages are served without their extension, as GitHub Pages does.
+  const file = resolve(root, `.${extname(pathname) ? pathname : `${pathname}.html`}`);
   if (!file.startsWith(root + sep)) { res.writeHead(403).end(); return; }
   try {
     const types = { ".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
@@ -41,7 +42,13 @@ try {
     if (url.endsWith("/website-payment-status")) return route.fulfill({ headers, json: { paid, status: paid ? "SETUP_PAID" : "PAYMENT_PENDING" } });
     return route.abort();
   });
-  await page.goto(`${base}/website-builder?purchase=website-builder`);
+  // The checkout is its own page. A product-page button has to get there
+  // carrying the plan, or the form below is never reached at all.
+  await page.goto(`${base}/website-builder`);
+  // The cookie banner sits over the foot of the checkout form. The dialog this
+  // replaced was drawn above it; a page is not, so answer it as a visitor would.
+  await page.locator(".dw-consent button", { hasText: "Reject" }).click();
+  await Promise.all([page.waitForURL(/\/checkout\?plan=website-builder$/), page.locator(".builder-plan [data-purchase-plan=\"website-builder\"]").click()]);
   await page.locator("#dw-email").fill("buyer@example.com");
   await page.locator("#dw-contact").fill("Test Buyer");
   await page.locator("#dw-biz").fill("Example Company");
@@ -57,7 +64,7 @@ try {
   assert.equal(payloads.length, 1, "Double submit must create only one request");
   assert.equal(payloads[0].recurringConsent, true);
   await page.locator("#builderSubmitBtn").click();
-  await page.waitForFunction(() => document.getElementById("builderFormStatus").textContent.includes("Review the GHS"));
+  await page.waitForFunction(() => document.getElementById("builderFormStatus").textContent.includes("Review the price"));
   await page.locator('[name="recurringConsent"]').check();
   await page.locator("#builderSubmitBtn").click();
   await page.waitForFunction(() => document.getElementById("builderFormStatus").textContent.includes("Payment status pending"));

@@ -65,3 +65,76 @@ export async function fetchWebsiteText(address: string): Promise<string> {
   }
   throw new Error("The website redirected too many times.");
 }
+
+/** A bounded, DNS-pinned availability probe. Redirects are vetted anew. */
+export async function probeWebsiteUrl(address: string): Promise<{ statusCode: number; finalUrl: string }> {
+  const signal = AbortSignal.timeout(8_000);
+  let url = new URL(address);
+  for (let hop = 0; hop <= 5; hop++) {
+    const pinned = await resolveWebsiteAddress(url);
+    const result = await new Promise<{ statusCode: number; location?: string }>((resolve, reject) => {
+      const request = (url.protocol === "https:" ? https : http).request(url, {
+        signal,
+        method: "GET",
+        headers: { "User-Agent": "Dakyworld-OS-UptimeMonitor/1.0", "Accept-Encoding": "identity" },
+        lookup: (_hostname, options, done) => {
+          if ((options as { all?: boolean }).all) (done as any)(null, [pinned]);
+          else done(null, pinned.address, pinned.family);
+        },
+      }, response => {
+        const statusCode = response.statusCode ?? 0;
+        const location = response.headers.location;
+        response.destroy();
+        resolve({ statusCode, location });
+      });
+      request.on("error", reject);
+      request.end();
+    });
+    if ([301, 302, 303, 307, 308].includes(result.statusCode) && result.location) {
+      url = new URL(result.location, url);
+      continue;
+    }
+    return { statusCode: result.statusCode, finalUrl: url.href };
+  }
+  throw new Error("The website redirected too many times.");
+}
+
+/** Download a public image without allowing DNS rebinding, private redirects or unbounded bodies. */
+export async function fetchWebsiteBytes(address: string, maxBytes: number): Promise<Buffer> {
+  const signal = AbortSignal.timeout(20_000);
+  let url = new URL(address);
+  for (let hop = 0; hop <= 5; hop++) {
+    const pinned = await resolveWebsiteAddress(url);
+    const result = await new Promise<{ location?: string; bytes?: Buffer }>((resolve, reject) => {
+      const request = (url.protocol === "https:" ? https : http).request(url, {
+        signal, method: "GET", headers: { "User-Agent": "Dakyworld-OS-Editor", "Accept-Encoding": "identity" },
+        lookup: (_hostname, options, done) => {
+          if ((options as { all?: boolean }).all) (done as any)(null, [pinned]);
+          else done(null, pinned.address, pinned.family);
+        },
+      }, response => {
+        const status = response.statusCode ?? 0;
+        if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
+          response.destroy(); resolve({ location: response.headers.location }); return;
+        }
+        if (status < 200 || status >= 300) { response.destroy(); reject(new Error(`The image answered ${status}.`)); return; }
+        const declared = Number(response.headers["content-length"] ?? 0);
+        if (declared > maxBytes) { response.destroy(); reject(new Error("The image exceeds the upload limit.")); return; }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        response.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > maxBytes) { response.destroy(new Error("The image exceeds the upload limit.")); return; }
+          chunks.push(chunk);
+        });
+        response.on("end", () => resolve({ bytes: Buffer.concat(chunks) }));
+        response.on("error", reject);
+      });
+      request.on("error", reject);
+      request.end();
+    });
+    if (result.location) { url = new URL(result.location, url); continue; }
+    return result.bytes!;
+  }
+  throw new Error("The image redirected too many times.");
+}

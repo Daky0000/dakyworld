@@ -52,7 +52,7 @@ import {
   type FieldValue,
   type SiteField,
 } from "../services/website/index.js";
-import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
+import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, siteStyleClasses, underSiteCredential, WebsiteError } from "../services/website/site.js";
 import { offerPagePublished } from "../services/context/business.js";
 
 /**
@@ -86,7 +86,8 @@ websiteRouter.use((req, res, next) => {
   next();
 });
 
-websiteRouter.use(json({ limit: "8mb" }));
+// Business allows 10 MB binary assets; base64 in JSON needs about 13.4 MB.
+websiteRouter.use(json({ limit: "16mb" }));
 registerWebsiteTierRoutes(websiteRouter);
 registerWebsiteHosting(websiteRouter);
 registerSubscriberSelfService(websiteRouter);
@@ -99,7 +100,7 @@ websiteRouter.use((req, _res, next) => {
       await assertTierFeatureAccess(req, "sourceCodeEditor");
     } else if (/\/agent(?:\/|$)/.test(req.path)) {
       await assertTierFeatureAccess(req, "aiBuilderAgent");
-      if (req.method === "POST") await recordAiPromptUsed(req);
+      if (req.method === "POST" && /\/agent\/(?:plan|apply)\/?$/.test(req.path)) await recordAiPromptUsed(req);
     } else if (/\/(?:assistant|suggest|ai)(?:\/|$)/.test(req.path)) {
       await assertTierFeatureAccess(req, "aiAssistant");
       if (req.method === "POST") await recordAiPromptUsed(req);
@@ -842,8 +843,19 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
         if (page.sourceHtml !== null && !siteRepo(site)) {
           await syncDemoFromSitePage(site, page.id, page.sourceHtml, false);
           const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
+          let version = last?.number ?? 0;
+          if (!page.publishedHtml) {
+            await tx.sitePage.update({ where: { id: page.id }, data: { publishedHtml: page.sourceHtml, status: "LIVE", lastPublishedAt: new Date() } });
+            await ensureHostedAddress(site.id);
+            const created = await tx.sitePageVersion.create({ data: {
+              pageId: page.id, number: version + 1, html: page.sourceHtml,
+              publishedById: req.dbUser?.id ?? null,
+            } });
+            version = created.number;
+            await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH", summary: `Published ${page.title} for the first time`, actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id } });
+          }
           return {
-            version: last?.number ?? 1,
+            version,
             changed: 0,
             summary: [],
             commitSha: "local",
@@ -927,7 +939,7 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
         if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository before opening a pull request.");
         const slug = page.path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "content";
         branchOverride = `content/${slug}-${Date.now().toString(36)}`;
-        await createBranch(repo, branchOverride);
+        await underSiteCredential(site, () => createBranch(repo, branchOverride!));
       }
 
       let commit: { sha: string; url: string };
@@ -952,13 +964,13 @@ websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
       let prResult: { prUrl: string; prNumber: number; branch: string } | null = null;
       if (isPR && repo && branchOverride) {
         const prBody = `### Website Content Updates\n\n- **Page**: \`${page.path}\`\n- **Target Branch**: \`${site.repoBranch}\`\n- **Author**: ${author}\n\n### Summary of Changes\n${summary.map(s => `- **${s.label}** (${s.part}): \`${s.from}\` → \`${s.to}\``).join("\n")}\n\nSubmitted via Dakyworld Website Editor.`;
-        const pr = await openPullRequest({
+        const pr = await underSiteCredential(site, () => openPullRequest({
           repo,
           branch: branchOverride,
           title: prTitle,
           body: prBody,
           base: site.repoBranch,
-        });
+        }));
         prResult = { prUrl: pr.url, prNumber: pr.number, branch: branchOverride };
       }
 
@@ -1290,7 +1302,8 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res
       // The reviewed draft must not cover the restored content when the editor
       // reloads. A draft saved concurrently is retained rather than overwritten.
       const cleared = await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: expectedRevision }, data: { draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, draftRevision: { increment: 1 } } });
-      await tx.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date(), sourceHtml: page.sourceHtml === null ? undefined : version.html } });
+      await tx.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date(), publishedHtml: version.html, sourceHtml: page.sourceHtml === null ? undefined : version.html } });
+      await ensureHostedAddress(site.id);
 
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ROLLBACK", summary: `Restored ${page.title} to version ${version.number}`, actorName: author, actorId: req.dbUser?.id, detail: { pageId: page.id, version: written.number, restoredFrom: version.number } } });
       return {

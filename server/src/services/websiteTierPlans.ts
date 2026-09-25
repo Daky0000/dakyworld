@@ -1,4 +1,5 @@
 import type { Request, Response, Router } from "express";
+import { randomUUID } from "node:crypto";
 import type { WebsitePlanTier } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
@@ -17,6 +18,10 @@ import {
 } from "./websiteEntitlement.js";
 import { priceFor, type PlanCurrency } from "./websitePricing.js";
 import { editingLockedForNonPayment } from "./websiteDunning.js";
+import { fetchWebsiteBytes } from "../lib/websiteFetch.js";
+import { sniff } from "../lib/fileType.js";
+import { optimizeImageBuffer } from "../lib/imageOptimization.js";
+import { assetUrl } from "./websiteAssets.js";
 
 /**
  * Website Builder Three-Tier Plan, Storage Quota, 3-Month Promo Pricing Reversion,
@@ -218,9 +223,9 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     supportPriority: "PRIORITY",
     includedTechnicalMinutes: 60,
     improvementRecommendations: "BASIC",
-    monitoring: true,
+    monitoring: false,
     technicalOversight: true,
-    monthlyReview: true,
+    monthlyReview: false,
     features: {
       visualEditor: true,
       mediaLibrary: true,
@@ -269,9 +274,9 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     supportPriority: "HIGHEST",
     includedTechnicalMinutes: 240,
     improvementRecommendations: "PROACTIVE",
-    monitoring: true,
+    monitoring: false,
     technicalOversight: true,
-    monthlyReview: true,
+    monthlyReview: false,
     features: {
       visualEditor: true,
       mediaLibrary: true,
@@ -389,8 +394,8 @@ export type SubscriptionPricingState = {
 
 /**
  * Computes whether a user's subscription is still inside the 3-month promotional
- * window ($3, $10, $25) or has automatically reverted to the standard price
- * ($5, $16, $45) after the first 3 months.
+ * window or has automatically reverted to the standard price after the first
+ * 3 months. Prices are read from the same GHS catalogue used at checkout.
  */
 export function resolveSubscriptionPricing(input: {
   tier: WebsitePlanTier;
@@ -671,7 +676,7 @@ export async function recordAiPromptUsed(req: Request): Promise<void> {
 
 
 /**
- * Seeds the 3 tier plans ($3/$5, $10/$16, $25/$45) and the 3 subscribed test users
+ * Seeds the 3 tier plans and the 3 subscribed test users
  * (starter@dakyworld.test, pro@dakyworld.test, business@dakyworld.test) into the database.
  */
 export async function ensureWebsiteTierUsersAndPlans(): Promise<{
@@ -765,7 +770,7 @@ export async function ensureWebsiteTierUsersAndPlans(): Promise<{
               setupPaidAt: subscribedAt,
               activatedAt: subscribedAt,
               nextBillingAt,
-              notes: `3-Month Promo ($${plan.promoMonthlyPrice}/mo -> $${plan.standardMonthlyPrice}/mo standard after ${promoEndsAt.toISOString().slice(0, 10)})`,
+              notes: `3-Month Promo (GHS ${plan.promoMonthlyPrice}/mo -> GHS ${plan.standardMonthlyPrice}/mo standard after ${promoEndsAt.toISOString().slice(0, 10)})`,
             },
           });
         }
@@ -785,11 +790,14 @@ export async function captureHtmlImagesIntoMediaLibrary(
   req: Request,
   siteId: string,
   html: string,
-): Promise<{ capturedCount: number; totalBytesAdded: number }> {
+): Promise<{ html: string; capturedCount: number; totalBytesAdded: number; skippedCount: number }> {
   const status = await computeUserStorageAndUsage(req, siteId);
+  const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { publicUrl: true } });
   let remainingQuota = status.storage.remainingBytes;
   let capturedCount = 0;
   let totalBytesAdded = 0;
+  let skippedCount = 0;
+  let updatedHtml = html;
 
   // Extract data:image/*;base64,... embedded images or <img src="..."> tags
   const imgTagRegex = /<img\b[^>]*?\bsrc=["']([^"']+)["'][^>]*>/gi;
@@ -805,25 +813,38 @@ export async function captureHtmlImagesIntoMediaLibrary(
   }
 
   for (const rawUrl of urls) {
-    if (remainingQuota <= 0) break;
-    const estimatedBytes = rawUrl.startsWith("data:image/")
-      ? Math.round((rawUrl.length * 3) / 4)
-      : 180 * 1024; // 180 KB average per captured HTML image asset
-
-    if (estimatedBytes > status.plan.maxUploadBytes || estimatedBytes > remainingQuota) {
-      continue;
+    if (capturedCount >= 50 || remainingQuota <= 0) { skippedCount += 1; continue; }
+    try {
+      const limit = Math.min(status.plan.maxUploadBytes, remainingQuota);
+      let bytes: Buffer;
+      if (/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(rawUrl)) {
+        bytes = Buffer.from(rawUrl.slice(rawUrl.indexOf(",") + 1), "base64");
+      } else {
+        const url = new URL(rawUrl, site.publicUrl);
+        if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Unsupported image URL");
+        bytes = await fetchWebsiteBytes(url.href, limit);
+      }
+      if (!bytes.length || bytes.length > limit) throw new Error("Image exceeds upload limit");
+      const mime = sniff(bytes);
+      if (!mime || !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(mime)) throw new Error("Unsupported image format");
+      const optimized = await optimizeImageBuffer(bytes);
+      if (optimized.content.length > limit) throw new Error("Image exceeds storage limit");
+      const repoPath = `assets/dw/${randomUUID()}.${optimized.extension}`;
+      await prisma.siteAsset.create({ data: {
+        siteId, repoPath, filename: rawUrl.startsWith("data:") ? `imported.${optimized.extension}` : new URL(rawUrl, site.publicUrl).pathname.split("/").pop()?.slice(0, 200) || `imported.${optimized.extension}`,
+        contentType: optimized.contentType, content: optimized.content, size: optimized.content.length,
+        alt: "",
+      } });
+      updatedHtml = updatedHtml.split(rawUrl).join(assetUrl(site, repoPath));
+      remainingQuota -= optimized.content.length;
+      totalBytesAdded += optimized.content.length;
+      capturedCount += 1;
+    } catch {
+      skippedCount += 1;
     }
-
-    remainingQuota -= estimatedBytes;
-    totalBytesAdded += estimatedBytes;
-    capturedCount += 1;
   }
 
-  if (totalBytesAdded > 0) {
-    recordMediaStorageAdded(req, totalBytesAdded);
-  }
-
-  return { capturedCount, totalBytesAdded };
+  return { html: updatedHtml, capturedCount, totalBytesAdded, skippedCount };
 }
 
 export function registerWebsiteTierRoutes(router: Router) {

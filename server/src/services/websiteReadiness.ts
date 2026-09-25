@@ -3,7 +3,7 @@ import type { Site, SitePage } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { githubConfigured, repoAllowed } from "../lib/github.js";
 import { summariseCompatibility, type SiteCompatibility } from "./website/compatibility.js";
-import { pageSource, siteRepo, WebsiteError } from "./website/site.js";
+import { pageSource, siteRepo, underSiteCredential, WebsiteError } from "./website/site.js";
 
 /**
  * Whether a website is one this editor can honestly be sold for.
@@ -28,7 +28,7 @@ const PAGE_LIMIT = 60;
 
 export async function siteCompatibility(site: Site, pages: SitePage[]): Promise<SiteCompatibility> {
   const repo = siteRepo(site);
-  const credentials = await githubConfigured();
+  const credentials = await underSiteCredential(site, githubConfigured);
   const allowed = repo ? await repoAllowed(repo).catch(() => false) : false;
 
   const blocked = !repo

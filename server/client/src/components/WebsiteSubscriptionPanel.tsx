@@ -55,6 +55,10 @@ export function WebsiteSubscriptionPanel() {
       void qc.invalidateQueries({ queryKey: ["website", "subscription"] });
     },
   });
+  const manage = useMutation({
+    mutationFn: () => api.post<{ url: string }>("/website/subscription/manage", {}),
+    onSuccess: ({ url }) => { window.location.assign(url); },
+  });
 
   if (subscription.isLoading) return <p className="text-sm text-muted">Loading your plan…</p>;
   if (subscription.isError) return <Notice tone="warn">{(subscription.error as Error).message}</Notice>;
@@ -99,6 +103,12 @@ export function WebsiteSubscriptionPanel() {
       </div>
 
       {done && <Notice tone="positive">{done}</Notice>}
+      {row.status !== "CANCELLED" && <div>
+        <Button size="sm" variant="secondary" disabled={manage.isPending} onClick={() => manage.mutate()}>
+          {manage.isPending ? "Opening billing…" : "Manage card and billing"}
+        </Button>
+        {manage.isError && <p className="mt-2 text-sm text-warn-text">{(manage.error as Error).message}</p>}
+      </div>}
 
       {row.status === "CANCELLED" ? (
         <Notice>

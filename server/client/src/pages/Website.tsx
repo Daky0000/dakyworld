@@ -41,7 +41,7 @@ export function Website() {
   const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
 
   const current = sites.data?.find((site) => site.id === siteId) ?? sites.data?.[0] ?? null;
-  const canConnect = !user?.external && can("website.manage");
+  const canConnect = Boolean(user?.external) || can("website.manage");
   const canManage = current?.capabilities?.manage === true;
 
   const pages = useQuery({
@@ -76,7 +76,7 @@ export function Website() {
     return (
       <div>
         <PageHeader title="Sites" subtitle="The websites this builder can publish to." />
-        <EmptyState message={user?.external ? "Your websites will appear here once a manager assigns access." : "No website has been added yet."} action={canConnect ? <ConnectWebsite /> : undefined} />
+        <EmptyState message="No website has been added yet." action={canConnect ? <ConnectWebsite /> : undefined} />
       </div>
     );
   }
