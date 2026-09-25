@@ -1,6 +1,7 @@
 import { validFramingDeclaration } from "../../shared/websiteImageFraming.js";
 import { regenerateInteractionStyles } from "./interaction.js";
 import { createHash } from "node:crypto";
+import { iconChoiceMarkup, type IconChoice, type IconFrame } from "../../shared/websiteIcons.js";
 import { DOCUMENT_KEY, draftDocument, fieldValues, sourceHash, type DraftDocument } from "./document.js";
 import { attrNode, decodeEntities, findTag, parseHtml, textOf, walk, type ElementNode } from "./parse.js";
 import { normalizeResponsive, regenerateResponsiveStyles, responsiveEqual, responsiveOf, RESPONSIVE_TOKEN, type ResponsiveStyles } from "./responsive.js";
@@ -47,6 +48,13 @@ export type FieldKind =
   | "button"
   /** An image: which file, and the description read out to somebody who cannot see it. */
   | "image"
+  /**
+   * An inline `<svg>` drawn on the page by itself: a logo mark, a feature icon,
+   * a social link's glyph. It used to be skipped entirely, because its children
+   * are drawing instructions rather than words. It can be swapped for a library
+   * icon or an image file, or removed, but its paths are never edited here.
+   */
+  | "icon"
   | "container";
 
 type Span = { start: number; end: number };
@@ -139,6 +147,21 @@ export type SiteField = {
   relAttr?: Span;
   /** What `rel` says now, so tokens that are nothing to do with us survive. */
   rel?: string;
+
+  // --- Icons: an icon field, or a button that has (or could have) one -------
+
+  /** The icon as the page writes it, for the editor to draw a preview of. */
+  icon?: string;
+  /** The whole icon element: what a swap replaces. */
+  iconSpan?: Span;
+  /** Which side of a button's words the icon sits on. */
+  iconPosition?: "start" | "end";
+  /** How the page draws it, which decides what the editor can say about it. */
+  iconType?: "svg" | "img" | "font";
+  /** Class and size carried from the icon being replaced onto its replacement. */
+  iconFrame?: IconFrame;
+  /** A button with words and no icon, which may be given one. */
+  iconAddable?: boolean;
 };
 
 export type SiteSection = {
@@ -203,6 +226,15 @@ export type FieldValue = {
   newTab?: boolean;
   originalVariant?: string;
   originalNewTab?: boolean;
+
+  /**
+   * A new icon, by library name or image address, or `null` to take the icon
+   * away. Never markup: the server turns the choice into markup itself.
+   */
+  icon?: IconChoice | null;
+  /** Which side a newly added icon goes on. Ignored when one is being replaced. */
+  iconPosition?: "start" | "end";
+  originalIcon?: string;
 };
 
 /** Elements that never hold editable copy. */
@@ -380,6 +412,53 @@ function newTabOf(element: ElementNode): Pick<SiteField, "newTab" | "targetAttr"
 }
 
 /** Everything a button field carries beyond what a link does. */
+/** An element that is a picture rather than words: what a button's icon is. */
+function iconType(source: string, element: ElementNode): SiteField["iconType"] | null {
+  if (element.tag === "svg") return "svg";
+  if (element.tag === "img") return "img";
+  // `<i class="fa fa-phone"></i>`, `<span class="icon-arrow"></span>`: an icon
+  // font or a CSS-drawn glyph. Empty is the test, not the class name, because
+  // there is no vocabulary of icon classes to trust.
+  if ((element.tag === "i" || element.tag === "span") && textOf(source, element) === "" && element.children.every((child) => child.tag === "svg" || child.tag === "img")) {
+    return element.children.length ? iconType(source, element.children[0]!) : "font";
+  }
+  return null;
+}
+
+function iconFrameOf(element: ElementNode): IconFrame {
+  const cls = attrNode(element, "class")?.value.trim();
+  const width = attrNode(element, "width")?.value.trim();
+  const height = attrNode(element, "height")?.value.trim();
+  return { ...(cls ? { className: cls } : {}), ...(width ? { width } : {}), ...(height ? { height } : {}) };
+}
+
+/**
+ * The icon at either edge of a button's words, if it has one.
+ *
+ * Only a child *outside* the words is an icon. `contentSpan` already steps
+ * over an empty element at either end, so an arrow drawn after "Book a call"
+ * is not part of what somebody types in, and it is exactly the thing they may
+ * want to change. A picture in the middle of the words stays part of them.
+ */
+function buttonIcon(source: string, element: ElementNode, content: Span | null): Partial<SiteField> {
+  const leading = element.children.filter((child) => !content || child.end <= content.start);
+  const trailing = element.children.filter((child) => content && child.start >= content.end);
+  for (const [candidates, position] of [[leading, "start"], [trailing, "end"]] as const) {
+    for (const child of position === "start" ? candidates : [...candidates].reverse()) {
+      const type = iconType(source, child);
+      if (!type) continue;
+      return {
+        icon: source.slice(child.start, child.end),
+        iconSpan: { start: child.start, end: child.end },
+        iconPosition: content ? position : "start",
+        iconType: type,
+        iconFrame: iconFrameOf(child),
+      };
+    }
+  }
+  return content ? { iconAddable: true } : {};
+}
+
 function buttonBits(element: ElementNode): Partial<SiteField> {
   const classAttr = element.attrs.find((candidate) => candidate.name === "class");
   const found = classAttr ? variantOf(classAttr.value) : null;
@@ -521,6 +600,7 @@ function linkField(source: string, element: ElementNode, id: string): SiteField 
     hrefSpan: href ? { start: href.valueStart, end: href.valueEnd } : undefined,
     ...styleOf(element),
     ...(isButton ? buttonBits(element) : {}),
+    ...(isButton ? buttonIcon(source, element, span) : {}),
   };
 }
 
@@ -549,6 +629,7 @@ function buttonElementField(source: string, element: ElementNode, id: string): S
     content: span,
     ...styleOf(element),
     ...buttonBits(element),
+    ...buttonIcon(source, element, span),
     // A `<button>` has no destination and no tab to open, so neither is offered.
     newTab: undefined,
     targetAttr: undefined,
@@ -833,6 +914,40 @@ export function readPage(source: string): PageContent {
     .filter((section) => section.fields.length > 0);
 
   const all = kept.flatMap((section) => section.fields);
+
+  // Inline SVG drawn by itself. Its own namespace (`icon.N`), for the same
+  // reason as the layout fields below: slotting new fields into the content
+  // numbering would move every id after them and retarget older drafts.
+  // An SVG inside somebody's words is part of those words, and one at the edge
+  // of a button belongs to that button, so neither is offered twice.
+  const iconClaims = all.flatMap((field) => [field.content, field.iconSpan].filter((span): span is Span => Boolean(span)));
+  const icons: SiteField[] = [];
+  for (const node of nodes) {
+    if (node.tag !== "svg") continue;
+    if (hiddenNode(node.parent ?? undefined)) continue;
+    if (generated.some((range) => node.start >= range.start && node.end <= range.end)) continue;
+    if (iconClaims.some((span) => node.start >= span.start && node.end <= span.end)) continue;
+    const named = attrNode(node, "aria-label")?.value.trim() || textOf(source, node).slice(0, 60);
+    icons.push({
+      id: `icon.${icons.length}`,
+      kind: "icon",
+      label: "Icon",
+      tag: "svg",
+      value: source.slice(node.start, node.end),
+      preview: named || "Icon",
+      structure: createHash("sha256").update(source.slice(node.start, node.end)).digest("hex"),
+      icon: source.slice(node.start, node.end),
+      iconSpan: { start: node.start, end: node.end },
+      iconType: "svg",
+      iconFrame: iconFrameOf(node),
+      ...styleOf(node),
+    });
+  }
+  if (icons.length) {
+    kept.push({ id: "icons", label: "Icons", kind: "section", fields: icons });
+    all.push(...icons);
+  }
+
   // Keep the old content numbering intact: layout fields use a separate
   // namespace, so opening an older saved draft cannot retarget its edits.
   const represented = new Set(all.map((field) => field.attrInsert));
@@ -1069,7 +1184,8 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
       // same class of surprise as a heading they rewrote: the draft still
       // remembers a variant that is no longer there, and writing over it would
       // undo their change without saying so.
-      (edit.originalVariant !== undefined && edit.originalVariant !== (field.variant ?? ""));
+      (edit.originalVariant !== undefined && edit.originalVariant !== (field.variant ?? "")) ||
+      (edit.originalIcon !== undefined && edit.originalIcon !== (field.icon ?? ""));
     if (moved) {
       conflicts.push({ id, expected: edit.original ?? edit.originalHref ?? edit.originalAlt ?? "", found: field.value });
       continue;
@@ -1172,6 +1288,28 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
           else edits.push({ span: field.relAttr, text: `rel="${attrEscape(kept.join(" "))}"` });
         }
         touched = true;
+      }
+    }
+
+    // An icon, swapped, added or taken away. The choice is a library name or
+    // an image address; the markup is written here, never taken from a draft.
+    if (edit.icon !== undefined) {
+      const markup = edit.icon === null ? "" : iconChoiceMarkup(edit.icon, field.iconFrame);
+      if (markup !== null) {
+        if (field.iconSpan) {
+          edits.push({ span: field.iconSpan, text: markup });
+          touched = true;
+        } else if (markup && field.iconAddable && field.content) {
+          // Added to a button that had none. Written as part of the words'
+          // own span, together with any new words, because an insertion at
+          // the same offset as that span would overlap it.
+          const pending = edits.findIndex((candidate) => "span" in candidate && candidate.span === field.content);
+          const words = pending === -1 ? source.slice(field.content.start, field.content.end) : edits[pending]!.text;
+          const text = edit.iconPosition === "end" ? `${words} ${markup}` : `${markup} ${words}`;
+          if (pending === -1) edits.push({ span: field.content, text });
+          else edits[pending] = { span: field.content, text };
+          touched = true;
+        }
       }
     }
 

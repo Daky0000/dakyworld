@@ -57,7 +57,7 @@ const STRUCTURED_DATA = /^application\/(ld\+json|json)$/i;
 
 export function analysePage(html: string): PageCompatibility {
   const content = readPage(html);
-  const fields: Record<FieldKind, number> = { text: 0, richtext: 0, link: 0, button: 0, image: 0, container: 0 };
+  const fields: Record<FieldKind, number> = { text: 0, richtext: 0, link: 0, button: 0, image: 0, icon: 0, container: 0 };
   for (const field of content.fields) fields[field.kind] += 1;
   // The same rule the importer refuses a file by — see `importedWebsiteFields`.
   // A page's title and description are editable and are not *content*: a
@@ -182,7 +182,7 @@ export function summariseCompatibility(input: {
   publishing: { repository: boolean; credentials: boolean; branch: string | null; blocked: string | null };
 }): SiteCompatibility {
   const pages: SiteCompatibility["pages"] = [];
-  const totals = { pages: input.pages.length, readable: 0, editable: 0, text: 0, richtext: 0, link: 0, button: 0, image: 0, container: 0 };
+  const totals = { pages: input.pages.length, readable: 0, editable: 0, text: 0, richtext: 0, link: 0, button: 0, image: 0, icon: 0, container: 0 };
   const merged = new Map<string, CompatibilityFinding>();
 
   for (const page of input.pages) {

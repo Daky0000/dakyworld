@@ -15,6 +15,7 @@ await page.route("**/api/**", route => {
   if (route.request().method() !== "GET") writes.push(url.pathname);
   if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "tester", name: "Client", external: true, permissions: [] } });
   if (url.pathname.endsWith("/access")) return route.fulfill({ json: { capabilities } });
+  if (url.pathname.endsWith("/assets")) return route.fulfill({ json: [] });
   if (url.pathname.endsWith("/design")) return route.fulfill({ json: { options: { colours: [], fonts: [], presets: [], aiEnabled: false } } });
   if (url.pathname.includes("/preview")) return route.fulfill({ contentType: "text/html", body: '<html><body style="margin:0;background:#f4f0e8;font-family:Arial;padding:60px"><h1 data-dw-field="hero.title" style="font-size:64px">Welcome home</h1><p>A quiet space to make your next idea real.</p></body></html>' });
   return route.fulfill({ json: document });

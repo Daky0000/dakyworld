@@ -8,6 +8,7 @@ import { buildPublishPlan, discoverFields, describeChanges, parse, editingSource
 import { pageSource, WebsiteError } from "./website/site.js";
 import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
+import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets.js";
 import { assertWebsiteConnectionChange, canManageWebsiteConnection } from "./websiteAccess.js";
 import {
@@ -90,6 +91,14 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     if (!asset) throw new WebsiteError(404, "That image is not part of this site.");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "private, no-store");
+    if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
+    // Published uploads can have their duplicate bytes swept from storage.
+    // Their previews must use the published file instead of an empty image.
+    if (!asset.content) {
+      if (!asset.publishedAt) throw new WebsiteError(404, "That image is no longer available. Upload it again.");
+      res.redirect(new URL(assetUrl(site, asset.repoPath), site.publicUrl).href);
+      return;
+    }
     res.type(asset.contentType).send(asset.content);
   }));
   router.post("/sites/:siteId/assets", handler(async (req, res) => {
@@ -99,10 +108,17 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const content = Buffer.from(input.data, "base64");
     const mime = sniff(content);
     const formats: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
-    if (!mime || !formats[mime]) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP or GIF image. SVG and executable formats are not supported.");
+    const svg = !mime && looksLikeSvg(content);
+    if (!svg && (!mime || !formats[mime])) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP, GIF or SVG image.");
     if (!content.length) throw new WebsiteError(400, "Choose a non-empty image file.");
     await assertMediaStorageAllowance(req, content.length, site.id);
-    const optimized = await optimizeImageBuffer(content);
+    let optimized: Awaited<ReturnType<typeof optimizeImageBuffer>>;
+    try {
+      optimized = await optimizeImageBuffer(content);
+    } catch (error) {
+      if (error instanceof SvgRejected) throw new WebsiteError(400, error.message);
+      throw error;
+    }
     await assertMediaStorageAllowance(req, optimized.content.length, site.id);
     const asset = await prisma.$transaction(async tx => {
       const uploaded = await tx.siteAsset.create({ data: { siteId: site.id, filename: input.filename, repoPath: `assets/dw/${randomUUID()}.${optimized.extension}`, contentType: optimized.contentType, content: optimized.content, size: optimized.content.length, alt: input.alt } });

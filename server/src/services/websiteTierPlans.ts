@@ -21,6 +21,7 @@ import { editingLockedForNonPayment } from "./websiteDunning.js";
 import { fetchWebsiteBytes } from "../lib/websiteFetch.js";
 import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
+import { looksLikeSvg } from "../lib/svgSanitize.js";
 import { assetUrl } from "./websiteAssets.js";
 
 /**
@@ -817,8 +818,11 @@ export async function captureHtmlImagesIntoMediaLibrary(
     try {
       const limit = Math.min(status.plan.maxUploadBytes, remainingQuota);
       let bytes: Buffer;
-      if (/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(rawUrl)) {
+      if (/^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,/i.test(rawUrl)) {
         bytes = Buffer.from(rawUrl.slice(rawUrl.indexOf(",") + 1), "base64");
+      } else if (/^data:image\/svg\+xml(?:;charset=[\w-]+)?(?:;utf8)?,/i.test(rawUrl)) {
+        // An SVG written straight into the attribute, percent-encoded.
+        bytes = Buffer.from(decodeURIComponent(rawUrl.slice(rawUrl.indexOf(",") + 1)), "utf8");
       } else {
         const url = new URL(rawUrl, site.publicUrl);
         if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Unsupported image URL");
@@ -826,7 +830,9 @@ export async function captureHtmlImagesIntoMediaLibrary(
       }
       if (!bytes.length || bytes.length > limit) throw new Error("Image exceeds upload limit");
       const mime = sniff(bytes);
-      if (!mime || !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(mime)) throw new Error("Unsupported image format");
+      // SVG has no signature to sniff; `optimizeImageBuffer` recognises it and
+      // rebuilds it through the sanitiser, and refuses it if that fails.
+      if (!(mime ? ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(mime) : looksLikeSvg(bytes))) throw new Error("Unsupported image format");
       const optimized = await optimizeImageBuffer(bytes);
       if (optimized.content.length > limit) throw new Error("Image exceeds storage limit");
       const repoPath = `assets/dw/${randomUUID()}.${optimized.extension}`;

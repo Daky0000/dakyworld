@@ -9,8 +9,11 @@ import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus 
 export type CapturedHtmlImage = {
   url: string;
   alt: string;
+  preview?: string;
   source?: string;
 };
+
+export type WebsiteAssetSelection = { url: string; alt: string; preview?: string };
 
 type Asset = { id: string; filename: string; alt: string; url: string; preview: string; byteSize?: number };
 
@@ -20,7 +23,7 @@ export function WebsiteAssetLibrary({
   capturedImages = [],
 }: {
   siteId: string;
-  onSelect?: (asset: { url: string; alt: string }) => void;
+  onSelect?: (asset: WebsiteAssetSelection) => void;
   capturedImages?: CapturedHtmlImage[];
 }) {
   const access = useWebsiteAccess(siteId);
@@ -49,14 +52,17 @@ export function WebsiteAssetLibrary({
           `File size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds your ${tierStatus?.tierName ?? "current"} plan's ${maxUploadLabel} per-file limit.`,
         );
       }
-      const bitmap = await createImageBitmap(file).catch(() => {
-        throw new Error("That file could not be opened as an image.");
-      });
-      if (bitmap.width * bitmap.height > 40_000_000) {
+      const isSvg = file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
+      if (!isSvg) {
+        const bitmap = await createImageBitmap(file).catch(() => {
+          throw new Error("That file could not be opened as an image.");
+        });
+        if (bitmap.width * bitmap.height > 40_000_000) {
+          bitmap.close();
+          throw new Error("Use an image smaller than 40 megapixels.");
+        }
         bitmap.close();
-        throw new Error("Use an image smaller than 40 megapixels.");
       }
-      bitmap.close();
       const data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result).split(",")[1]);
@@ -94,7 +100,7 @@ export function WebsiteAssetLibrary({
   const saveCapturedToLibrary = async (img: CapturedHtmlImage) => {
     try {
       setSavingUrl(img.url);
-      const response = await fetch(img.url);
+      const response = await fetch(img.preview ?? img.url);
       const blob = await response.blob();
       const data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -102,8 +108,20 @@ export function WebsiteAssetLibrary({
         reader.onerror = () => reject(new Error("Could not encode image"));
         reader.readAsDataURL(blob);
       });
-      const rawName = img.url.split("/").pop()?.split("?")[0] || "captured-image.png";
-      const filename = /\.(png|jpe?g|webp|gif)$/i.test(rawName) ? rawName : `${rawName}.png`;
+      const isSvg = blob.type === "image/svg+xml" || img.url.startsWith("data:image/svg") || /\.svg($|\?)/i.test(img.url);
+      const fallbackName = (img.alt || (isSvg ? "captured-icon" : "captured-image"))
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 50) || (isSvg ? "captured-icon" : "captured-image");
+      const rawName = img.url.startsWith("data:")
+        ? fallbackName
+        : (img.url.split("/").pop()?.split("?")[0] || fallbackName);
+      const ext = isSvg ? "svg" : /\.(png|jpe?g|webp|gif)$/i.test(rawName) ? "" : "png";
+      const filename = isSvg
+        ? (rawName.toLowerCase().endsWith(".svg") ? rawName : `${rawName}.svg`)
+        : (ext ? `${rawName}.${ext}` : rawName);
       await api.post(`/website/sites/${siteId}/assets`, {
         filename,
         alt: img.alt || filename,
@@ -182,7 +200,7 @@ export function WebsiteAssetLibrary({
             <Button
               size="sm"
               onClick={() => {
-                onSelect({ url: candidate.url, alt: candidate.alt });
+                onSelect({ url: candidate.url, alt: candidate.alt, preview: candidate.preview });
                 setCandidate(null);
               }}
             >
@@ -219,14 +237,14 @@ export function WebsiteAssetLibrary({
                     disabled={!onSelect}
                     onClick={() => {
                       if (onSelect) {
-                        onSelect({ url: img.url, alt: img.alt });
+                        onSelect({ url: img.url, alt: img.alt, preview: img.preview });
                       }
                     }}
                     className="relative h-28 w-full overflow-hidden bg-sunken text-left"
                     title={`Click to select ${name}`}
                   >
                     <img
-                      src={img.url}
+                      src={img.preview ?? img.url}
                       alt={img.alt}
                       className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
                     />
@@ -276,12 +294,12 @@ export function WebsiteAssetLibrary({
                 )}
               </div>
               <label className="block text-xs text-muted">
-                PNG, JPEG, WebP or GIF · up to {maxUploadLabel}
+                PNG, JPEG, WebP, GIF or SVG · up to {maxUploadLabel}
                 <input
                   className="mt-2 block w-full text-xs"
                   key={uploadKey}
                   type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,.svg"
                   onChange={(e) => {
                     setFile(e.target.files?.[0] ?? null);
                     upload.reset();
@@ -327,7 +345,7 @@ export function WebsiteAssetLibrary({
                   disabled={!onSelect}
                   onClick={() => {
                     if (onSelect) {
-                      onSelect({ url: asset.url, alt: asset.alt });
+                      onSelect({ url: asset.url, alt: asset.alt, preview: asset.preview });
                     }
                   }}
                   className="relative h-28 w-full overflow-hidden bg-sunken text-left"
@@ -407,7 +425,7 @@ export function WebsiteAssetPickerModal({
 }: {
   siteId: string;
   capturedImages?: CapturedHtmlImage[];
-  onSelect: (asset: { url: string; alt: string }) => void;
+  onSelect: (asset: WebsiteAssetSelection) => void;
   onClose: () => void;
 }) {
   return (

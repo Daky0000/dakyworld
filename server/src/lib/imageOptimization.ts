@@ -1,4 +1,5 @@
 import { sniff } from "./fileType.js";
+import { looksLikeSvg, sanitizeSvg } from "./svgSanitize.js";
 
 export type ImageOptimizationResult = {
   content: Buffer;
@@ -113,6 +114,12 @@ export function stripPngMetadata(buffer: Buffer): { buffer: Buffer; stripped: bo
  */
 export async function optimizeImageBuffer(raw: Buffer): Promise<ImageOptimizationResult> {
   const mime = sniff(raw);
+  // SVG has no magic number to sniff, and it is markup that can run script. It
+  // is kept only as the sanitiser rebuilds it (see lib/svgSanitize.ts), which
+  // also makes it the only format here whose bytes are always rewritten.
+  if (!mime && looksLikeSvg(raw)) {
+    return { content: Buffer.from(sanitizeSvg(raw.toString("utf8")), "utf8"), contentType: "image/svg+xml", extension: "svg", strippedExif: false };
+  }
   const formats: Record<string, string> = {
     "image/png": "png",
     "image/jpeg": "jpg",

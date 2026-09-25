@@ -51,6 +51,7 @@ import {
   type SiteSection,
 } from "./regions.js";
 import { checkLink, sanitizePlain, sanitizeRich } from "./sanitize.js";
+import { iconChoiceMarkup, type IconChoice } from "../../shared/websiteIcons.js";
 import { previewDocument, type PreviewDocument } from "./site.js";
 import { normalizeResponsive, responsiveEqual, type ResponsiveStyles } from "./responsive.js";
 
@@ -138,11 +139,12 @@ export const buildPreview = previewDocument;
  */
 export function sanitizeValue(
   field: SiteField,
-  raw: { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean },
+  raw: { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean; icon?: IconChoice | null; iconPosition?: "start" | "end" },
 ): FieldValue {
   const next: FieldValue = {};
 
-  if (raw.value !== undefined && field.kind !== "container") {
+  // An icon's drawing is never typed. It is swapped whole, by `iconEdit`.
+  if (raw.value !== undefined && field.kind !== "container" && field.kind !== "icon") {
     const cleaned =
       (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta")) ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
     if (cleaned !== field.value) next.value = cleaned;
@@ -170,6 +172,7 @@ export function sanitizeValue(
   if (raw.newTab !== undefined && field.kind === "button" && field.hrefSpan && raw.newTab !== Boolean(field.newTab)) {
     next.newTab = raw.newTab;
   }
+  Object.assign(next, iconEdit(field, raw));
 
   if (Object.keys(next).length === 0) return next;
 
@@ -184,7 +187,25 @@ export function sanitizeValue(
   if (field.alt !== undefined) next.originalAlt = field.alt;
   if (field.variant !== undefined) next.originalVariant = field.variant;
   if (field.newTab !== undefined) next.originalNewTab = field.newTab;
+  if (next.icon !== undefined) next.originalIcon = field.icon ?? "";
   return next;
+}
+
+/**
+ * An icon choice, cleaned to one the server can write.
+ *
+ * Checked by turning it into the markup it would become: a library name that
+ * does not exist or an address that is not safe to publish becomes nothing,
+ * and is dropped rather than stored, because the editor cannot send either.
+ * Taking an icon away needs one to be there, and adding one needs a button
+ * with words to sit beside.
+ */
+function iconEdit(field: SiteField, raw: { icon?: IconChoice | null; iconPosition?: "start" | "end" }): Pick<FieldValue, "icon" | "iconPosition"> {
+  if (raw.icon === undefined || !(field.iconSpan || field.iconAddable)) return {};
+  if (raw.icon === null) return field.iconSpan ? { icon: null } : {};
+  const choice: IconChoice = "library" in raw.icon ? { library: String(raw.icon.library) } : { src: String(raw.icon.src) };
+  if (iconChoiceMarkup(choice, field.iconFrame) === null) return {};
+  return field.iconSpan ? { icon: choice } : { icon: choice, iconPosition: raw.iconPosition === "end" ? "end" : "start" };
 }
 
 /**
@@ -203,11 +224,11 @@ export function sanitizeValue(
  */
 export function sanitizeSharedValue(
   field: SiteField,
-  raw: { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean },
+  raw: { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean; icon?: IconChoice | null; iconPosition?: "start" | "end" },
 ): FieldValue {
   const next: FieldValue = {};
 
-  if (raw.value !== undefined && field.kind !== "container") {
+  if (raw.value !== undefined && field.kind !== "container" && field.kind !== "icon") {
     next.value = (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta")) ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
   }
   if (raw.href !== undefined) next.href = raw.href.trim();
@@ -219,6 +240,7 @@ export function sanitizeSharedValue(
     if (resolveVariantChange(field.classes, wanted)) next.variant = wanted;
   }
   if (raw.newTab !== undefined && field.kind === "button" && field.hrefSpan) next.newTab = raw.newTab;
+  Object.assign(next, iconEdit(field, raw));
   return next;
 }
 

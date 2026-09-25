@@ -75,6 +75,9 @@ import {
 } from "../components/WebsiteIcons";
 import { useWebsiteAccess } from "../components/WebsiteMembers";
 import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
+import { rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
+import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
+import { iconPreviewSrc } from "../lib/websiteIconPreview";
 
 /**
  * One page of the website, open at full size, with everything about the thing
@@ -173,11 +176,15 @@ function variantLabel(stem: string | undefined, variant: string): string {
 function ButtonControls({
   field,
   edit,
+  siteId,
+  publicUrl,
   onChange,
   readOnly,
 }: {
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
+  siteId?: string;
+  publicUrl: string;
   onChange: (next: FieldEdit) => void;
   /** Offered only on a field the editor could unlock by naming it in the code.
    * Absent everywhere else, so the button never appears where it cannot help. */
@@ -239,6 +246,27 @@ function ButtonControls({
           <span>Opens in a new tab</span>
         </label>
       )}
+
+      {(field.icon !== undefined || field.iconAddable) && (
+        <WebsiteIconPicker
+          siteId={siteId}
+          publicUrl={publicUrl}
+          current={field.icon}
+          currentType={field.iconType}
+          addable={field.iconAddable}
+          position={field.iconPosition}
+          choice={edit?.icon}
+          choicePosition={edit?.iconPosition ?? field.iconPosition}
+          readOnly={readOnly}
+          onChoose={(nextIcon, side) => onChange({ ...edit, icon: nextIcon, ...(side ? { iconPosition: side } : {}) })}
+          onReset={() => {
+            const next = { ...edit };
+            delete next.icon;
+            delete next.iconPosition;
+            onChange(next);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -247,7 +275,9 @@ function FieldRow({
   field,
   edit,
   problem,
+  siteId,
   publicUrl,
+  resolveImagePreview,
   links,
   onChange,
   onNameFields,
@@ -258,7 +288,9 @@ function FieldRow({
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
   problem: string | undefined;
+  siteId?: string;
   publicUrl: string;
+  resolveImagePreview?: (url: string) => string;
   /** The site's own pages, so a destination is picked rather than spelled. */
   links: Array<{ path: string; title: string }>;
   onChange: (next: FieldEdit) => void;
@@ -281,12 +313,13 @@ function FieldRow({
 
   const imageSrc = useMemo(() => {
     if (field.kind !== "image") return null;
+    if (resolveImagePreview) return resolveImagePreview(value);
     try {
       return new URL(value, `${publicUrl.replace(/\/+$/, "")}/`).toString();
     } catch {
       return null;
     }
-  }, [field.kind, value, publicUrl]);
+  }, [field.kind, value, publicUrl, resolveImagePreview]);
 
   if (field.kind === "container") return <p className="text-xs leading-relaxed text-muted">Select a child to edit its content, or use the controls below to style this container.</p>;
 
@@ -358,7 +391,7 @@ function FieldRow({
               </label>
             )}
           </div>
-          {field.kind === "button" && <ButtonControls field={field} edit={edit} onChange={onChange} readOnly={readOnly} />}
+          {field.kind === "button" && <ButtonControls field={field} edit={edit} siteId={siteId} publicUrl={publicUrl} onChange={onChange} readOnly={readOnly} />}
         </>
       )}
 
@@ -396,6 +429,23 @@ function FieldRow({
         </div>
       )}
 
+      {field.kind === "icon" && (
+        <WebsiteIconPicker
+          siteId={siteId}
+          publicUrl={publicUrl}
+          current={field.icon}
+          currentType={field.iconType}
+          choice={edit?.icon}
+          readOnly={readOnly}
+          onChoose={(nextIcon) => onChange({ ...edit, icon: nextIcon })}
+          onReset={() => {
+            const next = { ...edit };
+            delete next.icon;
+            onChange(next);
+          }}
+        />
+      )}
+
       {field.sourceManaged && (
         <div className="mt-2 rounded-[10px] bg-sunken px-2 py-1 text-xs text-muted">
           <p>{field.sourceNote ?? "This is written by the code that builds this page, so it cannot be changed here."}</p>
@@ -425,6 +475,7 @@ function sideText(edit: FieldEdit | null): string {
   }
   if (edit.variant !== undefined) parts.push(`button style: ${edit.variant || "none"}`);
   if (edit.newTab !== undefined) parts.push(edit.newTab ? "opens in new tab" : "opens in same tab");
+  if (edit.icon !== undefined) parts.push(edit.icon === null ? "icon removed" : "icon changed");
   return parts.join(" · ") || "left as it was";
 }
 
@@ -805,6 +856,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`),
   });
 
+  const mediaAssets = useQuery({
+    queryKey: ["website", "assets", page.data?.site.id],
+    enabled: !!page.data?.site.id,
+    queryFn: () => api.get<WebsiteMediaAsset[]>(`/website/sites/${page.data!.site.id}/assets`),
+  });
+  // A picker selection must be available to the live write immediately,
+  // including before React renders or an upload invalidation finishes.
+  const selectedMedia = useRef(new Map<string, WebsiteMediaAsset>());
+  const resolveImagePreview = useCallback((value: string) => websiteMediaPreviewUrl(value, {
+    pageUrl: page.data?.page.url ?? (typeof window !== "undefined" ? window.location.href : ""),
+    editorUrl: typeof window !== "undefined" ? window.location.href : "",
+    assets: [...selectedMedia.current.values(), ...(mediaAssets.data ?? [])],
+  }), [page.data?.page.url, mediaAssets.data]);
+  const resolveImageSource = useCallback((value: string) => websiteMediaSourceUrl(value, {
+    pageUrl: page.data?.page.url ?? (typeof window !== "undefined" ? window.location.href : ""),
+    editorUrl: typeof window !== "undefined" ? window.location.href : "",
+    assets: [...selectedMedia.current.values(), ...(mediaAssets.data ?? [])],
+  }), [page.data?.page.url, mediaAssets.data]);
+  const previewStyle = useCallback((value: string) => rewriteWebsiteMediaStyle(value, resolveImagePreview), [resolveImagePreview]);
+
   const access = useWebsiteAccess(page.data?.site.id);
   const canEdit = access.data?.capabilities.edit === true;
   const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: () => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`) });
@@ -915,12 +986,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       return "written";
     }
     if (kind === "image") {
-      el.setAttribute("src", value ?? "");
+      el.setAttribute("src", resolveImagePreview(value ?? ""));
       el.removeAttribute("srcset");
       return "written";
     }
     if (kind === "style") {
-      if (value) el.setAttribute("style", value);
+      if (value) el.setAttribute("style", previewStyle(value));
       else el.removeAttribute("style");
       return "written";
     }
@@ -936,7 +1007,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     if (!el.hasAttribute("data-dw-editing")) el.innerHTML = value ?? "";
     return "written";
   },
-    [],
+    [resolveImagePreview, previewStyle],
   );
 
   /**
@@ -962,11 +1033,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       }
       tell(
         kind === "style"
-          ? { type: "style", id, style: value }
+          ? { type: "style", id, style: previewStyle(value) }
           : kind === "responsive"
             ? { type: "responsive", id, css: responsivePreviewCss(id, JSON.parse(value)) }
           : kind === "image"
-            ? { type: "image", id, src: value }
+            ? { type: "image", id, src: resolveImagePreview(value) }
           : kind === "variant"
             ? { type: "variant", id, from, to: value }
             : { type: "text", id, html: value },
@@ -979,7 +1050,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         setLiveBlind(true);
       }, 900);
     },
-    [tell, writeInFrame],
+    [tell, writeInFrame, resolveImagePreview, previewStyle],
   );
 
   const pick = useCallback(
@@ -990,9 +1061,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     [tell, writeInFrame],
   );
 
+  useEffect(() => {
+    if (!mediaAssets.data) return;
+    // Recovered drafts can replay before the asset query finishes. Refresh
+    // their visual URLs once metadata arrives without changing saved values.
+    const fields = (page.data?.sections ?? []).flatMap(section => section.fields);
+    for (const [id, edit] of Object.entries(latestEdits.current)) {
+      if (edit.value !== undefined && fields.some(field => field.id === id && field.kind === "image")) writeInFrame("image", id, edit.value);
+      if (edit.style !== undefined) writeInFrame("style", id, edit.style);
+    }
+  }, [mediaAssets.data, writeInFrame, page.data?.sections]);
+
   const change = useCallback(
     (fieldId: string, next: FieldEdit, options?: { fromFrame?: boolean; commit?: boolean }) => {
       if (!canEdit || reviewOpen || showVersions || publishPending.current || structurePending.current) return;
+      const imageField = page.data?.sections.some(section => section.fields.some(field => field.id === fieldId && field.kind === "image"));
+      next = {
+        ...next,
+        ...(imageField && next.value !== undefined ? { value: resolveImageSource(next.value) } : {}),
+        ...(next.style !== undefined ? { style: rewriteWebsiteMediaStyle(next.style, resolveImageSource) } : {}),
+      };
       dirty.current = true;
       setPublished(null);
       if (Object.keys(next).some((key) => !LIVE_KEYS.has(key))) needsReload.current = true;
@@ -1001,7 +1089,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       if (!options?.fromFrame) {
         if (next.style !== undefined) push("style", fieldId, next.style);
         if (next.responsive !== undefined) push("responsive", fieldId, JSON.stringify(next.responsive));
-        if (next.value !== undefined) push(page.data?.sections.some(section => section.fields.some(field => field.id === fieldId && field.kind === "image")) ? "image" : "text", fieldId, next.value);
+        if (next.value !== undefined) push(imageField ? "image" : "text", fieldId, next.value);
         if (next.variant !== undefined) {
           push("variant", fieldId, next.variant ?? "", wornVariant.current[fieldId]);
           // The frame now wears the new one, so the *next* swap has to take
@@ -1016,7 +1104,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         return updated;
       });
     },
-    [commitHistory, push, canEdit, reviewOpen, showVersions, page.data],
+    [commitHistory, push, canEdit, reviewOpen, showVersions, page.data, resolveImageSource],
   );
 
   // The frame talks back: which element was clicked, which one is being typed
@@ -1593,14 +1681,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
       if (tokens.length > 0) setPageColorTokens(tokens);
 
-      // Capture all images (<img> and CSS background-image url(...)) from the live HTML document for the Media Library
-      const baseUrl = page.data?.site?.publicUrl || window.location.origin;
+      // Capture all images (<img>, <svg>, and CSS background-image url(...)) from the live HTML document for the Media Library
+      const baseUrl = page.data?.page.url || page.data?.site?.publicUrl || window.location.origin;
       const resolveUrl = (raw: string) => {
-        const cleaned = raw.trim().replace(/^['"]|['"]$/g, "");
+        const cleaned = resolveImageSource(raw.trim().replace(/^['"]|['"]$/g, ""));
         if (!cleaned || cleaned.startsWith("data:font") || /\.(woff2?|ttf|otf|eot)(\?|$)/i.test(cleaned)) return "";
         if (/^(https?:|data:|blob:|\/api\/)/i.test(cleaned)) return cleaned;
         try {
-          return new URL(cleaned, baseUrl).href;
+          return resolveImageSource(new URL(cleaned, baseUrl).href);
         } catch {
           return cleaned;
         }
@@ -1608,19 +1696,32 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
       const discovered: CapturedHtmlImage[] = [];
       const seenUrls = new Set<string>();
-      const pushImg = (rawUrl: string, altText: string, sourceLabel: string) => {
+      const pushImg = (rawUrl: string, altText: string, sourceLabel: string, previewUrl?: string) => {
         const resolved = resolveUrl(rawUrl);
         if (!resolved || seenUrls.has(resolved)) return;
         seenUrls.add(resolved);
         discovered.push({
           url: resolved,
           alt: altText.trim() || resolved.split("/").pop()?.split("?")[0] || "Captured image",
+          preview: previewUrl ?? resolveImagePreview(resolved),
           source: sourceLabel,
         });
       };
 
       doc.querySelectorAll<HTMLImageElement>("img[src]").forEach((imgEl) => {
         pushImg(imgEl.getAttribute("src") || imgEl.src, imgEl.getAttribute("alt") || "", "HTML <img>");
+      });
+
+      doc.querySelectorAll<SVGElement>("svg").forEach((svgEl, idx) => {
+        if (svgEl.closest("[hidden], [style*='display: none'], [style*='display:none']")) return;
+        const outer = svgEl.outerHTML;
+        if (!outer || outer.length > 500_000) return;
+        const withNs = /\sxmlns\s*=/.test(outer.slice(0, outer.indexOf(">") + 1))
+          ? outer
+          : outer.replace(/^\s*<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+        const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(withNs)}`;
+        const label = svgEl.getAttribute("aria-label") || svgEl.getAttribute("id") || `SVG Graphic ${idx + 1}`;
+        pushImg(dataUrl, label, "Inline SVG", dataUrl);
       });
 
       const cssUrlRegex = /url\(\s*['"]?([^'")]+)['"]?\s*\)/gi;
@@ -1653,32 +1754,46 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     } catch {
       /* Cross-origin fallback */
     }
-  }, [allFields, edits, page.data?.site?.publicUrl]);
+  }, [allFields, edits, page.data?.site?.publicUrl, page.data?.page.url, resolveImagePreview, resolveImageSource]);
 
   const capturedHtmlImages = useMemo<CapturedHtmlImage[]>(() => {
-    const baseUrl = page.data?.site?.publicUrl || (typeof window !== "undefined" ? window.location.origin : "");
+    const baseUrl = page.data?.page.url || page.data?.site?.publicUrl || (typeof window !== "undefined" ? window.location.origin : "");
     const resolveUrl = (raw: string) => {
-      const cleaned = raw.trim().replace(/^['"]|['"]$/g, "");
+      const cleaned = resolveImageSource(raw.trim().replace(/^['"]|['"]$/g, ""));
       if (!cleaned || cleaned.startsWith("data:font") || /\.(woff2?|ttf|otf|eot)(\?|$)/i.test(cleaned)) return "";
       if (/^(https?:|data:|blob:|\/api\/)/i.test(cleaned)) return cleaned;
       try {
-        return new URL(cleaned, baseUrl).href;
+        return resolveImageSource(new URL(cleaned, baseUrl).href);
       } catch {
         return cleaned;
       }
     };
     const list: CapturedHtmlImage[] = [];
     const seen = new Set<string>();
-    const add = (rawUrl: string, alt: string, source: string) => {
+    const add = (rawUrl: string, alt: string, source: string, previewUrl?: string) => {
       const url = resolveUrl(rawUrl);
       if (!url || seen.has(url)) return;
       seen.add(url);
-      list.push({ url, alt: alt || url.split("/").pop()?.split("?")[0] || "Page Image", source });
+      list.push({
+        url,
+        alt: alt || url.split("/").pop()?.split("?")[0] || "Page Image",
+        preview: previewUrl ?? resolveImagePreview(url),
+        source,
+      });
     };
     for (const f of allFields) {
       if (f.kind === "image") {
         const val = edits[f.id]?.value ?? f.value ?? "";
         if (val) add(val, edits[f.id]?.alt ?? f.alt ?? f.label, "HTML <img>");
+      }
+      if (f.kind === "icon" || (f.kind === "button" && f.icon)) {
+        const iconMarkup = f.icon;
+        if (iconMarkup) {
+          const previewSrc = iconPreviewSrc(iconMarkup, page.data?.page.url ?? window.location.href);
+          if (previewSrc) {
+            add(previewSrc, f.label || "Button Icon", "Icon", previewSrc);
+          }
+        }
       }
       const st = edits[f.id]?.style ?? f.style ?? "";
       if (st) {
@@ -1687,10 +1802,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       }
     }
     for (const item of frameCapturedImages) {
-      add(item.url, item.alt, item.source ?? "Page Media");
+      add(item.url, item.alt, item.source ?? "Page Media", item.preview);
     }
     return list;
-  }, [allFields, edits, frameCapturedImages, page.data?.site?.publicUrl]);
+  }, [allFields, edits, frameCapturedImages, page.data?.site?.publicUrl, page.data?.page.url, resolveImagePreview, resolveImageSource]);
 
   const updatePageColorToken = useCallback(
     (tokenKey: string, nextHex: string, isVar: boolean, previousHex: string) => {
@@ -2101,6 +2216,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           siteId={site.id}
           capturedImages={capturedHtmlImages}
           onSelect={asset => {
+            if (asset.preview) selectedMedia.current.set(asset.url, { url: asset.url, preview: asset.preview });
+            const previewBackground = `url('${resolveImagePreview(asset.url).replace(/['"\\]/g, "")}')`;
             if (assetTargetMode === "background" || picked.kind !== "image") {
               const map = parseStyle(pickedStyle ?? "");
               map["background-image"] = `url('${asset.url.replace(/['"\\]/g, "")}')`;
@@ -2112,13 +2229,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 const doc = frame.current?.contentDocument;
                 const el = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
                 if (el && doc?.defaultView) {
-                  el.style.backgroundImage = `url('${asset.url.replace(/['"\\]/g, "")}')`;
+                  el.style.backgroundImage = previewBackground;
                   el.style.backgroundSize = map["background-size"] || "cover";
                   el.style.backgroundPosition = map["background-position"] || "center";
                   el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
                     const bg = doc.defaultView!.getComputedStyle(desc).backgroundImage;
                     if (bg && bg !== "none" && /url\(/i.test(bg)) {
-                      desc.style.backgroundImage = `url('${asset.url.replace(/['"\\]/g, "")}')`;
+                      desc.style.backgroundImage = previewBackground;
                     }
                   });
                 }
@@ -3192,22 +3309,24 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   <div hidden={inspectorTab === "interactions"}><ElementInspector
                     tab={inspectorTab === "layout" ? "layout" : inspectorTab === "style" ? "style" : "content"}
                     simple={!designerMode}
-                    sitePublicUrl={site.publicUrl}
+                    sitePublicUrl={page.data.page.url}
+                    resolveImagePreview={resolveImagePreview}
                     onTextColour={colour => !readOnly && formatActiveText({ color: colour })}
                     onPickBackgroundImage={() => {
                       setAssetTargetMode("background");
                       setAssetModalOpen(true);
                     }}
                     onSetBackgroundImageUrl={(nextUrl) => {
+                      const previewBackground = nextUrl ? `url('${resolveImagePreview(nextUrl).replace(/['"\\]/g, "")}')` : "none";
                       try {
                         const doc = frame.current?.contentDocument;
                         const el = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
                         if (el && doc?.defaultView) {
-                          el.style.backgroundImage = nextUrl ? `url('${nextUrl.replace(/['"\\]/g, "")}')` : "none";
+                          el.style.backgroundImage = previewBackground;
                           el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
                             const bg = doc.defaultView!.getComputedStyle(desc).backgroundImage;
                             if (bg && bg !== "none" && /url\(/i.test(bg)) {
-                              desc.style.backgroundImage = nextUrl ? `url('${nextUrl.replace(/['"\\]/g, "")}')` : "none";
+                              desc.style.backgroundImage = previewBackground;
                             }
                           });
                         }
@@ -3245,15 +3364,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                         {/* Elementor-style Image Preview Card & Controls when an <img> is clicked */}
                         {picked.kind === "image" && (() => {
                           const rawImgVal = (edits[picked.id]?.value ?? picked.value ?? "").trim();
-                          const resolvedImgUrl = (() => {
-                            if (!rawImgVal) return "";
-                            if (/^(https?:|data:|blob:|\/api\/)/i.test(rawImgVal)) return rawImgVal;
-                            try {
-                              return new URL(rawImgVal, `${site.publicUrl.replace(/\/+$/, "")}/`).toString();
-                            } catch {
-                              return rawImgVal;
-                            }
-                          })();
+                          const resolvedImgUrl = resolveImagePreview(rawImgVal);
                           const styleMap = parseStyle(pickedStyle ?? "");
                           const currentFit = styleMap["object-fit"] ?? computed["object-fit"] ?? "cover";
                           const currentAlt = edits[picked.id]?.alt ?? picked.alt ?? "";
@@ -3380,7 +3491,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           );
                         })()}
 
-                        {picked.kind === "image" && !readOnly && <WebsiteImageFraming siteId={site.id} key={`${picked.id}:${device}:${edits[picked.id]?.value ?? picked.value}`} src={(() => { try { return new URL(edits[picked.id]?.value ?? picked.value, `${site.publicUrl.replace(/\/+$/, "")}/`).toString(); } catch { return ""; } })()} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} />}
+                        {picked.kind === "image" && !readOnly && <WebsiteImageFraming siteId={site.id} key={`${picked.id}:${device}:${edits[picked.id]?.value ?? picked.value}`} src={resolveImagePreview(edits[picked.id]?.value ?? picked.value)} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} />}
 
                         {!readOnly && !picked.sourceManaged && picked.tag !== "title" && picked.tag !== "meta" && picked.kind !== "image" && picked.kind !== "container" && (
                           <div className="mb-2 flex justify-end">
@@ -3539,7 +3650,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                 {bgUrl && (
                                   <div
                                     className="h-20 w-full rounded-lg border border-line bg-cover bg-center"
-                                    style={{ backgroundImage: `url("${bgUrl.replace(/"/g, "")}")` }}
+                                    style={{ backgroundImage: `url("${resolveImagePreview(bgUrl).replace(/"/g, "")}")` }}
                                   />
                                 )}
                                 <div className="flex items-center gap-1.5">
@@ -3653,7 +3764,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           field={picked}
                           edit={edits[picked.id]}
                           problem={problems.get(picked.id)}
-                          publicUrl={site.publicUrl}
+                          siteId={site.id}
+                          publicUrl={page.data.page.url}
+                          resolveImagePreview={resolveImagePreview}
                           links={links ?? []}
                           readOnly={readOnly}
                           onChange={(next) => change(picked.id, next)}
@@ -3708,7 +3821,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                         field={field}
                         edit={edits[field.id]}
                         problem={problems.get(field.id)}
-                        publicUrl={site.publicUrl}
+                        siteId={site.id}
+                        publicUrl={page.data.page.url}
+                        resolveImagePreview={resolveImagePreview}
                         links={links ?? []}
                         readOnly={readOnly}
                         onChange={(next) => change(field.id, next)}

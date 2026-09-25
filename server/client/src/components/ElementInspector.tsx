@@ -57,6 +57,7 @@ export function ElementInspector({
   fonts,
   readOnly,
   sitePublicUrl,
+  resolveImagePreview,
   backgroundImageFallbackUrl,
   onChange,
   onCommit,
@@ -77,6 +78,7 @@ export function ElementInspector({
   fonts?: string[];
   readOnly?: boolean;
   sitePublicUrl?: string;
+  resolveImagePreview?: (url: string) => string;
   backgroundImageFallbackUrl?: string;
   onChange: (next: string) => void;
   /** Called when a continuous gesture ends, so history records one step. */
@@ -149,7 +151,7 @@ export function ElementInspector({
       return true;
     })
   );
-  if (tab === "content" && content) shown.add("content");
+  if ((tab === "content" || (tab === "layout" && facts.kind === "container")) && content) shown.add("content");
   if (tab === "style") {
     shown.add("background");
     shown.add("border");
@@ -1009,6 +1011,7 @@ export function ElementInspector({
               const bgUrl = (urlMatch?.[1] ?? backgroundImageFallbackUrl ?? "").trim();
               const resolvedBgUrl = (() => {
                 if (!bgUrl) return "";
+                if (resolveImagePreview) return resolveImagePreview(bgUrl);
                 if (/^(https?:|data:|blob:|\/api\/)/i.test(bgUrl)) return bgUrl;
                 if (sitePublicUrl) {
                   try {

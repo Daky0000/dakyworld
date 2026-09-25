@@ -6,6 +6,7 @@ import { prisma } from "../lib/prisma.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { assetUrl } from "./websiteAssets.js";
+import { SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 
 /**
  * Serving a customer's published website.
@@ -114,6 +115,7 @@ export function publicSiteHosting() {
         const bytes = Buffer.from(asset.content);
         const etag = `W/"${crypto.createHash("sha1").update(bytes).digest("base64url")}"`;
         if (req.headers["if-none-match"] === etag) return res.status(304).end();
+        if (asset.contentType === "image/svg+xml") res.set("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
         return res.status(200)
           .set("Content-Type", asset.contentType)
           .set("X-Content-Type-Options", "nosniff")

@@ -512,6 +512,8 @@ export function registerWebsiteShared(router: Router, access: Access) {
             responsive: z.object({ tablet: z.string().max(2_000).optional(), mobile: z.string().max(2_000).optional() }).strict().optional(),
             variant: z.string().max(120).nullable().optional(),
             newTab: z.boolean().optional(),
+            icon: z.union([z.object({ library: z.string().min(1).max(60) }).strict(), z.object({ src: z.string().min(1).max(2_000) }).strict()]).nullable().optional(),
+            iconPosition: z.enum(["start", "end"]).optional(),
           }),
         ),
       })

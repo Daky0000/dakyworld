@@ -166,6 +166,12 @@ function publicField(field: SiteField) {
     ...(field.variantStem !== undefined ? { variantStem: field.variantStem } : {}),
     ...(field.variantsOnPage !== undefined ? { variants: field.variantsOnPage } : {}),
     ...(field.newTab !== undefined ? { newTab: field.newTab } : {}),
+    // Icons. The markup travels so the editor can draw what is there now; the
+    // span it lives at does not, for the same reason as every other offset.
+    ...(field.icon !== undefined ? { icon: field.icon } : {}),
+    ...(field.iconPosition !== undefined ? { iconPosition: field.iconPosition } : {}),
+    ...(field.iconType !== undefined ? { iconType: field.iconType } : {}),
+    ...(field.iconAddable ? { iconAddable: true } : {}),
     ...(field.repeatable !== undefined ? { repeatable: field.repeatable } : {}),
   };
 }
@@ -526,6 +532,9 @@ const draftBody = z.object({
       /** A button's style class. `null` takes the style off without adding one. */
       variant: z.string().max(120).nullable().optional(),
       newTab: z.boolean().optional(),
+      /** A new icon by library name or image address; null takes it away. Never markup. */
+      icon: z.union([z.object({ library: z.string().min(1).max(60) }).strict(), z.object({ src: z.string().min(1).max(2_000) }).strict()]).nullable().optional(),
+      iconPosition: z.enum(["start", "end"]).optional(),
     }),
   ),
 });

@@ -15,7 +15,7 @@
  * control was drawn.
  */
 
-export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "container";
+export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "container" | "icon";
 
 /** The three widths the canvas offers. `mobile` is the draft's own key. */
 export type Device = "desktop" | "tablet" | "mobile";

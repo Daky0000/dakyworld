@@ -3122,7 +3122,7 @@ export type SitePageRow = {
   lastPublishedAt: string | null;
 };
 
-export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "container";
+export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "icon" | "container";
 
 /** One thing on a page somebody can change. Offsets stay on the server. */
 export type SiteFieldRow = {
@@ -3163,6 +3163,15 @@ export type SiteFieldRow = {
   variants?: string[];
   /** Whether it opens in a new tab. Absent on a `<button>`, which goes nowhere. */
   newTab?: boolean;
+  // Icons: an icon field, or a button that has (or may be given) one.
+  /** The icon as the page draws it now. Site markup: only ever shown as an image. */
+  icon?: string;
+  /** Which side of a button's words it sits on. */
+  iconPosition?: "start" | "end";
+  /** Inline SVG, an image file, or an icon font / CSS glyph. */
+  iconType?: "svg" | "img" | "font";
+  /** A button with words and no icon, which may be given one. */
+  iconAddable?: true;
 };
 
 export type SiteSectionRow = {
@@ -3174,7 +3183,9 @@ export type SiteSectionRow = {
 
 /** What the editor sends back: only the parts of a field that changed. */
 export type ResponsiveStyles = { tablet?: string; mobile?: string };
-export type FieldEdit = { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean };
+/** A new icon: a library icon by name or an image address. `null` takes it away. */
+export type IconChoice = { library: string } | { src: string };
+export type FieldEdit = { value?: string; href?: string; alt?: string; style?: string; responsive?: ResponsiveStyles; variant?: string | null; newTab?: boolean; icon?: IconChoice | null; iconPosition?: "start" | "end" };
 
 /** Where a field's edits actually go, and how far they reach. */
 export type SharedFieldScope = {
