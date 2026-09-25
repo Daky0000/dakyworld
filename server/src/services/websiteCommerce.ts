@@ -122,8 +122,11 @@ export async function startWebsitePurchase(input: PurchaseInput) {
   const tierPlan = WEBSITE_TIER_PLANS[tierKey];
   const product = await prisma.product.findFirst({ where: { key: input.productKey, active: true } });
   if (!product) throw new Error("That website plan is not available.");
-  const quote = await websitePaymentQuote(input.productKey, input.billingCycle ?? "monthly");
-  if (!input.recurringConsent || quote.quoteId !== input.quoteId) throw new PaystackError("Review the current GHS price and accept recurring billing before continuing.", 409);
+  const quote = await websitePaymentQuote(input.productKey, input.billingCycle ?? "monthly", {
+    currency: input.currency,
+    country: input.country,
+  });
+  if (!input.recurringConsent || quote.quoteId !== input.quoteId) throw new PaystackError("Review the current price and accept recurring billing before continuing.", 409);
   const fingerprint = crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex");
   const prior = await prisma.websitePurchase.findUnique({ where: { checkoutKey: input.checkoutKey }, include: { invoice: true } });
   if (prior) {
@@ -154,9 +157,13 @@ export async function startWebsitePurchase(input: PurchaseInput) {
     ? `${product.name} website setup`
     : isAnnual
       ? `${product.name} annual subscription (12 months — 2 months free)`
-      : `${product.name} subscription (GHS ${quote.monthly}/mo for the first ${quote.promoMonths} months, then GHS ${quote.standard}/mo standard)`;
+      : `${product.name} subscription (${quote.currency} ${quote.monthly}/mo for the first ${quote.promoMonths} months, then ${quote.currency} ${quote.standard}/mo standard)`;
 
-  const terms = `USD 1 = GHS ${quote.usdToGhs}; upfront GHS ${quote.upfront}; ${quote.billingCycle} recurring GHS ${quote.recurring}; standard recurring GHS ${quote.standard}; accepted quote ${quote.quoteId}`;
+  // The rate is recorded only where it was actually applied. Printing
+  // "USD 1 = GHS 12" on a dollar purchase states a conversion that did not
+  // happen to that customer.
+  const rateNote = quote.currency === "GHS" ? `USD 1 = GHS ${quote.usdToGhs}; ` : "";
+  const terms = `${rateNote}upfront ${quote.currency} ${quote.upfront}; ${quote.billingCycle} recurring ${quote.currency} ${quote.recurring}; standard recurring ${quote.currency} ${quote.standard}; accepted quote ${quote.quoteId}`;
   let records;
   try {
     records = await createNumberedInvoice(invoiceNumber => prisma.$transaction(async tx => {

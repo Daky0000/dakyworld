@@ -69,17 +69,21 @@ check("with a price", Number(builder.monthlyPrice) > 0);
 equal("pointing at its own public page", builder.publicPath, "/website-builder");
 check("every shipped product has a stable key", SHIPPED_PRODUCTS.every((product) => /^[a-z][a-z0-9-]*$/.test(product.key)));
 equal("three website plans ship", SHIPPED_PRODUCTS.map(product => product.key), ["website-builder", "website-care", "managed-website"]);
-// The catalogue is in cedis, because the public site quotes cedis. The dollar
-// column lives in services/websitePricing.ts and is asserted below: the two
-// used to disagree by a factor of eight, which is the fault these lines exist
-// to keep out.
-equal("Starter (EDITOR) is $25 in the catalogue", SHIPPED_PRODUCTS[0].monthlyPrice, "25.00");
-equal("Starter standard price is $40", SHIPPED_PRODUCTS[0].standardMonthlyPrice, "40.00");
+// The three tiers, in the dollars they are authored in. Ghana is charged the
+// cedi conversion of exactly these numbers at the merchant rate, so there is
+// one list and the cedi column cannot drift from it — the fault these lines
+// exist to keep out is the pass where GHS 300 stood against $3 for the same
+// tier, one price and a tenth of it.
+//
+// The seeds are derived from `USD_PRICES` rather than typed again, so these
+// assert the seeding as much as the figures.
+equal("Starter (EDITOR) is $3 in the catalogue", SHIPPED_PRODUCTS[0].monthlyPrice, "3.00");
+equal("Starter reverts to $5", SHIPPED_PRODUCTS[0].standardMonthlyPrice, "5.00");
 equal("catalogue prices are held in dollars", SHIPPED_PRODUCTS[0].currency, "USD");
-equal("Pro (CARE) is $75", SHIPPED_PRODUCTS[1].monthlyPrice, "75.00");
-equal("Pro standard price is $120", SHIPPED_PRODUCTS[1].standardMonthlyPrice, "120.00");
-equal("Business (MANAGED) is $195", SHIPPED_PRODUCTS[2].monthlyPrice, "195.00");
-equal("Business standard price is $320", SHIPPED_PRODUCTS[2].standardMonthlyPrice, "320.00");
+equal("Pro (CARE) is $10", SHIPPED_PRODUCTS[1].monthlyPrice, "10.00");
+equal("Pro reverts to $16", SHIPPED_PRODUCTS[1].standardMonthlyPrice, "16.00");
+equal("Business (MANAGED) is $25", SHIPPED_PRODUCTS[2].monthlyPrice, "25.00");
+equal("Business reverts to $45", SHIPPED_PRODUCTS[2].standardMonthlyPrice, "45.00");
 
 // The fault this pair exists for: the catalogue's prices are dollars and the
 // standard price comes from the tier table, so a currency change to one and
@@ -94,24 +98,50 @@ for (const [index, tier] of (["EDITOR", "CARE", "MANAGED"] as const).entries()) 
 
 
 // The advertised price and the charged price are the same number.
+//
+// Read from the price list rather than written out, so moving a tier moves
+// this assertion with it. What it catches is the page and the catalogue
+// drifting apart — which they did, and the page went on advertising a figure
+// the checkout had stopped charging.
 {
   const advertised = readFileSync(new URL("../../website-builder.html", import.meta.url), "utf8");
+  const starter = priceFor("EDITOR", "GHS").promoDisplay;
   check(
-    "the Website Builder page advertises the price the catalogue charges",
-    advertised.includes("GHS 300"),
+    `the Website Builder page advertises ${starter}, which is what Ghana is charged`,
+    advertised.includes(starter),
   );
+  const pro = priceFor("CARE", "GHS").promoDisplay;
+  check(`...and ${pro} for the Care plan`, advertised.includes(pro));
 }
 
-// One settlement currency. Everything is charged in cedis, converted from the
-// catalogue's dollar prices at the merchant rate — a subscription priced in
-// one currency and verified in another cannot be checked at all, which is what
-// services/paymentQuote.ts and the billing state machine depend on.
-equal("everything is billed in cedis", resolveCurrency({ country: "NG" }), "GHS");
-equal("including for a Ghanaian customer", resolveCurrency({ country: "GH" }), "GHS");
+// Two currencies, one list. Ghana is charged the cedi conversion of the dollar
+// price at the merchant rate; everywhere else is charged the dollars. A
+// purchase stores the currency it was sold in and the Paystack plan is created
+// in that same currency, so the billing state machine can still verify the
+// amount and currency it is shown — which is what a single list buys and what
+// two independent ones would destroy.
+{
+  const before = process.env.WEBSITE_USD_ENABLED;
+  process.env.WEBSITE_USD_ENABLED = "true";
+  equal("a Nigerian customer is billed in dollars", resolveCurrency({ country: "NG" }), "USD");
+  equal("a Ghanaian customer is billed in cedis", resolveCurrency({ country: "GH" }), "GHS");
+  process.env.WEBSITE_USD_ENABLED = "";
+  equal(
+    "with dollars not yet enabled at the processor, everybody is billed in cedis",
+    resolveCurrency({ country: "NG" }),
+    "GHS",
+  );
+  if (before === undefined) delete process.env.WEBSITE_USD_ENABLED;
+  else process.env.WEBSITE_USD_ENABLED = before;
+}
+
 for (const tier of ["EDITOR", "CARE", "MANAGED"] as const) {
-  const price = priceFor(tier);
-  check(`${tier} is quoted in cedis`, price.display.startsWith("GHS"));
-  check(`${tier} standard price is above its promotional one`, price.standardMonthlyPrice > price.promoMonthlyPrice);
+  const ghs = priceFor(tier, "GHS");
+  const usd = priceFor(tier, "USD");
+  check(`${tier} is quoted in cedis when cedis are asked for`, ghs.display.startsWith("GHS"));
+  check(`${tier} is quoted in dollars when dollars are asked for`, usd.display.startsWith("$"));
+  check(`${tier} standard price is above its promotional one in cedis`, ghs.standardMonthlyPrice > ghs.promoMonthlyPrice);
+  check(`${tier} standard price is above its promotional one in dollars`, usd.standardMonthlyPrice > usd.promoMonthlyPrice);
 }
 
-console.log(`products: ${checks} checks — one settlement currency, a catalogue in dollars charged in cedis at the merchant rate, the standard price always above the promotional one, storage quotas, and 3 test users verified`);
+console.log(`products: ${checks} checks — three tiers authored in dollars, Ghana charged the cedi conversion at the merchant rate, the standard price always above the promotional one, the page advertising what the checkout charges, storage quotas, and 3 test users verified`);

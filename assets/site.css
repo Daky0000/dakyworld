@@ -1654,3 +1654,29 @@ a.v:hover{color:var(--blue)}
 .product-card strong,.product-card .product-price{color:var(--ink)}
 .product-links{display:flex;flex-wrap:wrap;gap:16px 28px;margin-top:24px}
 #available-products{scroll-margin-top:110px}
+
+/* ── Checkout: choosing the plan inside the checkout ──────────────────────
+   Modelled on the pattern people already know from Claude and ChatGPT: the
+   plan and the billing cycle are radio cards at the top of the form, and the
+   summary column beside them follows the choice. Before this the plan was
+   fixed by whichever card was clicked behind the dialog, so changing your mind
+   meant closing the checkout and starting again. */
+.builder-plan-choice{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.builder-plan-option{position:relative;display:block;cursor:pointer}
+.builder-plan-option input{position:absolute;opacity:0;width:0;height:0}
+.builder-plan-option-body{display:flex;flex-direction:column;gap:2px;padding:14px;border:1.5px solid rgba(8,16,31,.14);border-radius:14px;background:#fff;transition:border-color .15s,box-shadow .15s,background .15s}
+.builder-plan-option input:checked + .builder-plan-option-body{border-color:var(--blue,#2563eb);background:rgba(37,99,235,.04);box-shadow:0 0 0 1px var(--blue,#2563eb) inset}
+.builder-plan-option input:focus-visible + .builder-plan-option-body{outline:2px solid var(--blue,#2563eb);outline-offset:2px}
+.builder-plan-option-badge{align-self:flex-start;background:var(--blue,#2563eb);color:#fff;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;margin-bottom:4px}
+.builder-plan-option-name{font-weight:650;font-size:14px;line-height:1.3}
+.builder-plan-option-desc{font-size:12px;color:var(--muted,#5b6572);line-height:1.4}
+.builder-plan-option-price{font-size:17px;font-weight:700;margin-top:6px}
+.builder-plan-option-cycle{font-size:11px;color:var(--muted,#5b6572)}
+.builder-cycle-choice{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.builder-cycle-option{position:relative;display:inline-flex;cursor:pointer}
+.builder-cycle-option input{position:absolute;opacity:0;width:0;height:0}
+.builder-cycle-option span{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1.5px solid rgba(8,16,31,.14);border-radius:999px;font-size:13px;font-weight:600;background:#fff;transition:border-color .15s,background .15s}
+.builder-cycle-option input:checked + span{border-color:var(--blue,#2563eb);background:rgba(37,99,235,.06)}
+.builder-cycle-option input:focus-visible + span{outline:2px solid var(--blue,#2563eb);outline-offset:2px}
+.builder-cycle-save{font-style:normal;background:#10b981;color:#fff;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:999px}
+@media (max-width:640px){.builder-plan-choice{grid-template-columns:1fr}}

@@ -35,22 +35,86 @@
     'managed-website': { title: 'Business Website', monthly: 25 }
   };
 
+  /** How this page writes an amount in the currency it is quoting. */
+  function formatMoney(currency, amount, decimals) {
+    var body = decimals ? amount.toFixed(2) : amount.toLocaleString();
+    return currency === 'USD' ? '$' + body : 'GHS ' + body;
+  }
+
+  /** The currency the page is quoting in. assets/pricing.js owns it. */
+  function activeCurrency() {
+    var pricing = window.DW_PRICING;
+    return (pricing && pricing.ready && pricing.currency) || 'GHS';
+  }
+
   function getPlanBaseMonthly(planKey) {
+    // The catalogue first: it is the only source that knows both currencies,
+    // and it is the same one the server will charge from.
+    var pricing = window.DW_PRICING;
+    if (pricing && pricing.ready) {
+      var price = pricing.priceFor(planKey);
+      if (price && !isNaN(parseFloat(price.promoMonthly))) {
+        return { currency: pricing.currency, monthly: parseFloat(price.promoMonthly) };
+      }
+    }
     var slot = document.querySelector('[data-dw-price="' + planKey + '"][data-dw-part="monthly"]') ||
                document.querySelector('[data-dw-price="' + planKey + '"]');
     if (slot) {
       var baseAttr = slot.getAttribute('data-base-monthly');
       if (baseAttr && !isNaN(parseFloat(baseAttr))) {
-        return { currency: slot.getAttribute('data-currency') || 'USD', monthly: parseFloat(baseAttr) };
+        // The currency that number is in, written by pricing.js when it set
+        // it. Defaulting to dollars here is what made a cedi price — which is
+        // what the markup carries and what Ghana pays — render as "$36".
+        return { currency: slot.getAttribute('data-dw-currency') || activeCurrency(), monthly: parseFloat(baseAttr) };
       }
       var raw = slot.textContent.trim();
       var m = raw.match(/([A-Z]{3})\s*([\d,]+(?:\.\d{2})?)/i);
       if (m) {
-        return { currency: m[1] || 'GHS', monthly: parseFloat((m[2] || '300').replace(/,/g, '')) || 300 };
+        return { currency: m[1] || 'GHS', monthly: parseFloat((m[2] || '36').replace(/,/g, '')) || 36 };
+      }
+      var dollars = raw.match(/\$\s*([\d,]+(?:\.\d{2})?)/);
+      if (dollars) {
+        return { currency: 'USD', monthly: parseFloat(dollars[1].replace(/,/g, '')) || 0 };
       }
     }
     var fallback = PLAN_META[planKey] || PLAN_META['website-builder'];
-    return { currency: 'USD', monthly: fallback.monthly };
+    return { currency: activeCurrency(), monthly: fallback.monthly };
+  }
+
+  /* The plan and cycle radios inside the checkout. Choosing one repoints the
+     hidden fields the server reads and repaints the summary beside them. A
+     checkout that cannot change the plan makes somebody close it and start
+     again from the cards behind it, which is where people abandon. */
+  function wireCheckoutChoices() {
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="planChoice"]'), function (radio) {
+      radio.addEventListener('change', function () {
+        if (!radio.checked) return;
+        activePlanKey = radio.value;
+        if (form && form.elements.productKey) form.elements.productKey.value = radio.value;
+        syncModalPrices(activePlanKey);
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="cycleChoice"]'), function (radio) {
+      radio.addEventListener('change', function () {
+        if (!radio.checked) return;
+        activeBillingCycle = radio.value;
+        if (form && form.elements.billingCycle) form.elements.billingCycle.value = radio.value;
+        updatePricingCardsDisplay();
+      });
+    });
+  }
+
+  /** The price on each plan card inside the checkout, in the active currency. */
+  function paintPlanOptions() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-plan-price]'), function (el) {
+      var key = el.getAttribute('data-plan-price');
+      var planInfo = getPlanBaseMonthly(key);
+      var amount = activeBillingCycle === 'annual' ? planInfo.monthly * 10 : planInfo.monthly;
+      el.textContent = formatMoney(planInfo.currency, amount, false);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.builder-plan-option-cycle'), function (el) {
+      el.textContent = activeBillingCycle === 'annual' ? 'Billed annually' : 'Billed monthly';
+    });
   }
 
   function updatePricingCardsDisplay() {
@@ -58,7 +122,7 @@
     ['website-builder', 'website-care'].forEach(function (key) {
       var info = getPlanBaseMonthly(key);
       var displayAmount = isAnnual ? info.monthly * 10 : info.monthly;
-      var formatted = info.currency + ' ' + displayAmount.toLocaleString();
+      var formatted = formatMoney(info.currency, displayAmount, false);
       var slot = document.querySelector('[data-dw-price="' + key + '"][data-dw-part="monthly"]');
       if (slot) slot.textContent = formatted;
     });
@@ -92,8 +156,15 @@
     var isAnnual = activeBillingCycle === 'annual';
     var numeric = isAnnual ? info.monthly * 10 : info.monthly;
     var currency = info.currency || 'GHS';
-    var amountStr = numeric.toLocaleString();
-    var formattedTotal = currency + ' ' + numeric.toFixed(2);
+    var amountStr = formatMoney(currency, numeric, false);
+    var formattedTotal = formatMoney(currency, numeric, true);
+
+    // The charge must be raised in the currency this summary quotes. Without
+    // the field the server falls back to the country the request appears to
+    // come from, which is a guess about somebody who has already told us.
+    var currencyField = document.getElementById('builderCurrencyField');
+    if (currencyField) currencyField.value = currency;
+    paintPlanOptions();
 
     var summaryTitle = document.getElementById('builderSummaryPlanTitle');
     if (summaryTitle) summaryTitle.textContent = meta.title;
@@ -117,7 +188,7 @@
     }
 
     var btnAmount = document.getElementById('builderBtnAmount');
-    if (btnAmount) btnAmount.textContent = currency + ' ' + amountStr;
+    if (btnAmount) btnAmount.textContent = amountStr;
 
     var lineMonthly = document.getElementById('builderLineMonthly');
     if (lineMonthly) lineMonthly.textContent = formattedTotal;
@@ -126,11 +197,21 @@
     if (lineTotal) lineTotal.textContent = formattedTotal;
 
     var sumVal = checkoutDialog.querySelector('.builder-sum-val');
-    if (sumVal) sumVal.textContent = amountStr;
+    if (sumVal) sumVal.textContent = numeric.toLocaleString();
 
     var sumCurr = checkoutDialog.querySelector('.builder-sum-curr');
-    if (sumCurr) sumCurr.textContent = currency;
+    if (sumCurr) sumCurr.textContent = currency === 'USD' ? '$' : 'GHS';
   }
+
+  wireCheckoutChoices();
+
+  /* pricing.js has repainted the cards in a new currency. Everything this file
+     draws is derived from those numbers, so it is all drawn again - including
+     the annual multiple, which pricing.js does not know about and has just
+     overwritten with the monthly price. */
+  window.addEventListener('dw-currency-change', function () {
+    updatePricingCardsDisplay();
+  });
 
   // Wire up Monthly / Annual Billing Toggle buttons
   Array.prototype.forEach.call(document.querySelectorAll('[data-billing-cycle]'), function (btn) {
@@ -409,26 +490,44 @@
         payload[key] = typeof value === 'string' ? value.trim() : value;
       });
 
-      var selection = payload.productKey + ':' + payload.billingCycle;
+      // The currency is part of what was quoted. Leaving it out of the key
+      // meant switching currency kept an accepted quote for the other one, and
+      // the server recomputes the quote to verify `quoteId` — so the purchase
+      // would be refused with nothing on screen explaining why.
+      var selection = payload.productKey + ':' + payload.billingCycle + ':' + (payload.currency || 'GHS');
       var consent = form.elements.recurringConsent;
       if (!acceptedQuote || quoteSelection !== selection) {
         submitting = true;
         if (submitBtn) submitBtn.disabled = true;
         try {
-          var quoteResponse = await fetch(API + '/website-payment-quote?productKey=' + encodeURIComponent(payload.productKey) + '&billingCycle=' + encodeURIComponent(payload.billingCycle), { signal: AbortSignal.timeout(15000) });
+          var quoteResponse = await fetch(
+            API + '/website-payment-quote?productKey=' + encodeURIComponent(payload.productKey) +
+            '&billingCycle=' + encodeURIComponent(payload.billingCycle) +
+            '&currency=' + encodeURIComponent(payload.currency || 'GHS'),
+            { signal: AbortSignal.timeout(15000) }
+          );
           var quoteBody = await quoteResponse.json();
           if (!quoteResponse.ok) throw new Error(quoteBody.error || 'Could not load the payment quote.');
           acceptedQuote = quoteBody;
+          // Every figure below is written in the currency the quote came back
+          // in. Hardcoding GHS printed cedi labels over dollar amounts for
+          // every customer outside Ghana.
+          var qc = quoteBody.currency === 'USD' ? 'USD' : 'GHS';
+          var qmoney = function (amount) { return formatMoney(qc, amount, true); };
           var quoteAmount = document.getElementById("builderBtnAmount");
-          if (quoteAmount) quoteAmount.textContent = "GHS " + quoteBody.upfront.toFixed(2);
+          if (quoteAmount) quoteAmount.textContent = qmoney(quoteBody.upfront);
           quoteSelection = selection;
           if (consent) consent.checked = false;
           var terms = document.getElementById('builderBillingTerms');
           var renewal = quoteBody.billingCycle === 'annual'
-            ? 'Then GHS ' + quoteBody.standard.toFixed(2) + ' every year.'
-            : 'GHS ' + quoteBody.recurring.toFixed(2) + ' per month for the first 3 months, then GHS ' + quoteBody.standard.toFixed(2) + ' per month.';
-          if (terms) terms.textContent = 'Pay GHS ' + quoteBody.upfront.toFixed(2) + ' now. ' + renewal + ' USD 1 = GHS ' + quoteBody.usdToGhs + '. Your card issuer may apply conversion fees. Recurring billing uses a reusable card. Cancel through your Paystack subscription email or contact support.';
-          setStatus('Review the GHS price below, accept recurring billing, then continue to Paystack.', 'info');
+            ? 'Then ' + qmoney(quoteBody.standard) + ' every year.'
+            : qmoney(quoteBody.recurring) + ' per month for the first ' + (quoteBody.promoMonths || 3) + ' months, then ' + qmoney(quoteBody.standard) + ' per month.';
+          // The rate is stated only where it was actually applied. Printing
+          // "USD 1 = GHS 12" on a dollar purchase describes a conversion that
+          // did not happen to that customer.
+          var rateNote = qc === 'GHS' ? ' USD 1 = GHS ' + quoteBody.usdToGhs + '.' : '';
+          if (terms) terms.textContent = 'Pay ' + qmoney(quoteBody.upfront) + ' now. ' + renewal + rateNote + ' Your card issuer may apply conversion fees. Recurring billing uses a reusable card. Cancel through your Paystack subscription email or contact support.';
+          setStatus('Review the price below, accept recurring billing, then continue to Paystack.', 'info');
         } catch (error) { setStatus(error.message || 'Could not load the payment quote.', 'error'); }
         submitting = false;
         if (submitBtn) submitBtn.disabled = false;

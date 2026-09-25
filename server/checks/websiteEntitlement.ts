@@ -203,8 +203,14 @@ check(
 check("the request says which route the customer was on", /ROUTE_LABEL\[input\.route\]/.test(setup));
 
 const pricing = source("../src/services/websitePricing.ts");
-check("setup help is quoted at $10 and charged in cedis", /SETUP_ASSISTANCE_USD = 10/.test(pricing) && /cedis\(amount\)/.test(pricing));
-check("there is one settlement currency", /export type PlanCurrency = "GHS"/.test(pricing));
+check("setup help is quoted at $10", /SETUP_ASSISTANCE_USD = 10/.test(pricing));
+// Two currencies, one list. Ghana is charged the cedi conversion of the dollar
+// price; everywhere else is charged the dollars. What must never come back is
+// two *independent* lists — that is how GHS 300 came to stand against $3 for
+// the same tier — so this asserts the cedi figure is derived from the rate.
+check("both currencies are offered", /export type PlanCurrency = "GHS" \| "USD"/.test(pricing));
+check("cedis are the dollars times the merchant rate", /usdToGhsRate\(\)/.test(pricing));
+check("dollars are not charged until the processor can settle them", /WEBSITE_USD_ENABLED/.test(pricing));
 
 const guide = readFileSync(new URL("../../website-builder-setup.html", import.meta.url), "utf8");
 check("the guide has a section for the hosted route", /id="hosted"/.test(guide));

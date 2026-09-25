@@ -62,7 +62,7 @@
         "@type": "Offer",
         "@id": "https://dakyworld.com/website-builder#offer",
         "priceCurrency": "GHS",
-        "price": "300",
+        "price": "36",
         "availability": "https://schema.org/InStock",
         "url": "https://dakyworld.com/website-builder"
       }
@@ -556,6 +556,23 @@
       </div>
     </div>
 
+    <!-- Currency.
+         Hidden in the markup and revealed by assets/pricing.js only when the
+         catalogue says more than one currency can actually be charged. Ghana is
+         the home market and cedis are the default; offering dollars while
+         Paystack cannot settle them would quote a price and then refuse the
+         card. -->
+    <div id="dwCurrencyChoice" hidden style="display:flex;align-items:center;justify-content:center;gap:12px;margin:-16px 0 32px">
+      <div role="group" aria-label="Currency" style="display:inline-flex;align-items:center;background:#f4f2ec;padding:5px;border-radius:999px;border:1px solid rgba(8,16,31,0.1)">
+        <button type="button" data-dw-currency-choice="GHS" aria-pressed="true" style="padding:6px 16px;border-radius:999px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:#08101f;color:#ffffff;transition:all 0.2s">
+          Cedis (GHS)
+        </button>
+        <button type="button" data-dw-currency-choice="USD" aria-pressed="false" style="padding:6px 16px;border-radius:999px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:#08101f;transition:all 0.2s">
+          Dollars (USD)
+        </button>
+      </div>
+    </div>
+
     <div class="builder-plans" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(285px,1fr));gap:24px;align-items:stretch" aria-label="Website Builder plans">
       <!-- TIER 1: Website Builder (Self-Service + AI Agent) -->
       <article class="builder-plan" style="display:flex;flex-direction:column;justify-content:space-between">
@@ -563,7 +580,7 @@
           <h3>Website Builder</h3>
           <p class="builder-plan-for">For teams making their own routine updates with visual &amp; AI tools</p>
           <p class="builder-price">
-            <span data-dw-price="website-builder" data-dw-part="monthly" data-base-monthly="300">GHS 300</span><small class="dw-cycle-label">/month</small>
+            <span data-dw-price="website-builder" data-dw-part="monthly" data-base-monthly="36" data-dw-currency="GHS">GHS 36</span><small class="dw-cycle-label">/month</small>
           </p>
           <p class="builder-plan-setup"><span data-dw-price="website-builder" data-dw-part="setup">no setup fee</span></p>
           <ul>
@@ -575,7 +592,7 @@
             <li>Up to 2 team accounts with role-based permissions</li>
           </ul>
         </div>
-        <button class="btn btn-primary" type="button" data-purchase-plan="website-builder" data-plan-title="Website Builder" data-plan-amount="300">
+        <button class="btn btn-primary" type="button" data-purchase-plan="website-builder" data-plan-title="Website Builder" data-plan-amount="36">
           Purchase Website Builder &rarr;
         </button>
       </article>
@@ -589,7 +606,7 @@
           <h3>Website Care + Builder</h3>
           <p class="builder-plan-for">Self-service editor plus a Dakyworld developer on call for deeper changes</p>
           <p class="builder-price">
-            <span data-dw-price="website-care" data-dw-part="monthly" data-base-monthly="900">GHS 900</span><small class="dw-cycle-label">/month</small>
+            <span data-dw-price="website-care" data-dw-part="monthly" data-base-monthly="120" data-dw-currency="GHS">GHS 120</span><small class="dw-cycle-label">/month</small>
           </p>
           <p class="builder-plan-setup"><span>no setup fee &middot; includes developer hours</span></p>
           <ul>
@@ -601,7 +618,7 @@
             <li>Up to 5 team accounts &amp; priority WhatsApp/email support</li>
           </ul>
         </div>
-        <button class="btn btn-primary" type="button" data-purchase-plan="website-care" data-plan-title="Website Care + Builder" data-plan-amount="750">
+        <button class="btn btn-primary" type="button" data-purchase-plan="website-care" data-plan-title="Website Care + Builder" data-plan-amount="120">
           Start Website Care + Builder &rarr;
         </button>
       </article>
@@ -655,7 +672,7 @@
             <div class="builder-line-items" aria-label="Order breakdown">
               <div class="builder-line-item">
                 <span id="builderLineLabel">Website Builder (Month 1)</span>
-                <span class="builder-line-price" id="builderLineMonthly">GHS 300.00</span>
+                <span class="builder-line-price" id="builderLineMonthly">GHS 36.00</span>
               </div>
               <div class="builder-line-item">
                 <span>Repository Setup &amp; Connect</span>
@@ -664,7 +681,7 @@
               <div class="builder-line-divider"></div>
               <div class="builder-line-item builder-line-item--total">
                 <span>Total due today</span>
-                <span class="builder-line-total" id="builderLineTotal">GHS 300.00</span>
+                <span class="builder-line-total" id="builderLineTotal">GHS 36.00</span>
               </div>
             </div>
 
@@ -709,10 +726,54 @@
             <form class="builder-form" id="builderPurchaseForm" novalidate>
               <input type="hidden" name="productKey" value="website-builder">
               <input type="hidden" name="billingCycle" value="monthly">
+              <!-- What the summary beside this form is quoting. Sent so the
+                   charge cannot be raised in a different currency from the one
+                   the customer was shown. -->
+              <input type="hidden" name="currency" id="builderCurrencyField" value="GHS">
+
+              <!-- Plan details.
+                   A checkout that cannot change the plan makes somebody close
+                   it and start again from the cards behind it, which is where
+                   people abandon. Both the plan and the billing cycle are
+                   chosen here, and the summary beside the form follows. -->
+              <div class="builder-fieldset">
+                <div class="builder-field-legend">1. Plan details</div>
+                <div class="builder-plan-choice" role="radiogroup" aria-label="Plan">
+                  <label class="builder-plan-option">
+                    <input type="radio" name="planChoice" value="website-builder" checked>
+                    <span class="builder-plan-option-body">
+                      <span class="builder-plan-option-name">Website Builder</span>
+                      <span class="builder-plan-option-desc">Edit and publish your own pages</span>
+                      <span class="builder-plan-option-price" data-plan-price="website-builder">GHS 36</span>
+                      <span class="builder-plan-option-cycle">Billed monthly</span>
+                    </span>
+                  </label>
+                  <label class="builder-plan-option">
+                    <input type="radio" name="planChoice" value="website-care">
+                    <span class="builder-plan-option-body">
+                      <span class="builder-plan-option-badge">Most popular</span>
+                      <span class="builder-plan-option-name">Website Care + Builder</span>
+                      <span class="builder-plan-option-desc">Adds a developer on call each month</span>
+                      <span class="builder-plan-option-price" data-plan-price="website-care">GHS 120</span>
+                      <span class="builder-plan-option-cycle">Billed monthly</span>
+                    </span>
+                  </label>
+                </div>
+                <div class="builder-cycle-choice" role="radiogroup" aria-label="Billing cycle">
+                  <label class="builder-cycle-option">
+                    <input type="radio" name="cycleChoice" value="monthly" checked>
+                    <span>Monthly billing</span>
+                  </label>
+                  <label class="builder-cycle-option">
+                    <input type="radio" name="cycleChoice" value="annual">
+                    <span>Annual billing <em class="builder-cycle-save">2 months free</em></span>
+                  </label>
+                </div>
+              </div>
 
               <!-- Contact Information -->
               <div class="builder-fieldset">
-                <div class="builder-field-legend">1. Contact Information</div>
+                <div class="builder-field-legend">2. Contact Information</div>
                 <div class="builder-fields-row">
                   <div class="builder-field builder-field--full">
                     <label for="dw-email">Email Address <span class="req">*</span></label>
@@ -732,7 +793,7 @@
 
               <!-- Website Connection -->
               <div class="builder-fieldset">
-                <div class="builder-field-legend">2. Website Connection</div>
+                <div class="builder-field-legend">3. Website Connection</div>
                 <div class="builder-fields-row">
                   <div class="builder-field">
                     <label for="dw-biz">Business / Brand Name <span class="req">*</span></label>
@@ -749,7 +810,7 @@
                 </div>
               </div>
 
-              <p id="builderBillingTerms" role="status">Review your exact GHS price before continuing. USD prices convert at the merchant rate shown at checkout.</p>
+              <p id="builderBillingTerms" role="status">Review the exact price before continuing. Ghana is billed in cedis at the merchant rate; elsewhere is billed in US dollars.</p>
               <label><input type="checkbox" name="recurringConsent" required> I agree to the displayed recurring charges and cancellation terms.</label>
 
               <!-- Payment Method Summary -->

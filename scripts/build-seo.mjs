@@ -368,7 +368,7 @@ const WEBSITE_BUILDER = {
   path: "/website-builder",
   description:
     "Edit your own website in place and publish when you are ready. Included at no extra cost on any Dakyworld monthly partnership.",
-  price: "300",
+  price: "36",
   setup: null,
 };
 

@@ -33,7 +33,7 @@ publicProductsRouter.options("/products", (_req, res) => {
   res.set("Access-Control-Allow-Origin", "*").set("Access-Control-Allow-Methods", "GET, OPTIONS").status(204).end();
 });
 
-const purchaseInput = z.object({
+export const purchaseInput = z.object({
   productKey: z.enum(["website-builder", "website-care", "managed-website"]),
   billingCycle: z.enum(["monthly", "annual"]).optional().default("monthly"),
   recurringConsent: z.literal(true),
@@ -45,7 +45,37 @@ const purchaseInput = z.object({
   phone: z.string().trim().max(40).optional(),
   websiteUrl: z.string().trim().url().max(500),
   notes: z.string().trim().max(2000).optional(),
+  /**
+   * What the customer was quoted in, and where they are.
+   *
+   * These were absent, and a zod object drops what it does not name — so the
+   * checkout could not have sent them even had the form collected them, and
+   * every purchase anywhere in the world resolved to cedis.
+   */
+  currency: z.enum(["GHS", "USD"]).optional(),
+  country: z.string().trim().max(60).optional(),
 });
+
+/**
+ * Where the request appears to come from, when the form did not say.
+ *
+ * Cloudflare and Vercel both put a two-letter country on a request. It is a
+ * hint: an explicit choice on the pricing page always wins, and
+ * `resolveCurrency` applies that precedence. Somebody behind a VPN gets the
+ * wrong default and can change it, which is the right failure.
+ */
+export function countryHint(req: { headers: Record<string, unknown> }): string | null {
+  for (const header of ["cf-ipcountry", "x-vercel-ip-country", "x-country-code"]) {
+    const value = req.headers[header];
+    if (typeof value !== "string") continue;
+    const code = value.trim().toUpperCase();
+    // `XX` is Cloudflare saying it does not know and `T1` is Tor. Both are
+    // worse than no answer: read as "not Ghana" they would quote dollars,
+    // where not knowing should fall through to the default.
+    if (/^[A-Z]{2}$/.test(code) && code !== "XX") return code;
+  }
+  return null;
+}
 
 const websiteCheckInput = z.object({
   websiteUrl: z.string().trim().min(3).max(500),
@@ -64,8 +94,16 @@ const paymentStatusRateLimit = rateLimit({ windowMs: 60_000, max: 30, message: "
 publicProductsRouter.get("/website-payment-quote", paymentStatusRateLimit, async (req, res, next) => {
   try {
     publicCors(req, res); res.set("Cache-Control", "no-store");
-    const input = z.object({ productKey: z.enum(["website-builder", "website-care", "managed-website"]), billingCycle: z.enum(["monthly", "annual"]) }).parse(req.query);
-    res.json(await websitePaymentQuote(input.productKey, input.billingCycle));
+    const input = z.object({
+      productKey: z.enum(["website-builder", "website-care", "managed-website"]),
+      billingCycle: z.enum(["monthly", "annual"]),
+      currency: z.enum(["GHS", "USD"]).optional(),
+      country: z.string().trim().max(60).optional(),
+    }).parse(req.query);
+    res.json(await websitePaymentQuote(input.productKey, input.billingCycle, {
+      currency: input.currency,
+      country: input.country ?? countryHint(req),
+    }));
   } catch (error) { next(error); }
 });
 
@@ -98,8 +136,13 @@ publicProductsRouter.post("/website-check", websiteCheckRateLimit, async (req, r
 });
 
 publicProductsRouter.post("/website-purchases", commerceRateLimit, async (req, res, next) => {
-  try { publicCors(req, res); res.status(201).json(await startWebsitePurchase(purchaseInput.parse(req.body))); }
-  catch (err) { next(err); }
+  try {
+    publicCors(req, res);
+    const input = purchaseInput.parse(req.body);
+    // The form's answer first, then the network's. `resolveCurrency` decides
+    // between them; this only makes sure it has both to decide from.
+    res.status(201).json(await startWebsitePurchase({ ...input, country: input.country ?? countryHint(req) }));
+  } catch (err) { next(err); }
 });
 
 publicProductsRouter.post("/managed-bookings", commerceRateLimit, async (req, res, next) => {

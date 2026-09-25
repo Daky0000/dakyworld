@@ -65,8 +65,7 @@ export type TierPlanDefinition = {
   name: string;
   /** What the plan is for. Deliberately carries no price — see `tierLabels`. */
   tagline: string;
-  /** Prices below are USD. paymentQuote.ts converts them to the charged GHS. */
-  currency: PlanCurrency;
+  /** Both prices are USD. Cedis are these times PAYSTACK_USD_GHS_RATE. */
   promoMonthlyPrice: number;
   standardMonthlyPrice: number;
   promoMonths: number;
@@ -102,9 +101,9 @@ export type TierPlanDefinition = {
  * charged since billing moved to cedis. Naming the tier and asking here means
  * a rate change reaches all of them at once, and none of them can drift.
  */
-export function tierLabels(tier: WebsitePlanTier) {
+export function tierLabels(tier: WebsitePlanTier, currency: PlanCurrency = "GHS") {
   const plan = WEBSITE_TIER_PLANS[tier];
-  const price = priceFor(tier);
+  const price = priceFor(tier, currency);
   return {
     name: plan.name,
     /** "GHS 300 (GHS 500)" — promotional, with the standard price after it. */
@@ -133,10 +132,11 @@ export function nextTierUp(tier: WebsitePlanTier): WebsitePlanTier | null {
 function upgradeSentence(
   tier: WebsitePlanTier,
   describe: (plan: TierPlanDefinition) => string,
+  currency: PlanCurrency = "GHS",
 ): string {
   const next = nextTierUp(tier);
   if (!next) return "";
-  return ` Upgrade to ${tierLabels(next).upgrade} for ${describe(WEBSITE_TIER_PLANS[next])}.`;
+  return ` Upgrade to ${tierLabels(next, currency).upgrade} for ${describe(WEBSITE_TIER_PLANS[next])}.`;
 }
 
 export const MB = 1024 * 1024;
@@ -148,9 +148,8 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     productKey: "website-builder",
     name: "Starter",
     tagline: "Essential visual page editing and media storage for solo creators.",
-    currency: "GHS",
-    promoMonthlyPrice: 25,
-    standardMonthlyPrice: 40,
+    promoMonthlyPrice: 3,
+    standardMonthlyPrice: 5,
     promoMonths: 3,
     storageQuotaBytes: 50 * MB,
     storageQuotaLabel: "50 MB",
@@ -201,9 +200,8 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     productKey: "website-care",
     name: "Pro",
     tagline: "Expanded storage, global theme tokens, SEO inspector and AI assistant.",
-    currency: "GHS",
-    promoMonthlyPrice: 75,
-    standardMonthlyPrice: 120,
+    promoMonthlyPrice: 10,
+    standardMonthlyPrice: 16,
     promoMonths: 3,
     storageQuotaBytes: 500 * MB,
     storageQuotaLabel: "500 MB",
@@ -253,9 +251,8 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     productKey: "managed-website",
     name: "Business",
     tagline: "5 GB media storage, unlimited imports and edits, AI Builder Agent and source code access.",
-    currency: "GHS",
-    promoMonthlyPrice: 195,
-    standardMonthlyPrice: 320,
+    promoMonthlyPrice: 25,
+    standardMonthlyPrice: 45,
     promoMonths: 3,
     storageQuotaBytes: 5 * GB,
     storageQuotaLabel: "5 GB",
