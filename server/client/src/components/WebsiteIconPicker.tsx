@@ -28,6 +28,7 @@ export function WebsiteIconPicker({
   readOnly,
   onChoose,
   onReset,
+  onOpenMediaLibrary,
 }: {
   siteId?: string;
   publicUrl: string;
@@ -44,6 +45,7 @@ export function WebsiteIconPicker({
   readOnly: boolean;
   onChoose: (next: IconChoice | null, side?: "start" | "end") => void;
   onReset: () => void;
+  onOpenMediaLibrary?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"library" | "images">("library");
@@ -195,6 +197,18 @@ export function WebsiteIconPicker({
             </>
           ) : (
             <>
+              {onOpenMediaLibrary && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenMediaLibrary();
+                    setOpen(false);
+                  }}
+                  className="mb-2.5 w-full rounded-lg bg-blue px-3 py-1.5 text-center text-xs font-semibold text-white shadow-2xs transition hover:opacity-90"
+                >
+                  Choose from Media Library / Upload
+                </button>
+              )}
               {!siteId ? (
                 <p className="text-xs text-muted">Images are available once the site is loaded.</p>
               ) : assets.isLoading ? (

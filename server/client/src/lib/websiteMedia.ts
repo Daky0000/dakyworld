@@ -17,9 +17,10 @@ export function websiteMediaPreviewUrl(value: string, context: WebsiteMediaConte
   const source = absoluteUrl(raw, context.pageUrl);
   const asset = context.assets.find(candidate => candidate.url === raw || absoluteUrl(candidate.url, context.pageUrl) === source);
   if (asset) return absoluteUrl(asset.preview, context.editorUrl);
-  // The preview document has the published site's <base>, so API paths must
+  // The preview document has the published site's <base>, so API paths and local demo/dw assets must
   // explicitly retain the editor origin even when written into that document.
-  return absoluteUrl(raw, /^\/api\//i.test(raw) ? context.editorUrl : context.pageUrl);
+  const preferEditor = /^\/(?:api|demos|assets)\//i.test(raw);
+  return absoluteUrl(raw, preferEditor ? context.editorUrl : context.pageUrl);
 }
 
 /** Recover the publish path from a captured preview or absolute site URL. */

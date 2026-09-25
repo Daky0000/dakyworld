@@ -213,6 +213,26 @@ app.use("/api/messaging", webhookRateLimit, express.raw({ type: "*/*", limit: "1
 // every business Dakyworld is pitching to stays behind the login.
 app.use("/demos", demoPagesRouter);
 
+app.get("/assets/dw/:filename", async (req, res, next) => {
+  try {
+    const filename = req.params.filename;
+    const repoPath = `assets/dw/${filename}`;
+    const asset = await prisma.siteAsset.findFirst({
+      where: { repoPath },
+      select: { content: true, contentType: true, size: true },
+    });
+    if (!asset || !asset.content) {
+      return res.status(404).send("Asset not found");
+    }
+    res.setHeader("Content-Type", asset.contentType || "image/png");
+    res.setHeader("Content-Length", asset.content.length);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.send(Buffer.from(asset.content));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // The client is served ahead of the auth middleware below: attachUser does a
 // database round trip per request, and static assets have no business paying
 // for one. The "/api/" guard keeps API routes falling through to their routers.

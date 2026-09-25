@@ -201,4 +201,19 @@ check("and the plugins its script asked for", (built ?? "").includes("[type='tex
 check("nothing in it can close the style element it goes in", !/<\/style/i.test(built ?? ""));
 equal("a page without the CDN gets nothing built", await tailwindCdnCss("<html><body class=\"w-4\">x</body></html>"), null);
 
+// --- Brand logo & media element detection and replacement -------------------
+
+const brandPage = `<!doctype html><html><body><header><a class="brand" href="/"><div class="brand-face" aria-hidden="true"><i></i></div><div class="brand-type"><strong>Nevermind</strong></div></a></header></body></html>`;
+const brandRead = readPage(brandPage);
+const brandIcon = brandRead.fields.find((f) => f.kind === "icon" && f.label.includes("brand-face"));
+check("a brand-face div is collected as an icon field", Boolean(brandIcon));
+check("and it is not coerced into a layout container", !brandRead.fields.some((f) => f.kind === "container" && f.label.includes("brand-face")));
+
+if (brandIcon) {
+  const brandSwapped = applyValues(brandPage, { [brandIcon.id]: { icon: { library: "zap" } } });
+  check("swapping brand icon replaces inner <i> drawing", !brandSwapped.html.includes("<i></i>") && brandSwapped.html.includes('data-dw-icon="zap"'));
+  const brandImg = applyValues(brandPage, { [brandIcon.id]: { icon: { src: "/assets/dw/logo.png" } } });
+  check("replacing brand icon with image writes <img> and drops old div markup", brandImg.html.includes('<img src="/assets/dw/logo.png"') && !brandImg.html.includes('<div class="brand-face"'));
+}
+
 console.log(`websiteIcons: ${checks} checks passed`);

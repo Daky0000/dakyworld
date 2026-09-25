@@ -670,6 +670,26 @@ const IMPORTED_CSP = [
   "frame-ancestors 'self'",
 ].join("; ");
 
+demoPagesRouter.get("/:slug/assets/dw/:filename", async (req, res, next) => {
+  try {
+    const filename = req.params.filename;
+    const repoPath = `assets/dw/${filename}`;
+    const asset = await prisma.siteAsset.findFirst({
+      where: { repoPath },
+      select: { content: true, contentType: true, size: true },
+    });
+    if (!asset || !asset.content) {
+      return res.status(404).send("Asset not found");
+    }
+    res.setHeader("Content-Type", asset.contentType || "image/png");
+    res.setHeader("Content-Length", asset.content.length);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.send(Buffer.from(asset.content));
+  } catch (err) {
+    next(err);
+  }
+});
+
 demoPagesRouter.get("/:slug", async (req, res, next) => {
   try {
     if (req.params.slug.toLowerCase() === "dakyworld") {

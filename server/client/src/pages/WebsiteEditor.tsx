@@ -77,7 +77,9 @@ import { useWebsiteAccess } from "../components/WebsiteMembers";
 import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
 import { rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
 import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
-import { iconPreviewSrc } from "../lib/websiteIconPreview";
+import { iconPreviewSrc, svgPreviewSrc } from "../lib/websiteIconPreview";
+import { libraryIcon, libraryIconMarkup } from "../../../src/shared/websiteIcons";
+import type { IconChoice } from "../lib/types";
 
 /**
  * One page of the website, open at full size, with everything about the thing
@@ -140,7 +142,7 @@ const INPUT =
  * away somebody's scroll position and their caret in exchange for no visible
  * difference at all.
  */
-const LIVE_KEYS = new Set(["value", "style", "responsive", "variant", "newTab"]);
+const LIVE_KEYS = new Set(["value", "style", "responsive", "variant", "newTab", "icon", "iconPosition", "alt"]);
 
 /**
  * A field with formatting inside it.
@@ -284,6 +286,8 @@ function FieldRow({
   naming,
   readOnly,
   bare,
+  onOpenMediaLibrary,
+  computedBackgroundUrl,
 }: {
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
@@ -301,6 +305,8 @@ function FieldRow({
   readOnly: boolean;
   /** Inside the visual panel, where the card's own border and title are noise. */
   bare?: boolean;
+  onOpenMediaLibrary?: () => void;
+  computedBackgroundUrl?: string;
 }) {
   // A field on a built page that no literal in the source produced. It is real
   // and it is on the page; it is simply not ours to change, and saying so here
@@ -321,7 +327,35 @@ function FieldRow({
     }
   }, [field.kind, value, publicUrl, resolveImagePreview]);
 
-  if (field.kind === "container") return <p className="text-xs leading-relaxed text-muted">Select a child to edit its content, or use the controls below to style this container.</p>;
+  if (field.kind === "container") {
+    const rawBg = edit?.style ?? field.style ?? computedBackgroundUrl ?? "";
+    const bgMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(rawBg);
+    const containerBgUrl = bgMatch?.[1] || (/^(?:https?:|\/|data:image\/)/i.test(rawBg.trim()) ? rawBg.trim() : "");
+    const previewSrc = containerBgUrl ? (resolveImagePreview ? resolveImagePreview(containerBgUrl) : containerBgUrl) : null;
+    return (
+      <div className="space-y-2">
+        {previewSrc && (
+          <div className="flex items-center gap-3 rounded-xl border border-line bg-sunken p-2.5">
+            <img src={previewSrc} alt="" className="h-12 w-12 rounded-lg border border-line bg-white object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-xs font-semibold text-ink">Background Image</span>
+              <span className="block truncate font-mono text-[10px] text-muted">{containerBgUrl}</span>
+            </div>
+            {onOpenMediaLibrary && !readOnly && (
+              <button
+                type="button"
+                onClick={onOpenMediaLibrary}
+                className="shrink-0 rounded-lg border border-line bg-white px-2 py-1 text-xs font-semibold text-ink hover:border-blue hover:text-blue"
+              >
+                Change
+              </button>
+            )}
+          </div>
+        )}
+        <p className="text-xs leading-relaxed text-muted">Select a child to edit its content, or use the controls below to style this container.</p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -397,14 +431,29 @@ function FieldRow({
 
       {field.kind === "image" && (
         <div className={`flex flex-wrap items-start gap-4 ${bare ? "flex-col" : ""}`}>
-          {imageSrc && (
-            <img
-              src={imageSrc}
-              alt=""
-              className="h-16 w-16 rounded-xl border border-line bg-cream object-contain p-1"
-              onError={(event) => ((event.target as HTMLImageElement).style.visibility = "hidden")}
-            />
-          )}
+          <div className="flex items-center gap-3">
+            {imageSrc ? (
+              <img
+                src={imageSrc}
+                alt=""
+                className="h-16 w-16 rounded-xl border border-line bg-cream object-contain p-1"
+                onError={(event) => ((event.target as HTMLImageElement).style.visibility = "hidden")}
+              />
+            ) : (
+              <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-line bg-cream text-lg text-muted">
+                🖼
+              </div>
+            )}
+            {onOpenMediaLibrary && !readOnly && (
+              <button
+                type="button"
+                onClick={onOpenMediaLibrary}
+                className="rounded-lg border border-line bg-white px-2.5 py-1 text-xs font-semibold text-ink transition hover:border-blue hover:text-blue"
+              >
+                Media Library
+              </button>
+            )}
+          </div>
           <div className={`space-y-2 ${bare ? "w-full" : "min-w-[240px] flex-1"}`}>
             <label className="block">
               <span className="mb-1 block text-xs text-muted">Picture file</span>
@@ -437,12 +486,13 @@ function FieldRow({
           currentType={field.iconType}
           choice={edit?.icon}
           readOnly={readOnly}
-          onChoose={(nextIcon) => onChange({ ...edit, icon: nextIcon })}
+          onChoose={(nextIcon) => onChange({ ...edit, icon: nextIcon, ...(nextIcon && "src" in nextIcon ? { value: nextIcon.src } : {}) })}
           onReset={() => {
             const next = { ...edit };
             delete next.icon;
             onChange(next);
           }}
+          onOpenMediaLibrary={onOpenMediaLibrary}
         />
       )}
 
@@ -957,7 +1007,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
    * written, no element to write on, or no reachable document.
    */
   const writeInFrame = useCallback(
-    (kind: "style" | "responsive" | "image" | "text" | "select" | "variant", id: string | null, value?: string, from?: string): "written" | "absent" | "unreachable" => {
+    (kind: "style" | "responsive" | "image" | "icon" | "text" | "select" | "variant", id: string | null, value?: string, from?: string): "written" | "absent" | "unreachable" => {
     let doc: Document | null = null;
     try {
       doc = frame.current?.contentDocument ?? null;
@@ -986,8 +1036,75 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       return "written";
     }
     if (kind === "image") {
-      el.setAttribute("src", resolveImagePreview(value ?? ""));
-      el.removeAttribute("srcset");
+      const previewUrl = resolveImagePreview(value ?? "");
+      if (el.tagName === "IMG") {
+        el.setAttribute("src", previewUrl);
+        el.removeAttribute("srcset");
+      } else {
+        const img = el.querySelector("img");
+        if (img) {
+          img.setAttribute("src", previewUrl);
+          img.removeAttribute("srcset");
+        } else {
+          const htmlEl = el as HTMLElement;
+          htmlEl.style.backgroundImage = previewUrl ? `url('${previewUrl.replace(/['"\\]/g, "")}')` : "none";
+          htmlEl.style.backgroundSize = "cover";
+          htmlEl.style.backgroundPosition = "center";
+          el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
+            if (doc?.defaultView) {
+              const bg = doc.defaultView.getComputedStyle(desc).backgroundImage;
+              if (bg && bg !== "none" && /url\(/i.test(bg)) {
+                desc.style.backgroundImage = previewUrl ? `url('${previewUrl.replace(/['"\\]/g, "")}')` : "none";
+              }
+            }
+          });
+        }
+      }
+      return "written";
+    }
+    if (kind === "icon") {
+      try {
+        const choice = value ? (JSON.parse(value) as IconChoice | null) : null;
+        let sheet = doc.querySelector<HTMLStyleElement>("style[data-dw-icon-preview]");
+        if (!sheet) {
+          sheet = doc.createElement("style");
+          sheet.setAttribute("data-dw-icon-preview", "");
+          sheet.textContent = `
+            [data-dw-icon-replaced]::before, [data-dw-icon-replaced]::after { display: none !important; content: none !important; }
+            [data-dw-icon-replaced] { border: none !important; transform: none !important; }
+          `;
+          (doc.head || doc.body).appendChild(sheet);
+        }
+        const htmlEl = el as HTMLElement;
+        if (!choice) {
+          htmlEl.innerHTML = "";
+          htmlEl.removeAttribute("data-dw-icon-replaced");
+          htmlEl.style.border = "";
+          htmlEl.style.borderRadius = "";
+          htmlEl.style.transform = "";
+          htmlEl.style.backgroundImage = "";
+        } else if ("library" in choice) {
+          const lib = libraryIcon(choice.library);
+          if (lib) {
+            htmlEl.innerHTML = libraryIconMarkup(lib);
+            htmlEl.setAttribute("data-dw-icon-replaced", "true");
+            htmlEl.style.border = "none";
+            htmlEl.style.borderRadius = "0";
+            htmlEl.style.transform = "none";
+            htmlEl.style.backgroundImage = "none";
+          }
+        } else if ("src" in choice) {
+          const src = resolveImagePreview(choice.src);
+          htmlEl.innerHTML = `<img src="${src}" alt="" aria-hidden="true" style="width:100%;height:100%;object-fit:contain">`;
+          htmlEl.setAttribute("data-dw-icon-replaced", "true");
+          htmlEl.style.border = "none";
+          htmlEl.style.borderRadius = "0";
+          htmlEl.style.transform = "none";
+          htmlEl.style.backgroundImage = "none";
+        }
+      } catch {
+        // Fallback
+      }
       return "written";
     }
     if (kind === "style") {
@@ -1019,7 +1136,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
    * says so and starts leaning on the reload instead.
    */
   const push = useCallback(
-    (kind: "style" | "responsive" | "image" | "text" | "variant", id: string, value: string, from?: string) => {
+    (kind: "style" | "responsive" | "image" | "icon" | "text" | "variant", id: string, value: string, from?: string) => {
       const result = writeInFrame(kind, id, value, from);
       if (result === "written") {
         awaiting.current = 0;
@@ -1038,6 +1155,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             ? { type: "responsive", id, css: responsivePreviewCss(id, JSON.parse(value)) }
           : kind === "image"
             ? { type: "image", id, src: resolveImagePreview(value) }
+          : kind === "icon"
+            ? { type: "icon", id, icon: value }
           : kind === "variant"
             ? { type: "variant", id, from, to: value }
             : { type: "text", id, html: value },
@@ -1069,6 +1188,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     for (const [id, edit] of Object.entries(latestEdits.current)) {
       if (edit.value !== undefined && fields.some(field => field.id === id && field.kind === "image")) writeInFrame("image", id, edit.value);
       if (edit.style !== undefined) writeInFrame("style", id, edit.style);
+      if (edit.icon !== undefined) writeInFrame("icon", id, JSON.stringify(edit.icon));
     }
   }, [mediaAssets.data, writeInFrame, page.data?.sections]);
 
@@ -1090,6 +1210,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         if (next.style !== undefined) push("style", fieldId, next.style);
         if (next.responsive !== undefined) push("responsive", fieldId, JSON.stringify(next.responsive));
         if (next.value !== undefined) push(imageField ? "image" : "text", fieldId, next.value);
+        if (next.icon !== undefined) push("icon", fieldId, JSON.stringify(next.icon));
         if (next.variant !== undefined) {
           push("variant", fieldId, next.variant ?? "", wornVariant.current[fieldId]);
           // The frame now wears the new one, so the *next* swap has to take
@@ -1166,6 +1287,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             if (edit.responsive !== undefined) writeInFrame("responsive", id, JSON.stringify(edit.responsive));
             if (edit.value !== undefined) writeInFrame(fields.find(field => field.id === id)?.kind === "image" ? "image" : "text", id, edit.value);
             if (edit.variant !== undefined) writeInFrame("variant", id, edit.variant ?? "", wornVariant.current[id]);
+            if (edit.icon !== undefined) writeInFrame("icon", id, JSON.stringify(edit.icon));
           }
           writeInFrame("select", pickedRef.current);
         }, 0);
@@ -2218,7 +2340,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           onSelect={asset => {
             if (asset.preview) selectedMedia.current.set(asset.url, { url: asset.url, preview: asset.preview });
             const previewBackground = `url('${resolveImagePreview(asset.url).replace(/['"\\]/g, "")}')`;
-            if (assetTargetMode === "background" || picked.kind !== "image") {
+            if (assetTargetMode === "background") {
               const map = parseStyle(pickedStyle ?? "");
               map["background-image"] = `url('${asset.url.replace(/['"\\]/g, "")}')`;
               if (!map["background-size"]) map["background-size"] = "cover";
@@ -2240,6 +2362,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   });
                 }
               } catch {}
+            } else if (picked.kind === "icon") {
+              change(picked.id, { ...edits[picked.id], icon: { src: asset.url }, value: asset.url }, { commit: true });
             } else {
               change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt }, { commit: true });
             }
@@ -3361,24 +3485,52 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     onReset={() => changePickedStyle(device === "desktop" ? picked.style ?? "" : picked.responsive?.[device] ?? "", true)}
                     content={
                       <>
-                        {/* Elementor-style Image Preview Card & Controls when an <img> is clicked */}
-                        {picked.kind === "image" && (() => {
-                          const rawImgVal = (edits[picked.id]?.value ?? picked.value ?? "").trim();
-                          const resolvedImgUrl = resolveImagePreview(rawImgVal);
+                        {(picked.kind === "image" ||
+                          picked.kind === "icon" ||
+                          (picked.kind === "container" &&
+                            (/url\(/i.test(pickedStyle ?? "") ||
+                              /url\(/i.test(picked.style ?? "") ||
+                              /url\(/i.test(computed["background-image"] ?? "")))) &&
+                          (() => {
+                          const isContainer = picked.kind === "container";
+                          const isIcon = picked.kind === "icon";
+                          const bgMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(pickedStyle ?? picked.style ?? computed["background-image"] ?? "");
+                          const containerBgUrl = bgMatch?.[1] ?? "";
+                          const iconChoice = edits[picked.id]?.icon;
+                          const rawImgVal = isContainer
+                            ? containerBgUrl
+                            : isIcon
+                              ? (iconChoice && "src" in iconChoice ? iconChoice.src : (edits[picked.id]?.value ?? picked.value ?? ""))
+                              : (edits[picked.id]?.value ?? picked.value ?? "").trim();
+                          const resolvedImgUrl = (() => {
+                            if (isIcon && iconChoice && "library" in iconChoice) {
+                              const lib = libraryIcon(iconChoice.library);
+                              return lib ? svgPreviewSrc(libraryIconMarkup(lib)) : "";
+                            }
+                            if (isIcon && (!rawImgVal || !/^(?:https?:|\/|data:)/i.test(rawImgVal) || rawImgVal.includes("brand-face"))) {
+                              const iconSrc = iconPreviewSrc(picked.icon || picked.value, page.data?.page?.url || "");
+                              if (iconSrc) return iconSrc;
+                            }
+                            return resolveImagePreview(rawImgVal);
+                          })();
                           const styleMap = parseStyle(pickedStyle ?? "");
-                          const currentFit = styleMap["object-fit"] ?? computed["object-fit"] ?? "cover";
+                          const currentFit = isContainer
+                            ? (styleMap["background-size"] ?? "cover")
+                            : (styleMap["object-fit"] ?? computed["object-fit"] ?? "cover");
                           const currentAlt = edits[picked.id]?.alt ?? picked.alt ?? "";
                           const currentHref = edits[picked.id]?.href ?? picked.href ?? "";
 
                           return (
                             <div className="mb-4 space-y-3 rounded-xl border border-line bg-surface-2/60 p-3">
                               <div className="flex items-center justify-between">
-                                <span className="text-xs font-bold text-ink">Choose Image</span>
-                                {rawImgVal && !readOnly && (
+                                <span className="text-xs font-bold text-ink">
+                                  {isContainer ? "Background Image" : isIcon ? "Logo / Icon Graphic" : "Choose Image"}
+                                </span>
+                                {!readOnly && (
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      setAssetTargetMode("image");
+                                      setAssetTargetMode(isContainer ? "background" : "image");
                                       setAssetModalOpen(true);
                                     }}
                                     className="text-[11px] font-semibold text-blue hover:underline"
@@ -3394,14 +3546,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                 tabIndex={0}
                                 onClick={() => {
                                   if (!readOnly) {
-                                    setAssetTargetMode("image");
+                                    setAssetTargetMode(isContainer ? "background" : "image");
                                     setAssetModalOpen(true);
                                   }
                                 }}
                                 onKeyDown={(e) => {
                                   if ((e.key === "Enter" || e.key === " ") && !readOnly) {
                                     e.preventDefault();
-                                    setAssetTargetMode("image");
+                                    setAssetTargetMode(isContainer ? "background" : "image");
                                     setAssetModalOpen(true);
                                   }
                                 }}
@@ -3410,7 +3562,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                 {resolvedImgUrl ? (
                                   <img
                                     src={resolvedImgUrl}
-                                    alt={currentAlt || "Selected image"}
+                                    alt={currentAlt || (isIcon ? "Selected icon" : "Selected image")}
                                     className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]"
                                   />
                                 ) : (
@@ -3418,75 +3570,120 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                     <span className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-white text-lg shadow-2xs">
                                       🖼
                                     </span>
-                                    <span className="text-xs font-semibold text-ink-2">Choose Image</span>
+                                    <span className="text-xs font-semibold text-ink-2">
+                                      {isIcon ? "Choose Logo / Icon Image" : "Choose Image"}
+                                    </span>
                                   </div>
                                 )}
                                 <div className="absolute inset-x-0 bottom-0 bg-ink/80 py-1.5 text-center text-xs font-semibold text-white opacity-0 transition group-hover:opacity-100">
-                                  Choose Image
+                                  {isIcon ? "Change Logo / Icon Image" : "Choose Image"}
                                 </div>
                               </div>
 
-                              {/* Image Resolution */}
+                              {/* Image Resolution / Sizing */}
                               <div className="flex items-center justify-between gap-2 pt-1">
-                                <span className="text-[11px] font-medium text-ink-2">Image Resolution</span>
+                                <span className="text-[11px] font-medium text-ink-2">
+                                  {isContainer ? "Background Sizing" : isIcon ? "Graphic Fitting" : "Image Resolution"}
+                                </span>
                                 <select
                                   disabled={readOnly}
                                   value={currentFit}
                                   onChange={(e) => {
-                                    const nextMap = { ...styleMap, "object-fit": e.target.value };
+                                    const nextMap = { ...styleMap };
+                                    if (isContainer) {
+                                      nextMap["background-size"] = e.target.value;
+                                    } else {
+                                      nextMap["object-fit"] = e.target.value;
+                                    }
                                     changePickedStyle(writeStyle(nextMap), true);
                                   }}
                                   className="h-7 w-40 rounded-lg border border-line bg-white px-2 text-[11px] font-medium text-ink outline-none focus:border-blue"
                                 >
                                   <option value="cover">Full (Cover)</option>
                                   <option value="contain">Contain (Full Image)</option>
-                                  <option value="fill">Stretch (100% × 100%)</option>
-                                  <option value="scale-down">Scale Down</option>
-                                  <option value="none">Original Size</option>
+                                  {isContainer ? (
+                                    <>
+                                      <option value="auto">Auto (Default)</option>
+                                      <option value="100% 100%">Stretch (100% × 100%)</option>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <option value="fill">Stretch (100% × 100%)</option>
+                                      <option value="scale-down">Scale Down</option>
+                                      <option value="none">Original Size</option>
+                                    </>
+                                  )}
                                 </select>
                               </div>
 
-                              {/* Caption / Alt */}
-                              <div className="space-y-1">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[11px] font-medium text-ink-2">Caption / Alt</span>
+                              {isIcon && (
+                                <div className="flex items-center justify-between gap-2 pt-1">
+                                  <span className="text-[11px] font-medium text-ink-2">Image Address</span>
                                   <input
                                     type="text"
                                     disabled={readOnly}
-                                    value={currentAlt}
-                                    placeholder="Enter image caption or alt text"
-                                    onChange={(e) =>
-                                      change(picked.id, {
-                                        ...edits[picked.id],
-                                        value: edits[picked.id]?.value ?? picked.value,
-                                        alt: e.target.value,
-                                      })
-                                    }
-                                    className="h-7 w-40 rounded-lg border border-line bg-white px-2 text-[11px] text-ink outline-none focus:border-blue"
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Link */}
-                              <div className="space-y-1">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[11px] font-medium text-ink-2">Link</span>
-                                  <input
-                                    type="text"
-                                    disabled={readOnly}
-                                    value={currentHref}
-                                    placeholder="None (or https://...)"
-                                    onChange={(e) =>
-                                      change(picked.id, {
-                                        ...edits[picked.id],
-                                        value: edits[picked.id]?.value ?? picked.value,
-                                        href: e.target.value,
-                                      })
-                                    }
+                                    value={iconChoice && "src" in iconChoice ? iconChoice.src : /^(?:https?:|\/|data:)/i.test(rawImgVal) ? rawImgVal : ""}
+                                    placeholder="/assets/... or https://..."
+                                    onChange={(e) => {
+                                      const v = e.target.value.trim();
+                                      if (v) {
+                                        change(picked.id, { ...edits[picked.id], icon: { src: v }, value: v }, { commit: true });
+                                      } else {
+                                        const next = { ...edits[picked.id] };
+                                        delete next.icon;
+                                        change(picked.id, next, { commit: true });
+                                      }
+                                    }}
                                     className="h-7 w-40 rounded-lg border border-line bg-white px-2 font-mono text-[11px] text-ink outline-none focus:border-blue"
                                   />
                                 </div>
-                              </div>
+                              )}
+
+                              {!isContainer && !isIcon && (
+                                <>
+                                  {/* Caption / Alt */}
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-[11px] font-medium text-ink-2">Caption / Alt</span>
+                                      <input
+                                        type="text"
+                                        disabled={readOnly}
+                                        value={currentAlt}
+                                        placeholder="Enter image caption or alt text"
+                                        onChange={(e) =>
+                                          change(picked.id, {
+                                            ...edits[picked.id],
+                                            value: edits[picked.id]?.value ?? picked.value,
+                                            alt: e.target.value,
+                                          })
+                                        }
+                                        className="h-7 w-40 rounded-lg border border-line bg-white px-2 text-[11px] text-ink outline-none focus:border-blue"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {/* Link */}
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-[11px] font-medium text-ink-2">Link</span>
+                                      <input
+                                        type="text"
+                                        disabled={readOnly}
+                                        value={currentHref}
+                                        placeholder="None (or https://...)"
+                                        onChange={(e) =>
+                                          change(picked.id, {
+                                            ...edits[picked.id],
+                                            value: edits[picked.id]?.value ?? picked.value,
+                                            href: e.target.value,
+                                          })
+                                        }
+                                        className="h-7 w-40 rounded-lg border border-line bg-white px-2 font-mono text-[11px] text-ink outline-none focus:border-blue"
+                                      />
+                                    </div>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           );
                         })()}
@@ -3772,6 +3969,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           onChange={(next) => change(picked.id, next)}
                           onNameFields={() => void nameFields()}
                           naming={naming}
+                          onOpenMediaLibrary={() => {
+                            setAssetTargetMode(picked.kind === "container" ? "background" : "image");
+                            setAssetModalOpen(true);
+                          }}
+                          computedBackgroundUrl={computed["background-image"]}
                           bare
                         />
                       </>
@@ -3829,6 +4031,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                         onChange={(next) => change(field.id, next)}
                         onNameFields={() => void nameFields()}
                         naming={naming}
+                        onOpenMediaLibrary={() => {
+                          pick(field.id);
+                          setAssetTargetMode(field.kind === "container" ? "background" : "image");
+                          setAssetModalOpen(true);
+                        }}
                       />
                     ))}
                   </>

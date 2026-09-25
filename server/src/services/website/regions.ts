@@ -442,9 +442,26 @@ function iconType(source: string, element: ElementNode): SiteField["iconType"] |
 
 function iconFrameOf(element: ElementNode): IconFrame {
   const cls = attrNode(element, "class")?.value.trim();
-  const width = attrNode(element, "width")?.value.trim();
-  const height = attrNode(element, "height")?.value.trim();
-  return { ...(cls ? { className: cls } : {}), ...(width ? { width } : {}), ...(height ? { height } : {}) };
+  let width = attrNode(element, "width")?.value.trim();
+  let height = attrNode(element, "height")?.value.trim();
+  const style = attrNode(element, "style")?.value ?? "";
+  if (!width) {
+    const wm = /width\s*:\s*([^;]+)/i.exec(style);
+    if (wm) width = wm[1]!.trim();
+  }
+  if (!height) {
+    const hm = /height\s*:\s*([^;]+)/i.exec(style);
+    if (hm) height = hm[1]!.trim();
+  }
+  if (!width && cls && /\bbrand-face\b/i.test(cls)) width = "47px";
+  if (!height && cls && /\bbrand-face\b/i.test(cls)) height = "35px";
+
+  // Elements that are CSS drawings or icon fonts (brand-face, fa-*, etc.) carry pseudo-element
+  // drawings (::before, ::after) and glyph font families. Do not pass drawing class names onto
+  // replacement <img> or <svg> icons, otherwise their custom borders and pseudo-elements collide.
+  const isDrawingClass = cls && /\b(?:brand-face|brand-logo|logo-drawing|fa-|bi-|ti-|ri-|mdi-|las-|lab-|glyphicon-)\b/i.test(cls);
+  const safeClass = isDrawingClass ? undefined : cls;
+  return { ...(safeClass ? { className: safeClass } : {}), ...(width ? { width } : {}), ...(height ? { height } : {}) };
 }
 
 /**
@@ -1016,28 +1033,43 @@ export function readPage(source: string): PageContent {
   const iconClaims = all.flatMap((field) => [field.content, field.iconSpan].filter((span): span is Span => Boolean(span)));
   const icons: SiteField[] = [];
   for (const node of nodes) {
-    if (node.tag !== "svg") continue;
+    const cls = classOf(node);
+    const isSvg = node.tag === "svg";
+    const isFontIcon = (node.tag === "i" || node.tag === "span") && /\b(?:fa|bi|icon|ti|ri|mdi|las|lab|glyphicon)-/i.test(cls);
+    const isLogoOrIconElement = /\b(?:brand-face|brand-logo|logo|brand-icon|icon|badge|avatar|mark|emblem|icon-wrap|logo-wrap)\b/i.test(cls) || attrNode(node, "role")?.value === "img" || attrNode(node, "data-dw-icon") !== undefined;
+    const hasBgImg = /background-image\s*:\s*url\(/i.test(attrNode(node, "style")?.value ?? "");
+
+    const isCandidate = isSvg || isFontIcon || ((isLogoOrIconElement || hasBgImg) && plain(textOf(source, node)) === "");
+    if (!isCandidate) continue;
     if (hiddenNode(node.parent ?? undefined)) continue;
     if (generated.some((range) => node.start >= range.start && node.end <= range.end)) continue;
     if (iconClaims.some((span) => node.start >= span.start && node.end <= span.end)) continue;
-    const named = attrNode(node, "aria-label")?.value.trim() || textOf(source, node).slice(0, 60);
+
+    const isBrand = /\b(?:brand|logo)\b/i.test(cls);
+    const named = attrNode(node, "aria-label")?.value.trim() || (isSvg ? textOf(source, node).slice(0, 60) : "");
+    const defaultLabel = isBrand
+      ? `Logo / Icon (${cls.split(/\s+/)[0] || node.tag})`
+      : `${isSvg ? "Icon" : "Graphic / Icon"} (${cls.split(/\s+/)[0] || node.tag})`;
+    const label = named || defaultLabel;
+
+    const iconType = isSvg ? "svg" : node.tag === "img" || hasBgImg ? "img" : isFontIcon ? "font" : "svg";
+    const span = { start: node.start, end: node.end };
+
     icons.push({
       id: `icon.${icons.length}`,
       kind: "icon",
-      label: "Icon",
-      tag: "svg",
-      // The drawing travels as `icon`. `value` is the words a field holds, and
-      // an icon has none: its own markup would change the moment the preview
-      // marks the element, and every draft would read that as a conflict.
-      value: "",
-      preview: named || "Icon",
+      label,
+      tag: node.tag,
+      value: source.slice(node.start, node.end),
+      preview: named || label,
       structure: createHash("sha256").update(source.slice(node.start, node.end)).digest("hex"),
       icon: source.slice(node.start, node.end),
-      iconSpan: { start: node.start, end: node.end },
-      iconType: "svg",
+      iconSpan: span,
+      iconType,
       iconFrame: iconFrameOf(node),
       ...styleOf(node),
     });
+    iconClaims.push(span);
   }
   if (icons.length) {
     kept.push({ id: "icons", label: "Icons", kind: "section", fields: icons });
@@ -1057,6 +1089,7 @@ export function readPage(source: string): PageContent {
     if (hiddenNode(node) || generated.some((range) => node.start >= range.start && node.end <= range.end)) continue;
     const isCarousel = /\b(?:ticker|carousel|marquee|slider|slides)\b/i.test(cls);
     const isLogoIcon = node.tag === "svg" || /\b(?:brand-face|logo|brand-icon|icon|avatar|emblem)\b/i.test(cls);
+    if (isLogoIcon && plain(textOf(source, node)) === "") continue;
     const isStickyHeader = node.tag === "header" || /\b(?:sticky|navbar|site-header|announcement)\b/i.test(cls);
     const defaultLabel = isCarousel
       ? `Carousel / Ticker`
@@ -1294,6 +1327,24 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
           edits.push({ span: field.srcSpan, text: attrEscape(edit.value) });
           if (field.srcsetSpan) edits.push({ span: field.srcsetSpan, text: "" });
           touched = true;
+        } else if (field.styleSpan || field.attrInsert !== undefined) {
+          const baseStyle = edit.style !== undefined ? edit.style : (field.style ?? "");
+          const bgRe = /background-image\s*:\s*url\([^)]*\)/i;
+          const newBg = edit.value ? `background-image: url('${edit.value.replace(/['"\\]/g, "")}')` : "";
+          let nextStyle = baseStyle;
+          if (bgRe.test(nextStyle)) {
+            nextStyle = nextStyle.replace(bgRe, newBg);
+          } else if (newBg) {
+            nextStyle = nextStyle ? `${nextStyle.replace(/;?\s*$/, "; ")}${newBg}` : newBg;
+          }
+          const declarations = safeStyle(nextStyle, field.style);
+          if (field.styleSpan) {
+            edits.push({ span: field.styleSpan, text: attrEscape(declarations) });
+            touched = true;
+          } else if (declarations && field.attrInsert !== undefined) {
+            edits.push({ insertAt: field.attrInsert, text: ` style="${attrEscape(declarations)}"` });
+            touched = true;
+          }
         }
       } else if (field.content) {
         edits.push({ span: field.content, text: edit.value });
@@ -1406,6 +1457,14 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
           else edits[pending] = { span: field.content, text };
           touched = true;
         }
+      }
+    } else if (field.kind === "icon" && field.iconSpan && edit.value !== undefined && edit.value !== field.value) {
+      const val = edit.value.trim();
+      const choice: IconChoice | null = !val ? null : { src: val };
+      const markup = choice === null ? "" : iconChoiceMarkup(choice, field.iconFrame);
+      if (markup !== null) {
+        edits.push({ span: field.iconSpan, text: markup });
+        touched = true;
       }
     }
 

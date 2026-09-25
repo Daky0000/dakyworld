@@ -152,6 +152,9 @@ export function ElementInspector({
     })
   );
   if ((tab === "content" || (tab === "layout" && facts.kind === "container")) && content) shown.add("content");
+  if (tab === "layout" && facts.kind === "container") {
+    shown.add("background");
+  }
   if (tab === "style") {
     shown.add("background");
     shown.add("border");
@@ -1006,9 +1009,23 @@ export function ElementInspector({
           <Section name="background" title={SECTION_TITLE.background} open={isOpen("background")} changed={sectionChanged("background")} onToggle={() => toggleSection("background")}>
             <Colour property="background-color" label="Background" />
             {(() => {
-              const rawBgImg = (declarations["background-image"] ?? declarations.background ?? source.computed["background-image"] ?? "").trim();
-              const urlMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(rawBgImg);
-              const bgUrl = (urlMatch?.[1] ?? backgroundImageFallbackUrl ?? "").trim();
+              const extractUrl = (...candidates: (string | undefined | null)[]) => {
+                for (const c of candidates) {
+                  if (!c || c === "none") continue;
+                  const trimmed = c.trim();
+                  const match = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(trimmed);
+                  if (match && match[1]) return match[1].trim();
+                  if (/^(https?:|\/|data:image\/)/i.test(trimmed)) return trimmed;
+                }
+                return "";
+              };
+              const bgUrl = extractUrl(
+                declarations["background-image"],
+                declarations.background,
+                source.computed["background-image"],
+                source.computed.background,
+                backgroundImageFallbackUrl
+              );
               const resolvedBgUrl = (() => {
                 if (!bgUrl) return "";
                 if (resolveImagePreview) return resolveImagePreview(bgUrl);
