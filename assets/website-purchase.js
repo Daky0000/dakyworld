@@ -5,12 +5,21 @@
   'use strict';
 
   var API = 'https://os.dakyworld.com/api/public';
+  // The checkout is its own page now. This script therefore runs in two
+  // places and neither has everything: /checkout has the form and no dialog,
+  // and the product pages have the purchase buttons and no form. Every lookup
+  // below has to tolerate its half being absent.
   var checkoutDialog = document.getElementById('builderCheckout');
+  var checkoutRoot = document.querySelector('.checkout-page');
   var successDialog = document.getElementById('builderSuccess');
 
-  if (!checkoutDialog) return;
+  var purchaseButtons = document.querySelectorAll('[data-purchase-plan]');
+  if (!checkoutDialog && !checkoutRoot && !purchaseButtons.length) return;
 
-  var form = document.getElementById('builderPurchaseForm') || checkoutDialog.querySelector('form');
+  var form = document.getElementById('builderPurchaseForm') ||
+             (checkoutDialog ? checkoutDialog.querySelector('form') : null);
+  /** Where the summary lives: inside the dialog, or on the page. */
+  var summaryScope = checkoutRoot || checkoutDialog || document;
   var submitBtn = document.getElementById('builderSubmitBtn') || (form ? form.querySelector('[type=submit]') : null);
   var statusEl = document.getElementById('builderFormStatus');
   var closeBtn = document.getElementById('builderCloseBtn');
@@ -23,17 +32,29 @@
   var activePlanKey = 'website-builder';
   var lastScannedWebsiteUrl = '';
 
+  /* Titles, and a price per currency for when the catalogue cannot be reached.
+     This is the only price list on the page and it exists for one case: the
+     fetch to the API failed and the visitor still needs to see something. It
+     is written per currency on purpose — it used to hold the dollar figures
+     and be handed back labelled with whichever currency was active, so a
+     Ghanaian visitor whose fetch failed was shown "GHS 3" for a plan that
+     costs GHS 36.
+     The cedi column is the dollar column at GHS 12/$. If the merchant rate
+     moves these go stale, which is acceptable for a number that only appears
+     when the network is down, and far better than being wrong by a factor of
+     twelve. */
   var PLAN_META = {
-    'website-builder': {
-      title: 'Website Builder',
-      monthly: 3,
-    },
-    'website-care': {
-      title: 'Website Care + Builder',
-      monthly: 10,
-    },
-    'managed-website': { title: 'Business Website', monthly: 25 }
+    'website-builder': { title: 'Website Builder', price: { USD: 3, GHS: 36 } },
+    'website-care': { title: 'Website Care + Builder', price: { USD: 10, GHS: 120 } },
+    'managed-website': { title: 'Business Website', price: { USD: 25, GHS: 300 } }
   };
+
+  /** The fallback price for a plan, in the currency being quoted. */
+  function fallbackMonthly(planKey) {
+    var meta = PLAN_META[planKey] || PLAN_META['website-builder'];
+    var cur = activeCurrency();
+    return { currency: cur, monthly: meta.price[cur] != null ? meta.price[cur] : meta.price.GHS };
+  }
 
   /** How this page writes an amount in the currency it is quoting. */
   function formatMoney(currency, amount, decimals) {
@@ -77,8 +98,7 @@
         return { currency: 'USD', monthly: parseFloat(dollars[1].replace(/,/g, '')) || 0 };
       }
     }
-    var fallback = PLAN_META[planKey] || PLAN_META['website-builder'];
-    return { currency: activeCurrency(), monthly: fallback.monthly };
+    return fallbackMonthly(planKey);
   }
 
   /* The plan and cycle radios inside the checkout. Choosing one repoints the
@@ -196,10 +216,10 @@
     var lineTotal = document.getElementById('builderLineTotal');
     if (lineTotal) lineTotal.textContent = formattedTotal;
 
-    var sumVal = checkoutDialog.querySelector('.builder-sum-val');
+    var sumVal = summaryScope.querySelector('.builder-sum-val');
     if (sumVal) sumVal.textContent = numeric.toLocaleString();
 
-    var sumCurr = checkoutDialog.querySelector('.builder-sum-curr');
+    var sumCurr = summaryScope.querySelector('.builder-sum-curr');
     if (sumCurr) sumCurr.textContent = currency === 'USD' ? '$' : 'GHS';
   }
 
@@ -370,6 +390,16 @@
 
   function openCheckout(plan) {
     activePlanKey = (plan === 'website-care') ? 'website-care' : 'website-builder';
+
+    // On a product page there is no form to fill: send them to the checkout,
+    // carrying the plan they picked. A dialog over the marketing page put the
+    // plan cards, the FAQ and the whole site navigation one scroll behind a
+    // part-filled form, which is a way to lose a purchase.
+    if (!form) {
+      window.location.assign('/checkout?plan=' + encodeURIComponent(activePlanKey));
+      return;
+    }
+
     syncModalPrices(activePlanKey);
     if (form) {
       form.reset();
@@ -380,6 +410,14 @@
       if (form.elements.websiteUrl && (lastScannedWebsiteUrl || (scanInput && scanInput.value && scanInput.value !== 'https://dakyworld.com'))) {
         form.elements.websiteUrl.value = lastScannedWebsiteUrl || scanInput.value.trim();
       }
+      // `reset()` puts the radios back to the markup's default, so the plan
+      // that was actually asked for is written on afterwards or the form and
+      // the summary disagree about what is being bought.
+      var planRadio = form.querySelector('input[name="planChoice"][value="' + activePlanKey + '"]');
+      if (planRadio) planRadio.checked = true;
+      var cycleRadio = form.querySelector('input[name="cycleChoice"][value="' + activeBillingCycle + '"]');
+      if (cycleRadio) cycleRadio.checked = true;
+
       // Remove any invalid field highlights
       var inputs = form.querySelectorAll('input, textarea');
       Array.prototype.forEach.call(inputs, function (input) {
@@ -392,6 +430,7 @@
     }
     setStatus('', '');
 
+    if (!checkoutDialog) return;
     if (typeof checkoutDialog.showModal === 'function') {
       checkoutDialog.showModal();
     } else {
@@ -406,6 +445,7 @@
   }
 
   function closeCheckout() {
+    if (!checkoutDialog) return;
     if (typeof checkoutDialog.close === 'function') {
       checkoutDialog.close();
     } else {
@@ -414,7 +454,7 @@
   }
 
   // Backdrop click close support
-  checkoutDialog.addEventListener('click', function (event) {
+  if (checkoutDialog) checkoutDialog.addEventListener('click', function (event) {
     var rect = checkoutDialog.getBoundingClientRect();
     var isInDialog = (
       rect.top <= event.clientY &&
@@ -442,9 +482,24 @@
     });
   });
 
-  // Check URL params for direct checkout opening (?purchase=website-builder or ?buy=website-builder or ?checkout=true)
-  if (searchParams.get('purchase') || searchParams.get('buy') || searchParams.get('plan') === 'website-builder' || searchParams.get('plan') === 'website-care' || searchParams.get('checkout') === 'true') {
-    openCheckout(searchParams.get('purchase') || searchParams.get('buy') || searchParams.get('plan') || 'website-builder');
+  // `/checkout?plan=website-care` selects that plan. On a product page the
+  // same parameters still mean "go and buy this", and openCheckout navigates.
+  var wanted = searchParams.get('purchase') || searchParams.get('buy') || searchParams.get('plan');
+  if (wanted === 'website-care' || wanted === 'website-builder') {
+    if (form) {
+      activePlanKey = wanted;
+      var wantedRadio = form.querySelector('input[name="planChoice"][value="' + wanted + '"]');
+      if (wantedRadio) wantedRadio.checked = true;
+      if (form.elements.productKey) form.elements.productKey.value = wanted;
+      syncModalPrices(wanted);
+    } else {
+      openCheckout(wanted);
+    }
+  } else if (form) {
+    // A direct arrival with no plan named still needs its summary drawn.
+    syncModalPrices(activePlanKey);
+  } else if (searchParams.get('checkout') === 'true') {
+    openCheckout('website-builder');
   }
 
   // Form submission handler

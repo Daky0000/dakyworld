@@ -17,4 +17,8 @@ Disallow: /admin
 # covers a crawler that reaches it by a route other than this file.
 Disallow: /AGENT_SYSTEM_PLAN.html
 
+
+# The checkout. It is a step in a purchase, not a page to arrive at from a search.
+Disallow: /checkout
+
 Sitemap: https://dakyworld.com/sitemap.xml

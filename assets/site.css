@@ -1680,3 +1680,63 @@ a.v:hover{color:var(--blue)}
 .builder-cycle-option input:focus-visible + span{outline:2px solid var(--blue,#2563eb);outline-offset:2px}
 .builder-cycle-save{font-style:normal;background:#10b981;color:#fff;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:999px}
 @media (max-width:640px){.builder-plan-choice{grid-template-columns:1fr}}
+
+/* ── The checkout page ────────────────────────────────────────────────────
+   A dedicated page rather than a dialog over the marketing page. A modal put
+   the plan cards, the FAQ and the whole site nav a scroll behind a form
+   somebody was part-way through, and every one of those is a way to leave a
+   purchase half-finished. This page carries two links: back to the product,
+   and the terms being agreed to. */
+.checkout-page{background:var(--paper,#f7f6f2);min-height:100vh}
+.checkout-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px;max-width:1120px;margin:0 auto}
+.checkout-back{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink,#08101f);text-decoration:none}
+.checkout-back:hover{text-decoration:underline}
+.checkout-secure{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--muted,#5b6572)}
+.checkout-secure svg{width:14px;height:14px}
+.checkout-main{max-width:1120px;margin:0 auto;padding:8px 24px 80px}
+.checkout-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(300px,1fr);gap:48px;align-items:start}
+.checkout-title{font-size:30px;line-height:1.15;letter-spacing:-.02em;margin:0 0 8px}
+.checkout-sub{color:var(--muted,#5b6572);font-size:14px;margin:0 0 32px;max-width:46ch}
+.checkout-section{margin-bottom:32px}
+.checkout-legend{font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted,#5b6572);margin:0 0 12px}
+.checkout-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.checkout-fields .builder-field--full{grid-column:1/-1}
+.checkout-section--terms{padding:16px;border-radius:14px;background:rgba(8,16,31,.035)}
+.checkout-terms{font-size:13px;line-height:1.55;color:var(--muted,#5b6572);margin:0 0 12px}
+.checkout-terms:empty{display:none}
+.checkout-consent{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.5;cursor:pointer}
+.checkout-consent input{margin-top:2px;flex:none;width:16px;height:16px}
+.checkout-submit{width:100%;justify-content:center;margin-top:8px;font-size:15px;padding:15px 22px}
+
+/* The summary sticks, so the amount stays visible while the form is filled. */
+.checkout-summary{position:sticky;top:24px}
+.checkout-summary-inner{background:#fff;border:1px solid rgba(8,16,31,.1);border-radius:18px;padding:24px}
+.checkout-summary-title{font-size:17px;font-weight:650;margin:0 0 14px}
+.checkout-summary-price{display:flex;align-items:baseline;gap:5px}
+.checkout-summary-price .builder-sum-curr{font-size:15px;font-weight:600;color:var(--muted,#5b6572)}
+.checkout-summary-price .builder-sum-val{font-size:34px;font-weight:700;letter-spacing:-.02em}
+.checkout-summary-price .builder-sum-cycle{font-size:14px;color:var(--muted,#5b6572)}
+.checkout-summary-renews{font-size:12px;color:var(--muted,#5b6572);margin:4px 0 18px}
+.checkout-lines{border-top:1px solid rgba(8,16,31,.1);padding-top:14px;display:flex;flex-direction:column;gap:9px}
+.checkout-line{display:flex;justify-content:space-between;gap:16px;font-size:13px}
+.checkout-line--muted{color:var(--muted,#5b6572)}
+.checkout-free{color:#10b981;font-weight:650}
+.checkout-line--total{border-top:1px solid rgba(8,16,31,.1);padding-top:11px;margin-top:3px;font-size:15px;font-weight:700}
+.checkout-note{font-size:11.5px;line-height:1.5;color:var(--muted,#5b6572);margin:16px 0 0}
+
+@media (max-width:900px){
+  .checkout-grid{grid-template-columns:1fr;gap:28px}
+  /* The summary leads on a phone: the price is what somebody checks first. */
+  .checkout-summary{position:static;order:-1}
+  .checkout-title{font-size:25px}
+  .checkout-fields{grid-template-columns:1fr}
+}
+
+/* These three inherit from the old dark checkout column, which this page
+   replaced. `.builder-sum-val` is `color:#fff` there — on a white summary card
+   that is an invisible price, with a gap where the number should be. The form
+   also carries an 18px flex gap that stacked on top of each section's own
+   margin, leaving a dead band above every heading. */
+.checkout-page .builder-form{gap:0}
+.checkout-summary-price .builder-sum-val{color:var(--ink,#08101f)}
+.checkout-summary-price{font-family:inherit}

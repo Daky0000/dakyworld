@@ -143,6 +143,19 @@ export const PAGES = [
     },
   },
   {
+    file: "checkout.html",
+    path: "/checkout",
+    priority: "0.1",
+    changefreq: "yearly",
+    keywords: "",
+    schema: [],
+    // Somebody arriving here from a search result has skipped the page that
+    // explains what they would be buying, and a checkout ranking against
+    // /website-builder competes with it for the same query.
+    noindex: true,
+    noindexReason: "The checkout. It is a step in a purchase, not a page to arrive at from a search.",
+  },
+  {
     file: "products.html",
     path: "/products",
     priority: "0.8",
@@ -573,7 +586,12 @@ function headBlock(page, title, description, faq) {
     BEGIN,
     `<meta http-equiv="Content-Security-Policy" content="${attr(CSP)}">`,
     `<link rel="canonical" href="${url}">`,
-    `<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">`,
+    // A transactional page has nothing to offer a search result and should not
+    // compete with the page that sells the thing. `noindex` pages are also kept
+    // out of the sitemap and disallowed in robots.txt, so all three agree.
+    page.noindex
+      ? `<meta name="robots" content="noindex, nofollow">`
+      : `<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">`,
     `<meta name="keywords" content="${attr(page.keywords)}">`,
     `<meta name="author" content="${COMPANY.name}">`,
     `<meta name="geo.region" content="GH-AH">`,
@@ -685,13 +703,21 @@ Disallow: /admin
 # covers a crawler that reaches it by a route other than this file.
 Disallow: /AGENT_SYSTEM_PLAN.html
 
+${PAGES.filter((page) => page.noindex)
+  .map(
+    (page) => `
+# ${page.noindexReason ?? "Not a page anybody should reach from a search result."}
+Disallow: ${page.path}`,
+  )
+  .join("")}
+
 Sitemap: ${ORIGIN}/sitemap.xml
 `;
 
 const today = new Date().toISOString().slice(0, 10);
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${PAGES.map(
+${PAGES.filter((page) => !page.noindex).map(
   (page) => `  <url>
     <loc>${ORIGIN}${page.path}</loc>
     <lastmod>${today}</lastmod>
