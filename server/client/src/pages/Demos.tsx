@@ -18,6 +18,15 @@ import {
   StatGrid,
   StatTile,
 } from "../components/ui";
+import { DemoAnalyticsModal } from "../components/DemoAnalyticsModal";
+
+function formatDuration(seconds: number): string {
+  if (!seconds || seconds <= 0) return "0s";
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
 
 const STATUS_LABEL: Record<DemoStatus, string> = {
   DRAFT: "Draft",
@@ -85,6 +94,7 @@ export function Demos() {
   const [slugDraft, setSlugDraft] = useState("");
   const [slugError, setSlugError] = useState<string | null>(null);
   const [openingBuilderId, setOpeningBuilderId] = useState<string | null>(null);
+  const [analyticsDemo, setAnalyticsDemo] = useState<Demo | null>(null);
 
   const openInWebsiteBuilder = async (demo: Demo, mode: "visual" | "edit" = "visual") => {
     try {
@@ -389,6 +399,26 @@ export function Demos() {
                     <div className={`font-mono ${demo.views > 0 ? "font-bold text-ink" : "text-muted"}`}>
                       {demo.views > 0 ? `Opened ${demo.views} time${demo.views === 1 ? "" : "s"}` : "Not yet opened"}
                     </div>
+                    {demo.analytics && demo.views > 0 && (
+                      <div className="mt-1 flex flex-wrap items-center justify-end gap-1.5 text-[11px]">
+                        {demo.analytics.topCountry && (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-line/60 bg-surface px-1.5 py-0.5 font-medium text-ink">
+                            <span>{demo.analytics.topCountry.flag}</span>
+                            <span>{demo.analytics.topCountry.name}</span>
+                          </span>
+                        )}
+                        {demo.analytics.avgDurationSeconds > 0 && (
+                          <span className="rounded-md border border-line/60 bg-surface px-1.5 py-0.5 font-mono text-ink">
+                            ⏱ {formatDuration(demo.analytics.avgDurationSeconds)}
+                          </span>
+                        )}
+                        {demo.analytics.totalClicks > 0 && (
+                          <span className="rounded-md bg-rose-50 px-1.5 py-0.5 font-bold text-rose-700">
+                            🔥 {demo.analytics.totalClicks} click{demo.analytics.totalClicks === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {demo.lastViewedAt && (
                       <div className="mt-0.5">
                         last viewed <RelativeTime value={demo.lastViewedAt} />
@@ -403,6 +433,21 @@ export function Demos() {
                 </div>
 
                 <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-line/60 pt-3">
+                  <Button
+                    size="sm"
+                    variant={demo.views > 0 ? "primary" : "secondary"}
+                    onClick={() => setAnalyticsDemo(demo)}
+                    className="gap-1.5 font-semibold"
+                  >
+                    <span>📊</span>
+                    <span>Analytics & Heatmap</span>
+                    {demo.views > 0 && (
+                      <span className="ml-1 rounded-full bg-black/10 px-1.5 py-0.2 text-[10px] font-bold">
+                        {demo.views}
+                      </span>
+                    )}
+                  </Button>
+
                   <select
                     value={demo.status}
                     onChange={(event) => update.mutate({ id: demo.id, status: event.target.value as DemoStatus })}
@@ -507,6 +552,12 @@ export function Demos() {
         target={composerTarget}
         open={Boolean(composerTarget)}
         onClose={() => setComposerTarget(null)}
+      />
+
+      <DemoAnalyticsModal
+        demo={analyticsDemo}
+        open={Boolean(analyticsDemo)}
+        onClose={() => setAnalyticsDemo(null)}
       />
     </div>
   );

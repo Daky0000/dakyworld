@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, apiUrl } from "../lib/api";
-import type { Lead, LeadFieldDef, LeadGroup, LeadResearch, StoredShot } from "../lib/types";
+import type { Demo, Lead, LeadFieldDef, LeadGroup, LeadResearch, StoredShot } from "../lib/types";
 import { CaptureTag, captureMethodLabel, useLeadFields } from "./LeadColumns";
 import { TagChip, TagPicker, useTagLookup } from "./LeadTags";
 import { LeadAuditSection } from "./LeadAudit";
 import { ProposalWriter } from "./ProposalWriter";
+import { DemoAnalyticsModal } from "./DemoAnalyticsModal";
 import { Badge, Button, Drawer, Field, Money, RelativeTime, ScoreBar } from "./ui";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
@@ -606,6 +607,7 @@ function ResearchSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
 function DemoSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [built, setBuilt] = useState<{ url: string; notes: string[]; builtBy: string } | null>(null);
+  const [analyticsDemo, setAnalyticsDemo] = useState<Demo | null>(null);
   const demos = lead.demos ?? [];
   const looked = Boolean(lead.research);
 
@@ -637,6 +639,13 @@ function DemoSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
                 <span className="text-xs text-muted">
                   {demo.views > 0 ? `opened ${demo.views}×` : "not opened"}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setAnalyticsDemo(demo as unknown as Demo)}
+                  className="rounded-full bg-blue/10 px-2.5 py-0.5 text-[11px] font-semibold text-blue transition hover:bg-blue/20"
+                >
+                  📊 Analytics & Heatmap
+                </button>
               </li>
             ))}
           </ul>
@@ -689,6 +698,12 @@ function DemoSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
         )}
         {error && <p className="mt-3 text-sm text-danger-text">{error}</p>}
       </div>
+
+      <DemoAnalyticsModal
+        demo={analyticsDemo}
+        open={Boolean(analyticsDemo)}
+        onClose={() => setAnalyticsDemo(null)}
+      />
     </Section>
   );
 }

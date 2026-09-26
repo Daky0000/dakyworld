@@ -1308,6 +1308,112 @@ export interface Demo {
     includeBanner?: boolean;
     notes?: string | null;
   } | null;
+  /** High-level analytics summary for this demo. */
+  analytics?: DemoAnalyticsSummary;
+}
+
+export interface DemoAnalyticsSummary {
+  views: number;
+  uniqueVisitors: number;
+  avgDurationSeconds: number;
+  totalClicks: number;
+  topCountry?: { code: string; name: string; flag: string; count: number } | null;
+  topDevice?: string | null;
+  recentVisitsCount?: number;
+}
+
+export interface DemoVisitClick {
+  x: number;
+  y: number;
+  xPercent: number;
+  yPercent: number;
+  targetTag?: string;
+  targetText?: string;
+  targetSelector?: string;
+  timeOffset?: number;
+  visitId: string;
+  sessionId?: string;
+  deviceType?: string | null;
+  browser?: string | null;
+  os?: string | null;
+  ip?: string | null;
+  country?: string | null;
+  countryName?: string | null;
+  flag?: string;
+  createdAt: string;
+}
+
+export interface DemoVisitSession {
+  id: string;
+  sessionId: string;
+  ip?: string | null;
+  country?: string | null;
+  countryName?: string | null;
+  flag: string;
+  city?: string | null;
+  userAgent?: string | null;
+  deviceType?: string | null;
+  browser?: string | null;
+  os?: string | null;
+  viewportWidth?: number | null;
+  viewportHeight?: number | null;
+  screenWidth?: number | null;
+  screenHeight?: number | null;
+  durationSeconds: number;
+  scrollDepth: number;
+  clickCount: number;
+  clicks?: Array<{
+    x: number;
+    y: number;
+    xPercent: number;
+    yPercent: number;
+    targetTag?: string;
+    targetText?: string;
+    targetSelector?: string;
+    timeOffset?: number;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DemoAnalyticsReport {
+  demo: {
+    id: string;
+    slug: string;
+    title: string;
+    businessName: string;
+    url: string;
+    views: number;
+    lastViewedAt?: string | null;
+    createdAt: string;
+  };
+  summary: {
+    totalViews: number;
+    uniqueVisitors: number;
+    totalVisits: number;
+    avgDurationSeconds: number;
+    avgScrollDepth: number;
+    totalClicks: number;
+    bounceRate: number;
+  };
+  breakdowns: {
+    countries: Array<{ code: string; name: string; flag: string; count: number; percentage: number }>;
+    devices: Array<{ deviceType: string; count: number; percentage: number }>;
+    browsers: Array<{ browser: string; count: number; percentage: number }>;
+    os: Array<{ os: string; count: number; percentage: number }>;
+  };
+  visits: DemoVisitSession[];
+  heatmap: {
+    totalClicks: number;
+    clicks: DemoVisitClick[];
+    topClickedElements: Array<{
+      selector: string;
+      tag: string;
+      text: string;
+      count: number;
+      percentage: number;
+    }>;
+  };
 }
 
 // --- The website audit team -------------------------------------------------
@@ -3459,5 +3565,124 @@ export type SiteAgentApplyResult = {
     newRevision?: number;
   }>;
 };
+
+// --- Client Portal: Balance & Activity ------------------------------------
+
+export interface ClientInvoiceItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
+export interface ClientInvoice {
+  id: string;
+  invoiceNumber: string;
+  amountTotal: number;
+  currency: string;
+  status: "DRAFT" | "SENT" | "PAID" | "OVERDUE";
+  issueDate: string;
+  dueDate: string;
+  paidAt: string | null;
+  paymentUrl: string | null;
+  pdfUrl: string | null;
+  paidVia: string | null;
+  projectName?: string | null;
+  carePlanTier?: string | null;
+  lineItems: ClientInvoiceItem[];
+}
+
+export interface ClientSubscriptionSummary {
+  id: string;
+  tier: string;
+  tierName: string;
+  monthlyPrice: number;
+  currency: string;
+  billingCycle: string;
+  billingState: string;
+  status: string;
+  nextBillingAt: string | null;
+  providerSubscriptionCode: string | null;
+  manageUrl: string | null;
+}
+
+export interface ClientCarePlanSummary {
+  id: string;
+  tier: string;
+  monthlyFee: number;
+  currency: string;
+  includedHours: number | null;
+  status: string;
+  billingDay: number;
+  nextBillingAt: string | null;
+}
+
+export interface ClientAiUsageSummary {
+  enabled: boolean;
+  period: string;
+  promptsUsed: number;
+  promptsLimit: number;
+  promptsRemaining: number;
+  promptsPercent: number;
+  importsUsed: number;
+  importsLimit: number;
+  editsUsed: number;
+  editsLimit: number;
+  storageQuotaBytes: number;
+  storageQuotaLabel: string;
+  tierName: string;
+  canUpgrade: boolean;
+}
+
+export interface ClientAddon {
+  id: string;
+  name: string;
+  description: string;
+  amount: number;
+  currency: string;
+  badge: string;
+  kind: "ai" | "maintenance" | "seo" | "domain";
+}
+
+export interface WebsiteBalanceReport {
+  client: {
+    id: string;
+    name: string;
+    email: string | null;
+    company: string | null;
+  } | null;
+  summary: {
+    outstandingAmount: number;
+    paidLifetime: number;
+    currency: string;
+    status: "CURRENT" | "OUTSTANDING" | "OVERDUE";
+    unpaidCount: number;
+    paidCount: number;
+  };
+  subscription: ClientSubscriptionSummary | null;
+  carePlan: ClientCarePlanSummary | null;
+  aiUsage: ClientAiUsageSummary;
+  invoices: ClientInvoice[];
+  availableAddons: ClientAddon[];
+}
+
+export interface ClientActivityItem {
+  id: string;
+  category: "content" | "ai" | "media" | "billing" | "settings" | "team";
+  kind: string;
+  title: string;
+  description: string;
+  actorName: string;
+  siteName?: string;
+  createdAt: string;
+  badgeTone: "positive" | "info" | "warn" | "default" | "muted" | "danger";
+}
+
+export interface ClientActivityResponse {
+  total: number;
+  items: ClientActivityItem[];
+}
+
 
 

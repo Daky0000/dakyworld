@@ -29,6 +29,7 @@ import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView,
 import { ensureHostedAddress, registerWebsiteHosting } from "../services/websiteHosting.js";
 import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
 import { registerWebsiteSetupAssistance } from "../services/websiteSetupAssistance.js";
+import { registerWebsiteClientPortal } from "../services/websiteClientPortal.js";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -93,6 +94,7 @@ registerWebsiteTierRoutes(websiteRouter);
 registerWebsiteHosting(websiteRouter);
 registerSubscriberSelfService(websiteRouter);
 registerWebsiteSetupAssistance(websiteRouter);
+registerWebsiteClientPortal(websiteRouter);
 
 // Tier feature enforcement across SEO, AI Assistant, AI Builder Agent, and Source Editor routes
 websiteRouter.use((req, _res, next) => {

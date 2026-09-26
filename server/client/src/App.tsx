@@ -47,6 +47,7 @@ const WebsiteTeam = lazy(() => import("./pages/WebsiteTeam").then((module) => ({
 const WebsiteAudit = lazy(() => import("./pages/WebsiteAudit").then((module) => ({ default: module.WebsiteAudit })));
 const WebsiteSettings = lazy(() => import("./pages/WebsiteSettings").then((module) => ({ default: module.WebsiteSettings })));
 const WebsiteBilling = lazy(() => import("./pages/WebsiteBilling").then((module) => ({ default: module.WebsiteBilling })));
+const WebsiteBalance = lazy(() => import("./pages/WebsiteBalance").then((module) => ({ default: module.WebsiteBalance })));
 
 /**
  * Screens are loaded when somebody goes to them, not all at once.
@@ -109,6 +110,7 @@ export default function App() {
           <Route path="updates" element={<Guard needs="website.manage"><WebsiteUpdates /></Guard>} />
           <Route path="team" element={<WebsiteTeam />} />
           <Route path="audit" element={<WebsiteAudit />} />
+          <Route path="balance" element={<WebsiteBalance />} />
           <Route path="settings" element={<WebsiteGuard needs="manage"><WebsiteSettings /></WebsiteGuard>} />
           <Route path="source" element={<WebsiteGuard needs="source"><WebsiteSource /></WebsiteGuard>} />
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />

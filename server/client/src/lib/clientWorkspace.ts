@@ -21,6 +21,7 @@ export const CLIENT_NAV: ClientNavItem[] = [
   { to: "/website/assets", label: "Assets" },
   { to: "/website/team", label: "Team" },
   { to: "/website/audit", label: "Activity" },
+  { to: "/website/balance", label: "Balance & Invoices" },
 ];
 
 /** Where a client goes when they arrive with nothing else asked for. */

@@ -558,6 +558,7 @@ model Demo {
   /// hit on a page we host, which is an ordinary web server counting requests.
   views        Int       @default(0)
   lastViewedAt DateTime?
+  visits       DemoVisit[]
 
   sentAt    DateTime?
   createdAt DateTime  @default(now())
@@ -566,6 +567,45 @@ model Demo {
   @@index([status])
   @@index([leadId])
 }
+
+/// Visitor analytics for a demo page: IP, country, device, dwell time, and click/heatmap data.
+model DemoVisit {
+  id             String    @id @default(cuid())
+  demo           Demo      @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId         String
+  sessionId      String
+
+  /// Network & Location
+  ip             String?
+  country        String?
+  countryName    String?
+  city           String?
+
+  /// Device & Environment
+  userAgent      String?
+  deviceType     String?
+  browser        String?
+  os             String?
+  viewportWidth  Int?
+  viewportHeight Int?
+  screenWidth    Int?
+  screenHeight   Int?
+
+  /// Engagement
+  durationSeconds Int      @default(0)
+  scrollDepth     Int      @default(0)
+
+  /// Clicks & Heatmap data: array of { x, y, xPercent, yPercent, targetTag, targetText, targetSelector, timeOffset }
+  clicks         Json?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([demoId])
+  @@index([sessionId])
+  @@index([createdAt])
+}
+
 
 /// One run of the website audit team over one site.
 ///
