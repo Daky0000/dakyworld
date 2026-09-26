@@ -26,11 +26,19 @@ import {
   sanitizeValue,
   structureControls,
   validateFieldChange,
+  restoreDocument,
+  changeStructure,
   type FieldValue,
   type SiteField,
 } from "./website/index.js";
 import { pageSource, pageUrl, publishPages, siteStylesheets, WebsiteError } from "./website/site.js";
 import { generateSmartPageSeo, registerWebsiteSeoRoutes } from "./websiteSeo.js";
+import {
+  SECTION_TEMPLATES,
+  injectSectionIntoHtml,
+  type SectionKind,
+} from "./websiteSectionTemplates.js";
+import { createWebsiteEscalation } from "./websiteEscalationService.js";
 
 // ============================================================================
 // Schemas & Types
@@ -125,6 +133,18 @@ export const siteAgentApplyInputSchema = z.object({
       })),
       edits: z.record(z.string(), agentFieldEditSchema),
     })),
+    structuralActions: z.array(z.object({
+      pageId: z.string(),
+      pageTitle: z.string(),
+      kind: z.enum(["remove", "duplicate", "before", "after"]),
+      fieldId: z.string(),
+      targetId: z.string().optional(),
+      label: z.string(),
+    })).optional(),
+    documentHtmlUpdates: z.record(z.string(), z.object({
+      html: z.string(),
+      label: z.string(),
+    })).optional(),
   }),
 }).strict();
 export type SiteAgentApplyInput = z.infer<typeof siteAgentApplyInputSchema>;
@@ -155,7 +175,7 @@ export type SiteAgentStructuralAction = {
 
 export type SiteAgentPlan = {
   explanation: string;
-  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "attachment" | "command";
+  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "attachment" | "command" | "escalation";
   summary: {
     totalPages: number;
     affectedPages: number;
@@ -163,7 +183,19 @@ export type SiteAgentPlan = {
   };
   pages: SiteAgentPagePlan[];
   structuralActions?: SiteAgentStructuralAction[];
+  documentHtmlUpdates?: Record<string, { html: string; label: string }>;
   editorCommand?: "undo" | "redo" | "discard" | null;
+  escalation?: {
+    id: string;
+    reportNumber: string;
+    reason: string;
+    category: string;
+    agentNotes: string;
+    status: string;
+    createdAt: string;
+    siteId: string;
+    pageTitle?: string | null;
+  };
   requiresApproval?: boolean;
   approvalReasons?: string[];
   riskLevel?: "low" | "medium" | "high";
@@ -942,21 +974,25 @@ export async function planCrossPageContentChange(
 // 4. Attachment & Single-Page / Multi-Page Comprehensive Instruction Planner
 // ============================================================================
 
-const AI_AGENT_SYSTEM_DOCTRINE = `You are the Website Builder Agent for a connected website. Your job is to execute ANY website builder task requested by the user across their current page or across all pages of their site.
-You can:
-- Change any text, heading, paragraph, button label, or rich text content
-- Clear or delete text or remove/duplicate/reorder page blocks & sections
-- Change any CSS styling (color, background-color, background-image, font-family, font-size, font-weight, line-height, letter-spacing, text-align, text-transform, border-radius, border-color, border-width, padding, margin, gap, opacity, box-shadow, display, justify-content, align-items, width, height)
-- Replace background images or <img> sources with attached image URLs
-- Set button/anchor links (href) to attached files (like PDFs/documents) or external/internal URLs
-- Perform global font family, color code, phone number, or email replacements across all pages
-- Execute undo, redo, or discard draft commands
-Always return a valid JSON plan matching the schema.`;
+const AI_AGENT_SYSTEM_DOCTRINE = `You are the Website Builder Agent for a connected website. Your responsibilities and capabilities are STRICTLY AND EXCLUSIVELY limited to the website builder:
+- Page copywriting, headings, paragraphs, buttons, rich text content, and labels
+- Layout sections: adding, generating, removing, duplicating, or reordering page blocks and sections
+- Modern styling & theme tokens: colors, backgrounds, background images, typography (font family, font size, weight, line-height, alignment), borders, padding, shadows, opacity
+- Media and asset links: replacing image sources or hero backdrops with user-attached files, and linking buttons to PDFs/documents
+- Cross-page consistency: updating global brand fonts, brand colors, business phone numbers, and contact emails across all pages
+- SEO metadata: page titles, meta descriptions, OpenGraph tags
+- Editor commands: undo, redo, and discard draft
+
+CRITICAL BOUNDARY ENFORCEMENT:
+You DO NOT perform actions outside the visual website builder. You must NEVER manage CRM leads, execute outbound mass emailing or cold email campaigns, process staff payroll or salaries, execute server/database administration, or change OS system settings.
+If a user asks for anything outside website design, layout, or copy, set intent to "escalate" with an explanation and category so an official Escalation Report is dispatched to the business owner.`;
 
 const aiPlanSchema = z.object({
   explanation: z.string(),
-  intent: z.enum(["font", "color", "phone", "email", "content", "page_edits", "structure", "command"]),
+  intent: z.enum(["font", "color", "phone", "email", "content", "page_edits", "structure", "command", "escalate"]),
   editorCommand: z.enum(["undo", "redo", "discard"]).nullable().optional(),
+  escalationReason: z.string().optional(),
+  escalationCategory: z.enum(["custom_backend", "third_party_integration", "crm_or_leads", "billing_or_account", "complex_engineering", "other"]).optional(),
   parsedOperation: z.object({
     from: z.string().default(""),
     to: z.string().default(""),
@@ -979,6 +1015,86 @@ const aiPlanSchema = z.object({
     })),
   })).default([]),
 });
+
+// ============================================================================
+// Scope Guardrails & Section Matcher
+// ============================================================================
+
+export type ScopeEvaluation = {
+  inScope: boolean;
+  category?: "crm_or_leads" | "billing_or_account" | "custom_backend" | "complex_engineering" | "other";
+  topic?: string;
+  reason?: string;
+};
+
+export function evaluateBuilderScope(prompt: string): ScopeEvaluation {
+  const p = prompt.toLowerCase();
+
+  // 1. CRM / Leads / Customer pipelines / Cold emailing / Contact exports
+  if (/\b(?:crm|leads?|pipeline|cold email|outbound sequence|customer relationship|lead capture list|export contacts|subscriber list|bulk email|blast email)\b/i.test(p)) {
+    return {
+      inScope: false,
+      category: "crm_or_leads",
+      topic: "CRM, Lead Management & Outbound Communications",
+      reason: "Lead pipelines, CRM contacts, and mass outbound email marketing are managed outside the Website Builder.",
+    };
+  }
+
+  // 2. Financials / Payroll / Staff salaries / Bank transfers / Invoices OS
+  if (/\b(?:payroll|salaries|salary|pay staff|employee wages|bank transfer|wire transfer|refund customer|accounting ledger|financial report|tax invoice)\b/i.test(p)) {
+    return {
+      inScope: false,
+      category: "billing_or_account",
+      topic: "Financial & Payroll Operations",
+      reason: "Payroll, staff compensation, bank transfers, and internal financial ledgers are handled outside the Website Builder.",
+    };
+  }
+
+  // 3. Server administration / Docker / SSH / Database dropping / OS Root
+  if (/\b(?:drop table|drop database|truncate table|ssh root|restart server|ec2|docker compose|deploy kubernetes|grant admin role|modify env vars|system password)\b/i.test(p)) {
+    return {
+      inScope: false,
+      category: "custom_backend",
+      topic: "Server & Database Infrastructure",
+      reason: "Server infrastructure, database management, and host configurations are handled outside the Website Builder.",
+    };
+  }
+
+  // 4. Custom native backend applications / API microservices
+  if (/\b(?:build a backend api|create a postgres database|write node\.js server|custom microservice|backend webhook)\b/i.test(p)) {
+    return {
+      inScope: false,
+      category: "complex_engineering",
+      topic: "Custom Backend Microservices",
+      reason: "Custom backend microservice architecture requires engineering implementation outside the visual builder.",
+    };
+  }
+
+  return { inScope: true };
+}
+
+export function isExplicitEscalationRequest(prompt: string): boolean {
+  const p = prompt.toLowerCase();
+  return (
+    /\b(?:escalate(?:\s+this)?\s+to\s+(?:the\s+)?owner|report(?:\s+this)?\s+to\s+(?:the\s+)?owner|send(?:\s+a)?\s+report\s+to\s+(?:the\s+)?owner|talk\s+to\s+(?:the\s+)?owner|contact(?:\s+the)?\s+owner|ask(?:\s+the)?\s+owner|talk\s+to\s+dan|report\s+to\s+dan|ask\s+dan|hand\s*off\s+to\s+developer|developer\s+handoff|submit\s+(?:an?\s+)?escalation)\b/i.test(p)
+  );
+}
+
+export function matchSectionTemplateRequest(lower: string): SectionKind | null {
+  const hasAddIntent = /\b(add|insert|create|generate|include|put|build|new)\b/i.test(lower);
+  if (!hasAddIntent) return null;
+
+  if (/\b(testimonials?|reviews?|client feedback|ratings?)\b/i.test(lower)) return "testimonials";
+  if (/\b(pricing|price tables?|plans? tables?|tiers?|subscription plans?)\b/i.test(lower)) return "pricing";
+  if (/\b(faqs?|frequently asked|questions?|q&a|accordions?)\b/i.test(lower)) return "faq";
+  if (/\b(features?|benefits?|services? grids?|capabilities)\b/i.test(lower)) return "features";
+  if (/\b(cta|call to actions?|conversion banners?|sign up banners?)\b/i.test(lower)) return "cta";
+  if (/\b(contacts?|get in touch|reach out|contact info|contact cards?)\b/i.test(lower)) return "contact";
+  if (/\b(teams?|staffs?|our people|leadership|executives?|members?)\b/i.test(lower)) return "team";
+  if (/\b(heros?|hero banners?|header banners?|above the fold)\b/i.test(lower)) return "hero";
+
+  return null;
+}
 
 function findMatchingFieldOnPage(
   fields: SiteField[],
@@ -1062,6 +1178,133 @@ export async function planAgentInstruction(
   }
   if (options && resolvedSelectedFieldId) {
     options = { ...options, selectedFieldId: resolvedSelectedFieldId };
+  }
+
+  // --------------------------------------------------------------------------
+  // Scope Guardrail: Strictly restrict tasks to the Website Builder domain
+  // --------------------------------------------------------------------------
+  const scopeResult = evaluateBuilderScope(trimmed);
+  if (!scopeResult.inScope) {
+    const escalation = await createWebsiteEscalation({
+      siteId: site.id,
+      pageId: currentPage?.id,
+      pageTitle: currentPage?.title,
+      userPrompt: prompt,
+      reason: "OUT_OF_SCOPE",
+      category: scopeResult.category ?? "other",
+      agentNotes: `User prompt is outside website builder scope (${scopeResult.topic}): ${scopeResult.reason}. Escalation report filed for owner review.`,
+    });
+
+    return enrichPlanWithApprovalMetadata({
+      explanation: `The Website Builder Agent specializes strictly in website design, copy, typography, colors, sections, media assets, and SEO metadata. Your request regarding "${scopeResult.topic}" is outside website design and layout. I have submitted an official Escalation Report (${escalation.reportNumber}) directly to the business owner and leadership team for direct follow-up.`,
+      actionKind: "escalation",
+      summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
+      pages: [],
+      escalation: {
+        id: escalation.id,
+        reportNumber: escalation.reportNumber,
+        reason: escalation.reason,
+        category: escalation.category,
+        agentNotes: escalation.agentNotes,
+        status: escalation.status,
+        createdAt: escalation.createdAt.toISOString(),
+        siteId: site.id,
+        pageTitle: currentPage?.title ?? null,
+      },
+      requiresApproval: false,
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // Explicit User Escalation to Owner
+  // --------------------------------------------------------------------------
+  if (isExplicitEscalationRequest(trimmed)) {
+    const escalation = await createWebsiteEscalation({
+      siteId: site.id,
+      pageId: currentPage?.id,
+      pageTitle: currentPage?.title,
+      userPrompt: prompt,
+      reason: "OWNER_REQUESTED",
+      category: "other",
+      agentNotes: `User requested explicit escalation to site owner from the website builder agent chat.`,
+    });
+
+    return enrichPlanWithApprovalMetadata({
+      explanation: `Your escalation report (${escalation.reportNumber}) has been submitted to the business owner and leadership team. They can view, track, and resolve it from the Owner Reports dashboard.`,
+      actionKind: "escalation",
+      summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
+      pages: [],
+      escalation: {
+        id: escalation.id,
+        reportNumber: escalation.reportNumber,
+        reason: escalation.reason,
+        category: escalation.category,
+        agentNotes: escalation.agentNotes,
+        status: escalation.status,
+        createdAt: escalation.createdAt.toISOString(),
+        siteId: site.id,
+        pageTitle: currentPage?.title ?? null,
+      },
+      requiresApproval: false,
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // Instant High-Fidelity Section Generation (Testimonials, Pricing, FAQ, Features, CTA, Contact, Team, Hero)
+  // --------------------------------------------------------------------------
+  const sectionTemplateKey = matchSectionTemplateRequest(lower);
+  if (sectionTemplateKey && currentPage) {
+    try {
+      const template = SECTION_TEMPLATES[sectionTemplateKey];
+      const source = await pageSource(site, currentPage);
+      const existingDraft = {
+        ...((currentPage.draft ?? {}) as Record<string, FieldValue>),
+        ...(options?.edits ?? {}),
+      };
+      const currentHtml = editingSource(source.html, existingDraft);
+      const sectionHtml = template.generateHtml({
+        siteName: site.name,
+      });
+      const nextHtml = injectSectionIntoHtml(currentHtml, sectionHtml);
+      const { fields: currentFields } = discoverFields(currentHtml);
+      const { fields: nextFields } = discoverFields(nextHtml);
+      const currentIds = new Set(currentFields.map((f) => f.id));
+      const newFields = nextFields.filter((f) => !currentIds.has(f.id));
+
+      const changes: SiteAgentPagePlan["changes"] = newFields.slice(0, 15).map((f) => ({
+        fieldId: f.id,
+        label: f.label,
+        property: f.kind === "text" || f.kind === "richtext" ? "value" : f.kind,
+        before: "(New section)",
+        after: f.value || f.label,
+      }));
+
+      return enrichPlanWithApprovalMetadata({
+        explanation: `Generated and added a modern responsive ${template.label} section to "${currentPage.title}". The new section contains ${newFields.length} editable elements ready for your content.`,
+        actionKind: "structure",
+        summary: { totalPages: livePages.length, affectedPages: 1, totalChanges: Math.max(1, newFields.length) },
+        pages: [
+          {
+            pageId: currentPage.id,
+            pageTitle: currentPage.title,
+            pagePath: currentPage.path,
+            draftRevision: currentPage.draftRevision,
+            changes,
+            edits: {},
+          },
+        ],
+        documentHtmlUpdates: {
+          [currentPage.id]: {
+            html: nextHtml,
+            label: `Added ${template.label} section`,
+          },
+        },
+        requiresApproval: true,
+        approvalReasons: [`Adds new ${template.label} section to "${currentPage.title}".`],
+      });
+    } catch {
+      // Fall through to other handlers or AI model planner
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -1792,6 +2035,39 @@ export async function planAgentInstruction(
 
     const aiData = result.data;
 
+    if (aiData.intent === "escalate") {
+      const esc = await createWebsiteEscalation({
+        siteId: site.id,
+        pageId: currentPage?.id,
+        pageTitle: currentPage?.title,
+        userPrompt: trimmed,
+        reason: "UNSUPPORTED_CAPABILITY",
+        category: (aiData.escalationCategory as any) || "complex_engineering",
+        agentNotes: aiData.escalationReason || aiData.explanation || "AI model determined request requires developer assistance beyond automated layout editing.",
+      });
+
+      return enrichPlanWithApprovalMetadata({
+        explanation: aiData.explanation || `This custom request requires developer assistance beyond automated layout editing. An Escalation Report (${esc.reportNumber}) has been submitted to the business owner and technical leadership team.`,
+        actionKind: "escalation",
+        summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
+        pages: [],
+        escalation: {
+          id: esc.id,
+          reportNumber: esc.reportNumber,
+          reason: esc.reason,
+          category: esc.category,
+          agentNotes: esc.agentNotes,
+          status: esc.status,
+          createdAt: esc.createdAt.toISOString(),
+          siteId: site.id,
+          pageTitle: currentPage?.title ?? null,
+        },
+        requiresApproval: false,
+        costUsd: result.costUsd,
+        model: result.model,
+      });
+    }
+
     if (aiData.editorCommand) {
       return enrichPlanWithApprovalMetadata({
         explanation: aiData.explanation || `Executed ${aiData.editorCommand}.`,
@@ -1943,6 +2219,39 @@ export async function planAgentInstruction(
       costUsd: result.costUsd,
       model: result.model,
     });
+  } catch (err) {
+    if (err instanceof WebsiteError && err.status < 500) {
+      throw err;
+    }
+    // Automatically file an escalation report so the business owner is notified
+    const esc = await createWebsiteEscalation({
+      siteId: site.id,
+      pageId: currentPage?.id,
+      pageTitle: currentPage?.title,
+      userPrompt: trimmed,
+      reason: "EXECUTION_FAILURE",
+      category: "complex_engineering",
+      agentNotes: `Automated planner encountered an execution failure: ${err instanceof Error ? err.message : String(err)}. Escalated to site owner.`,
+    });
+
+    return enrichPlanWithApprovalMetadata({
+      explanation: `The automated website builder could not complete this specific task. An official Escalation Report (${esc.reportNumber}) has been filed and sent directly to the business owner and developer team for manual assistance.`,
+      actionKind: "escalation",
+      summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
+      pages: [],
+      escalation: {
+        id: esc.id,
+        reportNumber: esc.reportNumber,
+        reason: esc.reason,
+        category: esc.category,
+        agentNotes: esc.agentNotes,
+        status: esc.status,
+        createdAt: esc.createdAt.toISOString(),
+        siteId: site.id,
+        pageTitle: currentPage?.title ?? null,
+      },
+      requiresApproval: false,
+    });
   } finally {
     forgetBudgets();
   }
@@ -1967,6 +2276,111 @@ export async function applyAgentSitePlan(
   let appliedPages = 0;
   let totalChanges = 0;
 
+  // 1. Process document HTML updates (such as section insertions generated by agent)
+  if (input.plan.documentHtmlUpdates) {
+    for (const [pageId, docUpdate] of Object.entries(input.plan.documentHtmlUpdates)) {
+      const page = pageMap.get(pageId);
+      if (!page) continue;
+      const ifRevision = input.pageRevisions[page.id] ?? page.draftRevision;
+      try {
+        const source = await pageSource(site, page);
+        const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
+        const nextDraftValues = restoreDocument(source.html, existingDraft, docUpdate.html, docUpdate.label);
+
+        const written = await prisma.sitePage.updateMany({
+          where: { id: page.id, draftRevision: ifRevision },
+          data: {
+            draft: nextDraftValues as unknown as Prisma.InputJsonValue,
+            draftSavedAt: new Date(),
+            draftSavedById: userId ?? null,
+            draftRevision: { increment: 1 },
+          },
+        });
+
+        if (written.count > 0) {
+          appliedPages += 1;
+          totalChanges += 1;
+          page.draftRevision = ifRevision + 1;
+          page.draft = nextDraftValues as unknown as Prisma.JsonValue;
+          results.push({
+            pageId: page.id,
+            pageTitle: page.title,
+            success: true,
+            message: `Applied layout structure change: ${docUpdate.label}.`,
+            newRevision: ifRevision + 1,
+          });
+        }
+      } catch (err) {
+        results.push({
+          pageId: page.id,
+          pageTitle: page.title,
+          success: false,
+          message: err instanceof Error ? err.message : "Failed to update page structure.",
+        });
+      }
+    }
+  }
+
+  // 2. Process structuralActions (remove, duplicate, before, after)
+  if (input.plan.structuralActions && input.plan.structuralActions.length > 0) {
+    const actionsByPage = new Map<string, SiteAgentStructuralAction[]>();
+    for (const sa of input.plan.structuralActions) {
+      const list = actionsByPage.get(sa.pageId) ?? [];
+      list.push(sa);
+      actionsByPage.set(sa.pageId, list);
+    }
+
+    for (const [pageId, actions] of actionsByPage.entries()) {
+      const page = pageMap.get(pageId);
+      if (!page) continue;
+      const ifRevision = page.draftRevision;
+      try {
+        const source = await pageSource(site, page);
+        let currentDraft = (page.draft ?? {}) as Record<string, FieldValue>;
+        for (const action of actions) {
+          const res = changeStructure(source.html, currentDraft, {
+            kind: action.kind,
+            fieldId: action.fieldId,
+            ...(action.targetId ? { targetId: action.targetId } : {}),
+          });
+          currentDraft = res.values;
+        }
+
+        const written = await prisma.sitePage.updateMany({
+          where: { id: page.id, draftRevision: ifRevision },
+          data: {
+            draft: currentDraft as unknown as Prisma.InputJsonValue,
+            draftSavedAt: new Date(),
+            draftSavedById: userId ?? null,
+            draftRevision: { increment: 1 },
+          },
+        });
+
+        if (written.count > 0) {
+          appliedPages += 1;
+          totalChanges += actions.length;
+          page.draftRevision = ifRevision + 1;
+          page.draft = currentDraft as unknown as Prisma.JsonValue;
+          results.push({
+            pageId: page.id,
+            pageTitle: page.title,
+            success: true,
+            message: `Applied ${actions.length} structural change${actions.length === 1 ? "" : "s"} to ${page.title}.`,
+            newRevision: ifRevision + 1,
+          });
+        }
+      } catch (err) {
+        results.push({
+          pageId: page.id,
+          pageTitle: page.title,
+          success: false,
+          message: err instanceof Error ? err.message : "Failed to apply structural change.",
+        });
+      }
+    }
+  }
+
+  // 3. Process field edits for pages
   for (const pagePlan of input.plan.pages) {
     const page = pageMap.get(pagePlan.pageId);
     if (!page) {
@@ -1974,7 +2388,7 @@ export async function applyAgentSitePlan(
       continue;
     }
 
-    const ifRevision = input.pageRevisions[page.id] ?? pagePlan.draftRevision;
+    const ifRevision = page.draftRevision;
     try {
       const source = await pageSource(site, page);
       const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
@@ -1997,7 +2411,9 @@ export async function applyAgentSitePlan(
       }
 
       if (pageChangeCount === 0) {
-        results.push({ pageId: page.id, pageTitle: page.title, success: true, message: "No draft changes needed for this page." });
+        if (!results.some(r => r.pageId === page.id)) {
+          results.push({ pageId: page.id, pageTitle: page.title, success: true, message: "No draft changes needed for this page." });
+        }
         continue;
       }
 
@@ -2021,6 +2437,8 @@ export async function applyAgentSitePlan(
       } else {
         appliedPages += 1;
         totalChanges += pageChangeCount;
+        page.draftRevision = ifRevision + 1;
+        page.draft = nextDraftValues as unknown as Prisma.JsonValue;
         results.push({
           pageId: page.id,
           pageTitle: page.title,
@@ -2364,30 +2782,28 @@ export function registerWebsiteBuilderAgent(
     }
   });
 
-  // 6. Escalate a code-managed or structural request to a Dakyworld developer
+  // 6. Escalate a code-managed or structural request to a Dakyworld developer & site owner
   router.post("/sites/:siteId/agent/escalate", async (req: Request, res: Response, next) => {
     try {
       const body = escalateDeveloperSchema.parse(req.body ?? {});
       const site = await access.loadSite(req, req.params.siteId);
       const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Owner";
-      const event = await prisma.siteAuditEvent.create({
-        data: {
-          siteId: site.id,
-          kind: "DEVELOPER_ESCALATION",
-          summary: `Developer assistance requested: "${body.prompt.slice(0, 80)}"`,
-          actorName: author,
-          actorId: req.dbUser?.id,
-          detail: {
-            prompt: body.prompt,
-            pageId: body.pageId ?? null,
-            reason: body.reason ?? "User escalated from Website Builder Agent",
-            status: "QUEUED_FOR_DEVELOPER",
-          },
-        },
+      
+      const escalation = await createWebsiteEscalation({
+        siteId: site.id,
+        pageId: body.pageId,
+        userPrompt: body.prompt,
+        reason: "OWNER_REQUESTED",
+        category: "complex_engineering",
+        agentNotes: body.reason ?? "User escalated directly from Website Builder Agent chat",
+        userEmail: req.dbUser?.email ?? null,
+        userName: author,
       });
+
       res.status(201).json({
-        ticketId: event.id,
-        message: "Request sent to your Dakyworld developer team. We have full context of the page and element you were working on.",
+        ticketId: escalation.id,
+        reportNumber: escalation.reportNumber,
+        message: `Request sent to the business owner and Dakyworld technical team (Report #${escalation.reportNumber}). We have full context of the page and element you were working on.`,
       });
     } catch (err) {
       next(err);

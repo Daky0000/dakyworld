@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { PageHeader, Button } from "../components/ui";
 import {
+  IconAlertCircle,
   IconCheck,
   IconMessageSquare,
   IconPalette,
@@ -19,6 +20,8 @@ import type {
   SiteAgentOverview,
   SiteAgentPlan,
   SiteAgentApplyResult,
+  WebsiteEscalationReportItem,
+  WebsiteEscalationListResponse,
 } from "../lib/types";
 
 type PageSeoInfo = {
@@ -64,8 +67,14 @@ export function WebsiteAI() {
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const site = sites.data?.find((s) => s.id === selectedSiteId) ?? sites.data?.[0];
 
-  // Active mode in the agent workspace: prompt (natural language) or structured tools
-  const [activeTab, setActiveTab] = useState<"prompt" | "font" | "color" | "content" | "seo">("prompt");
+  // Active mode in the agent workspace: prompt (natural language), structured tools, or owner escalations
+  const [activeTab, setActiveTab] = useState<"prompt" | "font" | "color" | "content" | "seo" | "escalations">("prompt");
+
+  // Owner Escalations state
+  const [escalationStatusFilter, setEscalationStatusFilter] = useState<"ALL" | "OPEN" | "IN_REVIEW" | "RESOLVED">("ALL");
+  const [editingEscalationId, setEditingEscalationId] = useState<string | null>(null);
+  const [editingStatus, setEditingStatus] = useState<"OPEN" | "IN_REVIEW" | "RESOLVED">("IN_REVIEW");
+  const [editingNotes, setEditingNotes] = useState("");
 
   // Input states
   const [prompt, setPrompt] = useState("");
@@ -104,6 +113,42 @@ export function WebsiteAI() {
     queryKey: ["website", "agent", "overview", site?.id],
     enabled: Boolean(site?.id),
     queryFn: () => api.get<SiteAgentOverview>(`/website/sites/${site!.id}/agent/overview`),
+  });
+
+  // Owner Escalations Query
+  const escalations = useQuery({
+    queryKey: ["website", "escalations", selectedSiteId, escalationStatusFilter],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (selectedSiteId) params.set("siteId", selectedSiteId);
+      if (escalationStatusFilter !== "ALL") params.set("status", escalationStatusFilter);
+      return api.get<WebsiteEscalationListResponse>(`/website/escalations?${params.toString()}`);
+    },
+  });
+
+  // Update Escalation Mutation
+  const updateEscalationMutation = useMutation({
+    mutationFn: async ({
+      id,
+      status,
+      ownerNotes,
+    }: {
+      id: string;
+      status: "OPEN" | "IN_REVIEW" | "RESOLVED";
+      ownerNotes?: string;
+    }) => {
+      return api.patch<WebsiteEscalationReportItem>(`/website/escalations/${id}`, {
+        status,
+        ownerNotes,
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["website", "escalations"] });
+      setEditingEscalationId(null);
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "Failed to update escalation status.");
+    },
   });
 
   // SEO & Repo overview query
@@ -563,6 +608,25 @@ export function WebsiteAI() {
               >
                 <IconSearch />
                 <span>SEO &amp; Repo Tags</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("escalations")}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+                  activeTab === "escalations" ? "bg-amber-600 text-white" : "text-muted hover:bg-cream hover:text-ink"
+                }`}
+              >
+                <IconAlertCircle />
+                <span>Owner Reports</span>
+                {escalations.data?.openCount !== undefined && escalations.data.openCount > 0 && (
+                  <span
+                    className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                      activeTab === "escalations" ? "bg-white text-amber-700" : "bg-amber-500 text-white"
+                    }`}
+                  >
+                    {escalations.data.openCount}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -1030,6 +1094,308 @@ export function WebsiteAI() {
                 </div>
               </div>
             )}
+
+            {/* TAB 6: Owner Reports & Escalations Dashboard */}
+            {activeTab === "escalations" && (
+              <div className="space-y-6">
+                {/* Header Context Banner */}
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-amber-500/20 text-amber-700">
+                        <IconAlertCircle size={16} />
+                      </span>
+                      <h4 className="text-sm font-bold text-ink">
+                        Website Builder Escalations &amp; Owner Handoff Reports
+                      </h4>
+                    </div>
+                    {escalations.data?.openCount !== undefined && (
+                      <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                        {escalations.data.openCount} Open Action{escalations.data.openCount === 1 ? "" : "s"}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted leading-relaxed">
+                    The Website Builder Agent operates strictly within the website design domain (page copy, styling, layout sections, typography, images, and SEO). When a client requests actions outside this scope (such as CRM leads, outbound cold email campaigns, staff payroll, or custom server engineering), or when an automated layout operation cannot be fulfilled, an Escalation Report is dispatched directly here for business owner review.
+                  </p>
+                </div>
+
+                {/* Status Filter Tabs */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {(["ALL", "OPEN", "IN_REVIEW", "RESOLVED"] as const).map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setEscalationStatusFilter(status)}
+                        className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                          escalationStatusFilter === status
+                            ? "bg-ink text-white"
+                            : "bg-cream text-muted hover:text-ink"
+                        }`}
+                      >
+                        {status === "ALL"
+                          ? "All Reports"
+                          : status === "OPEN"
+                            ? "Open / Pending"
+                            : status === "IN_REVIEW"
+                              ? "In Review"
+                              : "Resolved"}
+                      </button>
+                    ))}
+                  </div>
+
+                  <span className="text-xs text-muted">
+                    Showing {escalations.data?.items.length ?? 0} report{(escalations.data?.items.length ?? 0) === 1 ? "" : "s"}
+                  </span>
+                </div>
+
+                {/* Reports Listing */}
+                {escalations.isLoading ? (
+                  <div className="py-12 text-center text-xs text-muted">Loading escalation reports…</div>
+                ) : !escalations.data?.items.length ? (
+                  <div className="rounded-2xl border border-line bg-cream/30 py-12 text-center">
+                    <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 mb-2">
+                      <IconCheck size={20} />
+                    </div>
+                    <h5 className="text-sm font-semibold text-ink">No Escalation Reports</h5>
+                    <p className="text-xs text-muted mt-1 max-w-sm mx-auto">
+                      All website builder actions are running smoothly within scope. When requests require owner or developer follow-up, they will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {escalations.data.items.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`rounded-2xl border p-4.5 transition ${
+                          item.status === "OPEN"
+                            ? "border-amber-500/30 bg-white shadow-xs"
+                            : item.status === "IN_REVIEW"
+                              ? "border-blue/30 bg-white"
+                              : "border-line bg-cream/40 opacity-80"
+                        }`}
+                      >
+                        {/* Report Header Bar */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-ink">{item.reportNumber}</span>
+
+                            {/* Status Pill */}
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                                item.status === "OPEN"
+                                  ? "bg-amber-500/15 text-amber-800"
+                                  : item.status === "IN_REVIEW"
+                                    ? "bg-blue/15 text-blue"
+                                    : "bg-emerald-500/15 text-emerald-800"
+                              }`}
+                            >
+                              {item.status === "OPEN"
+                                ? "Needs Attention"
+                                : item.status === "IN_REVIEW"
+                                  ? "In Review"
+                                  : "Resolved"}
+                            </span>
+
+                            {/* Reason Pill */}
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                item.reason === "OUT_OF_SCOPE"
+                                  ? "bg-rose-500/10 text-rose-800"
+                                  : item.reason === "UNSUPPORTED_CAPABILITY"
+                                    ? "bg-purple-500/10 text-purple-800"
+                                    : item.reason === "EXECUTION_FAILURE"
+                                      ? "bg-red-500/10 text-red-800"
+                                      : "bg-amber-500/10 text-amber-800"
+                              }`}
+                            >
+                              {item.reason === "OUT_OF_SCOPE"
+                                ? "Out of Builder Scope"
+                                : item.reason === "UNSUPPORTED_CAPABILITY"
+                                  ? "Custom Engineering"
+                                  : item.reason === "EXECUTION_FAILURE"
+                                    ? "Execution Error"
+                                    : "Client Escalation"}
+                            </span>
+
+                            {/* Category Pill */}
+                            <span className="rounded-md bg-sunken px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                              {item.category.replace(/_/g, " ")}
+                            </span>
+                          </div>
+
+                          <span className="text-[11px] text-muted">
+                            {new Date(item.createdAt).toLocaleString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
+
+                        {/* Report Body */}
+                        <div className="mt-3.5 space-y-3">
+                          {/* Location & Client details */}
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+                            <div>
+                              <span className="font-semibold text-ink">Site:</span> {item.site?.name || site?.name || "Website"}
+                            </div>
+                            {item.pageTitle && (
+                              <div>
+                                <span className="font-semibold text-ink">Page:</span> {item.pageTitle}
+                              </div>
+                            )}
+                            {(item.userName || item.userEmail) && (
+                              <div>
+                                <span className="font-semibold text-ink">Client:</span> {item.userName || item.userEmail}
+                              </div>
+                            )}
+                            {item.pageId && (
+                              <Link
+                                to={`/website/pages/${item.pageId}`}
+                                className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-blue hover:underline"
+                              >
+                                <span>Open Page in Editor</span>
+                                <span>→</span>
+                              </Link>
+                            )}
+                          </div>
+
+                          {/* Client's Prompt */}
+                          <div className="rounded-xl border border-line bg-cream/70 p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1">
+                              Client Prompt
+                            </div>
+                            <p className="text-xs text-ink font-medium leading-relaxed italic">
+                              &ldquo;{item.userPrompt}&rdquo;
+                            </p>
+                          </div>
+
+                          {/* Agent Diagnostic Notes */}
+                          <div className="rounded-xl border border-line bg-sunken/40 p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1">
+                              Agent Diagnosis &amp; Handoff Notes
+                            </div>
+                            <p className="text-xs text-slate-700 leading-relaxed">
+                              {item.agentNotes}
+                            </p>
+                          </div>
+
+                          {/* Owner Notes & Resolution Details */}
+                          {item.status === "RESOLVED" && item.resolvedAt && (
+                            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-900">
+                              <div className="font-semibold flex items-center gap-1.5">
+                                <IconCheck size={12} />
+                                <span>
+                                  Resolved by {item.resolvedBy || "Owner"} on{" "}
+                                  {new Date(item.resolvedAt).toLocaleDateString()}
+                                </span>
+                              </div>
+                              {item.ownerNotes && (
+                                <p className="mt-1 text-[11px] text-emerald-800 italic">
+                                  Notes: {item.ownerNotes}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Interactive Status Update Form */}
+                          {editingEscalationId === item.id ? (
+                            <div className="mt-3 rounded-xl border border-line bg-white p-3 space-y-3">
+                              <div className="text-xs font-bold text-ink">Update Report Status</div>
+                              <div className="flex flex-wrap gap-2">
+                                {(["OPEN", "IN_REVIEW", "RESOLVED"] as const).map((st) => (
+                                  <button
+                                    key={st}
+                                    type="button"
+                                    onClick={() => setEditingStatus(st)}
+                                    className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                                      editingStatus === st
+                                        ? "bg-ink text-white"
+                                        : "bg-cream text-muted hover:text-ink"
+                                    }`}
+                                  >
+                                    {st === "OPEN"
+                                      ? "Mark Open"
+                                      : st === "IN_REVIEW"
+                                        ? "Mark In Review"
+                                        : "Mark Resolved"}
+                                  </button>
+                                ))}
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-muted mb-1">
+                                  Owner Notes / Resolution Details (optional)
+                                </label>
+                                <textarea
+                                  rows={2}
+                                  value={editingNotes}
+                                  onChange={(e) => setEditingNotes(e.target.value)}
+                                  placeholder="e.g. Discussed with client, added custom integration, or handled via CRM."
+                                  className="w-full rounded-xl border border-line bg-cream p-2 text-xs text-ink outline-none focus:border-blue"
+                                />
+                              </div>
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  onClick={() => setEditingEscalationId(null)}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  type="button"
+                                  disabled={updateEscalationMutation.isPending}
+                                  onClick={() =>
+                                    updateEscalationMutation.mutate({
+                                      id: item.id,
+                                      status: editingStatus,
+                                      ownerNotes: editingNotes.trim() || undefined,
+                                    })
+                                  }
+                                >
+                                  {updateEscalationMutation.isPending ? "Saving…" : "Save Status"}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-2 pt-1">
+                              {item.status !== "RESOLVED" && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingEscalationId(item.id);
+                                    setEditingStatus("RESOLVED");
+                                    setEditingNotes(item.ownerNotes || "");
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-500/20 transition"
+                                >
+                                  <IconCheck size={12} />
+                                  <span>Resolve</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingEscalationId(item.id);
+                                  setEditingStatus(item.status);
+                                  setEditingNotes(item.ownerNotes || "");
+                                }}
+                                className="rounded-lg border border-line bg-cream px-2.5 py-1 text-xs font-semibold text-ink hover:bg-sunken transition"
+                              >
+                                <span>Manage Report</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Feedback & Error Messages */}
@@ -1039,8 +1405,52 @@ export function WebsiteAI() {
             </div>
           )}
 
+          {/* Escalation Plan Feedback Banner */}
+          {plan && plan.actionKind === "escalation" && (
+            <section className="space-y-4 rounded-2xl border border-amber-500/30 bg-white p-5 shadow-xs">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-line pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-bold text-amber-800 uppercase">
+                      Escalation Report Dispatched
+                    </span>
+                    {plan.escalation?.reportNumber && (
+                      <span className="font-mono text-xs font-semibold text-ink">
+                        #{plan.escalation.reportNumber}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="mt-1.5 font-display text-lg text-ink font-semibold">{plan.explanation}</h3>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("escalations");
+                    void escalations.refetch();
+                  }}
+                >
+                  <IconAlertCircle />
+                  <span>Open Owner Reports</span>
+                </Button>
+              </div>
+
+              {plan.escalation && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs space-y-2">
+                  <div className="flex flex-wrap gap-2 text-muted">
+                    <span className="font-semibold text-ink">Category:</span> {plan.escalation.category.replace(/_/g, " ")}
+                    <span className="mx-1">·</span>
+                    <span className="font-semibold text-ink">Reason:</span> {plan.escalation.reason}
+                  </div>
+                  <p className="text-slate-700 leading-relaxed font-medium">
+                    {plan.escalation.agentNotes}
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
+
           {/* Plan Review & Multi-Page Diff View */}
-          {plan && (
+          {plan && plan.actionKind !== "escalation" && (
             <section className="space-y-4 rounded-2xl border border-line bg-white p-5 shadow-xs">
               <div className="flex flex-wrap items-start justify-between gap-4 border-b border-line pb-4">
                 <div>

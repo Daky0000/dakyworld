@@ -3538,7 +3538,7 @@ export type SiteAgentPermissionMode = "smart" | "full" | "ask";
 
 export type SiteAgentPlan = {
   explanation: string;
-  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment";
+  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment" | "escalation";
   summary: {
     totalPages: number;
     affectedPages: number;
@@ -3546,12 +3546,50 @@ export type SiteAgentPlan = {
   };
   pages: SiteAgentPagePlan[];
   structuralActions?: SiteAgentStructuralAction[];
+  documentHtmlUpdates?: Record<string, { html: string; label: string }>;
   editorCommand?: "undo" | "redo" | "discard" | null;
+  escalation?: {
+    id: string;
+    reportNumber: string;
+    reason: string;
+    category: string;
+    agentNotes: string;
+    status: string;
+    createdAt: string;
+    siteId: string;
+    pageTitle?: string | null;
+  };
   requiresApproval?: boolean;
   approvalReasons?: string[];
   riskLevel?: "low" | "medium" | "high";
   costUsd?: number;
   model?: string;
+};
+
+export type WebsiteEscalationReportItem = {
+  id: string;
+  reportNumber: string;
+  siteId: string;
+  pageId: string | null;
+  pageTitle: string | null;
+  userPrompt: string;
+  reason: "OUT_OF_SCOPE" | "UNSUPPORTED_CAPABILITY" | "EXECUTION_FAILURE" | "OWNER_REQUESTED";
+  category: "custom_backend" | "third_party_integration" | "crm_or_leads" | "billing_or_account" | "complex_engineering" | "other";
+  agentNotes: string;
+  userEmail: string | null;
+  userName: string | null;
+  status: "OPEN" | "IN_REVIEW" | "RESOLVED";
+  ownerNotes: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  createdAt: string;
+  site?: { id: string; name: string; publicUrl?: string | null };
+};
+
+export type WebsiteEscalationListResponse = {
+  openCount: number;
+  total: number;
+  items: WebsiteEscalationReportItem[];
 };
 
 export type SiteAgentApplyResult = {

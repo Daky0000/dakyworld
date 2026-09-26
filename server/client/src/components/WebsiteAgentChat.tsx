@@ -1069,8 +1069,27 @@ export function WebsiteAgentChat({
                         </div>
                       )}
 
-                      {/* Action / Approval Footer */}
-                      {!msg.applied ? (
+                      {/* Action / Approval / Escalation Footer */}
+                      {msg.plan.actionKind === "escalation" || msg.plan.escalation ? (
+                        <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-ink">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 font-bold text-xs text-amber-950">
+                              <span>📋 Owner Escalation Report</span>
+                              {msg.plan.escalation?.reportNumber && (
+                                <span className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-mono text-white">
+                                  #{msg.plan.escalation.reportNumber}
+                                </span>
+                              )}
+                            </div>
+                            <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                              Dispatched
+                            </span>
+                          </div>
+                          <p className="mt-1.5 text-[11px] text-amber-900 leading-relaxed">
+                            This report has been filed directly to the business owner and leadership team. They have full context of your request and will follow up with you.
+                          </p>
+                        </div>
+                      ) : !msg.applied ? (
                         <div className="mt-3 flex items-center justify-end gap-2">
                           <button
                             type="button"
@@ -1145,20 +1164,22 @@ export function WebsiteAgentChat({
                     </div>
                   )}
 
-                  {/* Developer Handoff Escalation Card when a request requires custom code or couldn't be auto-planned */}
+                  {/* Owner & Developer Handoff Escalation Card when a request requires custom code or couldn't be auto-planned */}
                   {msg.sender === "agent" &&
                     msg.id !== "welcome" &&
+                    msg.plan?.actionKind !== "escalation" &&
+                    !msg.plan?.escalation &&
                     (!msg.plan || Boolean(msg.error)) && (
                       <div className="mt-2.5 rounded-xl border border-line bg-white p-2.5 text-ink shadow-2xs">
                         {msg.escalatedTicketId ? (
                           <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-positive-text">
                             <IconCheck />
-                            <span>Sent to your Dakyworld Developer team (Ticket #{msg.escalatedTicketId.slice(0, 8)}). We have full context of this page.</span>
+                            <span>Report filed to owner & developer team (Report #{msg.escalatedTicketId.slice(0, 12)}). We have full context of this page.</span>
                           </div>
                         ) : (
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-[10px] text-muted">
-                              Need a custom layout or code change?
+                              Need business owner or developer help?
                             </span>
                             <button
                               type="button"
@@ -1169,10 +1190,10 @@ export function WebsiteAgentChat({
                                   msg.userPrompt || msg.text,
                                 )
                               }
-                              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-sunken px-2.5 py-1 text-[10px] font-semibold text-ink hover:border-blue hover:text-blue transition disabled:opacity-50"
+                              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-sunken px-2.5 py-1 text-[10px] font-semibold text-ink hover:border-amber-500 hover:text-amber-800 transition disabled:opacity-50"
                             >
                               <IconMessageSquare size={12} />
-                              <span>{msg.escalating ? "Sending…" : "Hand off to Developer"}</span>
+                              <span>{msg.escalating ? "Sending…" : "Report to Owner"}</span>
                             </button>
                           </div>
                         )}

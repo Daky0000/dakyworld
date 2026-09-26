@@ -30,6 +30,7 @@ import { ensureHostedAddress, registerWebsiteHosting } from "../services/website
 import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
 import { registerWebsiteSetupAssistance } from "../services/websiteSetupAssistance.js";
 import { registerWebsiteClientPortal } from "../services/websiteClientPortal.js";
+import { registerWebsiteEscalationRoutes } from "../services/websiteEscalationService.js";
 import { z } from "zod";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -95,6 +96,7 @@ registerWebsiteHosting(websiteRouter);
 registerSubscriberSelfService(websiteRouter);
 registerWebsiteSetupAssistance(websiteRouter);
 registerWebsiteClientPortal(websiteRouter);
+registerWebsiteEscalationRoutes(websiteRouter);
 
 // Tier feature enforcement across SEO, AI Assistant, AI Builder Agent, and Source Editor routes
 websiteRouter.use((req, _res, next) => {

@@ -4296,6 +4296,7 @@ model Site {
   pages          SitePage[]
   sharedElements SharedElement[]
   publishJobs    PublishJob[]
+  escalations    WebsiteEscalation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4916,3 +4917,33 @@ model WebsiteUsage {
 
   @@unique([userId, period])
 }
+
+/// Escalation reports from the Website Builder Agent to the business owner.
+///
+/// When a client requests a task outside the builder scope (such as CRM operations,
+/// custom backend microservices, or external integrations) or when the builder agent
+/// cannot fulfill a requested layout change, an escalation report is filed directly
+/// to the owner queue so human engineers can assist the client.
+model WebsiteEscalation {
+  id           String    @id @default(cuid())
+  site         Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId       String
+  pageId       String?
+  pageTitle    String?
+  userPrompt   String
+  reason       String    // "OUT_OF_SCOPE" | "UNSUPPORTED_CAPABILITY" | "EXECUTION_FAILURE" | "OWNER_REQUESTED"
+  category     String    // "custom_backend" | "third_party_integration" | "crm_or_leads" | "billing_or_account" | "complex_engineering" | "other"
+  agentNotes   String
+  userEmail    String?
+  userName     String?
+  status       String    @default("OPEN") // "OPEN" | "IN_REVIEW" | "RESOLVED"
+  ownerNotes   String?
+  resolvedAt   DateTime?
+  resolvedBy   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([siteId, status])
+  @@index([status, createdAt])
+}
+
