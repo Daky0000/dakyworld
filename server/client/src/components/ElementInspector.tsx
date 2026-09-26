@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CssValueField, UnitPillSelector } from "./CssValueField";
 import {
   ALIGN_ICONS, BORDER_STYLES, CASES, COLOURS, ColourField, DIRECTION_ICONS, DISPLAY_ICONS, EXTRA_LABEL, EXTRA_SEED,
@@ -222,7 +222,7 @@ export function ElementInspector({
    * sixty-two pixels; the control keeps the full one as its accessible name, so
    * a screen reader is never handed the abbreviation.
    */
-  const Text = ({ property, label, short }: { property: string; label: string; short?: string }) => (
+  const renderText = ({ property, label, short }: { property: string; label: string; short?: string }) => (
     <Row
       label={short ?? label}
       rail={rail(property)}
@@ -233,7 +233,7 @@ export function ElementInspector({
   );
 
   /** A fixed set of choices, always including whatever the site already uses. */
-  const Choice = ({ property, label, options }: { property: string; label: string; options: string[] | { label: string; value: string }[] }) => {
+  const renderChoice = ({ property, label, options }: { property: string; label: string; options: string[] | { label: string; value: string }[] }) => {
     const current = value(property);
     const list = (options as (string | { label: string; value: string })[]).map((option) =>
       typeof option === "string" ? { label: option, value: option } : option,
@@ -261,10 +261,10 @@ export function ElementInspector({
    * puzzle, and a value the site set that has no picture falls back to one too,
    * because a control that cannot show the current value is worse than a menu.
    */
-  const Pictures = ({ property, label, icons, options }: { property: string; label: string; icons: Record<string, React.ReactNode>; options: string[] }) => {
+  const renderPictures = ({ property, label, icons, options }: { property: string; label: string; icons: Record<string, React.ReactNode>; options: string[] }) => {
     const effective = value(property).effective.trim();
     const drawable = options.filter((option) => icons[option]);
-    if (effective && !drawable.includes(effective)) return <Choice property={property} label={label} options={options} />;
+    if (effective && !drawable.includes(effective)) return renderChoice({ property, label, options });
     return (
       <Row
         label={label}
@@ -294,7 +294,7 @@ export function ElementInspector({
    * from different places, and saying "Website" over a width the site set and a
    * height somebody changed would be false about half of it.
    */
-  const Pair = ({ label, first, second }: { label: string; first: { property: string; label: string; prefix: string }; second: { property: string; label: string; prefix: string } }) => {
+  const renderPair = ({ label, first, second }: { label: string; first: { property: string; label: string; prefix: string }; second: { property: string; label: string; prefix: string } }) => {
     // An empty label keeps the column, so a second pair under the first lines up
     // with it rather than shifting left by sixty-two pixels.
     const left = value(first.property);
@@ -336,7 +336,7 @@ export function ElementInspector({
     );
   };
 
-  const Colour = ({ property, label }: { property: string; label: string }) => (
+  const renderColour = ({ property, label }: { property: string; label: string }) => (
     <Row
       label={label}
       rail={rail(property)}
@@ -357,7 +357,7 @@ export function ElementInspector({
   const decoration = value("text-decoration").effective;
   const fontOptions = [...FONTS.filter((font) => font.value), ...(fonts ?? []).filter((face) => !FONTS.some((font) => font.value === face)).map((face) => ({ label: face, value: face }))];
 
-  const SideField = ({ property, side, unitOverride }: { property: "padding" | "margin"; side: (typeof SIDES)[number]; unitOverride: string }) => {
+  const renderSideField = ({ property, side, unitOverride }: { property: "padding" | "margin"; side: (typeof SIDES)[number]; unitOverride: string }) => {
     const current = value(`${property}-${side}`);
     return (
       <div className="relative min-w-0">
@@ -383,6 +383,19 @@ export function ElementInspector({
       </div>
     );
   };
+
+  // Stable component types keep input DOM nodes and caret positions while the
+  // latest render functions read current inspector values after each change.
+  const renderers = useRef({ Text: renderText, Choice: renderChoice, Pictures: renderPictures, Pair: renderPair, Colour: renderColour, SideField: renderSideField });
+  renderers.current = { Text: renderText, Choice: renderChoice, Pictures: renderPictures, Pair: renderPair, Colour: renderColour, SideField: renderSideField };
+  const { Text, Choice, Pictures, Pair, Colour, SideField } = useMemo(() => ({
+    Text: (props: Parameters<typeof renderText>[0]) => renderers.current.Text(props),
+    Choice: (props: Parameters<typeof renderChoice>[0]) => renderers.current.Choice(props),
+    Pictures: (props: Parameters<typeof renderPictures>[0]) => renderers.current.Pictures(props),
+    Pair: (props: Parameters<typeof renderPair>[0]) => renderers.current.Pair(props),
+    Colour: (props: Parameters<typeof renderColour>[0]) => renderers.current.Colour(props),
+    SideField: (props: Parameters<typeof renderSideField>[0]) => renderers.current.SideField(props),
+  }), []);
 
   /**
    * Padding and margin, drawn as the box they are, with the unit selector (PX, %, EM, REM) at the top.

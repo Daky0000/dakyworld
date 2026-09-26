@@ -145,7 +145,7 @@ export function createWebsiteAccessGate(reader = accessReader) {
       if (/^\/tier-status(?:\/|$)/.test(req.path)) {
         return;
       }
-      if (/^\/(?:sites|overview)\/?$/.test(req.path) && ["GET", "HEAD"].includes(req.method)) {
+      if (/^\/(?:sites|overview|assets)\/?$/.test(req.path) && ["GET", "HEAD"].includes(req.method)) {
         if (!websiteCapabilities(principal, null).view && !(await reader.hasMembership(principal.id))) {
           // Empty collections are useful for unassigned customers and reveal no site data.
           if (!principal.external) throw new WebsiteError(403, "This account has not been given access to a website.");

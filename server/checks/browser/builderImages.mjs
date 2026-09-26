@@ -131,6 +131,8 @@ try {
   releaseFirstSave();
   await page.getByText(/Draft saved.*1 unpublished change/, { exact: false }).waitFor();
   assert.equal(document.draft.values["hero.image"].value, canonical);
+  assert.equal(document.draft.values["hero.image"].style, undefined, "Replacing a sized image keeps its existing style");
+  assert.deepEqual(await frameImage().evaluate(img => [Math.round(img.getBoundingClientRect().width), Math.round(img.getBoundingClientRect().height)]), [240, 120], "Replacement keeps the original image dimensions");
   await assertImageLoaded("Autosave must leave the replacement visible");
 
   async function switchMode(name) {
@@ -172,8 +174,19 @@ try {
   await library.getByRole("button", { name: /^Site Library & Upload/ }).click();
   await library.getByTitle("Use replacement.png", { exact: true }).click();
   await assertImageLoaded("Selecting an existing uploaded asset must display immediately");
+  await page.getByRole("tab", { name: "Style", exact: true }).click();
+  const focalPoint = page.getByRole("textbox", { name: "Focal point" });
+  await focalPoint.fill("50% 50%");
+  await focalPoint.press("End");
+  await focalPoint.type(" ");
+  assert.ok(await focalPoint.evaluate(input => document.activeElement === input), "Style input keeps focus after typing");
+  const width = page.getByRole("spinbutton", { name: "Width" }).first();
+  await width.fill("2");
+  await width.type("40");
+  assert.equal(await width.inputValue(), "240", "Numeric style input accepts continuous typing");
+  assert.ok(await width.evaluate(input => document.activeElement === input), "Numeric style input keeps focus after every change");
   assert.deepEqual(errors, []);
-  console.log("builderImages: upload, immediate image and thumbnail, autosave, mode switch, ready replay, background, canonical draft URLs and reopening passed.");
+  console.log("builderImages: replacement sizing, editor focus, upload preview, autosave, mode switch, ready replay, background, and reopening passed.");
 } finally {
   releaseFirstSave();
   await browser.close();

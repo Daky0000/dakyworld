@@ -1048,8 +1048,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         } else {
           const htmlEl = el as HTMLElement;
           htmlEl.style.backgroundImage = previewUrl ? `url('${previewUrl.replace(/['"\\]/g, "")}')` : "none";
-          htmlEl.style.backgroundSize = "cover";
-          htmlEl.style.backgroundPosition = "center";
           el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
             if (doc?.defaultView) {
               const bg = doc.defaultView.getComputedStyle(desc).backgroundImage;
@@ -2343,8 +2341,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             if (assetTargetMode === "background") {
               const map = parseStyle(pickedStyle ?? "");
               map["background-image"] = `url('${asset.url.replace(/['"\\]/g, "")}')`;
-              if (!map["background-size"]) map["background-size"] = "cover";
-              if (!map["background-position"]) map["background-position"] = "center";
               changePickedStyle(writeStyle(map), true);
               // Also sync any child background layer or cover <img> inside the container in the live iframe
               try {
@@ -2352,8 +2348,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 const el = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
                 if (el && doc?.defaultView) {
                   el.style.backgroundImage = previewBackground;
-                  el.style.backgroundSize = map["background-size"] || "cover";
-                  el.style.backgroundPosition = map["background-position"] || "center";
+                  if (map["background-size"]) el.style.backgroundSize = map["background-size"];
+                  if (map["background-position"]) el.style.backgroundPosition = map["background-position"];
                   el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
                     const bg = doc.defaultView!.getComputedStyle(desc).backgroundImage;
                     if (bg && bg !== "none" && /url\(/i.test(bg)) {
@@ -2365,7 +2361,25 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             } else if (picked.kind === "icon") {
               change(picked.id, { ...edits[picked.id], icon: { src: asset.url }, value: asset.url }, { commit: true });
             } else {
-              change(picked.id, { ...edits[picked.id], value: asset.url, alt: asset.alt || edits[picked.id]?.alt || picked.alt }, { commit: true });
+              const previous = edits[picked.id] ?? {};
+              const next: FieldEdit = { ...previous, value: asset.url, alt: asset.alt || previous.alt || picked.alt };
+              // An unsized <img> otherwise adopts the new file's natural size.
+              // Keep the old box and its crop when replacing the source.
+              const image = frame.current?.contentDocument?.querySelector(`[data-dw-field="${CSS.escape(picked.id)}"] img, img[data-dw-field="${CSS.escape(picked.id)}"]`) as HTMLImageElement | null;
+              if (picked.kind === "image" && device === "desktop" && image && !image.hasAttribute("width") && !image.hasAttribute("height") && !image.style.width && !image.style.height) {
+                const sizing = parseStyle(pickedStyle ?? "");
+                if (!sizing.width && !sizing.height) {
+                  const bounds = image.getBoundingClientRect();
+                  if (bounds.width > 0 && bounds.height > 0) {
+                    sizing.width = `${Math.round(bounds.width)}px`;
+                    sizing.height = `${Math.round(bounds.height)}px`;
+                    sizing["max-width"] = sizing["max-width"] ?? "100%";
+                    sizing["object-fit"] = sizing["object-fit"] ?? computed["object-fit"] ?? "fill";
+                    next.style = writeStyle(sizing);
+                  }
+                }
+              }
+              change(picked.id, next, { commit: true });
             }
             setAssetModalOpen(false);
           }}
@@ -3862,8 +3876,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                         delete nextMap["background-image"];
                                       } else {
                                         nextMap["background-image"] = `url('${v.replace(/['"\\]/g, "")}')`;
-                                        if (!nextMap["background-size"]) nextMap["background-size"] = "cover";
-                                        if (!nextMap["background-position"]) nextMap["background-position"] = "center";
                                       }
                                       changePickedStyle(writeStyle(nextMap), true);
                                     }}

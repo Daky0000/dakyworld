@@ -77,6 +77,7 @@ export function WebsiteAssetLibrary({
     },
     onSuccess: async (asset) => {
       await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+      await qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
       notifyTierStatusChanged();
       setFile(null);
       setUploadKey((key) => key + 1);
@@ -93,6 +94,7 @@ export function WebsiteAssetLibrary({
     },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+      await qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
       notifyTierStatusChanged();
     },
   });
@@ -128,6 +130,7 @@ export function WebsiteAssetLibrary({
         data,
       });
       await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+      await qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
       notifyTierStatusChanged();
     } catch {
       // Ignore CORS fetch errors on external images; user can still select directly by URL
@@ -389,30 +392,44 @@ export function WebsiteAssetLibrary({
 
 export function WebsiteAssets() {
   const [selected, setSelected] = useState("");
+  const [search, setSearch] = useState("");
   const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
-  const id = selected || sites.data?.[0]?.id;
+  const allAssets = useQuery({ queryKey: ["website", "assets", "all"], queryFn: () => api.get<(Asset & { siteId: string; siteName: string; size: number })[]>("/website/assets") });
+  const shown = allAssets.data?.filter((asset) =>
+    (!selected || asset.siteId === selected) &&
+    `${asset.filename} ${asset.alt} ${asset.siteName}`.toLowerCase().includes(search.trim().toLowerCase()),
+  );
   return (
-    <div>
-      <PageHeader title="Images" subtitle="Your website's uploaded images, ready to use in the visual editor." />
-      <select
-        aria-label="Website"
-        value={id ?? ""}
-        onChange={(e) => setSelected(e.target.value)}
-        className="mb-6 h-10 rounded-xl border border-line bg-white px-3 text-sm"
-      >
-        {sites.data?.map((site) => (
-          <option key={site.id} value={site.id}>
-            {site.name}
-          </option>
-        ))}
-      </select>
-      {id ? (
-        <div className="max-w-3xl">
-          <WebsiteAssetLibrary key={id} siteId={id} />
-        </div>
-      ) : (
-        <p className="text-sm text-muted">Connect a website to manage its images.</p>
-      )}
+    <div className="space-y-5">
+      <PageHeader title="Assets" subtitle="All images uploaded to websites you can access." />
+      <div className="flex flex-wrap gap-3">
+        <select aria-label="Filter by website" value={selected} onChange={(e) => setSelected(e.target.value)} className="h-10 rounded-xl border border-line bg-white px-3 text-sm">
+          <option value="">All websites</option>
+          {sites.data?.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+        </select>
+        <input aria-label="Search assets" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search images" className="h-10 rounded-xl border border-line bg-white px-3 text-sm" />
+      </div>
+      {allAssets.isLoading && <p className="text-sm text-muted">Loading assets…</p>}
+      {allAssets.error && <p role="alert" className="text-sm text-danger-text">{(allAssets.error as Error).message}</p>}
+      {shown && <p className="text-xs text-muted">{shown.length} {shown.length === 1 ? "image" : "images"}</p>}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        {shown?.map((asset) => <article key={asset.id} className="overflow-hidden rounded-xl border border-line bg-white">
+          <img src={asset.preview} alt={asset.alt || asset.filename} loading="lazy" className="h-36 w-full bg-sunken object-contain" />
+          <div className="space-y-1 p-3 text-xs">
+            <p className="truncate font-semibold text-ink" title={asset.filename}>{asset.filename}</p>
+            <p className="truncate text-muted">{asset.siteName}</p>
+            <p className="text-muted">{(asset.size / 1024).toFixed(0)} KB</p>
+          </div>
+        </article>)}
+      </div>
+      {shown?.length === 0 && <p className="text-sm text-muted">{search || selected ? "No images match these filters." : "No uploaded images yet. Select a website below to upload one."}</p>}
+      {sites.data?.length ? <div className="max-w-3xl border-t border-line pt-5">
+        <h2 className="mb-3 text-sm font-semibold text-ink">Upload and manage website images</h2>
+        <select aria-label="Website for upload" value={selected || sites.data[0].id} onChange={(e) => setSelected(e.target.value)} className="mb-4 h-10 rounded-xl border border-line bg-white px-3 text-sm">
+          {sites.data.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+        </select>
+        <WebsiteAssetLibrary key={selected || sites.data[0].id} siteId={selected || sites.data[0].id} />
+      </div> : <p className="text-sm text-muted">Connect a website to upload images.</p>}
     </div>
   );
 }

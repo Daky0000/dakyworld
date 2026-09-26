@@ -10,7 +10,7 @@ import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets.js";
-import { assertWebsiteConnectionChange, canManageWebsiteConnection } from "./websiteAccess.js";
+import { assertWebsiteConnectionChange, canManageWebsiteConnection, websiteSiteFilter } from "./websiteAccess.js";
 import {
   assertImportAllowance,
   assertMediaStorageAllowance,
@@ -79,6 +79,20 @@ type Access = {
 
 export function registerWebsiteManagement(router: Router, access: Access) {
   const handler = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: (error?: unknown) => void) => { void fn(req, res).catch(next); };
+
+  router.get("/assets", handler(async (req, res) => {
+    const assets = await prisma.siteAsset.findMany({
+      where: { site: websiteSiteFilter(req) },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { id: true, siteId: true, filename: true, repoPath: true, alt: true, contentType: true, size: true, createdAt: true, site: true },
+    });
+    res.json(assets.map(({ site, ...asset }) => ({
+      ...asset,
+      siteName: site.name,
+      url: assetUrl(site, asset.repoPath),
+      preview: `/api/website/sites/${asset.siteId}/assets/${asset.id}/content`,
+    })));
+  }));
 
   router.get("/sites/:siteId/assets", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
