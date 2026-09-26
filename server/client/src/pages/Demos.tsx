@@ -19,6 +19,7 @@ import {
   StatTile,
 } from "../components/ui";
 import { DemoAnalyticsModal } from "../components/DemoAnalyticsModal";
+import { IconBarChart, IconClock, IconFlame, IconGlobe } from "../components/WebsiteIcons";
 
 function formatDuration(seconds: number): string {
   if (!seconds || seconds <= 0) return "0s";
@@ -403,18 +404,20 @@ export function Demos() {
                       <div className="mt-1 flex flex-wrap items-center justify-end gap-1.5 text-[11px]">
                         {demo.analytics.topCountry && (
                           <span className="inline-flex items-center gap-1 rounded-md border border-line/60 bg-surface px-1.5 py-0.5 font-medium text-ink">
-                            <span>{demo.analytics.topCountry.flag}</span>
+                            <IconGlobe size={11} className="text-muted" />
                             <span>{demo.analytics.topCountry.name}</span>
                           </span>
                         )}
                         {demo.analytics.avgDurationSeconds > 0 && (
-                          <span className="rounded-md border border-line/60 bg-surface px-1.5 py-0.5 font-mono text-ink">
-                            ⏱ {formatDuration(demo.analytics.avgDurationSeconds)}
+                          <span className="inline-flex items-center gap-1 rounded-md border border-line/60 bg-surface px-1.5 py-0.5 font-mono text-ink">
+                            <IconClock size={11} className="text-muted" />
+                            <span>{formatDuration(demo.analytics.avgDurationSeconds)}</span>
                           </span>
                         )}
                         {demo.analytics.totalClicks > 0 && (
-                          <span className="rounded-md bg-rose-50 px-1.5 py-0.5 font-bold text-rose-700">
-                            🔥 {demo.analytics.totalClicks} click{demo.analytics.totalClicks === 1 ? "" : "s"}
+                          <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 font-bold text-rose-700">
+                            <IconFlame size={11} />
+                            <span>{demo.analytics.totalClicks} click{demo.analytics.totalClicks === 1 ? "" : "s"}</span>
                           </span>
                         )}
                       </div>
@@ -439,7 +442,7 @@ export function Demos() {
                     onClick={() => setAnalyticsDemo(demo)}
                     className="gap-1.5 font-semibold"
                   >
-                    <span>📊</span>
+                    <IconBarChart size={13} />
                     <span>Analytics & Heatmap</span>
                     {demo.views > 0 && (
                       <span className="ml-1 rounded-full bg-black/10 px-1.5 py-0.2 text-[10px] font-bold">

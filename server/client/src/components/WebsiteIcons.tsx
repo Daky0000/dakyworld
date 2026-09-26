@@ -433,3 +433,155 @@ export function IconAlertCircle(props: IconProps) {
   );
 }
 
+export function IconCreditCard(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+      <line x1="1" y1="10" x2="23" y2="10" />
+    </BaseSvg>
+  );
+}
+
+export function IconBarChart(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <line x1="18" y1="20" x2="18" y2="10" />
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" />
+    </BaseSvg>
+  );
+}
+
+export function IconFlame(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+    </BaseSvg>
+  );
+}
+
+export function IconGlobe(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </BaseSvg>
+  );
+}
+
+export function IconAward(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <circle cx="12" cy="8" r="7" />
+      <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
+    </BaseSvg>
+  );
+}
+
+export function IconLock(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </BaseSvg>
+  );
+}
+
+export function IconImage(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <polyline points="21 15 16 10 5 21" />
+    </BaseSvg>
+  );
+}
+
+export function IconLink(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </BaseSvg>
+  );
+}
+
+export function IconClock(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </BaseSvg>
+  );
+}
+
+export function IconMail(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+      <polyline points="22,6 12,13 2,6" />
+    </BaseSvg>
+  );
+}
+
+export function IconRocket(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
+      <path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
+      <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+      <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+    </BaseSvg>
+  );
+}
+
+export function IconBot(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <rect x="3" y="11" width="18" height="10" rx="2" />
+      <circle cx="12" cy="5" r="2" />
+      <path d="M12 7v4" />
+      <line x1="8" y1="16" x2="8" y2="16" />
+      <line x1="16" y1="16" x2="16" y2="16" />
+    </BaseSvg>
+  );
+}
+
+export function IconUsers(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </BaseSvg>
+  );
+}
+
+export function IconMove(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <polyline points="5 9 2 12 5 15" />
+      <polyline points="9 5 12 2 15 5" />
+      <polyline points="15 19 12 22 9 19" />
+      <polyline points="19 9 22 12 19 15" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <line x1="12" y1="2" x2="12" y2="22" />
+    </BaseSvg>
+  );
+}
+
+export function IconMaximize(props: IconProps) {
+  return (
+    <BaseSvg {...props}>
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </BaseSvg>
+  );
+}
+
+
+

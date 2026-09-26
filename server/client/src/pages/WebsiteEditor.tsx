@@ -47,9 +47,11 @@ import {
   IconEyeOff,
   IconFileText,
   IconHistory,
+  IconImage,
   IconLayers,
   IconLayout,
   IconList,
+  IconLock,
   IconMessageSquare,
   IconMoon,
   IconMoreHorizontal,
@@ -440,8 +442,8 @@ function FieldRow({
                 onError={(event) => ((event.target as HTMLImageElement).style.visibility = "hidden")}
               />
             ) : (
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-line bg-cream text-lg text-muted">
-                🖼
+              <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-line bg-cream text-muted">
+                <IconImage size={24} />
               </div>
             )}
             {onOpenMediaLibrary && !readOnly && (
@@ -3179,19 +3181,31 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     onClick={() => setInspectorTab(tab)}
                     title={locked ? `Requires Pro ($10 ($16)/mo) or Business ($25 ($45)/mo) tier` : undefined}
                   >
-                    {tab === "seo"
-                      ? locked
-                        ? "🔒 SEO"
-                        : "SEO"
-                      : tab === "theme"
-                        ? locked
-                          ? "🔒 Theme"
-                          : "Theme"
-                        : tab === "layout"
-                          ? "◫ Layout"
-                          : tab === "style" && picked?.kind === "container"
-                            ? "◐ Style"
-                            : tab[0].toUpperCase() + tab.slice(1)}
+                    {tab === "seo" ? (
+                      locked ? (
+                        <span className="inline-flex items-center gap-1">
+                          <IconLock size={11} />
+                          <span>SEO</span>
+                        </span>
+                      ) : (
+                        "SEO"
+                      )
+                    ) : tab === "theme" ? (
+                      locked ? (
+                        <span className="inline-flex items-center gap-1">
+                          <IconLock size={11} />
+                          <span>Theme</span>
+                        </span>
+                      ) : (
+                        "Theme"
+                      )
+                    ) : tab === "layout" ? (
+                      "Layout"
+                    ) : tab === "style" && picked?.kind === "container" ? (
+                      "Style"
+                    ) : (
+                      tab[0].toUpperCase() + tab.slice(1)
+                    )}
                   </button>
                 );
               })}
@@ -3200,8 +3214,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               {inspectorTab === "seo" && tierStatus && !tierStatus.features.seoInspector ? (
                 <div className="space-y-3 p-4 text-left">
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
-                    <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                      🔒 Feature Locked on {tierStatus.tierName} ({tierStatus.pricing.priceDisplay}/mo)
+                    <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-400">
+                      <IconLock size={13} />
+                      <span>Feature Locked on {tierStatus.tierName} ({tierStatus.pricing.priceDisplay}/mo)</span>
                     </div>
                     <p className="mt-1.5 text-xs leading-relaxed text-ink">
                       The <strong>SEO Inspector &amp; Alt-Text Auto-Fixer</strong> is available starting on the{" "}
@@ -3220,8 +3235,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               ) : inspectorTab === "theme" && tierStatus && !tierStatus.features.themeSettings ? (
                 <div className="space-y-3 p-4 text-left">
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
-                    <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                      🔒 Feature Locked on {tierStatus.tierName} ({tierStatus.pricing.priceDisplay}/mo)
+                    <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-400">
+                      <IconLock size={13} />
+                      <span>Feature Locked on {tierStatus.tierName} ({tierStatus.pricing.priceDisplay}/mo)</span>
                     </div>
                     <p className="mt-1.5 text-xs leading-relaxed text-ink">
                       The <strong>Global Theme Color Palette &amp; Page Surface Controls</strong> are unlocked on{" "}
@@ -3581,8 +3597,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                   />
                                 ) : (
                                   <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted">
-                                    <span className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-white text-lg shadow-2xs">
-                                      🖼
+                                    <span className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-white text-muted shadow-2xs">
+                                      <IconImage size={20} />
                                     </span>
                                     <span className="text-xs font-semibold text-ink-2">
                                       {isIcon ? "Choose Logo / Icon Image" : "Choose Image"}

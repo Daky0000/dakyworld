@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { IconCheck, IconLock } from "./WebsiteIcons";
 
 export interface WebsiteTierFeatures {
   visualEditor: boolean;
@@ -490,12 +491,14 @@ export function WebsiteTierStatusBanner({
                     <strong>{tier.limits.monthlyImports ?? "Unlimited"}/mo</strong> • Edits:{" "}
                     <strong>{tier.limits.monthlyEdits ?? "Unlimited"}/mo</strong>
                   </div>
-                  <div style={{ fontSize: "0.68rem", color: "#34D399" }}>
-                    ✓ {tier.featureSummary.slice(0, 4).join(" • ")}
+                  <div style={{ fontSize: "0.68rem", color: "#34D399", display: "flex", alignItems: "center", gap: 5 }}>
+                    <IconCheck size={11} />
+                    <span>{tier.featureSummary.slice(0, 4).join(" • ")}</span>
                   </div>
                   {tier.lockedFeatures.length > 0 && (
-                    <div style={{ fontSize: "0.67rem", color: "#F87171", marginTop: 4 }}>
-                      🔒 Locked: {tier.lockedFeatures.join(", ")}
+                    <div style={{ fontSize: "0.67rem", color: "#F87171", marginTop: 4, display: "flex", alignItems: "center", gap: 5 }}>
+                      <IconLock size={11} />
+                      <span>Locked: {tier.lockedFeatures.join(", ")}</span>
                     </div>
                   )}
                 </div>

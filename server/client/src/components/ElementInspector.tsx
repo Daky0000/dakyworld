@@ -10,6 +10,7 @@ import {
   isBrowserDefault, meaningfulValue, positionControls, readableValue,
   type Device, type ElementFacts, type InspectorValue, type SectionKey,
 } from "../lib/elementInspector";
+import { IconImage, IconLink } from "./WebsiteIcons";
 
 /**
  * One contextual inspector, in place of a layout panel and a style panel that
@@ -825,7 +826,7 @@ export function ElementInspector({
                             gapsLinked ? "bg-ink text-white" : "bg-white text-muted hover:text-ink"
                           }`}
                         >
-                          🔗
+                          <IconLink size={12} />
                         </button>
                       </div>
                     </div>
@@ -1112,8 +1113,8 @@ export function ElementInspector({
                       />
                     ) : (
                       <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted">
-                        <span className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-white text-base shadow-2xs">
-                          🖼
+                        <span className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-white text-muted shadow-2xs">
+                          <IconImage size={18} />
                         </span>
                         <span className="text-[11px] font-semibold text-ink-2">Click to Choose Image</span>
                         <span className="text-[10px] text-muted">From HTML Page Media or Upload</span>

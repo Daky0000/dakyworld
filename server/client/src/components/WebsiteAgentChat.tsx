@@ -1,6 +1,16 @@
 import { useState, useRef, useEffect } from "react";
 import { api } from "../lib/api";
-import { IconCheck, IconMessageSquare, IconUndo, IconUploadCloud } from "./WebsiteIcons";
+import {
+  IconAlertCircle,
+  IconCheck,
+  IconCopy,
+  IconFileText,
+  IconMessageSquare,
+  IconMove,
+  IconTrash,
+  IconUndo,
+  IconUploadCloud,
+} from "./WebsiteIcons";
 import type {
   FieldEdit,
   SiteAgentPlan,
@@ -987,8 +997,9 @@ export function WebsiteAgentChat({
                         msg.plan.approvalReasons &&
                         msg.plan.approvalReasons.length > 0 && (
                           <div className="mb-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-950">
-                            <div className="font-semibold flex items-center gap-1">
-                              <span>⚠️ Permission Requested:</span>
+                            <div className="font-semibold flex items-center gap-1.5 text-amber-950">
+                              <IconAlertCircle size={14} className="text-amber-600 shrink-0" />
+                              <span>Permission Requested:</span>
                             </div>
                             <ul className="mt-1 list-disc pl-4 space-y-0.5 text-[10px]">
                               {msg.plan.approvalReasons.map((reason, idx) => (
@@ -1006,12 +1017,23 @@ export function WebsiteAgentChat({
                               key={idx}
                               className="flex items-center justify-between rounded-lg bg-sunken px-2.5 py-1.5 text-[11px]"
                             >
-                              <span className="font-medium text-ink">
-                                {sa.kind === "remove"
-                                  ? "🗑️ Delete section/element"
-                                  : sa.kind === "duplicate"
-                                    ? "📋 Duplicate section/element"
-                                    : `↕️ Move ${sa.kind}`}
+                              <span className="font-medium text-ink inline-flex items-center gap-1.5">
+                                {sa.kind === "remove" ? (
+                                  <>
+                                    <IconTrash size={12} className="text-rose-600 shrink-0" />
+                                    <span>Delete section/element</span>
+                                  </>
+                                ) : sa.kind === "duplicate" ? (
+                                  <>
+                                    <IconCopy size={12} className="text-blue shrink-0" />
+                                    <span>Duplicate section/element</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <IconMove size={12} className="text-muted shrink-0" />
+                                    <span>Move {sa.kind}</span>
+                                  </>
+                                )}
                               </span>
                               <span className="text-[10px] text-muted truncate max-w-[140px]">
                                 {sa.label}
@@ -1074,7 +1096,8 @@ export function WebsiteAgentChat({
                         <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-ink">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-1.5 font-bold text-xs text-amber-950">
-                              <span>📋 Owner Escalation Report</span>
+                              <IconFileText size={14} className="text-amber-800 shrink-0" />
+                              <span>Owner Escalation Report</span>
                               {msg.plan.escalation?.reportNumber && (
                                 <span className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-mono text-white">
                                   #{msg.plan.escalation.reportNumber}

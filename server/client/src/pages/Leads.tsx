@@ -22,6 +22,7 @@ import {
 } from "../components/LeadColumns";
 import { Button, Card, EmptyState, Field, Modal, Money, PageHeader, RelativeTime, StatGrid, StatTile } from "../components/ui";
 import { TagChip, TagManager, TagPicker, useLeadTags, useTagLookup } from "../components/LeadTags";
+import { IconTarget } from "../components/WebsiteIcons";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
 const SOURCES = [
@@ -1100,9 +1101,9 @@ function LeadListCards({
                           onClick={() => onFilterToList(block.key)}
                           title="Filter the whole screen to this list"
                           aria-label={`Filter to ${block.label}`}
-                          className="rounded-full border border-line px-2.5 py-1 font-mono text-xs text-muted transition hover:border-ink/40 hover:text-ink active:scale-[0.96]"
+                          className="inline-flex items-center justify-center rounded-full border border-line px-2 py-1 text-xs text-muted transition hover:border-ink/40 hover:text-ink active:scale-[0.96]"
                         >
-                          ⌖
+                          <IconTarget size={12} />
                         </button>
                       )}
                       <button

@@ -9,6 +9,7 @@ import { LeadAuditSection } from "./LeadAudit";
 import { ProposalWriter } from "./ProposalWriter";
 import { DemoAnalyticsModal } from "./DemoAnalyticsModal";
 import { Badge, Button, Drawer, Field, Money, RelativeTime, ScoreBar } from "./ui";
+import { IconBarChart } from "./WebsiteIcons";
 
 const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
 const COMM_TYPES = ["CALL", "EMAIL", "MESSAGE", "MEETING"];
@@ -642,9 +643,10 @@ function DemoSection({ lead, onDone }: { lead: Lead; onDone: () => void }) {
                 <button
                   type="button"
                   onClick={() => setAnalyticsDemo(demo as unknown as Demo)}
-                  className="rounded-full bg-blue/10 px-2.5 py-0.5 text-[11px] font-semibold text-blue transition hover:bg-blue/20"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-blue/10 px-2.5 py-0.5 text-[11px] font-semibold text-blue transition hover:bg-blue/20"
                 >
-                  📊 Analytics & Heatmap
+                  <IconBarChart size={12} />
+                  <span>Analytics & Heatmap</span>
                 </button>
               </li>
             ))}

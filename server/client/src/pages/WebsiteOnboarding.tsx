@@ -34,11 +34,11 @@ type Onboarding = {
   complete: boolean;
 };
 
-const MARK: Record<Step["state"], { glyph: string; className: string; tone: "positive" | "warn" | "muted" | "danger" }> = {
-  done: { glyph: "✓", className: "bg-positive-surface text-positive-text", tone: "positive" },
-  todo: { glyph: "•", className: "bg-sunken text-muted", tone: "muted" },
-  attention: { glyph: "!", className: "bg-warn-surface text-warn-text", tone: "warn" },
-  blocked: { glyph: "⚠", className: "bg-danger-surface text-danger-text", tone: "danger" },
+const MARK: Record<Step["state"], { className: string; tone: "positive" | "warn" | "muted" | "danger" }> = {
+  done: { className: "bg-positive-surface text-positive-text", tone: "positive" },
+  todo: { className: "bg-sunken text-muted", tone: "muted" },
+  attention: { className: "bg-warn-surface text-warn-text", tone: "warn" },
+  blocked: { className: "bg-danger-surface text-danger-text", tone: "danger" },
 };
 
 export function WebsiteOnboarding() {

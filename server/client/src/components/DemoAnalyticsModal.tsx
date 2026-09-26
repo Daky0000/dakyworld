@@ -3,6 +3,20 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import type { Demo, DemoAnalyticsReport, DemoVisitSession, DemoVisitClick } from "../lib/types.js";
 import { Button, Badge, RelativeTime, CopyButton } from "./ui.js";
+import {
+  IconAward,
+  IconBarChart,
+  IconDesktop,
+  IconFlame,
+  IconGlobe,
+  IconMove,
+  IconPhoneDevice,
+  IconRefresh,
+  IconTablet,
+  IconTarget,
+  IconMaximize,
+  IconXCircle,
+} from "./WebsiteIcons";
 
 interface DemoAnalyticsModalProps {
   demo: Demo | null;
@@ -154,13 +168,13 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
               <button
                 type="button"
                 onClick={() => setActiveTab("overview")}
-                className={`rounded-full px-3.5 py-1.5 transition ${
+                className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 transition ${
                   activeTab === "overview"
                     ? "bg-white text-ink shadow-sm font-semibold"
                     : "text-muted hover:text-ink"
                 }`}
               >
-                📊 Visitors & Activity
+                <IconBarChart size={13} /> Visitors & Activity
               </button>
               <button
                 type="button"
@@ -171,7 +185,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                     : "text-muted hover:text-ink"
                 }`}
               >
-                🔥 Heatmap & Clicks
+                <IconFlame size={13} /> Heatmap & Clicks
                 {report?.heatmap?.totalClicks ? (
                   <span className="rounded-full bg-rose-100 px-1.5 py-0.2 text-[10px] font-bold text-rose-700">
                     {report.heatmap.totalClicks}
@@ -181,7 +195,9 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
             </div>
 
             <Button size="sm" variant="secondary" onClick={() => void refetch()}>
-              ↻ Refresh
+              <span className="flex items-center gap-1.5">
+                <IconRefresh size={12} /> Refresh
+              </span>
             </Button>
             <button
               type="button"
@@ -189,7 +205,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
               className="rounded-full p-2 text-muted transition hover:bg-surface hover:text-ink"
               aria-label="Close"
             >
-              ✕
+              <IconXCircle size={18} />
             </button>
           </div>
         </div>
@@ -287,8 +303,8 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                     {/* Country Distribution */}
                     <div className="rounded-2xl border border-line bg-white p-5 shadow-xs">
-                      <h3 className="font-display text-sm font-bold text-ink">
-                        🌍 Visitor Country & Location
+                      <h3 className="flex items-center gap-1.5 font-display text-sm font-bold text-ink">
+                        <IconGlobe size={14} /> Visitor Country & Location
                       </h3>
                       <p className="mt-0.5 text-xs text-muted">
                         Detected from client IP and network headers
@@ -322,8 +338,8 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
 
                     {/* Device Types */}
                     <div className="rounded-2xl border border-line bg-white p-5 shadow-xs">
-                      <h3 className="font-display text-sm font-bold text-ink">
-                        📱 Devices Opened With
+                      <h3 className="flex items-center gap-1.5 font-display text-sm font-bold text-ink">
+                        <IconPhoneDevice size={14} /> Devices Opened With
                       </h3>
                       <p className="mt-0.5 text-xs text-muted">
                         Mobile, tablet, or desktop devices
@@ -331,13 +347,13 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                       <div className="mt-4 space-y-3">
                         {breakdowns?.devices && breakdowns.devices.length > 0 ? (
                           breakdowns.devices.map((d) => {
-                            const icon = d.deviceType === "mobile" ? "📱" : d.deviceType === "tablet" ? "📟" : "💻";
+                            const DeviceIcon = d.deviceType === "mobile" ? IconPhoneDevice : d.deviceType === "tablet" ? IconTablet : IconDesktop;
                             const label = d.deviceType.charAt(0).toUpperCase() + d.deviceType.slice(1);
                             return (
                               <div key={d.deviceType} className="space-y-1">
                                 <div className="flex items-center justify-between text-xs">
                                   <span className="flex items-center gap-1.5 font-medium text-ink">
-                                    <span>{icon}</span>
+                                    <DeviceIcon size={13} className="text-muted" />
                                     <span>{label}</span>
                                   </span>
                                   <span className="font-mono text-muted">
@@ -361,8 +377,8 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
 
                     {/* Browsers & OS */}
                     <div className="rounded-2xl border border-line bg-white p-5 shadow-xs">
-                      <h3 className="font-display text-sm font-bold text-ink">
-                        🌐 Browsers & Platforms
+                      <h3 className="flex items-center gap-1.5 font-display text-sm font-bold text-ink">
+                        <IconGlobe size={14} /> Browsers & Platforms
                       </h3>
                       <p className="mt-0.5 text-xs text-muted">Client software details</p>
                       <div className="mt-4 space-y-2">
@@ -441,12 +457,12 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         <tbody className="divide-y divide-line/60">
                           {visits.length > 0 ? (
                             visits.map((visit) => {
-                              const deviceIcon =
+                              const DeviceIcon =
                                 visit.deviceType === "mobile"
-                                  ? "📱"
+                                  ? IconPhoneDevice
                                   : visit.deviceType === "tablet"
-                                    ? "📟"
-                                    : "💻";
+                                    ? IconTablet
+                                    : IconDesktop;
                               return (
                                 <tr key={visit.id} className="transition hover:bg-surface/40">
                                   {/* Opened */}
@@ -457,7 +473,11 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                   {/* Country */}
                                   <td className="whitespace-nowrap px-4 py-3">
                                     <span className="flex items-center gap-1.5 font-medium text-ink">
-                                      <span className="text-base">{visit.flag || "🌐"}</span>
+                                      {visit.flag ? (
+                                        <span className="text-base">{visit.flag}</span>
+                                      ) : (
+                                        <IconGlobe size={14} className="text-muted" />
+                                      )}
                                       <span>{visit.countryName || visit.country || "Unknown location"}</span>
                                     </span>
                                   </td>
@@ -473,7 +493,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                   {/* Device & Browser */}
                                   <td className="whitespace-nowrap px-4 py-3">
                                     <div className="flex items-center gap-1.5 text-ink">
-                                      <span>{deviceIcon}</span>
+                                      <DeviceIcon size={14} className="text-muted" />
                                       <span className="font-semibold">{visit.browser || "Unknown"}</span>
                                       <span className="text-muted">on</span>
                                       <span className="text-muted">{visit.os || "OS"}</span>
@@ -568,46 +588,50 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         <button
                           type="button"
                           onClick={() => setViewportPreset("desktop")}
-                          className={`rounded-full px-2.5 py-1 transition ${
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition ${
                             viewportPreset === "desktop"
                               ? "bg-white font-semibold text-ink shadow-xs"
                               : "text-muted hover:text-ink"
                           }`}
                         >
-                          💻 Desktop (1200px)
+                          <IconDesktop size={13} />
+                          <span>Desktop (1200px)</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => setViewportPreset("tablet")}
-                          className={`rounded-full px-2.5 py-1 transition ${
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition ${
                             viewportPreset === "tablet"
                               ? "bg-white font-semibold text-ink shadow-xs"
                               : "text-muted hover:text-ink"
                           }`}
                         >
-                          📟 Tablet (768px)
+                          <IconTablet size={13} />
+                          <span>Tablet (768px)</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => setViewportPreset("mobile")}
-                          className={`rounded-full px-2.5 py-1 transition ${
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition ${
                             viewportPreset === "mobile"
                               ? "bg-white font-semibold text-ink shadow-xs"
                               : "text-muted hover:text-ink"
                           }`}
                         >
-                          📱 Mobile (390px)
+                          <IconPhoneDevice size={13} />
+                          <span>Mobile (390px)</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => setViewportPreset("full")}
-                          className={`rounded-full px-2.5 py-1 transition ${
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition ${
                             viewportPreset === "full"
                               ? "bg-white font-semibold text-ink shadow-xs"
                               : "text-muted hover:text-ink"
                           }`}
                         >
-                          ↔ Full Width
+                          <IconMaximize size={13} />
+                          <span>Full Width</span>
                         </button>
                       </div>
                     </div>
@@ -619,24 +643,26 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         <button
                           type="button"
                           onClick={() => setHeatmapMode("pins")}
-                          className={`rounded-full px-3 py-1 transition ${
+                          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 transition ${
                             heatmapMode === "pins"
                               ? "bg-white font-semibold text-ink shadow-xs"
                               : "text-muted hover:text-ink"
                           }`}
                         >
-                          🎯 Click Pins
+                          <IconTarget size={13} />
+                          <span>Click Pins</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => setHeatmapMode("heat")}
-                          className={`rounded-full px-3 py-1 transition ${
+                          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 transition ${
                             heatmapMode === "heat"
                               ? "bg-white font-semibold text-ink shadow-xs"
                               : "text-muted hover:text-ink"
                           }`}
                         >
-                          🔥 Thermal Glow
+                          <IconFlame size={13} />
+                          <span>Thermal Glow</span>
                         </button>
                         <button
                           type="button"
@@ -665,7 +691,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         </option>
                         {visits.map((v) => (
                           <option key={v.id} value={v.id}>
-                            {v.flag} {v.countryName || v.ip || "Visitor"} ({v.deviceType || "Device"}) — {v.clickCount} clicks
+                            {v.countryName || v.ip || "Visitor"} ({v.deviceType || "Device"}) — {v.clickCount} clicks
                           </option>
                         ))}
                       </select>
@@ -761,15 +787,16 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                 onClick={() => setActivePin(null)}
                                 className="text-muted hover:text-ink"
                               >
-                                ✕
+                                <IconXCircle size={16} />
                               </button>
                             </div>
 
                             <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs text-muted">
                               <div>
                                 <span>Visitor: </span>
-                                <strong className="text-ink">
-                                  {activePin.flag} {activePin.countryName || activePin.ip || "Visitor"}
+                                <strong className="inline-flex items-center gap-1 text-ink">
+                                  <IconGlobe size={13} className="text-muted" />
+                                  <span>{activePin.countryName || activePin.ip || "Visitor"}</span>
                                 </strong>
                               </div>
                               <div>
@@ -800,8 +827,9 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                     <div className="flex flex-col gap-4">
                       <div className="rounded-2xl border border-line bg-white p-4 shadow-xs">
                         <div className="flex items-center justify-between">
-                          <h3 className="font-display text-sm font-bold text-ink">
-                            🏆 Top Clicked Elements
+                          <h3 className="inline-flex items-center gap-1.5 font-display text-sm font-bold text-ink">
+                            <IconAward size={16} className="text-amber-500" />
+                            <span>Top Clicked Elements</span>
                           </h3>
                           <span className="font-mono text-xs text-muted">
                             {topElements.length} targets

@@ -2,6 +2,15 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { Badge, Button, PageHeader } from "../components/ui";
+import {
+  IconAlertCircle,
+  IconCheck,
+  IconCreditCard,
+  IconDownload,
+  IconEdit,
+  IconFileText,
+  IconSparkles,
+} from "../components/WebsiteIcons";
 import type { WebsiteBalanceReport, ClientInvoice, ClientAddon } from "../lib/types";
 
 export function WebsiteBalance() {
@@ -107,8 +116,14 @@ export function WebsiteBalance() {
             }`}
           >
             <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-2xs text-lg">
-                {data.summary.status === "OVERDUE" ? "⚠️" : data.summary.status === "OUTSTANDING" ? "📋" : "✓"}
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-2xs">
+                {data.summary.status === "OVERDUE" ? (
+                  <IconAlertCircle size={20} className="text-red-600" />
+                ) : data.summary.status === "OUTSTANDING" ? (
+                  <IconFileText size={20} className="text-amber-600" />
+                ) : (
+                  <IconCheck size={20} className="text-emerald-600" />
+                )}
               </span>
               <div>
                 <p className="font-semibold text-sm">
@@ -262,9 +277,9 @@ export function WebsiteBalance() {
                           href={inv.pdfUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex h-9 items-center justify-center rounded-xl border border-line bg-white px-3 text-xs font-semibold text-ink hover:bg-cream"
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-3 text-xs font-semibold text-ink hover:bg-cream"
                         >
-                          📄 PDF
+                          <IconFileText size={13} /> PDF
                         </a>
                       )}
                       {inv.paymentUrl ? (
@@ -272,9 +287,9 @@ export function WebsiteBalance() {
                           href={inv.paymentUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex h-9 items-center justify-center rounded-xl bg-ink px-4 text-xs font-semibold text-white hover:bg-ink/90 shadow-2xs"
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-ink px-4 text-xs font-semibold text-white hover:bg-ink/90 shadow-2xs"
                         >
-                          💳 Pay Now →
+                          <IconCreditCard size={13} /> Pay Now →
                         </a>
                       ) : (
                         <span className="text-xs text-muted">Manual Transfer</span>
@@ -314,7 +329,10 @@ export function WebsiteBalance() {
               {/* AI Prompts */}
               <div className="rounded-xl border border-line/60 bg-cream/30 p-4">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-ink">🤖 AI Copy & Layout Prompts</span>
+                  <span className="flex items-center gap-1.5 font-semibold text-ink">
+                    <IconSparkles size={14} className="text-blue" />
+                    AI Copy & Layout Prompts
+                  </span>
                   <span className="font-mono text-muted">
                     {data.aiUsage.promptsLimit >= 999999 ? "Unlimited" : `${data.aiUsage.promptsUsed} / ${data.aiUsage.promptsLimit}`}
                   </span>
@@ -335,7 +353,10 @@ export function WebsiteBalance() {
               {/* Page Imports */}
               <div className="rounded-xl border border-line/60 bg-cream/30 p-4">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-ink">📥 HTML Page Imports</span>
+                  <span className="flex items-center gap-1.5 font-semibold text-ink">
+                    <IconDownload size={14} className="text-emerald-600" />
+                    HTML Page Imports
+                  </span>
                   <span className="font-mono text-muted">
                     {data.aiUsage.importsLimit >= 999999 ? "Unlimited" : `${data.aiUsage.importsUsed} / ${data.aiUsage.importsLimit}`}
                   </span>
@@ -356,7 +377,10 @@ export function WebsiteBalance() {
               {/* Page Edits */}
               <div className="rounded-xl border border-line/60 bg-cream/30 p-4">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-ink">✏️ Page Edits & Saves</span>
+                  <span className="flex items-center gap-1.5 font-semibold text-ink">
+                    <IconEdit size={14} className="text-purple-600" />
+                    Page Edits & Saves
+                  </span>
                   <span className="font-mono text-muted">
                     {data.aiUsage.editsLimit >= 999999 ? "Unlimited" : `${data.aiUsage.editsUsed} / ${data.aiUsage.editsLimit}`}
                   </span>
@@ -550,8 +574,8 @@ export function WebsiteBalance() {
       {purchaseSuccess && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-xs">
           <div className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-xl">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-2xl text-emerald-800">
-              ✓
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-800">
+              <IconCheck size={24} />
             </div>
             <h3 className="mt-4 font-display text-lg font-bold text-ink">Invoice Generated</h3>
             <p className="mt-1 text-xs text-muted leading-relaxed">{purchaseSuccess.message}</p>

@@ -5,9 +5,11 @@ import { PageHeader, Button } from "../components/ui";
 import {
   IconAlertCircle,
   IconCheck,
+  IconMail,
   IconMessageSquare,
   IconPalette,
   IconPhone,
+  IconRocket,
   IconSearch,
   IconSparkles,
   IconType,
@@ -518,7 +520,7 @@ export function WebsiteAI() {
                       className="flex items-center gap-1.5 truncate text-xs text-ink hover:text-blue"
                       title="Click to replace this phone number across pages"
                     >
-                      <span className="text-muted">📞</span>
+                      <IconPhone size={13} className="text-muted shrink-0" />
                       <span className="truncate font-medium">{overview.data.phoneNumbers[0].number}</span>
                     </button>
                   )}
@@ -529,7 +531,7 @@ export function WebsiteAI() {
                       className="flex items-center gap-1.5 truncate text-xs text-ink hover:text-blue"
                       title="Click to replace this email across pages"
                     >
-                      <span className="text-muted">✉️</span>
+                      <IconMail size={13} className="text-muted shrink-0" />
                       <span className="truncate font-medium">{overview.data.emails[0].email}</span>
                     </button>
                   )}
@@ -1543,7 +1545,8 @@ export function WebsiteAI() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2 text-positive-text font-semibold">
-                    <span>✓ Changes successfully applied to drafts!</span>
+                    <IconCheck size={16} className="text-positive-text shrink-0" />
+                    <span>Changes successfully applied to drafts!</span>
                   </div>
                   <p className="mt-1 text-xs text-ink">
                     Updated {applyResult.appliedPages} page{applyResult.appliedPages === 1 ? "" : "s"} ({applyResult.totalChanges} fields) with revision conflict protection.
@@ -1551,19 +1554,23 @@ export function WebsiteAI() {
                 </div>
 
                 {batchPublished ? (
-                  <div className="rounded-xl border border-positive-line bg-white px-3.5 py-2 text-xs font-semibold text-positive-text">
-                    🚀 Published {batchPublished.publishedPages} page{batchPublished.publishedPages === 1 ? "" : "s"} live in 1 commit!
+                  <div className="inline-flex items-center gap-1.5 rounded-xl border border-positive-line bg-white px-3.5 py-2 text-xs font-semibold text-positive-text">
+                    <IconRocket size={13} className="text-positive-text shrink-0" />
+                    <span>Published {batchPublished.publishedPages} page{batchPublished.publishedPages === 1 ? "" : "s"} live in 1 commit!</span>
                   </div>
                 ) : (
                   <button
                     type="button"
                     disabled={publishBatchMutation.isPending}
                     onClick={() => publishBatchMutation.mutate()}
-                    className="rounded-xl bg-ink px-4 py-2 text-xs font-semibold text-white hover:bg-ink/90 transition disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-xs font-semibold text-white hover:bg-ink/90 transition disabled:opacity-50"
                   >
-                    {publishBatchMutation.isPending
-                      ? "Publishing all pages live…"
-                      : `🚀 Publish All ${applyResult.appliedPages} Page${applyResult.appliedPages === 1 ? "" : "s"} Live`}
+                    <IconRocket size={13} className="shrink-0" />
+                    <span>
+                      {publishBatchMutation.isPending
+                        ? "Publishing all pages live…"
+                        : `Publish All ${applyResult.appliedPages} Page${applyResult.appliedPages === 1 ? "" : "s"} Live`}
+                    </span>
                   </button>
                 )}
               </div>

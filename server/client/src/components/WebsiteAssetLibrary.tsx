@@ -5,6 +5,7 @@ import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
 import { useWebsiteAccess } from "./WebsiteMembers";
 import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "./WebsiteTierStatusBanner";
+import { IconXCircle } from "./WebsiteIcons";
 
 export type CapturedHtmlImage = {
   url: string;
@@ -471,7 +472,7 @@ export function WebsiteAssetPickerModal({
             className="flex h-8 w-8 items-center justify-center rounded-[10px] text-muted hover:bg-sunken hover:text-ink"
             aria-label="Close"
           >
-            ✕
+            <IconXCircle size={18} />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5">

@@ -3,6 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { SiteSummary, ClientActivityResponse } from "../lib/types";
 import { Badge, PageHeader } from "./ui";
+import {
+  IconBot,
+  IconCreditCard,
+  IconFileText,
+  IconImage,
+  IconSliders,
+  IconUsers,
+  IconZap,
+} from "./WebsiteIcons";
 
 const CATEGORIES = [
   { id: "all", label: "All Activity" },
@@ -36,19 +45,19 @@ export function WebsiteAuditTrail() {
   const getCategoryIcon = (category: string) => {
     switch (category) {
       case "ai":
-        return "🤖";
+        return <IconBot size={16} className="text-blue" />;
       case "content":
-        return "📄";
+        return <IconFileText size={16} className="text-ink" />;
       case "media":
-        return "🖼️";
+        return <IconImage size={16} className="text-emerald-600" />;
       case "billing":
-        return "💳";
+        return <IconCreditCard size={16} className="text-purple-600" />;
       case "settings":
-        return "⚙️";
+        return <IconSliders size={16} className="text-amber-600" />;
       case "team":
-        return "👥";
+        return <IconUsers size={16} className="text-sky-600" />;
       default:
-        return "⚡";
+        return <IconZap size={16} className="text-blue" />;
     }
   };
 
@@ -120,7 +129,9 @@ export function WebsiteAuditTrail() {
         <div className="space-y-3">
           {activity.data.items.length === 0 ? (
             <div className="rounded-2xl border border-line bg-white p-12 text-center">
-              <span className="text-3xl">📝</span>
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-cream text-muted">
+                <IconFileText size={24} />
+              </div>
               <h3 className="mt-3 font-semibold text-ink text-sm">No activity recorded for this filter</h3>
               <p className="mt-1 text-xs text-muted max-w-sm mx-auto">
                 Edits, content changes, AI assistant prompts, and invoice settlements will be recorded in real-time.
