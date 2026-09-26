@@ -98,6 +98,13 @@ async function httpGateChecks() {
     await status("staff manager can connect a site", "staff", "/sites", "POST", 200);
     const body = await (await request("VIEWER", "/sites")).json() as { filter: unknown };
     check("customer collection queries always carry membership filtering", () => assert.deepEqual(body.filter, { members: { some: { userId: "VIEWER" } } }));
+    await status("unauthenticated balance access is refused", null, "/balance", "GET", 401);
+    await status("authenticated customer can access balance", "VIEWER", "/balance", "GET", 200);
+    await status("authenticated customer can access balance addon order", "VIEWER", "/balance/request-addon", "POST", 200);
+    await status("authenticated customer can access activity", "VIEWER", "/activity", "GET", 200);
+    await status("authenticated customer can access escalations", "VIEWER", "/escalations", "GET", 200);
+    await status("viewer cannot file site escalation", "VIEWER", "/sites/own/escalations", "POST", 403);
+    await status("editor can file site escalation", "EDITOR", "/sites/own/escalations", "POST", 200);
     roles.delete("VIEWER");
     await status("membership revocation takes effect on the next request", "VIEWER", "/pages/ownpage", "GET", 404);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }

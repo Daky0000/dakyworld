@@ -130,7 +130,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/\/(?:scan|import)\/?$/.test(path)) return "manage";
   if (/^\/(?:sites|pages)\/[^/]+\/?$/.test(path)) return "manage";
   // AI suggestions, SEO actions, comments, and agent plans produce draft/site changes.
-  if (/\/(?:ai|suggest|assistant|agent|seo|insert-section|comments|health-monitor)(?:\/|$)/.test(path)) return "edit";
+  if (/\/(?:ai|suggest|assistant|agent|seo|insert-section|comments|health-monitor|escalations)(?:\/|$)/.test(path)) return "edit";
   if (/^\/tier-status(?:\/|$)/.test(path)) return "view";
   return null;
 }
@@ -141,7 +141,7 @@ export function createWebsiteAccessGate(reader = accessReader) {
       const principal = websitePrincipal(req);
       // These routes operate on the signed-in customer's own account. Their
       // handlers check any optional site ID before using it.
-      if (/^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance)\/?$/.test(req.path)) return;
+      if (/^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?)\/?$/.test(req.path)) return;
       if (/^\/tier-status(?:\/|$)/.test(req.path)) {
         return;
       }
