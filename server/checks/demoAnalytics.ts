@@ -153,108 +153,33 @@ equal("UK alias flag normalizes to GB", countryFlag("UK"), "🇬🇧");
 equal("Local flag", countryFlag("LOCAL"), "🏠");
 equal("Invalid flag fallback", countryFlag(null), "🌐");
 
-// Truthful location: IP lookup resolves country, but city is NULL without trusted city lookup
-const ghLocation = resolveIpLocation("102.176.0.1:44321");
-equal("Ghana IP with port resolves to GH", ghLocation.country, "GH");
-equal("Ghana IP name", ghLocation.countryName, "Ghana");
-equal("Ghana IP flag", ghLocation.flag, "🇬🇭");
-equal("Ghana IP city is null without trusted city lookup", ghLocation.city, null);
-equal("Ghana IP citySource is none", ghLocation.citySource, "none");
-equal("Ghana IP countrySource is geoip", ghLocation.countrySource, "geoip");
-equal("Ghana IP confidence is high", ghLocation.confidence, "high");
-equal("Ghana IP is not local", ghLocation.isLocal, false);
-
-const usLocation = resolveIpLocation("8.8.8.8:8080");
-equal("US IP resolves to US", usLocation.country, "US");
-equal("US IP name", usLocation.countryName, "United States");
-equal("US IP flag", usLocation.flag, "🇺🇸");
-equal("US IP city is null without trusted city lookup", usLocation.city, null);
-
-// Conflicting timezone / country: GeoIP country must win, timezone must not override country or invent city
-const ghIpUsTz = resolveIpLocation("102.176.0.1", { timezone: "America/New_York" });
-equal("Conflicting timezone does not override IP country", ghIpUsTz.country, "GH");
-equal("Conflicting timezone city is not accepted", ghIpUsTz.city, null);
-equal("Conflicting timezone source is geoip", ghIpUsTz.countrySource, "geoip");
-equal("Timezone preference is recorded separately", ghIpUsTz.timezonePreference, "America/New_York");
-
-// Local development fallback
-const plainLocal = resolveIpLocation("127.0.0.1");
-equal("Plain local IP country", plainLocal.country, "LOCAL");
-equal("Plain local IP name", plainLocal.countryName, "Local Development");
-equal("Plain local IP flag", plainLocal.flag, "🏠");
-equal("Plain local IP city is null", plainLocal.city, null);
-check("Plain local IP isLocal", plainLocal.isLocal);
-
-// Timezone and locale-assisted resolution
-const tzGh = resolveFromTimezone("Africa/Accra");
-check("Timezone Africa/Accra resolves", tzGh !== null);
-equal("Timezone Africa/Accra country", tzGh?.country, "GH");
-equal("Timezone Africa/Accra city", tzGh?.city, "Accra");
-equal("Timezone Africa/Accra flag", tzGh?.flag, "🇬🇭");
-
-const tzNy = resolveFromTimezone("America/New_York");
-equal("Timezone America/New_York country", tzNy?.country, "US");
-equal("Timezone America/New_York city", tzNy?.city, "New York");
-
-const tzLondon = resolveFromTimezone("Europe/London");
-equal("Timezone Europe/London country", tzLondon?.country, "GB");
-equal("Timezone Europe/London city", tzLondon?.city, "London");
-
-const locGh = resolveFromLocale("en-GH");
-equal("Locale en-GH country", locGh?.country, "GH");
-equal("Locale en-GH name", locGh?.countryName, "Ghana");
-
-// Local development enriched with visitor timezone preference (e.g. testing locally in Accra)
-const localWithTz = resolveIpLocation("127.0.0.1:3000", { timezone: "Africa/Accra" });
-equal("Local with TZ country", localWithTz.country, "GH");
-equal("Local with TZ countryName", localWithTz.countryName, "Ghana");
-equal("Local with TZ city remains null without edge lookup", localWithTz.city, null);
-equal("Local with TZ countrySource is preference", localWithTz.countrySource, "preference");
-equal("Local with TZ confidence is low", localWithTz.confidence, "low");
-check("Local with TZ preserves isLocal flag", localWithTz.isLocal);
-
-// Verified CDN edge header resolution: city is trusted when supplied by edge
-const cdnLocation = resolveIpLocation("1.2.3.4", { hintCountry: "GH", hintCity: "Kumasi" });
-equal("CDN hint country wins", cdnLocation.country, "GH");
-equal("CDN hint city wins", cdnLocation.city, "Kumasi");
-equal("CDN hint flag", cdnLocation.flag, "🇬🇭");
-equal("CDN hint citySource is edge", cdnLocation.citySource, "edge");
-equal("CDN hint countrySource is edge", cdnLocation.countrySource, "edge");
-
-/* ------------------------------------ Anti-Spoofing and Trusted Proxy Handling -- */
-
-// Verified edge request (carries cf-ray)
-const verifiedEdgeReq = {
-  headers: {
-    "cf-ray": "8d1234567890abcd-ACC",
-    "cf-connecting-ip": "102.176.0.1:54321",
-    "cf-ipcountry": "GH",
-    "cf-ipcity": "Accra",
-    "x-forwarded-for": "10.0.0.1, 102.176.0.1",
-  },
-  ip: "10.0.0.1",
-};
-check("Verified edge request detected", isEdgeVerified(verifiedEdgeReq));
-equal("extractClientIp takes verified cf-connecting-ip", extractClientIp(verifiedEdgeReq), "102.176.0.1");
-const verifiedHints = extractGeoHints(verifiedEdgeReq);
-equal("extractGeoHints country on verified edge", verifiedHints.country, "GH");
-equal("extractGeoHints city on verified edge", verifiedHints.city, "Accra");
-
-// Spoofed request: attacker attempts to forge CF headers directly without arriving via Cloudflare
-const spoofedReq = {
-  headers: {
-    "cf-connecting-ip": "8.8.8.8",
-    "cf-ipcountry": "US",
-    "cf-ipcity": "San Francisco",
-    "x-real-ip": "8.8.8.8",
-  },
-  ip: "102.176.0.1", // Express resolved client IP from trusted proxy
-};
-check("Unverified edge request rejected", !isEdgeVerified(spoofedReq));
-equal("extractClientIp ignores spoofed header and trusts Express req.ip", extractClientIp(spoofedReq), "102.176.0.1");
-const spoofedHints = extractGeoHints(spoofedReq);
-equal("extractGeoHints rejects spoofed country", spoofedHints.country, null);
-equal("extractGeoHints rejects spoofed city", spoofedHints.city, null);
+// Deterministic fixtures: live IP assignments are not permanent test facts.
+const providers = { city: () => null, country: (ip: string) => ip === "102.176.0.1" ? "GH" : null };
+const ghLocation = resolveIpLocation("102.176.0.1:44321", null, providers);
+equal("Country fixture", ghLocation.country, "GH");
+equal("Country-only city is null", ghLocation.city, null);
+equal("Country source", ghLocation.countrySource, "geoip_country");
+equal("No browser guess", resolveIpLocation(null, { locale: "en-US" }, providers).country, null);
+equal("Timezone cannot override country", resolveIpLocation("102.176.0.1", { timezone: "America/New_York" }, providers).country, "GH");
+equal("Local stays local", resolveIpLocation("127.0.0.1", { timezone: "Africa/Accra" }, providers).locationStatus, "local");
+equal("Local country stays null", resolveIpLocation("127.0.0.1", { locale: "en-US" }, providers).country, null);
+for (const marker of ["cf-ray", "x-vercel-id", "x-amz-cf-id"]) {
+  const forged = { ip: "102.176.0.1", headers: { [marker]: "forged", "cf-connecting-ip": "8.8.8.8", "cf-ipcountry": "US", "cf-ipcity": "Fake City" } };
+  equal("Marker does not verify edge", isEdgeVerified(forged), false);
+  equal("Forged IP ignored", extractClientIp(forged), "102.176.0.1");
+  equal("Forged geography ignored", extractGeoHints(forged), { country: null, city: null, region: null });
+}
+equal("Private proxy cannot bypass Express", extractClientIp({ ip: "10.0.0.1", headers: { "x-forwarded-for": "8.8.8.8, 102.176.0.1" } }), "10.0.0.1");
+for (const ip of ["192.0.2.1", "198.51.100.1", "203.0.113.1", "224.0.0.1", "2001:db8::1", "::ffff:127.0.0.1", "fe80::1"]) {
+  equal("Non-geolocatable address rejected: " + ip, resolveIpLocation(ip, null, providers).country, null);
+}
+const cityProviders = { ...providers, city: () => ({ country: "GH", city: "Kumasi", region: "Ashanti", accuracyRadiusKm: 50, databaseVersion: "fixture" }) };
+const city = resolveIpLocation("102.176.0.1", { hintCountry: "US", hintCity: "Fake City" }, cityProviders);
+equal("City from provider only", city.city, "Kumasi");
+equal("City country consistent", city.country, "GH");
+equal("City source", city.citySource, "geolite_city");
+equal("Provider radius", city.accuracyRadiusKm, 50);
+equal("City status", city.locationStatus, "resolved");
 
 /* ------------------------------------ Signed Visit Tokens & Beacon Authentication -- */
 

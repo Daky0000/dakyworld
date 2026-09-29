@@ -1,3 +1,4 @@
+import { serializeVisitLocation, locationCoverage } from "../lib/visitLocation.js";
 import express, { Router } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -25,7 +26,6 @@ import {
   resolveIpLocation,
   countryFlag,
   extractClientIp,
-  extractGeoHints,
   isPrivateOrLocalIp,
   maskIp,
 } from "../lib/demoGeo.js";
@@ -314,6 +314,7 @@ demosRouter.get("/", async (req, res, next) => {
               ip: true,
               country: true,
               countryName: true,
+              locationStatus: true,
               deviceType: true,
               browser: true,
               durationSeconds: true,
@@ -363,7 +364,7 @@ demosRouter.get("/", async (req, res, next) => {
 
         const countryCounts: Record<string, { code: string; name: string; flag: string; count: number }> = {};
         for (const v of demo.visits) {
-          if (v.country) {
+          if (v.country && ["resolved", "partial"].includes(v.locationStatus || "legacy") && !isPrivateOrLocalIp(v.ip)) {
             if (!countryCounts[v.country]) {
               countryCounts[v.country] = {
                 code: v.country,
@@ -465,9 +466,8 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       orderBy: { createdAt: "desc" },
     });
 
-    const visits = includeInternal
-      ? rawVisits
-      : rawVisits.filter((v) => !isPrivateOrLocalIp(v.ip));
+    const visits = (includeInternal ? rawVisits : rawVisits.filter((v) => !isPrivateOrLocalIp(v.ip)))
+      .map(v => ({ ...v, ...serializeVisitLocation(v) }));
 
     // Handle CSV export matching the exact filtered population and date range
     if (format === "csv") {
@@ -476,7 +476,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         "Opened At",
         "Session ID",
         "Country",
-        "City",
+        "City", "Region", "Location status", "Country source", "City source", "Accuracy radius (km)", "Database version", "Location label",
         "Device",
         "Browser",
         "OS",
@@ -492,7 +492,9 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
           `"${v.createdAt.toISOString()}"`,
           `"${v.sessionId}"`,
           `"${v.countryName || v.country || "Unknown"}"`,
-          `"${v.city || "City unavailable"}"`,
+          `"${(v.city || "City unavailable").replace(/"/g, '\"\"')}"`,
+          ...[v.region, v.locationStatus, v.countrySource, v.citySource, v.accuracyRadiusKm, v.geoDatabaseVersion, v.locationLabel]
+            .map(value => `"${String(value ?? "").replace(/"/g, '\"\"')}"`),
           `"${v.deviceType || "desktop"}"`,
           `"${v.browser || "unknown"}"`,
           `"${v.os || "unknown"}"`,
@@ -548,7 +550,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
     }> = [];
 
     const countryMap: Record<string, { code: string; name: string; flag: string; count: number }> = {};
-    const cityMap: Record<string, { city: string; country: string; flag: string; count: number; unverified: boolean }> = {};
+    const cityMap: Record<string, { city: string; region: string | null; country: string; flag: string; count: number; unverified: boolean }> = {};
     const deviceMap: Record<string, number> = {};
     const browserMap: Record<string, number> = {};
     const osMap: Record<string, number> = {};
@@ -564,7 +566,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       }
 
       const cCode = v.country || (isPrivateOrLocalIp(v.ip) ? "LOCAL" : "UNKNOWN");
-      if (!countryMap[cCode]) {
+      if (["resolved", "partial"].includes(v.locationStatus) && !v.isLocal && !countryMap[cCode]) {
         countryMap[cCode] = {
           code: cCode,
           name: v.countryName || (cCode === "LOCAL" ? "Local Development" : "Unresolved"),
@@ -572,17 +574,17 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
           count: 0,
         };
       }
-      countryMap[cCode].count++;
+      if (["resolved", "partial"].includes(v.locationStatus) && !v.isLocal) countryMap[cCode].count++;
 
-      if (v.city) {
-        const cityKey = `${v.city}||${v.country || "UNKNOWN"}`;
+      if (v.city && v.locationStatus === "resolved" && !v.isLocal) {
+        const cityKey = `${v.city}||${v.region || ""}||${v.country || "UNKNOWN"}`;
         if (!cityMap[cityKey]) {
           cityMap[cityKey] = {
-            city: v.city,
+            city: v.city, region: v.region,
             country: v.countryName || v.country || "Unknown",
             flag: countryFlag(v.country),
             count: 0,
-            unverified: true, // Legacy cities classified as unverified
+            unverified: false,
           };
         }
         cityMap[cityKey].count++;
@@ -614,11 +616,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
           browser: v.browser,
           os: v.os,
           ip: maskIp(v.ip),
-          country: v.country,
-          countryName: v.countryName,
-          city: v.city,
-          isLocal: isPrivateOrLocalIp(v.ip),
-          flag: countryFlag(v.country),
+          ...serializeVisitLocation(v),
           createdAt: v.createdAt.toISOString(),
         };
         allClicks.push(enrichedClick);
@@ -679,12 +677,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         id: v.id,
         sessionId: v.sessionId,
         ip: maskIp(v.ip),
-        country: v.country,
-        countryName: v.countryName,
-        flag: countryFlag(v.country),
-        city: v.city,
-        citySource: v.city ? "unverified" : "none",
-        isLocal: isPrivateOrLocalIp(v.ip),
+        ...serializeVisitLocation(v),
         userAgent: v.userAgent,
         deviceType: v.deviceType,
         browser: v.browser,
@@ -710,6 +703,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       summary: {
         totalViews: demo.views,
         periodViews: visits.length,
+        locationCoverage: locationCoverage(rawVisits),
         uniqueVisitors,
         totalVisits: visits.length,
         avgDurationSeconds,
@@ -1438,16 +1432,6 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
       return res.status(404).json({ error: "Visit not found or unissued" });
     }
 
-    const ip = extractClientIp(req);
-    const hints = extractGeoHints(req);
-    const geo = resolveIpLocation(ip, {
-      hintCountry: hints.country,
-      hintCity: hints.city,
-      hintRegion: hints.region,
-      timezone: data.timezone,
-      locale: data.locale,
-    });
-
     const newDuration = Math.max(existingVisit.durationSeconds ?? 0, data.durationSeconds ?? 0);
     const newScrollDepth = Math.max(existingVisit.scrollDepth ?? 0, data.scrollDepth ?? 0);
 
@@ -1469,16 +1453,6 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
         screenWidth: data.screenWidth ? Math.round(data.screenWidth) : existingVisit.screenWidth,
         screenHeight: data.screenHeight ? Math.round(data.screenHeight) : existingVisit.screenHeight,
         clicks: mergedClicks as Prisma.InputJsonValue,
-        // Enrich location only if edge verified city or genuine country resolved
-        ...(geo.country && (!existingVisit.country || existingVisit.country === "LOCAL")
-          ? {
-              country: geo.country,
-              countryName: geo.countryName,
-              city: geo.city || existingVisit.city,
-            }
-          : geo.city && !existingVisit.city
-            ? { city: geo.city }
-            : {}),
       },
     });
 
@@ -1557,12 +1531,7 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
 
     if (!isPreviewOrHeatmap) {
       const ip = extractClientIp(req);
-      const hints = extractGeoHints(req);
-      const geo = resolveIpLocation(ip, {
-        hintCountry: hints.country,
-        hintCity: hints.city,
-        hintRegion: hints.region,
-      });
+      const geo = resolveIpLocation(ip);
       const ua = req.headers["user-agent"] || null;
       const parsedDevice = parseUserAgent(ua);
       const isBot = parsedDevice.isBot;
@@ -1575,9 +1544,11 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
             demoId: demo.id,
             sessionId,
             ip,
-            country: geo.country,
-            countryName: geo.countryName,
-            city: geo.city,
+            country: geo.country, countryName: geo.countryName, city: geo.city,
+            region: geo.region, countrySource: geo.countrySource, citySource: geo.citySource,
+            locationStatus: geo.locationStatus, accuracyRadiusKm: geo.accuracyRadiusKm,
+            geoDatabaseVersion: geo.geoDatabaseVersion, locationResolvedAt: geo.locationResolvedAt,
+            locationResolverVersion: geo.locationResolverVersion,
             userAgent: ua ? ua.slice(0, 500) : null,
             deviceType: parsedDevice.deviceType,
             browser: parsedDevice.browser,
@@ -1603,7 +1574,7 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       // View Notification Logging only for genuine human viewers
       if (!isBot && meta.notifyOnView !== false) {
         const viewer = meta.recipientName || meta.clientName || "Prospect";
-        const locLabel = geo.city && geo.countryName ? ` from ${geo.city}, ${geo.countryName}` : "";
+        const locLabel = geo.city && geo.countryName ? ` (approximate location: ${geo.city}, ${geo.countryName})` : "";
         const newNote = {
           id: randomUUID(),
           text: `${viewer} from ${demo.businessName}${locLabel} opened your proposal demo.`,

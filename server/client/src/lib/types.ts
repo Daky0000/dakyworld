@@ -1340,6 +1340,14 @@ export interface DemoVisitClick {
   country?: string | null;
   countryName?: string | null;
   city?: string | null;
+  region?: string | null;
+  locationLabel?: string;
+  locationStatus?: string;
+  countrySource?: string | null;
+  accuracyRadiusKm?: number | null;
+  geoDatabaseVersion?: string | null;
+  locationResolvedAt?: string | null;
+  locationResolverVersion?: string | null;
   isLocal?: boolean;
   flag?: string;
   createdAt: string;
@@ -1353,7 +1361,15 @@ export interface DemoVisitSession {
   countryName?: string | null;
   flag: string;
   city?: string | null;
-  citySource?: "edge" | "unverified" | "none" | null;
+  region?: string | null;
+  locationLabel?: string;
+  locationStatus?: string;
+  countrySource?: string | null;
+  accuracyRadiusKm?: number | null;
+  geoDatabaseVersion?: string | null;
+  locationResolvedAt?: string | null;
+  locationResolverVersion?: string | null;
+  citySource?: "geolite_city" | "legacy" | "none" | null;
   isLocal?: boolean;
   userAgent?: string | null;
   deviceType?: string | null;
@@ -1395,6 +1411,7 @@ export interface DemoAnalyticsReport {
   summary: {
     totalViews: number;
     periodViews?: number;
+    locationCoverage?: { total: number; eligible: number; local: number; legacy: number; unknown: number; country: number; city: number; countryPercent: number; cityPercent: number };
     uniqueVisitors: number;
     totalVisits: number;
     avgDurationSeconds: number;
@@ -1404,7 +1421,7 @@ export interface DemoAnalyticsReport {
   };
   breakdowns: {
     countries: Array<{ code: string; name: string; flag: string; count: number; percentage: number }>;
-    cities: Array<{ city: string; country: string; flag: string; count: number; percentage: number; unverified?: boolean }>;
+    cities: Array<{ region?: string | null; city: string; country: string; flag: string; count: number; percentage: number; unverified?: boolean }>;
     devices: Array<{ deviceType: string; count: number; percentage: number }>;
     browsers: Array<{ browser: string; count: number; percentage: number }>;
     os: Array<{ os: string; count: number; percentage: number }>;

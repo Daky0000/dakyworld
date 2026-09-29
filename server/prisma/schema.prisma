@@ -637,6 +637,15 @@ model DemoVisit {
   countryName    String?
   city           String?
 
+  region                  String?
+  countrySource           String?
+  citySource              String?
+  locationStatus          String?
+  accuracyRadiusKm        Float?
+  geoDatabaseVersion      String?
+  locationResolvedAt      DateTime?
+  locationResolverVersion String?
+
   /// Device & Environment
   userAgent      String?
   deviceType     String?

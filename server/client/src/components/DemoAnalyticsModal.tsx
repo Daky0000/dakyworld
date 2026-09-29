@@ -433,11 +433,11 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                       <div className="mt-4 space-y-3">
                         {breakdowns?.cities && breakdowns.cities.length > 0 ? (
                           breakdowns.cities.map((city: any) => (
-                            <div key={`${city.city}-${city.country}`} className="space-y-1">
+                            <div key={`${city.city}-${city.region}-${city.country}`} className="space-y-1">
                               <div className="flex items-center justify-between text-xs">
                                 <span className="flex items-center gap-1.5 font-medium text-ink">
                                   <span className="text-base">{city.flag}</span>
-                                  <span>{city.city || "City unavailable"}</span>
+                                  <span>{[city.city, city.region].filter(Boolean).join(", ") || "City unavailable"}</span>
                                   {city.unverified ? (
                                     <span className="rounded bg-amber-50 px-1 py-0.2 font-mono text-[9px] font-semibold text-amber-700">
                                       Unverified
@@ -610,10 +610,11 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                         <IconGlobe size={14} className="text-muted" />
                                       )}
                                       <span>{locText}</span>
+                                      <span className="text-[10px] text-muted">{visit.locationLabel}</span>
                                       {!visit.city && (visit.countryName || visit.country) ? (
                                         <span className="text-[10px] text-muted">(City unavailable)</span>
                                       ) : null}
-                                      {visit.citySource === "unverified" ? (
+                                      {visit.citySource === "legacy" ? (
                                         <span className="rounded bg-amber-50 px-1 py-0.2 font-mono text-[9px] font-semibold text-amber-700">
                                           Unverified
                                         </span>
@@ -834,7 +835,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                           All Visitors ({report?.heatmap?.totalClicks ?? 0} clicks)
                         </option>
                         {visits.map((v) => {
-                          const labelLoc = [v.city, v.countryName || v.ip || "Visitor"].filter(Boolean).join(", ");
+                          const labelLoc = v.locationLabel || "Unknown location";
                           return (
                             <option key={v.id} value={v.id}>
                               {labelLoc} ({v.deviceType || "Device"}) — {v.clickCount} clicks
@@ -1050,9 +1051,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                   <strong className="inline-flex items-center gap-1 text-ink">
                                     <span>{activePin.flag || "🌐"}</span>
                                     <span>
-                                      {[activePin.city, activePin.countryName || activePin.country]
-                                        .filter(Boolean)
-                                        .join(", ") || activePin.ip || "Visitor"}
+                                      {activePin.locationLabel || "Unknown location"}
                                     </span>
                                   </strong>
                                 </div>
@@ -1090,7 +1089,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                     >
                                       <span className="flex items-center gap-1 text-ink">
                                         <span>{c.flag || "🌐"}</span>
-                                        <span>{c.city || c.countryName || "Visitor"}</span>
+                                        <span>{c.locationLabel || "Unknown location"}</span>
                                         <span className="text-muted">({c.deviceType || "Device"})</span>
                                       </span>
                                       <span className="font-mono text-muted">
@@ -1182,9 +1181,15 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-line bg-white px-6 py-3.5 text-xs text-muted">
-          <span>
-            Tracking visitor IP, country, city, device, dwell time, and heatmap clicks automatically.
-          </span>
+          <div>
+            Locations are approximate IP estimates. VPNs and mobile networks may show a different location.
+            {report?.summary.locationCoverage && (
+              <p className="text-xs text-muted">
+                Location coverage: country {report.summary.locationCoverage.countryPercent}%, city {report.summary.locationCoverage.cityPercent}%.
+                {" "}Unknown: {report.summary.locationCoverage.unknown}. Legacy: {report.summary.locationCoverage.legacy}. Local: {report.summary.locationCoverage.local}.
+              </p>
+            )}
+          </div>
           <Button size="sm" variant="secondary" onClick={onClose}>
             Close
           </Button>

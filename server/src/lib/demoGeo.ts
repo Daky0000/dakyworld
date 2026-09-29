@@ -1,5 +1,7 @@
 import { isIP } from "node:net";
-import { countryForIp, lookupIpRecord } from "./geoCountry.js";
+import ipaddr from "ipaddr.js";
+import { lookupAnalyticsCity } from "./geoCity.js";
+import { analyticsCountry } from "./analyticsCountry.js";
 
 const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
 
@@ -27,7 +29,7 @@ export function cleanIp(raw: string | null | undefined): string | null {
   if (!isIP(ip)) {
     return null;
   }
-  return ip;
+  return ipaddr.process(ip).toString();
 }
 
 /**
@@ -60,27 +62,8 @@ export function maskIp(rawIp: string | null | undefined): string | null {
 export function isPrivateOrLocalIp(rawIp: string | null | undefined): boolean {
   const ip = cleanIp(rawIp);
   if (!ip) return false;
-  if (ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || ip === "::") return true;
-
-  // 127.0.0.0/8 (Loopback block)
-  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-  // 10.0.0.0/8 (Private)
-  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-  // 192.168.0.0/16 (Private)
-  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-  // 172.16.0.0/12 (Private: 172.16.0.0 - 172.31.255.255)
-  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-  // 169.254.0.0/16 (Link-local)
-  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-  // 100.64.0.0/10 (Carrier-Grade NAT / Shared Address Space)
-  if (/^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-
-  // IPv6 Unique Local (fc00::/7 -> fc.. or fd..)
-  if (/^f[cd][0-9a-f]{2}:/i.test(ip)) return true;
-  // IPv6 Link-Local (fe80::/10 -> fe8., fe9., fea., feb.)
-  if (/^fe[89ab][0-9a-f]:/i.test(ip)) return true;
-
-  return false;
+  const address = ipaddr.process(ip);
+  return ["private", "loopback", "linkLocal", "uniqueLocal", "carrierGradeNat", "unspecified"].includes(address.range());
 }
 
 /**
@@ -121,204 +104,19 @@ export function countryFlag(code: string | null | undefined): string {
   }
 }
 
-/**
- * Checks whether the incoming request is verified to have arrived from a trusted edge
- * (Cloudflare, Vercel, CloudFront) rather than a direct client with spoofed headers.
- */
-export function isEdgeVerified(
-  req: { headers: Record<string, unknown> },
-  options?: { trustEdge?: boolean },
-): boolean {
-  if (options?.trustEdge) return true;
-  const headers = req.headers || {};
-  const hasHeader = (name: string): boolean => {
-    const val = headers[name] || headers[name.toLowerCase()];
-    return typeof val === "string" && val.trim().length > 0;
-  };
-
-  // Cloudflare requests carry cf-ray
-  if (hasHeader("cf-ray")) return true;
-  // Vercel edge requests carry x-vercel-id
-  if (hasHeader("x-vercel-id")) return true;
-  // AWS CloudFront requests carry x-amz-cf-id
-  if (hasHeader("x-amz-cf-id")) return true;
-
+/** Compatibility helper: edge geography is disabled regardless of request headers. */
+export function isEdgeVerified(_req: { headers: Record<string, unknown> }, _options?: { trustEdge?: boolean }): boolean {
   return false;
 }
 
-/**
- * Extracts the real client IP using the configured trusted proxy chain (Express req.ip)
- * and verifies edge headers against spoofing.
- */
-export function extractClientIp(
-  req: {
-    headers: Record<string, unknown>;
-    ip?: string;
-    socket?: { remoteAddress?: string };
-  },
-  options?: { trustEdge?: boolean },
-): string | null {
-  const getHeader = (name: string): string | null => {
-    const val = req.headers[name] || req.headers[name.toLowerCase()];
-    if (typeof val === "string") return val.trim();
-    if (Array.isArray(val) && typeof val[0] === "string") return val[0].trim();
-    return null;
-  };
-
-  const edgeVerified = isEdgeVerified(req, options);
-
-  // 1. If Express resolved req.ip through trust proxy, use it as the trusted baseline
-  const expressIp = cleanIp(req.ip);
-  if (expressIp && !isPrivateOrLocalIp(expressIp)) {
-    // If edge is verified and provides cf-connecting-ip or true-client-ip, validate syntax
-    if (edgeVerified) {
-      const edgeIp = cleanIp(getHeader("cf-connecting-ip") || getHeader("true-client-ip"));
-      if (edgeIp) return edgeIp;
-    }
-    return expressIp;
-  }
-
-  // 2. If req.ip is private / local (e.g. internal proxy, Docker, or mock), allow verified edge header
-  if (edgeVerified) {
-    const directHeaders = [
-      "cf-connecting-ip",
-      "true-client-ip",
-      "x-real-ip",
-      "fastly-client-ip",
-    ];
-    for (const h of directHeaders) {
-      const val = getHeader(h);
-      if (val) {
-        const clean = cleanIp(val);
-        if (clean) return clean;
-      }
-    }
-  }
-
-  // 3. X-Forwarded-For: find first valid public IP, or leftmost clean IP
-  const xForwardedFor = getHeader("x-forwarded-for");
-  if (xForwardedFor) {
-    const parts = xForwardedFor
-      .split(",")
-      .map((p) => cleanIp(p))
-      .filter((p): p is string => Boolean(p));
-    const publicIp = parts.find((p) => !isPrivateOrLocalIp(p));
-    if (publicIp) return publicIp;
-    if (parts.length > 0) return parts[0]!;
-  }
-
-  // 4. Fallback to Express req.ip (even if local) or socket
-  if (expressIp) {
-    return expressIp;
-  }
-  if (req.socket?.remoteAddress) {
-    const clean = cleanIp(req.socket.remoteAddress);
-    if (clean) return clean;
-  }
-
-  return null;
+/** Express alone resolves the configured proxy chain. Raw headers are never trusted here. */
+export function extractClientIp(req: { headers: Record<string, unknown>; ip?: string; socket?: { remoteAddress?: string } }, _options?: { trustEdge?: boolean }): string | null {
+  return cleanIp(req.ip);
 }
 
-export interface GeoHints {
-  country: string | null;
-  city: string | null;
-  region: string | null;
-}
-
-/**
- * Extracts country, city, and region hints from CDN edge headers (Cloudflare, Vercel, CloudFront, etc.).
- * Rejects client-spoofed headers when not arriving from a verified edge.
- */
-export function extractGeoHints(
-  req: { headers: Record<string, unknown> },
-  options?: { trustEdge?: boolean },
-): GeoHints {
-  const getHeader = (name: string): string | null => {
-    const val = req.headers[name] || req.headers[name.toLowerCase()];
-    if (typeof val === "string") return val.trim();
-    if (Array.isArray(val) && typeof val[0] === "string") return val[0].trim();
-    return null;
-  };
-
-  // Reject spoofed geo headers if not from verified edge
-  if (!isEdgeVerified(req, options)) {
-    return { country: null, city: null, region: null };
-  }
-
-  // Country headers
-  let country: string | null = null;
-  const countryHeaders = [
-    "cf-ipcountry",
-    "x-vercel-ip-country",
-    "cloudfront-viewer-country",
-    "x-country-code",
-    "x-country",
-    "x-appengine-country",
-    "fastly-country-code",
-    "geoip-country-code",
-  ];
-  for (const h of countryHeaders) {
-    const val = getHeader(h);
-    if (val) {
-      const upper = val.toUpperCase();
-      if (/^[A-Z]{2}$/.test(upper) && upper !== "XX" && upper !== "ZZ" && upper !== "T1") {
-        country = upper === "UK" ? "GB" : upper;
-        break;
-      }
-    }
-  }
-
-  // City headers
-  let city: string | null = null;
-  const cityHeaders = [
-    "cf-ipcity",
-    "x-vercel-ip-city",
-    "cloudfront-viewer-city",
-    "x-appengine-city",
-    "x-city",
-    "x-geo-city",
-  ];
-  for (const h of cityHeaders) {
-    const val = getHeader(h);
-    if (val) {
-      try {
-        const decoded = decodeURIComponent(val.replace(/\+/g, " ")).trim();
-        if (decoded && decoded.length <= 80 && !/^[0-9]+$/.test(decoded)) {
-          city = decoded;
-          break;
-        }
-      } catch {
-        city = val.trim();
-        break;
-      }
-    }
-  }
-
-  // Region headers
-  let region: string | null = null;
-  const regionHeaders = [
-    "cf-region",
-    "x-vercel-ip-country-region",
-    "cloudfront-viewer-country-region-name",
-    "x-region",
-  ];
-  for (const h of regionHeaders) {
-    const val = getHeader(h);
-    if (val) {
-      try {
-        const decoded = decodeURIComponent(val.replace(/\+/g, " ")).trim();
-        if (decoded && decoded.length <= 80) {
-          region = decoded;
-          break;
-        }
-      } catch {
-        region = val.trim();
-        break;
-      }
-    }
-  }
-
-  return { country, city, region };
+export interface GeoHints { country: string | null; city: string | null; region: string | null }
+export function extractGeoHints(_req: { headers: Record<string, unknown> }, _options?: { trustEdge?: boolean }): GeoHints {
+  return { country: null, city: null, region: null };
 }
 
 /**
@@ -484,167 +282,32 @@ export interface LocationResolveOptions {
   locale?: string | null;
 }
 
-export type LocationSource = "edge" | "geoip" | "preference" | "local" | "unresolved";
-export type CitySource = "edge" | "unverified" | "none";
-export type LocationConfidence = "high" | "medium" | "low" | "none";
-
-export interface ResolvedIpLocation {
-  ip: string | null;
-  country: string | null;
-  countryName: string | null;
-  city: string | null;
-  flag: string;
-  isLocal: boolean;
-  countrySource: LocationSource;
-  citySource: CitySource;
-  confidence: LocationConfidence;
-  timezonePreference?: string | null;
-  localePreference?: string | null;
+export type LocationSource = "geolite_city" | "geoip_country" | "legacy" | "none";
+export interface GeoResult {
+  country: string; city?: string | null; region?: string | null;
+  accuracyRadiusKm?: number | null; databaseVersion?: string | null;
 }
 
-/**
- * Resolves visitor location through multi-tiered detection:
- * 1. CDN Edge Geo Headers (Cloudflare, Vercel, CloudFront)
- * 2. MaxMind GeoIP Country Database
- * 3. Client IANA Timezone mapping & locale (as preference/heuristic only)
- * 4. Fallback to Local Development with neutral flag
- *
- * Truthful location resolution:
- * - City is ONLY resolved if provided by a trusted edge lookup; otherwise null ("City unavailable").
- * - Capital city defaults and timezone city guesses are NOT treated as measured locations.
- * - Browser timezone and locale are treated strictly as environment preferences, not physical locations.
- * - If IP country contradicts timezone country, IP country always wins.
- */
+/** Browser preferences and edge hints are intentionally ignored. */
 export function resolveIpLocation(
   ip: string | null | undefined,
-  hintOrOptions?: string | LocationResolveOptions | null,
-): ResolvedIpLocation {
-  const sanitizedIp = cleanIp(ip);
-  const isLocal = isPrivateOrLocalIp(sanitizedIp);
-
-  const opts: LocationResolveOptions =
-    typeof hintOrOptions === "string"
-      ? { hintCountry: hintOrOptions }
-      : hintOrOptions && typeof hintOrOptions === "object"
-        ? hintOrOptions
-        : {};
-
-  let code: string | null = null;
-  let city: string | null = null;
-  let countrySource: LocationSource = "unresolved";
-  let citySource: CitySource = "none";
-  let confidence: LocationConfidence = "none";
-
-  // 1. Direct country hint from verified CDN edge headers
-  if (
-    opts.hintCountry &&
-    /^[A-Z]{2}$/i.test(opts.hintCountry) &&
-    opts.hintCountry.toUpperCase() !== "XX" &&
-    opts.hintCountry.toUpperCase() !== "ZZ"
-  ) {
-    code = opts.hintCountry.toUpperCase() === "UK" ? "GB" : opts.hintCountry.toUpperCase();
-    countrySource = "edge";
-    confidence = "high";
-  }
-
-  // 2. MaxMind GeoIP Database lookup for public IP
-  const geoRecord = sanitizedIp ? lookupIpRecord(sanitizedIp) : null;
-  if (!code && geoRecord) {
-    code = geoRecord.country;
-    countrySource = "geoip";
-    confidence = "high";
-  }
-
-  // 3. Local development handling
-  if (isLocal) {
-    if (!code) {
-      const tzResolved = resolveFromTimezone(opts.timezone);
-      const locResolved = resolveFromLocale(opts.locale);
-      if (tzResolved && tzResolved.country !== "LOCAL") {
-        code = tzResolved.country;
-        countrySource = "preference";
-        confidence = "low";
-      } else if (locResolved) {
-        code = locResolved.country;
-        countrySource = "preference";
-        confidence = "low";
-      } else {
-        code = "LOCAL";
-        countrySource = "local";
-        confidence = "high";
-      }
-    }
-  } else if (!code) {
-    // 4. Public IP without GeoIP or edge hint: treat browser timezone / locale strictly as preference
-    const tzResolved = resolveFromTimezone(opts.timezone);
-    const locResolved = resolveFromLocale(opts.locale);
-    if (tzResolved && tzResolved.country !== "LOCAL") {
-      code = tzResolved.country;
-      countrySource = "preference";
-      confidence = "low";
-    } else if (locResolved) {
-      code = locResolved.country;
-      countrySource = "preference";
-      confidence = "low";
-    }
-  }
-
-  // City resolution:
-  // ONLY use trusted CDN edge header city. NEVER invent capital city or guess from timezone!
-  if (opts.hintCity && typeof opts.hintCity === "string" && opts.hintCity.trim().length > 0) {
-    city = opts.hintCity.trim();
-    citySource = "edge";
-  } else {
-    city = null;
-    citySource = "none";
-  }
-
-  // Handle local development / loopback
-  if (isLocal) {
-    if (code && code !== "LOCAL") {
-      return {
-        ip: sanitizedIp,
-        country: code,
-        countryName: countryName(code),
-        city,
-        flag: countryFlag(code),
-        isLocal: true,
-        countrySource,
-        citySource,
-        confidence,
-        timezonePreference: opts.timezone || null,
-        localePreference: opts.locale || null,
-      };
-    }
-    return {
-      ip: sanitizedIp,
-      country: "LOCAL",
-      countryName: "Local Development",
-      city,
-      flag: "🏠",
-      isLocal: true,
-      countrySource: "local",
-      citySource,
-      confidence: "high",
-      timezonePreference: opts.timezone || null,
-      localePreference: opts.locale || null,
-    };
-  }
-
-  const name = code ? countryName(code) : null;
-  const flag = code ? countryFlag(code) : "🌐";
-
+  _options?: string | LocationResolveOptions | null,
+  providers = { city: lookupAnalyticsCity, country: analyticsCountry },
+) {
+  const address = cleanIp(ip);
+  const local = isPrivateOrLocalIp(address);
+  const publicIp = address && ipaddr.process(address).range() === "unicast";
+  const record = publicIp ? providers.city(address!) : null;
+  const code = record?.country || (publicIp ? providers.country(address!) : null);
+  const city = code ? record?.city || null : null;
   return {
-    ip: sanitizedIp,
-    country: code,
-    countryName: name,
-    city,
-    flag,
-    isLocal: false,
-    countrySource,
-    citySource,
-    confidence,
-    timezonePreference: opts.timezone || null,
-    localePreference: opts.locale || null,
+    ip: address, country: code, countryName: countryName(code), city,
+    region: record?.region || null, flag: countryFlag(code), isLocal: local,
+    countrySource: code ? (record ? "geolite_city" : "geoip_country") : "none",
+    citySource: city ? "geolite_city" : "none",
+    locationStatus: local ? "local" : city ? "resolved" : code ? "partial" : "unknown",
+    accuracyRadiusKm: record?.accuracyRadiusKm ?? null,
+    geoDatabaseVersion: record?.databaseVersion ?? null,
+    locationResolvedAt: new Date(), locationResolverVersion: "2",
   };
 }

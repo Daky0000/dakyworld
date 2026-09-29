@@ -23,10 +23,13 @@
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
     "demo:docs": "tsx scripts/demoDocuments.ts",
-    "checks:browser": "node checks/browser/run.mjs"
+    "checks:browser": "node checks/browser/run.mjs",
+    "geo:update": "tsx scripts/updateGeoCity.ts",
+    "geo:audit": "tsx scripts/auditGeoLegacy.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
+    "@maxmind/geoip2-node": "^7.1.0",
     "@prisma/client": "^5.20.0",
     "@tailwindcss/aspect-ratio": "^0.4.2",
     "@tailwindcss/container-queries": "^0.1.1",
@@ -40,14 +43,17 @@
     "express": "^4.21.1",
     "geoip-country": "^5.0.202609230144",
     "imapflow": "^1.7.1",
+    "ipaddr.js": "^2.5.0",
     "json5": "^2.2.3",
     "mailparser": "^3.9.15",
+    "maxmind": "^5.0.7",
     "nodemailer": "^9.1.1",
     "pdfkit": "^0.15.1",
     "postcss": "^8.5.28",
     "redis": "^5.12.1",
     "stripe": "^17.2.1",
     "tailwindcss": "^3.4.19",
+    "tar": "^7.5.22",
     "typescript": "^5.6.3",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.25.2"
@@ -62,7 +68,7 @@
     "prisma": "^5.20.0",
     "tsx": "^4.19.1"
   },
-  "_overridesComment": "mailparser pins html-to-text at exactly 10.0.0, which pins deepmerge-ts ^7 — the version carrying GHSA-ggr8-5vv4-36mx, a stack exhaustion on a recursive object graph. That is reachable from a parsed email body, which is the one input to this app a stranger writes. 10.0.1 is a patch release whose only relevant change is moving to deepmerge-ts ^8; the override exists to lift mailparser's exact pin, not to cross a major.",
+  "_overridesComment": "mailparser pins html-to-text at exactly 10.0.0, which pins deepmerge-ts ^7 ? the version carrying GHSA-ggr8-5vv4-36mx, a stack exhaustion on a recursive object graph. That is reachable from a parsed email body, which is the one input to this app a stranger writes. 10.0.1 is a patch release whose only relevant change is moving to deepmerge-ts ^8; the override exists to lift mailparser's exact pin, not to cross a major.",
   "overrides": {
     "html-to-text": "10.0.1",
     "geoip-country": {

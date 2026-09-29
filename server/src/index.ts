@@ -1,3 +1,4 @@
+import { startGeoDatabaseMonitor, reloadCityDatabase } from "./lib/geoCity.js";
 import { installShutdown } from "./lib/shutdown.js";
 import { legacyPublishedAsset } from "./services/publishedAssets.js";
 import { capacity } from "./lib/capacity.js";
@@ -94,13 +95,13 @@ const PORT = Number(process.env.PORT ?? 4000);
 const CLIENT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../client/dist");
 const hasBuiltClient = existsSync(path.join(CLIENT_DIST, "index.html"));
 
-// Railway terminates TLS and rewrites the host one hop in front of us. Without
-// this, `req.ip` is the proxy's address and `req.secure` is always false — so
-// every rate limiter would share one bucket and the HTTPS check would redirect
-// forever. A hop *count* rather than `true`: trusting the whole chain means
-// trusting whatever the caller put at the front of X-Forwarded-For, which is
-// how a per-IP limiter becomes a per-request one.
-app.set("trust proxy", 1);
+// Configure the verified proxy chain before deployment. Express uses this for
+// visitor IPs, secure-request detection, and per-IP rate limiting.
+// Direct connections are the safe default when no chain has been verified.
+const proxySetting = process.env.TRUSTED_PROXY_CIDRS?.trim();
+const proxyHops = process.env.TRUSTED_PROXY_HOPS?.trim();
+if (proxyHops && !/^[1-8]$/.test(proxyHops)) throw new Error("TRUSTED_PROXY_HOPS must be between 1 and 8");
+app.set("trust proxy", proxySetting ? proxySetting.split(",").map(value => value.trim()) : proxyHops ? Number(proxyHops) : false);
 app.disable("x-powered-by");
 
 app.use(measureRequests);
@@ -336,7 +337,9 @@ ensureSystemRoles()
   .catch((err) => console.error("Role seed failed:", err))
   .then(() => bootstrapOwner())
   .catch((err) => console.error("Owner bootstrap failed:", err))
-  .finally(() => {
+  .finally(async () => {
+    if (process.env.GEOIP_CITY_ENABLED === "true") await reloadCityDatabase();
+    startGeoDatabaseMonitor();
     let stopLocalInvalidations: (() => void) | undefined;
     let stopBackground: (() => void | Promise<void>) | undefined;
     const server = app.listen(PORT, () => {
