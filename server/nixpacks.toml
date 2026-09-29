@@ -1,2 +1,6 @@
 [phases.setup]
 nixPkgs = ["nodejs_22"]
+
+[variables]
+NPM_CONFIG_PRODUCTION = "false"
+
