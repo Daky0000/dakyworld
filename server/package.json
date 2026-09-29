@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npm run build:client && prisma generate && tsc -p tsconfig.json",
-    "build:client": "npm --prefix client ci && npm --prefix client run build",
+    "build:client": "npm --prefix client ci --include=dev && npm --prefix client run build",
     "build:server": "prisma generate && tsc -p tsconfig.json",
     "checks": "tsx checks/run.ts",
     "checks:types": "tsc --noEmit -p tsconfig.checks.json",
