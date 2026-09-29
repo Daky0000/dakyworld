@@ -106,11 +106,11 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
  * exempted outright as well, because a healthcheck that can be broken by a
  * header change is a healthcheck waiting to break.
  */
-const HEALTHCHECK_PATH = "/api/health";
+const HEALTHCHECK_PATHS = new Set(["/api/health", "/api/ready"]);
 
 export function forceHttps(req: Request, res: Response, next: NextFunction) {
   if (!isProduction()) return next();
-  if (req.path === HEALTHCHECK_PATH) return next();
+  if (HEALTHCHECK_PATHS.has(req.path)) return next();
 
   // req.secure is only meaningful with `trust proxy` set; index.ts sets it.
   if (req.secure) return next();

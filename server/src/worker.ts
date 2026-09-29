@@ -16,7 +16,7 @@ const server = http.createServer((req, res) => {
   if (req.url !== "/api/ready") { res.writeHead(404); res.end(); return; }
   void prisma.$queryRaw`SELECT 1`.then(() => { res.writeHead(200); res.end("ready"); }, () => { res.writeHead(503); res.end("unavailable"); });
 });
-server.listen(Number(process.env.PORT ?? 4001));
+server.listen(Number(process.env.PORT ?? 4001), "0.0.0.0");
 installShutdown({
   server,
   stop: async () => { stopLocal(); await stop(); },

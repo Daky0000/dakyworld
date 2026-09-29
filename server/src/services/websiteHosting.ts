@@ -104,7 +104,7 @@ const NOT_PUBLISHED_HTML = `<!doctype html><html lang="en"><head><meta charset="
  */
 export function publicSiteHosting() {
   return async function hostingMiddleware(req: Request, res: Response, next: NextFunction) {
-    if (req.path === "/api/ready") return next();
+    if (req.path === "/api/ready" || req.path === "/api/health") return next();
     const host = hostOf(req);
     if (!host || osHosts().has(host)) return next();
 
