@@ -25,6 +25,7 @@ import {
 import { resolveEntitlement } from "./websiteEntitlement.js";
 import { autoPopulateSitePaletteFromHtml, extractColorsFromHtml } from "./website/pageColors.js";
 import { generateStarterSiteHtml, STARTER_TEMPLATES } from "./websiteSectionTemplates.js";
+import { prepareImportedHtml } from "./htmlCompiler.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -195,11 +196,14 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 
   router.post("/sites", handler(async (req, res) => {
     const input = siteInput.extend({
-      html: z.string().min(1).max(2_000_000).optional(),
+      html: z.string().min(1).max(15_000_000).optional(),
       templateKey: z.string().max(60).optional(),
     }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
-    const { html, templateKey, ...data } = input;
+    let { html, templateKey, ...data } = input;
+    if (html) {
+      html = prepareImportedHtml(html);
+    }
     const external = Boolean(req.dbUser?.accessRole?.external);
     let owner: { clientId: string; userId: string; siteLimit: number } | null = null;
     if (external) {
@@ -317,9 +321,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   router.post("/sites/:siteId/import", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     await assertImportAllowance(req, site.id);
-    const body = z.object({ title: z.string().trim().min(1).max(120), filePath: z.string().regex(/^[a-zA-Z0-9_/-]+\.html$/).max(200), path: z.string().regex(/^\/[a-zA-Z0-9_/-]*$/).max(200), html: z.string().min(1).max(2_000_000) }).parse(req.body);
-    const count = importedWebsiteFields(body.html);
-    const capturedMedia = await captureHtmlImagesIntoMediaLibrary(req, site.id, body.html);
+    const body = z.object({ title: z.string().trim().min(1).max(120), filePath: z.string().regex(/^[a-zA-Z0-9_/-]+\.html$/).max(200), path: z.string().regex(/^\/[a-zA-Z0-9_/-]*$/).max(200), html: z.string().min(1).max(15_000_000) }).parse(req.body);
+    const preparedHtml = prepareImportedHtml(body.html);
+    const count = importedWebsiteFields(preparedHtml);
+    const capturedMedia = await captureHtmlImagesIntoMediaLibrary(req, site.id, preparedHtml);
     const page = await prisma.$transaction(async tx => {
       if (await tx.sitePage.findFirst({ where: { siteId: site.id, OR: [{ filePath: body.filePath }, { path: body.path }] }, select: { id: true } })) throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
       const imported = await tx.sitePage.create({ data: { siteId: site.id, title: body.title, filePath: body.filePath, path: body.path, sourceHtml: capturedMedia.html } });
@@ -329,7 +334,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
       throw error;
     });
-    const extractedPalette = await autoPopulateSitePaletteFromHtml(site.id, body.html).catch(() => []);
+    const extractedPalette = await autoPopulateSitePaletteFromHtml(site.id, preparedHtml).catch(() => []);
     await recordImportUsed(req);
     const { html: _html, ...captureSummary } = capturedMedia;
     res.status(201).json({ id: page.id, fields: count, capturedMedia: captureSummary, palette: extractedPalette });

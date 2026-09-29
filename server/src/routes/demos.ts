@@ -16,6 +16,7 @@ import {
   subjectFromLead,
 } from "../services/demoBuilder.js";
 import { applyValues, editingSource, fieldValues, type FieldValue } from "../services/website/index.js";
+import { compileClaudeDynamicTemplate } from "../services/htmlCompiler.js";
 import { appUrl } from "../services/emailSender.js";
 import { MAX_UPLOAD_BODY } from "../services/fileStore.js";
 import { companyProfile } from "../services/systemProfile.js";
@@ -1611,6 +1612,8 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
             : sitePage.sourceHtml;
       }
     }
+
+    renderedHtml = compileClaudeDynamicTemplate(renderedHtml);
 
     // Inject analytics tracking script with server-issued visit ID and signed token
     const trackedHtml = injectDemoTracker(renderedHtml, {

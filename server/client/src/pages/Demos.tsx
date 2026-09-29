@@ -20,6 +20,7 @@ import {
 } from "../components/ui";
 import { DemoAnalyticsModal } from "../components/DemoAnalyticsModal";
 import { IconBarChart, IconClock, IconFlame, IconGlobe } from "../components/WebsiteIcons";
+import { compileClaudeDynamicTemplate } from "../../../src/shared/templateCompiler";
 
 function formatDuration(seconds: number): string {
   if (!seconds || seconds <= 0) return "0s";
@@ -243,6 +244,9 @@ export async function unpackClaudeArtifactBundleInBrowser(rawHtml: string): Prom
         template = `${injection}\n${template}`;
       }
     }
+
+    // Compile dynamic templates if present
+    template = compileClaudeDynamicTemplate(template);
 
     return { html: template, unpacked: true };
   } catch (err) {

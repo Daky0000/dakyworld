@@ -20,7 +20,7 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
   const upload = useMutation({
     mutationFn: async () => {
       if (!file) throw new Error("Choose an HTML file.");
-      if (file.size > 2_000_000) throw new Error("Choose an HTML file smaller than 2 MB.");
+      if (file.size > 15_000_000) throw new Error("Choose an HTML file smaller than 15 MB.");
       return api.post<{ id: string }>(`/website/sites/${siteId}/import`, {
         title: title.trim(),
         path: path.trim(),

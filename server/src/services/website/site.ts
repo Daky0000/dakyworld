@@ -13,6 +13,7 @@ import { invalidateSource, readCache, sourceKey, writeCache } from "./sourceCach
 import { detectFramework, isEditableSourcePath, type DiscoveredRoute, type SourceKind } from "./frameworks.js";
 import { invalidateRender, renderRoute } from "./renderSource.js";
 import { discoverRouterRoutes, routerCandidates } from "./router.js";
+import { compileClaudeDynamicTemplate } from "../htmlCompiler.js";
 
 /**
  * Where a page's HTML comes from, and where an edited one goes.
@@ -130,7 +131,7 @@ export async function pageFile(site: Site, page: SitePage): Promise<string | nul
 }
 
 export async function pageSource(site: Site, page: SitePage, options: { fresh?: boolean } = {}): Promise<PageSource> {
-  if (page.sourceHtml !== null && page.sourceHtml !== undefined) return { html: page.sourceHtml, from: "imported file" };
+  if (page.sourceHtml !== null && page.sourceHtml !== undefined) return { html: compileClaudeDynamicTemplate(page.sourceHtml), from: "imported file" };
   return underSiteCredential(site, () => readPageSource(site, page, options));
 }
 
@@ -919,7 +920,7 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   const body = [...walk(parseHtml(out))].find(node => node.tag === "body");
   const at = body?.innerEnd ?? out.length;
   out = out.slice(0, at) + pickerAssets(nonce, allowEditing) + out.slice(at);
-  return { html: out, csp: policy.replace("script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob: data:", "script-src 'nonce-" + nonce + "' 'unsafe-inline' 'unsafe-eval' https: blob: data:") + "; style-src-attr 'unsafe-inline'" };
+  return { html: out, csp: policy + "; style-src-attr 'unsafe-inline'" };
 }
 
 /**
