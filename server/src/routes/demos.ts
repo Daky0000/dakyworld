@@ -1339,16 +1339,17 @@ const CSP = [
 ].join("; ");
 
 const IMPORTED_CSP = [
-  "default-src 'self' https: data: blob:",
+  "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'",
   "img-src 'self' https: data: blob:",
-  "style-src 'self' 'unsafe-inline' https:",
+  "style-src 'self' 'unsafe-inline' https: data: blob:",
   "font-src 'self' https: data: blob:",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob: data:",
   "media-src 'self' https: data: blob:",
   "connect-src 'self' https: blob: data:",
   "worker-src 'self' blob: data:",
   "child-src 'self' blob:",
-  "form-action 'none'",
+  "frame-src * https: data: blob:",
+  "form-action * 'self'",
   "frame-ancestors 'self'",
 ].join("; ");
 
@@ -1591,7 +1592,10 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       }
     }
 
-    const isImported = demo.builtBy === "Imported HTML" || meta.imported === true;
+    const isImported =
+      demo.builtBy === "Imported HTML" ||
+      meta.imported === true ||
+      /<(script|iframe|canvas|svg|video|audio)\b/i.test(demo.html);
 
     let renderedHtml = demo.html;
     if (meta.sitePageId) {

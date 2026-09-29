@@ -83,6 +83,174 @@ function parseHtmlClientMetadata(html: string, fileName?: string) {
   return { businessName, title, suggestedSlug: slugifyClient(businessName || fromFile || "demo") };
 }
 
+async function gunzipBytes(bytes: Uint8Array): Promise<Uint8Array> {
+  if (typeof DecompressionStream !== "undefined") {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    void writer.write(bytes as any);
+    void writer.close();
+    const output: Uint8Array[] = [];
+    const reader = ds.readable.getReader();
+    let totalLen = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) {
+        output.push(value as Uint8Array);
+        totalLen += value.length;
+      }
+    }
+    const result = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const chunk of output) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return result;
+  }
+  return bytes;
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+    binary += String.fromCharCode.apply(null, Array.from(chunk));
+  }
+  return btoa(binary);
+}
+
+export async function unpackClaudeArtifactBundleInBrowser(rawHtml: string): Promise<{ html: string; unpacked: boolean }> {
+  if (!rawHtml.includes('type="__bundler/manifest"') || !rawHtml.includes('type="__bundler/template"')) {
+    return { html: rawHtml, unpacked: false };
+  }
+
+  const manifestMatch = /<script\b[^>]*\btype=["']__bundler\/manifest["'][^>]*>([\s\S]*?)<\/script>/i.exec(rawHtml);
+  const templateMatch = /<script\b[^>]*\btype=["']__bundler\/template["'][^>]*>([\s\S]*?)<\/script>/i.exec(rawHtml);
+  if (!manifestMatch || !templateMatch) {
+    return { html: rawHtml, unpacked: false };
+  }
+
+  try {
+    const manifest = JSON.parse(manifestMatch[1]);
+    let template: string = JSON.parse(templateMatch[1]);
+
+    const extResMatch = /<script\b[^>]*\btype=["']__bundler\/ext_resources["'][^>]*>([\s\S]*?)<\/script>/i.exec(rawHtml);
+    const extResources: Array<{ id: string; uuid: string }> = extResMatch ? JSON.parse(extResMatch[1]) : [];
+
+    const assetMap: Record<string, { mime: string; dataUrl: string; text: string | null }> = {};
+    for (const [uuid, entry] of Object.entries(manifest as Record<string, { mime: string; data: string; compressed?: boolean }>)) {
+      let rawBytes = base64ToUint8Array(entry.data);
+      if (entry.compressed) {
+        try {
+          rawBytes = await gunzipBytes(rawBytes);
+        } catch {}
+      }
+      const b64 = uint8ArrayToBase64(rawBytes);
+      const dataUrl = `data:${entry.mime};base64,${b64}`;
+      const isText = entry.mime.startsWith("text/") || entry.mime.includes("javascript") || entry.mime.includes("json");
+      assetMap[uuid] = {
+        mime: entry.mime,
+        dataUrl,
+        text: isText ? new TextDecoder().decode(rawBytes) : null,
+      };
+    }
+
+    const resourceMap: Record<string, string> = {};
+    for (const entry of extResources) {
+      if (assetMap[entry.uuid]) {
+        resourceMap[entry.id] = assetMap[entry.uuid].dataUrl;
+      }
+    }
+
+    const scriptUuids = new Set<string>();
+    const headScripts: string[] = [];
+
+    const reactEntry = extResources.find(
+      (e) => e.id.includes("react.production") || e.id.endsWith("/react.js") || e.id.includes("react@")
+    );
+    if (reactEntry && assetMap[reactEntry.uuid]?.text) {
+      headScripts.push(`<script>${assetMap[reactEntry.uuid].text}</script>`);
+      scriptUuids.add(reactEntry.uuid);
+    }
+
+    const reactDomEntry = extResources.find(
+      (e) => e.id.includes("react-dom.production") || e.id.endsWith("/react-dom.js") || e.id.includes("react-dom@")
+    );
+    if (reactDomEntry && assetMap[reactDomEntry.uuid]?.text) {
+      headScripts.push(`<script>${assetMap[reactDomEntry.uuid].text}</script>`);
+      scriptUuids.add(reactDomEntry.uuid);
+    }
+
+    for (const entry of extResources) {
+      if (!scriptUuids.has(entry.uuid)) {
+        const asset = assetMap[entry.uuid];
+        if (asset?.text && (asset.mime.includes("javascript") || entry.id.endsWith(".js"))) {
+          headScripts.push(`<script>${asset.text}</script>`);
+          scriptUuids.add(entry.uuid);
+        }
+      }
+    }
+
+    // Inline JS scripts directly in place
+    template = template.replace(
+      /<script\b([^>]*?)\bsrc\s*=\s*["']([0-9a-f-]{36})["']([^>]*?)>\s*<\/script>/gi,
+      (match, before, uuid, after) => {
+        const asset = assetMap[uuid];
+        if (asset?.text) {
+          scriptUuids.add(uuid);
+          return `<script${before}${after}>${asset.text}</script>`;
+        }
+        return match;
+      }
+    );
+
+    // Replace all remaining asset UUIDs in template with data URLs (images, fonts, stylesheets)
+    for (const [uuid, asset] of Object.entries(assetMap)) {
+      if (!scriptUuids.has(uuid)) {
+        template = template.split(uuid).join(asset.dataUrl);
+      }
+    }
+
+    template = template.replace(/\s+integrity="[^"]*"/gi, "").replace(/\s+crossorigin="[^"]*"/gi, "");
+
+    const resourceScript =
+      Object.keys(resourceMap).length > 0
+        ? `<script>window.__resources = ${JSON.stringify(resourceMap).replace(/<\//g, "<\\/")};</script>`
+        : "";
+
+    const injection = [resourceScript, ...headScripts].filter(Boolean).join("\n");
+    if (injection) {
+      const headOpen = /<head\b[^>]*>/i.exec(template);
+      if (headOpen) {
+        const idx = headOpen.index + headOpen[0].length;
+        template = template.slice(0, idx) + "\n" + injection + "\n" + template.slice(idx);
+      } else if (template.includes("</head>")) {
+        template = template.replace("</head>", `${injection}\n</head>`);
+      } else {
+        template = `${injection}\n${template}`;
+      }
+    }
+
+    return { html: template, unpacked: true };
+  } catch (err) {
+    console.warn("Client bundle unpacking note:", err);
+    return { html: rawHtml, unpacked: false };
+  }
+}
+
 export function Demos() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -697,11 +865,24 @@ function ImportDemoDrawer({
         }),
       ]);
 
+      let resolvedText = text;
+      let resolvedB64 = b64;
+      try {
+        const unpacked = await unpackClaudeArtifactBundleInBrowser(text);
+        if (unpacked.unpacked) {
+          resolvedText = unpacked.html;
+          const encoded = encodeURIComponent(resolvedText);
+          resolvedB64 = `data:text/html;charset=utf-8;base64,${btoa(unescape(encoded))}`;
+        }
+      } catch (e) {
+        console.warn("Client bundle unpacking note:", e);
+      }
+
       setFileName(file.name);
       setFileSize(file.size);
-      setDataBase64(b64);
+      setDataBase64(resolvedB64);
 
-      const meta = parseHtmlClientMetadata(text, file.name);
+      const meta = parseHtmlClientMetadata(resolvedText, file.name);
       if (!businessName.trim()) setBusinessName(meta.businessName);
       if (!title.trim()) setTitle(meta.title);
       if (!slugTouched && !slug.trim()) setSlug(meta.suggestedSlug);
@@ -911,11 +1092,23 @@ function ImportDemoDrawer({
                 className="input font-mono text-xs"
                 placeholder="<!DOCTYPE html><html>..."
                 value={rawHtml}
-                onChange={(e) => {
+                onChange={async (e) => {
                   const val = e.target.value;
                   setRawHtml(val);
                   if (val.trim().length > 20) {
-                    const meta = parseHtmlClientMetadata(val);
+                    let textToParse = val;
+                    if (val.includes('type="__bundler/manifest"')) {
+                      try {
+                        const unpacked = await unpackClaudeArtifactBundleInBrowser(val);
+                        if (unpacked.unpacked) {
+                          textToParse = unpacked.html;
+                          setRawHtml(unpacked.html);
+                        }
+                      } catch (err) {
+                        console.warn("Client unpack note:", err);
+                      }
+                    }
+                    const meta = parseHtmlClientMetadata(textToParse);
                     if (!businessName.trim()) setBusinessName(meta.businessName);
                     if (!title.trim()) setTitle(meta.title);
                     if (!slugTouched && !slug.trim()) setSlug(meta.suggestedSlug);

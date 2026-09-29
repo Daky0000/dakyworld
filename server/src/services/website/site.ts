@@ -900,7 +900,7 @@ export type PreviewDocument = { html: string; csp: string };
  * cdnStyles.ts), added at the end of the head where the Play CDN puts its own.
  */
 export function previewDocument(html: string, baseUrl: string, editable?: SiteField[], allowEditing = true, builtCss?: string | null): PreviewDocument {
-  const policy = ["default-src 'none'", "sandbox allow-scripts allow-same-origin", "base-uri http: https:", "img-src 'self' data: blob: http: https:", "style-src 'self' 'unsafe-inline' http: https:", "font-src 'self' data: http: https:", "media-src http: https: data:", "script-src 'none'", "connect-src 'none'", "object-src 'none'", "frame-src 'none'", "frame-ancestors 'self'", "form-action 'none'"].join("; ");
+  const policy = ["default-src 'none'", "sandbox allow-scripts allow-same-origin", "base-uri http: https:", "img-src 'self' data: blob: http: https:", "style-src 'self' 'unsafe-inline' http: https:", "font-src 'self' data: http: https:", "media-src http: https: data:", "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob: data:", "connect-src 'self' https: blob: data:", "object-src 'none'", "frame-src * http: https: data: blob:", "frame-ancestors 'self'", "form-action 'none'"].join("; ");
   // Apply the original offsets first, then parse again before removing tags.
   let out = editable?.length ? markEditable(html, editable) : html;
   const removed = [...walk(parseHtml(out))].filter(node => node.tag === "base" || (node.tag === "meta" && ["refresh", "content-security-policy"].includes(decodeEntities(attr(node, "http-equiv") ?? "").trim().toLowerCase())));
@@ -919,7 +919,7 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   const body = [...walk(parseHtml(out))].find(node => node.tag === "body");
   const at = body?.innerEnd ?? out.length;
   out = out.slice(0, at) + pickerAssets(nonce, allowEditing) + out.slice(at);
-  return { html: out, csp: policy.replace("script-src 'none'", "script-src 'nonce-" + nonce + "'") + "; style-src-attr 'unsafe-inline'" };
+  return { html: out, csp: policy.replace("script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob: data:", "script-src 'nonce-" + nonce + "' 'unsafe-inline' 'unsafe-eval' https: blob: data:") + "; style-src-attr 'unsafe-inline'" };
 }
 
 /**
